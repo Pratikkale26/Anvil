@@ -1,20 +1,24 @@
 import { readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { emitPinocchio } from "./src/emitter/pinocchio-emitter.js";
+import { emitQuasar } from "./src/emitter/quasar-emitter.js";
+import { emitNative } from "./src/emitter/native-emitter.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 async function run() {
-  console.log("1. Reading pre-loaded IR fixture (counter.json)...");
-  
-  const fixturePath = join(__dirname, "src/ir/fixtures/counter.json");
+  const fixture = process.argv[2] ?? "counter";
+  const target = process.argv[3] ?? "pinocchio";
+
+  console.log(`1. Reading pre-loaded IR fixture (${fixture}.json)...`);
+
+  const fixturePath = join(__dirname, `src/ir/fixtures/${fixture}.json`);
   const irRaw = readFileSync(fixturePath, "utf-8");
   const ir = JSON.parse(irRaw);
 
-  const target = "pinocchio"; // change to quasar or native to test others
-
   console.log(`2. Sending IR to local /emit route for target: ${target}...`);
-  
+
   try {
     const res = await fetch("http://localhost:8080/emit", {
       method: "POST",
@@ -32,7 +36,7 @@ async function run() {
     const data = await res.json();
     
     // Save the emitted Rust code to a file you can see in VS Code
-    const outPath = join(__dirname, `test-output-${target}.rs`);
+    const outPath = join(__dirname, `test-output-${fixture}-${target}.rs`);
     writeFileSync(outPath, data.code);
     
     console.log(`\n✅ Success! Emitted ${data.instructions} instructions and ${data.accounts} accounts.`);
@@ -41,8 +45,26 @@ async function run() {
     console.table(data.cu);
 
   } catch (err) {
-    console.error("❌ Failed to connect to API. Is 'bun run dev' running?");
-    console.error(err);
+    console.warn("⚠️ API unavailable, falling back to local emitter execution.");
+
+    const emitters = {
+      pinocchio: emitPinocchio,
+      quasar: emitQuasar,
+      native: emitNative,
+    } as const;
+
+    const emitter = emitters[target as keyof typeof emitters];
+    if (!emitter) {
+      console.error(`❌ Unknown target: ${target}`);
+      return;
+    }
+
+    const code = emitter(ir);
+    const outPath = join(__dirname, `test-output-${fixture}-${target}.rs`);
+    writeFileSync(outPath, code);
+
+    console.log(`\n✅ Local fallback succeeded for ${fixture} -> ${target}.`);
+    console.log(`Saved emitted code to: ${outPath}`);
   }
 }
 

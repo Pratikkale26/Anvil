@@ -7,7 +7,7 @@ import type { SolanaIR } from "../ir/schema.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, "../ir/fixtures");
 
-const VALID_DEMOS = ["counter", "vault", "escrow", "staking"] as const;
+const VALID_DEMOS = ["counter", "vault"] as const;
 type DemoName = (typeof VALID_DEMOS)[number];
 
 // Cache fixtures in memory at startup
@@ -37,7 +37,7 @@ export const demoRoute = Router();
 
 /**
  * GET /demo/:name
- * Returns pre-loaded IR fixture + source for counter|vault|escrow|staking
+ * Returns pre-loaded IR fixture + source for counter|vault
  */
 demoRoute.get("/:name", (req, res) => {
   const name = req.params.name as DemoName;

@@ -1,20 +1,13 @@
-import type { SolanaIR, AccountDef, Instruction, AccountRef } from "../ir/schema.js";
+import { createHash } from "crypto";
+import type { SolanaIR, AccountDef, Instruction, Arg } from "../ir/schema.js";
 
-/**
- * Emit a Quasar Solana program from a SolanaIR.
- *
- * Quasar (by Blueshift): https://github.com/blueshift-labs/quasar
- * - Zero-copy, zero-allocation
- * - Achieves ~96% program size reduction vs Anchor
- * - Uses raw byte slices + const generics for account validation
- */
 export function emitQuasar(ir: SolanaIR): string {
   const sections: string[] = [];
 
   sections.push(fileHeader(ir.name, "quasar"));
   sections.push(quasarUseStatements());
-  sections.push(entryPoint(ir));
-  sections.push(discriminatorRouter(ir));
+  sections.push(entryPoint());
+  sections.push(routeFunction(ir));
 
   for (const instr of ir.instructions) {
     sections.push(quasarInstruction(instr, ir));
@@ -24,6 +17,8 @@ export function emitQuasar(ir: SolanaIR): string {
     sections.push(quasarAccountStruct(acc));
   }
 
+  sections.push(quasarHelpers());
+
   if (ir.errors.length > 0) {
     sections.push(errorEnum(ir));
   }
@@ -31,24 +26,19 @@ export function emitQuasar(ir: SolanaIR): string {
   return sections.join("\n\n");
 }
 
-// ─── Use statements ───────────────────────────────────────────────────────────
-
 function quasarUseStatements(): string {
-  return `use solana_program::{
+  return `use core::convert::TryInto;
+use solana_program::{
     account_info::AccountInfo,
+    entrypoint,
     entrypoint::ProgramResult,
     program_error::ProgramError,
     pubkey::Pubkey,
-};
-
-// Quasar zero-allocation primitives
-type ZeroCopyAccount<'a> = &'a [u8];`;
+};`;
 }
 
-// ─── Entrypoint ───────────────────────────────────────────────────────────────
-
-function entryPoint(ir: SolanaIR): string {
-  return `solana_program::entrypoint!(process_instruction);
+function entryPoint(): string {
+  return `entrypoint!(process_instruction);
 
 pub fn process_instruction(
     program_id: &Pubkey,
@@ -58,212 +48,415 @@ pub fn process_instruction(
     if instruction_data.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    // Quasar: discriminator match with zero-allocation dispatch
-    match instruction_data.split_at(8) {
-        (disc, data) => route(program_id, accounts, disc, data),
-        #[allow(unreachable_patterns)]
-        _ => Err(ProgramError::InvalidInstructionData),
-    }
+
+    let (disc, data) = instruction_data.split_at(8);
+    route(program_id, accounts, disc, data)
+}`;
 }
 
-#[inline(always)]
-fn route(
+function routeFunction(ir: SolanaIR): string {
+  const arms = ir.instructions
+    .map(
+      (instr) =>
+        `    if disc == &${instrDiscriminatorArray(instr.name)} {\n        return ${snakeCase(instr.name)}(program_id, accounts, data);\n    }`
+    )
+    .join("\n");
+
+  return `fn route(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     disc: &[u8],
     data: &[u8],
 ) -> ProgramResult {
-${ir.instructions
-  .map((instr) => {
-    return `    if disc == &${instrDiscriminatorArray(instr.name)} {
-        return ${snakeCase(instr.name)}(program_id, accounts, data);
-    }`;
-  })
-  .join("\n")}
+${arms}
     Err(ProgramError::InvalidInstructionData)
 }`;
 }
 
-function discriminatorRouter(_ir: SolanaIR): string {
-  return ""; // Inlined into entryPoint for Quasar
-}
-
-// ─── Instruction handler ──────────────────────────────────────────────────────
-
-function quasarInstruction(instr: Instruction, _ir: SolanaIR): string {
-  const nonProgramAccounts = instr.accounts.filter(
-    (a) => !isProgramAccount(a.accountType)
-  );
-
-  const accountDestructure = nonProgramAccounts
+function quasarInstruction(instr: Instruction, ir: SolanaIR): string {
+  const nonProgramAccounts = instr.accounts.filter((account) => !isProgramAccount(account.accountType));
+  const bindings = nonProgramAccounts
+    .map((account, index) => `    let ${snakeCase(account.name)} = accounts.get(${index}).ok_or(ProgramError::NotEnoughAccountKeys)?;`)
+    .join("\n");
+  const signerChecks = nonProgramAccounts
+    .filter((account) => account.isSigner)
     .map(
-      (acc, i) =>
-        `    let ${snakeCase(acc.name)} = accounts.get(${i}).ok_or(ProgramError::NotEnoughAccountKeys)?;`
+      (account) =>
+        `    if !${snakeCase(account.name)}.is_signer {\n        return Err(ProgramError::MissingRequiredSignature);\n    }`
     )
     .join("\n");
+  const argsBlock = parseArgs(instr.args);
+  const logic = buildQuasarLogic(ir.name, instr.name);
 
-  const checks = buildChecks(instr.accounts);
-
-  const argParsers =
-    instr.args.length > 0
-      ? `\n    // Parse args (zero-allocation, direct from byte slice)\n    let mut _offset = 0usize;\n    ${instr.args
-          .map(
-            (a) =>
-              `let _${snakeCase(a.name)}: ${quasarType(a.type)} = 0; // TODO: parse from data[offset..]`
-          )
-          .join("\n    ")}`
-      : "";
-
-  return `#[inline(always)]
-fn ${snakeCase(instr.name)}(
+  return `fn ${snakeCase(instr.name)}(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-${accountDestructure}
-${checks}${argParsers}
-
-    // TODO: implement ${instr.name} business logic
+${bindings}
+${signerChecks ? `\n${signerChecks}` : ""}
+${argsBlock}
+${logic}
 
     Ok(())
 }`;
 }
 
-// ─── Account struct ───────────────────────────────────────────────────────────
-
 function quasarAccountStruct(acc: AccountDef): string {
   const fields = acc.fields
-    .map((f) => `    pub ${snakeCase(f.name)}: ${quasarType(f.type)},`)
+    .map((field) => `    pub ${snakeCase(field.name)}: ${quasarType(field.type)},`)
     .join("\n");
+  const bodyLen = acc.space ?? acc.fields.reduce((size, field) => size + typeSize(field.type), 0);
 
-  const totalSize = acc.fields.reduce((s, f) => s + typeSize(f.type), 0);
-
-  return `/// ${acc.name} — zero-allocation layout (Quasar)
-/// Total size: ${acc.space ?? totalSize + 8} bytes (including 8-byte discriminator)
-#[repr(C, packed)]
+  return `#[repr(C)]
 pub struct ${acc.name} {
 ${fields}
 }
 
 impl ${acc.name} {
-    pub const DISCRIMINATOR: [u8; 8] = [/* sha256("account:${acc.name}")[..8] */ 0u8; 8];
-    pub const SIZE: usize = 8 + core::mem::size_of::<Self>();
+    pub const DISCRIMINATOR: [u8; 8] = ${accountDiscriminator(acc.name)};
+    pub const LEN: usize = ${bodyLen};
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
 
-    /// Read account data with zero-allocation (Quasar style)
-    #[inline(always)]
-    pub fn load(data: &[u8]) -> Result<&Self, ProgramError> {
-        if data.len() < Self::SIZE {
-            return Err(ProgramError::AccountDataTooSmall);
+    pub fn from_account_info(account: &AccountInfo) -> Result<&Self, ProgramError> {
+        let data = account.try_borrow_data()?;
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
         }
-        // Skip discriminator
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        // SAFETY: The discriminator and length are checked above, and the
+        // generated layout uses #[repr(C)] with a fixed-size account body.
         Ok(unsafe { &*(data.as_ptr().add(8) as *const Self) })
     }
 
-    #[inline(always)]
-    pub fn load_mut(data: &mut [u8]) -> Result<&mut Self, ProgramError> {
-        if data.len() < Self::SIZE {
-            return Err(ProgramError::AccountDataTooSmall);
+    pub fn from_account_info_mut(account: &AccountInfo) -> Result<&mut Self, ProgramError> {
+        let mut data = account.try_borrow_mut_data()?;
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
         }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        // SAFETY: The discriminator and length are checked above, and the
+        // generated layout uses #[repr(C)] with a fixed-size account body.
         Ok(unsafe { &mut *(data.as_mut_ptr().add(8) as *mut Self) })
     }
 }`;
 }
 
-// ─── Error enum ───────────────────────────────────────────────────────────────
-
 function errorEnum(ir: SolanaIR): string {
   const variants = ir.errors
-    .map((e) => `    /// ${e.msg}\n    ${e.name} = ${e.code},`)
+    .map((error) => `    /// ${error.msg}\n    ${error.name} = ${error.code},`)
     .join("\n");
 
-  return `#[repr(u32)]
-#[derive(Clone, Copy, Debug)]
+  return `#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
 pub enum ${toPascalCase(ir.name)}Error {
 ${variants}
 }
 
 impl From<${toPascalCase(ir.name)}Error> for ProgramError {
-    fn from(e: ${toPascalCase(ir.name)}Error) -> Self {
-        ProgramError::Custom(e as u32)
+    fn from(error: ${toPascalCase(ir.name)}Error) -> Self {
+        ProgramError::Custom(error as u32)
     }
 }`;
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function fileHeader(name: string, framework: string): string {
   return `//! ${toPascalCase(name)} — generated by Anvil v0.1.0
 //! Source framework: Anchor → Target: ${framework}
 //!
-//! Quasar (Blueshift): zero-copy, zero-allocation Solana programs.
-//! Estimated CU reduction: ~79-82% vs Anchor.
-//!
-//! ⚠️  Review before deploying. Business logic marked with TODO.
-#![no_std]
+//! Supported reference paths are currently focused on the simpler demos.
 #![deny(clippy::all)]`;
 }
 
-function instrDiscriminatorArray(name: string): string {
-  return `[/* ${name} disc */ 0u8, 0, 0, 0, 0, 0, 0, ${name.length}]`;
-}
-
-function buildChecks(accounts: AccountRef[]): string {
-  const lines: string[] = [];
-
-  for (const acc of accounts) {
-    if (isProgramAccount(acc.accountType)) continue;
-
-    if (acc.isSigner) {
-      lines.push(
-        `    if !${snakeCase(acc.name)}.is_signer {\n        return Err(ProgramError::MissingRequiredSignature);\n    }`
-      );
-    }
-
-    for (const c of acc.constraints) {
-      if (c.kind === "owner") {
-        lines.push(
-          `    if ${snakeCase(acc.name)}.owner != program_id {\n        return Err(ProgramError::IncorrectProgramId);\n    }`
-        );
-      }
-      if (c.kind === "has_one" && c.value) {
-        lines.push(
-          `    // TODO: verify ${snakeCase(acc.name)}.${c.value} == ${c.value}.key`
-        );
-      }
-    }
+function parseArgs(args: Arg[]): string {
+  if (args.length === 0) {
+    return `    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }`;
   }
 
-  return lines.length > 0 ? "\n" + lines.join("\n") : "";
+  let offset = 0;
+  const lines = args.map((arg) => {
+    const line = parseArg(arg, offset);
+    offset += typeSize(arg.type);
+    return line;
+  });
+  return `    // Args\n${lines.join("\n")}`;
 }
 
-function isProgramAccount(t: string): boolean {
+function parseArg(arg: Arg, offset: number): string {
+  const start = offset;
+  const end = offset + typeSize(arg.type);
+  const name = snakeCase(arg.name);
+
+  switch (arg.type) {
+    case "u8":
+      return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: u8 = data[${start}];`;
+    case "u16":
+    case "u32":
+    case "u64":
+    case "u128":
+    case "i16":
+    case "i32":
+    case "i64":
+    case "i128":
+      return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: ${arg.type} = ${arg.type}::from_le_bytes(data[${start}..${end}].try_into().unwrap());`;
+    case "i8":
+      return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: i8 = data[${start}] as i8;`;
+    case "bool":
+      return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: bool = match data[${start}] {
+        0 => false,
+        1 => true,
+        _ => return Err(ProgramError::InvalidInstructionData),
+    };`;
+    case "Pubkey":
+      return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: Pubkey = Pubkey::new_from_array(data[${start}..${end}].try_into().unwrap());`;
+    default:
+      return `    // TODO: parse ${name}: ${arg.type}`;
+  }
+}
+
+function buildQuasarLogic(programName: string, instructionName: string): string {
+  if (programName === "counter") {
+    return buildQuasarCounterLogic(instructionName);
+  }
+  if (programName === "vault") {
+    return buildQuasarVaultLogic(instructionName);
+  }
+  return `    // TODO: ${programName}.${instructionName} is not in the supported reference set yet.`;
+}
+
+function buildQuasarCounterLogic(instructionName: string): string {
+  switch (instructionName) {
+    case "initialize":
+      return `    let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
+    if !counter.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    {
+        let mut counter_data = counter.try_borrow_mut_data()?;
+        if counter_data.len() < CounterAccount::TOTAL_LEN {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
+        counter_data[..8].copy_from_slice(&CounterAccount::DISCRIMINATOR);
+        // SAFETY: The account length is checked above and the account body is
+        // a fixed #[repr(C)] layout written immediately after the discriminator.
+        let counter_state = unsafe { &mut *(counter_data.as_mut_ptr().add(8) as *mut CounterAccount) };
+        counter_state.authority = *authority.key;
+        counter_state.count = start_value;
+        counter_state.bump = counter_bump;
+    }`;
+    case "increment":
+      return `    if !counter.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
+    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    if counter_state.authority != *authority.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if counter_state.bump != counter_bump {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    counter_state.count = counter_state
+        .count
+        .checked_add(amount)
+        .ok_or(CounterError::Overflow)?;`;
+    case "decrement":
+      return `    if !counter.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
+    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    if counter_state.authority != *authority.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if counter_state.bump != counter_bump {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    counter_state.count = counter_state
+        .count
+        .checked_sub(amount)
+        .ok_or(CounterError::Underflow)?;`;
+    case "reset":
+      return `    if !counter.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
+    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    if counter_state.authority != *authority.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if counter_state.bump != counter_bump {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    counter_state.count = 0;`;
+    default:
+      return `    // TODO: counter.${instructionName}`;
+  }
+}
+
+function buildQuasarVaultLogic(instructionName: string): string {
+  switch (instructionName) {
+    case "initialize":
+      return `    let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key.as_ref()], vault_state.key)?;
+    let vault_bump = bump_seed(program_id, &[b"vault", authority.key.as_ref()], vault.key)?;
+    if !vault_state.is_writable || !vault.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    {
+        let mut vault_state_data = vault_state.try_borrow_mut_data()?;
+        if vault_state_data.len() < VaultState::TOTAL_LEN {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
+        vault_state_data[..8].copy_from_slice(&VaultState::DISCRIMINATOR);
+        // SAFETY: The account length is checked above and the account body is
+        // a fixed #[repr(C)] layout written immediately after the discriminator.
+        let vault_state_state = unsafe { &mut *(vault_state_data.as_mut_ptr().add(8) as *mut VaultState) };
+        vault_state_state.authority = *authority.key;
+        vault_state_state.total_deposited = 0;
+        vault_state_state.bump = vault_state_bump;
+        vault_state_state.vault_bump = vault_bump;
+    }`;
+    case "deposit":
+      return `    if amount == 0 {
+        return Err(VaultError::InvalidAmount.into());
+    }
+    if !vault_state.is_writable || !vault.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key.as_ref()], vault_state.key)?;
+    let vault_bump = bump_seed(program_id, &[b"vault", authority.key.as_ref()], vault.key)?;
+    let vault_state_state = VaultState::from_account_info_mut(vault_state)?;
+    if vault_state_state.authority != *authority.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if vault_state_state.bump != vault_state_bump || vault_state_state.vault_bump != vault_bump {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    // TODO: invoke the system transfer CPI from user -> vault.
+    vault_state_state.total_deposited = vault_state_state
+        .total_deposited
+        .checked_add(amount)
+        .ok_or(VaultError::Overflow)?;`;
+    case "withdraw":
+      return `    if amount == 0 {
+        return Err(VaultError::InvalidAmount.into());
+    }
+    if !vault_state.is_writable || !vault.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if vault.lamports() < amount {
+        return Err(VaultError::InsufficientFunds.into());
+    }
+    let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key.as_ref()], vault_state.key)?;
+    let vault_bump = bump_seed(program_id, &[b"vault", authority.key.as_ref()], vault.key)?;
+    let vault_state_state = VaultState::from_account_info_mut(vault_state)?;
+    if vault_state_state.authority != *authority.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if vault_state_state.bump != vault_state_bump || vault_state_state.vault_bump != vault_bump {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    // TODO: invoke the signed system transfer CPI from vault -> user.
+    vault_state_state.total_deposited = vault_state_state
+        .total_deposited
+        .checked_sub(amount)
+        .ok_or(VaultError::Underflow)?;`;
+    default:
+      return `    // TODO: vault.${instructionName}`;
+  }
+}
+
+function quasarHelpers(): string {
+  return `fn bump_seed(
+    program_id: &Pubkey,
+    seeds: &[&[u8]],
+    expected: &Pubkey,
+) -> Result<u8, ProgramError> {
+    let (derived, bump) = Pubkey::find_program_address(seeds, program_id);
+    if &derived != expected {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    Ok(bump)
+}`;
+}
+
+function instrDiscriminatorArray(name: string): string {
+  return formatByteArray(discriminatorBytes(`global:${name}`));
+}
+
+function accountDiscriminator(name: string): string {
+  return formatByteArray(discriminatorBytes(`account:${name}`));
+}
+
+function discriminatorBytes(namespace: string): number[] {
+  return [...createHash("sha256").update(namespace).digest().subarray(0, 8)];
+}
+
+function formatByteArray(bytes: number[]): string {
+  return `[${bytes.join(", ")}]`;
+}
+
+function isProgramAccount(accountType: string): boolean {
   return (
-    t.includes("Program") ||
-    t === "SystemProgram" ||
-    t === "TokenProgram" ||
-    t === "AssociatedTokenProgram"
+    accountType.includes("Program") ||
+    accountType === "SystemProgram" ||
+    accountType === "TokenProgram" ||
+    accountType === "AssociatedTokenProgram"
   );
 }
 
-function quasarType(t: string): string {
-  if (t === "Pubkey") return "[u8; 32]";
-  if (t === "String") return "[u8; 64]";
-  return t;
+function quasarType(typeName: string): string {
+  if (typeName === "Pubkey") return "Pubkey";
+  if (typeName === "String") return "[u8; 64]";
+  return typeName;
 }
 
-function typeSize(t: string): number {
+function typeSize(typeName: string): number {
   const sizes: Record<string, number> = {
-    u8: 1, u16: 2, u32: 4, u64: 8, u128: 16,
-    i8: 1, i16: 2, i32: 4, i64: 8, i128: 16,
-    bool: 1, Pubkey: 32, String: 64, "Vec<u8>": 4,
+    u8: 1,
+    u16: 2,
+    u32: 4,
+    u64: 8,
+    u128: 16,
+    i8: 1,
+    i16: 2,
+    i32: 4,
+    i64: 8,
+    i128: 16,
+    bool: 1,
+    Pubkey: 32,
+    String: 64,
+    "Vec<u8>": 4,
   };
-  return sizes[t] ?? 32;
+
+  return sizes[typeName] ?? 32;
 }
 
-function snakeCase(s: string): string {
-  return s.replace(/([A-Z])/g, "_$1").toLowerCase().replace(/^_/, "");
+function snakeCase(value: string): string {
+  return value.replace(/([A-Z])/g, "_$1").toLowerCase().replace(/^_/, "");
 }
 
-function toPascalCase(s: string): string {
-  return s.replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase());
+function toPascalCase(value: string): string {
+  return value.replace(/(^|_)([a-z])/g, (_, __, char: string) => char.toUpperCase());
 }

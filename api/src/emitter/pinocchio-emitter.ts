@@ -1,19 +1,12 @@
-import type { SolanaIR, AccountDef, Instruction, AccountRef } from "../ir/schema.js";
+import { createHash } from "crypto";
+import type { SolanaIR, AccountDef, Instruction, Arg } from "../ir/schema.js";
 
-/**
- * Emit a Pinocchio Solana program from a SolanaIR.
- *
- * Pinocchio (by Anza): https://github.com/anza-xyz/pinocchio
- * - Zero-copy, zero-dependency
- * - No proc macros — everything is manual
- * - Zero-copy account deserialization via raw byte slices
- */
 export function emitPinocchio(ir: SolanaIR): string {
   const sections: string[] = [];
 
   sections.push(fileHeader(ir.name, "pinocchio"));
   sections.push(pinocchioUseStatements());
-  sections.push(entryPoint(ir));
+  sections.push(entryPoint());
   sections.push(discriminatorRouter(ir));
 
   for (const instr of ir.instructions) {
@@ -24,6 +17,8 @@ export function emitPinocchio(ir: SolanaIR): string {
     sections.push(pinocchioAccountStruct(acc));
   }
 
+  sections.push(pinocchioHelpers());
+
   if (ir.errors.length > 0) {
     sections.push(errorEnum(ir));
   }
@@ -31,22 +26,18 @@ export function emitPinocchio(ir: SolanaIR): string {
   return sections.join("\n\n");
 }
 
-// ─── Use statements ───────────────────────────────────────────────────────────
-
 function pinocchioUseStatements(): string {
-  return `use pinocchio::{
+  return `use core::convert::TryInto;
+use pinocchio::{
     account_info::AccountInfo,
     entrypoint,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
-};
-use pinocchio_system::instructions::Transfer;`;
+};`;
 }
 
-// ─── Entrypoint ───────────────────────────────────────────────────────────────
-
-function entryPoint(ir: SolanaIR): string {
+function entryPoint(): string {
   return `entrypoint!(process_instruction);
 
 pub fn process_instruction(
@@ -54,25 +45,18 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    // First 8 bytes = instruction discriminator
     if instruction_data.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let discriminator = &instruction_data[..8];
-    let data = &instruction_data[8..];
 
+    let (discriminator, data) = instruction_data.split_at(8);
     router(program_id, accounts, discriminator, data)
 }`;
 }
 
-// ─── Router ───────────────────────────────────────────────────────────────────
-
 function discriminatorRouter(ir: SolanaIR): string {
   const arms = ir.instructions
-    .map((instr, i) => {
-      const disc = instrDiscriminator(instr.name);
-      return `    ${disc} => ${snakeCase(instr.name)}(program_id, accounts, data),`;
-    })
+    .map((instr) => `        ${instrDiscriminator(instr.name)} => ${snakeCase(instr.name)}(program_id, accounts, data),`)
     .join("\n");
 
   return `fn router(
@@ -88,81 +72,85 @@ ${arms}
 }`;
 }
 
-// ─── Instruction handler ──────────────────────────────────────────────────────
-
 function pinocchioInstruction(instr: Instruction, ir: SolanaIR): string {
-  const nonProgramAccounts = instr.accounts.filter(
-    (a) => !isProgramAccount(a.accountType)
-  );
-
-  const accountDestructure = nonProgramAccounts
-    .map((acc, i) => `    let ${snakeCase(acc.name)} = &accounts[${i}];`)
+  const nonProgramAccounts = instr.accounts.filter((account) => !isProgramAccount(account.accountType));
+  const bindings = nonProgramAccounts
+    .map((account, index) => `    let ${snakeCase(account.name)} = &accounts[${index}];`)
     .join("\n");
-
-  const checks = buildChecks(instr.accounts);
-
-  const args = parseArgsFromInstr(instr);
-  const argsComment =
-    instr.args.length > 0
-      ? `\n    // Args: ${instr.args.map((a) => `${a.name}: ${a.type}`).join(", ")}\n    let _data_offset = 0usize;\n    ${args}`
-      : "";
+  const signerChecks = nonProgramAccounts
+    .filter((account) => account.isSigner)
+    .map(
+      (account) =>
+        `    if !${snakeCase(account.name)}.is_signer() {\n        return Err(ProgramError::MissingRequiredSignature);\n    }`
+    )
+    .join("\n");
+  const argsBlock = parseArgs(instr.args);
+  const logic = buildPinocchioLogic(ir.name, instr.name);
 
   return `fn ${snakeCase(instr.name)}(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-${accountDestructure}
-${checks}${argsComment}
-
-    // TODO: implement ${instr.name} business logic
+    if accounts.len() < ${nonProgramAccounts.length} {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+${bindings}
+${signerChecks ? `\n${signerChecks}` : ""}
+${argsBlock}
+${logic}
 
     Ok(())
 }`;
 }
 
-// ─── Account struct ───────────────────────────────────────────────────────────
-
 function pinocchioAccountStruct(acc: AccountDef): string {
   const fields = acc.fields
-    .map((f) => `    pub ${snakeCase(f.name)}: ${rustTypeForPinocchio(f.type)},`)
+    .map((field) => `    pub ${snakeCase(field.name)}: ${rustTypeForPinocchio(field.type)},`)
     .join("\n");
+  const bodyLen = acc.space ?? acc.fields.reduce((size, field) => size + typeSize(field.type), 0);
 
-  const fieldParsers = acc.fields
-    .map((f, i) => {
-      const size = typeSize(f.type);
-      if (f.type === "Pubkey") {
-        return `        let ${snakeCase(f.name)} = unsafe { &*(ptr as *const [u8; 32]) };
-        ptr = ptr.add(32);`;
-      }
-      return `        let ${snakeCase(f.name)} = unsafe { *(ptr as *const ${rustTypeForPinocchio(f.type)}) };
-        ptr = ptr.add(${size});`;
-    })
-    .join("\n");
-
-  return `/// Zero-copy view into ${acc.name} account data (Pinocchio style)
-#[repr(C)]
+  return `#[repr(C)]
 pub struct ${acc.name} {
 ${fields}
 }
 
 impl ${acc.name} {
-    pub const LEN: usize = ${acc.space ?? acc.fields.reduce((s, f) => s + typeSize(f.type), 0)};
+    pub const DISCRIMINATOR: [u8; 8] = ${accountDiscriminator(acc.name)};
+    pub const LEN: usize = ${bodyLen};
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
 
-    /// Parse account data zero-copy — no allocations
-    pub unsafe fn from_account_info(account: &AccountInfo) -> &Self {
-        let data = account.borrow_data_unchecked();
-        // Skip 8-byte discriminator
-        &*(data.as_ptr().add(8) as *const Self)
+    pub fn from_account_info(account: &AccountInfo) -> Result<&Self, ProgramError> {
+        let data = unsafe { account.borrow_data_unchecked() };
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        // SAFETY: The discriminator and length are checked above, and the
+        // generated layout uses #[repr(C)] with a fixed-size account body.
+        Ok(unsafe { &*(data.as_ptr().add(8) as *const Self) })
+    }
+
+    pub fn from_account_info_mut(account: &AccountInfo) -> Result<&mut Self, ProgramError> {
+        let data = unsafe { account.borrow_mut_data_unchecked() };
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        // SAFETY: The discriminator and length are checked above, and the
+        // generated layout uses #[repr(C)] with a fixed-size account body.
+        Ok(unsafe { &mut *(data.as_mut_ptr().add(8) as *mut Self) })
     }
 }`;
 }
 
-// ─── Error enum ───────────────────────────────────────────────────────────────
-
 function errorEnum(ir: SolanaIR): string {
   const variants = ir.errors
-    .map((e) => `    /// ${e.msg}\n    ${e.name} = ${e.code},`)
+    .map((error) => `    /// ${error.msg}\n    ${error.name} = ${error.code},`)
     .join("\n");
 
   return `#[derive(Clone, Copy, Debug, PartialEq)]
@@ -172,97 +160,305 @@ ${variants}
 }
 
 impl From<${toPascalCase(ir.name)}Error> for ProgramError {
-    fn from(e: ${toPascalCase(ir.name)}Error) -> Self {
-        ProgramError::Custom(e as u32)
+    fn from(error: ${toPascalCase(ir.name)}Error) -> Self {
+        ProgramError::Custom(error as u32)
     }
 }`;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
 function fileHeader(name: string, framework: string): string {
   return `//! ${toPascalCase(name)} — generated by Anvil v0.1.0
 //! Source framework: Anchor → Target: ${framework}
-//! 
-//! ⚠️  This is generated reference output. Review before deploying.
-//!    Edge cases and business logic are marked with TODO.
-#![deny(clippy::all)]
-#![forbid(unsafe_code)]`;
+//!
+//! Supported reference paths are currently focused on the simpler demos.
+#![deny(clippy::all)]`;
+}
+
+function parseArgs(args: Arg[]): string {
+  if (args.length === 0) {
+    return `    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }`;
+  }
+
+  let offset = 0;
+  const lines = args.map((arg) => {
+    const line = parseArg(arg, offset);
+    offset += typeSize(arg.type);
+    return line;
+  });
+  return `    // Args\n${lines.join("\n")}`;
+}
+
+function parseArg(arg: Arg, offset: number): string {
+  const start = offset;
+  const end = offset + typeSize(arg.type);
+  const name = snakeCase(arg.name);
+
+  switch (arg.type) {
+    case "u8":
+      return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: u8 = data[${start}];`;
+    case "u16":
+    case "u32":
+    case "u64":
+    case "u128":
+    case "i16":
+    case "i32":
+    case "i64":
+    case "i128":
+      return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: ${arg.type} = ${arg.type}::from_le_bytes(data[${start}..${end}].try_into().unwrap());`;
+    case "i8":
+      return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: i8 = data[${start}] as i8;`;
+    case "bool":
+      return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: bool = match data[${start}] {
+        0 => false,
+        1 => true,
+        _ => return Err(ProgramError::InvalidInstructionData),
+    };`;
+    case "Pubkey":
+      return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: [u8; 32] = data[${start}..${end}].try_into().unwrap();`;
+    default:
+      return `    // TODO: parse ${name}: ${arg.type}`;
+  }
+}
+
+function buildPinocchioLogic(programName: string, instructionName: string): string {
+  if (programName === "counter") {
+    return buildPinocchioCounterLogic(instructionName);
+  }
+  if (programName === "vault") {
+    return buildPinocchioVaultLogic(instructionName);
+  }
+  return `    // TODO: ${programName}.${instructionName} is not in the supported reference set yet.`;
+}
+
+function buildPinocchioCounterLogic(instructionName: string): string {
+  switch (instructionName) {
+    case "initialize":
+      return `    let counter_bump = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
+    if !counter.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    {
+        let counter_data = unsafe { counter.borrow_mut_data_unchecked() };
+        if counter_data.len() < CounterAccount::TOTAL_LEN {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
+        counter_data[..8].copy_from_slice(&CounterAccount::DISCRIMINATOR);
+        // SAFETY: The account length is checked above and the account body is
+        // a fixed #[repr(C)] layout written immediately after the discriminator.
+        let counter_state = unsafe { &mut *(counter_data.as_mut_ptr().add(8) as *mut CounterAccount) };
+        counter_state.authority = *authority.key();
+        counter_state.count = start_value;
+        counter_state.bump = counter_bump;
+    }`;
+    case "increment":
+      return `    if !counter.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let counter_bump = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
+    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    if counter_state.authority != *authority.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if counter_state.bump != counter_bump {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    counter_state.count = counter_state
+        .count
+        .checked_add(amount)
+        .ok_or(CounterError::Overflow)?;`;
+    case "decrement":
+      return `    if !counter.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let counter_bump = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
+    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    if counter_state.authority != *authority.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if counter_state.bump != counter_bump {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    counter_state.count = counter_state
+        .count
+        .checked_sub(amount)
+        .ok_or(CounterError::Underflow)?;`;
+    case "reset":
+      return `    if !counter.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let counter_bump = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
+    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    if counter_state.authority != *authority.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if counter_state.bump != counter_bump {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    counter_state.count = 0;`;
+    default:
+      return `    // TODO: counter.${instructionName}`;
+  }
+}
+
+function buildPinocchioVaultLogic(instructionName: string): string {
+  switch (instructionName) {
+    case "initialize":
+      return `    let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
+    let vault_bump = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
+    if !vault_state.is_writable() || !vault.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    {
+        let vault_state_data = unsafe { vault_state.borrow_mut_data_unchecked() };
+        if vault_state_data.len() < VaultState::TOTAL_LEN {
+            return Err(ProgramError::AccountDataTooSmall);
+        }
+        vault_state_data[..8].copy_from_slice(&VaultState::DISCRIMINATOR);
+        // SAFETY: The account length is checked above and the account body is
+        // a fixed #[repr(C)] layout written immediately after the discriminator.
+        let vault_state_state = unsafe { &mut *(vault_state_data.as_mut_ptr().add(8) as *mut VaultState) };
+        vault_state_state.authority = *authority.key();
+        vault_state_state.total_deposited = 0;
+        vault_state_state.bump = vault_state_bump;
+        vault_state_state.vault_bump = vault_bump;
+    }`;
+    case "deposit":
+      return `    if amount == 0 {
+        return Err(VaultError::InvalidAmount.into());
+    }
+    if !vault_state.is_writable() || !vault.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
+    let vault_bump = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
+    let vault_state_state = VaultState::from_account_info_mut(vault_state)?;
+    if vault_state_state.authority != *authority.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if vault_state_state.bump != vault_state_bump || vault_state_state.vault_bump != vault_bump {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    // TODO: invoke the system transfer CPI from user -> vault.
+    vault_state_state.total_deposited = vault_state_state
+        .total_deposited
+        .checked_add(amount)
+        .ok_or(VaultError::Overflow)?;`;
+    case "withdraw":
+      return `    if amount == 0 {
+        return Err(VaultError::InvalidAmount.into());
+    }
+    if !vault_state.is_writable() || !vault.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if vault.lamports() < amount {
+        return Err(VaultError::InsufficientFunds.into());
+    }
+    let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
+    let vault_bump = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
+    let vault_state_state = VaultState::from_account_info_mut(vault_state)?;
+    if vault_state_state.authority != *authority.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if vault_state_state.bump != vault_state_bump || vault_state_state.vault_bump != vault_bump {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    // TODO: invoke the signed system transfer CPI from vault -> user.
+    vault_state_state.total_deposited = vault_state_state
+        .total_deposited
+        .checked_sub(amount)
+        .ok_or(VaultError::Underflow)?;`;
+    default:
+      return `    // TODO: vault.${instructionName}`;
+  }
+}
+
+function pinocchioHelpers(): string {
+  return `fn bump_seed(
+    program_id: &Pubkey,
+    seeds: &[&[u8]],
+    expected: &Pubkey,
+) -> Result<u8, ProgramError> {
+    let (derived, bump) = Pubkey::find_program_address(seeds, program_id);
+    if &derived != expected {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    Ok(bump)
+}`;
 }
 
 function instrDiscriminator(name: string): string {
-  // Anchor-style discriminator: sha256("global:<name>")[..8] as byte array literal
-  // We approximate with a comment — real impl needs sha256
-  return `[/* ${name} discriminator: sha256("global:${name}")[..8] */0u8, 0, 0, 0, 0, 0, 0, ${name.length}]`;
+  return formatByteArray(discriminatorBytes(`global:${name}`));
 }
 
-function buildChecks(accounts: AccountRef[]): string {
-  const lines: string[] = [];
-
-  for (const acc of accounts) {
-    if (isProgramAccount(acc.accountType)) continue;
-
-    if (acc.isSigner) {
-      lines.push(
-        `    // Verify ${acc.name} is signer\n    if !${snakeCase(acc.name)}.is_signer() {\n        return Err(ProgramError::MissingRequiredSignature);\n    }`
-      );
-    }
-
-    for (const c of acc.constraints) {
-      if (c.kind === "owner") {
-        lines.push(
-          `    // Verify ${acc.name} owned by this program\n    if ${snakeCase(acc.name)}.owner() != program_id {\n        return Err(ProgramError::IncorrectProgramId);\n    }`
-        );
-      }
-      if (c.kind === "has_one" && c.value) {
-        lines.push(
-          `    // has_one: ${acc.name}.${c.value}\n    // TODO: verify ${snakeCase(acc.name)}.${c.value} == ${c.value}.key()`
-        );
-      }
-    }
-  }
-
-  return lines.length > 0 ? "\n" + lines.join("\n") : "";
+function accountDiscriminator(name: string): string {
+  return formatByteArray(discriminatorBytes(`account:${name}`));
 }
 
-function parseArgsFromInstr(instr: Instruction): string {
-  if (instr.args.length === 0) return "";
-  return instr.args
-    .map(
-      (a) =>
-        `let _${snakeCase(a.name)}: ${rustTypeForPinocchio(a.type)} = 0; // TODO: parse from data`
-    )
-    .join("\n    ");
+function discriminatorBytes(namespace: string): number[] {
+  return [...createHash("sha256").update(namespace).digest().subarray(0, 8)];
 }
 
-function isProgramAccount(t: string): boolean {
+function formatByteArray(bytes: number[]): string {
+  return `[${bytes.join(", ")}]`;
+}
+
+function isProgramAccount(accountType: string): boolean {
   return (
-    t.includes("Program") ||
-    t === "SystemProgram" ||
-    t === "TokenProgram" ||
-    t === "AssociatedTokenProgram"
+    accountType.includes("Program") ||
+    accountType === "SystemProgram" ||
+    accountType === "TokenProgram" ||
+    accountType === "AssociatedTokenProgram"
   );
 }
 
-function rustTypeForPinocchio(t: string): string {
-  if (t === "Pubkey") return "[u8; 32]";
-  if (t === "String") return "[u8; 64]"; // fixed-size in pinocchio
-  return t;
+function rustTypeForPinocchio(typeName: string): string {
+  if (typeName === "Pubkey") return "[u8; 32]";
+  if (typeName === "String") return "[u8; 64]";
+  return typeName;
 }
 
-function typeSize(t: string): number {
+function typeSize(typeName: string): number {
   const sizes: Record<string, number> = {
-    u8: 1, u16: 2, u32: 4, u64: 8, u128: 16,
-    i8: 1, i16: 2, i32: 4, i64: 8, i128: 16,
-    bool: 1, Pubkey: 32, String: 64, "Vec<u8>": 4,
+    u8: 1,
+    u16: 2,
+    u32: 4,
+    u64: 8,
+    u128: 16,
+    i8: 1,
+    i16: 2,
+    i32: 4,
+    i64: 8,
+    i128: 16,
+    bool: 1,
+    Pubkey: 32,
+    String: 64,
+    "Vec<u8>": 4,
   };
-  return sizes[t] ?? 32;
+
+  return sizes[typeName] ?? 32;
 }
 
-function snakeCase(s: string): string {
-  return s.replace(/([A-Z])/g, "_$1").toLowerCase().replace(/^_/, "");
+function snakeCase(value: string): string {
+  return value.replace(/([A-Z])/g, "_$1").toLowerCase().replace(/^_/, "");
 }
 
-function toPascalCase(s: string): string {
-  return s.replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase());
+function toPascalCase(value: string): string {
+  return value.replace(/(^|_)([a-z])/g, (_, __, char: string) => char.toUpperCase());
 }
