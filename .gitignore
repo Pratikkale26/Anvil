@@ -40,3 +40,5 @@ next-env.d.ts
 .bun/
 .bun-build
 bun.lock*
+
+docs/
