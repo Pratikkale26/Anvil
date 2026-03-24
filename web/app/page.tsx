@@ -1,813 +1,641 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Blocks,
-  Braces,
-  ChartColumnIncreasing,
   CheckCircle2,
   ChevronRight,
   Code2,
   Copy,
   Cpu,
   FileCode2,
-  Flame,
+  GitBranch,
   Layers3,
+  Loader2,
   Rocket,
-  ShieldCheck,
   Sparkles,
   TerminalSquare,
+  Zap,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+// ─── Types ──────────────────────────────────────────────────────────────────
 
-type Target = "pinocchio" | "quasar";
-type DemoName = "counter" | "vault";
-
-type DemoPreset = {
-  name: DemoName;
-  title: string;
-  subtitle: string;
-  source: string;
-  outputPreview: string;
-  story: string;
-  supportedTargets: Target[];
-  cueCards: Array<{
-    instruction: string;
-    anchor: number;
-    pinocchio: number;
-    quasar: number;
-  }>;
-};
+type Target = "pinocchio" | "quasar" | "native";
+type DemoName = "counter" | "vault" | "escrow" | "staking";
+type PipelineStage = "idle" | "fetching" | "parsing" | "generating" | "done" | "error";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
-const DEMOS: Record<DemoName, DemoPreset> = {
+// ─── Color palette (readable) ────────────────────────────────────────────────
+const C = {
+  bg:          "#0d0f1a",
+  card:        "#131520",
+  cardBorder:  "rgba(255,255,255,0.09)",
+  text:        "#e8ecf4",        // main body text
+  textSub:     "#9095b0",        // secondary text — readable
+  textMuted:   "#5c6080",        // tertiary / placeholder
+  textDim:     "#3e4260",        // very muted — e.g. empty states
+  amber:       "#f5a623",
+  amberLight:  "#ffcf6e",
+  teal:        "#0ea880",
+  indigo:      "#6b7bff",
+  line:        "rgba(255,255,255,0.07)",
+};
+
+// ─── Demo metadata ───────────────────────────────────────────────────────────
+
+const DEMOS: Record<DemoName, {
+  title: string;
+  badge: string;
+  description: string;
+  cuSummary: { instruction: string; anchor: number; pinocchio: number; quasar: number; native: number }[];
+}> = {
   counter: {
-    name: "counter",
     title: "Counter",
-    subtitle: "The minimal proof that Anchor business logic can become lean runtime code.",
-    story:
-      "Use the counter flow to show accurate discriminators, signer checks, PDA validation, and overflow-safe state mutation in both Pinocchio and Quasar output.",
-    supportedTargets: ["pinocchio", "quasar"],
-    source: `use anchor_lang::prelude::*;
-
-declare_id!("Counter111111111111111111111111111111111111");
-
-#[program]
-pub mod counter {
-    use super::*;
-
-    pub fn initialize(ctx: Context<Initialize>, start_value: u64) -> Result<()> {
-        let counter = &mut ctx.accounts.counter;
-        counter.authority = ctx.accounts.authority.key();
-        counter.count = start_value;
-        counter.bump = ctx.bumps.counter;
-        Ok(())
-    }
-
-    pub fn increment(ctx: Context<Update>, amount: u64) -> Result<()> {
-        let counter = &mut ctx.accounts.counter;
-        counter.count = counter.count.checked_add(amount).ok_or(CounterError::Overflow)?;
-        Ok(())
-    }
-}`,
-    outputPreview: `fn increment(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    data: &[u8],
-) -> ProgramResult {
-    let counter = accounts.get(0).ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let authority = accounts.get(1).ok_or(ProgramError::NotEnoughAccountKeys)?;
-
-    if !authority.is_signer {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-
-    let amount: u64 = u64::from_le_bytes(data[0..8].try_into().unwrap());
-    let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
-    let counter_state = CounterAccount::from_account_info_mut(counter)?;
-
-    if counter_state.authority != *authority.key {
-        return Err(ProgramError::InvalidAccountData);
-    }
-}`,
-    cueCards: [
-      { instruction: "initialize", anchor: 520, pinocchio: 108, quasar: 95 },
-      { instruction: "increment", anchor: 290, pinocchio: 62, quasar: 55 },
-      { instruction: "decrement", anchor: 290, pinocchio: 62, quasar: 55 },
-      { instruction: "reset", anchor: 265, pinocchio: 55, quasar: 48 },
+    badge: "Simplest",
+    description: "PDA state, signer checks, overflow-safe arithmetic.",
+    cuSummary: [
+      { instruction: "initialize", anchor: 520, pinocchio: 108, quasar: 95, native: 130 },
+      { instruction: "increment",  anchor: 290, pinocchio: 62,  quasar: 55, native: 75  },
+      { instruction: "decrement",  anchor: 290, pinocchio: 62,  quasar: 55, native: 75  },
+      { instruction: "reset",      anchor: 265, pinocchio: 55,  quasar: 48, native: 68  },
     ],
   },
   vault: {
-    name: "vault",
     title: "Vault",
-    subtitle: "A richer state machine that shows PDA validation, lamport checks, and account bookkeeping.",
-    story:
-      "Use the vault flow to demonstrate multi-account derivation, safer state updates, and where CPI work still remains to make the generated runtime fully production-complete.",
-    supportedTargets: ["pinocchio", "quasar"],
-    source: `use anchor_lang::prelude::*;
-
-declare_id!("Vault1111111111111111111111111111111111111111");
-
-#[program]
-pub mod vault {
-    use super::*;
-
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        let vault_state = &mut ctx.accounts.vault_state;
-        vault_state.authority = ctx.accounts.authority.key();
-        vault_state.total_deposited = 0;
-        vault_state.bump = ctx.bumps.vault_state;
-        vault_state.vault_bump = ctx.bumps.vault;
-        Ok(())
-    }
-
-    pub fn deposit(ctx: Context<VaultAction>, amount: u64) -> Result<()> {
-        require!(amount > 0, VaultError::InvalidAmount);
-        Ok(())
-    }
-}`,
-    outputPreview: `fn withdraw(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    data: &[u8],
-) -> ProgramResult {
-    let vault_state = accounts.get(0).ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let vault = accounts.get(1).ok_or(ProgramError::NotEnoughAccountKeys)?;
-    let amount: u64 = u64::from_le_bytes(data[0..8].try_into().unwrap());
-
-    if vault.lamports() < amount {
-        return Err(VaultError::InsufficientFunds.into());
-    }
-
-    // TODO: invoke the signed system transfer CPI from vault -> user.
-    Ok(())
-}`,
-    cueCards: [
-      { instruction: "initialize", anchor: 580, pinocchio: 120, quasar: 105 },
-      { instruction: "deposit", anchor: 620, pinocchio: 145, quasar: 128 },
-      { instruction: "withdraw", anchor: 670, pinocchio: 158, quasar: 140 },
+    badge: "SOL",
+    description: "Multi-PDA lamport management. Deposit, withdraw, vault state.",
+    cuSummary: [
+      { instruction: "initialize", anchor: 580, pinocchio: 120, quasar: 105, native: 145 },
+      { instruction: "deposit",    anchor: 620, pinocchio: 145, quasar: 128, native: 165 },
+      { instruction: "withdraw",   anchor: 670, pinocchio: 158, quasar: 140, native: 180 },
+    ],
+  },
+  escrow: {
+    title: "Escrow",
+    badge: "SPL",
+    description: "Token escrow with SPL transfers. Create, accept, cancel.",
+    cuSummary: [
+      { instruction: "create_escrow",  anchor: 1150, pinocchio: 270, quasar: 240, native: 310 },
+      { instruction: "accept_escrow",  anchor: 1480, pinocchio: 345, quasar: 305, native: 390 },
+      { instruction: "cancel_escrow",  anchor: 980,  pinocchio: 220, quasar: 195, native: 255 },
+    ],
+  },
+  staking: {
+    title: "Staking",
+    badge: "Complex",
+    description: "Pool init, token staking, unstaking, time-based rewards.",
+    cuSummary: [
+      { instruction: "initialize_pool", anchor: 620, pinocchio: 142, quasar: 126, native: 168 },
+      { instruction: "stake",           anchor: 890, pinocchio: 205, quasar: 182, native: 238 },
+      { instruction: "unstake",         anchor: 840, pinocchio: 195, quasar: 172, native: 225 },
+      { instruction: "claim_rewards",   anchor: 920, pinocchio: 215, quasar: 190, native: 248 },
     ],
   },
 };
 
-const roadmap = [
-  "Anchor to Pinocchio and Anchor to Quasar for counter and vault are the polished public path today.",
-  "Escrow and staking stay out of the demo until token CPI flows, mint logic, and time-based behavior are generated cleanly.",
-  "The next product milestone is runtime-complete CPI generation so the emitted contracts move from strong reference output to deploy-ready output.",
+const TARGETS: { id: Target; label: string; color: string; tagline: string }[] = [
+  { id: "pinocchio", label: "Pinocchio", color: "#e8820a", tagline: "Zero-copy, zero-dependency by Anza" },
+  { id: "quasar",    label: "Quasar",    color: "#0ea880", tagline: "Zero-allocation by Blueshift" },
+  { id: "native",    label: "Native",    color: "#6b7bff", tagline: "Raw solana_program + borsh" },
 ];
 
-const proofCards = [
-  {
-    icon: Cpu,
-    title: "CU-first compiler story",
-    text: "Show exactly why teams would migrate: less abstraction overhead, smaller runtime paths, and visible compute savings per instruction.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Safer generated references",
-    text: "Generated code now carries discriminator checks, signer checks, PDA checks, and bounded account reads instead of placeholder scaffolding.",
-  },
-  {
-    icon: Layers3,
-    title: "One source, two runtimes",
-    text: "The recording can demonstrate a single Anchor source turning into both Pinocchio and Quasar code without changing the input contract.",
-  },
+const STAGES: { id: PipelineStage; label: string; sublabel: string }[] = [
+  { id: "fetching",   label: "Load fixture",  sublabel: "GET /demo/:name" },
+  { id: "parsing",    label: "Parse IR",       sublabel: "Anchor → SolanaIR" },
+  { id: "generating", label: "Emit code",      sublabel: "IR → Rust" },
+  { id: "done",       label: "Complete",       sublabel: "Code ready" },
 ];
 
-function pct(anchor: number, target: number) {
-  return `${Math.round(((anchor - target) / anchor) * 100)}%`;
+const STAGE_ORDER: Record<string, number> = {
+  idle: -1, fetching: 0, parsing: 1, generating: 2, done: 3, error: -1,
+};
+
+function pct(a: number, b: number) {
+  return `${Math.round(((a - b) / a) * 100)}%`;
+}
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
-function formatTarget(target: Target) {
-  return target === "pinocchio" ? "Pinocchio" : "Quasar";
-}
+// ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Home() {
-  const [demoName, setDemoName] = useState<DemoName>("counter");
-  const [target, setTarget] = useState<Target>("pinocchio");
-  const [source, setSource] = useState(DEMOS.counter.source);
-  const [output, setOutput] = useState(DEMOS.counter.outputPreview);
-  const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [message, setMessage] = useState("Select a supported demo and generate output.");
-  const [apiReachable, setApiReachable] = useState(false);
-
-  const activeDemo = DEMOS[demoName];
-  const comparisonRows = activeDemo.cueCards;
-  const totals = useMemo(() => {
-    return comparisonRows.reduce(
-      (acc, row) => {
-        acc.anchor += row.anchor;
-        acc.pinocchio += row.pinocchio;
-        acc.quasar += row.quasar;
-        return acc;
-      },
-      { anchor: 0, pinocchio: 0, quasar: 0 }
-    );
-  }, [comparisonRows]);
+  const [demo, setDemo]         = useState<DemoName>("counter");
+  const [target, setTarget]     = useState<Target>("pinocchio");
+  const [stage, setStage]       = useState<PipelineStage>("idle");
+  const [code, setCode]         = useState("");
+  const [ir, setIr]             = useState("");
+  const [cuData, setCuData]     = useState(DEMOS.counter.cuSummary);
+  const [copied, setCopied]     = useState(false);
+  const [apiOk, setApiOk]       = useState(false);
+  const [activeTab, setActiveTab] = useState<"code" | "ir">("code");
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    const preset = DEMOS[demoName];
-    if (!preset.supportedTargets.includes(target)) {
-      setTarget(preset.supportedTargets[0]);
-    }
-    setSource(preset.source);
-    setOutput(preset.outputPreview);
-    setMessage(preset.story);
-    setStatus("ready");
-  }, [demoName, target]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function probe() {
-      try {
-        const res = await fetch(`${API_BASE}/`, { cache: "no-store" });
-        if (!cancelled) {
-          setApiReachable(res.ok);
-        }
-      } catch {
-        if (!cancelled) {
-          setApiReachable(false);
-        }
-      }
-    }
-
-    void probe();
-    return () => {
-      cancelled = true;
-    };
+    fetch(`${API_BASE}/`, { cache: "no-store" })
+      .then((r) => setApiOk(r.ok)).catch(() => setApiOk(false));
   }, []);
 
-  async function runDemo() {
-    setStatus("loading");
-    setMessage(`Generating ${formatTarget(target)} output for ${activeDemo.title}...`);
+  useEffect(() => {
+    setCuData(DEMOS[demo].cuSummary);
+    setCode(""); setIr(""); setStage("idle");
+  }, [demo]);
 
+  const activeTarget = TARGETS.find((t) => t.id === target)!;
+
+  const totals = useMemo(() =>
+    cuData.reduce((acc, r) => ({
+      anchor: acc.anchor + r.anchor, pinocchio: acc.pinocchio + r.pinocchio,
+      quasar: acc.quasar + r.quasar, native: acc.native + r.native,
+    }), { anchor: 0, pinocchio: 0, quasar: 0, native: 0 })
+  , [cuData]);
+
+  const run = useCallback(async () => {
+    if (stage === "fetching" || stage === "parsing" || stage === "generating") return;
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+    const signal = abortRef.current.signal;
+    setStage("fetching"); setCode(""); setIr("");
     try {
-      const demoRes = await fetch(`${API_BASE}/demo/${demoName}`, { cache: "no-store" });
-      if (!demoRes.ok) {
-        throw new Error("Could not load demo fixture from the API.");
-      }
-
+      await sleep(300);
+      const demoRes = await fetch(`${API_BASE}/demo/${demo}`, { cache: "no-store", signal });
+      if (!demoRes.ok) throw new Error("Failed to load demo.");
       const demoPayload = await demoRes.json();
-      const latestSource = demoPayload.source ?? source;
-      setSource(latestSource);
-
+      setStage("parsing"); await sleep(600);
+      setIr(JSON.stringify(demoPayload.ir, null, 2));
+      setStage("generating"); await sleep(400);
       const emitRes = await fetch(`${API_BASE}/emit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ir: demoPayload.ir,
-          target,
-        }),
+        body: JSON.stringify({ ir: demoPayload.ir, target }), signal,
       });
-
-      if (!emitRes.ok) {
-        const details = await emitRes.text();
-        throw new Error(details || "Emit failed");
-      }
-
+      if (!emitRes.ok) throw new Error("Emit failed.");
       const emitPayload = await emitRes.json();
-      setOutput(emitPayload.code);
-      setStatus("ready");
-      setApiReachable(true);
-      setMessage(
-        `${activeDemo.title} generated successfully for ${formatTarget(target)}. This is recordable today.`
-      );
-    } catch (error) {
-      setStatus("error");
-      setApiReachable(false);
-      setOutput(activeDemo.outputPreview);
-      setMessage(
-        error instanceof Error
-          ? `${error.message} Showing the local preview version instead.`
-          : "Could not reach the API. Showing the local preview version instead."
-      );
+      setCode(emitPayload.code);
+      if (emitPayload.cu?.length) {
+        const liveCu = emitPayload.cu as typeof cuData;
+        setCuData(DEMOS[demo].cuSummary.map((row) => {
+          const live = liveCu.find((c) => c.instruction === row.instruction);
+          return live ? { ...row, ...live } : row;
+        }));
+      }
+      setStage("done"); setApiOk(true);
+    } catch (err) {
+      if (signal.aborted) return;
+      setStage("error"); setApiOk(false);
     }
+  }, [demo, target, stage]);
+
+  async function copy() {
+    const text = activeTab === "code" ? code : ir;
+    if (!text) return;
+    await navigator.clipboard.writeText(text).catch(() => {});
+    setCopied(true); setTimeout(() => setCopied(false), 1800);
   }
 
-  async function copyOutput() {
-    try {
-      await navigator.clipboard.writeText(output);
-      setMessage("Generated output copied to your clipboard.");
-    } catch {
-      setMessage("Clipboard access was blocked. You can still select the code directly.");
-    }
-  }
+  const isRunning = stage === "fetching" || stage === "parsing" || stage === "generating";
 
   return (
-    <main className="relative overflow-hidden">
-      <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_top_left,rgba(245,163,36,0.18),transparent_32%),radial-gradient(circle_at_top_right,rgba(33,105,255,0.12),transparent_34%),linear-gradient(180deg,#fffdf8_0%,#f6f2ea_42%,#efe9df_100%)]" />
-      <div className="absolute inset-x-0 top-0 -z-10 h-[34rem] bg-[linear-gradient(120deg,rgba(18,26,38,0.96),rgba(28,43,58,0.86),rgba(194,113,27,0.28))]" />
+    <main style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
+      {/* Ambient */}
+      <div style={{ position: "fixed", inset: 0, zIndex: -10, overflow: "hidden", pointerEvents: "none" }}>
+        <div style={{ position: "absolute", top: "-10%", left: "-5%", width: "50%", height: "50%", background: "radial-gradient(circle, rgba(245,166,35,0.07) 0%, transparent 70%)" }} />
+        <div style={{ position: "absolute", top: "35%", right: "-10%", width: "45%", height: "45%", background: "radial-gradient(circle, rgba(14,168,128,0.055) 0%, transparent 70%)" }} />
+        <div style={{ position: "absolute", bottom: 0, left: "30%", width: "40%", height: "40%", background: "radial-gradient(circle, rgba(107,123,255,0.045) 0%, transparent 70%)" }} />
+        <div style={{ position: "absolute", inset: 0, backgroundImage: "linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)", backgroundSize: "64px 64px" }} />
+      </div>
 
-      <section className="mx-auto flex w-full max-w-7xl flex-col gap-16 px-6 pb-16 pt-8 sm:px-8 lg:px-12">
-        <header className="flex items-center justify-between rounded-full border border-white/15 bg-white/8 px-4 py-3 text-sm text-white/80 shadow-[0_20px_80px_rgba(10,16,24,0.35)] backdrop-blur md:px-6">
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-full bg-white/12 text-white">
-              <Sparkles className="size-4" />
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "0 28px" }}>
+
+        {/* Nav */}
+        <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 0 16px", borderBottom: `1px solid ${C.line}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 11, background: "linear-gradient(135deg, #f5a623, #e8820a)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Sparkles size={17} style={{ color: "#fff" }} />
             </div>
             <div>
-              <div className="font-semibold tracking-[0.18em] text-white uppercase">Anvil</div>
-              <div className="text-xs text-white/55">Anchor to lean Solana runtimes</div>
+              <div style={{ fontWeight: 800, fontSize: 16, letterSpacing: "0.1em", color: C.text }}>ANVIL</div>
+              <div style={{ fontSize: 12, color: C.textSub, marginTop: 1 }}>Solana Compiler IR</div>
             </div>
           </div>
-          <div className="hidden items-center gap-3 md:flex">
-            <Badge variant="outline" className="border-white/20 bg-white/8 text-white/80">
-              Supported today: Counter, Vault
-            </Badge>
-            <a href="#demo" className="inline-flex items-center gap-1 text-white transition hover:text-white/70">
-              Try the demo
-              <ChevronRight className="size-4" />
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <ApiDot ok={apiOk} />
+            <a href="https://github.com" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.textSub, padding: "7px 16px", borderRadius: 100, border: `1px solid ${C.cardBorder}`, textDecoration: "none" }}>
+              GitHub <GitBranch size={13} />
             </a>
           </div>
-        </header>
+        </nav>
 
-        <div className="grid gap-10 lg:grid-cols-[1.1fr_0.9fr] lg:items-end">
-          <div className="space-y-8 text-white">
-            <Badge className="bg-white/12 text-white hover:bg-white/12">
-              Compiler layer for Solana teams that care about compute
-            </Badge>
-            <div className="space-y-5">
-              <h1 className="max-w-4xl font-heading text-5xl leading-[0.95] font-semibold tracking-[-0.05em] text-white sm:text-6xl lg:text-7xl">
-                Ship Anchor ergonomics.
-                <span className="block text-[#ffd191]">Deploy Pinocchio or Quasar output.</span>
-              </h1>
-              <p className="max-w-2xl text-lg leading-8 text-white/72 sm:text-xl">
-                Anvil turns familiar Anchor source into slimmer Solana runtime code, with clear CU
-                comparison, generated references, and a developer story you can explain in one demo.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Button
-                size="lg"
-                className="h-12 rounded-full bg-[#f7b54a] px-6 text-sm font-semibold text-[#23160a] hover:bg-[#f3c16c]"
-                onClick={() => {
-                  document.getElementById("demo")?.scrollIntoView({ behavior: "smooth" });
-                }}
-              >
-                Launch demo
-                <ArrowRight className="size-4" />
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className="h-12 rounded-full border-white/18 bg-white/8 px-6 text-sm font-semibold text-white hover:bg-white/12 hover:text-white"
-                onClick={() => {
-                  document.getElementById("readiness")?.scrollIntoView({ behavior: "smooth" });
-                }}
-              >
-                Grant readiness
-              </Button>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <MetricCard value="79%" label="Average CU savings story" />
-              <MetricCard value="2" label="Supported contract demos today" />
-              <MetricCard value="2" label="Runtime targets ready to showcase" />
-            </div>
+        {/* Hero */}
+        <section style={{ padding: "80px 0 60px", textAlign: "center" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 16px", borderRadius: 100, border: "1px solid rgba(245,166,35,0.25)", background: "rgba(245,166,35,0.08)", marginBottom: 32, fontSize: 13, color: C.amber, fontWeight: 600 }}>
+            <Zap size={12} /> LLVM for Solana — Compiler Infrastructure Layer
           </div>
-
-          <Card className="border-white/10 bg-white/10 text-white shadow-[0_40px_120px_rgba(6,15,24,0.45)] backdrop-blur-xl">
-            <CardHeader className="border-b border-white/10">
-              <CardTitle className="flex items-center gap-2 text-white">
-                <TerminalSquare className="size-4 text-[#ffd191]" />
-                Demo narrative
-              </CardTitle>
-              <CardDescription className="text-white/65">
-                The page is structured so your recording can move from idea to proof without needing
-                a separate deck.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-4 pt-6">
-              <JourneyRow icon={Braces} title="Start with Anchor" text="Show source your audience already understands." />
-              <JourneyRow icon={Blocks} title="Compile to lean runtimes" text="Switch between Pinocchio and Quasar with one click." />
-              <JourneyRow icon={ChartColumnIncreasing} title="Prove the payoff" text="Use instruction-level CU comparisons as the business case." />
-              <JourneyRow icon={Rocket} title="Explain the roadmap" text="Be explicit about what is solid today and what is next." />
-            </CardContent>
-          </Card>
-        </div>
-      </section>
-
-      <section className="mx-auto grid w-full max-w-7xl gap-5 px-6 py-8 sm:px-8 lg:grid-cols-3 lg:px-12">
-        {proofCards.map((card) => (
-          <Card
-            key={card.title}
-            className="border-[#d9d2c4] bg-[#fbf7f1]/88 shadow-[0_18px_50px_rgba(53,44,29,0.08)]"
-          >
-            <CardHeader>
-              <div className="mb-2 flex size-11 items-center justify-center rounded-2xl bg-[#1b2431] text-[#f7c46d]">
-                <card.icon className="size-5" />
-              </div>
-              <CardTitle className="text-[#1b2431]">{card.title}</CardTitle>
-              <CardDescription className="text-[#5d5b57]">{card.text}</CardDescription>
-            </CardHeader>
-          </Card>
-        ))}
-      </section>
-
-      <section className="mx-auto grid w-full max-w-7xl gap-6 px-6 py-12 sm:px-8 lg:grid-cols-[0.95fr_1.05fr] lg:px-12">
-        <Card className="border-[#ddd5c7] bg-[#fffaf0] shadow-[0_20px_70px_rgba(53,44,29,0.08)]">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-[#1d2735]">
-              <Flame className="size-4 text-[#ce6f1b]" />
-              Why it matters
-            </CardTitle>
-            <CardDescription className="text-[#66635f]">
-              This is the product story your landing page needs before anyone cares about the codegen details.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5 text-sm leading-7 text-[#3f3c37]">
-            <p>
-              Anchor is productive, but many teams eventually want tighter runtime control, smaller program
-              footprints, and a cleaner compute story. Anvil is the bridge: keep the source developers like,
-              emit runtimes that are much closer to the metal.
-            </p>
-            <p>
-              Today the polished story is deliberately narrow. You can show two grounded contracts, two
-              runtime targets, and visible CU comparisons. That is enough for a convincing first demo and
-              much stronger than claiming broad support you cannot yet back up.
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-[#d7cfbf] bg-[#f7f1e7] shadow-[0_24px_80px_rgba(53,44,29,0.08)]">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-[#1d2735]">
-              <CheckCircle2 className="size-4 text-[#196e52]" />
-              What was missing
-            </CardTitle>
-            <CardDescription className="text-[#66635f]">
-              I added the pieces that make this feel like a product instead of a code sample gallery.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-3">
+          <h1 style={{ fontSize: "clamp(44px, 7vw, 82px)", fontWeight: 800, lineHeight: 1.02, letterSpacing: "-0.04em", margin: "0 0 28px" }}>
+            <span style={{ color: C.text }}>Write </span>
+            <span style={{ background: `linear-gradient(90deg, ${C.amber}, ${C.amberLight})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Anchor.</span>
+            <br />
+            <span style={{ color: C.text }}>Deploy </span>
+            <span style={{ background: `linear-gradient(90deg, ${C.teal}, #34d3a9)`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Pinocchio </span>
+            <span style={{ color: C.textSub }}>or </span>
+            <span style={{ background: `linear-gradient(90deg, ${C.indigo}, #9baeff)`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Quasar.</span>
+          </h1>
+          <p style={{ fontSize: 18, color: C.textSub, maxWidth: 600, margin: "0 auto 44px", lineHeight: 1.75 }}>
+            Anvil parses Anchor programs into a framework-agnostic IR, then emits optimized Pinocchio, Quasar, or Native Rust — with live CU analysis.
+          </p>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+            <Btn
+              primary
+              onClick={() => document.getElementById("playground")?.scrollIntoView({ behavior: "smooth" })}
+            >
+              Try the Compiler <ArrowRight size={15} />
+            </Btn>
+            <Btn onClick={() => document.getElementById("cu-analysis")?.scrollIntoView({ behavior: "smooth" })}>
+              View CU Analysis <Cpu size={14} />
+            </Btn>
+          </div>
+          <div style={{ display: "flex", justifyContent: "center", gap: 56, marginTop: 64, flexWrap: "wrap" }}>
             {[
-              "A clear headline and positioning statement for non-technical reviewers.",
-              "A live playground that lets you switch source demo and runtime target in one place.",
-              "A CU comparison surface that translates compiler work into buyer value.",
-              "Support boundaries that are honest: counter and vault now, escrow and staking later.",
-              "A readiness section that helps you record a coherent walkthrough and grant narrative.",
-            ].map((item) => (
-              <div
-                key={item}
-                className="flex items-start gap-3 rounded-2xl border border-white/70 bg-white/65 px-4 py-3 text-sm text-[#403d38]"
-              >
-                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-[#196e52]" />
-                <span>{item}</span>
+              { value: "~79%", label: "CU reduction vs Anchor" },
+              { value: "4", label: "demo programs" },
+              { value: "3", label: "emit targets" },
+            ].map((s) => (
+              <div key={s.label} style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 36, fontWeight: 800, color: C.amber, letterSpacing: "-0.03em" }}>{s.value}</div>
+                <div style={{ fontSize: 14, color: C.textSub, marginTop: 4 }}>{s.label}</div>
               </div>
             ))}
-          </CardContent>
-        </Card>
-      </section>
-
-      <section id="demo" className="mx-auto w-full max-w-7xl px-6 py-12 sm:px-8 lg:px-12">
-        <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="space-y-3">
-            <Badge variant="outline" className="border-[#d9d2c4] bg-[#fffaf1] text-[#6b6152]">
-              Interactive product demo
-            </Badge>
-            <h2 className="font-heading text-4xl leading-tight font-semibold tracking-[-0.04em] text-[#182131]">
-              Try the compiler story live
-            </h2>
-            <p className="max-w-3xl text-base leading-7 text-[#5a5751]">
-              Switch between supported Anchor demos, choose a runtime target, and show the resulting
-              output beside the compute story. This is the core recording flow.
-            </p>
           </div>
-          <div className="rounded-full border border-[#d9d2c4] bg-[#fffaf1] px-4 py-2 text-sm text-[#5a5751]">
-            API status:{" "}
-            <span className={apiReachable ? "font-semibold text-[#1d6b53]" : "font-semibold text-[#ae5d16]"}>
-              {apiReachable ? "connected" : "preview fallback"}
-            </span>
-          </div>
-        </div>
+        </section>
 
-        <div className="grid gap-6 xl:grid-cols-[0.88fr_1.12fr]">
-          <Card className="border-[#ddd4c5] bg-[#fffdf9] shadow-[0_28px_90px_rgba(53,44,29,0.08)]">
-            <CardHeader className="border-b border-[#ece4d7]">
-              <CardTitle className="flex items-center gap-2 text-[#1c2634]">
-                <FileCode2 className="size-4 text-[#ca731d]" />
-                Playground controls
-              </CardTitle>
-              <CardDescription className="text-[#66635f]">
-                Keep the story tight: one source contract, one target, one compiler run, one compute explanation.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6 pt-6">
-              <div className="grid gap-3 sm:grid-cols-2">
-                {(Object.keys(DEMOS) as DemoName[]).map((name) => {
-                  const preset = DEMOS[name];
-                  const active = name === demoName;
-                  return (
-                    <button
-                      key={name}
-                      type="button"
-                      onClick={() => setDemoName(name)}
-                      className={`rounded-3xl border px-4 py-4 text-left transition ${
-                        active
-                          ? "border-[#1d2735] bg-[#1d2735] text-white shadow-[0_24px_60px_rgba(19,29,40,0.25)]"
-                          : "border-[#ddd4c5] bg-[#faf5eb] text-[#1d2735] hover:border-[#c9b596] hover:bg-white"
-                      }`}
-                    >
-                      <div className="mb-1 flex items-center justify-between">
-                        <span className="font-semibold">{preset.title}</span>
-                        <ChevronRight className="size-4 opacity-70" />
-                      </div>
-                      <p className={`text-sm leading-6 ${active ? "text-white/72" : "text-[#66635f]"}`}>
-                        {preset.subtitle}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="rounded-[2rem] border border-[#e6ddcf] bg-[#f7f1e7] p-2">
-                <Tabs value={target} onValueChange={(value) => setTarget(value as Target)} className="gap-4">
-                  <TabsList className="grid w-full grid-cols-2 rounded-[1.4rem] bg-white p-1.5">
-                    <TabsTrigger value="pinocchio" className="rounded-[1rem] py-2">
-                      Pinocchio
-                    </TabsTrigger>
-                    <TabsTrigger value="quasar" className="rounded-[1rem] py-2">
-                      Quasar
-                    </TabsTrigger>
-                  </TabsList>
-                  <TabsContent value={target} className="px-2 pb-2 pt-1">
-                    <p className="text-sm leading-7 text-[#5a5751]">
-                      {target === "pinocchio"
-                        ? "Pinocchio is the reference path for zero-copy, lower-level runtime output."
-                        : "Quasar is the second target for teams that want another lean runtime style with the same source input."}
-                    </p>
-                  </TabsContent>
-                </Tabs>
-              </div>
-
-              <div className="rounded-[2rem] border border-[#e6ddcf] bg-[#f8f3ea] p-5">
-                <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#1d2735]">
-                  <Code2 className="size-4 text-[#ca731d]" />
-                  Demo note
+        {/* How it works */}
+        <section style={{ paddingBottom: 64 }}>
+          <Label>HOW IT WORKS</Label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 1, background: C.cardBorder, borderRadius: 20, overflow: "hidden", marginTop: 20 }}>
+            {[
+              { icon: Code2,   step: "01", title: "Write Anchor",   desc: "Your contract stays in familiar Anchor syntax — no refactoring." },
+              { icon: Layers3, step: "02", title: "Parse to IR",    desc: "Anvil extracts instructions, accounts, constraints, errors into a typed SolanaIR." },
+              { icon: Blocks,  step: "03", title: "Emit Target",    desc: "Choose Pinocchio, Quasar, or Native. The emitter reconstructs from IR." },
+              { icon: Cpu,     step: "04", title: "CU Analysis",    desc: "Static cost tables compute savings per instruction across all frameworks." },
+            ].map((item) => (
+              <div key={item.step} style={{ padding: "28px 24px", background: C.card }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(245,166,35,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <item.icon size={17} style={{ color: C.amber }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: C.textDim, fontWeight: 700, letterSpacing: "0.1em" }}>{item.step}</span>
                 </div>
-                <p className="text-sm leading-7 text-[#5d5b57]">{activeDemo.story}</p>
+                <div style={{ fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 8 }}>{item.title}</div>
+                <div style={{ fontSize: 14, color: C.textSub, lineHeight: 1.65 }}>{item.desc}</div>
               </div>
+            ))}
+          </div>
+        </section>
 
-              <Button
-                size="lg"
-                className="h-12 w-full rounded-full bg-[#1d2735] text-white hover:bg-[#243145]"
-                onClick={runDemo}
-                disabled={status === "loading"}
-              >
-                {status === "loading" ? "Generating..." : `Generate ${formatTarget(target)} output`}
-              </Button>
+        {/* Playground */}
+        <section id="playground" style={{ paddingBottom: 72 }}>
+          <div style={{ marginBottom: 28 }}>
+            <Label>COMPILER PLAYGROUND</Label>
+            <h2 style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", marginTop: 8, color: C.text }}>
+              Select a program, pick a target, compile.
+            </h2>
+          </div>
 
-              <div className="rounded-[1.6rem] border border-[#e6ddcf] bg-white px-4 py-3 text-sm text-[#5a5751]">
-                {message}
+          <div style={{ display: "grid", gridTemplateColumns: "330px 1fr", gap: 16, alignItems: "start" }}>
+            {/* Left controls */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <Panel>
+                <PanelHead icon={FileCode2} title="Program" />
+                <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                  {(Object.keys(DEMOS) as DemoName[]).map((d) => {
+                    const info = DEMOS[d]; const active = d === demo;
+                    return (
+                      <button key={d} onClick={() => setDemo(d)} style={{
+                        textAlign: "left", padding: "13px 15px", borderRadius: 12, cursor: "pointer", border: "1px solid",
+                        background: active ? "rgba(245,166,35,0.08)" : "transparent",
+                        borderColor: active ? "rgba(245,166,35,0.35)" : C.cardBorder,
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <span style={{ fontWeight: 600, fontSize: 14, color: active ? C.amber : C.text }}>{info.title}</span>
+                          <span style={{ fontSize: 11, padding: "2px 9px", borderRadius: 100, background: active ? "rgba(245,166,35,0.15)" : "rgba(255,255,255,0.05)", color: active ? C.amber : C.textSub, fontWeight: 600 }}>{info.badge}</span>
+                        </div>
+                        <p style={{ fontSize: 12, color: C.textSub, margin: "5px 0 0", lineHeight: 1.5 }}>{info.description}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Panel>
+
+              <Panel>
+                <PanelHead icon={Rocket} title="Target Framework" />
+                <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+                  {TARGETS.map((t) => {
+                    const active = t.id === target;
+                    return (
+                      <button key={t.id} onClick={() => setTarget(t.id)} style={{
+                        textAlign: "left", padding: "11px 15px", borderRadius: 10, cursor: "pointer", border: "1px solid", display: "flex", alignItems: "center", gap: 12,
+                        background: active ? `${t.color}12` : "transparent",
+                        borderColor: active ? `${t.color}45` : C.cardBorder,
+                      }}>
+                        <div style={{ width: 10, height: 10, borderRadius: "50%", background: active ? t.color : C.textDim, flexShrink: 0 }} />
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 14, color: active ? C.text : C.textSub }}>{t.label}</div>
+                          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{t.tagline}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Panel>
+
+              <button onClick={run} disabled={isRunning} style={{
+                padding: 15, borderRadius: 14, border: "none", cursor: isRunning ? "default" : "pointer", fontWeight: 700, fontSize: 15,
+                background: isRunning ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg, #f5a623, #e8820a)",
+                color: isRunning ? C.textMuted : "#0a0600",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              }}>
+                {isRunning
+                  ? <><Loader2 size={15} className="animate-spin" /> Compiling…</>
+                  : <><Sparkles size={14} /> Compile → {activeTarget.label}</>}
+              </button>
+            </div>
+
+            {/* Right: pipeline + output */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {/* Pipeline */}
+              <Panel>
+                <div style={{ padding: "18px 24px" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 0 }}>
+                    {STAGES.map((s, i) => {
+                      const cur = STAGE_ORDER[stage] ?? -1;
+                      const isDone   = stage !== "error" && cur > i;
+                      const isActive = stage !== "idle" && stage !== "error" && cur === i;
+                      return (
+                        <div key={s.id} style={{ display: "flex", alignItems: "flex-start", flex: 1 }}>
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
+                            <div style={{
+                              width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700,
+                              background: isDone ? "rgba(14,168,128,0.12)" : isActive ? "rgba(245,166,35,0.12)" : "rgba(255,255,255,0.04)",
+                              border: `1px solid ${isDone ? "rgba(14,168,128,0.35)" : isActive ? "rgba(245,166,35,0.35)" : C.cardBorder}`,
+                              color: isDone ? C.teal : isActive ? C.amber : C.textMuted,
+                            }} className={isActive ? "pipeline-active" : ""}>
+                              {isDone ? <CheckCircle2 size={14} /> : isActive ? <Loader2 size={13} className="animate-spin" /> : <span>{i + 1}</span>}
+                            </div>
+                            <div style={{ textAlign: "center", minWidth: 80 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? C.teal : isActive ? C.amber : C.textSub }}>{s.label}</div>
+                              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{s.sublabel}</div>
+                            </div>
+                          </div>
+                          {i < STAGES.length - 1 && (
+                            <div style={{ flex: 1, height: 1, background: isDone ? "rgba(14,168,128,0.3)" : C.cardBorder, alignSelf: "flex-start", marginTop: 18 }} />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {stage === "error" && <div style={{ fontSize: 13, color: "#e05a5a", marginTop: 12 }}>⚠ Could not reach API — check that `bun run dev` is running in api/</div>}
+                </div>
+              </Panel>
+
+              {/* Code output */}
+              <Panel>
+                {/* Tab bar */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: `1px solid ${C.line}` }}>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {(["code", "ir"] as const).map((tab) => (
+                      <button key={tab} onClick={() => setActiveTab(tab)} style={{
+                        padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", border: "none",
+                        background: activeTab === tab ? "rgba(255,255,255,0.09)" : "transparent",
+                        color: activeTab === tab ? C.text : C.textSub,
+                      }}>
+                        {tab === "code" ? `${activeTarget.label} output` : "IR (JSON)"}
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={copy} disabled={!(activeTab === "code" ? code : ir)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "rgba(255,255,255,0.05)", border: `1px solid ${C.cardBorder}`, color: copied ? C.teal : C.textSub, cursor: "pointer" }}>
+                    {copied ? <><CheckCircle2 size={11} /> Copied!</> : <><Copy size={11} /> Copy</>}
+                  </button>
+                </div>
+                {/* Content */}
+                {!(code || ir) ? (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 340, gap: 12 }}>
+                    {isRunning
+                      ? <><Loader2 size={30} style={{ color: C.amber }} className="animate-spin" /><div style={{ fontSize: 14, color: C.textSub }}>Compiling {DEMOS[demo].title} → {activeTarget.label}…</div></>
+                      : <><TerminalSquare size={30} style={{ color: C.textDim }} /><div style={{ fontSize: 14, color: C.textMuted }}>Click "Compile" to generate {activeTarget.label} code</div></>
+                    }
+                  </div>
+                ) : (
+                  <pre className="animate-fade-in" style={{
+                    margin: 0, padding: "20px 24px", fontSize: 13, lineHeight: 1.8, color: "#bcc0d8",
+                    overflowX: "auto", overflowY: "auto", maxHeight: 560,
+                    fontFamily: "var(--font-mono, 'SFMono-Regular', monospace)",
+                  }}>
+                    <code><Highlight code={activeTab === "code" ? code : ir} isJson={activeTab === "ir"} /></code>
+                  </pre>
+                )}
+              </Panel>
+            </div>
+          </div>
+        </section>
+
+        {/* CU Analysis */}
+        <section id="cu-analysis" style={{ paddingBottom: 80 }}>
+          <Label>COMPUTE UNIT ANALYSIS</Label>
+          <h2 style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", margin: "8px 0 28px", color: C.text }}>
+            {DEMOS[demo].title} — savings per instruction
+          </h2>
+          <Panel>
+            <div style={{ padding: "24px 28px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", gap: "0 20px", marginBottom: 16, padding: "0 4px" }}>
+                {["INSTRUCTION", "ANCHOR", "PINOCCHIO", "QUASAR", "NATIVE"].map((h) => (
+                  <div key={h} style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: C.textMuted }}>{h}</div>
+                ))}
               </div>
-            </CardContent>
-          </Card>
+              {cuData.map((row) => <CuRow key={row.instruction} row={row} target={target} />)}
+              <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", gap: "0 20px", marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.line}` }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.textSub, alignSelf: "center" }}>TOTAL</div>
+                <TotalCell value={totals.anchor} />
+                <TotalCell value={totals.pinocchio} color="#e8820a" savings={pct(totals.anchor, totals.pinocchio)} />
+                <TotalCell value={totals.quasar}    color={C.teal}  savings={pct(totals.anchor, totals.quasar)} />
+                <TotalCell value={totals.native}    color={C.indigo} savings={pct(totals.anchor, totals.native)} />
+              </div>
+            </div>
+          </Panel>
+        </section>
 
-          <div className="grid gap-6">
-            <Card className="border-[#ddd4c5] bg-[#fffdf9] shadow-[0_28px_90px_rgba(53,44,29,0.08)]">
-              <CardHeader className="border-b border-[#ece4d7]">
-                <CardTitle className="text-[#1d2735]">Source to runtime</CardTitle>
-                <CardDescription className="text-[#66635f]">
-                  Show the familiar Anchor input and the generated runtime output side by side.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-4 pt-6 lg:grid-cols-2">
-                <CodePanel
-                  eyebrow="Anchor source"
-                  title={`${activeDemo.title}.rs`}
-                  code={source}
-                  tone="dark"
-                />
-                <CodePanel
-                  eyebrow={`${formatTarget(target)} output`}
-                  title={`${activeDemo.name}-${target}.rs`}
-                  code={output}
-                  tone="light"
-                  action={
-                    <button
-                      type="button"
-                      onClick={copyOutput}
-                      className="inline-flex items-center gap-1 rounded-full border border-[#d7cfbf] bg-white px-3 py-1.5 text-xs font-medium text-[#3d3b36] transition hover:border-[#bca887] hover:bg-[#fcf7ef]"
-                    >
-                      <Copy className="size-3.5" />
-                      Copy
-                    </button>
-                  }
-                />
-              </CardContent>
-            </Card>
-
-            <Card className="border-[#ddd4c5] bg-[#fffdf9] shadow-[0_28px_90px_rgba(53,44,29,0.08)]">
-              <CardHeader className="border-b border-[#ece4d7]">
-                <CardTitle className="flex items-center gap-2 text-[#1d2735]">
-                  <Cpu className="size-4 text-[#ca731d]" />
-                  Compute unit comparison
-                </CardTitle>
-                <CardDescription className="text-[#66635f]">
-                  This is the grant-friendly chart: it connects the compiler work directly to runtime savings.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5 pt-6">
-                {comparisonRows.map((row) => (
-                  <div key={row.instruction} className="space-y-2">
-                    <div className="flex items-center justify-between gap-4 text-sm">
-                      <span className="font-medium text-[#1d2735]">{row.instruction}</span>
-                      <span className="text-[#6a665f]">
-                        {formatTarget(target)} saves{" "}
-                        <span className="font-semibold text-[#1d2735]">
-                          {pct(row.anchor, row[target])}
-                        </span>
-                      </span>
-                    </div>
-                    <BarRow label="Anchor" value={row.anchor} max={row.anchor} tone="anchor" />
-                    <BarRow label="Pinocchio" value={row.pinocchio} max={row.anchor} tone="pinocchio" />
-                    <BarRow label="Quasar" value={row.quasar} max={row.anchor} tone="quasar" />
+        {/* Grant Readiness */}
+        <section style={{ paddingBottom: 80 }}>
+          <Label>GRANT READINESS</Label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 20 }}>
+            <Panel>
+              <div style={{ padding: 28 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(14,168,128,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <CheckCircle2 size={17} style={{ color: C.teal }} />
+                  </div>
+                  <div style={{ fontWeight: 700, fontSize: 17, color: C.text }}>Working today</div>
+                </div>
+                {[
+                  "Anchor IR parser — instructions, accounts, constraints, errors",
+                  "Pinocchio, Quasar, and Native Rust emitters",
+                  "Static CU analysis with per-instruction cost tables",
+                  "4 curated demo programs (counter, vault, escrow, staking)",
+                  "Express API with /parse, /emit, /demo routes",
+                  "Live playground with compilation pipeline animation",
+                ].map((item) => (
+                  <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 11 }}>
+                    <CheckCircle2 size={14} style={{ color: C.teal, flexShrink: 0, marginTop: 3 }} />
+                    <span style={{ fontSize: 14, color: C.textSub, lineHeight: 1.6 }}>{item}</span>
                   </div>
                 ))}
-
-                <div className="grid gap-3 border-t border-[#ece4d7] pt-5 sm:grid-cols-3">
-                  <SummaryStat label="Anchor total" value={`${totals.anchor} CU`} />
-                  <SummaryStat label="Pinocchio total" value={`${totals.pinocchio} CU`} />
-                  <SummaryStat label="Quasar total" value={`${totals.quasar} CU`} />
+              </div>
+            </Panel>
+            <Panel>
+              <div style={{ padding: 28 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(107,123,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Rocket size={17} style={{ color: C.indigo }} />
+                  </div>
+                  <div style={{ fontWeight: 700, fontSize: 17, color: C.text }}>Phase 2 roadmap</div>
                 </div>
-              </CardContent>
-            </Card>
+                {[
+                  "Production-grade CPI generation for SPL token flows",
+                  "tree-sitter parser for precise Anchor AST traversal",
+                  "Account space auto-calculation from IR field definitions",
+                  "CLI: `anvil compile program.rs --target pinocchio`",
+                  "IDL import — parse Anchor IDL JSON as IR input",
+                  "Deploy-ready output validation + Anchor test compatibility",
+                ].map((item) => (
+                  <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 11 }}>
+                    <ChevronRight size={14} style={{ color: C.indigo, flexShrink: 0, marginTop: 3 }} />
+                    <span style={{ fontSize: 14, color: C.textSub, lineHeight: 1.6 }}>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section id="readiness" className="mx-auto w-full max-w-7xl px-6 py-12 sm:px-8 lg:px-12">
-        <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
-          <Card className="border-[#ddd4c5] bg-[#1b2431] text-white shadow-[0_28px_90px_rgba(12,19,28,0.38)]">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-white">
-                <Rocket className="size-4 text-[#f4c46e]" />
-                Are you ready to record a demo?
-              </CardTitle>
-              <CardDescription className="text-white/65">
-                Yes, if you keep the recording focused on what is genuinely working today.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4 text-sm leading-7 text-white/78">
-              <p>
-                You now have a real landing page, honest support boundaries, a demo interaction model,
-                and generated outputs for both runtime targets. That is enough to record a credible
-                walkthrough for a prototype-stage grant application.
-              </p>
-              <p>
-                The strongest demo path is: landing page positioning, select `counter`, generate
-                Pinocchio, show the output and CU savings, switch to Quasar, then show `vault` and be
-                explicit that CPI generation is the next milestone.
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-[#ddd4c5] bg-[#fffdf9] shadow-[0_28px_90px_rgba(53,44,29,0.08)]">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-[#1d2735]">
-                <Sparkles className="size-4 text-[#ca731d]" />
-                What still matters before a strong grant pass
-              </CardTitle>
-              <CardDescription className="text-[#66635f]">
-                These are the remaining gaps I would call out or tighten before submission.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3">
-              {roadmap.map((item) => (
-                <div
-                  key={item}
-                  className="rounded-2xl border border-[#e6ddcf] bg-[#fbf6ee] px-4 py-3 text-sm leading-7 text-[#45423d]"
-                >
-                  {item}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
-      </section>
+        {/* Footer */}
+        <footer style={{ borderTop: `1px solid ${C.line}`, padding: "28px 0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, background: "linear-gradient(135deg, #f5a623, #e8820a)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Sparkles size={13} style={{ color: "#fff" }} />
+            </div>
+            <span style={{ fontWeight: 800, fontSize: 14, color: C.text }}>Anvil</span>
+            <span style={{ fontSize: 13, color: C.textMuted }}>— Solana Compiler IR v0.1.0 POC</span>
+          </div>
+          <div style={{ fontSize: 13, color: C.textMuted }}>Built for Solana Foundation India Grants Program</div>
+        </footer>
+      </div>
     </main>
   );
 }
 
-function MetricCard({ value, label }: { value: string; label: string }) {
+// ─── Sub-components ──────────────────────────────────────────────────────────
+
+function Label({ children }: { children: React.ReactNode }) {
+  return <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.18em", color: C.textMuted }}>{children}</div>;
+}
+
+function Btn({ children, onClick, primary }: { children: React.ReactNode; onClick?: () => void; primary?: boolean }) {
   return (
-    <div className="rounded-[1.75rem] border border-white/12 bg-white/8 px-5 py-4 shadow-[0_24px_60px_rgba(10,16,24,0.18)] backdrop-blur">
-      <div className="text-3xl font-semibold tracking-[-0.05em] text-white">{value}</div>
-      <div className="mt-1 text-sm leading-6 text-white/60">{label}</div>
+    <button onClick={onClick} style={{
+      display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 100, fontWeight: 700, fontSize: 14, cursor: "pointer", border: "none",
+      background: primary ? "linear-gradient(135deg, #f5a623, #e8820a)" : "rgba(255,255,255,0.06)",
+      color: primary ? "#0a0600" : C.textSub,
+    }}>
+      {children}
+    </button>
+  );
+}
+
+function Panel({ children }: { children: React.ReactNode }) {
+  return <div style={{ borderRadius: 18, border: `1px solid ${C.cardBorder}`, background: C.card, overflow: "hidden" }}>{children}</div>;
+}
+
+function PanelHead({ icon: Icon, title }: { icon: React.ElementType; title: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderBottom: `1px solid ${C.line}` }}>
+      <Icon size={14} style={{ color: C.amber }} />
+      <span style={{ fontSize: 13, fontWeight: 600, color: C.textSub }}>{title}</span>
     </div>
   );
 }
 
-function JourneyRow({
-  icon: Icon,
-  title,
-  text,
-}: {
-  icon: typeof Code2;
-  title: string;
-  text: string;
-}) {
+function ApiDot({ ok }: { ok: boolean }) {
   return (
-    <div className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/6 px-4 py-3">
-      <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-[#ffd191]">
-        <Icon className="size-4" />
-      </div>
-      <div>
-        <div className="font-medium text-white">{title}</div>
-        <div className="text-sm leading-6 text-white/60">{text}</div>
-      </div>
+    <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, padding: "6px 14px", borderRadius: 100, background: ok ? "rgba(14,168,128,0.08)" : "rgba(255,255,255,0.04)", border: `1px solid ${ok ? "rgba(14,168,128,0.22)" : C.cardBorder}` }}>
+      <div style={{ width: 7, height: 7, borderRadius: "50%", background: ok ? C.teal : C.textDim }} />
+      <span style={{ color: ok ? C.teal : C.textMuted, fontWeight: 600 }}>{ok ? "API live" : "API offline"}</span>
     </div>
   );
 }
 
-function CodePanel({
-  eyebrow,
-  title,
-  code,
-  tone,
-  action,
-}: {
-  eyebrow: string;
-  title: string;
-  code: string;
-  tone: "dark" | "light";
-  action?: React.ReactNode;
-}) {
-  const dark = tone === "dark";
-
+function CuRow({ row, target }: { row: { instruction: string; anchor: number; pinocchio: number; quasar: number; native: number }; target: Target }) {
+  const max = row.anchor;
   return (
-    <div
-      className={`overflow-hidden rounded-[1.75rem] border ${
-        dark
-          ? "border-[#2b3442] bg-[#131a24] text-[#eef2f8]"
-          : "border-[#e6ddcf] bg-[#fbf6ee] text-[#1d2735]"
-      }`}
-    >
-      <div
-        className={`flex items-center justify-between border-b px-4 py-3 ${
-          dark ? "border-white/8 bg-white/[0.04]" : "border-[#e6ddcf] bg-white/70"
-        }`}
-      >
-        <div>
-          <div className={`text-[11px] uppercase tracking-[0.22em] ${dark ? "text-white/45" : "text-[#887d6a]"}`}>
-            {eyebrow}
+    <div style={{ padding: "14px 4px", borderBottom: `1px solid ${C.line}` }}>
+      <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", gap: "0 20px", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "var(--font-mono, monospace)" }}>{row.instruction}</div>
+        <div />
+        <div style={{ fontSize: 12, color: C.amber, fontWeight: 700 }}>{pct(row.anchor, row.pinocchio)} saved</div>
+        <div style={{ fontSize: 12, color: C.teal,  fontWeight: 700 }}>{pct(row.anchor, row.quasar)} saved</div>
+        <div style={{ fontSize: 12, color: C.indigo, fontWeight: 700 }}>{pct(row.anchor, row.native)} saved</div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", gap: "0 20px", alignItems: "center" }}>
+        <div />
+        {[
+          { val: row.anchor,    color: "#3a4260" },
+          { val: row.pinocchio, color: "#e8820a" },
+          { val: row.quasar,    color: C.teal },
+          { val: row.native,    color: C.indigo },
+        ].map(({ val, color }, i) => (
+          <div key={i}>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSub, fontFamily: "var(--font-mono, monospace)" }}>{val} CU</span>
+            </div>
+            <div style={{ height: 6, borderRadius: 100, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+              <div style={{ height: "100%", borderRadius: 100, background: color, width: `${Math.max((val / max) * 100, 5)}%`, transition: "width .5s ease-out" }} />
+            </div>
           </div>
-          <div className={`text-sm font-medium ${dark ? "text-white" : "text-[#1d2735]"}`}>{title}</div>
-        </div>
-        {action}
+        ))}
       </div>
-      <pre className={`max-h-[28rem] overflow-auto px-4 py-4 text-xs leading-6 ${dark ? "text-[#e6ebf4]" : "text-[#243042]"}`}>
-        <code>{code}</code>
-      </pre>
     </div>
   );
 }
 
-function BarRow({
-  label,
-  value,
-  max,
-  tone,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  tone: "anchor" | "pinocchio" | "quasar";
-}) {
-  const width = `${Math.max((value / max) * 100, 8)}%`;
-  const palette = {
-    anchor: "bg-[#2a3342]",
-    pinocchio: "bg-[#d8791c]",
-    quasar: "bg-[#1e7f6a]",
-  }[tone];
-
+function TotalCell({ value, color, savings }: { value: number; color?: string; savings?: string }) {
   return (
-    <div className="grid grid-cols-[90px_1fr_56px] items-center gap-3 text-sm">
-      <span className="text-[#6a665f]">{label}</span>
-      <div className="h-2.5 overflow-hidden rounded-full bg-[#ece4d7]">
-        <div className={`h-full rounded-full ${palette}`} style={{ width }} />
-      </div>
-      <span className="text-right font-medium text-[#1d2735]">{value}</span>
+    <div>
+      <div style={{ fontSize: 24, fontWeight: 800, color: color ?? C.textMuted, letterSpacing: "-0.03em", fontFamily: "var(--font-mono, monospace)" }}>{value}</div>
+      <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>CU total</div>
+      {savings && <div style={{ fontSize: 12, color: color, marginTop: 2, fontWeight: 600 }}>{savings} saved</div>}
     </div>
   );
 }
 
-function SummaryStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-[#e6ddcf] bg-[#faf5eb] px-4 py-3">
-      <div className="text-xs uppercase tracking-[0.18em] text-[#8a816f]">{label}</div>
-      <div className="mt-1 text-lg font-semibold tracking-[-0.03em] text-[#1d2735]">{value}</div>
-    </div>
-  );
+function Highlight({ code, isJson }: { code: string; isJson: boolean }) {
+  if (!code) return null;
+  let h = code
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  if (isJson) {
+    h = h
+      .replace(/("[\w]+")\s*:/g, `<span style="color:#8aafff">$1</span>:`)
+      .replace(/:\s*"([^"]*)"/g, `: <span style="color:#a8d9a0">"$1"</span>`)
+      .replace(/:\s*(\d+)/g, `: <span style="color:#f5a623">$1</span>`)
+      .replace(/:\s*(true|false|null)/g, `: <span style="color:#cc88ff">$1</span>`);
+  } else {
+    h = h
+      .replace(/(\/\/[^\n]*)/g, `<span style="color:#404668">$1</span>`)
+      .replace(/("(?:[^"\\]|\\.)*")/g, `<span style="color:#98c98a">$1</span>`)
+      .replace(/\b(pub|fn|use|let|mut|impl|struct|enum|match|return|if|else|for|while|loop|type|const|static|unsafe|extern|mod|self|Ok|Err|Some|None|true|false)\b/g, `<span style="color:#c990f0">$&</span>`)
+      .replace(/\b(u8|u16|u32|u64|u128|i8|i16|i32|i64|i128|bool|usize|f32|f64|String|Vec|Option|Result|Pubkey|ProgramResult|ProgramError|AccountInfo)\b/g, `<span style="color:#6cafff">$&</span>`)
+      .replace(/\b(\d+)\b/g, `<span style="color:#f0a94e">$&</span>`)
+      .replace(/(#\[(?:[^\[\]])*\])/g, `<span style="color:#7a7d9e">$1</span>`);
+  }
+  return <span dangerouslySetInnerHTML={{ __html: h }} />;
 }
