@@ -1,0 +1,305 @@
+{
+  "name": "escrow",
+  "programId": "Escrow111111111111111111111111111111111111111",
+  "instructions": [
+    {
+      "name": "create_escrow",
+      "accounts": [
+        {
+          "name": "maker",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "mint_a",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "mint_b",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "maker_ata_a",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "token::mint",      "value": "mint_a" },
+            { "kind": "token::authority", "value": "maker" }
+          ]
+        },
+        {
+          "name": "escrow",
+          "accountType": "Escrow",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "constraints": [
+            { "kind": "init" },
+            { "kind": "seeds", "value": "[b\"escrow\", maker.key().as_ref(), seed.to_le_bytes().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "constraints": [
+            { "kind": "init" },
+            { "kind": "token::mint",      "value": "mint_a" },
+            { "kind": "token::authority", "value": "escrow" }
+          ]
+        },
+        {
+          "name": "system_program",
+          "accountType": "SystemProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "token_program",
+          "accountType": "TokenProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [
+        { "name": "seed",           "type": "u64" },
+        { "name": "receive_amount", "type": "u64" }
+      ],
+      "estimatedCU": 1150
+    },
+    {
+      "name": "accept_escrow",
+      "accounts": [
+        {
+          "name": "taker",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "maker",
+          "accountType": "SystemAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "mint_a",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "mint_b",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "taker_ata_b",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "token::mint",      "value": "mint_b" },
+            { "kind": "token::authority", "value": "taker" }
+          ]
+        },
+        {
+          "name": "taker_ata_a",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "constraints": [
+            { "kind": "init_if_needed" },
+            { "kind": "token::mint",      "value": "mint_a" },
+            { "kind": "token::authority", "value": "taker" }
+          ]
+        },
+        {
+          "name": "maker_ata_b",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "constraints": [
+            { "kind": "init_if_needed" },
+            { "kind": "token::mint",      "value": "mint_b" },
+            { "kind": "token::authority", "value": "maker" }
+          ]
+        },
+        {
+          "name": "escrow",
+          "accountType": "Escrow",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "has_one", "value": "maker" },
+            { "kind": "has_one", "value": "mint_a" },
+            { "kind": "has_one", "value": "mint_b" },
+            { "kind": "close",   "value": "maker" },
+            { "kind": "seeds",   "value": "[b\"escrow\", maker.key().as_ref(), escrow.seed.to_le_bytes().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "token::mint",      "value": "mint_a" },
+            { "kind": "token::authority", "value": "escrow" }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "TokenProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [],
+      "estimatedCU": 1480
+    },
+    {
+      "name": "cancel_escrow",
+      "accounts": [
+        {
+          "name": "maker",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "mint_a",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "maker_ata_a",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "token::mint",      "value": "mint_a" },
+            { "kind": "token::authority", "value": "maker" }
+          ]
+        },
+        {
+          "name": "escrow",
+          "accountType": "Escrow",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "has_one", "value": "maker" },
+            { "kind": "has_one", "value": "mint_a" },
+            { "kind": "close",   "value": "maker" },
+            { "kind": "seeds",   "value": "[b\"escrow\", maker.key().as_ref(), escrow.seed.to_le_bytes().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "token::mint",      "value": "mint_a" },
+            { "kind": "token::authority", "value": "escrow" }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "TokenProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [],
+      "estimatedCU": 980
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Escrow",
+      "fields": [
+        { "name": "maker",          "type": "Pubkey" },
+        { "name": "mint_a",         "type": "Pubkey" },
+        { "name": "mint_b",         "type": "Pubkey" },
+        { "name": "receive_amount", "type": "u64" },
+        { "name": "seed",           "type": "u64" },
+        { "name": "bump",           "type": "u8" }
+      ],
+      "space": 105
+    }
+  ],
+  "types": [],
+  "errors": [],
+  "metadata": {
+    "sourceFramework": "anchor",
+    "sourceVersion": "0.30.0",
+    "anvilVersion": "0.1.0",
+    "parsedAt": "2026-03-25T00:00:00.000Z",
+    "cuEstimates": [
+      {
+        "instruction": "create_escrow",
+        "anchor": 1150, "pinocchio": 270, "quasar": 240, "native": 310,
+        "savingsPinocchio": "77%", "savingsQuasar": "79%"
+      },
+      {
+        "instruction": "accept_escrow",
+        "anchor": 1480, "pinocchio": 345, "quasar": 305, "native": 390,
+        "savingsPinocchio": "77%", "savingsQuasar": "79%"
+      },
+      {
+        "instruction": "cancel_escrow",
+        "anchor": 980, "pinocchio": 220, "quasar": 195, "native": 255,
+        "savingsPinocchio": "78%", "savingsQuasar": "80%"
+      }
+    ]
+  }
+}

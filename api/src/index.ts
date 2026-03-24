@@ -1,13 +1,47 @@
-import express from "express"
+import express from "express";
+import cors from "cors";
+import { parseRoute } from "./routes/parse.js";
+import { emitRoute } from "./routes/emit.js";
+import { demoRoute } from "./routes/demo.js";
 
 const app = express();
-app.use(express.json())
 
-app.get("/", (req, res) => { 
-    res.send("yo this is me"); 
+app.use(cors());
+app.use(express.json({ limit: "2mb" }));
+
+// ─── Health check ────────────────────────────────────────────────────────────
+app.get("/", (_req, res) => {
+  res.json({
+    service: "Anvil API",
+    version: "0.1.0",
+    status: "ok",
+    endpoints: [
+      "POST /parse  — Anchor .rs → Solana IR",
+      "POST /emit   — Solana IR → target framework code",
+      "GET  /demo/:name — pre-loaded demo IR (counter|vault|escrow|staking)",
+    ],
+  });
 });
 
+// ─── Routes ──────────────────────────────────────────────────────────────────
+app.use("/parse", parseRoute);
+app.use("/emit", emitRoute);
+app.use("/demo", demoRoute);
 
-app.listen(8080, () => {
-    console.log("api is running on http://localhost:8080")
-})
+// ─── Global error handler ────────────────────────────────────────────────────
+app.use(
+  (
+    err: Error,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction
+  ) => {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error", details: err.message });
+  }
+);
+
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
+app.listen(PORT, () => {
+  console.log(`✅ Anvil API running on http://localhost:${PORT}`);
+});

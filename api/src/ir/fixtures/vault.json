@@ -1,0 +1,208 @@
+{
+  "name": "vault",
+  "programId": "Vault1111111111111111111111111111111111111111",
+  "instructions": [
+    {
+      "name": "initialize",
+      "accounts": [
+        {
+          "name": "vault_state",
+          "accountType": "VaultState",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "constraints": [
+            { "kind": "init" },
+            { "kind": "seeds", "value": "[b\"vault_state\", authority.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "seeds", "value": "[b\"vault\", authority.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "authority",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "SystemProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [],
+      "estimatedCU": 580
+    },
+    {
+      "name": "deposit",
+      "accounts": [
+        {
+          "name": "vault_state",
+          "accountType": "VaultState",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "mut" },
+            { "kind": "has_one", "value": "authority" },
+            { "kind": "seeds", "value": "[b\"vault_state\", authority.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "seeds", "value": "[b\"vault\", authority.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "user",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "authority",
+          "accountType": "SystemAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "SystemProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" }
+      ],
+      "estimatedCU": 620
+    },
+    {
+      "name": "withdraw",
+      "accounts": [
+        {
+          "name": "vault_state",
+          "accountType": "VaultState",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "mut" },
+            { "kind": "has_one", "value": "authority" },
+            { "kind": "seeds", "value": "[b\"vault_state\", authority.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "seeds", "value": "[b\"vault\", authority.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "user",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "authority",
+          "accountType": "SystemAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "SystemProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" }
+      ],
+      "estimatedCU": 670
+    }
+  ],
+  "accounts": [
+    {
+      "name": "VaultState",
+      "fields": [
+        { "name": "authority",       "type": "Pubkey" },
+        { "name": "total_deposited", "type": "u64" },
+        { "name": "bump",            "type": "u8" },
+        { "name": "vault_bump",      "type": "u8" }
+      ],
+      "space": 42
+    }
+  ],
+  "types": [],
+  "errors": [
+    { "code": 6000, "name": "InvalidAmount",     "msg": "Amount must be greater than zero" },
+    { "code": 6001, "name": "InsufficientFunds", "msg": "Insufficient funds in vault" },
+    { "code": 6002, "name": "Overflow",          "msg": "Arithmetic overflow" },
+    { "code": 6003, "name": "Underflow",         "msg": "Arithmetic underflow" }
+  ],
+  "metadata": {
+    "sourceFramework": "anchor",
+    "sourceVersion": "0.30.0",
+    "anvilVersion": "0.1.0",
+    "parsedAt": "2026-03-25T00:00:00.000Z",
+    "cuEstimates": [
+      {
+        "instruction": "initialize",
+        "anchor": 580, "pinocchio": 120, "quasar": 105, "native": 145,
+        "savingsPinocchio": "79%", "savingsQuasar": "82%"
+      },
+      {
+        "instruction": "deposit",
+        "anchor": 620, "pinocchio": 145, "quasar": 128, "native": 165,
+        "savingsPinocchio": "77%", "savingsQuasar": "79%"
+      },
+      {
+        "instruction": "withdraw",
+        "anchor": 670, "pinocchio": 158, "quasar": 140, "native": 180,
+        "savingsPinocchio": "76%", "savingsQuasar": "79%"
+      }
+    ]
+  }
+}

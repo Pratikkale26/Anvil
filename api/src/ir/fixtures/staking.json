@@ -1,0 +1,354 @@
+{
+  "name": "staking",
+  "programId": "Staking11111111111111111111111111111111111111",
+  "instructions": [
+    {
+      "name": "initialize_pool",
+      "accounts": [
+        {
+          "name": "pool",
+          "accountType": "StakePool",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "constraints": [
+            { "kind": "init" },
+            { "kind": "seeds", "value": "[b\"pool\", authority.key().as_ref(), stake_mint.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "stake_mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "reward_mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "authority",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "SystemProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "token_program",
+          "accountType": "TokenProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [
+        { "name": "reward_rate", "type": "u64" }
+      ],
+      "estimatedCU": 620
+    },
+    {
+      "name": "stake",
+      "accounts": [
+        {
+          "name": "user_stake",
+          "accountType": "UserStake",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "constraints": [
+            { "kind": "init_if_needed" },
+            { "kind": "seeds", "value": "[b\"user_stake\", user.key().as_ref(), pool.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "pool",
+          "accountType": "StakePool",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "mut" },
+            { "kind": "seeds", "value": "[b\"pool\", pool.authority.as_ref(), pool.stake_mint.as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "user_stake_ata",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "token::mint",      "value": "pool.stake_mint" },
+            { "kind": "token::authority", "value": "user" }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "token::mint",      "value": "pool.stake_mint" },
+            { "kind": "token::authority", "value": "pool" }
+          ]
+        },
+        {
+          "name": "user",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "SystemProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "token_program",
+          "accountType": "TokenProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" }
+      ],
+      "estimatedCU": 890
+    },
+    {
+      "name": "unstake",
+      "accounts": [
+        {
+          "name": "user_stake",
+          "accountType": "UserStake",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "mut" },
+            { "kind": "has_one", "value": "owner" },
+            { "kind": "has_one", "value": "pool" },
+            { "kind": "seeds", "value": "[b\"user_stake\", owner.key().as_ref(), pool.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "pool",
+          "accountType": "StakePool",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [{ "kind": "mut" }]
+        },
+        {
+          "name": "user_stake_ata",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "token::mint",      "value": "pool.stake_mint" },
+            { "kind": "token::authority", "value": "owner" }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "token::mint",      "value": "pool.stake_mint" },
+            { "kind": "token::authority", "value": "pool" }
+          ]
+        },
+        {
+          "name": "owner",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "token_program",
+          "accountType": "TokenProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" }
+      ],
+      "estimatedCU": 840
+    },
+    {
+      "name": "claim_rewards",
+      "accounts": [
+        {
+          "name": "user_stake",
+          "accountType": "UserStake",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "mut" },
+            { "kind": "has_one", "value": "owner" },
+            { "kind": "has_one", "value": "pool" }
+          ]
+        },
+        {
+          "name": "pool",
+          "accountType": "StakePool",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [{ "kind": "mut" }]
+        },
+        {
+          "name": "reward_mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "user_reward_ata",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "constraints": [
+            { "kind": "init_if_needed" },
+            { "kind": "token::mint",      "value": "reward_mint" },
+            { "kind": "token::authority", "value": "owner" }
+          ]
+        },
+        {
+          "name": "owner",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "SystemProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "token_program",
+          "accountType": "TokenProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "associated_token_program",
+          "accountType": "AssociatedTokenProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [],
+      "estimatedCU": 920
+    }
+  ],
+  "accounts": [
+    {
+      "name": "StakePool",
+      "fields": [
+        { "name": "authority",    "type": "Pubkey" },
+        { "name": "stake_mint",   "type": "Pubkey" },
+        { "name": "reward_mint",  "type": "Pubkey" },
+        { "name": "reward_rate",  "type": "u64" },
+        { "name": "total_staked", "type": "u64" },
+        { "name": "bump",         "type": "u8" }
+      ],
+      "space": 105
+    },
+    {
+      "name": "UserStake",
+      "fields": [
+        { "name": "owner",    "type": "Pubkey" },
+        { "name": "pool",     "type": "Pubkey" },
+        { "name": "amount",   "type": "u64" },
+        { "name": "stake_ts", "type": "i64" }
+      ],
+      "space": 80
+    }
+  ],
+  "types": [],
+  "errors": [
+    { "code": 6000, "name": "InvalidAmount",     "msg": "Amount must be greater than zero" },
+    { "code": 6001, "name": "InsufficientStake", "msg": "Insufficient staked amount" },
+    { "code": 6002, "name": "NoRewards",         "msg": "No rewards to claim" },
+    { "code": 6003, "name": "Overflow",          "msg": "Arithmetic overflow" },
+    { "code": 6004, "name": "Underflow",         "msg": "Arithmetic underflow" }
+  ],
+  "metadata": {
+    "sourceFramework": "anchor",
+    "sourceVersion": "0.30.0",
+    "anvilVersion": "0.1.0",
+    "parsedAt": "2026-03-25T00:00:00.000Z",
+    "cuEstimates": [
+      {
+        "instruction": "initialize_pool",
+        "anchor": 620, "pinocchio": 142, "quasar": 126, "native": 168,
+        "savingsPinocchio": "77%", "savingsQuasar": "80%"
+      },
+      {
+        "instruction": "stake",
+        "anchor": 890, "pinocchio": 205, "quasar": 182, "native": 238,
+        "savingsPinocchio": "77%", "savingsQuasar": "80%"
+      },
+      {
+        "instruction": "unstake",
+        "anchor": 840, "pinocchio": 195, "quasar": 172, "native": 225,
+        "savingsPinocchio": "77%", "savingsQuasar": "80%"
+      },
+      {
+        "instruction": "claim_rewards",
+        "anchor": 920, "pinocchio": 215, "quasar": 190, "native": 248,
+        "savingsPinocchio": "77%", "savingsQuasar": "79%"
+      }
+    ]
+  }
+}

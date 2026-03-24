@@ -1,0 +1,175 @@
+{
+  "name": "counter",
+  "programId": "Counter111111111111111111111111111111111111",
+  "instructions": [
+    {
+      "name": "initialize",
+      "accounts": [
+        {
+          "name": "counter",
+          "accountType": "CounterAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "constraints": [
+            { "kind": "init" },
+            { "kind": "seeds", "value": "[b\"counter\", authority.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "authority",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "SystemProgram",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [
+        { "name": "start_value", "type": "u64" }
+      ],
+      "estimatedCU": 520
+    },
+    {
+      "name": "increment",
+      "accounts": [
+        {
+          "name": "counter",
+          "accountType": "CounterAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "mut" },
+            { "kind": "has_one", "value": "authority" },
+            { "kind": "seeds", "value": "[b\"counter\", authority.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "authority",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" }
+      ],
+      "estimatedCU": 290
+    },
+    {
+      "name": "decrement",
+      "accounts": [
+        {
+          "name": "counter",
+          "accountType": "CounterAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "mut" },
+            { "kind": "has_one", "value": "authority" },
+            { "kind": "seeds", "value": "[b\"counter\", authority.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "authority",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" }
+      ],
+      "estimatedCU": 290
+    },
+    {
+      "name": "reset",
+      "accounts": [
+        {
+          "name": "counter",
+          "accountType": "CounterAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "constraints": [
+            { "kind": "mut" },
+            { "kind": "has_one", "value": "authority" },
+            { "kind": "seeds", "value": "[b\"counter\", authority.key().as_ref()]" },
+            { "kind": "bump" }
+          ]
+        },
+        {
+          "name": "authority",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": false,
+          "isInit": false,
+          "constraints": []
+        }
+      ],
+      "args": [],
+      "estimatedCU": 265
+    }
+  ],
+  "accounts": [
+    {
+      "name": "CounterAccount",
+      "fields": [
+        { "name": "authority", "type": "Pubkey" },
+        { "name": "count",     "type": "u64" },
+        { "name": "bump",      "type": "u8" }
+      ],
+      "space": 41
+    }
+  ],
+  "types": [],
+  "errors": [
+    { "code": 6000, "name": "Overflow",   "msg": "Counter overflow" },
+    { "code": 6001, "name": "Underflow",  "msg": "Counter underflow" }
+  ],
+  "metadata": {
+    "sourceFramework": "anchor",
+    "sourceVersion": "0.30.0",
+    "anvilVersion": "0.1.0",
+    "parsedAt": "2026-03-25T00:00:00.000Z",
+    "cuEstimates": [
+      {
+        "instruction": "initialize",
+        "anchor": 520, "pinocchio": 108, "quasar": 95, "native": 130,
+        "savingsPinocchio": "79%", "savingsQuasar": "82%"
+      },
+      {
+        "instruction": "increment",
+        "anchor": 290, "pinocchio": 62, "quasar": 55, "native": 75,
+        "savingsPinocchio": "79%", "savingsQuasar": "81%"
+      },
+      {
+        "instruction": "decrement",
+        "anchor": 290, "pinocchio": 62, "quasar": 55, "native": 75,
+        "savingsPinocchio": "79%", "savingsQuasar": "81%"
+      },
+      {
+        "instruction": "reset",
+        "anchor": 265, "pinocchio": 55, "quasar": 48, "native": 68,
+        "savingsPinocchio": "79%", "savingsQuasar": "82%"
+      }
+    ]
+  }
+}

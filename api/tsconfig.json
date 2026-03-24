@@ -3,7 +3,7 @@
     // Environment setup & latest features
     "lib": ["ESNext"],
     "target": "ESNext",
-    "module": "Preserve",
+    "module": "esnext",
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "allowJs": true,
@@ -20,10 +20,14 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
+    "outDir": "dist",
+    "rootDir": "src",
 
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false
-  }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
