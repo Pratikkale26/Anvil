@@ -49,12 +49,14 @@ const DEMOS: Record<DemoName, {
   title: string;
   badge: string;
   description: string;
+  available: boolean;
   cuSummary: { instruction: string; anchor: number; pinocchio: number; quasar: number; native: number }[];
 }> = {
   counter: {
     title: "Counter",
     badge: "Simplest",
     description: "PDA state, signer checks, overflow-safe arithmetic.",
+    available: true,
     cuSummary: [
       { instruction: "initialize", anchor: 520, pinocchio: 108, quasar: 95, native: 130 },
       { instruction: "increment",  anchor: 290, pinocchio: 62,  quasar: 55, native: 75  },
@@ -66,6 +68,7 @@ const DEMOS: Record<DemoName, {
     title: "Vault",
     badge: "SOL",
     description: "Multi-PDA lamport management. Deposit, withdraw, vault state.",
+    available: true,
     cuSummary: [
       { instruction: "initialize", anchor: 580, pinocchio: 120, quasar: 105, native: 145 },
       { instruction: "deposit",    anchor: 620, pinocchio: 145, quasar: 128, native: 165 },
@@ -74,8 +77,9 @@ const DEMOS: Record<DemoName, {
   },
   escrow: {
     title: "Escrow",
-    badge: "SPL",
+    badge: "Coming",
     description: "Token escrow with SPL transfers. Create, accept, cancel.",
+    available: false,
     cuSummary: [
       { instruction: "create_escrow",  anchor: 1150, pinocchio: 270, quasar: 240, native: 310 },
       { instruction: "accept_escrow",  anchor: 1480, pinocchio: 345, quasar: 305, native: 390 },
@@ -84,8 +88,9 @@ const DEMOS: Record<DemoName, {
   },
   staking: {
     title: "Staking",
-    badge: "Complex",
+    badge: "Coming",
     description: "Pool init, token staking, unstaking, time-based rewards.",
+    available: false,
     cuSummary: [
       { instruction: "initialize_pool", anchor: 620, pinocchio: 142, quasar: 126, native: 168 },
       { instruction: "stake",           anchor: 890, pinocchio: 205, quasar: 182, native: 238 },
@@ -95,10 +100,10 @@ const DEMOS: Record<DemoName, {
   },
 };
 
-const TARGETS: { id: Target; label: string; color: string; tagline: string }[] = [
-  { id: "pinocchio", label: "Pinocchio", color: "#e8820a", tagline: "Zero-copy, zero-dependency by Anza" },
-  { id: "quasar",    label: "Quasar",    color: "#0ea880", tagline: "Zero-allocation by Blueshift" },
-  { id: "native",    label: "Native",    color: "#6b7bff", tagline: "Raw solana_program + borsh" },
+const TARGETS: { id: Target; label: string; color: string; tagline: string; available: boolean }[] = [
+  { id: "pinocchio", label: "Pinocchio", color: "#e8820a", tagline: "Zero-copy, zero-dependency by Anza", available: true },
+  { id: "quasar",    label: "Quasar",    color: "#0ea880", tagline: "Zero-allocation by Blueshift", available: true },
+  { id: "native",    label: "Native",    color: "#6b7bff", tagline: "Raw solana_program + borsh", available: false },
 ];
 
 const STAGES: { id: PipelineStage; label: string; sublabel: string }[] = [
@@ -143,6 +148,19 @@ export default function Home() {
     setCode(""); setIr(""); setStage("idle");
   }, [demo]);
 
+  useEffect(() => {
+    if (!DEMOS[demo].available) {
+      setDemo("counter");
+    }
+  }, [demo]);
+
+  useEffect(() => {
+    const nextTarget = TARGETS.find((t) => t.id === target);
+    if (nextTarget && !nextTarget.available) {
+      setTarget("pinocchio");
+    }
+  }, [target]);
+
   const activeTarget = TARGETS.find((t) => t.id === target)!;
 
   const totals = useMemo(() =>
@@ -182,7 +200,7 @@ export default function Home() {
         }));
       }
       setStage("done"); setApiOk(true);
-    } catch (err) {
+    } catch {
       if (signal.aborted) return;
       setStage("error"); setApiOk(false);
     }
@@ -243,8 +261,7 @@ export default function Home() {
             <span style={{ background: `linear-gradient(90deg, ${C.indigo}, #9baeff)`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Quasar.</span>
           </h1>
           <p style={{ fontSize: 18, color: C.textSub, maxWidth: 600, margin: "0 auto 44px", lineHeight: 1.75 }}>
-            Anvil parses Anchor programs into a framework-agnostic IR, then emits optimized Pinocchio, Quasar, or Native Rust — with live CU analysis.
-          </p>
+            Anvil parses Anchor programs into a framework-agnostic IR, then emits optimized Pinocchio, Quasar, or Native Rust — with live CU analysis.          </p>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
             <Btn
               primary
@@ -259,8 +276,8 @@ export default function Home() {
           <div style={{ display: "flex", justifyContent: "center", gap: 56, marginTop: 64, flexWrap: "wrap" }}>
             {[
               { value: "~79%", label: "CU reduction vs Anchor" },
-              { value: "4", label: "demo programs" },
-              { value: "3", label: "emit targets" },
+              { value: "2", label: "live demo programs" },
+              { value: "2", label: "live emit targets" },
             ].map((s) => (
               <div key={s.label} style={{ textAlign: "center" }}>
                 <div style={{ fontSize: 36, fontWeight: 800, color: C.amber, letterSpacing: "-0.03em" }}>{s.value}</div>
@@ -277,7 +294,7 @@ export default function Home() {
             {[
               { icon: Code2,   step: "01", title: "Write Anchor",   desc: "Your contract stays in familiar Anchor syntax — no refactoring." },
               { icon: Layers3, step: "02", title: "Parse to IR",    desc: "Anvil extracts instructions, accounts, constraints, errors into a typed SolanaIR." },
-              { icon: Blocks,  step: "03", title: "Emit Target",    desc: "Choose Pinocchio, Quasar, or Native. The emitter reconstructs from IR." },
+              { icon: Blocks,  step: "03", title: "Emit Target",    desc: "Choose Pinocchio or Quasar today. Native is shown as the next target in the roadmap." },
               { icon: Cpu,     step: "04", title: "CU Analysis",    desc: "Static cost tables compute savings per instruction across all frameworks." },
             ].map((item) => (
               <div key={item.step} style={{ padding: "28px 24px", background: C.card }}>
@@ -312,14 +329,16 @@ export default function Home() {
                   {(Object.keys(DEMOS) as DemoName[]).map((d) => {
                     const info = DEMOS[d]; const active = d === demo;
                     return (
-                      <button key={d} onClick={() => setDemo(d)} style={{
+                      <button key={d} disabled={!info.available} onClick={() => info.available && setDemo(d)} style={{
                         textAlign: "left", padding: "13px 15px", borderRadius: 12, cursor: "pointer", border: "1px solid",
                         background: active ? "rgba(245,166,35,0.08)" : "transparent",
                         borderColor: active ? "rgba(245,166,35,0.35)" : C.cardBorder,
+                        opacity: info.available ? 1 : 0.58,
+                        cursor: info.available ? "pointer" : "not-allowed",
                       }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                           <span style={{ fontWeight: 600, fontSize: 14, color: active ? C.amber : C.text }}>{info.title}</span>
-                          <span style={{ fontSize: 11, padding: "2px 9px", borderRadius: 100, background: active ? "rgba(245,166,35,0.15)" : "rgba(255,255,255,0.05)", color: active ? C.amber : C.textSub, fontWeight: 600 }}>{info.badge}</span>
+                          <span style={{ fontSize: 11, padding: "2px 9px", borderRadius: 100, background: info.available ? (active ? "rgba(245,166,35,0.15)" : "rgba(255,255,255,0.05)") : "rgba(107,123,255,0.12)", color: info.available ? (active ? C.amber : C.textSub) : "#aeb8ff", fontWeight: 600 }}>{info.badge}</span>
                         </div>
                         <p style={{ fontSize: 12, color: C.textSub, margin: "5px 0 0", lineHeight: 1.5 }}>{info.description}</p>
                       </button>
@@ -334,14 +353,23 @@ export default function Home() {
                   {TARGETS.map((t) => {
                     const active = t.id === target;
                     return (
-                      <button key={t.id} onClick={() => setTarget(t.id)} style={{
+                      <button key={t.id} disabled={!t.available} onClick={() => t.available && setTarget(t.id)} style={{
                         textAlign: "left", padding: "11px 15px", borderRadius: 10, cursor: "pointer", border: "1px solid", display: "flex", alignItems: "center", gap: 12,
                         background: active ? `${t.color}12` : "transparent",
                         borderColor: active ? `${t.color}45` : C.cardBorder,
+                        opacity: t.available ? 1 : 0.58,
+                        cursor: t.available ? "pointer" : "not-allowed",
                       }}>
                         <div style={{ width: 10, height: 10, borderRadius: "50%", background: active ? t.color : C.textDim, flexShrink: 0 }} />
                         <div>
-                          <div style={{ fontWeight: 600, fontSize: 14, color: active ? C.text : C.textSub }}>{t.label}</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ fontWeight: 600, fontSize: 14, color: active ? C.text : C.textSub }}>{t.label}</div>
+                            {!t.available && (
+                              <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: "rgba(107,123,255,0.12)", color: "#aeb8ff", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                                Coming
+                              </span>
+                            )}
+                          </div>
                           <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{t.tagline}</div>
                         </div>
                       </button>
@@ -423,7 +451,7 @@ export default function Home() {
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 340, gap: 12 }}>
                     {isRunning
                       ? <><Loader2 size={30} style={{ color: C.amber }} className="animate-spin" /><div style={{ fontSize: 14, color: C.textSub }}>Compiling {DEMOS[demo].title} → {activeTarget.label}…</div></>
-                      : <><TerminalSquare size={30} style={{ color: C.textDim }} /><div style={{ fontSize: 14, color: C.textMuted }}>Click "Compile" to generate {activeTarget.label} code</div></>
+                      : <><TerminalSquare size={30} style={{ color: C.textDim }} /><div style={{ fontSize: 14, color: C.textMuted }}>Click &quot;Compile&quot; to generate {activeTarget.label} code</div></>
                     }
                   </div>
                 ) : (
@@ -479,9 +507,11 @@ export default function Home() {
                 </div>
                 {[
                   "Anchor IR parser — instructions, accounts, constraints, errors",
-                  "Pinocchio, Quasar, and Native Rust emitters",
+                  "Pinocchio and Quasar emitters ready for the live demo path",
+                  "Native Rust emitter scaffold on the roadmap",
                   "Static CU analysis with per-instruction cost tables",
-                  "4 curated demo programs (counter, vault, escrow, staking)",
+                  "2 live demo programs today (counter, vault)",
+                  "Escrow and staking visible as upcoming support",
                   "Express API with /parse, /emit, /demo routes",
                   "Live playground with compilation pipeline animation",
                 ].map((item) => (
@@ -574,7 +604,7 @@ function ApiDot({ ok }: { ok: boolean }) {
   );
 }
 
-function CuRow({ row, target }: { row: { instruction: string; anchor: number; pinocchio: number; quasar: number; native: number }; target: Target }) {
+function CuRow({ row }: { row: { instruction: string; anchor: number; pinocchio: number; quasar: number; native: number } }) {
   const max = row.anchor;
   return (
     <div style={{ padding: "14px 4px", borderBottom: `1px solid ${C.line}` }}>
