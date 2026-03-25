@@ -17,7 +17,7 @@ export function emitQuasar(ir: SolanaIR): string {
     sections.push(quasarAccountStruct(acc));
   }
 
-  sections.push(quasarHelpers());
+  sections.push(quasarHelpers(ir));
 
   if (ir.errors.length > 0) {
     sections.push(errorEnum(ir));
@@ -408,8 +408,8 @@ function buildQuasarVaultLogic(instructionName: string): string {
   }
 }
 
-function quasarHelpers(): string {
-  return `fn bump_seed(
+function quasarHelpers(ir: SolanaIR): string {
+  const helpers = [`fn bump_seed(
     program_id: &Pubkey,
     seeds: &[&[u8]],
     expected: &Pubkey,
@@ -419,13 +419,17 @@ function quasarHelpers(): string {
         return Err(ProgramError::InvalidSeeds);
     }
     Ok(bump)
-}
+}`];
 
-fn transfer_lamports(
+  if (ir.name === "vault") {
+    helpers.push(`fn transfer_lamports(
     from: &AccountInfo,
     to: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
+    if from.key == to.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
     let mut from_lamports = from.try_borrow_mut_lamports()?;
     let mut to_lamports = to.try_borrow_mut_lamports()?;
     **from_lamports = from_lamports
@@ -435,7 +439,10 @@ fn transfer_lamports(
         .checked_add(amount)
         .ok_or(ProgramError::ArithmeticOverflow)?;
     Ok(())
-}`;
+}`);
+  }
+
+  return helpers.join("\n\n");
 }
 
 function buildQuasarReadLines(acc: AccountDef): string {

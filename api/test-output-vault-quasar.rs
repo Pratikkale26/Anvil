@@ -252,6 +252,9 @@ fn transfer_lamports(
     to: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
+    if from.key == to.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
     let mut from_lamports = from.try_borrow_mut_lamports()?;
     let mut to_lamports = to.try_borrow_mut_lamports()?;
     **from_lamports = from_lamports

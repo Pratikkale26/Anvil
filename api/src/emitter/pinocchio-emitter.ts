@@ -17,7 +17,7 @@ export function emitPinocchio(ir: SolanaIR): string {
     sections.push(pinocchioAccountStruct(acc));
   }
 
-  sections.push(pinocchioHelpers());
+  sections.push(pinocchioHelpers(ir));
 
   if (ir.errors.length > 0) {
     sections.push(errorEnum(ir));
@@ -410,8 +410,8 @@ function buildPinocchioVaultLogic(instructionName: string): string {
   }
 }
 
-function pinocchioHelpers(): string {
-  return `fn bump_seed(
+function pinocchioHelpers(ir: SolanaIR): string {
+  const helpers = [`fn bump_seed(
     program_id: &Pubkey,
     seeds: &[&[u8]],
     expected: &Pubkey,
@@ -421,13 +421,17 @@ function pinocchioHelpers(): string {
         return Err(ProgramError::InvalidSeeds);
     }
     Ok(bump)
-}
+}`];
 
-fn transfer_lamports(
+  if (ir.name === "vault") {
+    helpers.push(`fn transfer_lamports(
     from: &AccountInfo,
     to: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
+    if from.key() == to.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
     let from_lamports = unsafe { from.borrow_mut_lamports_unchecked() };
     let to_lamports = unsafe { to.borrow_mut_lamports_unchecked() };
     *from_lamports = from_lamports
@@ -437,7 +441,10 @@ fn transfer_lamports(
         .checked_add(amount)
         .ok_or(ProgramError::ArithmeticOverflow)?;
     Ok(())
-}`;
+}`);
+  }
+
+  return helpers.join("\n\n");
 }
 
 function buildPinocchioReadLines(acc: AccountDef): string {

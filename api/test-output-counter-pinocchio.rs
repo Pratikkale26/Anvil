@@ -267,22 +267,6 @@ fn bump_seed(
     Ok(bump)
 }
 
-fn transfer_lamports(
-    from: &AccountInfo,
-    to: &AccountInfo,
-    amount: u64,
-) -> ProgramResult {
-    let from_lamports = unsafe { from.borrow_mut_lamports_unchecked() };
-    let to_lamports = unsafe { to.borrow_mut_lamports_unchecked() };
-    *from_lamports = from_lamports
-        .checked_sub(amount)
-        .ok_or(ProgramError::InsufficientFunds)?;
-    *to_lamports = to_lamports
-        .checked_add(amount)
-        .ok_or(ProgramError::ArithmeticOverflow)?;
-    Ok(())
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
 pub enum CounterError {
