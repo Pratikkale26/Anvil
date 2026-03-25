@@ -334,7 +334,7 @@ export default function Home() {
                     const info = DEMOS[d]; const active = d === demo;
                     return (
                       <button key={d} disabled={!info.available} onClick={() => info.available && setDemo(d)} style={{
-                        textAlign: "left", padding: "13px 15px", borderRadius: 12, cursor: "pointer", border: "1px solid",
+                        textAlign: "left", padding: "13px 15px", borderRadius: 12, border: "1px solid",
                         background: active ? "rgba(245,166,35,0.08)" : "transparent",
                         borderColor: active ? "rgba(245,166,35,0.35)" : C.cardBorder,
                         opacity: info.available ? 1 : 0.58,
@@ -358,7 +358,7 @@ export default function Home() {
                     const active = t.id === target;
                     return (
                       <button key={t.id} disabled={!t.available} onClick={() => t.available && setTarget(t.id)} style={{
-                        textAlign: "left", padding: "11px 15px", borderRadius: 10, cursor: "pointer", border: "1px solid", display: "flex", alignItems: "center", gap: 12,
+                        textAlign: "left", padding: "11px 15px", borderRadius: 10, border: "1px solid", display: "flex", alignItems: "center", gap: 12,
                         background: active ? `${t.color}12` : "transparent",
                         borderColor: active ? `${t.color}45` : C.cardBorder,
                         opacity: t.available ? 1 : 0.58,
@@ -485,7 +485,7 @@ export default function Home() {
                   <div key={h} style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: C.textMuted }}>{h}</div>
                 ))}
               </div>
-              {cuData.map((row) => <CuRow key={row.instruction} row={row} target={target} />)}
+              {cuData.map((row) => <CuRow key={row.instruction} row={row} />)}
               <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", gap: "0 20px", marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.line}` }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.textSub, alignSelf: "center" }}>TOTAL</div>
                 <TotalCell value={totals.anchor} />
