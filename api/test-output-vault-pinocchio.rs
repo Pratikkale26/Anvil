@@ -62,23 +62,19 @@ fn initialize(
     }
     let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
     let vault_bump = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
+    if vault_state.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if !vault_state.is_writable() || !vault.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    {
-        let vault_state_data = unsafe { vault_state.borrow_mut_data_unchecked() };
-        if vault_state_data.len() < VaultState::TOTAL_LEN {
-            return Err(ProgramError::AccountDataTooSmall);
-        }
-        vault_state_data[..8].copy_from_slice(&VaultState::DISCRIMINATOR);
-        // SAFETY: The account length is checked above and the account body is
-        // a fixed #[repr(C)] layout written immediately after the discriminator.
-        let vault_state_state = unsafe { &mut *(vault_state_data.as_mut_ptr().add(8) as *mut VaultState) };
-        vault_state_state.authority = *authority.key();
-        vault_state_state.total_deposited = 0;
-        vault_state_state.bump = vault_state_bump;
-        vault_state_state.vault_bump = vault_bump;
-    }
+    let vault_state_state = VaultState {
+        authority: *authority.key(),
+        total_deposited: 0,
+        bump: vault_state_bump,
+        vault_bump,
+    };
+    VaultState::save(vault_state, &vault_state_state)?;
 
     Ok(())
 }
@@ -107,23 +103,27 @@ fn deposit(
     if amount == 0 {
         return Err(VaultError::InvalidAmount.into());
     }
-    if !vault_state.is_writable() || !vault.is_writable() {
+    if vault_state.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if !vault_state.is_writable() || !vault.is_writable() || !user.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
     let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
     let vault_bump = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
-    let vault_state_state = VaultState::from_account_info_mut(vault_state)?;
+    let mut vault_state_state = VaultState::from_account_info(vault_state)?;
     if vault_state_state.authority != *authority.key() {
         return Err(ProgramError::InvalidAccountData);
     }
     if vault_state_state.bump != vault_state_bump || vault_state_state.vault_bump != vault_bump {
         return Err(ProgramError::InvalidSeeds);
     }
-    // TODO: invoke the system transfer CPI from user -> vault.
+    transfer_lamports(user, vault, amount)?;
     vault_state_state.total_deposited = vault_state_state
         .total_deposited
         .checked_add(amount)
         .ok_or(VaultError::Overflow)?;
+    VaultState::save(vault_state, &vault_state_state)?;
 
     Ok(())
 }
@@ -152,7 +152,10 @@ fn withdraw(
     if amount == 0 {
         return Err(VaultError::InvalidAmount.into());
     }
-    if !vault_state.is_writable() || !vault.is_writable() {
+    if vault_state.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if !vault_state.is_writable() || !vault.is_writable() || !user.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
     if vault.lamports() < amount {
@@ -160,18 +163,19 @@ fn withdraw(
     }
     let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
     let vault_bump = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
-    let vault_state_state = VaultState::from_account_info_mut(vault_state)?;
+    let mut vault_state_state = VaultState::from_account_info(vault_state)?;
     if vault_state_state.authority != *authority.key() {
         return Err(ProgramError::InvalidAccountData);
     }
     if vault_state_state.bump != vault_state_bump || vault_state_state.vault_bump != vault_bump {
         return Err(ProgramError::InvalidSeeds);
     }
-    // TODO: invoke the signed system transfer CPI from vault -> user.
+    transfer_lamports(vault, user, amount)?;
     vault_state_state.total_deposited = vault_state_state
         .total_deposited
         .checked_sub(amount)
         .ok_or(VaultError::Underflow)?;
+    VaultState::save(vault_state, &vault_state_state)?;
 
     Ok(())
 }
@@ -189,30 +193,50 @@ impl VaultState {
     pub const LEN: usize = 42;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
 
-    pub fn from_account_info(account: &AccountInfo) -> Result<&Self, ProgramError> {
-        let data = unsafe { account.borrow_data_unchecked() };
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
         if data.len() < Self::TOTAL_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
-        // SAFETY: The discriminator and length are checked above, and the
-        // generated layout uses #[repr(C)] with a fixed-size account body.
-        Ok(unsafe { &*(data.as_ptr().add(8) as *const Self) })
+        let mut offset = 8usize;
+        let authority: [u8; 32] = data[offset..offset + 32].try_into().unwrap();
+        offset += 32;
+        let total_deposited: u64 = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+        offset += 8;
+        let bump: u8 = data[offset];
+        offset += 1;
+        let vault_bump: u8 = data[offset];
+        offset += 1;
+        Ok(Self { authority, total_deposited, bump, vault_bump })
     }
 
-    pub fn from_account_info_mut(account: &AccountInfo) -> Result<&mut Self, ProgramError> {
-        let data = unsafe { account.borrow_mut_data_unchecked() };
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
         if data.len() < Self::TOTAL_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
-        if data[..8] != Self::DISCRIMINATOR {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        // SAFETY: The discriminator and length are checked above, and the
-        // generated layout uses #[repr(C)] with a fixed-size account body.
-        Ok(unsafe { &mut *(data.as_mut_ptr().add(8) as *mut Self) })
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        data[offset..offset + 32].copy_from_slice(&value.authority);
+        offset += 32;
+        data[offset..offset + 8].copy_from_slice(&value.total_deposited.to_le_bytes());
+        offset += 8;
+        data[offset] = value.bump as u8;
+        offset += 1;
+        data[offset] = value.vault_bump as u8;
+        offset += 1;
+        Ok(())
+    }
+
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = unsafe { account.borrow_data_unchecked() };
+        Self::read(&data)
+    }
+
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        Self::write(&mut data, value)
     }
 }
 
@@ -226,6 +250,22 @@ fn bump_seed(
         return Err(ProgramError::InvalidSeeds);
     }
     Ok(bump)
+}
+
+fn transfer_lamports(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    let from_lamports = unsafe { from.borrow_mut_lamports_unchecked() };
+    let to_lamports = unsafe { to.borrow_mut_lamports_unchecked() };
+    *from_lamports = from_lamports
+        .checked_sub(amount)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    *to_lamports = to_lamports
+        .checked_add(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -63,22 +63,18 @@ fn initialize(
     }
     let start_value: u64 = u64::from_le_bytes(data[0..8].try_into().unwrap());
     let counter_bump = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
+    if counter.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if !counter.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    {
-        let counter_data = unsafe { counter.borrow_mut_data_unchecked() };
-        if counter_data.len() < CounterAccount::TOTAL_LEN {
-            return Err(ProgramError::AccountDataTooSmall);
-        }
-        counter_data[..8].copy_from_slice(&CounterAccount::DISCRIMINATOR);
-        // SAFETY: The account length is checked above and the account body is
-        // a fixed #[repr(C)] layout written immediately after the discriminator.
-        let counter_state = unsafe { &mut *(counter_data.as_mut_ptr().add(8) as *mut CounterAccount) };
-        counter_state.authority = *authority.key();
-        counter_state.count = start_value;
-        counter_state.bump = counter_bump;
-    }
+    let counter_state = CounterAccount {
+        authority: *authority.key(),
+        count: start_value,
+        bump: counter_bump,
+    };
+    CounterAccount::save(counter, &counter_state)?;
 
     Ok(())
 }
@@ -102,11 +98,14 @@ fn increment(
         return Err(ProgramError::InvalidInstructionData);
     }
     let amount: u64 = u64::from_le_bytes(data[0..8].try_into().unwrap());
+    if counter.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if !counter.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
     let counter_bump = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
-    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    let mut counter_state = CounterAccount::from_account_info(counter)?;
     if counter_state.authority != *authority.key() {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -117,6 +116,7 @@ fn increment(
         .count
         .checked_add(amount)
         .ok_or(CounterError::Overflow)?;
+    CounterAccount::save(counter, &counter_state)?;
 
     Ok(())
 }
@@ -140,11 +140,14 @@ fn decrement(
         return Err(ProgramError::InvalidInstructionData);
     }
     let amount: u64 = u64::from_le_bytes(data[0..8].try_into().unwrap());
+    if counter.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if !counter.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
     let counter_bump = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
-    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    let mut counter_state = CounterAccount::from_account_info(counter)?;
     if counter_state.authority != *authority.key() {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -155,6 +158,7 @@ fn decrement(
         .count
         .checked_sub(amount)
         .ok_or(CounterError::Underflow)?;
+    CounterAccount::save(counter, &counter_state)?;
 
     Ok(())
 }
@@ -176,11 +180,14 @@ fn reset(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
+    if counter.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if !counter.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
     let counter_bump = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
-    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    let mut counter_state = CounterAccount::from_account_info(counter)?;
     if counter_state.authority != *authority.key() {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -188,6 +195,7 @@ fn reset(
         return Err(ProgramError::InvalidSeeds);
     }
     counter_state.count = 0;
+    CounterAccount::save(counter, &counter_state)?;
 
     Ok(())
 }
@@ -204,30 +212,46 @@ impl CounterAccount {
     pub const LEN: usize = 41;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
 
-    pub fn from_account_info(account: &AccountInfo) -> Result<&Self, ProgramError> {
-        let data = unsafe { account.borrow_data_unchecked() };
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
         if data.len() < Self::TOTAL_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
-        // SAFETY: The discriminator and length are checked above, and the
-        // generated layout uses #[repr(C)] with a fixed-size account body.
-        Ok(unsafe { &*(data.as_ptr().add(8) as *const Self) })
+        let mut offset = 8usize;
+        let authority: [u8; 32] = data[offset..offset + 32].try_into().unwrap();
+        offset += 32;
+        let count: u64 = u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap());
+        offset += 8;
+        let bump: u8 = data[offset];
+        offset += 1;
+        Ok(Self { authority, count, bump })
     }
 
-    pub fn from_account_info_mut(account: &AccountInfo) -> Result<&mut Self, ProgramError> {
-        let data = unsafe { account.borrow_mut_data_unchecked() };
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
         if data.len() < Self::TOTAL_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
-        if data[..8] != Self::DISCRIMINATOR {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        // SAFETY: The discriminator and length are checked above, and the
-        // generated layout uses #[repr(C)] with a fixed-size account body.
-        Ok(unsafe { &mut *(data.as_mut_ptr().add(8) as *mut Self) })
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        data[offset..offset + 32].copy_from_slice(&value.authority);
+        offset += 32;
+        data[offset..offset + 8].copy_from_slice(&value.count.to_le_bytes());
+        offset += 8;
+        data[offset] = value.bump as u8;
+        offset += 1;
+        Ok(())
+    }
+
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = unsafe { account.borrow_data_unchecked() };
+        Self::read(&data)
+    }
+
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        Self::write(&mut data, value)
     }
 }
 
@@ -241,6 +265,22 @@ fn bump_seed(
         return Err(ProgramError::InvalidSeeds);
     }
     Ok(bump)
+}
+
+fn transfer_lamports(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    let from_lamports = unsafe { from.borrow_mut_lamports_unchecked() };
+    let to_lamports = unsafe { to.borrow_mut_lamports_unchecked() };
+    *from_lamports = from_lamports
+        .checked_sub(amount)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    *to_lamports = to_lamports
+        .checked_add(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

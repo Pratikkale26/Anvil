@@ -107,6 +107,9 @@ function quasarAccountStruct(acc: AccountDef): string {
     .map((field) => `    pub ${snakeCase(field.name)}: ${quasarType(field.type)},`)
     .join("\n");
   const bodyLen = acc.space ?? acc.fields.reduce((size, field) => size + typeSize(field.type), 0);
+  const readLines = buildQuasarReadLines(acc);
+  const writeLines = buildQuasarWriteLines(acc);
+  const ctorFields = acc.fields.map((field) => snakeCase(field.name)).join(", ");
 
   return `#[repr(C)]
 pub struct ${acc.name} {
@@ -118,30 +121,36 @@ impl ${acc.name} {
     pub const LEN: usize = ${bodyLen};
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
 
-    pub fn from_account_info(account: &AccountInfo) -> Result<&Self, ProgramError> {
-        let data = account.try_borrow_data()?;
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
         if data.len() < Self::TOTAL_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
-        // SAFETY: The discriminator and length are checked above, and the
-        // generated layout uses #[repr(C)] with a fixed-size account body.
-        Ok(unsafe { &*(data.as_ptr().add(8) as *const Self) })
+        let mut offset = 8usize;
+${readLines}
+        Ok(Self { ${ctorFields} })
     }
 
-    pub fn from_account_info_mut(account: &AccountInfo) -> Result<&mut Self, ProgramError> {
-        let mut data = account.try_borrow_mut_data()?;
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
         if data.len() < Self::TOTAL_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
-        if data[..8] != Self::DISCRIMINATOR {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        // SAFETY: The discriminator and length are checked above, and the
-        // generated layout uses #[repr(C)] with a fixed-size account body.
-        Ok(unsafe { &mut *(data.as_mut_ptr().add(8) as *mut Self) })
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+${writeLines}
+        Ok(())
+    }
+
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = account.try_borrow_data()?;
+        Self::read(&data)
+    }
+
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = account.try_borrow_mut_data()?;
+        Self::write(&mut data, value)
     }
 }`;
 }
@@ -249,28 +258,27 @@ function buildQuasarCounterLogic(instructionName: string): string {
   switch (instructionName) {
     case "initialize":
       return `    let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
+    if counter.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if !counter.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
-    {
-        let mut counter_data = counter.try_borrow_mut_data()?;
-        if counter_data.len() < CounterAccount::TOTAL_LEN {
-            return Err(ProgramError::AccountDataTooSmall);
-        }
-        counter_data[..8].copy_from_slice(&CounterAccount::DISCRIMINATOR);
-        // SAFETY: The account length is checked above and the account body is
-        // a fixed #[repr(C)] layout written immediately after the discriminator.
-        let counter_state = unsafe { &mut *(counter_data.as_mut_ptr().add(8) as *mut CounterAccount) };
-        counter_state.authority = *authority.key;
-        counter_state.count = start_value;
-        counter_state.bump = counter_bump;
-    }`;
+    let counter_state = CounterAccount {
+        authority: *authority.key,
+        count: start_value,
+        bump: counter_bump,
+    };
+    CounterAccount::save(counter, &counter_state)?;`;
     case "increment":
-      return `    if !counter.is_writable {
+      return `    if counter.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if !counter.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
     let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
-    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    let mut counter_state = CounterAccount::from_account_info(counter)?;
     if counter_state.authority != *authority.key {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -280,13 +288,17 @@ function buildQuasarCounterLogic(instructionName: string): string {
     counter_state.count = counter_state
         .count
         .checked_add(amount)
-        .ok_or(CounterError::Overflow)?;`;
+        .ok_or(CounterError::Overflow)?;
+    CounterAccount::save(counter, &counter_state)?;`;
     case "decrement":
-      return `    if !counter.is_writable {
+      return `    if counter.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if !counter.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
     let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
-    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    let mut counter_state = CounterAccount::from_account_info(counter)?;
     if counter_state.authority != *authority.key {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -296,20 +308,25 @@ function buildQuasarCounterLogic(instructionName: string): string {
     counter_state.count = counter_state
         .count
         .checked_sub(amount)
-        .ok_or(CounterError::Underflow)?;`;
+        .ok_or(CounterError::Underflow)?;
+    CounterAccount::save(counter, &counter_state)?;`;
     case "reset":
-      return `    if !counter.is_writable {
+      return `    if counter.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if !counter.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
     let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
-    let counter_state = CounterAccount::from_account_info_mut(counter)?;
+    let mut counter_state = CounterAccount::from_account_info(counter)?;
     if counter_state.authority != *authority.key {
         return Err(ProgramError::InvalidAccountData);
     }
     if counter_state.bump != counter_bump {
         return Err(ProgramError::InvalidSeeds);
     }
-    counter_state.count = 0;`;
+    counter_state.count = 0;
+    CounterAccount::save(counter, &counter_state)?;`;
     default:
       return `    // TODO: counter.${instructionName}`;
   }
@@ -320,49 +337,52 @@ function buildQuasarVaultLogic(instructionName: string): string {
     case "initialize":
       return `    let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key.as_ref()], vault_state.key)?;
     let vault_bump = bump_seed(program_id, &[b"vault", authority.key.as_ref()], vault.key)?;
+    if vault_state.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if !vault_state.is_writable || !vault.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
-    {
-        let mut vault_state_data = vault_state.try_borrow_mut_data()?;
-        if vault_state_data.len() < VaultState::TOTAL_LEN {
-            return Err(ProgramError::AccountDataTooSmall);
-        }
-        vault_state_data[..8].copy_from_slice(&VaultState::DISCRIMINATOR);
-        // SAFETY: The account length is checked above and the account body is
-        // a fixed #[repr(C)] layout written immediately after the discriminator.
-        let vault_state_state = unsafe { &mut *(vault_state_data.as_mut_ptr().add(8) as *mut VaultState) };
-        vault_state_state.authority = *authority.key;
-        vault_state_state.total_deposited = 0;
-        vault_state_state.bump = vault_state_bump;
-        vault_state_state.vault_bump = vault_bump;
-    }`;
+    let vault_state_state = VaultState {
+        authority: *authority.key,
+        total_deposited: 0,
+        bump: vault_state_bump,
+        vault_bump,
+    };
+    VaultState::save(vault_state, &vault_state_state)?;`;
     case "deposit":
       return `    if amount == 0 {
         return Err(VaultError::InvalidAmount.into());
     }
-    if !vault_state.is_writable || !vault.is_writable {
+    if vault_state.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if !vault_state.is_writable || !vault.is_writable || !user.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
     let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key.as_ref()], vault_state.key)?;
     let vault_bump = bump_seed(program_id, &[b"vault", authority.key.as_ref()], vault.key)?;
-    let vault_state_state = VaultState::from_account_info_mut(vault_state)?;
+    let mut vault_state_state = VaultState::from_account_info(vault_state)?;
     if vault_state_state.authority != *authority.key {
         return Err(ProgramError::InvalidAccountData);
     }
     if vault_state_state.bump != vault_state_bump || vault_state_state.vault_bump != vault_bump {
         return Err(ProgramError::InvalidSeeds);
     }
-    // TODO: invoke the system transfer CPI from user -> vault.
+    transfer_lamports(user, vault, amount)?;
     vault_state_state.total_deposited = vault_state_state
         .total_deposited
         .checked_add(amount)
-        .ok_or(VaultError::Overflow)?;`;
+        .ok_or(VaultError::Overflow)?;
+    VaultState::save(vault_state, &vault_state_state)?;`;
     case "withdraw":
       return `    if amount == 0 {
         return Err(VaultError::InvalidAmount.into());
     }
-    if !vault_state.is_writable || !vault.is_writable {
+    if vault_state.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if !vault_state.is_writable || !vault.is_writable || !user.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
     if vault.lamports() < amount {
@@ -370,18 +390,19 @@ function buildQuasarVaultLogic(instructionName: string): string {
     }
     let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key.as_ref()], vault_state.key)?;
     let vault_bump = bump_seed(program_id, &[b"vault", authority.key.as_ref()], vault.key)?;
-    let vault_state_state = VaultState::from_account_info_mut(vault_state)?;
+    let mut vault_state_state = VaultState::from_account_info(vault_state)?;
     if vault_state_state.authority != *authority.key {
         return Err(ProgramError::InvalidAccountData);
     }
     if vault_state_state.bump != vault_state_bump || vault_state_state.vault_bump != vault_bump {
         return Err(ProgramError::InvalidSeeds);
     }
-    // TODO: invoke the signed system transfer CPI from vault -> user.
+    transfer_lamports(vault, user, amount)?;
     vault_state_state.total_deposited = vault_state_state
         .total_deposited
         .checked_sub(amount)
-        .ok_or(VaultError::Underflow)?;`;
+        .ok_or(VaultError::Underflow)?;
+    VaultState::save(vault_state, &vault_state_state)?;`;
     default:
       return `    // TODO: vault.${instructionName}`;
   }
@@ -398,7 +419,75 @@ function quasarHelpers(): string {
         return Err(ProgramError::InvalidSeeds);
     }
     Ok(bump)
+}
+
+fn transfer_lamports(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    let mut from_lamports = from.try_borrow_mut_lamports()?;
+    let mut to_lamports = to.try_borrow_mut_lamports()?;
+    **from_lamports = from_lamports
+        .checked_sub(amount)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    **to_lamports = to_lamports
+        .checked_add(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    Ok(())
 }`;
+}
+
+function buildQuasarReadLines(acc: AccountDef): string {
+  return acc.fields.map((field) => buildQuasarReadLine(field.type, snakeCase(field.name))).join("\n");
+}
+
+function buildQuasarWriteLines(acc: AccountDef): string {
+  return acc.fields.map((field) => buildQuasarWriteLine(field.type, snakeCase(field.name))).join("\n");
+}
+
+function buildQuasarReadLine(typeName: string, fieldName: string): string {
+  const size = typeSize(typeName);
+  if (typeName === "Pubkey") {
+    return `        let ${fieldName}: Pubkey = Pubkey::new_from_array(data[offset..offset + 32].try_into().unwrap());
+        offset += 32;`;
+  }
+  if (typeName === "bool") {
+    return `        let ${fieldName}: bool = match data[offset] {
+            0 => false,
+            1 => true,
+            _ => return Err(ProgramError::InvalidAccountData),
+        };
+        offset += 1;`;
+  }
+  if (typeName === "u8") {
+    return `        let ${fieldName}: u8 = data[offset];
+        offset += 1;`;
+  }
+  if (typeName === "i8") {
+    return `        let ${fieldName}: i8 = data[offset] as i8;
+        offset += 1;`;
+  }
+  return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(data[offset..offset + ${size}].try_into().unwrap());
+        offset += ${size};`;
+}
+
+function buildQuasarWriteLine(typeName: string, fieldName: string): string {
+  if (typeName === "Pubkey") {
+    return `        data[offset..offset + 32].copy_from_slice(value.${fieldName}.as_ref());
+        offset += 32;`;
+  }
+  if (typeName === "bool") {
+    return `        data[offset] = if value.${fieldName} { 1 } else { 0 };
+        offset += 1;`;
+  }
+  if (typeName === "u8" || typeName === "i8") {
+    return `        data[offset] = value.${fieldName} as u8;
+        offset += 1;`;
+  }
+  const size = typeSize(typeName);
+  return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName}.to_le_bytes());
+        offset += ${size};`;
 }
 
 function instrDiscriminatorArray(name: string): string {
