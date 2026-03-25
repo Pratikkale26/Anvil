@@ -261,7 +261,8 @@ export default function Home() {
             <span style={{ background: `linear-gradient(90deg, ${C.indigo}, #9baeff)`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Quasar.</span>
           </h1>
           <p style={{ fontSize: 18, color: C.textSub, maxWidth: 600, margin: "0 auto 44px", lineHeight: 1.75 }}>
-            Anvil parses Anchor programs into a framework-agnostic IR, then emits optimized Pinocchio, Quasar, or Native Rust — with live CU analysis.          </p>
+            Anvil parses Anchor programs into a framework-agnostic IR, then emits optimized Pinocchio or Quasar Rust with live CU analysis.
+          </p>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
             <Btn
               primary
@@ -318,6 +319,9 @@ export default function Home() {
             <h2 style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", marginTop: 8, color: C.text }}>
               Select a program, pick a target, compile.
             </h2>
+            <p style={{ fontSize: 14, color: C.textSub, marginTop: 10, maxWidth: 720, lineHeight: 1.7 }}>
+              Today the playground is wired to the live <code>counter</code> and <code>vault</code> demos. Next up: paste your own Anchor source, or point Anvil at a GitHub repo or local file.
+            </p>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "330px 1fr", gap: 16, alignItems: "start" }}>
@@ -535,6 +539,7 @@ export default function Home() {
                   "tree-sitter parser for precise Anchor AST traversal",
                   "Account space auto-calculation from IR field definitions",
                   "CLI: `anvil compile program.rs --target pinocchio`",
+                  "GitHub repo and local-file ingestion from the frontend",
                   "IDL import — parse Anchor IDL JSON as IR input",
                   "Deploy-ready output validation + Anchor test compatibility",
                 ].map((item) => (
