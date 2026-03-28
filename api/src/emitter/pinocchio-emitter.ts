@@ -16,6 +16,8 @@ import {
   toPascalCase,
   isProgramAccount,
   irNeedsHelper,
+  irNeedsSignedSplCloseAccountHelper,
+  irNeedsUnsignedSplCloseAccountHelper,
 } from "./emitter-base.js";
 
 class PinocchioEmitter extends BaseEmitter {
@@ -116,10 +118,12 @@ ${arms}
 
   override emitBumpSeed(_programId: string, seeds: string[], expectedKey: string): string {
     const prelude: string[] = [];
-    const transformedSeeds = seeds.map((seed, index) => {
+    let tempCount = 0;
+    const transformedSeeds = seeds.map((seed) => {
       const match = seed.match(/^(.*)\.to_le_bytes\(\)\.as_ref\(\)$/);
       if (!match?.[1]) return seed;
-      const varName = `seed_bytes_${index}`;
+      const varName = tempCount === 0 ? "seed_bytes" : `seed_bytes_${tempCount + 1}`;
+      tempCount++;
       prelude.push(`    let ${varName} = ${match[1].trim()}.to_le_bytes();`);
       return `${varName}.as_ref()`;
     });
@@ -163,6 +167,10 @@ ${arms}
     spl_token_close_account${signed}(${account}, ${destination}, ${authority}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
   }
 
+  override emitProgramAccountClose(account: string, destination: string): string {
+    return `    close_program_account(${account}, ${destination})?;`;
+  }
+
   override emitPdaSignerSeeds(
     account: string,
     accountInfoVar: string,
@@ -185,18 +193,21 @@ ${arms}
 
     // Transform seed expressions from Anchor-style to Pinocchio-style
     const prelude: string[] = [];
-    const transformedSeeds = seeds.map((seed, index) => {
+    let tempCount = 0;
+    const transformedSeeds = seeds.map((seed) => {
       // b"literal" stays unchanged
       if (seed.startsWith('b"') || seed.startsWith("b'")) return seed;
       const bytesMatch = seed.match(/^&(.+)\.to_le_bytes\(\)$/);
       if (bytesMatch?.[1]) {
-        const varName = `${account}_seed_bytes_${index}`;
+        const varName = tempCount === 0 ? "seed_bytes" : `seed_bytes_${tempCount + 1}`;
+        tempCount++;
         prelude.push(`    let ${varName} = ${bytesMatch[1].trim()}.to_le_bytes();`);
         return `&${varName}`;
       }
       const asRefMatch = seed.match(/^(.*)\.to_le_bytes\(\)\.as_ref\(\)$/);
       if (asRefMatch?.[1]) {
-        const varName = `${account}_seed_bytes_${index}`;
+        const varName = tempCount === 0 ? "seed_bytes" : `seed_bytes_${tempCount + 1}`;
+        tempCount++;
         prelude.push(`    let ${varName} = ${asRefMatch[1].trim()}.to_le_bytes();`);
         return `${varName}.as_ref()`;
       }
@@ -402,7 +413,9 @@ fn spl_token_transfer_signed(
 }`);
     }
 
-    if (irNeedsHelper(ir, "spl_close_account")) {
+    const needsUnsignedCloseHelper = irNeedsUnsignedSplCloseAccountHelper(ir);
+    const needsSignedCloseHelper = irNeedsSignedSplCloseAccountHelper(ir);
+    if (needsUnsignedCloseHelper) {
       helpers.push(`fn spl_token_close_account(
     account: &AccountInfo,
     destination: &AccountInfo,
@@ -414,9 +427,11 @@ fn spl_token_transfer_signed(
         authority,
     }
     .invoke()
-}
+}`);
+    }
 
-fn spl_token_close_account_signed(
+    if (needsSignedCloseHelper) {
+      helpers.push(`fn spl_token_close_account_signed(
     account: &AccountInfo,
     destination: &AccountInfo,
     authority: &AccountInfo,
@@ -428,6 +443,35 @@ fn spl_token_close_account_signed(
         authority,
     }
     .invoke_signed(signer_seeds)
+}`);
+    }
+
+    if (irNeedsHelper(ir, "close_program_account")) {
+      helpers.push(`fn close_program_account(
+    account: &AccountInfo,
+    destination: &AccountInfo,
+) -> ProgramResult {
+    if account.key() == destination.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let lamports = account.lamports();
+    {
+        let destination_lamports = unsafe { destination.borrow_mut_lamports_unchecked() };
+        *destination_lamports = destination_lamports
+            .checked_add(lamports)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+    }
+    {
+        let account_lamports = unsafe { account.borrow_mut_lamports_unchecked() };
+        *account_lamports = 0;
+    }
+    {
+        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        for byte in data.iter_mut() {
+            *byte = 0;
+        }
+    }
+    Ok(())
 }`);
     }
 

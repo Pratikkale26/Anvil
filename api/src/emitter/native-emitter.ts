@@ -217,6 +217,10 @@ ${arms}
     )?;`;
   }
 
+  override emitProgramAccountClose(account: string, destination: string): string {
+    return `    close_program_account(${account}, ${destination})?;`;
+  }
+
   override emitPdaSignerSeeds(
     account: string,
     accountInfoVar: string,
@@ -326,7 +330,25 @@ impl std::error::Error for ${enumName} {}`;
   }
 
   override emitHelperFunctions(_ir: SolanaIR): string {
-    return "";
+    if (!irNeedsHelper(_ir, "close_program_account")) {
+      return "";
+    }
+    return `fn close_program_account(
+    account: &AccountInfo,
+    destination: &AccountInfo,
+) -> ProgramResult {
+    if account.key == destination.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let lamports = account.lamports();
+    **destination.try_borrow_mut_lamports()? = destination
+        .lamports()
+        .checked_add(lamports)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    **account.try_borrow_mut_lamports()? = 0;
+    account.data.borrow_mut().fill(0);
+    Ok(())
+}`;
   }
 }
 

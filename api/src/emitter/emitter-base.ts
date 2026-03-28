@@ -55,6 +55,7 @@ export abstract class BaseEmitter {
   abstract emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string): string;
   abstract emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string): string;
   abstract emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string): string;
+  abstract emitProgramAccountClose(account: string, destination: string): string;
 
   // ── PDA signer seeds ──
   abstract emitPdaSignerSeeds(
@@ -348,6 +349,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             signerSeeds
           ));
         }
+
+        lines.push(this.emitProgramAccountClose(
+          resolveAccountInfoVar(accountName),
+          resolveAccountInfoVar(snakeCase(closeConstraint.value))
+        ));
       }
     };
     const emitPendingSaves = (): void => {
@@ -781,6 +787,14 @@ export function capitalize(value: string): string {
  */
 export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
   for (const instr of ir.instructions) {
+    if (helperName === "close_program_account") {
+      if (instr.accounts.some((account) =>
+        account.constraints.some((constraint) => constraint.kind === "close" && constraint.value)
+      )) {
+        return true;
+      }
+    }
+
     if (helperName === "spl_close_account") {
       for (const account of instr.accounts) {
         const hasCloseConstraint = account.constraints.some(
@@ -816,6 +830,58 @@ export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
         case "spl_close_account":
           if (stmt.kind === "cpi_spl_close_account") return true;
           break;
+      }
+    }
+  }
+  return false;
+}
+
+export function irNeedsSignedSplCloseAccountHelper(ir: SolanaIR): boolean {
+  for (const instr of ir.instructions) {
+    for (const stmt of instr.body) {
+      if (stmt.kind === "cpi_spl_close_account" && stmt.signerSeeds) {
+        return true;
+      }
+    }
+
+    for (const account of instr.accounts) {
+      const hasCloseConstraint = account.constraints.some(
+        (constraint) => constraint.kind === "close" && constraint.value
+      );
+      if (!hasCloseConstraint || !account.isPda) continue;
+      const closesDependentTokenAccount = instr.accounts.some((dependent) =>
+        dependent.constraints.some(
+          (constraint) => constraint.kind === "token::authority" && constraint.value === account.name
+        )
+      );
+      if (closesDependentTokenAccount) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function irNeedsUnsignedSplCloseAccountHelper(ir: SolanaIR): boolean {
+  for (const instr of ir.instructions) {
+    for (const stmt of instr.body) {
+      if (stmt.kind === "cpi_spl_close_account" && !stmt.signerSeeds) {
+        return true;
+      }
+    }
+
+    for (const account of instr.accounts) {
+      const hasCloseConstraint = account.constraints.some(
+        (constraint) => constraint.kind === "close" && constraint.value
+      );
+      if (!hasCloseConstraint || account.isPda) continue;
+      const closesDependentTokenAccount = instr.accounts.some((dependent) =>
+        dependent.constraints.some(
+          (constraint) => constraint.kind === "token::authority" && constraint.value === account.name
+        )
+      );
+      if (closesDependentTokenAccount) {
+        return true;
       }
     }
   }

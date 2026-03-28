@@ -147,6 +147,10 @@ ${arms}
     spl_token_close_account${signed}(${account}, ${destination}, ${authority}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
   }
 
+  override emitProgramAccountClose(account: string, destination: string): string {
+    return `    close_program_account(${account}, ${destination})?;`;
+  }
+
   override emitPdaSignerSeeds(
     account: string,
     accountInfoVar: string,
@@ -357,6 +361,25 @@ fn spl_token_transfer_signed(
         amount,
     )?;
     quasar::program::invoke_signed(&ix, &[from.clone(), to.clone(), authority.clone()], signer_seeds)
+}`);
+    }
+
+    if (irNeedsHelper(ir, "close_program_account")) {
+      helpers.push(`fn close_program_account(
+    account: &AccountInfo,
+    destination: &AccountInfo,
+) -> ProgramResult {
+    if account.key == destination.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let lamports = account.lamports();
+    **destination.try_borrow_mut_lamports()? = destination
+        .lamports()
+        .checked_add(lamports)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    **account.try_borrow_mut_lamports()? = 0;
+    account.try_borrow_mut_data()?.fill(0);
+    Ok(())
 }`);
     }
 
