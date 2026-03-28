@@ -188,8 +188,52 @@ export function hasDeriveAttribute(attrs: SyntaxNode[], target: string): boolean
 export function extractAccountAttrInner(attrs: SyntaxNode[]): string | null {
   for (const attr of attrs) {
     const text = attr.text;
-    const match = text.match(/#\[account\(([^)]*(?:\([^)]*\)[^)]*)*)\)\]/s);
-    if (match?.[1]) return match[1];
+    const prefix = "#[account(";
+    const start = text.indexOf(prefix);
+    if (start === -1) continue;
+
+    let depth = 1;
+    let inString = false;
+    let quote = "";
+    let escaped = false;
+    const bodyStart = start + prefix.length;
+
+    for (let i = bodyStart; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === quote) {
+          inString = false;
+          quote = "";
+        }
+        continue;
+      }
+
+      if (ch === '"' || ch === "'") {
+        inString = true;
+        quote = ch;
+        continue;
+      }
+
+      if (ch === "(") {
+        depth++;
+        continue;
+      }
+
+      if (ch === ")") {
+        depth--;
+        if (depth === 0) {
+          return text.slice(bodyStart, i);
+        }
+      }
+    }
   }
   return null;
 }

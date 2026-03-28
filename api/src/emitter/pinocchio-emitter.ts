@@ -142,7 +142,14 @@ ${arms}
     spl_token_close_account${signed}(${account}, ${destination}, ${authority}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
   }
 
-  override emitPdaSignerSeeds(account: string, seeds: string[], bumpField?: string): string {
+  override emitPdaSignerSeeds(
+    account: string,
+    accountInfoVar: string,
+    seeds: string[],
+    _bumpField?: string,
+    stateVar?: string,
+    typeName?: string,
+  ): string {
     // Detect the account name used as prefix in seed expressions
     let statePrefix = account;
     for (const seed of seeds) {
@@ -153,7 +160,7 @@ ${arms}
       }
     }
 
-    const dataVar = `${account}_data`;
+    const dataVar = stateVar || `${account}_data`;
 
     // Transform seed expressions from Anchor-style to Pinocchio-style
     const transformedSeeds = seeds.map(seed => {
@@ -168,16 +175,10 @@ ${arms}
     });
 
     const seedsStr = transformedSeeds.join(",\n            ");
-
-    // Determine the type name — capitalize the account name
-    const typeName = account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
-
-    // Only emit from_account_info here if it's strictly needed for seeds
-    // (the body classifier should have already emitted a state_read for this account,
-    //  but the PDA seeds block needs to deserialize separately if the data is needed for seeds)
+    const resolvedTypeName = typeName || account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+    const maybeRead = stateVar ? "" : `    let ${dataVar} = ${resolvedTypeName}::from_account_info(${accountInfoVar})?;\n`;
     return `    // PDA signer seeds for '${account}'
-    let ${dataVar} = ${typeName}::from_account_info(${account})?;
-    let seeds = &[
+${maybeRead}    let seeds = &[
             ${seedsStr},
         ];
     let signer_seeds = &[&seeds[..]];`;
@@ -323,6 +324,16 @@ impl From<${enumName}> for ProgramError {
         .checked_add(amount)
         .ok_or(ProgramError::ArithmeticOverflow)?;
     Ok(())
+}`);
+
+      helpers.push(`fn transfer_lamports_signed(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let ix = pinocchio::system_instruction::transfer(from.key(), to.key(), amount);
+    pinocchio::program::invoke_signed(&ix, &[from.clone(), to.clone()], signer_seeds)
 }`);
     }
 

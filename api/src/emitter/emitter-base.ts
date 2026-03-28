@@ -57,7 +57,14 @@ export abstract class BaseEmitter {
   abstract emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string): string;
 
   // ── PDA signer seeds ──
-  abstract emitPdaSignerSeeds(account: string, seeds: string[], bumpField?: string): string;
+  abstract emitPdaSignerSeeds(
+    account: string,
+    accountInfoVar: string,
+    seeds: string[],
+    bumpField?: string,
+    stateVar?: string,
+    typeName?: string,
+  ): string;
 
   // ── Macro transforms ──
   abstract emitRequire(condition: string, error: string): string;
@@ -305,6 +312,24 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
 
     // Collect which accounts are mutated (for auto-save)
     const mutatedAccounts = new Set<string>();
+    const stateVars = new Map<string, string>();
+    const accountInfoVars = new Map<string, string>();
+
+    const resolveStateVar = (account: string): string => stateVars.get(account) ?? account;
+    const resolveAccountInfoVar = (account: string): string => accountInfoVars.get(account) ?? account;
+    const emitPendingSaves = (): void => {
+      for (const accName of mutatedAccounts) {
+        const accRef = instr.accounts.find(a => snakeCase(a.name) === snakeCase(accName));
+        const typeName = accRef?.accountType || "Unknown";
+        if (!isProgramAccount(typeName) && typeName !== "Unknown" && typeName !== "Signer" && typeName !== "SystemAccount" && typeName !== "UncheckedAccount") {
+          lines.push(this.emitStateSave(
+            resolveAccountInfoVar(snakeCase(accName)),
+            typeName,
+            resolveStateVar(snakeCase(accName))
+          ));
+        }
+      }
+    };
 
     for (const stmt of statements) {
       switch (stmt.kind) {
@@ -315,6 +340,8 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
 
           // Skip pass_through Ok(()) — handled by instruction wrapper
           if (rawCode === "Ok(())") {
+            emitPendingSaves();
+            lines.push(`    Ok(())`);
             break;
           }
 
@@ -353,10 +380,19 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           if (isProgramAccount(stmt.accountType || "")) {
             break;
           }
+          const accountName = snakeCase(stmt.account);
+          const localVar = snakeCase(stmt.localVar);
+          const needsAlias = accountName === localVar;
+          const accountInfoVar = needsAlias ? `${accountName}_account` : accountName;
+          if (needsAlias) {
+            lines.push(`    let ${accountInfoVar} = ${accountName};`);
+          }
+          stateVars.set(accountName, localVar);
+          accountInfoVars.set(accountName, accountInfoVar);
           lines.push(this.emitStateRead(
-            snakeCase(stmt.account),
+            accountInfoVar,
             stmt.accountType || "Unknown",
-            snakeCase(stmt.localVar),
+            localVar,
             stmt.mutable
           ));
           break;
@@ -388,23 +424,14 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             // Derive seeds from the account's PDA constraints in the IR
             const accountRef = instr.accounts.find(a => snakeCase(a.name) === snakeCase(bumpAccount));
             const pdaSeeds = accountRef?.pdaSeeds ?? [`b"${snakeCase(bumpAccount)}"`];
-            // Build seeds array: PDA seeds + authority ref if applicable
-            const seedExprs = pdaSeeds.map(s => s);
-            // Look for has_one constraints to find the authority field
-            const hasOneAuth = accountRef?.constraints?.find(
-              (c: { kind: string; value?: string }) => c.kind === "has_one" && (c.value === "authority" || c.value === "maker")
-            );
-            if (hasOneAuth?.value) {
-              seedExprs.push(`${snakeCase(stmt.account)}.${hasOneAuth.value}.as_ref()`);
-            }
             value = `bump`;
             lines.push(this.emitBumpSeed(
               "program_id",
-              seedExprs,
-              snakeCase(bumpAccount)
+              pdaSeeds,
+              resolveAccountInfoVar(snakeCase(bumpAccount))
             ));
           }
-          lines.push(`    ${snakeCase(stmt.account)}.${snakeCase(stmt.field)} = ${value};`);
+          lines.push(`    ${resolveStateVar(snakeCase(stmt.account))}.${snakeCase(stmt.field)} = ${value};`);
           break;
         }
 
@@ -513,24 +540,39 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         case "pda_signer_seeds": {
           this.transformedCount++;
           this.details.push(`Transformed: PDA signer seeds for '${stmt.account}'`);
+          const accountName = snakeCase(stmt.account);
+          const accRef = instr.accounts.find(a => snakeCase(a.name) === accountName);
+          let seedStateAccount: string | undefined;
+          for (const seed of stmt.seeds) {
+            const directMatch = seed.match(/^(\w+)\.\w+/)?.[1];
+            if (directMatch && stateVars.has(directMatch)) {
+              seedStateAccount = directMatch;
+              break;
+            }
+            const bumpMatch = seed.match(/&\[(\w+)\.\w+/)?.[1];
+            if (bumpMatch && stateVars.has(bumpMatch)) {
+              seedStateAccount = bumpMatch;
+              break;
+            }
+          }
+          const seedStateVar = seedStateAccount ? stateVars.get(seedStateAccount) : stateVars.get(accountName);
+          const seedStateType = seedStateAccount
+            ? instr.accounts.find(a => snakeCase(a.name) === seedStateAccount)?.accountType
+            : accRef?.accountType;
           lines.push(this.emitPdaSignerSeeds(
-            snakeCase(stmt.account),
+            accountName,
+            resolveAccountInfoVar(accountName),
             stmt.seeds,
-            stmt.bumpField
+            stmt.bumpField,
+            seedStateVar,
+            seedStateType
           ));
           break;
         }
 
         // ── Return Ok(()) ──
         case "return_ok": {
-          // Emit save() for any mutated state accounts before returning
-          for (const accName of mutatedAccounts) {
-            const accRef = instr.accounts.find(a => snakeCase(a.name) === snakeCase(accName));
-            const typeName = accRef?.accountType || "Unknown";
-            if (!isProgramAccount(typeName) && typeName !== "Unknown" && typeName !== "Signer" && typeName !== "SystemAccount" && typeName !== "UncheckedAccount") {
-              lines.push(this.emitStateSave(snakeCase(accName), typeName, snakeCase(accName)));
-            }
-          }
+          emitPendingSaves();
           lines.push(`    Ok(())`);
           break;
         }

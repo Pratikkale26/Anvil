@@ -437,6 +437,11 @@ function extractPdaSeeds(
  * → account is "escrow"
  */
 function detectSeedAccount(seeds: string[]): string {
+  const literalSeed = seeds[0]?.match(/^b["']([A-Za-z0-9_]+)["']$/)?.[1];
+  if (literalSeed) {
+    return literalSeed;
+  }
+
   for (const seed of seeds) {
     // Look for pattern: accountName.field
     const match = seed.match(/^(\w+)\.\w+/);

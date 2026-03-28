@@ -12,7 +12,9 @@
           "isInit": true,
           "isPda": true,
           "pdaSeeds": [
-            "b\"pool\""
+            "b\"pool\"",
+            "authority.key().as_ref()",
+            "stake_mint.key().as_ref()"
           ],
           "constraints": [
             {
@@ -20,7 +22,10 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"pool\""
+              "value": "[b\"pool\", authority.key().as_ref(), stake_mint.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
             }
           ]
         },
@@ -148,7 +153,9 @@
           "isInit": true,
           "isPda": true,
           "pdaSeeds": [
-            "b\"user_stake\""
+            "b\"user_stake\"",
+            "user.key().as_ref()",
+            "pool.key().as_ref()"
           ],
           "constraints": [
             {
@@ -156,7 +163,10 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"user_stake\""
+              "value": "[b\"user_stake\", user.key().as_ref(), pool.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
             }
           ]
         },
@@ -168,7 +178,9 @@
           "isInit": false,
           "isPda": true,
           "pdaSeeds": [
-            "b\"pool\""
+            "b\"pool\"",
+            "pool.authority.as_ref()",
+            "pool.stake_mint.as_ref()"
           ],
           "constraints": [
             {
@@ -176,7 +188,11 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"pool\""
+              "value": "[b\"pool\", pool.authority.as_ref(), pool.stake_mint.as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.bump"
             }
           ]
         },
@@ -346,7 +362,9 @@
           "isInit": false,
           "isPda": true,
           "pdaSeeds": [
-            "b\"user_stake\""
+            "b\"user_stake\"",
+            "owner.key().as_ref()",
+            "pool.key().as_ref()"
           ],
           "constraints": [
             {
@@ -362,7 +380,10 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"user_stake\""
+              "value": "[b\"user_stake\", owner.key().as_ref(), pool.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
             }
           ]
         },
@@ -804,6 +825,6 @@
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T12:03:58.490Z"
+    "parsedAt": "2026-03-28T12:21:10.602Z"
   }
 }

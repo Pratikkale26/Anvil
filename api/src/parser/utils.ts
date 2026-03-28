@@ -36,12 +36,48 @@ export function extractAttributes(block: string): string[] {
  */
 export function splitConstraintTokens(attrBody: string): string[] {
   const tokens: string[] = [];
-  let depth = 0;
+  let parenDepth = 0;
+  let angleDepth = 0;
+  let bracketDepth = 0;
   let current = "";
+  let inString = false;
+  let stringQuote = "";
+  let escaped = false;
   for (const ch of attrBody) {
-    if (ch === "(" || ch === "<") depth++;
-    else if (ch === ")" || ch === ">") depth--;
-    if (ch === "," && depth === 0) {
+    if (inString) {
+      current += ch;
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === stringQuote) {
+        inString = false;
+        stringQuote = "";
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      stringQuote = ch;
+    } else if (ch === "(") {
+      parenDepth++;
+    } else if (ch === ")") {
+      parenDepth--;
+    } else if (ch === "<") {
+      angleDepth++;
+    } else if (ch === ">") {
+      angleDepth--;
+    } else if (ch === "[") {
+      bracketDepth++;
+    } else if (ch === "]") {
+      bracketDepth--;
+    }
+    if (ch === "," && parenDepth === 0 && angleDepth === 0 && bracketDepth === 0) {
       const trimmed = current.trim();
       if (trimmed) tokens.push(trimmed);
       current = "";

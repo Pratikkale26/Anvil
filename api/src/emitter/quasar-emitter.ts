@@ -147,7 +147,14 @@ ${arms}
     spl_token_close_account${signed}(${account}, ${destination}, ${authority}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
   }
 
-  override emitPdaSignerSeeds(account: string, seeds: string[], bumpField?: string): string {
+  override emitPdaSignerSeeds(
+    account: string,
+    accountInfoVar: string,
+    seeds: string[],
+    _bumpField?: string,
+    stateVar?: string,
+    typeName?: string,
+  ): string {
     // Detect the account name used as prefix in seed expressions
     let statePrefix = account;
     for (const seed of seeds) {
@@ -158,8 +165,8 @@ ${arms}
       }
     }
 
-    const dataVar = `${account}_data`;
-    const typeName = account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+    const dataVar = stateVar || `${account}_data`;
+    const resolvedTypeName = typeName || account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 
     const transformedSeeds = seeds.map(seed => {
       if (seed.startsWith('b"') || seed.startsWith("b'")) return seed;
@@ -170,9 +177,9 @@ ${arms}
     });
 
     const seedsStr = transformedSeeds.join(",\n            ");
+    const maybeRead = stateVar ? "" : `    let ${dataVar} = ${resolvedTypeName}::from_account_info(${accountInfoVar})?;\n`;
     return `    // PDA signer seeds for '${account}'
-    let ${dataVar} = ${typeName}::from_account_info(${account})?;
-    let seeds = &[
+${maybeRead}    let seeds = &[
             ${seedsStr},
         ];
     let signer_seeds = &[&seeds[..]];`;

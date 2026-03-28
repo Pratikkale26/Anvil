@@ -64,13 +64,16 @@ fn initialize(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    let mut vault_state = VaultState::from_account_info(vault_state)?;
+    let vault_state_account = vault_state;
+    let mut vault_state = VaultState::from_account_info(vault_state_account)?;
     vault_state.authority = *authority.key();
     vault_state.total_deposited = 0;
-    let bump = bump_seed(program_id, &[b"vault_state"], vault_state.key())?;
+    let bump = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state_account.key())?;
     vault_state.bump = bump;
-    let bump = bump_seed(program_id, &[b"vault"], vault.key())?;
+    let bump = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
     vault_state.vault_bump = bump;
+    VaultState::save(vault_state_account, &vault_state)?;
+    Ok(())
 
 }
 
@@ -101,10 +104,13 @@ fn deposit(
     if !(amount > 0) {
         return Err(VaultError::InvalidAmount.into());
     }
-    let mut vault_state = VaultState::from_account_info(vault_state)?;
+    let vault_state_account = vault_state;
+    let mut vault_state = VaultState::from_account_info(vault_state_account)?;
     transfer_lamports(user, vault, amount)?;
     vault_state.total_deposited = vault_state.total_deposited.checked_add(amount)
             .ok_or(VaultError::Overflow)?;
+    VaultState::save(vault_state_account, &vault_state)?;
+    Ok(())
 
 }
 
@@ -135,23 +141,26 @@ fn withdraw(
     if !(amount > 0) {
         return Err(VaultError::InvalidAmount.into());
     }
-    let vault_state = VaultState::from_account_info(vault_state)?;
+    let vault_state_account = vault_state;
+    let vault_state = VaultState::from_account_info(vault_state_account)?;
     if !(vault.lamports() >= amount) {
         return Err(VaultError::InsufficientFunds.into());
     }
-    // PDA signer seeds for 'vault_state'
-    let vault_state_data = VaultState::from_account_info(vault_state)?;
+    // PDA signer seeds for 'vault'
     let seeds = &[
             b"vault",
-            vault_state_data.authority.as_ref(),
-            &[vault_state_data.vault_bump],
+            vault_state.authority.as_ref(),
+            &[vault_state.vault_bump],
         ];
     let signer_seeds = &[&seeds[..]];
     // System transfer with PDA signer
     transfer_lamports_signed(vault, user, amount, signer_seeds)?;
-    let mut vault_state = VaultState::from_account_info(vault_state)?;
+    let vault_state_account = vault_state;
+    let mut vault_state = VaultState::from_account_info(vault_state_account)?;
     vault_state.total_deposited = vault_state.total_deposited.checked_sub(amount)
             .ok_or(VaultError::Underflow)?;
+    VaultState::save(vault_state_account, &vault_state)?;
+    Ok(())
 
 }
 
@@ -244,6 +253,16 @@ fn transfer_lamports(
         .checked_add(amount)
         .ok_or(ProgramError::ArithmeticOverflow)?;
     Ok(())
+}
+
+fn transfer_lamports_signed(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let ix = pinocchio::system_instruction::transfer(from.key(), to.key(), amount);
+    pinocchio::program::invoke_signed(&ix, &[from.clone(), to.clone()], signer_seeds)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

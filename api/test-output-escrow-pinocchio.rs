@@ -73,16 +73,19 @@ fn create_escrow(
     }
     let receive_amount: u64 = u64::from_le_bytes(data[8..16].try_into().unwrap());
 
-    let mut escrow = Escrow::from_account_info(escrow)?;
+    let escrow_account = escrow;
+    let mut escrow = Escrow::from_account_info(escrow_account)?;
     escrow.maker = *maker.key();
     escrow.mint_a = *mint_a.key();
     escrow.mint_b = *mint_b.key();
     escrow.receive_amount = receive_amount;
     escrow.seed = seed;
-    let bump = bump_seed(program_id, &[b"escrow"], escrow.key())?;
+    let bump = bump_seed(program_id, &[b"escrow", maker.key().as_ref(), seed.to_le_bytes().as_ref()], escrow_account.key())?;
     escrow.bump = bump;
     // SPL Token transfer — maker_ata_a → vault
     spl_token_transfer(maker_ata_a, vault, maker, token_account_amount(maker_ata_a)?)?;
+    Escrow::save(escrow_account, &escrow)?;
+    Ok(())
 
 }
 
@@ -113,20 +116,21 @@ fn accept_escrow(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    let escrow = Escrow::from_account_info(escrow)?;
+    let escrow_account = escrow;
+    let escrow = Escrow::from_account_info(escrow_account)?;
     // PDA signer seeds for 'escrow'
-    let escrow_data = Escrow::from_account_info(escrow)?;
     let seeds = &[
             b"escrow",
-            escrow_data.maker.as_ref(),
+            escrow.maker.as_ref(),
             &escrow.seed.to_le_bytes(),
-            &[escrow_data.bump],
+            &[escrow.bump],
         ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer — taker_ata_b → maker_ata_b
     spl_token_transfer(taker_ata_b, maker_ata_b, taker, escrow.receive_amount)?;
     // SPL Token transfer (PDA signed) — vault → taker_ata_a
     spl_token_transfer_signed(vault, taker_ata_a, escrow, token_account_amount(vault)?, signer_seeds)?;
+    Ok(())
 
 }
 
@@ -153,18 +157,19 @@ fn cancel_escrow(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    let escrow = Escrow::from_account_info(escrow)?;
+    let escrow_account = escrow;
+    let escrow = Escrow::from_account_info(escrow_account)?;
     // PDA signer seeds for 'escrow'
-    let escrow_data = Escrow::from_account_info(escrow)?;
     let seeds = &[
             b"escrow",
-            escrow_data.maker.as_ref(),
+            escrow.maker.as_ref(),
             &escrow.seed.to_le_bytes(),
-            &[escrow_data.bump],
+            &[escrow.bump],
         ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → maker_ata_a
     spl_token_transfer_signed(vault, maker_ata_a, escrow, token_account_amount(vault)?, signer_seeds)?;
+    Ok(())
 
 }
 

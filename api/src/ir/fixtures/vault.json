@@ -12,7 +12,8 @@
           "isInit": true,
           "isPda": true,
           "pdaSeeds": [
-            "b\"vault_state\""
+            "b\"vault_state\"",
+            "authority.key().as_ref()"
           ],
           "constraints": [
             {
@@ -20,7 +21,10 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"vault_state\""
+              "value": "[b\"vault_state\", authority.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
             }
           ]
         },
@@ -32,7 +36,8 @@
           "isInit": false,
           "isPda": true,
           "pdaSeeds": [
-            "b\"vault\""
+            "b\"vault\"",
+            "authority.key().as_ref()"
           ],
           "constraints": [
             {
@@ -40,7 +45,10 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"vault\""
+              "value": "[b\"vault\", authority.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
             }
           ]
         },
@@ -121,7 +129,8 @@
           "isInit": false,
           "isPda": true,
           "pdaSeeds": [
-            "b\"vault_state\""
+            "b\"vault_state\"",
+            "authority.key().as_ref()"
           ],
           "constraints": [
             {
@@ -133,7 +142,11 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"vault_state\""
+              "value": "[b\"vault_state\", authority.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "vault_state.bump"
             }
           ]
         },
@@ -145,7 +158,8 @@
           "isInit": false,
           "isPda": true,
           "pdaSeeds": [
-            "b\"vault\""
+            "b\"vault\"",
+            "authority.key().as_ref()"
           ],
           "constraints": [
             {
@@ -153,7 +167,11 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"vault\""
+              "value": "[b\"vault\", authority.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "vault_state.vault_bump"
             }
           ]
         },
@@ -242,7 +260,8 @@
           "isInit": false,
           "isPda": true,
           "pdaSeeds": [
-            "b\"vault_state\""
+            "b\"vault_state\"",
+            "authority.key().as_ref()"
           ],
           "constraints": [
             {
@@ -254,7 +273,11 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"vault_state\""
+              "value": "[b\"vault_state\", authority.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "vault_state.bump"
             }
           ]
         },
@@ -266,7 +289,8 @@
           "isInit": false,
           "isPda": true,
           "pdaSeeds": [
-            "b\"vault\""
+            "b\"vault\"",
+            "authority.key().as_ref()"
           ],
           "constraints": [
             {
@@ -274,7 +298,11 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"vault\""
+              "value": "[b\"vault\", authority.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "vault_state.vault_bump"
             }
           ]
         },
@@ -340,7 +368,7 @@
         },
         {
           "kind": "pda_signer_seeds",
-          "account": "vault_state",
+          "account": "vault",
           "seeds": [
             "b\"vault\"",
             "vault_state.authority.as_ref()",
@@ -432,6 +460,6 @@
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T12:03:58.463Z"
+    "parsedAt": "2026-03-28T12:21:10.569Z"
   }
 }

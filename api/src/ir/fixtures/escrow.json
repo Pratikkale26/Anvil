@@ -68,7 +68,9 @@
           "isInit": true,
           "isPda": true,
           "pdaSeeds": [
-            "b\"escrow\""
+            "b\"escrow\"",
+            "maker.key().as_ref()",
+            "seed.to_le_bytes().as_ref()"
           ],
           "constraints": [
             {
@@ -76,7 +78,10 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"escrow\""
+              "value": "[b\"escrow\", maker.key().as_ref(), seed.to_le_bytes().as_ref()]"
+            },
+            {
+              "kind": "bump"
             }
           ]
         },
@@ -323,7 +328,9 @@
           "isInit": false,
           "isPda": true,
           "pdaSeeds": [
-            "b\"escrow\""
+            "b\"escrow\"",
+            "maker.key().as_ref()",
+            "escrow.seed.to_le_bytes().as_ref()"
           ],
           "constraints": [
             {
@@ -347,7 +354,11 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"escrow\""
+              "value": "[b\"escrow\", maker.key().as_ref(), escrow.seed.to_le_bytes().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "escrow.bump"
             }
           ]
         },
@@ -505,7 +516,9 @@
           "isInit": false,
           "isPda": true,
           "pdaSeeds": [
-            "b\"escrow\""
+            "b\"escrow\"",
+            "maker.key().as_ref()",
+            "escrow.seed.to_le_bytes().as_ref()"
           ],
           "constraints": [
             {
@@ -525,7 +538,11 @@
             },
             {
               "kind": "seeds",
-              "value": "[b\"escrow\""
+              "value": "[b\"escrow\", maker.key().as_ref(), escrow.seed.to_le_bytes().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "escrow.bump"
             }
           ]
         },
@@ -642,6 +659,6 @@
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T12:03:58.475Z"
+    "parsedAt": "2026-03-28T12:21:10.588Z"
   }
 }
