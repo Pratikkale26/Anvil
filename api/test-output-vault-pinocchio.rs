@@ -67,13 +67,11 @@ fn initialize(
     let mut vault_state = VaultState::from_account_info(vault_state)?;
     vault_state.authority = *authority.key();
     vault_state.total_deposited = 0;
-    let bump = bump_seed(program_id, &[b"vault_state", vault_state.maker.as_ref()], vault_state.key())?;
+    let bump = bump_seed(program_id, &[b"vault_state"], vault_state.key())?;
     vault_state.bump = bump;
-    let bump = bump_seed(program_id, &[b"vault", vault_state.maker.as_ref()], vault.key())?;
+    let bump = bump_seed(program_id, &[b"vault"], vault.key())?;
     vault_state.vault_bump = bump;
-    Ok(());
 
-    Ok(())
 }
 
 fn deposit(
@@ -100,15 +98,14 @@ fn deposit(
     }
     let amount: u64 = u64::from_le_bytes(data[0..8].try_into().unwrap());
 
-    require!(amount > 0, VaultError::InvalidAmount);;
+    if !(amount > 0) {
+        return Err(VaultError::InvalidAmount.into());
+    }
     let mut vault_state = VaultState::from_account_info(vault_state)?;
-    let cpi_ctx = System::from_account_info(system_program)?;
-    transfer_lamports(from, to, amount)?;
+    transfer_lamports(user, vault, amount)?;
     vault_state.total_deposited = vault_state.total_deposited.checked_add(amount)
             .ok_or(VaultError::Overflow)?;
-    Ok(());
 
-    Ok(())
 }
 
 fn withdraw(
@@ -135,13 +132,13 @@ fn withdraw(
     }
     let amount: u64 = u64::from_le_bytes(data[0..8].try_into().unwrap());
 
-    require!(amount > 0, VaultError::InvalidAmount);;
+    if !(amount > 0) {
+        return Err(VaultError::InvalidAmount.into());
+    }
     let vault_state = VaultState::from_account_info(vault_state)?;
-    // ⚠️ Anvil: Review this section — Contains possible Anchor-specific pattern
-    require!(
-            ctx.accounts.vault.lamports() >= amount,
-            VaultError::InsufficientFunds
-        );;
+    if !(vault.lamports() >= amount) {
+        return Err(VaultError::InsufficientFunds.into());
+    }
     // PDA signer seeds for 'vault_state'
     let vault_state_data = VaultState::from_account_info(vault_state)?;
     let seeds = &[
@@ -150,14 +147,12 @@ fn withdraw(
             &[vault_state_data.vault_bump],
         ];
     let signer_seeds = &[&seeds[..]];
-    let cpi_ctx = System::from_account_info(system_program)?;
-    transfer_lamports(from, to, amount)?;
+    // System transfer with PDA signer
+    transfer_lamports_signed(vault, user, amount, signer_seeds)?;
     let mut vault_state = VaultState::from_account_info(vault_state)?;
     vault_state.total_deposited = vault_state.total_deposited.checked_sub(amount)
             .ok_or(VaultError::Underflow)?;
-    Ok(());
 
-    Ok(())
 }
 
 #[repr(C)]
@@ -170,7 +165,7 @@ pub struct VaultState {
 
 impl VaultState {
     pub const DISCRIMINATOR: [u8; 8] = [228, 196, 82, 165, 98, 210, 235, 152];
-    pub const LEN: usize = 50;
+    pub const LEN: usize = 42;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
@@ -249,15 +244,6 @@ fn transfer_lamports(
         .checked_add(amount)
         .ok_or(ProgramError::ArithmeticOverflow)?;
     Ok(())
-}
-
-/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
-fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
-    let data = unsafe { account.borrow_data_unchecked() };
-    if data.len() < 72 {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    Ok(u64::from_le_bytes(data[64..72].try_into().unwrap()))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

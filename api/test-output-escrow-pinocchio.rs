@@ -79,13 +79,11 @@ fn create_escrow(
     escrow.mint_b = *mint_b.key();
     escrow.receive_amount = receive_amount;
     escrow.seed = seed;
-    let bump = bump_seed(program_id, &[b"escrow", escrow.maker.as_ref()], escrow.key())?;
+    let bump = bump_seed(program_id, &[b"escrow"], escrow.key())?;
     escrow.bump = bump;
     // SPL Token transfer — maker_ata_a → vault
     spl_token_transfer(maker_ata_a, vault, maker, token_account_amount(maker_ata_a)?)?;
-    Ok(());
 
-    Ok(())
 }
 
 fn accept_escrow(
@@ -129,9 +127,7 @@ fn accept_escrow(
     spl_token_transfer(taker_ata_b, maker_ata_b, taker, escrow.receive_amount)?;
     // SPL Token transfer (PDA signed) — vault → taker_ata_a
     spl_token_transfer_signed(vault, taker_ata_a, escrow, token_account_amount(vault)?, signer_seeds)?;
-    Ok(());
 
-    Ok(())
 }
 
 fn cancel_escrow(
@@ -169,9 +165,7 @@ fn cancel_escrow(
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → maker_ata_a
     spl_token_transfer_signed(vault, maker_ata_a, escrow, token_account_amount(vault)?, signer_seeds)?;
-    Ok(());
 
-    Ok(())
 }
 
 #[repr(C)]
@@ -186,7 +180,7 @@ pub struct Escrow {
 
 impl Escrow {
     pub const DISCRIMINATOR: [u8; 8] = [31, 213, 123, 187, 186, 22, 218, 155];
-    pub const LEN: usize = 121;
+    pub const LEN: usize = 113;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {

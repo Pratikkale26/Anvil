@@ -212,16 +212,9 @@
           "accountType": "VaultState"
         },
         {
-          "kind": "state_read",
-          "account": "system_program",
-          "localVar": "cpi_ctx",
-          "mutable": false,
-          "accountType": "System"
-        },
-        {
           "kind": "cpi_system_transfer",
-          "from": "from",
-          "to": "to",
+          "from": "user",
+          "to": "vault",
           "amount": "amount"
         },
         {
@@ -356,17 +349,11 @@
           "rawCode": "let seeds = &[\n            b\"vault\",\n            vault_state.authority.as_ref(),\n            &[vault_state.vault_bump],\n        ];\nlet signer_seeds = &[&seeds[..]];"
         },
         {
-          "kind": "state_read",
-          "account": "system_program",
-          "localVar": "cpi_ctx",
-          "mutable": false,
-          "accountType": "System"
-        },
-        {
           "kind": "cpi_system_transfer",
-          "from": "from",
-          "to": "to",
-          "amount": "amount"
+          "from": "vault",
+          "to": "user",
+          "amount": "amount",
+          "signerSeeds": "signer_seeds"
         },
         {
           "kind": "state_read",
@@ -445,6 +432,6 @@
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T11:53:05.241Z"
+    "parsedAt": "2026-03-28T12:03:58.463Z"
   }
 }
