@@ -21,20 +21,31 @@ import {
   toPascalCase,
   isProgramAccount,
   irNeedsHelper,
+  irNeedsSignedSplCloseAccountHelper,
+  irNeedsUnsignedSplCloseAccountHelper,
 } from "./emitter-base.js";
 
 class QuasarEmitter extends BaseEmitter {
   override readonly frameworkName = "Quasar";
 
   override emitUseStatements(_ir: SolanaIR): string {
-    return `use core::convert::TryInto;
-use quasar::{
+    const imports = [`use core::convert::TryInto;`,
+`use quasar::{
     account_info::AccountInfo,
     entrypoint,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
-};`;
+};`];
+
+    if (irNeedsHelper(_ir, "spl_transfer") || irNeedsHelper(_ir, "spl_mint_to") || irNeedsHelper(_ir, "spl_burn")) {
+      imports.push(`use quasar_token::instructions::Transfer as TokenTransfer;`);
+    }
+    if (irNeedsHelper(_ir, "spl_close_account")) {
+      imports.push(`use quasar_token::instructions::CloseAccount as TokenCloseAccount;`);
+    }
+
+    return imports.join("\n");
   }
 
   override emitEntrypoint(_ir: SolanaIR): string {
@@ -108,8 +119,19 @@ ${arms}
   }
 
   override emitBumpSeed(_programId: string, seeds: string[], expectedKey: string): string {
-    const seedsStr = seeds.map((s) => `${s}`).join(", ");
-    return `    let bump = bump_seed(program_id, &[${seedsStr}], ${expectedKey}.key)?;`;
+    const prelude: string[] = [];
+    let tempCount = 0;
+    const transformedSeeds = seeds.map((seed) => {
+      const match = seed.match(/^(.*)\.to_le_bytes\(\)\.as_ref\(\)$/);
+      if (!match?.[1]) return seed;
+      const varName = tempCount === 0 ? "seed_bytes" : `seed_bytes_${tempCount + 1}`;
+      tempCount++;
+      prelude.push(`    let ${varName} = ${match[1].trim()}.to_le_bytes();`);
+      return `${varName}.as_ref()`;
+    });
+    const seedsStr = transformedSeeds.map((s) => `${s}`).join(", ");
+    const bumpLine = `    let bump = bump_seed(program_id, &[${seedsStr}], ${expectedKey}.key)?;`;
+    return prelude.length > 0 ? `${prelude.join("\n")}\n${bumpLine}` : bumpLine;
   }
 
   override emitSystemTransfer(from: string, to: string, amount: string, signerSeeds?: string): string {
@@ -172,8 +194,24 @@ ${arms}
     const dataVar = stateVar || `${account}_data`;
     const resolvedTypeName = typeName || account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 
+    const prelude: string[] = [];
+    let tempCount = 0;
     const transformedSeeds = seeds.map(seed => {
       if (seed.startsWith('b"') || seed.startsWith("b'")) return seed;
+      const bytesMatch = seed.match(/^&(.+)\.to_le_bytes\(\)$/);
+      if (bytesMatch?.[1]) {
+        const varName = tempCount === 0 ? "seed_bytes" : `seed_bytes_${tempCount + 1}`;
+        tempCount++;
+        prelude.push(`    let ${varName} = ${bytesMatch[1].trim()}.to_le_bytes();`);
+        return `&${varName}`;
+      }
+      const asRefMatch = seed.match(/^(.*)\.to_le_bytes\(\)\.as_ref\(\)$/);
+      if (asRefMatch?.[1]) {
+        const varName = tempCount === 0 ? "seed_bytes" : `seed_bytes_${tempCount + 1}`;
+        tempCount++;
+        prelude.push(`    let ${varName} = ${asRefMatch[1].trim()}.to_le_bytes();`);
+        return `${varName}.as_ref()`;
+      }
       if (seed.startsWith("&[")) {
         return seed.replace(new RegExp(`&\\[${statePrefix}\\.`), `&[${dataVar}.`);
       }
@@ -183,7 +221,7 @@ ${arms}
     const seedsStr = transformedSeeds.join(",\n            ");
     const maybeRead = stateVar ? "" : `    let ${dataVar} = ${resolvedTypeName}::from_account_info(${accountInfoVar})?;\n`;
     return `    // PDA signer seeds for '${account}'
-${maybeRead}    let seeds = &[
+${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds = &[
             ${seedsStr},
         ];
     let signer_seeds = &[&seeds[..]];`;
@@ -227,8 +265,7 @@ ${maybeRead}    let seeds = &[
     const fields = acc.fields
       .map((f) => `    pub ${snakeCase(f.name)}: ${this.rustTypeForFramework(f.type)},`)
       .join("\n");
-    const bodyLen =
-      acc.space ?? acc.fields.reduce((s, f) => s + typeSize(f.type), 0);
+    const bodyLen = acc.fields.reduce((s, f) => s + typeSize(f.type), 0);
     const readLines = this.buildReadLines(acc);
     const writeLines = this.buildWriteLines(acc);
     const ctorFields = acc.fields.map((f) => snakeCase(f.name)).join(", ");
@@ -321,8 +358,34 @@ impl From<${enumName}> for ProgramError {
     if from.key == to.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    **from.try_borrow_mut_lamports()? -= amount;
-    **to.try_borrow_mut_lamports()? += amount;
+    **from.try_borrow_mut_lamports()? = from
+        .lamports()
+        .checked_sub(amount)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    **to.try_borrow_mut_lamports()? = to
+        .lamports()
+        .checked_add(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    Ok(())
+}`);
+
+      helpers.push(`fn transfer_lamports_signed(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    amount: u64,
+    _signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    if from.key == to.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    **from.try_borrow_mut_lamports()? = from
+        .lamports()
+        .checked_sub(amount)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    **to.try_borrow_mut_lamports()? = to
+        .lamports()
+        .checked_add(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
     Ok(())
 }`);
     }
@@ -334,15 +397,13 @@ impl From<${enumName}> for ProgramError {
     authority: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
-    let ix = spl_token::instruction::transfer(
-        &spl_token::id(),
-        from.key,
-        to.key,
-        authority.key,
-        &[],
+    TokenTransfer {
+        from,
+        to,
+        authority,
         amount,
-    )?;
-    quasar::program::invoke(&ix, &[from.clone(), to.clone(), authority.clone()])
+    }
+    .invoke()
 }
 
 fn spl_token_transfer_signed(
@@ -352,15 +413,46 @@ fn spl_token_transfer_signed(
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
-    let ix = spl_token::instruction::transfer(
-        &spl_token::id(),
-        from.key,
-        to.key,
-        authority.key,
-        &[],
+    TokenTransfer {
+        from,
+        to,
+        authority,
         amount,
-    )?;
-    quasar::program::invoke_signed(&ix, &[from.clone(), to.clone(), authority.clone()], signer_seeds)
+    }
+    .invoke_signed(signer_seeds)
+}`);
+    }
+
+    const needsUnsignedCloseHelper = irNeedsUnsignedSplCloseAccountHelper(ir);
+    const needsSignedCloseHelper = irNeedsSignedSplCloseAccountHelper(ir);
+    if (needsUnsignedCloseHelper) {
+      helpers.push(`fn spl_token_close_account(
+    account: &AccountInfo,
+    destination: &AccountInfo,
+    authority: &AccountInfo,
+) -> ProgramResult {
+    TokenCloseAccount {
+        account,
+        destination,
+        authority,
+    }
+    .invoke()
+}`);
+    }
+
+    if (needsSignedCloseHelper) {
+      helpers.push(`fn spl_token_close_account_signed(
+    account: &AccountInfo,
+    destination: &AccountInfo,
+    authority: &AccountInfo,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    TokenCloseAccount {
+        account,
+        destination,
+        authority,
+    }
+    .invoke_signed(signer_seeds)
 }`);
     }
 
