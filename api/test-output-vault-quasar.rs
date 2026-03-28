@@ -178,7 +178,7 @@ pub struct VaultState {
 
 impl VaultState {
     pub const DISCRIMINATOR: [u8; 8] = [228, 196, 82, 165, 98, 210, 235, 152];
-    pub const LEN: usize = 50;
+    pub const LEN: usize = 42;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
@@ -248,8 +248,34 @@ fn transfer_lamports(
     if from.key == to.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    **from.try_borrow_mut_lamports()? -= amount;
-    **to.try_borrow_mut_lamports()? += amount;
+    **from.try_borrow_mut_lamports()? = from
+        .lamports()
+        .checked_sub(amount)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    **to.try_borrow_mut_lamports()? = to
+        .lamports()
+        .checked_add(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    Ok(())
+}
+
+fn transfer_lamports_signed(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    amount: u64,
+    _signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    if from.key == to.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    **from.try_borrow_mut_lamports()? = from
+        .lamports()
+        .checked_sub(amount)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    **to.try_borrow_mut_lamports()? = to
+        .lamports()
+        .checked_add(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
     Ok(())
 }
 

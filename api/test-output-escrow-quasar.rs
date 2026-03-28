@@ -13,6 +13,8 @@ use quasar::{
     pubkey::Pubkey,
     ProgramResult,
 };
+use quasar_token::instructions::Transfer as TokenTransfer;
+use quasar_token::instructions::CloseAccount as TokenCloseAccount;
 
 entrypoint!(process_instruction);
 
@@ -80,7 +82,8 @@ fn create_escrow(
     escrow.mint_b = *mint_b.key();
     escrow.receive_amount = receive_amount;
     escrow.seed = seed;
-    let bump = bump_seed(program_id, &[b"escrow", maker.key().as_ref(), seed.to_le_bytes().as_ref()], escrow_account.key)?;
+    let seed_bytes = seed.to_le_bytes();
+    let bump = bump_seed(program_id, &[b"escrow", maker.key().as_ref(), seed_bytes.as_ref()], escrow_account.key)?;
     escrow.bump = bump;
     // SPL Token transfer — maker_ata_a → vault
     spl_token_transfer(maker_ata_a, vault, maker, token_account_amount(maker_ata_a)?)?;
@@ -128,10 +131,11 @@ fn accept_escrow(
         return Err(ProgramError::InvalidAccountData);
     }
     // PDA signer seeds for 'escrow'
+    let seed_bytes = escrow.seed.to_le_bytes();
     let seeds = &[
             b"escrow",
             escrow.maker.as_ref(),
-            &escrow.seed.to_le_bytes(),
+            &seed_bytes,
             &[escrow.bump],
         ];
     let signer_seeds = &[&seeds[..]];
@@ -178,10 +182,11 @@ fn cancel_escrow(
         return Err(ProgramError::InvalidAccountData);
     }
     // PDA signer seeds for 'escrow'
+    let seed_bytes = escrow.seed.to_le_bytes();
     let seeds = &[
             b"escrow",
             escrow.maker.as_ref(),
-            &escrow.seed.to_le_bytes(),
+            &seed_bytes,
             &[escrow.bump],
         ];
     let signer_seeds = &[&seeds[..]];
@@ -206,7 +211,7 @@ pub struct Escrow {
 
 impl Escrow {
     pub const DISCRIMINATOR: [u8; 8] = [31, 213, 123, 187, 186, 22, 218, 155];
-    pub const LEN: usize = 121;
+    pub const LEN: usize = 113;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
@@ -282,15 +287,13 @@ fn spl_token_transfer(
     authority: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
-    let ix = spl_token::instruction::transfer(
-        &spl_token::id(),
-        from.key,
-        to.key,
-        authority.key,
-        &[],
+    TokenTransfer {
+        from,
+        to,
+        authority,
         amount,
-    )?;
-    quasar::program::invoke(&ix, &[from.clone(), to.clone(), authority.clone()])
+    }
+    .invoke()
 }
 
 fn spl_token_transfer_signed(
@@ -300,15 +303,27 @@ fn spl_token_transfer_signed(
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
-    let ix = spl_token::instruction::transfer(
-        &spl_token::id(),
-        from.key,
-        to.key,
-        authority.key,
-        &[],
+    TokenTransfer {
+        from,
+        to,
+        authority,
         amount,
-    )?;
-    quasar::program::invoke_signed(&ix, &[from.clone(), to.clone(), authority.clone()], signer_seeds)
+    }
+    .invoke_signed(signer_seeds)
+}
+
+fn spl_token_close_account_signed(
+    account: &AccountInfo,
+    destination: &AccountInfo,
+    authority: &AccountInfo,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    TokenCloseAccount {
+        account,
+        destination,
+        authority,
+    }
+    .invoke_signed(signer_seeds)
 }
 
 fn close_program_account(
