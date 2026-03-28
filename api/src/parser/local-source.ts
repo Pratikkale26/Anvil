@@ -12,31 +12,45 @@ function isRustFile(path: string): boolean {
 }
 
 function collectCandidates(projectPath: string): string[] {
-  const candidates: string[] = [];
   const resolved = resolve(projectPath);
+  const candidates: string[] = [];
+  const seen = new Set<string>();
 
-  const preferred = [
-    join(resolved, "src/lib.rs"),
-    join(resolved, "src/main.rs"),
-  ];
+  const tryAdd = (path: string): void => {
+    if (!existsSync(path)) return;
+    if (!statSync(path).isFile()) return;
+    if (seen.has(path)) return;
+    seen.add(path);
+    candidates.push(path);
+  };
 
-  for (const path of preferred) {
-    if (existsSync(path) && statSync(path).isFile()) {
-      candidates.push(path);
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 4) return;
+
+    tryAdd(join(dir, "src/lib.rs"));
+    tryAdd(join(dir, "src/main.rs"));
+    tryAdd(join(dir, "program/src/lib.rs"));
+
+    for (const entry of readdirSync(dir)) {
+      if (entry === "target" || entry === "node_modules" || entry.startsWith(".")) continue;
+      const fullPath = join(dir, entry);
+      if (!statSync(fullPath).isDirectory()) continue;
+      walk(fullPath, depth + 1);
+    }
+  };
+
+  walk(resolved, 0);
+
+  if (candidates.length === 0) {
+    const directRustFiles = readdirSync(resolved)
+      .map((entry) => join(resolved, entry))
+      .filter((entry) => existsSync(entry) && statSync(entry).isFile() && isRustFile(entry));
+    for (const file of directRustFiles) {
+      tryAdd(file);
     }
   }
 
-  const programsDir = join(resolved, "programs");
-  if (existsSync(programsDir) && statSync(programsDir).isDirectory()) {
-    for (const entry of readdirSync(programsDir)) {
-      const candidate = join(programsDir, entry, "src/lib.rs");
-      if (existsSync(candidate) && statSync(candidate).isFile()) {
-        candidates.push(candidate);
-      }
-    }
-  }
-
-  return [...new Set(candidates)];
+  return candidates;
 }
 
 export function resolveLocalSource(inputPath: string): LocalSourceResolution {

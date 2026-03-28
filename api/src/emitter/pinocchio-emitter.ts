@@ -42,6 +42,12 @@ class PinocchioEmitter extends BaseEmitter {
     if (irNeedsHelper(_ir, "spl_transfer") || irNeedsHelper(_ir, "spl_mint_to") || irNeedsHelper(_ir, "spl_burn")) {
       imports.push(`use pinocchio_token::instructions::Transfer as TokenTransfer;`);
     }
+    if (irNeedsHelper(_ir, "spl_mint_to")) {
+      imports.push(`use pinocchio_token::instructions::MintTo as TokenMintTo;`);
+    }
+    if (irNeedsHelper(_ir, "spl_burn")) {
+      imports.push(`use pinocchio_token::instructions::Burn as TokenBurn;`);
+    }
     if (irNeedsHelper(_ir, "spl_close_account")) {
       imports.push(`use pinocchio_token::instructions::CloseAccount as TokenCloseAccount;`);
     }
@@ -426,6 +432,72 @@ fn spl_token_transfer_signed(
     TokenTransfer {
         from,
         to,
+        authority,
+        amount,
+    }
+    .invoke_signed(signer_seeds)
+}`);
+    }
+
+    if (irNeedsHelper(ir, "spl_mint_to")) {
+      helpers.push(`fn spl_token_mint_to(
+    mint: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    TokenMintTo {
+        mint,
+        to,
+        authority,
+        amount,
+    }
+    .invoke()
+}
+
+fn spl_token_mint_to_signed(
+    mint: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    TokenMintTo {
+        mint,
+        to,
+        authority,
+        amount,
+    }
+    .invoke_signed(signer_seeds)
+}`);
+    }
+
+    if (irNeedsHelper(ir, "spl_burn")) {
+      helpers.push(`fn spl_token_burn(
+    from: &AccountInfo,
+    mint: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    TokenBurn {
+        from,
+        mint,
+        authority,
+        amount,
+    }
+    .invoke()
+}
+
+fn spl_token_burn_signed(
+    from: &AccountInfo,
+    mint: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    TokenBurn {
+        from,
+        mint,
         authority,
         amount,
     }

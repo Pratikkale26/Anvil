@@ -365,23 +365,103 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         const accountName = snakeCase(account.name);
         const accountInfoVar = resolveAccountInfoVar(accountName);
         transformed = transformed.replace(
-          new RegExp(`\\b${accountName}\\.key\\(\\)`, "g"),
-          this.emitAccountKeyExpr(accountInfoVar)
+          new RegExp(`(^|[^\\w.])${accountName}\\.key\\(\\)`, "g"),
+          (_full, prefix: string) => `${prefix}${this.emitAccountKeyExpr(accountInfoVar)}`
         );
         transformed = transformed.replace(
-          new RegExp(`\\b${accountName}\\.lamports\\(\\)`, "g"),
-          this.emitAccountLamportsExpr(accountInfoVar)
+          new RegExp(`(^|[^\\w.])${accountName}\\.lamports\\(\\)`, "g"),
+          (_full, prefix: string) => `${prefix}${this.emitAccountLamportsExpr(accountInfoVar)}`
         );
         if (!isGeneratedStateType(account.accountType)) continue;
         transformed = transformed.replace(
-          new RegExp(`\\b${accountName}\\.(\\w+)`, "g"),
-          (full, field: string) => {
+          new RegExp(`(^|[^\\w.])${accountName}\\.(\\w+)`, "g"),
+          (full, prefix: string, field: string) => {
             if (field === "key" || field === "lamports") return full;
             const localVar = ensureStateRead(accountName);
-            return `${localVar}.${snakeCase(field)}`;
+            return `${prefix}${localVar}.${snakeCase(field)}`;
           }
         );
       }
+      return transformed;
+    };
+    const transformNestedAnchorCode = (code: string): string => {
+      let transformed = code;
+
+      const replaceCpi = (
+        pattern: RegExp,
+        build: (...groups: string[]) => string,
+      ): void => {
+        transformed = transformed.replace(pattern, (...args) => {
+          const groups = args.slice(1, -2) as string[];
+          return build(...groups);
+        });
+      };
+
+      replaceCpi(
+        /token::transfer\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        (from, to, authority, signerSeeds, amount) =>
+          `spl_token_transfer_signed(${snakeCase(from)}, ${snakeCase(to)}, ${snakeCase(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${signerSeeds})?;`
+      );
+      replaceCpi(
+        /token::transfer\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        (from, to, authority, amount) =>
+          `spl_token_transfer(${snakeCase(from)}, ${snakeCase(to)}, ${snakeCase(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
+      );
+      replaceCpi(
+        /token::mint_to\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        (mint, to, authority, signerSeeds, amount) =>
+          `spl_token_mint_to_signed(${snakeCase(mint)}, ${snakeCase(to)}, ${snakeCase(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${signerSeeds})?;`
+      );
+      replaceCpi(
+        /token::mint_to\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        (mint, to, authority, amount) =>
+          `spl_token_mint_to(${snakeCase(mint)}, ${snakeCase(to)}, ${snakeCase(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
+      );
+      replaceCpi(
+        /token::burn\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        (mint, from, authority, signerSeeds, amount) =>
+          `spl_token_burn_signed(${snakeCase(from)}, ${snakeCase(mint)}, ${snakeCase(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${signerSeeds})?;`
+      );
+      replaceCpi(
+        /token::burn\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        (mint, from, authority, amount) =>
+          `spl_token_burn(${snakeCase(from)}, ${snakeCase(mint)}, ${snakeCase(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
+      );
+      replaceCpi(
+        /token::close_account\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*\)\?;/g,
+        (account, destination, authority, signerSeeds) =>
+          `spl_token_close_account_signed(${snakeCase(account)}, ${snakeCase(destination)}, ${snakeCase(authority)}, ${signerSeeds})?;`
+      );
+      replaceCpi(
+        /token::close_account\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*\)\?;/g,
+        (account, destination, authority) =>
+          `spl_token_close_account(${snakeCase(account)}, ${snakeCase(destination)}, ${snakeCase(authority)})?;`
+      );
+      replaceCpi(
+        /anchor_lang::system_program::transfer\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*anchor_lang::system_program::Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        (from, to, signerSeeds, amount) =>
+          `transfer_lamports_signed(${snakeCase(from)}, ${snakeCase(to)}, ${cleanInlineExpr(amount)}, ${signerSeeds})?;`
+      );
+      replaceCpi(
+        /anchor_lang::system_program::transfer\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*anchor_lang::system_program::Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        (from, to, amount) =>
+          `transfer_lamports(${snakeCase(from)}, ${snakeCase(to)}, ${cleanInlineExpr(amount)})?;`
+      );
+
+      transformed = transformed.replace(
+        /require!\(([\s\S]+?),\s*([\w:]+(?:::\w+)*)\s*\);/g,
+        (_full, condition: string, error: string) =>
+          `if !(${cleanInlineExpr(condition)}) {\n            return Err(${error}.into());\n        }`
+      );
+      transformed = transformed.replace(
+        /emit!\(\s*(\w+)\s*\{\s*([\s\S]*?)\s*\}\s*\);/g,
+        (_full, event: string, fields: string) => this.emitEmit(event, fields).replace(/^    /gm, "")
+      );
+      transformed = transformed.replace(
+        /(^|[^\w:])msg!\(([\s\S]*?)\);/g,
+        (_full, prefix: string, message: string) => `${prefix}${this.emitMsg(cleanInlineExpr(message)).replace(/^    /gm, "")}`
+      );
+
       return transformed;
     };
     const transformCtxAccountsReferences = (code: string): string => {
@@ -481,7 +561,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             break;
           }
 
-          const transformedRawCode = transformCtxAccountsReferences(rawCode);
+          const transformedRawCode = transformCtxAccountsReferences(transformAccountReferences(transformNestedAnchorCode(rawCode)));
 
           // Don't add extra semicolons if the code already ends with one, with }, or with )
           let code: string;
@@ -490,7 +570,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           } else {
             code = `    ${transformedRawCode};`;
           }
-          if (stmt.needsReview) {
+          if (stmt.needsReview && hasResidualAnchorPatterns(transformedRawCode)) {
             code = `    // ⚠️ Anvil: Review this section — ${stmt.reviewReason ?? "may need manual verification"}\n${code}`;
           }
           lines.push(code);
@@ -573,7 +653,8 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: require macro ──
         case "require": {
           this.transformedCount++;
-          lines.push(this.emitRequire(stmt.condition, stmt.error));
+          const condition = transformAccountReferences(transformCtxAccountsReferences(stmt.condition));
+          lines.push(this.emitRequire(condition, stmt.error));
           break;
         }
 
@@ -864,6 +945,19 @@ export function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function cleanInlineExpr(value: string): string {
+  return value.replace(/\s+/g, " ").trim().replace(/,$/, "");
+}
+
+function hasResidualAnchorPatterns(value: string): boolean {
+  return /ctx\.(accounts|bumps)\./.test(value) ||
+    /CpiContext::/.test(value) ||
+    /anchor_spl::/.test(value) ||
+    /\btoken::(?:transfer|mint_to|burn|close_account)\(/.test(value) ||
+    /\bemit!\(/.test(value) ||
+    /\brequire!\(/.test(value);
+}
+
 /**
  * Determine what helper functions an IR needs based on its body statements.
  */
@@ -896,6 +990,26 @@ export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
     }
 
     for (const stmt of instr.body) {
+      if (stmt.kind === "pass_through") {
+        const code = stmt.code;
+        switch (helperName) {
+          case "transfer_lamports":
+            if (/anchor_lang::system_program::transfer\(/.test(code)) return true;
+            break;
+          case "spl_transfer":
+            if (/token::transfer\(/.test(code)) return true;
+            break;
+          case "spl_mint_to":
+            if (/token::mint_to\(/.test(code)) return true;
+            break;
+          case "spl_burn":
+            if (/token::burn\(/.test(code)) return true;
+            break;
+          case "spl_close_account":
+            if (/token::close_account\(/.test(code)) return true;
+            break;
+        }
+      }
       switch (helperName) {
         case "transfer_lamports":
           if (stmt.kind === "cpi_system_transfer") return true;
@@ -920,13 +1034,19 @@ export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
 
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
-    instr.body.some((stmt) => stmt.kind === "cpi_system_transfer" && !stmt.signerSeeds)
+    instr.body.some((stmt) =>
+      (stmt.kind === "cpi_system_transfer" && !stmt.signerSeeds) ||
+      (stmt.kind === "pass_through" && /anchor_lang::system_program::transfer\(\s*CpiContext::new\(/.test(stmt.code))
+    )
   );
 }
 
 export function irNeedsSignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
-    instr.body.some((stmt) => stmt.kind === "cpi_system_transfer" && !!stmt.signerSeeds)
+    instr.body.some((stmt) =>
+      (stmt.kind === "cpi_system_transfer" && !!stmt.signerSeeds) ||
+      (stmt.kind === "pass_through" && /anchor_lang::system_program::transfer\(\s*CpiContext::new_with_signer\(/.test(stmt.code))
+    )
   );
 }
 
@@ -938,6 +1058,8 @@ export function irNeedsTokenAmountHelper(ir: SolanaIR): boolean {
         case "cpi_spl_mint_to":
         case "cpi_spl_burn":
           return /\.amount$/.test(stmt.amount);
+        case "pass_through":
+          return /token::(?:transfer|mint_to|burn)\(/.test(stmt.code) && /\.amount\b/.test(stmt.code);
         default:
           return false;
       }

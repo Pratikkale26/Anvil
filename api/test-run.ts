@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { parseAnchor } from "./src/parser/anchor-parser.js";
@@ -8,8 +8,21 @@ import { emitQuasar, emitQuasarFull } from "./src/emitter/quasar-emitter.js";
 import { emitNative, emitNativeFull } from "./src/emitter/native-emitter.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const OUTPUT_DIR = join(__dirname, "generated-outputs");
+
+function labelFromPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  const fileName = parts.at(-1) ?? "input";
+  const stem = fileName.replace(/\.(rs|json)$/, "");
+  if (stem !== "lib" && stem !== "main") return stem;
+  const parent = parts.at(-2);
+  const grandParent = parts.at(-3);
+  return [grandParent, parent, stem].filter(Boolean).join("-");
+}
 
 async function run() {
+  mkdirSync(OUTPUT_DIR, { recursive: true });
+
   const input = process.argv[2] ?? "counter";
   const target = process.argv[3] ?? "pinocchio";
   const resolvedInputPath = existsSync(input) ? resolve(input) : "";
@@ -22,9 +35,9 @@ async function run() {
   const explicitProjectPath = resolvedInputPath && inputStats?.isDirectory() ? resolvedInputPath : "";
 
   let label = input.endsWith(".rs")
-    ? input.split("/").pop()?.replace(/\.rs$/, "") ?? "input"
+    ? labelFromPath(input)
     : input.endsWith(".json")
-      ? input.split("/").pop()?.replace(/\.json$/, "") ?? "input"
+      ? labelFromPath(input)
       : input;
 
   let ir: unknown;
@@ -44,7 +57,7 @@ async function run() {
       const resolved = resolveLocalSource(explicitProjectPath);
       sourcePath = resolved.resolvedPath;
       source = resolved.source;
-      label = sourcePath.split("/").slice(-3).join("-").replace(/\.rs$/, "");
+      label = labelFromPath(sourcePath);
       console.log(`1. Parsing project directory: ${explicitProjectPath}`);
       if (resolved.candidates.length > 1) {
         console.log(`   Found ${resolved.candidates.length} candidate entry files. Using: ${resolved.resolvedPath}`);
@@ -101,7 +114,7 @@ async function run() {
     const data = await res.json() as Record<string, unknown>;
     
     // Save the emitted Rust code to a file you can see in VS Code
-    const outPath = join(__dirname, `test-output-${label}-${target}.rs`);
+    const outPath = join(OUTPUT_DIR, `${label}-${target}.rs`);
     writeFileSync(outPath, data.code as string);
     
     console.log(`\n✅ Success! Emitted ${data.instructions} instructions and ${data.accounts} accounts.`);
@@ -131,8 +144,11 @@ async function run() {
     if (data.files) {
       console.log(`\n📁 Multi-file output:`);
       const files = data.files as { path: string; content: string }[];
+      const multiFileDir = join(OUTPUT_DIR, `${label}-${target}`);
       for (const file of files) {
-        const filePath = join(__dirname, `test-output-${label}-${target}`, file.path);
+        const filePath = join(multiFileDir, file.path);
+        mkdirSync(dirname(filePath), { recursive: true });
+        writeFileSync(filePath, file.content);
         console.log(`   → ${file.path}`);
       }
     }
@@ -153,8 +169,15 @@ async function run() {
     }
 
     const output = emitter(ir);
-    const outPath = join(__dirname, `test-output-${label}-${target}.rs`);
+    const outPath = join(OUTPUT_DIR, `${label}-${target}.rs`);
     writeFileSync(outPath, output.singleFile);
+
+    const multiFileDir = join(OUTPUT_DIR, `${label}-${target}`);
+    for (const file of output.files) {
+      const filePath = join(multiFileDir, file.path);
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, file.content);
+    }
 
     console.log(`\n✅ Local fallback succeeded for ${label} -> ${target}.`);
     console.log(`Saved emitted code to: ${outPath}`);

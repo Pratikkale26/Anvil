@@ -23,6 +23,7 @@ import {
   findAllDescendants,
   hasDescendant,
   findTopLevelComma,
+  findLastTopLevelComma,
   containsAnchorPatterns,
 } from "./ast-helpers.js";
 import { detectCpi } from "./cpi-detector.js";
@@ -263,6 +264,11 @@ function classifyExpressionStatement(
   const expr = node.namedChild(0);
   if (!expr) return { stmt: { kind: "pass_through", code: text, needsReview: false } };
 
+  // ── Macro invocation used as an expression statement: emit!(...), require!(...), msg!(...) ──
+  if (expr.type === "macro_invocation") {
+    return { stmt: classifyMacroInvocation(expr) };
+  }
+
   // ── Assignment: state.field = value ──
   if (expr.type === "assignment_expression") {
     const assignResult = classifyAssignment(expr);
@@ -362,7 +368,7 @@ function classifyMacroInvocation(node: SyntaxNode): BodyStatement {
 
   switch (macroName) {
     case "require": {
-      const commaIdx = findTopLevelComma(argsText);
+      const commaIdx = findLastTopLevelComma(argsText);
       if (commaIdx !== -1) {
         const condition = argsText.slice(0, commaIdx).trim();
         const error = argsText.slice(commaIdx + 1).trim();

@@ -358,3 +358,14 @@ export function findTopLevelComma(text: string): number {
   }
   return -1;
 }
+
+export function findLastTopLevelComma(text: string): number {
+  let depth = 0;
+  for (let i = text.length - 1; i >= 0; i--) {
+    const ch = text[i];
+    if (ch === ")" || ch === "]" || ch === "}" || ch === ">") depth++;
+    else if (ch === "(" || ch === "[" || ch === "{" || ch === "<") depth--;
+    else if (ch === "," && depth === 0) return i;
+  }
+  return -1;
+}

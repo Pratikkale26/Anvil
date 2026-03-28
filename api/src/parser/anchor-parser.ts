@@ -74,10 +74,16 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
     // ── Walk top-level items and classify by attributes ──
     const topLevel = classifyTopLevel(root);
 
+    if (!topLevel.programModule) {
+      return {
+        ok: false,
+        error: "No Anchor #[program] module found",
+        details: "This parser currently supports Anchor entry files. Native multi-file Solana programs like many SPL crates are not transpiled yet.",
+      };
+    }
+
     // ── Extract program name ──
-    const programName = topLevel.programModule
-      ? extractModuleName(topLevel.programModule.node)
-      : "unknown_program";
+    const programName = extractModuleName(topLevel.programModule.node);
 
     // ── Extract program ID from declare_id!("...") ──
     const programId = extractProgramId(root);
@@ -91,9 +97,7 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
     );
 
     // ── Parse instructions ──
-    const instructions = topLevel.programModule
-      ? parseInstructions(topLevel.programModule.node, topLevel.accountsStructs, source)
-      : [];
+    const instructions = parseInstructions(topLevel.programModule.node, topLevel.accountsStructs, source);
 
     // ── Parse errors ──
     const errors = topLevel.errorEnums.flatMap((e) => parseErrorEnum(e.node, e.attrs));

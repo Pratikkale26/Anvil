@@ -173,7 +173,7 @@ fn delist(
     if !(listing.is_active) {
         return Err(MarketplaceError::ListingNotActive.into());
     }
-    if !(listing.seller == *seller.key()) {
+    if !(listing.seller == **seller.key()) {
         return Err(MarketplaceError::Unauthorized.into());
     }
     // PDA signer seeds for 'listing'
@@ -295,7 +295,7 @@ fn update_fee(
     }
     let marketplace_account = marketplace;
     let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
-    if !(marketplace.admin == *admin.key()) {
+    if !(marketplace.admin == **admin.key()) {
         return Err(MarketplaceError::Unauthorized.into());
     }
     marketplace.fee_bps = new_fee_bps;
