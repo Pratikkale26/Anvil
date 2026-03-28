@@ -43,7 +43,7 @@ export const demoRoute = Router();
  * If the fixture doesn't have body data (from pre-body-classifier era),
  * automatically re-parses the source to produce a complete IR.
  */
-demoRoute.get("/:name", (req, res) => {
+demoRoute.get("/:name", async (req, res) => {
   const name = req.params.name as DemoName;
 
   if (!VALID_DEMOS.includes(name)) {
@@ -64,7 +64,7 @@ demoRoute.get("/:name", (req, res) => {
 
   if (needsReparse && source) {
     console.log(`🔄 Fixture '${name}' missing body data — re-parsing from source...`);
-    const result = parseAnchor(source);
+    const result = await parseAnchor(source);
     if (result.ok) {
       ir = result.ir;
       fixtureCache.set(name, ir); // cache the upgraded version
@@ -76,7 +76,7 @@ demoRoute.get("/:name", (req, res) => {
   if (!ir) {
     // Try parsing from source as last resort
     if (source) {
-      const result = parseAnchor(source);
+      const result = await parseAnchor(source);
       if (result.ok) {
         ir = result.ir;
         fixtureCache.set(name, ir);

@@ -32,12 +32,13 @@ Main responsibilities:
 - parse Anchor-like source into IR
 - emit target Rust code from IR
 - serve preloaded demo fixtures
+- resolve local source files and project directories for parser input
 
 ### Routes
 
 - [api/src/routes/parse.ts](/home/pk/Anvil/api/src/routes/parse.ts)
-  - accepts Anchor-like Rust source
-  - returns normalized IR
+  - accepts raw source, a local Rust file path, or a local project directory
+  - returns normalized IR plus resolved parser path metadata
 
 - [api/src/routes/emit.ts](/home/pk/Anvil/api/src/routes/emit.ts)
   - accepts IR + target
@@ -68,8 +69,25 @@ Actual parser files in the current codebase:
 - [api/src/parser/constraint-parser.ts](/home/pk/Anvil/api/src/parser/constraint-parser.ts)
 - [api/src/parser/cpi-detector.ts](/home/pk/Anvil/api/src/parser/cpi-detector.ts)
 - [api/src/parser/ast-helpers.ts](/home/pk/Anvil/api/src/parser/ast-helpers.ts)
+- [api/src/parser/local-source.ts](/home/pk/Anvil/api/src/parser/local-source.ts)
 - [api/src/parser/utils.ts](/home/pk/Anvil/api/src/parser/utils.ts)
 - [api/src/parser/ts-init.ts](/home/pk/Anvil/api/src/parser/ts-init.ts)
+
+### Project-level parsing
+
+Anvil now supports parser input from local disk in three forms:
+
+- raw Rust source text
+- a single `.rs` file path
+- a project directory
+
+For project directories, the current auto-detection prefers:
+
+- `programs/*/src/lib.rs`
+- `src/lib.rs`
+- `src/main.rs`
+
+This works well for many Anchor repos, but it is not yet a full workspace graph loader. If a repository contains multiple programs, tests are more reliable when you target one exact program file with `sourcePath`.
 
 ## IR
 
@@ -123,6 +141,7 @@ Current strengths:
 - full PDA seed preservation from parser -> IR -> emitter
 - account-info aliasing prevents state/account shadow bugs
 - signer-side CPI authority stays as `AccountInfo`
+- token vault close generation for PDA-controlled escrow-style accounts with `close = ...`
 - manual account byte encoding to avoid layout/alignment pitfalls
 
 ### Quasar emitter

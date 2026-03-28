@@ -16,9 +16,9 @@ app.get("/", (_req, res) => {
     version: "0.1.0",
     status: "ok",
     endpoints: [
-      "POST /parse  — Anchor .rs → Solana IR",
+      "POST /parse  — Anchor source|file|project → Solana IR",
       "POST /emit   — Solana IR → target framework code",
-      "GET  /demo/:name — pre-loaded demo IR (counter|vault)",
+      "GET  /demo/:name — pre-loaded demo IR (counter|vault|escrow|staking)",
     ],
   });
 });

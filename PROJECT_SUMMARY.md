@@ -62,6 +62,7 @@ The frontend is a Next.js app used for product presentation and the live playgro
 - generic save emission for mutated state accounts
 - better signer-seed handling for PDA-owned CPIs
 - improved Pinocchio helper generation for signed system/token transfers
+- local file and project-directory parser input
 
 ## What Still Needs Manual Review
 
@@ -110,6 +111,24 @@ curl -s http://localhost:8080/parse \
   -H 'Content-Type: application/json' \
   --data-binary @<(jq -Rs '{source: .}' api/src/demo-programs/vault.rs)
 ```
+
+Parse one exact local program file:
+
+```bash
+curl -s http://localhost:8080/parse \
+  -H 'Content-Type: application/json' \
+  -d '{"sourcePath":"/absolute/path/to/programs/example/src/lib.rs"}'
+```
+
+Parse a local Anchor workspace directory:
+
+```bash
+curl -s http://localhost:8080/parse \
+  -H 'Content-Type: application/json' \
+  -d '{"projectPath":"/absolute/path/to/anchor-workspace"}'
+```
+
+The project-directory parser is a convenience layer, not a full workspace loader. It auto-detects likely entry files, but if a repo contains several programs you should point Anvil at one exact file path.
 
 ## Practical Rule Of Thumb
 

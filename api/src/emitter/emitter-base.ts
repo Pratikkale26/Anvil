@@ -319,9 +319,37 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     const mutatedAccounts = new Set<string>();
     const stateVars = new Map<string, string>();
     const accountInfoVars = new Map<string, string>();
+    const accountsWithSignerSeeds = new Set<string>();
 
     const resolveStateVar = (account: string): string => stateVars.get(account) ?? account;
     const resolveAccountInfoVar = (account: string): string => accountInfoVars.get(account) ?? account;
+    const emitAutoCloseAccounts = (): void => {
+      for (const account of instr.accounts) {
+        const accountName = snakeCase(account.name);
+        const closeConstraint = account.constraints.find(
+          (constraint) => constraint.kind === "close" && constraint.value
+        );
+        if (!closeConstraint?.value) continue;
+
+        for (const dependent of instr.accounts) {
+          const dependentName = snakeCase(dependent.name);
+          const tokenAuthority = dependent.constraints.find(
+            (constraint) => constraint.kind === "token::authority" && constraint.value === account.name
+          );
+          if (!tokenAuthority) continue;
+
+          const signerSeeds = account.isPda && accountsWithSignerSeeds.has(accountName)
+            ? "signer_seeds"
+            : undefined;
+          lines.push(this.emitSplCloseAccount(
+            resolveAccountInfoVar(dependentName),
+            resolveAccountInfoVar(snakeCase(closeConstraint.value)),
+            resolveAccountInfoVar(accountName),
+            signerSeeds
+          ));
+        }
+      }
+    };
     const emitPendingSaves = (): void => {
       for (const accName of mutatedAccounts) {
         const accRef = instr.accounts.find(a => snakeCase(a.name) === snakeCase(accName));
@@ -345,6 +373,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
 
           // Skip pass_through Ok(()) — handled by instruction wrapper
           if (rawCode === "Ok(())") {
+            emitAutoCloseAccounts();
             emitPendingSaves();
             lines.push(`    Ok(())`);
             break;
@@ -597,11 +626,13 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             seedStateVar,
             seedStateType
           ));
+          accountsWithSignerSeeds.add(accountName);
           break;
         }
 
         // ── Return Ok(()) ──
         case "return_ok": {
+          emitAutoCloseAccounts();
           emitPendingSaves();
           lines.push(`    Ok(())`);
           break;
@@ -750,6 +781,24 @@ export function capitalize(value: string): string {
  */
 export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
   for (const instr of ir.instructions) {
+    if (helperName === "spl_close_account") {
+      for (const account of instr.accounts) {
+        const hasCloseConstraint = account.constraints.some(
+          (constraint) => constraint.kind === "close" && constraint.value
+        );
+        if (!hasCloseConstraint) continue;
+
+        const closesDependentTokenAccount = instr.accounts.some((dependent) =>
+          dependent.constraints.some(
+            (constraint) => constraint.kind === "token::authority" && constraint.value === account.name
+          )
+        );
+        if (closesDependentTokenAccount) {
+          return true;
+        }
+      }
+    }
+
     for (const stmt of instr.body) {
       switch (helperName) {
         case "transfer_lamports":

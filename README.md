@@ -70,7 +70,7 @@ The API starts on `http://localhost:8080` by default.
 Available routes:
 
 - `GET /` health check and capabilities
-- `POST /parse` Anchor source -> IR
+- `POST /parse` Anchor source|file|project -> IR
 - `POST /emit` IR -> target output
 - `GET /demo/:name` preloaded demo IR for bundled demo programs
 
@@ -135,6 +135,30 @@ curl -s http://localhost:8080/parse \
   --data-binary @<(jq -Rs '{source: .}' api/src/demo-programs/escrow.rs)
 ```
 
+Parse a local Rust file directly from disk:
+
+```bash
+curl -s http://localhost:8080/parse \
+  -H 'Content-Type: application/json' \
+  -d '{"sourcePath":"/absolute/path/to/programs/my_program/src/lib.rs"}'
+```
+
+Parse a local Anchor workspace directory from disk:
+
+```bash
+curl -s http://localhost:8080/parse \
+  -H 'Content-Type: application/json' \
+  -d '{"projectPath":"/absolute/path/to/anchor-workspace"}'
+```
+
+Current project auto-detection looks for:
+
+- `programs/*/src/lib.rs`
+- `src/lib.rs`
+- `src/main.rs`
+
+If multiple program entry files exist, Anvil returns `candidates` in the response and currently parses the first detected candidate. For serious testing, it is better to call `sourcePath` with the exact program file you want.
+
 Emit from an existing IR fixture:
 
 ```bash
@@ -148,6 +172,16 @@ If you want to test a different contract, the easiest path is:
 2. Call `POST /parse` with that file’s contents
 3. Feed the returned IR into `POST /emit`
 4. Compare the emitted Rust against the original contract’s constraints and CPI flow
+
+If you want to test a cloned Solana repo from disk:
+
+1. Clone the repo anywhere on your machine
+2. Identify the program you want to test
+3. If it is a normal Anchor workspace, point Anvil at `projectPath`
+4. If the repo has multiple programs, point Anvil at one exact `sourcePath`
+5. Inspect the returned `sourcePath` and `candidates` from `/parse`
+6. Emit to `pinocchio`, `quasar`, or `native`
+7. Save and review the generated Rust
 
 ### Test parser + emitter in one shell
 
@@ -165,6 +199,25 @@ bun -e 'import { readFileSync } from "fs"; import { parseAnchor } from "./src/pa
 - Mutated state accounts are saved once before return
 - Signed CPI helpers use the right backend-specific instruction style
 - Any Anchor-only lifecycle behavior like `close`, `init_if_needed`, or ATA setup is either emitted correctly or clearly marked for review
+- Multi-program repos are pointed at the exact `lib.rs` you intend to parse
+
+### Suggested future testing workflow
+
+For lots of contract testing, this is a good repeatable loop:
+
+1. Clone a repo locally
+2. Parse one program via `sourcePath`
+3. Save the emitted output to a file
+4. Diff the generated code across emitter changes
+5. Add that source as a regression fixture if it exposes a new edge case
+
+Good contract categories to keep adding:
+
+- simple counters and config PDAs
+- SOL vaults
+- token escrow flows
+- staking / reward programs
+- programs with `init_if_needed`, `close`, and multiple PDA authorities
 
 ## Deploying
 

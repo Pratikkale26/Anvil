@@ -22,14 +22,26 @@ class PinocchioEmitter extends BaseEmitter {
   override readonly frameworkName = "Pinocchio";
 
   override emitUseStatements(_ir: SolanaIR): string {
-    return `use core::convert::TryInto;
-use pinocchio::{
+    const imports = [`use core::convert::TryInto;`,
+`use pinocchio::{
     account_info::AccountInfo,
     entrypoint,
     program_error::ProgramError,
     pubkey::Pubkey,
     ProgramResult,
-};`;
+};`];
+
+    if (irNeedsHelper(_ir, "transfer_lamports")) {
+      imports.push(`use pinocchio_system::instructions::Transfer as SystemTransfer;`);
+    }
+    if (irNeedsHelper(_ir, "spl_transfer") || irNeedsHelper(_ir, "spl_mint_to") || irNeedsHelper(_ir, "spl_burn")) {
+      imports.push(`use pinocchio_token::instructions::Transfer as TokenTransfer;`);
+    }
+    if (irNeedsHelper(_ir, "spl_close_account")) {
+      imports.push(`use pinocchio_token::instructions::CloseAccount as TokenCloseAccount;`);
+    }
+
+    return imports.join("\n");
   }
 
   override emitEntrypoint(_ir: SolanaIR): string {
@@ -103,8 +115,17 @@ ${arms}
   }
 
   override emitBumpSeed(_programId: string, seeds: string[], expectedKey: string): string {
-    const seedsStr = seeds.map((s) => `${s}`).join(", ");
-    return `    let bump = bump_seed(program_id, &[${seedsStr}], ${expectedKey}.key())?;`;
+    const prelude: string[] = [];
+    const transformedSeeds = seeds.map((seed, index) => {
+      const match = seed.match(/^(.*)\.to_le_bytes\(\)\.as_ref\(\)$/);
+      if (!match?.[1]) return seed;
+      const varName = `seed_bytes_${index}`;
+      prelude.push(`    let ${varName} = ${match[1].trim()}.to_le_bytes();`);
+      return `${varName}.as_ref()`;
+    });
+    const seedsStr = transformedSeeds.map((s) => `${s}`).join(", ");
+    const bumpLine = `    let bump = bump_seed(program_id, &[${seedsStr}], ${expectedKey}.key())?;`;
+    return prelude.length > 0 ? `${prelude.join("\n")}\n${bumpLine}` : bumpLine;
   }
 
   override emitSystemTransfer(from: string, to: string, amount: string, signerSeeds?: string): string {
@@ -163,9 +184,22 @@ ${arms}
     const dataVar = stateVar || `${account}_data`;
 
     // Transform seed expressions from Anchor-style to Pinocchio-style
-    const transformedSeeds = seeds.map(seed => {
+    const prelude: string[] = [];
+    const transformedSeeds = seeds.map((seed, index) => {
       // b"literal" stays unchanged
       if (seed.startsWith('b"') || seed.startsWith("b'")) return seed;
+      const bytesMatch = seed.match(/^&(.+)\.to_le_bytes\(\)$/);
+      if (bytesMatch?.[1]) {
+        const varName = `${account}_seed_bytes_${index}`;
+        prelude.push(`    let ${varName} = ${bytesMatch[1].trim()}.to_le_bytes();`);
+        return `&${varName}`;
+      }
+      const asRefMatch = seed.match(/^(.*)\.to_le_bytes\(\)\.as_ref\(\)$/);
+      if (asRefMatch?.[1]) {
+        const varName = `${account}_seed_bytes_${index}`;
+        prelude.push(`    let ${varName} = ${asRefMatch[1].trim()}.to_le_bytes();`);
+        return `${varName}.as_ref()`;
+      }
       // &[prefix.bump] → &[data_var.bump]
       if (seed.startsWith("&[")) {
         return seed.replace(new RegExp(`&\\[${statePrefix}\\.`), `&[${dataVar}.`);
@@ -178,7 +212,7 @@ ${arms}
     const resolvedTypeName = typeName || account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
     const maybeRead = stateVar ? "" : `    let ${dataVar} = ${resolvedTypeName}::from_account_info(${accountInfoVar})?;\n`;
     return `    // PDA signer seeds for '${account}'
-${maybeRead}    let seeds = &[
+${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds = &[
             ${seedsStr},
         ];
     let signer_seeds = &[&seeds[..]];`;
@@ -312,18 +346,12 @@ impl From<${enumName}> for ProgramError {
     to: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
-    if from.key() == to.key() {
-        return Err(ProgramError::InvalidAccountData);
+    SystemTransfer {
+        from,
+        to,
+        lamports: amount,
     }
-    let from_lamports = unsafe { from.borrow_mut_lamports_unchecked() };
-    let to_lamports = unsafe { to.borrow_mut_lamports_unchecked() };
-    *from_lamports = from_lamports
-        .checked_sub(amount)
-        .ok_or(ProgramError::InsufficientFunds)?;
-    *to_lamports = to_lamports
-        .checked_add(amount)
-        .ok_or(ProgramError::ArithmeticOverflow)?;
-    Ok(())
+    .invoke()
 }`);
 
       helpers.push(`fn transfer_lamports_signed(
@@ -332,7 +360,7 @@ impl From<${enumName}> for ProgramError {
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
-    pinocchio_system::instructions::Transfer {
+    SystemTransfer {
         from,
         to,
         lamports: amount,
@@ -348,7 +376,7 @@ impl From<${enumName}> for ProgramError {
     authority: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
-    pinocchio_token::instructions::Transfer {
+    TokenTransfer {
         from,
         to,
         authority,
@@ -364,7 +392,7 @@ fn spl_token_transfer_signed(
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
-    pinocchio_token::instructions::Transfer {
+    TokenTransfer {
         from,
         to,
         authority,
@@ -380,7 +408,7 @@ fn spl_token_transfer_signed(
     destination: &AccountInfo,
     authority: &AccountInfo,
 ) -> ProgramResult {
-    pinocchio_token::instructions::CloseAccount {
+    TokenCloseAccount {
         account,
         destination,
         authority,
@@ -394,7 +422,7 @@ fn spl_token_close_account_signed(
     authority: &AccountInfo,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
-    pinocchio_token::instructions::CloseAccount {
+    TokenCloseAccount {
         account,
         destination,
         authority,
