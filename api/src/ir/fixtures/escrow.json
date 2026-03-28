@@ -160,19 +160,19 @@
           "kind": "state_field_assign",
           "account": "escrow",
           "field": "maker",
-          "value": "*maker.key()"
+          "value": "ctx.accounts.maker.key()"
         },
         {
           "kind": "state_field_assign",
           "account": "escrow",
           "field": "mint_a",
-          "value": "*mint_a.key()"
+          "value": "ctx.accounts.mint_a.key()"
         },
         {
           "kind": "state_field_assign",
           "account": "escrow",
           "field": "mint_b",
-          "value": "*mint_b.key()"
+          "value": "ctx.accounts.mint_b.key()"
         },
         {
           "kind": "state_field_assign",
@@ -659,6 +659,6 @@
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T13:14:04.032Z"
+    "parsedAt": "2026-03-28T13:28:30.912Z"
   }
 }

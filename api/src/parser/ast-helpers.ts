@@ -336,7 +336,8 @@ export function cleanAmountExpr(text: string): string {
  * Check if text contains any ctx.accounts or ctx.bumps references.
  */
 export function containsAnchorPatterns(text: string): boolean {
-  return /ctx\.(accounts|bumps)\./.test(text) ||
+  return /ctx\.bumps\./.test(text) ||
+    /ctx\.accounts\.\w+\.to_account_info\(\)/.test(text) ||
     /CpiContext::/.test(text) ||
     /anchor_spl::/.test(text) ||
     /anchor_lang::/.test(text);

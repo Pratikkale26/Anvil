@@ -45,6 +45,8 @@ export abstract class BaseEmitter {
   abstract emitSignerCheck(name: string): string;
   abstract emitOwnerCheck(name: string): string;
   abstract emitWritableCheck(names: string[]): string;
+  abstract emitAccountKeyExpr(accountName: string): string;
+  abstract emitAccountLamportsExpr(accountName: string): string;
   abstract emitStateRead(accountName: string, typeName: string, localVar: string, mutable: boolean): string;
   abstract emitStateSave(accountName: string, typeName: string, localVar: string): string;
   abstract emitBumpSeed(programId: string, seeds: string[], expectedKey: string): string;
@@ -321,6 +323,8 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     const stateVars = new Map<string, string>();
     const accountInfoVars = new Map<string, string>();
     const accountsWithSignerSeeds = new Set<string>();
+    const isGeneratedStateType = (typeName: string): boolean =>
+      ir.accounts.some((account) => account.name === typeName);
 
     const resolveStateVar = (account: string): string => stateVars.get(account) ?? account;
     const resolveAccountInfoVar = (account: string): string => accountInfoVars.get(account) ?? account;
@@ -330,7 +334,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       if (existing) return existing;
       const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === normalized);
       const typeName = accountRef?.accountType ?? "Unknown";
-      if (isProgramAccount(typeName) || typeName === "Unknown" || typeName === "Signer" || typeName === "SystemAccount" || typeName === "UncheckedAccount") {
+      if (!isGeneratedStateType(typeName)) {
         return normalized;
       }
       const localVar = normalized;
@@ -349,27 +353,61 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       ) ?? [];
       for (const constraint of hasOneConstraints) {
         const targetAccount = snakeCase(constraint.value!);
-        lines.push(`    if ${localVar}.${snakeCase(constraint.value!)} != *${targetAccount}.key() {`);
+        lines.push(`    if ${localVar}.${snakeCase(constraint.value!)} != ${this.emitAccountKeyExpr(resolveAccountInfoVar(targetAccount))} {`);
         lines.push(`        return Err(ProgramError::InvalidAccountData);`);
         lines.push(`    }`);
       }
       return localVar;
     };
+    const transformAccountReferences = (code: string): string => {
+      let transformed = code;
+      for (const account of instr.accounts) {
+        const accountName = snakeCase(account.name);
+        const accountInfoVar = resolveAccountInfoVar(accountName);
+        transformed = transformed.replace(
+          new RegExp(`\\b${accountName}\\.key\\(\\)`, "g"),
+          this.emitAccountKeyExpr(accountInfoVar)
+        );
+        transformed = transformed.replace(
+          new RegExp(`\\b${accountName}\\.lamports\\(\\)`, "g"),
+          this.emitAccountLamportsExpr(accountInfoVar)
+        );
+        if (!isGeneratedStateType(account.accountType)) continue;
+        transformed = transformed.replace(
+          new RegExp(`\\b${accountName}\\.(\\w+)`, "g"),
+          (full, field: string) => {
+            if (field === "key" || field === "lamports") return full;
+            const localVar = ensureStateRead(accountName);
+            return `${localVar}.${snakeCase(field)}`;
+          }
+        );
+      }
+      return transformed;
+    };
     const transformCtxAccountsReferences = (code: string): string => {
       let transformed = code;
-      transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\(\)/g, (_, name: string) => `*${resolveAccountInfoVar(snakeCase(name))}.key()`);
-      transformed = transformed.replace(/ctx\.accounts\.(\w+)\.lamports\(\)/g, (_, name: string) => `${resolveAccountInfoVar(snakeCase(name))}.lamports()`);
+      transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\(\)/g, (_, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name))));
+      transformed = transformed.replace(/ctx\.accounts\.(\w+)\.lamports\(\)/g, (_, name: string) => this.emitAccountLamportsExpr(resolveAccountInfoVar(snakeCase(name))));
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.(\w+)/g, (full, name: string, field: string) => {
         if (field === "key" || field === "lamports") return full;
         const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === snakeCase(name));
         const typeName = accountRef?.accountType ?? "Unknown";
-        if (isProgramAccount(typeName) || typeName === "Unknown" || typeName === "Signer" || typeName === "SystemAccount" || typeName === "UncheckedAccount") {
+        if (!isGeneratedStateType(typeName)) {
           return full;
         }
         const localVar = ensureStateRead(name);
         return `${localVar}.${snakeCase(field)}`;
       });
       return transformed;
+    };
+    const emitAccountConstraintChecks = (): void => {
+      for (const account of instr.accounts) {
+        for (const constraint of account.constraints) {
+          if (constraint.kind !== "constraint" || !constraint.value) continue;
+          const condition = transformAccountReferences(transformCtxAccountsReferences(constraint.value));
+          lines.push(this.emitRequire(condition, "ProgramError::InvalidAccountData"));
+        }
+      }
     };
     const emitAutoCloseAccounts = (): void => {
       for (const account of instr.accounts) {
@@ -407,7 +445,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       for (const accName of mutatedAccounts) {
         const accRef = instr.accounts.find(a => snakeCase(a.name) === snakeCase(accName));
         const typeName = accRef?.accountType || "Unknown";
-        if (!isProgramAccount(typeName) && typeName !== "Unknown" && typeName !== "Signer" && typeName !== "SystemAccount" && typeName !== "UncheckedAccount") {
+        if (isGeneratedStateType(typeName)) {
           lines.push(this.emitStateSave(
             resolveAccountInfoVar(snakeCase(accName)),
             typeName,
@@ -416,6 +454,8 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         }
       }
     };
+
+    emitAccountConstraintChecks();
 
     for (const stmt of statements) {
       switch (stmt.kind) {
@@ -490,7 +530,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           ) ?? [];
           for (const constraint of hasOneConstraints) {
             const targetAccount = snakeCase(constraint.value!);
-            lines.push(`    if ${localVar}.${snakeCase(constraint.value!)} != *${targetAccount}.key() {`);
+            lines.push(`    if ${localVar}.${snakeCase(constraint.value!)} != ${this.emitAccountKeyExpr(resolveAccountInfoVar(targetAccount))} {`);
             lines.push(`        return Err(ProgramError::InvalidAccountData);`);
             lines.push(`    }`);
           }
@@ -876,6 +916,33 @@ export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
     }
   }
   return false;
+}
+
+export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_system_transfer" && !stmt.signerSeeds)
+  );
+}
+
+export function irNeedsSignedLamportsHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_system_transfer" && !!stmt.signerSeeds)
+  );
+}
+
+export function irNeedsTokenAmountHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => {
+      switch (stmt.kind) {
+        case "cpi_spl_transfer":
+        case "cpi_spl_mint_to":
+        case "cpi_spl_burn":
+          return /\.amount$/.test(stmt.amount);
+        default:
+          return false;
+      }
+    })
+  );
 }
 
 export function irNeedsSignedSplCloseAccountHelper(ir: SolanaIR): boolean {

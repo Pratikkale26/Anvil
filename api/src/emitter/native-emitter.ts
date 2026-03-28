@@ -97,6 +97,14 @@ ${arms}
     }`;
   }
 
+  override emitAccountKeyExpr(accountName: string): string {
+    return `*${accountName}.key`;
+  }
+
+  override emitAccountLamportsExpr(accountName: string): string {
+    return `${accountName}.lamports()`;
+  }
+
   override emitStateRead(accountName: string, typeName: string, localVar: string, mutable: boolean): string {
     const mutKeyword = mutable ? "mut " : "";
     return `    let ${mutKeyword}${localVar} = ${typeName}::try_from_slice(&${accountName}.data.borrow())?;`;

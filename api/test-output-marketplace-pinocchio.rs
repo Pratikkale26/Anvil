@@ -126,7 +126,8 @@ fn list(
     listing.mint = *nft_mint.key();
     listing.price = price;
     listing.seed = seed;
-    let bump = bump_seed(program_id, &[b"listing", seller.key().as_ref(), &seed.to_le_bytes()], listing_account.key())?;
+    let seed_bytes = seed.to_le_bytes();
+    let bump = bump_seed(program_id, &[b"listing", seller.key().as_ref(), &seed_bytes], listing_account.key())?;
     listing.bump = bump;
     listing.marketplace = *marketplace.key();
     listing.is_active = true;
@@ -225,14 +226,16 @@ fn purchase(
         return Err(ProgramError::InvalidInstructionData);
     }
 
+    let marketplace_account = marketplace;
+    let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
+    if !(*treasury.key() == marketplace.treasury) {
+        return Err(ProgramError::InvalidAccountData.into());
+    }
     let listing_account = listing;
     let listing = Listing::from_account_info(listing_account)?;
     if !(listing.is_active) {
         return Err(MarketplaceError::ListingNotActive.into());
     }
-    let marketplace_account = marketplace;
-    let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
-    // ⚠️ Anvil: Review this section — Contains possible Anchor-specific pattern
     let fee = listing.price
             .checked_mul(marketplace.fee_bps as u64)
             .ok_or(MarketplaceError::Overflow)?
@@ -470,20 +473,6 @@ fn transfer_lamports(
     .invoke()
 }
 
-fn transfer_lamports_signed(
-    from: &AccountInfo,
-    to: &AccountInfo,
-    amount: u64,
-    signer_seeds: &[&[&[u8]]],
-) -> ProgramResult {
-    SystemTransfer {
-        from,
-        to,
-        lamports: amount,
-    }
-    .invoke_signed(signer_seeds)
-}
-
 fn spl_token_transfer(
     from: &AccountInfo,
     to: &AccountInfo,
@@ -554,15 +543,6 @@ fn close_program_account(
         }
     }
     Ok(())
-}
-
-/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
-fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
-    let data = unsafe { account.borrow_data_unchecked() };
-    if data.len() < 72 {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    Ok(u64::from_le_bytes(data[64..72].try_into().unwrap()))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

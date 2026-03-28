@@ -16,6 +16,9 @@ import {
   toPascalCase,
   isProgramAccount,
   irNeedsHelper,
+  irNeedsSignedLamportsHelper,
+  irNeedsTokenAmountHelper,
+  irNeedsUnsignedLamportsHelper,
   irNeedsSignedSplCloseAccountHelper,
   irNeedsUnsignedSplCloseAccountHelper,
 } from "./emitter-base.js";
@@ -107,6 +110,14 @@ ${arms}
     }`;
   }
 
+  override emitAccountKeyExpr(accountName: string): string {
+    return `*${accountName}.key()`;
+  }
+
+  override emitAccountLamportsExpr(accountName: string): string {
+    return `${accountName}.lamports()`;
+  }
+
   override emitStateRead(accountName: string, typeName: string, localVar: string, mutable: boolean): string {
     const mutKeyword = mutable ? "mut " : "";
     return `    let ${mutKeyword}${localVar} = ${typeName}::from_account_info(${accountName})?;`;
@@ -120,6 +131,13 @@ ${arms}
     const prelude: string[] = [];
     let tempCount = 0;
     const transformedSeeds = seeds.map((seed) => {
+      const bytesMatch = seed.match(/^&(.*)\.to_le_bytes\(\)$/);
+      if (bytesMatch?.[1]) {
+        const varName = tempCount === 0 ? "seed_bytes" : `seed_bytes_${tempCount + 1}`;
+        tempCount++;
+        prelude.push(`    let ${varName} = ${bytesMatch[1].trim()}.to_le_bytes();`);
+        return `&${varName}`;
+      }
       const match = seed.match(/^(.*)\.to_le_bytes\(\)\.as_ref\(\)$/);
       if (!match?.[1]) return seed;
       const varName = tempCount === 0 ? "seed_bytes" : `seed_bytes_${tempCount + 1}`;
@@ -351,7 +369,7 @@ impl From<${enumName}> for ProgramError {
     Ok(bump)
 }`);
 
-    if (irNeedsHelper(ir, "transfer_lamports")) {
+    if (irNeedsUnsignedLamportsHelper(ir)) {
       helpers.push(`fn transfer_lamports(
     from: &AccountInfo,
     to: &AccountInfo,
@@ -364,7 +382,9 @@ impl From<${enumName}> for ProgramError {
     }
     .invoke()
 }`);
+    }
 
+    if (irNeedsSignedLamportsHelper(ir)) {
       helpers.push(`fn transfer_lamports_signed(
     from: &AccountInfo,
     to: &AccountInfo,
@@ -476,7 +496,7 @@ fn spl_token_transfer_signed(
     }
 
     // Only emit the token account amount reader if SPL token operations are present
-    if (irNeedsHelper(ir, "spl_transfer") || irNeedsHelper(ir, "spl_mint_to") || irNeedsHelper(ir, "spl_burn")) {
+    if (irNeedsTokenAmountHelper(ir)) {
       helpers.push(`/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
 fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     let data = unsafe { account.borrow_data_unchecked() };

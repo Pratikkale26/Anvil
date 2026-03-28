@@ -90,7 +90,7 @@
           "kind": "state_field_assign",
           "account": "vault_state",
           "field": "authority",
-          "value": "*authority.key()"
+          "value": "ctx.accounts.authority.key()"
         },
         {
           "kind": "state_field_assign",
@@ -363,8 +363,7 @@
         {
           "kind": "pass_through",
           "code": "require!(\n            ctx.accounts.vault.lamports() >= amount,\n            VaultError::InsufficientFunds\n        );",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern"
+          "needsReview": false
         },
         {
           "kind": "pda_signer_seeds",
@@ -460,6 +459,6 @@
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T13:14:04.018Z"
+    "parsedAt": "2026-03-28T13:28:30.896Z"
   }
 }

@@ -318,16 +318,11 @@ function classifyAssignment(node: SyntaxNode): BodyStatement | null {
       const field = isCtxAccountsField ? (chain[3] ?? "unknown") : (chain[1] ?? "unknown");
       let value = rightNode.text;
 
-      // Transform ctx.accounts.X.key() → *X.key()
+      // Preserve ctx.accounts references for the emitter to rewrite per framework.
       if (value.includes("ctx.accounts.")) {
         const accountRef = findCtxAccountsAccess(rightNode);
         if (accountRef) {
-          // Check if it calls .key()
-          if (value.includes(".key()")) {
-            value = `*${accountRef}.key()`;
-          } else {
-            value = accountRef;
-          }
+          value = rightNode.text;
         }
       }
 

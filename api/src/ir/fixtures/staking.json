@@ -102,19 +102,19 @@
           "kind": "state_field_assign",
           "account": "pool",
           "field": "authority",
-          "value": "*authority.key()"
+          "value": "ctx.accounts.authority.key()"
         },
         {
           "kind": "state_field_assign",
           "account": "pool",
           "field": "stake_mint",
-          "value": "*stake_mint.key()"
+          "value": "ctx.accounts.stake_mint.key()"
         },
         {
           "kind": "state_field_assign",
           "account": "pool",
           "field": "reward_mint",
-          "value": "*reward_mint.key()"
+          "value": "ctx.accounts.reward_mint.key()"
         },
         {
           "kind": "state_field_assign",
@@ -317,7 +317,7 @@
           "kind": "state_field_assign",
           "account": "user_stake",
           "field": "owner",
-          "value": "*user.key()"
+          "value": "ctx.accounts.user.key()"
         },
         {
           "kind": "state_field_assign",
@@ -825,6 +825,6 @@
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T13:14:04.045Z"
+    "parsedAt": "2026-03-28T13:28:30.925Z"
   }
 }
