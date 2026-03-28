@@ -1,6 +1,5 @@
 {
   "name": "escrow",
-  "programId": "Escrow111111111111111111111111111111111111111",
   "instructions": [
     {
       "name": "create_escrow",
@@ -23,29 +22,21 @@
           "name": "mint_a",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "mint_b",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "maker_ata_a",
@@ -115,67 +106,31 @@
           "name": "system_program",
           "accountType": "System",
           "isSigner": false,
-          "isMut": true,
-          "isInit": true,
+          "isMut": false,
+          "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "init"
-            },
-            {
-              "kind": "token::mint",
-              "value": "mint_a"
-            },
-            {
-              "kind": "token::authority",
-              "value": "escrow"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "token_program",
           "accountType": "Program<'info, anchor_spl::token::Token>",
           "isSigner": false,
-          "isMut": true,
-          "isInit": true,
+          "isMut": false,
+          "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "init"
-            },
-            {
-              "kind": "token::mint",
-              "value": "mint_a"
-            },
-            {
-              "kind": "token::authority",
-              "value": "escrow"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "associated_token_program",
           "accountType": "Program<'info, anchor_spl::associated_token::AssociatedToken>",
           "isSigner": false,
-          "isMut": true,
-          "isInit": true,
+          "isMut": false,
+          "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "init"
-            },
-            {
-              "kind": "token::mint",
-              "value": "mint_a"
-            },
-            {
-              "kind": "token::authority",
-              "value": "escrow"
-            }
-          ]
+          "constraints": []
         }
       ],
       "args": [
@@ -200,19 +155,19 @@
           "kind": "state_field_assign",
           "account": "escrow",
           "field": "maker",
-          "value": "*signer_key"
+          "value": "*maker.key()"
         },
         {
           "kind": "state_field_assign",
           "account": "escrow",
           "field": "mint_a",
-          "value": "*signer_key"
+          "value": "*mint_a.key()"
         },
         {
           "kind": "state_field_assign",
           "account": "escrow",
           "field": "mint_b",
-          "value": "*signer_key"
+          "value": "*mint_b.key()"
         },
         {
           "kind": "state_field_assign",
@@ -233,16 +188,19 @@
           "value": "ctx.bumps.escrow"
         },
         {
-          "kind": "pass_through",
-          "code": "anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.maker_ata_a.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.maker.to_account_info(),\n                },\n            ),\n            ctx.accounts.maker_ata_a.amount,\n        )?",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+          "kind": "cpi_spl_transfer",
+          "from": "maker_ata_a",
+          "to": "vault",
+          "authority": "maker",
+          "amount": "maker_ata_a.amount"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
-      "rawBody": "{\n        let escrow = &mut ctx.accounts.escrow;\n        escrow.maker = ctx.accounts.maker.key();\n        escrow.mint_a = ctx.accounts.mint_a.key();\n        escrow.mint_b = ctx.accounts.mint_b.key();\n        escrow.receive_amount = receive_amount;\n        escrow.seed = seed;\n        escrow.bump = ctx.bumps.escrow;\n\n        \n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.maker_ata_a.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.maker.to_account_info(),\n                },\n            ),\n            ctx.accounts.maker_ata_a.amount,\n        )?;\n        Ok(())\n    }"
+      "rawBody": "{\n        let escrow = &mut ctx.accounts.escrow;\n        escrow.maker = ctx.accounts.maker.key();\n        escrow.mint_a = ctx.accounts.mint_a.key();\n        escrow.mint_b = ctx.accounts.mint_b.key();\n        escrow.receive_amount = receive_amount;\n        escrow.seed = seed;\n        escrow.bump = ctx.bumps.escrow;\n\n        // Transfer tokens from maker to vault\n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.maker_ata_a.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.maker.to_account_info(),\n                },\n            ),\n            ctx.accounts.maker_ata_a.amount,\n        )?;\n        Ok(())\n    }"
     },
     {
       "name": "accept_escrow",
@@ -265,43 +223,31 @@
           "name": "maker",
           "accountType": "SystemAccount",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "mint_a",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "mint_b",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "taker_ata_b",
@@ -431,76 +377,41 @@
           "name": "system_program",
           "accountType": "System",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            },
-            {
-              "kind": "token::mint",
-              "value": "mint_a"
-            },
-            {
-              "kind": "token::authority",
-              "value": "escrow"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "token_program",
           "accountType": "Program<'info, anchor_spl::token::Token>",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            },
-            {
-              "kind": "token::mint",
-              "value": "mint_a"
-            },
-            {
-              "kind": "token::authority",
-              "value": "escrow"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "associated_token_program",
           "accountType": "Program<'info, anchor_spl::associated_token::AssociatedToken>",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            },
-            {
-              "kind": "token::mint",
-              "value": "mint_a"
-            },
-            {
-              "kind": "token::authority",
-              "value": "escrow"
-            }
-          ]
+          "constraints": []
         }
       ],
       "args": [],
       "body": [
         {
-          "kind": "pass_through",
-          "code": "let escrow = &ctx.accounts.escrow",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+          "kind": "state_read",
+          "account": "escrow",
+          "localVar": "escrow",
+          "mutable": false,
+          "accountType": "Escrow"
         },
         {
           "kind": "pda_signer_seeds",
@@ -511,26 +422,31 @@
             "&escrow.seed.to_le_bytes()",
             "&[escrow.bump]"
           ],
-          "bumpField": "escrow.bump",
-          "rawCode": "let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\nlet signer_seeds = &[&seeds[..]]"
+          "bumpField": "&[escrow.bump]",
+          "rawCode": "let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\nlet signer_seeds = &[&seeds[..]];"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "taker_ata_b",
+          "to": "maker_ata_b",
+          "authority": "taker",
+          "amount": "escrow.receive_amount"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "vault",
+          "to": "taker_ata_a",
+          "authority": "escrow",
+          "amount": "vault.amount",
+          "signerSeeds": "signer_seeds"
         },
         {
           "kind": "pass_through",
-          "code": "anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.taker_ata_b.to_account_info(),\n                    to: ctx.accounts.maker_ata_b.to_account_info(),\n                    authority: ctx.accounts.taker.to_account_info(),\n                },\n            ),\n            escrow.receive_amount,\n        )?",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
-        },
-        {
-          "kind": "pass_through",
-          "code": "anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.taker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
-        },
-        {
-          "kind": "return_ok"
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
-      "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        \n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.taker_ata_b.to_account_info(),\n                    to: ctx.accounts.maker_ata_b.to_account_info(),\n                    authority: ctx.accounts.taker.to_account_info(),\n                },\n            ),\n            escrow.receive_amount,\n        )?;\n\n        \n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.taker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?;\n        Ok(())\n    }"
+      "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        // Send mint_b from taker to maker\n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.taker_ata_b.to_account_info(),\n                    to: ctx.accounts.maker_ata_b.to_account_info(),\n                    authority: ctx.accounts.taker.to_account_info(),\n                },\n            ),\n            escrow.receive_amount,\n        )?;\n\n        // Send mint_a from vault to taker\n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.taker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?;\n        Ok(())\n    }"
     },
     {
       "name": "cancel_escrow",
@@ -553,15 +469,11 @@
           "name": "mint_a",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "maker_ata_a",
@@ -643,32 +555,21 @@
           "name": "token_program",
           "accountType": "Program<'info, anchor_spl::token::Token>",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            },
-            {
-              "kind": "token::mint",
-              "value": "mint_a"
-            },
-            {
-              "kind": "token::authority",
-              "value": "escrow"
-            }
-          ]
+          "constraints": []
         }
       ],
       "args": [],
       "body": [
         {
-          "kind": "pass_through",
-          "code": "let escrow = &ctx.accounts.escrow",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+          "kind": "state_read",
+          "account": "escrow",
+          "localVar": "escrow",
+          "mutable": false,
+          "accountType": "Escrow"
         },
         {
           "kind": "pda_signer_seeds",
@@ -679,20 +580,24 @@
             "&escrow.seed.to_le_bytes()",
             "&[escrow.bump]"
           ],
-          "bumpField": "escrow.bump",
-          "rawCode": "let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\nlet signer_seeds = &[&seeds[..]]"
+          "bumpField": "&[escrow.bump]",
+          "rawCode": "let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\nlet signer_seeds = &[&seeds[..]];"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "vault",
+          "to": "maker_ata_a",
+          "authority": "escrow",
+          "amount": "vault.amount",
+          "signerSeeds": "signer_seeds"
         },
         {
           "kind": "pass_through",
-          "code": "anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.maker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
-        },
-        {
-          "kind": "return_ok"
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
-      "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        \n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.maker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?;\n        Ok(())\n    }"
+      "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        // Return tokens to maker\n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.maker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?;\n        Ok(())\n    }"
     }
   ],
   "accounts": [
@@ -724,20 +629,19 @@
           "type": "u8"
         }
       ],
-      "space": 113
+      "space": 121
     }
   ],
   "types": [],
   "errors": [],
   "helperFns": [],
   "imports": [
-    "anchor_lang::prelude::*",
-    "super::*"
+    "anchor_lang::prelude::*"
   ],
   "metadata": {
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T11:00:27.857Z"
+    "parsedAt": "2026-03-28T11:53:05.257Z"
   }
 }

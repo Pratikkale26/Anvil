@@ -1,7 +1,7 @@
 /**
  * Fixture Regeneration Script
  *
- * Parses all demo-programs/*.rs source files through the new parser
+ * Parses all demo-programs/*.rs source files through the tree-sitter parser
  * to create fixtures that include body classification data.
  *
  * Usage: bun run regenerate-fixtures.ts
@@ -35,7 +35,8 @@ for (const name of demos) {
     continue;
   }
 
-  const result = parseAnchor(source);
+  // parseAnchor is now async (tree-sitter WASM init)
+  const result = await parseAnchor(source);
 
   if (!result.ok) {
     console.error(`  ❌ Parse failed: ${result.error}`);

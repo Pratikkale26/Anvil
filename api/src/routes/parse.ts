@@ -8,7 +8,7 @@ export const parseRoute = Router();
  * Body: { source: string }          — raw Anchor .rs file content
  * Returns: SolanaIR JSON or error
  */
-parseRoute.post("/", (req, res) => {
+parseRoute.post("/", async (req, res) => {
   const { source } = req.body as { source?: string };
 
   if (!source || typeof source !== "string") {
@@ -21,7 +21,7 @@ parseRoute.post("/", (req, res) => {
     return;
   }
 
-  const result = parseAnchor(source);
+  const result = await parseAnchor(source);
 
   if (!result.ok) {
     res.status(422).json({

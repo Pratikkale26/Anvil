@@ -1,286 +1,303 @@
 /**
- * CPI Pattern Detector
+ * CPI Detector — AST-based CPI Pattern Recognition
  *
- * Detects and decomposes Cross-Program Invocation (CPI) patterns from Anchor Rust code.
- * Handles all standard Anchor CPI patterns:
- *   - System program SOL transfer
- *   - SPL Token transfer, mint_to, burn, close_account
- *   - Associated Token Account creation
- *   - Custom/generic CPIs via invoke/invoke_signed
+ * Detects all standard Anchor CPI patterns by walking tree-sitter AST nodes.
+ * Handles both inline CpiContext and separate variable CPI patterns.
+ *
+ * Supported CPI kinds:
+ *   - SPL Token transfer (token::transfer)
+ *   - SPL Token mint_to (token::mint_to)
+ *   - SPL Token burn (token::burn)
+ *   - SPL Token close_account (token::close_account)
+ *   - System program transfer (system_program::transfer)
+ *   - Custom CPI (invoke / invoke_signed)
  */
 
-// ─── Detection result types ──────────────────────────────────────────────────
-
-export type CpiDetection =
-  | { kind: "system_transfer"; from: string; to: string; amount: string }
-  | { kind: "spl_transfer"; from: string; to: string; authority: string; amount: string }
-  | { kind: "spl_mint_to"; mint: string; to: string; authority: string; amount: string }
-  | { kind: "spl_burn"; from: string; mint: string; authority: string; amount: string }
-  | { kind: "spl_close_account"; account: string; destination: string; authority: string }
-  | { kind: "custom"; program: string; rawCode: string };
-
-// ─── Main detection function ─────────────────────────────────────────────────
+import type { SyntaxNode } from "./ts-init.js";
+import type { BodyStatement } from "../ir/schema.js";
+import {
+  findDescendant,
+  findCtxAccountsAccess,
+  extractStructField,
+  getArguments,
+  cleanAccountRef,
+  cleanAmountExpr,
+} from "./ast-helpers.js";
 
 /**
- * Attempt to detect a CPI pattern from a code block (possibly spanning multiple lines).
- * Returns null if no CPI pattern is detected.
+ * Try to detect a CPI call in an expression node.
+ * Returns a classified BodyStatement if it's a known CPI, or null.
+ *
+ * Works on both call_expression and try_expression nodes.
  */
-export function detectCpi(code: string): CpiDetection | null {
-  // Normalize whitespace for pattern matching
-  const normalized = code.replace(/\s+/g, " ").trim();
+export function detectCpi(node: SyntaxNode): BodyStatement | null {
+  // Unwrap try_expression (expr?) to get the inner call
+  let callNode = node;
+  if (callNode.type === "try_expression") {
+    const inner = callNode.namedChild(0);
+    if (inner) callNode = inner;
+  }
 
-  // Try each detector in order of specificity
-  return (
-    trySystemTransfer(code, normalized) ??
-    trySplTransfer(code, normalized) ??
-    trySplMintTo(code, normalized) ??
-    trySplBurn(code, normalized) ??
-    trySplCloseAccount(code, normalized) ??
-    tryGenericCpi(code, normalized)
-  );
+  if (callNode.type !== "call_expression") return null;
+
+  const funcNode = callNode.childForFieldName("function");
+  if (!funcNode) return null;
+
+  const funcText = funcNode.text;
+
+  // ── SPL Token transfer ──
+  if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
+    return extractSplTransfer(callNode);
+  }
+
+  // ── SPL Token mint_to ──
+  if (funcText.includes("token::mint_to") || funcText.includes("token::MintTo")) {
+    return extractSplMintTo(callNode);
+  }
+
+  // ── SPL Token burn ──
+  if (funcText.includes("token::burn") || funcText.includes("token::Burn")) {
+    return extractSplBurn(callNode);
+  }
+
+  // ── SPL Token close_account ──
+  if (funcText.includes("close_account") || funcText.includes("CloseAccount")) {
+    return extractSplCloseAccount(callNode);
+  }
+
+  // ── System program transfer ──
+  if (funcText.includes("system_program::transfer") || funcText.includes("system_instruction::transfer")) {
+    return extractSystemTransfer(callNode);
+  }
+
+  // ── Generic invoke / invoke_signed ──
+  if (funcText === "invoke" || funcText === "invoke_signed") {
+    return extractCustomCpi(callNode);
+  }
+
+  return null;
 }
 
-// ─── System Program Transfer ─────────────────────────────────────────────────
+// ─── SPL Token Transfer ─────────────────────────────────────────────────────
 
-function trySystemTransfer(raw: string, norm: string): CpiDetection | null {
-  // Pattern 1: anchor_lang::system_program::transfer(cpi_ctx, amount)?
-  // With CpiContext containing Transfer { from, to }
-  if (!norm.includes("system_program") && !norm.includes("SystemProgram")) return null;
-  if (!norm.includes("Transfer") && !norm.includes("transfer")) return null;
+function extractSplTransfer(callNode: SyntaxNode): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return fallbackPassThrough(callNode);
 
-  // Extract from the Transfer struct
-  const transferStructMatch = raw.match(
-    /Transfer\s*\{\s*from\s*:\s*ctx\.accounts\.(\w+)\.to_account_info\(\)\s*,\s*to\s*:\s*ctx\.accounts\.(\w+)\.to_account_info\(\)/s
-  );
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  const lastArg = args[args.length - 1];
 
-  // Also try without ctx.accounts prefix
-  const transferStructMatch2 = raw.match(
-    /Transfer\s*\{\s*from\s*:\s*(\w+)\.to_account_info\(\)\s*,\s*to\s*:\s*(\w+)\.to_account_info\(\)/s
-  );
+  let from = "from";
+  let to = "to";
+  let authority = "authority";
+  let amount = "amount";
+  let signerSeeds: string | undefined;
 
-  const from = transferStructMatch?.[1] ?? transferStructMatch2?.[1] ?? "from";
-  const to = transferStructMatch?.[2] ?? transferStructMatch2?.[2] ?? "to";
+  // Check if first arg contains CpiContext::new (inline CPI)
+  if (firstArg && firstArg.text.includes("CpiContext::")) {
+    const transferStruct = findDescendant(firstArg, "struct_expression");
+    if (transferStruct) {
+      from = extractStructField(transferStruct, "from") ?? "from";
+      to = extractStructField(transferStruct, "to") ?? "to";
+      authority = extractStructField(transferStruct, "authority") ?? "authority";
+    }
+    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+  } else if (firstArg) {
+    // CPI context is a variable reference — we can't easily resolve it
+    // but we can check the surrounding code for the CpiContext construction
+    signerSeeds = undefined; // TODO: could trace variable
+  }
 
-  // Extract amount from the transfer call
-  const amountMatch = raw.match(
-    /(?:system_program::)?transfer\s*\(\s*\w+\s*,\s*(\w+)\s*\)/
-  );
-  const amount = amountMatch?.[1] ?? "amount";
-
-  return { kind: "system_transfer", from, to, amount };
-}
-
-// ─── SPL Token Transfer ──────────────────────────────────────────────────────
-
-function trySplTransfer(raw: string, norm: string): CpiDetection | null {
-  if (!norm.includes("token::transfer") && !norm.includes("token_program")) return null;
-  // Must have Transfer struct (not Transfer as an instruction name)
-  if (!norm.includes("Transfer {") && !norm.includes("Transfer{")) return null;
-  // Exclude system_program::Transfer
-  if (norm.includes("system_program::Transfer")) return null;
-
-  // Extract Transfer struct fields
-  const fields = extractTransferFields(raw);
-
-  // Extract amount
-  const amountMatch = raw.match(
-    /token::transfer\s*\(\s*\w+\s*,\s*(.+?)\s*\)\s*\?/s
-  );
-  const amount = amountMatch?.[1]?.trim() ?? "amount";
+  // Amount is the last argument (or second arg if not CpiContext)
+  if (lastArg && lastArg !== firstArg) {
+    amount = cleanAmountExpr(lastArg.text);
+  }
 
   return {
-    kind: "spl_transfer",
-    from: fields.from ?? "from",
-    to: fields.to ?? "to",
-    authority: fields.authority ?? "authority",
+    kind: "cpi_spl_transfer",
+    from: cleanAccountRef(from),
+    to: cleanAccountRef(to),
+    authority: cleanAccountRef(authority),
     amount,
+    signerSeeds,
   };
 }
 
-// ─── SPL Token MintTo ────────────────────────────────────────────────────────
+// ─── SPL Token Mint To ──────────────────────────────────────────────────────
 
-function trySplMintTo(raw: string, norm: string): CpiDetection | null {
-  if (!norm.includes("mint_to") && !norm.includes("MintTo")) return null;
+function extractSplMintTo(callNode: SyntaxNode): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return fallbackPassThrough(callNode);
 
-  const fields = extractMintToFields(raw);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  const lastArg = args[args.length - 1];
 
-  const amountMatch = raw.match(
-    /(?:token::)?mint_to\s*\(\s*\w+\s*,\s*(.+?)\s*\)\s*\?/s
-  );
-  const amount = amountMatch?.[1]?.trim() ?? "amount";
+  let mint = "mint";
+  let to = "to";
+  let authority = "authority";
+  let amount = "amount";
+  let signerSeeds: string | undefined;
+
+  if (firstArg && firstArg.text.includes("CpiContext::")) {
+    const mintStruct = findDescendant(firstArg, "struct_expression");
+    if (mintStruct) {
+      mint = extractStructField(mintStruct, "mint") ?? "mint";
+      to = extractStructField(mintStruct, "to") ?? "to";
+      authority = extractStructField(mintStruct, "authority") ?? "authority";
+    }
+    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+  }
+
+  if (lastArg && lastArg !== firstArg) {
+    amount = cleanAmountExpr(lastArg.text);
+  }
 
   return {
-    kind: "spl_mint_to",
-    mint: fields.mint ?? "mint",
-    to: fields.to ?? "to",
-    authority: fields.authority ?? "authority",
+    kind: "cpi_spl_mint_to",
+    mint: cleanAccountRef(mint),
+    to: cleanAccountRef(to),
+    authority: cleanAccountRef(authority),
     amount,
+    signerSeeds,
   };
 }
 
-// ─── SPL Token Burn ──────────────────────────────────────────────────────────
+// ─── SPL Token Burn ─────────────────────────────────────────────────────────
 
-function trySplBurn(raw: string, norm: string): CpiDetection | null {
-  if (!norm.includes("token::burn") && !norm.includes("Burn")) return null;
+function extractSplBurn(callNode: SyntaxNode): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return fallbackPassThrough(callNode);
 
-  const fields = extractBurnFields(raw);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  const lastArg = args[args.length - 1];
 
-  const amountMatch = raw.match(
-    /(?:token::)?burn\s*\(\s*\w+\s*,\s*(.+?)\s*\)\s*\?/s
-  );
-  const amount = amountMatch?.[1]?.trim() ?? "amount";
+  let from = "from";
+  let mint = "mint";
+  let authority = "authority";
+  let amount = "amount";
+  let signerSeeds: string | undefined;
+
+  if (firstArg && firstArg.text.includes("CpiContext::")) {
+    const burnStruct = findDescendant(firstArg, "struct_expression");
+    if (burnStruct) {
+      from = extractStructField(burnStruct, "from") ?? "from";
+      mint = extractStructField(burnStruct, "mint") ?? "mint";
+      authority = extractStructField(burnStruct, "authority") ?? "authority";
+    }
+    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+  }
+
+  if (lastArg && lastArg !== firstArg) {
+    amount = cleanAmountExpr(lastArg.text);
+  }
 
   return {
-    kind: "spl_burn",
-    from: fields.from ?? "from",
-    mint: fields.mint ?? "mint",
-    authority: fields.authority ?? "authority",
+    kind: "cpi_spl_burn",
+    from: cleanAccountRef(from),
+    mint: cleanAccountRef(mint),
+    authority: cleanAccountRef(authority),
     amount,
+    signerSeeds,
   };
 }
 
-// ─── SPL Token CloseAccount ──────────────────────────────────────────────────
+// ─── SPL Token Close Account ────────────────────────────────────────────────
 
-function trySplCloseAccount(raw: string, norm: string): CpiDetection | null {
-  if (!norm.includes("close_account") && !norm.includes("CloseAccount")) return null;
+function extractSplCloseAccount(callNode: SyntaxNode): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return fallbackPassThrough(callNode);
 
-  const fields = extractCloseAccountFields(raw);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+
+  let account = "account";
+  let destination = "destination";
+  let authority = "authority";
+  let signerSeeds: string | undefined;
+
+  if (firstArg && firstArg.text.includes("CpiContext::")) {
+    const closeStruct = findDescendant(firstArg, "struct_expression");
+    if (closeStruct) {
+      account = extractStructField(closeStruct, "account") ?? "account";
+      destination = extractStructField(closeStruct, "destination") ?? "destination";
+      authority = extractStructField(closeStruct, "authority") ?? "authority";
+    }
+    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+  }
 
   return {
-    kind: "spl_close_account",
-    account: fields.account ?? "account",
-    destination: fields.destination ?? "destination",
-    authority: fields.authority ?? "authority",
+    kind: "cpi_spl_close_account",
+    account: cleanAccountRef(account),
+    destination: cleanAccountRef(destination),
+    authority: cleanAccountRef(authority),
+    signerSeeds,
   };
 }
 
-// ─── Generic / Custom CPI ────────────────────────────────────────────────────
+// ─── System Program Transfer ────────────────────────────────────────────────
 
-function tryGenericCpi(raw: string, norm: string): CpiDetection | null {
-  if (!norm.includes("CpiContext::new") && !norm.includes("invoke")) return null;
+function extractSystemTransfer(callNode: SyntaxNode): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return fallbackPassThrough(callNode);
 
-  // Try to extract the program being called
-  const programMatch = raw.match(
-    /ctx\.accounts\.(\w+)\.to_account_info\(\)/
-  );
-  const program = programMatch?.[1] ?? "unknown_program";
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  const lastArg = args[args.length - 1];
+
+  let from = "from";
+  let to = "to";
+  let amount = "amount";
+  let signerSeeds: string | undefined;
+
+  if (firstArg && firstArg.text.includes("CpiContext::")) {
+    const transferStruct = findDescendant(firstArg, "struct_expression");
+    if (transferStruct) {
+      from = extractStructField(transferStruct, "from") ?? "from";
+      to = extractStructField(transferStruct, "to") ?? "to";
+    }
+    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+  } else if (args.length >= 2) {
+    // system_program::transfer(cpi_ctx, amount) — ctx is first, amount is second
+  }
+
+  if (lastArg && lastArg !== firstArg) {
+    amount = cleanAmountExpr(lastArg.text);
+  }
 
   return {
-    kind: "custom",
-    program,
-    rawCode: raw,
+    kind: "cpi_system_transfer",
+    from: cleanAccountRef(from),
+    to: cleanAccountRef(to),
+    amount,
+    signerSeeds,
   };
 }
 
-// ─── Field extraction helpers ────────────────────────────────────────────────
+// ─── Custom CPI ─────────────────────────────────────────────────────────────
 
-interface TransferFields {
-  from?: string;
-  to?: string;
-  authority?: string;
+function extractCustomCpi(callNode: SyntaxNode): BodyStatement {
+  const funcText = callNode.childForFieldName("function")?.text ?? "";
+  const signerSeeds = funcText === "invoke_signed" ? "signer_seeds" : undefined;
+
+  return {
+    kind: "cpi_custom",
+    programAccount: "unknown",
+    rawCode: callNode.text,
+    signerSeeds,
+    needsReview: true,
+  };
 }
 
-function extractTransferFields(raw: string): TransferFields {
-  const result: TransferFields = {};
+// ─── Fallback ───────────────────────────────────────────────────────────────
 
-  // from: ctx.accounts.X.to_account_info() or X.to_account_info()
-  const fromMatch = raw.match(
-    /from\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (fromMatch?.[1]) result.from = fromMatch[1];
-
-  // to: ctx.accounts.X.to_account_info() or X.to_account_info()
-  const toMatch = raw.match(
-    /to\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (toMatch?.[1]) result.to = toMatch[1];
-
-  // authority: ctx.accounts.X.to_account_info() or X.to_account_info()
-  const authMatch = raw.match(
-    /authority\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (authMatch?.[1]) result.authority = authMatch[1];
-
-  return result;
-}
-
-interface MintToFields {
-  mint?: string;
-  to?: string;
-  authority?: string;
-}
-
-function extractMintToFields(raw: string): MintToFields {
-  const result: MintToFields = {};
-
-  const mintMatch = raw.match(
-    /mint\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (mintMatch?.[1]) result.mint = mintMatch[1];
-
-  const toMatch = raw.match(
-    /to\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (toMatch?.[1]) result.to = toMatch[1];
-
-  const authMatch = raw.match(
-    /authority\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (authMatch?.[1]) result.authority = authMatch[1];
-
-  return result;
-}
-
-interface BurnFields {
-  from?: string;
-  mint?: string;
-  authority?: string;
-}
-
-function extractBurnFields(raw: string): BurnFields {
-  const result: BurnFields = {};
-
-  const fromMatch = raw.match(
-    /from\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (fromMatch?.[1]) result.from = fromMatch[1];
-
-  const mintMatch = raw.match(
-    /mint\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (mintMatch?.[1]) result.mint = mintMatch[1];
-
-  const authMatch = raw.match(
-    /authority\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (authMatch?.[1]) result.authority = authMatch[1];
-
-  return result;
-}
-
-interface CloseAccountFields {
-  account?: string;
-  destination?: string;
-  authority?: string;
-}
-
-function extractCloseAccountFields(raw: string): CloseAccountFields {
-  const result: CloseAccountFields = {};
-
-  const accountMatch = raw.match(
-    /account\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (accountMatch?.[1]) result.account = accountMatch[1];
-
-  const destMatch = raw.match(
-    /destination\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (destMatch?.[1]) result.destination = destMatch[1];
-
-  const authMatch = raw.match(
-    /authority\s*:\s*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)/
-  );
-  if (authMatch?.[1]) result.authority = authMatch[1];
-
-  return result;
+function fallbackPassThrough(node: SyntaxNode): BodyStatement {
+  return {
+    kind: "pass_through",
+    code: node.text,
+    needsReview: true,
+    reviewReason: "CPI pattern detected but could not extract details",
+  };
 }

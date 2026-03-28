@@ -1,6 +1,5 @@
 {
   "name": "staking",
-  "programId": "Staking11111111111111111111111111111111111111",
   "instructions": [
     {
       "name": "initialize_pool",
@@ -29,41 +28,21 @@
           "name": "stake_mint",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": true,
-          "isInit": true,
-          "isPda": true,
-          "pdaSeeds": [
-            "b\"pool\""
-          ],
-          "constraints": [
-            {
-              "kind": "init"
-            },
-            {
-              "kind": "seeds",
-              "value": "[b\"pool\""
-            }
-          ]
+          "isMut": false,
+          "isInit": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
         },
         {
           "name": "reward_mint",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": true,
-          "isInit": true,
-          "isPda": true,
-          "pdaSeeds": [
-            "b\"pool\""
-          ],
-          "constraints": [
-            {
-              "kind": "init"
-            },
-            {
-              "kind": "seeds",
-              "value": "[b\"pool\""
-            }
-          ]
+          "isMut": false,
+          "isInit": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
         },
         {
           "name": "authority",
@@ -83,29 +62,21 @@
           "name": "system_program",
           "accountType": "System",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "token_program",
           "accountType": "Program<'info, anchor_spl::token::Token>",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         }
       ],
       "args": [
@@ -126,19 +97,19 @@
           "kind": "state_field_assign",
           "account": "pool",
           "field": "authority",
-          "value": "*signer_key"
+          "value": "*authority.key()"
         },
         {
           "kind": "state_field_assign",
           "account": "pool",
           "field": "stake_mint",
-          "value": "*signer_key"
+          "value": "*stake_mint.key()"
         },
         {
           "kind": "state_field_assign",
           "account": "pool",
           "field": "reward_mint",
-          "value": "*signer_key"
+          "value": "*reward_mint.key()"
         },
         {
           "kind": "state_field_assign",
@@ -159,7 +130,9 @@
           "value": "ctx.bumps.pool"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
       "rawBody": "{\n        let pool = &mut ctx.accounts.pool;\n        pool.authority = ctx.accounts.authority.key();\n        pool.stake_mint = ctx.accounts.stake_mint.key();\n        pool.reward_mint = ctx.accounts.reward_mint.key();\n        pool.reward_rate = reward_rate;\n        pool.total_staked = 0;\n        pool.bump = ctx.bumps.pool;\n        Ok(())\n    }"
@@ -269,29 +242,21 @@
           "name": "system_program",
           "accountType": "System",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "token_program",
           "accountType": "Program<'info, anchor_spl::token::Token>",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         }
       ],
       "args": [
@@ -302,14 +267,14 @@
       ],
       "body": [
         {
-          "kind": "require",
-          "condition": "amount > 0",
-          "error": "StakingError::InvalidAmount"
+          "kind": "pass_through",
+          "code": "require!(amount > 0, StakingError::InvalidAmount);",
+          "needsReview": false
         },
         {
           "kind": "sysvar_clock",
           "localVar": "clock",
-          "code": "let clock = Clock::get()?"
+          "code": "let clock = Clock::get()?;"
         },
         {
           "kind": "state_read",
@@ -326,16 +291,17 @@
           "accountType": "StakePool"
         },
         {
-          "kind": "pass_through",
-          "code": "anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.user_stake_ata.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.user.to_account_info(),\n                },\n            ),\n            amount,\n        )?",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+          "kind": "cpi_spl_transfer",
+          "from": "user_stake_ata",
+          "to": "vault",
+          "authority": "user",
+          "amount": "amount"
         },
         {
           "kind": "state_field_assign",
           "account": "user_stake",
           "field": "owner",
-          "value": "*signer_key"
+          "value": "*user.key()"
         },
         {
           "kind": "state_field_assign",
@@ -362,10 +328,12 @@
           "value": "pool.total_staked.checked_add(amount)\n            .ok_or(StakingError::Overflow)?"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
-      "rawBody": "{\n        require!(amount > 0, StakingError::InvalidAmount);\n\n        let clock = Clock::get()?;\n        let user_stake = &mut ctx.accounts.user_stake;\n        let pool = &mut ctx.accounts.pool;\n\n        \n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.user_stake_ata.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.user.to_account_info(),\n                },\n            ),\n            amount,\n        )?;\n\n        user_stake.owner = ctx.accounts.user.key();\n        user_stake.pool = pool.key();\n        user_stake.amount = user_stake.amount.checked_add(amount)\n            .ok_or(StakingError::Overflow)?;\n        user_stake.stake_ts = clock.unix_timestamp;\n        pool.total_staked = pool.total_staked.checked_add(amount)\n            .ok_or(StakingError::Overflow)?;\n        Ok(())\n    }"
+      "rawBody": "{\n        require!(amount > 0, StakingError::InvalidAmount);\n\n        let clock = Clock::get()?;\n        let user_stake = &mut ctx.accounts.user_stake;\n        let pool = &mut ctx.accounts.pool;\n\n        // Transfer tokens in\n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.user_stake_ata.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.user.to_account_info(),\n                },\n            ),\n            amount,\n        )?;\n\n        user_stake.owner = ctx.accounts.user.key();\n        user_stake.pool = pool.key();\n        user_stake.amount = user_stake.amount.checked_add(amount)\n            .ok_or(StakingError::Overflow)?;\n        user_stake.stake_ts = clock.unix_timestamp;\n        pool.total_staked = pool.total_staked.checked_add(amount)\n            .ok_or(StakingError::Overflow)?;\n        Ok(())\n    }"
     },
     {
       "name": "unstake",
@@ -460,45 +428,21 @@
           "name": "owner",
           "accountType": "Signer",
           "isSigner": true,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            },
-            {
-              "kind": "token::mint",
-              "value": "pool.stake_mint"
-            },
-            {
-              "kind": "token::authority",
-              "value": "pool"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "token_program",
           "accountType": "Program<'info, anchor_spl::token::Token>",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            },
-            {
-              "kind": "token::mint",
-              "value": "pool.stake_mint"
-            },
-            {
-              "kind": "token::authority",
-              "value": "pool"
-            }
-          ]
+          "constraints": []
         }
       ],
       "args": [
@@ -509,9 +453,9 @@
       ],
       "body": [
         {
-          "kind": "require",
-          "condition": "amount > 0",
-          "error": "StakingError::InvalidAmount"
+          "kind": "pass_through",
+          "code": "require!(amount > 0, StakingError::InvalidAmount);",
+          "needsReview": false
         },
         {
           "kind": "state_read",
@@ -521,15 +465,16 @@
           "accountType": "UserStake"
         },
         {
-          "kind": "require",
-          "condition": "user_stake.amount >= amount",
-          "error": "StakingError::InsufficientStake"
+          "kind": "pass_through",
+          "code": "require!(user_stake.amount >= amount, StakingError::InsufficientStake);",
+          "needsReview": false
         },
         {
-          "kind": "pass_through",
-          "code": "let pool = &ctx.accounts.pool",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+          "kind": "state_read",
+          "account": "pool",
+          "localVar": "pool",
+          "mutable": false,
+          "accountType": "StakePool"
         },
         {
           "kind": "pda_signer_seeds",
@@ -540,14 +485,16 @@
             "pool.stake_mint.as_ref()",
             "&[pool.bump]"
           ],
-          "bumpField": "pool.bump",
-          "rawCode": "let seeds = &[\n            b\"pool\",\n            pool.authority.as_ref(),\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\nlet signer_seeds = &[&seeds[..]]"
+          "bumpField": "&[pool.bump]",
+          "rawCode": "let seeds = &[\n            b\"pool\",\n            pool.authority.as_ref(),\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\nlet signer_seeds = &[&seeds[..]];"
         },
         {
-          "kind": "pass_through",
-          "code": "anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.user_stake_ata.to_account_info(),\n                    authority: ctx.accounts.pool.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            amount,\n        )?",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+          "kind": "cpi_spl_transfer",
+          "from": "vault",
+          "to": "user_stake_ata",
+          "authority": "pool",
+          "amount": "amount",
+          "signerSeeds": "signer_seeds"
         },
         {
           "kind": "state_field_assign",
@@ -569,7 +516,9 @@
           "value": "pool.total_staked.checked_sub(amount)\n            .ok_or(StakingError::Underflow)?"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
       "rawBody": "{\n        require!(amount > 0, StakingError::InvalidAmount);\n        let user_stake = &mut ctx.accounts.user_stake;\n        require!(user_stake.amount >= amount, StakingError::InsufficientStake);\n\n        let pool = &ctx.accounts.pool;\n        let seeds = &[\n            b\"pool\",\n            pool.authority.as_ref(),\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.user_stake_ata.to_account_info(),\n                    authority: ctx.accounts.pool.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            amount,\n        )?;\n\n        user_stake.amount = user_stake.amount.checked_sub(amount)\n            .ok_or(StakingError::Underflow)?;\n        let pool = &mut ctx.accounts.pool;\n        pool.total_staked = pool.total_staked.checked_sub(amount)\n            .ok_or(StakingError::Underflow)?;\n        Ok(())\n    }"
@@ -667,43 +616,31 @@
           "name": "system_program",
           "accountType": "System",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "token_program",
           "accountType": "Program<'info, anchor_spl::token::Token>",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "associated_token_program",
           "accountType": "Program<'info, anchor_spl::associated_token::AssociatedToken>",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         }
       ],
       "args": [],
@@ -711,7 +648,7 @@
         {
           "kind": "sysvar_clock",
           "localVar": "clock",
-          "code": "let clock = Clock::get()?"
+          "code": "let clock = Clock::get()?;"
         },
         {
           "kind": "state_read",
@@ -721,25 +658,26 @@
           "accountType": "UserStake"
         },
         {
-          "kind": "pass_through",
-          "code": "let pool = &ctx.accounts.pool",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+          "kind": "state_read",
+          "account": "pool",
+          "localVar": "pool",
+          "mutable": false,
+          "accountType": "StakePool"
         },
         {
           "kind": "pass_through",
-          "code": "let time_elapsed = (clock.unix_timestamp - user_stake.stake_ts) as u64",
+          "code": "let time_elapsed = (clock.unix_timestamp - user_stake.stake_ts) as u64;",
           "needsReview": false
         },
         {
           "kind": "pass_through",
-          "code": "let rewards = user_stake.amount\n            .checked_mul(pool.reward_rate)\n            .ok_or(StakingError::Overflow)?\n            .checked_mul(time_elapsed)\n            .ok_or(StakingError::Overflow)?\n            .checked_div(86400)  \n            .ok_or(StakingError::Overflow)?",
+          "code": "let rewards = user_stake.amount\n            .checked_mul(pool.reward_rate)\n            .ok_or(StakingError::Overflow)?\n            .checked_mul(time_elapsed)\n            .ok_or(StakingError::Overflow)?\n            .checked_div(86400)  // per day\n            .ok_or(StakingError::Overflow)?;",
           "needsReview": false
         },
         {
-          "kind": "require",
-          "condition": "rewards > 0",
-          "error": "StakingError::NoRewards"
+          "kind": "pass_through",
+          "code": "require!(rewards > 0, StakingError::NoRewards);",
+          "needsReview": false
         },
         {
           "kind": "pda_signer_seeds",
@@ -750,14 +688,16 @@
             "pool.stake_mint.as_ref()",
             "&[pool.bump]"
           ],
-          "bumpField": "pool.bump",
-          "rawCode": "let seeds = &[\n            b\"pool\",\n            pool.authority.as_ref(),\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\nlet signer_seeds = &[&seeds[..]]"
+          "bumpField": "&[pool.bump]",
+          "rawCode": "let seeds = &[\n            b\"pool\",\n            pool.authority.as_ref(),\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\nlet signer_seeds = &[&seeds[..]];"
         },
         {
-          "kind": "pass_through",
-          "code": "anchor_spl::token::mint_to(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::MintTo {\n                    mint: ctx.accounts.reward_mint.to_account_info(),\n                    to: ctx.accounts.user_reward_ata.to_account_info(),\n                    authority: ctx.accounts.pool.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            rewards,\n        )?",
-          "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+          "kind": "cpi_spl_mint_to",
+          "mint": "reward_mint",
+          "to": "user_reward_ata",
+          "authority": "pool",
+          "amount": "rewards",
+          "signerSeeds": "signer_seeds"
         },
         {
           "kind": "state_field_assign",
@@ -766,115 +706,15 @@
           "value": "clock.unix_timestamp"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
-      "rawBody": "{\n        let clock = Clock::get()?;\n        let user_stake = &mut ctx.accounts.user_stake;\n        let pool = &ctx.accounts.pool;\n\n        let time_elapsed = (clock.unix_timestamp - user_stake.stake_ts) as u64;\n        let rewards = user_stake.amount\n            .checked_mul(pool.reward_rate)\n            .ok_or(StakingError::Overflow)?\n            .checked_mul(time_elapsed)\n            .ok_or(StakingError::Overflow)?\n            .checked_div(86400)  \n            .ok_or(StakingError::Overflow)?;\n\n        require!(rewards > 0, StakingError::NoRewards);\n\n        let seeds = &[\n            b\"pool\",\n            pool.authority.as_ref(),\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        anchor_spl::token::mint_to(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::MintTo {\n                    mint: ctx.accounts.reward_mint.to_account_info(),\n                    to: ctx.accounts.user_reward_ata.to_account_info(),\n                    authority: ctx.accounts.pool.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            rewards,\n        )?;\n\n        user_stake.stake_ts = clock.unix_timestamp;\n        Ok(())\n    }"
+      "rawBody": "{\n        let clock = Clock::get()?;\n        let user_stake = &mut ctx.accounts.user_stake;\n        let pool = &ctx.accounts.pool;\n\n        let time_elapsed = (clock.unix_timestamp - user_stake.stake_ts) as u64;\n        let rewards = user_stake.amount\n            .checked_mul(pool.reward_rate)\n            .ok_or(StakingError::Overflow)?\n            .checked_mul(time_elapsed)\n            .ok_or(StakingError::Overflow)?\n            .checked_div(86400)  // per day\n            .ok_or(StakingError::Overflow)?;\n\n        require!(rewards > 0, StakingError::NoRewards);\n\n        let seeds = &[\n            b\"pool\",\n            pool.authority.as_ref(),\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        anchor_spl::token::mint_to(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::MintTo {\n                    mint: ctx.accounts.reward_mint.to_account_info(),\n                    to: ctx.accounts.user_reward_ata.to_account_info(),\n                    authority: ctx.accounts.pool.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            rewards,\n        )?;\n\n        user_stake.stake_ts = clock.unix_timestamp;\n        Ok(())\n    }"
     }
   ],
   "accounts": [
-    {
-      "name": "Stake",
-      "fields": [
-        {
-          "name": "user_stake",
-          "type": "Account<"
-        },
-        {
-          "name": "pool",
-          "type": "Account<"
-        },
-        {
-          "name": "user_stake_ata",
-          "type": "Account<"
-        },
-        {
-          "name": "vault",
-          "type": "Account<"
-        },
-        {
-          "name": "user",
-          "type": "Signer<"
-        },
-        {
-          "name": "system_program",
-          "type": "Program<"
-        },
-        {
-          "name": "token_program",
-          "type": "Program<"
-        }
-      ],
-      "space": 232
-    },
-    {
-      "name": "Unstake",
-      "fields": [
-        {
-          "name": "user_stake",
-          "type": "Account<"
-        },
-        {
-          "name": "pool",
-          "type": "Account<"
-        },
-        {
-          "name": "user_stake_ata",
-          "type": "Account<"
-        },
-        {
-          "name": "vault",
-          "type": "Account<"
-        },
-        {
-          "name": "owner",
-          "type": "Signer<"
-        },
-        {
-          "name": "token_program",
-          "type": "Program<"
-        }
-      ],
-      "space": 200
-    },
-    {
-      "name": "ClaimRewards",
-      "fields": [
-        {
-          "name": "user_stake",
-          "type": "Account<"
-        },
-        {
-          "name": "pool",
-          "type": "Account<"
-        },
-        {
-          "name": "reward_mint",
-          "type": "Account<"
-        },
-        {
-          "name": "user_reward_ata",
-          "type": "Account<"
-        },
-        {
-          "name": "owner",
-          "type": "Signer<"
-        },
-        {
-          "name": "system_program",
-          "type": "Program<"
-        },
-        {
-          "name": "token_program",
-          "type": "Program<"
-        },
-        {
-          "name": "associated_token_program",
-          "type": "Program<"
-        }
-      ],
-      "space": 264
-    },
     {
       "name": "StakePool",
       "fields": [
@@ -958,13 +798,12 @@
   ],
   "helperFns": [],
   "imports": [
-    "anchor_lang::prelude::*",
-    "super::*"
+    "anchor_lang::prelude::*"
   ],
   "metadata": {
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T11:00:27.862Z"
+    "parsedAt": "2026-03-28T11:53:05.267Z"
   }
 }

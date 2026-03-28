@@ -74,25 +74,16 @@ fn create_escrow(
     let receive_amount: u64 = u64::from_le_bytes(data[8..16].try_into().unwrap());
 
     let mut escrow = Escrow::from_account_info(escrow)?;
-    escrow.maker = *signer_key;
-    escrow.mint_a = *signer_key;
-    escrow.mint_b = *signer_key;
+    escrow.maker = *maker.key();
+    escrow.mint_a = *mint_a.key();
+    escrow.mint_b = *mint_b.key();
     escrow.receive_amount = receive_amount;
     escrow.seed = seed;
     let bump = bump_seed(program_id, &[b"escrow", escrow.maker.as_ref()], escrow.key())?;
     escrow.bump = bump;
-    // ⚠️ Anvil: Review this section — Contains possible Anchor-specific pattern — verify after transformation
-    anchor_spl::token::transfer(
-            CpiContext::new(
-                ctx.accounts.token_program.to_account_info(),
-                anchor_spl::token::Transfer {
-                    from: ctx.accounts.maker_ata_a.to_account_info(),
-                    to: ctx.accounts.vault.to_account_info(),
-                    authority: ctx.accounts.maker.to_account_info(),
-                },
-            ),
-            ctx.accounts.maker_ata_a.amount,
-        )?;
+    // SPL Token transfer — maker_ata_a → vault
+    spl_token_transfer(maker_ata_a, vault, maker, token_account_amount(maker_ata_a)?)?;
+    Ok(());
 
     Ok(())
 }
@@ -124,8 +115,7 @@ fn accept_escrow(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    // ⚠️ Anvil: Review this section — Contains possible Anchor-specific pattern — verify after transformation
-    let escrow = &ctx.accounts.escrow;
+    let escrow = Escrow::from_account_info(escrow)?;
     // PDA signer seeds for 'escrow'
     let escrow_data = Escrow::from_account_info(escrow)?;
     let seeds = &[
@@ -135,31 +125,11 @@ fn accept_escrow(
             &[escrow_data.bump],
         ];
     let signer_seeds = &[&seeds[..]];
-    // ⚠️ Anvil: Review this section — Contains possible Anchor-specific pattern — verify after transformation
-    anchor_spl::token::transfer(
-            CpiContext::new(
-                ctx.accounts.token_program.to_account_info(),
-                anchor_spl::token::Transfer {
-                    from: ctx.accounts.taker_ata_b.to_account_info(),
-                    to: ctx.accounts.maker_ata_b.to_account_info(),
-                    authority: ctx.accounts.taker.to_account_info(),
-                },
-            ),
-            escrow.receive_amount,
-        )?;
-    // ⚠️ Anvil: Review this section — Contains possible Anchor-specific pattern — verify after transformation
-    anchor_spl::token::transfer(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                anchor_spl::token::Transfer {
-                    from: ctx.accounts.vault.to_account_info(),
-                    to: ctx.accounts.taker_ata_a.to_account_info(),
-                    authority: ctx.accounts.escrow.to_account_info(),
-                },
-                signer_seeds,
-            ),
-            ctx.accounts.vault.amount,
-        )?;
+    // SPL Token transfer — taker_ata_b → maker_ata_b
+    spl_token_transfer(taker_ata_b, maker_ata_b, taker, escrow.receive_amount)?;
+    // SPL Token transfer (PDA signed) — vault → taker_ata_a
+    spl_token_transfer_signed(vault, taker_ata_a, escrow, token_account_amount(vault)?, signer_seeds)?;
+    Ok(());
 
     Ok(())
 }
@@ -187,8 +157,7 @@ fn cancel_escrow(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    // ⚠️ Anvil: Review this section — Contains possible Anchor-specific pattern — verify after transformation
-    let escrow = &ctx.accounts.escrow;
+    let escrow = Escrow::from_account_info(escrow)?;
     // PDA signer seeds for 'escrow'
     let escrow_data = Escrow::from_account_info(escrow)?;
     let seeds = &[
@@ -198,19 +167,9 @@ fn cancel_escrow(
             &[escrow_data.bump],
         ];
     let signer_seeds = &[&seeds[..]];
-    // ⚠️ Anvil: Review this section — Contains possible Anchor-specific pattern — verify after transformation
-    anchor_spl::token::transfer(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                anchor_spl::token::Transfer {
-                    from: ctx.accounts.vault.to_account_info(),
-                    to: ctx.accounts.maker_ata_a.to_account_info(),
-                    authority: ctx.accounts.escrow.to_account_info(),
-                },
-                signer_seeds,
-            ),
-            ctx.accounts.vault.amount,
-        )?;
+    // SPL Token transfer (PDA signed) — vault → maker_ata_a
+    spl_token_transfer_signed(vault, maker_ata_a, escrow, token_account_amount(vault)?, signer_seeds)?;
+    Ok(());
 
     Ok(())
 }
@@ -227,7 +186,7 @@ pub struct Escrow {
 
 impl Escrow {
     pub const DISCRIMINATOR: [u8; 8] = [31, 213, 123, 187, 186, 22, 218, 155];
-    pub const LEN: usize = 113;
+    pub const LEN: usize = 121;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
@@ -295,6 +254,41 @@ fn bump_seed(
         return Err(ProgramError::InvalidSeeds);
     }
     Ok(bump)
+}
+
+fn spl_token_transfer(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    let ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        from.key(),
+        to.key(),
+        authority.key(),
+        &[],
+        amount,
+    )?;
+    pinocchio::program::invoke(&ix, &[from.clone(), to.clone(), authority.clone()])
+}
+
+fn spl_token_transfer_signed(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        from.key(),
+        to.key(),
+        authority.key(),
+        &[],
+        amount,
+    )?;
+    pinocchio::program::invoke_signed(&ix, &[from.clone(), to.clone(), authority.clone()], signer_seeds)
 }
 
 /// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)

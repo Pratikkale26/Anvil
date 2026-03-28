@@ -1,6 +1,5 @@
 {
   "name": "vault",
-  "programId": "Vault1111111111111111111111111111111111111111",
   "instructions": [
     {
       "name": "initialize",
@@ -63,15 +62,11 @@
           "name": "system_program",
           "accountType": "System",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         }
       ],
       "args": [],
@@ -87,7 +82,7 @@
           "kind": "state_field_assign",
           "account": "vault_state",
           "field": "authority",
-          "value": "*signer_key"
+          "value": "*authority.key()"
         },
         {
           "kind": "state_field_assign",
@@ -108,7 +103,9 @@
           "value": "ctx.bumps.vault"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
       "rawBody": "{\n        let vault_state = &mut ctx.accounts.vault_state;\n        vault_state.authority = ctx.accounts.authority.key();\n        vault_state.total_deposited = 0;\n        vault_state.bump = ctx.bumps.vault_state;\n        vault_state.vault_bump = ctx.bumps.vault;\n        Ok(())\n    }"
@@ -178,29 +175,21 @@
           "name": "authority",
           "accountType": "SystemAccount",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "system_program",
           "accountType": "System",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         }
       ],
       "args": [
@@ -211,9 +200,9 @@
       ],
       "body": [
         {
-          "kind": "require",
-          "condition": "amount > 0",
-          "error": "VaultError::InvalidAmount"
+          "kind": "pass_through",
+          "code": "require!(amount > 0, VaultError::InvalidAmount);",
+          "needsReview": false
         },
         {
           "kind": "state_read",
@@ -223,9 +212,16 @@
           "accountType": "VaultState"
         },
         {
+          "kind": "state_read",
+          "account": "system_program",
+          "localVar": "cpi_ctx",
+          "mutable": false,
+          "accountType": "System"
+        },
+        {
           "kind": "cpi_system_transfer",
-          "from": "user",
-          "to": "vault",
+          "from": "from",
+          "to": "to",
           "amount": "amount"
         },
         {
@@ -235,7 +231,9 @@
           "value": "vault_state.total_deposited.checked_add(amount)\n            .ok_or(VaultError::Overflow)?"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
       "rawBody": "{\n        require!(amount > 0, VaultError::InvalidAmount);\n        let vault_state = &mut ctx.accounts.vault_state;\n\n        let cpi_ctx = CpiContext::new(\n            ctx.accounts.system_program.to_account_info(),\n            anchor_lang::system_program::Transfer {\n                from: ctx.accounts.user.to_account_info(),\n                to: ctx.accounts.vault.to_account_info(),\n            },\n        );\n        anchor_lang::system_program::transfer(cpi_ctx, amount)?;\n\n        vault_state.total_deposited = vault_state.total_deposited.checked_add(amount)\n            .ok_or(VaultError::Overflow)?;\n        Ok(())\n    }"
@@ -305,29 +303,21 @@
           "name": "authority",
           "accountType": "SystemAccount",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         },
         {
           "name": "system_program",
           "accountType": "System",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         }
       ],
       "args": [
@@ -338,38 +328,45 @@
       ],
       "body": [
         {
-          "kind": "require",
-          "condition": "amount > 0",
-          "error": "VaultError::InvalidAmount"
+          "kind": "pass_through",
+          "code": "require!(amount > 0, VaultError::InvalidAmount);",
+          "needsReview": false
+        },
+        {
+          "kind": "state_read",
+          "account": "vault_state",
+          "localVar": "vault_state",
+          "mutable": false,
+          "accountType": "VaultState"
         },
         {
           "kind": "pass_through",
-          "code": "let vault_state = &ctx.accounts.vault_state",
+          "code": "require!(\n            ctx.accounts.vault.lamports() >= amount,\n            VaultError::InsufficientFunds\n        );",
           "needsReview": true,
-          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
-        },
-        {
-          "kind": "require",
-          "condition": "ctx.accounts.vault.lamports() >= amount",
-          "error": "VaultError::InsufficientFunds"
+          "reviewReason": "Contains possible Anchor-specific pattern"
         },
         {
           "kind": "pda_signer_seeds",
-          "account": "vault",
+          "account": "vault_state",
           "seeds": [
             "b\"vault\"",
             "vault_state.authority.as_ref()",
             "&[vault_state.vault_bump]"
           ],
-          "bumpField": "vault_state.vault_bump",
-          "rawCode": "let seeds = &[\n            b\"vault\",\n            vault_state.authority.as_ref(),\n            &[vault_state.vault_bump],\n        ];\nlet signer_seeds = &[&seeds[..]]"
+          "rawCode": "let seeds = &[\n            b\"vault\",\n            vault_state.authority.as_ref(),\n            &[vault_state.vault_bump],\n        ];\nlet signer_seeds = &[&seeds[..]];"
+        },
+        {
+          "kind": "state_read",
+          "account": "system_program",
+          "localVar": "cpi_ctx",
+          "mutable": false,
+          "accountType": "System"
         },
         {
           "kind": "cpi_system_transfer",
-          "from": "vault",
-          "to": "user",
-          "amount": "amount",
-          "signerSeeds": "let signer_seeds = &[&seeds[..]]"
+          "from": "from",
+          "to": "to",
+          "amount": "amount"
         },
         {
           "kind": "state_read",
@@ -385,39 +382,15 @@
           "value": "vault_state.total_deposited.checked_sub(amount)\n            .ok_or(VaultError::Underflow)?"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
       "rawBody": "{\n        require!(amount > 0, VaultError::InvalidAmount);\n        let vault_state = &ctx.accounts.vault_state;\n        require!(\n            ctx.accounts.vault.lamports() >= amount,\n            VaultError::InsufficientFunds\n        );\n\n        let seeds = &[\n            b\"vault\",\n            vault_state.authority.as_ref(),\n            &[vault_state.vault_bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        let cpi_ctx = CpiContext::new_with_signer(\n            ctx.accounts.system_program.to_account_info(),\n            anchor_lang::system_program::Transfer {\n                from: ctx.accounts.vault.to_account_info(),\n                to: ctx.accounts.user.to_account_info(),\n            },\n            signer_seeds,\n        );\n        anchor_lang::system_program::transfer(cpi_ctx, amount)?;\n\n        let vault_state = &mut ctx.accounts.vault_state;\n        vault_state.total_deposited = vault_state.total_deposited.checked_sub(amount)\n            .ok_or(VaultError::Underflow)?;\n        Ok(())\n    }"
     }
   ],
   "accounts": [
-    {
-      "name": "VaultAction",
-      "fields": [
-        {
-          "name": "vault_state",
-          "type": "Account<"
-        },
-        {
-          "name": "vault",
-          "type": "UncheckedAccount<"
-        },
-        {
-          "name": "user",
-          "type": "Signer<"
-        },
-        {
-          "name": "authority",
-          "type": "SystemAccount<"
-        },
-        {
-          "name": "system_program",
-          "type": "Program<"
-        }
-      ],
-      "space": 168
-    },
     {
       "name": "VaultState",
       "fields": [
@@ -466,13 +439,12 @@
   ],
   "helperFns": [],
   "imports": [
-    "anchor_lang::prelude::*",
-    "super::*"
+    "anchor_lang::prelude::*"
   ],
   "metadata": {
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T11:00:27.852Z"
+    "parsedAt": "2026-03-28T11:53:05.241Z"
   }
 }

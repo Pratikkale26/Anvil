@@ -1,9 +1,14 @@
 /**
- * Anchor Parser — Enhanced with Body Classification
+ * Anchor Parser — tree-sitter AST-based
  *
- * Parses raw Anchor .rs source files into a SolanaIR with classified
- * instruction bodies. Uses structure extraction (regex + brace matching)
- * for the program skeleton and the body classifier for instruction logic.
+ * Parses raw Anchor .rs source files into SolanaIR using tree-sitter-rust
+ * for reliable AST extraction. Replaces the previous regex-based parser.
+ *
+ * Key advantages over regex:
+ *   - Correct handling of nested generics (Account<'info, TokenAccount>)
+ *   - Reliable field expression chain resolution (ctx.accounts.X)
+ *   - Proper CPI detection (inline CpiContext, multi-line expressions)
+ *   - No false positives from text patterns inside strings/comments
  *
  * The parser extracts:
  *   - Program name and ID
@@ -15,9 +20,27 @@
  *   - Import statements
  */
 
-import { SolanaIRSchema, type SolanaIR, type AccountRef, type Arg, type HelperFn } from "../ir/schema.js";
-import { stripComments, extractBlock, findMatchingClose, normalizeSolanaType } from "./utils.js";
+import {
+  SolanaIRSchema,
+} from "../ir/schema.js";
+import type {
+  SolanaIR,
+  AccountRef,
+  Arg,
+  HelperFn,
+  AccountDef,
+  BodyStatement,
+} from "../ir/schema.js";
+import { getParser } from "./ts-init.js";
+import type { SyntaxNode } from "./ts-init.js";
+import {
+  hasAttribute,
+  hasDeriveAttribute,
+  findDescendant,
+  extractAccountAttrInner,
+} from "./ast-helpers.js";
 import { parseConstraints } from "./constraint-parser.js";
+import { normalizeSolanaType } from "./utils.js";
 import { classifyBody } from "./body-classifier.js";
 
 // ─── Public types ────────────────────────────────────────────────────────────
@@ -35,35 +58,51 @@ export interface ParseError {
 
 // ─── Main entry point ────────────────────────────────────────────────────────
 
-export function parseAnchor(source: string): ParseResult | ParseError {
+/**
+ * Parse an Anchor Rust source file into SolanaIR using tree-sitter.
+ * This is async because tree-sitter WASM initialization is async.
+ */
+export async function parseAnchor(source: string): Promise<ParseResult | ParseError> {
   try {
-    const cleaned = stripComments(source);
+    const parser = await getParser();
+    const tree = parser.parse(source);
+    if (!tree) {
+      return { ok: false, error: "tree-sitter returned null parse tree" };
+    }
+    const root = tree.rootNode;
+
+    // ── Walk top-level items and classify by attributes ──
+    const topLevel = classifyTopLevel(root);
 
     // ── Extract program name ──
-    const nameMatch = cleaned.match(/#\[program\]\s*pub\s+mod\s+(\w+)/);
-    const programName = nameMatch?.[1] ?? "unknown_program";
+    const programName = topLevel.programModule
+      ? extractModuleName(topLevel.programModule.node)
+      : "unknown_program";
 
-    // ── Extract programId from declare_id!("...") ──
-    const idMatch = cleaned.match(/declare_id!\s*\(\s*"([^"]+)"\s*\)/);
-    const programId = idMatch ? idMatch[1] : undefined;
+    // ── Extract program ID from declare_id!("...") ──
+    const programId = extractProgramId(root);
 
     // ── Extract imports ──
-    const imports = extractImports(cleaned);
+    const imports = extractImports(root);
 
-    // ── Parse instructions (with body classification) ──
-    const instructions = parseInstructionsWithBodies(source, cleaned);
+    // ── Parse account data structs (#[account] structs) ──
+    const accounts = topLevel.accountDataStructs.map((s) =>
+      parseAccountDataStruct(s.node, s.attrs)
+    );
 
-    // ── Parse account data structs ──
-    const accounts = parseAccountDefs(cleaned);
+    // ── Parse instructions ──
+    const instructions = topLevel.programModule
+      ? parseInstructions(topLevel.programModule.node, topLevel.accountsStructs, source)
+      : [];
 
     // ── Parse errors ──
-    const errors = parseErrors(cleaned);
+    const errors = topLevel.errorEnums.flatMap((e) => parseErrorEnum(e.node, e.attrs));
 
-    // ── Parse helper functions (outside #[program] mod) ──
-    const helperFns = parseHelperFunctions(source, cleaned);
+    // ── Parse helper functions ──
+    const helperFns = topLevel.helperFns.map((h) => parseHelperFn(h.node));
 
     // ── Parse custom types ──
-    const types = parseCustomTypes(cleaned);
+    const types = topLevel.customTypes.map((t) => parseCustomType(t.node, t.kind));
 
     const irRaw: SolanaIR = {
       name: programName,
@@ -102,401 +141,478 @@ export function parseAnchor(source: string): ParseResult | ParseError {
   }
 }
 
-// ─── Instruction parsing with body extraction ────────────────────────────────
+// ─── Top-level classification ────────────────────────────────────────────────
 
-function parseInstructionsWithBodies(
-  rawSource: string,
-  cleaned: string
-): SolanaIR["instructions"] {
-  // Find the #[program] mod block
-  const programBlocks = extractBlock(cleaned, /#\[program\]\s*pub\s+mod\s+\w+/g);
-  if (programBlocks.length === 0) return [];
+interface TopLevelItems {
+  programModule: { node: SyntaxNode; attrs: SyntaxNode[] } | null;
+  accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[] }[];
+  accountDataStructs: { node: SyntaxNode; attrs: SyntaxNode[] }[];
+  errorEnums: { node: SyntaxNode; attrs: SyntaxNode[] }[];
+  helperFns: { node: SyntaxNode; attrs: SyntaxNode[] }[];
+  customTypes: { node: SyntaxNode; attrs: SyntaxNode[]; kind: "struct" | "enum" }[];
+}
 
-  const firstBlock = programBlocks[0];
-  if (!firstBlock) return [];
+function classifyTopLevel(root: SyntaxNode): TopLevelItems {
+  const items: TopLevelItems = {
+    programModule: null,
+    accountsStructs: [],
+    accountDataStructs: [],
+    errorEnums: [],
+    helperFns: [],
+    customTypes: [],
+  };
 
-  const programBody = firstBlock.block;
-  const programStart = cleaned.indexOf(firstBlock.match[0]);
-  const programOpenBrace = cleaned.indexOf("{", programStart + firstBlock.match[0].length - 1);
+  let currentAttrs: SyntaxNode[] = [];
 
-  const instructions: SolanaIR["instructions"] = [];
+  for (let i = 0; i < root.namedChildCount; i++) {
+    const child = root.namedChild(i);
+    if (!child) continue;
 
-  // Each pub fn inside the program mod is an instruction
-  const fnPattern = /pub\s+fn\s+(\w+)\s*\(/g;
-  let fnMatch: RegExpExecArray | null;
-
-  while ((fnMatch = fnPattern.exec(programBody)) !== null) {
-    const fnName = fnMatch[1];
-    if (!fnName) continue;
-
-    // ── Extract full signature ──
-    const openParen = programBody.indexOf("(", fnMatch.index + fnMatch[0].length - 1);
-    const closeParen = findMatchingClose(programBody, openParen, "(", ")");
-    if (openParen === -1 || closeParen === -1) continue;
-
-    const fullSig = programBody.slice(openParen + 1, closeParen);
-
-    // ── Extract function body ──
-    const bodyStart = programBody.indexOf("{", closeParen);
-    if (bodyStart === -1) continue;
-    const bodyEnd = findMatchingClose(programBody, bodyStart, "{", "}");
-    if (bodyEnd === -1) continue;
-
-    const rawBody = programBody.slice(bodyStart, bodyEnd + 1); // including { }
-
-    // ── Parse signature for Context<T> and args ──
-    const { contextType, args } = parseSignature(fullSig);
-
-    // ── Resolve accounts from the Context<T> struct ──
-    const accounts = contextType
-      ? parseAccountsStruct(contextType, cleaned)
-      : [];
-
-    // ── Classify the function body ──
-    const body = classifyBody(rawBody);
-
-    // ── Enrich state_read operations with account type from context struct ──
-    for (const stmt of body) {
-      if (stmt.kind === "state_read" && accounts.length > 0) {
-        const matchingAccount = accounts.find(a => a.name === stmt.account);
-        if (matchingAccount) {
-          stmt.accountType = matchingAccount.accountType;
-        }
-      }
+    // Accumulate attributes
+    if (child.type === "attribute_item") {
+      currentAttrs.push(child);
+      continue;
     }
 
-    instructions.push({
-      name: fnName,
-      accounts,
-      args,
-      body,
-      rawBody,
-    });
+    const attrs = [...currentAttrs];
+    currentAttrs = [];
+
+    switch (child.type) {
+      case "mod_item": {
+        if (hasAttribute(attrs, "program")) {
+          items.programModule = { node: child, attrs };
+        }
+        break;
+      }
+
+      case "struct_item": {
+        if (hasDeriveAttribute(attrs, "Accounts")) {
+          const name = extractStructName(child);
+          if (name) items.accountsStructs.push({ name, node: child, attrs });
+        } else if (hasAttribute(attrs, "account")) {
+          items.accountDataStructs.push({ node: child, attrs });
+        } else {
+          items.customTypes.push({ node: child, attrs, kind: "struct" });
+        }
+        break;
+      }
+
+      case "enum_item": {
+        if (hasAttribute(attrs, "error_code")) {
+          items.errorEnums.push({ node: child, attrs });
+        } else {
+          items.customTypes.push({ node: child, attrs, kind: "enum" });
+        }
+        break;
+      }
+
+      case "function_item": {
+        items.helperFns.push({ node: child, attrs });
+        break;
+      }
+
+      case "impl_item":
+        // Skip impl blocks — they're usually for custom types
+        break;
+
+      case "use_declaration":
+        // Imports handled separately
+        break;
+
+      // Skip macro_invocation for declare_id!, etc. — handled separately
+    }
+  }
+
+  return items;
+}
+
+// ─── Program module parsing ─────────────────────────────────────────────────
+
+function extractModuleName(modNode: SyntaxNode): string {
+  const nameNode = modNode.childForFieldName("name");
+  return nameNode?.text ?? "unknown_program";
+}
+
+// ─── Instruction parsing ────────────────────────────────────────────────────
+
+function parseInstructions(
+  programModNode: SyntaxNode,
+  accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[] }[],
+  source: string,
+): SolanaIR["instructions"] {
+  const body = programModNode.childForFieldName("body");
+  if (!body) return [];
+
+  const instructions: SolanaIR["instructions"] = [];
+  let currentAttrs: SyntaxNode[] = [];
+
+  for (let i = 0; i < body.namedChildCount; i++) {
+    const child = body.namedChild(i);
+    if (!child) continue;
+
+    if (child.type === "attribute_item") {
+      currentAttrs.push(child);
+      continue;
+    }
+
+    if (child.type === "function_item") {
+      const instr = parseInstructionFn(child, accountsStructs, source);
+      if (instr) instructions.push(instr);
+    }
+
+    currentAttrs = [];
   }
 
   return instructions;
 }
 
-// ─── Signature parsing ───────────────────────────────────────────────────────
+function parseInstructionFn(
+  fnNode: SyntaxNode,
+  accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[] }[],
+  source: string,
+): SolanaIR["instructions"][0] | null {
+  const fnName = fnNode.childForFieldName("name")?.text;
+  if (!fnName) return null;
 
-function parseSignature(sig: string): {
+  // ── Extract parameters ──
+  const paramsNode = fnNode.childForFieldName("parameters");
+  const { contextType, args } = paramsNode
+    ? parseParameters(paramsNode)
+    : { contextType: "", args: [] };
+
+  // ── Resolve accounts from the Context<T> struct ──
+  const accountsStruct = accountsStructs.find((s) => s.name === contextType);
+  const accounts = accountsStruct
+    ? parseAccountsStructFields(accountsStruct.node, accountsStruct.attrs)
+    : [];
+
+  // ── Classify the function body using AST ──
+  const bodyNode = fnNode.childForFieldName("body");
+  const bodyStatements: BodyStatement[] = bodyNode ? classifyBody(bodyNode) : [];
+
+  // ── Enrich state_read with account types from context struct ──
+  for (const stmt of bodyStatements) {
+    if (stmt.kind === "state_read" && accounts.length > 0) {
+      const matchingAccount = accounts.find((a) => a.name === stmt.account);
+      if (matchingAccount) {
+        stmt.accountType = matchingAccount.accountType;
+      }
+    }
+  }
+
+  // ── Raw body text ──
+  const rawBody = bodyNode?.text ?? "";
+
+  return {
+    name: fnName,
+    accounts,
+    args,
+    body: bodyStatements,
+    rawBody,
+  };
+}
+
+// ─── Parameter parsing ──────────────────────────────────────────────────────
+
+function parseParameters(paramsNode: SyntaxNode): {
   contextType: string;
   args: Arg[];
 } {
-  const params = sig.split(",").map((s) => s.trim()).filter(Boolean);
-
   let contextType = "";
   const args: Arg[] = [];
 
-  for (const param of params) {
-    // Skip ctx: Context<T> — extract T
-    const ctxMatch = param.match(/ctx\s*:\s*Context\s*<\s*(\w+)\s*>/);
+  for (let i = 0; i < paramsNode.namedChildCount; i++) {
+    const param = paramsNode.namedChild(i);
+    if (!param || param.type !== "parameter") continue;
+
+    const paramText = param.text;
+
+    // Skip lifetime params
+    if (paramText.startsWith("'")) continue;
+
+    // Check for ctx: Context<T>
+    const ctxMatch = paramText.match(/ctx\s*:\s*Context\s*<\s*'?\s*(\w+)\s*>/);
     if (ctxMatch?.[1]) {
       contextType = ctxMatch[1];
       continue;
     }
-    // Skip lifetime params and _ctx
-    if (param.startsWith("'") || param.startsWith("_")) continue;
+
+    // Skip _ctx patterns
+    if (paramText.startsWith("_")) continue;
 
     // Parse name: type
-    const colonIdx = param.indexOf(":");
-    if (colonIdx === -1) continue;
-    const name = param.slice(0, colonIdx).trim().replace(/^pub\s+/, "");
-    const rawType = param.slice(colonIdx + 1).trim();
-    if (!name || !rawType) continue;
+    const nameNode = param.childForFieldName("pattern");
+    const typeNode = param.childForFieldName("type");
+    if (!nameNode || !typeNode) continue;
 
-    args.push({ name, type: normalizeSolanaType(rawType) });
+    const name = nameNode.text.replace(/^pub\s+/, "").trim();
+    if (!name) continue;
+
+    args.push({
+      name,
+      type: normalizeSolanaType(typeNode.text),
+    });
   }
 
   return { contextType, args };
 }
 
-// ─── Accounts struct parsing ─────────────────────────────────────────────────
+// ─── Accounts context struct parsing ────────────────────────────────────────
 
-function parseAccountsStruct(structName: string, source: string): AccountRef[] {
+function parseAccountsStructFields(
+  structNode: SyntaxNode,
+  _outerAttrs: SyntaxNode[],
+): AccountRef[] {
   const accounts: AccountRef[] = [];
+  const bodyNode = structNode.childForFieldName("body");
+  if (!bodyNode) return accounts;
 
-  const re = new RegExp(`pub\\s+struct\\s+${structName}\\s*(?:<[^>]*>)?\\s*\\{`, "g");
-  const structStart = re.exec(source);
-  if (!structStart) return [];
+  let currentAttrs: SyntaxNode[] = [];
 
-  const openIdx = source.indexOf("{", structStart.index + structStart[0].length - 1);
-  if (openIdx === -1) return [];
-  const closeIdx = findMatchingClose(source, openIdx, "{", "}");
-  if (closeIdx === -1) return [];
+  for (let i = 0; i < bodyNode.namedChildCount; i++) {
+    const child = bodyNode.namedChild(i);
+    if (!child) continue;
 
-  const structBody = source.slice(openIdx + 1, closeIdx);
-
-  // Split struct body into chunks per field using 'pub' as delimiter
-  // Each chunk has attributes + pub name: Type,
-  const chunks = structBody.split(/(?=\s*(?:#\[|pub\s))/);
-
-  let currentAttrs: string[] = [];
-
-  for (const chunk of chunks) {
-    const trimmed = chunk.trim();
-    if (!trimmed) continue;
-
-    // Collect attribute lines
-    const attrMatch = trimmed.match(/^#\[([^\]]*(?:\[[^\]]*\][^\]]*)*)\]/);
-    if (attrMatch?.[1] && !trimmed.includes("pub ")) {
-      currentAttrs.push(attrMatch[1].trim());
+    if (child.type === "attribute_item") {
+      currentAttrs.push(child);
       continue;
     }
 
-    // Check for inline attribute + pub field
-    const inlineAttrRe = /#\[([^\]]*(?:\[[^\]]*\][^\]]*)*)\]/g;
-    let inlineMatch: RegExpExecArray | null;
-    while ((inlineMatch = inlineAttrRe.exec(trimmed)) !== null) {
-      if (inlineMatch[1] && inlineMatch.index < trimmed.indexOf("pub ")) {
-        currentAttrs.push(inlineMatch[1].trim());
-      }
+    if (child.type === "field_declaration") {
+      const account = parseAccountField(child, currentAttrs);
+      if (account) accounts.push(account);
+      currentAttrs = [];
     }
-
-    // Parse field: pub name: Type
-    const fieldMatch = trimmed.match(/pub\s+(\w+)\s*:\s*(.+)/s);
-    if (!fieldMatch?.[1] || !fieldMatch[2]) continue;
-
-    const fieldName = fieldMatch[1];
-    let rawType = fieldMatch[2].trim();
-    // Remove trailing comma and anything after
-    rawType = rawType.replace(/,\s*$/, "").trim();
-    // Handle multi-line types by removing line breaks
-    rawType = rawType.replace(/\s+/g, " ").trim();
-
-    const accountType = extractAccountType(rawType);
-
-    // Get the LAST #[account(...)] attribute
-    const accountAttr = [...currentAttrs]
-      .reverse()
-      .find((a) => a.startsWith("account(") || a === "account");
-
-    let isSigner = false;
-    let isMut = false;
-    let isInit = false;
-    let isPda = false;
-    let pdaSeeds: string[] = [];
-    let constraints: ReturnType<typeof parseConstraints> = [];
-
-    if (accountAttr) {
-      const inner = accountAttr.replace(/^account\s*\(\s*/, "").replace(/\s*\)$/, "");
-      constraints = parseConstraints(inner);
-      isMut = constraints.some((c) => c.kind === "mut" || c.kind === "init" || c.kind === "init_if_needed");
-      isInit = constraints.some((c) => c.kind === "init" || c.kind === "init_if_needed");
-      isPda = constraints.some((c) => c.kind === "seeds");
-
-      // Extract PDA seeds
-      const seedsConstraint = constraints.find((c) => c.kind === "seeds");
-      if (seedsConstraint?.value) {
-        pdaSeeds = parsePdaSeeds(seedsConstraint.value);
-      }
-    }
-
-    if (rawType.includes("Signer")) isSigner = true;
-
-    accounts.push({
-      name: fieldName,
-      accountType,
-      isSigner,
-      isMut,
-      isInit,
-      isPda,
-      pdaSeeds,
-      constraints,
-    });
   }
 
   return accounts;
 }
 
-// ─── Account data struct parsing ─────────────────────────────────────────────
+function parseAccountField(
+  fieldNode: SyntaxNode,
+  attrs: SyntaxNode[],
+): AccountRef | null {
+  const nameNode = fieldNode.childForFieldName("name");
+  const typeNode = fieldNode.childForFieldName("type");
+  if (!nameNode || !typeNode) return null;
 
-function parseAccountDefs(cleaned: string): SolanaIR["accounts"] {
-  const defs: SolanaIR["accounts"] = [];
+  const fieldName = nameNode.text;
+  const rawType = typeNode.text;
+  const accountType = extractAccountType(rawType);
 
-  const structBlocks = extractBlock(cleaned, /pub\s+struct\s+(\w+)/g);
+  // Parse all #[account(...)] attributes for this field
+  const accountAttrInner = extractAccountAttrInner(attrs);
 
-  for (const { match, block } of structBlocks) {
-    const structName = match[1];
-    if (!structName) continue;
+  let isSigner = rawType.includes("Signer");
+  let isMut = false;
+  let isInit = false;
+  let isPda = false;
+  let pdaSeeds: string[] = [];
+  let constraints: ReturnType<typeof parseConstraints> = [];
 
-    const precedingText = cleaned.slice(
-      Math.max(0, cleaned.indexOf(match[0]) - 300),
-      cleaned.indexOf(match[0])
+  if (accountAttrInner) {
+    constraints = parseConstraints(accountAttrInner);
+    isMut = constraints.some(
+      (c) => c.kind === "mut" || c.kind === "init" || c.kind === "init_if_needed",
     );
+    isInit = constraints.some(
+      (c) => c.kind === "init" || c.kind === "init_if_needed",
+    );
+    isPda = constraints.some((c) => c.kind === "seeds");
 
-    const hasAccountAttr =
-      /#\[account(\s*\(|\s*\])/i.test(precedingText) ||
-      /#\[account\b/.test(precedingText);
-
-    if (!hasAccountAttr) continue;
-
-    const fields = parseStructFields(block);
-    if (fields.length === 0) continue;
-
-    const space = 8 + fields.reduce((acc, f) => acc + fieldSize(f.type), 0);
-
-    defs.push({ name: structName, fields, space });
+    const seedsConstraint = constraints.find((c) => c.kind === "seeds");
+    if (seedsConstraint?.value) {
+      pdaSeeds = parsePdaSeeds(seedsConstraint.value);
+    }
   }
 
-  return defs;
+  return {
+    name: fieldName,
+    accountType,
+    isSigner,
+    isMut,
+    isInit,
+    isPda,
+    pdaSeeds,
+    constraints,
+  };
 }
 
-// ─── Error parsing ───────────────────────────────────────────────────────────
+// ─── Account data struct parsing ────────────────────────────────────────────
 
-function parseErrors(cleaned: string): SolanaIR["errors"] {
+function parseAccountDataStruct(
+  structNode: SyntaxNode,
+  _attrs: SyntaxNode[],
+): AccountDef {
+  const name = extractStructName(structNode) ?? "Unknown";
+  const fields = parseStructFields(structNode);
+  const space = 8 + fields.reduce((acc, f) => acc + fieldSize(f.type), 0);
+
+  return { name, fields, space };
+}
+
+// ─── Error enum parsing ─────────────────────────────────────────────────────
+
+function parseErrorEnum(enumNode: SyntaxNode, _attrs: SyntaxNode[]): SolanaIR["errors"] {
   const errors: SolanaIR["errors"] = [];
+  const bodyNode = enumNode.childForFieldName("body");
+  if (!bodyNode) return errors;
 
-  const errorEnumRe = /#\[error_code\]\s*pub\s+enum\s+(\w+)\s*\{([^}]*)\}/g;
-  let enumMatch: RegExpExecArray | null;
+  let code = 6000;
+  let currentAttrs: SyntaxNode[] = [];
 
-  while ((enumMatch = errorEnumRe.exec(cleaned)) !== null) {
-    const enumBody = enumMatch[2];
+  for (let i = 0; i < bodyNode.namedChildCount; i++) {
+    const child = bodyNode.namedChild(i);
+    if (!child) continue;
 
-    const variantRe = /(?:#\[msg\("([^"]*)"\)\]\s*)?(\w+)\s*,?/g;
-    let vMatch: RegExpExecArray | null;
-    let code = 6000;
-
-    while ((vMatch = variantRe.exec(enumBody ?? "")) !== null) {
-      const msg = vMatch[1] ?? vMatch[2] ?? "";
-      const name = vMatch[2];
-      if (!name || name === "pub" || name === "enum") continue;
-      errors.push({ code: code++, name, msg });
+    if (child.type === "attribute_item") {
+      currentAttrs.push(child);
+      continue;
     }
+
+    // enum variants can be identifier or enum_variant
+    const variantName = child.childForFieldName("name")?.text ?? child.text.replace(/,\s*$/, "").trim();
+    if (!variantName || variantName === "pub" || variantName === "enum") {
+      currentAttrs = [];
+      continue;
+    }
+
+    // Extract #[msg("...")] from attributes
+    let msg = variantName;
+    for (const attr of currentAttrs) {
+      const msgMatch = attr.text.match(/#\[msg\("([^"]*)"\)\]/);
+      if (msgMatch?.[1]) {
+        msg = msgMatch[1];
+        break;
+      }
+    }
+
+    errors.push({ code: code++, name: variantName, msg });
+    currentAttrs = [];
   }
 
   return errors;
 }
 
-// ─── Helper function extraction ──────────────────────────────────────────────
+// ─── Helper function parsing ────────────────────────────────────────────────
 
-function parseHelperFunctions(rawSource: string, cleaned: string): HelperFn[] {
-  const helpers: HelperFn[] = [];
+function parseHelperFn(fnNode: SyntaxNode): HelperFn {
+  const name = fnNode.childForFieldName("name")?.text ?? "unknown";
+  const isPublic = fnNode.text.trimStart().startsWith("pub ");
+  const bodyNode = fnNode.childForFieldName("body");
+  const body = bodyNode?.text ?? "{}";
 
-  // Find the #[program] mod boundaries
-  const programMatch = cleaned.match(/#\[program\]\s*pub\s+mod\s+\w+/);
-  if (!programMatch) return [];
+  // Reconstruct signature — everything before the body
+  const bodyStart = bodyNode?.startIndex ?? fnNode.endIndex;
+  const signature = fnNode.text.slice(0, bodyStart - fnNode.startIndex).trim();
 
-  const programStart = cleaned.indexOf(programMatch[0]);
-  const programOpenBrace = cleaned.indexOf("{", programStart);
-  const programCloseBrace = findMatchingClose(cleaned, programOpenBrace, "{", "}");
-
-  // Look for fn definitions OUTSIDE the program module and OUTSIDE account/error structs
-  const beforeProgram = cleaned.slice(0, programStart);
-  const afterProgram = programCloseBrace > 0 ? cleaned.slice(programCloseBrace + 1) : "";
-  const outsideProgram = beforeProgram + "\n" + afterProgram;
-
-  const fnBlocks = extractBlock(outsideProgram, /(pub\s+)?fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(/g);
-
-  for (const { match, block } of fnBlocks) {
-    const isPublic = !!match[1];
-    const name = match[2];
-    if (!name) continue;
-
-    // Skip if it's a struct impl method or test
-    if (name.startsWith("test_") || name === "main") continue;
-
-    // Reconstruct full signature
-    const fnStart = outsideProgram.indexOf(match[0]);
-    const sigEnd = outsideProgram.indexOf("{", fnStart);
-    if (sigEnd === -1) continue;
-    const signature = outsideProgram.slice(fnStart, sigEnd).trim();
-
-    const rawCode = signature + " {" + block + "}";
-
-    helpers.push({
-      name,
-      signature,
-      body: "{" + block + "}",
-      isPublic,
-      rawCode,
-    });
-  }
-
-  return helpers;
+  return {
+    name,
+    signature,
+    body,
+    isPublic,
+    rawCode: fnNode.text,
+  };
 }
 
-// ─── Custom types extraction ─────────────────────────────────────────────────
+// ─── Custom type parsing ────────────────────────────────────────────────────
 
-function parseCustomTypes(cleaned: string): SolanaIR["types"] {
-  const types: SolanaIR["types"] = [];
+function parseCustomType(
+  node: SyntaxNode,
+  kind: "struct" | "enum",
+): SolanaIR["types"][0] {
+  const name = (node.childForFieldName("name")?.text) ?? "Unknown";
 
-  // Find structs that are NOT #[account] and NOT #[derive(Accounts)]
-  const structBlocks = extractBlock(cleaned, /pub\s+struct\s+(\w+)/g);
-
-  for (const { match, block } of structBlocks) {
-    const structName = match[1];
-    if (!structName) continue;
-    const precedingText = cleaned.slice(
-      Math.max(0, cleaned.indexOf(match[0]) - 300),
-      cleaned.indexOf(match[0])
-    );
-
-    // Skip if it's an account struct or accounts context
-    if (/#\[account/.test(precedingText)) continue;
-    if (/#\[derive\([^)]*Accounts[^)]*\)\]/.test(precedingText)) continue;
-
-    const fields = parseStructFields(block);
-    if (fields.length === 0) continue;
-
-    types.push({
-      name: structName,
-      kind: "struct" as const,
-      fields,
-    });
+  if (kind === "struct") {
+    const fields = parseStructFields(node);
+    return { name, kind: "struct", fields };
   }
 
-  // Find enums that are NOT #[error_code]
-  const enumRe = /pub\s+enum\s+(\w+)\s*\{([^}]*)\}/g;
-  let enumMatch: RegExpExecArray | null;
-
-  while ((enumMatch = enumRe.exec(cleaned)) !== null) {
-    const enumName = enumMatch[1];
-    const enumBody = enumMatch[2];
-    if (!enumName || !enumBody) continue;
-    const precedingText = cleaned.slice(
-      Math.max(0, cleaned.indexOf(enumMatch[0]) - 200),
-      cleaned.indexOf(enumMatch[0])
-    );
-
-    if (/#\[error_code\]/.test(precedingText)) continue;
-
-
-    const variants: string[] = [];
-    const variantRe = /(\w+)\s*(?:\{[^}]*\})?/g;
-    let vm: RegExpExecArray | null;
-    while ((vm = variantRe.exec(enumBody)) !== null) {
-      const v = vm[1];
-      if (v && v !== "pub" && v !== "enum") {
-        variants.push(v);
+  // Enum variants
+  const variants: string[] = [];
+  const bodyNode = node.childForFieldName("body");
+  if (bodyNode) {
+    for (let i = 0; i < bodyNode.namedChildCount; i++) {
+      const child = bodyNode.namedChild(i);
+      if (!child) continue;
+      const variantName = child.childForFieldName("name")?.text ?? child.text.replace(/,\s*$/, "").trim();
+      if (variantName && variantName !== "pub" && variantName !== "enum") {
+        variants.push(variantName);
       }
     }
-
-    if (variants.length > 0) {
-      types.push({
-        name: enumName,
-        kind: "enum" as const,
-        variants,
-      });
-    }
   }
 
-  return types;
+  return { name, kind: "enum", variants };
 }
 
-// ─── Import extraction ───────────────────────────────────────────────────────
+// ─── Struct fields parsing ──────────────────────────────────────────────────
 
-function extractImports(cleaned: string): string[] {
+function parseStructFields(
+  structNode: SyntaxNode,
+): { name: string; type: string }[] {
+  const fields: { name: string; type: string }[] = [];
+  const bodyNode = structNode.childForFieldName("body");
+  if (!bodyNode) return fields;
+
+  for (let i = 0; i < bodyNode.namedChildCount; i++) {
+    const child = bodyNode.namedChild(i);
+    if (!child || child.type !== "field_declaration") continue;
+
+    const nameNode = child.childForFieldName("name");
+    const typeNode = child.childForFieldName("type");
+    if (!nameNode || !typeNode) continue;
+
+    const name = nameNode.text;
+    if (name === "_phantom") continue;
+
+    fields.push({
+      name,
+      type: normalizeSolanaType(typeNode.text),
+    });
+  }
+
+  return fields;
+}
+
+// ─── Import extraction ──────────────────────────────────────────────────────
+
+function extractImports(root: SyntaxNode): string[] {
   const imports: string[] = [];
-  const useRe = /^\s*use\s+(.+?)\s*;/gm;
-  let m: RegExpExecArray | null;
-  while ((m = useRe.exec(cleaned)) !== null) {
-    if (m[1]) imports.push(m[1]);
+  for (let i = 0; i < root.namedChildCount; i++) {
+    const child = root.namedChild(i);
+    if (!child || child.type !== "use_declaration") continue;
+    // Get everything after "use" and before ";"
+    const text = child.text.replace(/^use\s+/, "").replace(/;\s*$/, "");
+    imports.push(text);
   }
   return imports;
 }
 
-// ─── Helper utilities ────────────────────────────────────────────────────────
+// ─── Program ID extraction ──────────────────────────────────────────────────
+
+function extractProgramId(root: SyntaxNode): string | undefined {
+  // Look for declare_id!("...") macro invocation
+  for (let i = 0; i < root.namedChildCount; i++) {
+    const child = root.namedChild(i);
+    if (!child || child.type !== "macro_invocation") continue;
+
+    const macroName = child.namedChild(0)?.text;
+    if (macroName === "declare_id") {
+      const tokenTree = child.children.find((c: { type: string }) => c.type === "token_tree");
+      if (tokenTree) {
+        const idMatch = tokenTree.text.match(/"([^"]+)"/);
+        if (idMatch?.[1]) return idMatch[1];
+      }
+    }
+  }
+  return undefined;
+}
+
+// ─── Utility functions ──────────────────────────────────────────────────────
+
+function extractStructName(node: SyntaxNode): string | null {
+  return node.childForFieldName("name")?.text ?? null;
+}
 
 function extractAccountType(rawType: string): string {
   const t = rawType.trim();
@@ -510,32 +626,7 @@ function extractAccountType(rawType: string): string {
   return t;
 }
 
-function extractAttributes(block: string): string[] {
-  const attrs: string[] = [];
-  const re = /#\[([^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*)\]/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(block)) !== null) {
-    if (m[1]) attrs.push(m[1].trim());
-  }
-  return attrs;
-}
-
-function parseStructFields(body: string): { name: string; type: string }[] {
-  const fields: { name: string; type: string }[] = [];
-  const fieldRe = /(?:pub\s+)?(\w+)\s*:\s*([A-Za-z0-9_<>]+)\s*,?/g;
-  let m: RegExpExecArray | null;
-  while ((m = fieldRe.exec(body)) !== null) {
-    const name = m[1];
-    const rawType = m[2];
-    if (!name || !rawType) continue;
-    if (name === "pub" || name === "self" || name === "_phantom") continue;
-    fields.push({ name, type: normalizeSolanaType(rawType) });
-  }
-  return fields;
-}
-
 function parsePdaSeeds(seedsValue: string): string[] {
-  // Parse seeds = [b"counter", authority.key().as_ref()]
   const inner = seedsValue.replace(/^\[/, "").replace(/\]$/, "");
   const seeds: string[] = [];
   let current = "";

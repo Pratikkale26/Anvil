@@ -1,6 +1,5 @@
 {
   "name": "counter",
-  "programId": "Counter111111111111111111111111111111111111",
   "instructions": [
     {
       "name": "initialize",
@@ -43,15 +42,11 @@
           "name": "system_program",
           "accountType": "System",
           "isSigner": false,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [
-            {
-              "kind": "mut"
-            }
-          ]
+          "constraints": []
         }
       ],
       "args": [
@@ -72,7 +67,7 @@
           "kind": "state_field_assign",
           "account": "counter",
           "field": "authority",
-          "value": "*signer_key"
+          "value": "*authority.key()"
         },
         {
           "kind": "state_field_assign",
@@ -87,7 +82,9 @@
           "value": "ctx.bumps.counter"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
       "rawBody": "{\n        let counter = &mut ctx.accounts.counter;\n        counter.authority = ctx.accounts.authority.key();\n        counter.count = start_value;\n        counter.bump = ctx.bumps.counter;\n        Ok(())\n    }"
@@ -123,25 +120,11 @@
           "name": "authority",
           "accountType": "Signer",
           "isSigner": true,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
-          "isPda": true,
-          "pdaSeeds": [
-            "b\"counter\""
-          ],
-          "constraints": [
-            {
-              "kind": "mut"
-            },
-            {
-              "kind": "has_one",
-              "value": "authority"
-            },
-            {
-              "kind": "seeds",
-              "value": "[b\"counter\""
-            }
-          ]
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
         }
       ],
       "args": [
@@ -165,7 +148,9 @@
           "value": "counter.count.checked_add(amount).ok_or(CounterError::Overflow)?"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
       "rawBody": "{\n        let counter = &mut ctx.accounts.counter;\n        counter.count = counter.count.checked_add(amount).ok_or(CounterError::Overflow)?;\n        Ok(())\n    }"
@@ -201,25 +186,11 @@
           "name": "authority",
           "accountType": "Signer",
           "isSigner": true,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
-          "isPda": true,
-          "pdaSeeds": [
-            "b\"counter\""
-          ],
-          "constraints": [
-            {
-              "kind": "mut"
-            },
-            {
-              "kind": "has_one",
-              "value": "authority"
-            },
-            {
-              "kind": "seeds",
-              "value": "[b\"counter\""
-            }
-          ]
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
         }
       ],
       "args": [
@@ -243,7 +214,9 @@
           "value": "counter.count.checked_sub(amount).ok_or(CounterError::Underflow)?"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
       "rawBody": "{\n        let counter = &mut ctx.accounts.counter;\n        counter.count = counter.count.checked_sub(amount).ok_or(CounterError::Underflow)?;\n        Ok(())\n    }"
@@ -279,25 +252,11 @@
           "name": "authority",
           "accountType": "Signer",
           "isSigner": true,
-          "isMut": true,
+          "isMut": false,
           "isInit": false,
-          "isPda": true,
-          "pdaSeeds": [
-            "b\"counter\""
-          ],
-          "constraints": [
-            {
-              "kind": "mut"
-            },
-            {
-              "kind": "has_one",
-              "value": "authority"
-            },
-            {
-              "kind": "seeds",
-              "value": "[b\"counter\""
-            }
-          ]
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
         }
       ],
       "args": [],
@@ -316,27 +275,15 @@
           "value": "0"
         },
         {
-          "kind": "return_ok"
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
         }
       ],
       "rawBody": "{\n        let counter = &mut ctx.accounts.counter;\n        counter.count = 0;\n        Ok(())\n    }"
     }
   ],
   "accounts": [
-    {
-      "name": "Update",
-      "fields": [
-        {
-          "name": "counter",
-          "type": "Account<"
-        },
-        {
-          "name": "authority",
-          "type": "Signer<"
-        }
-      ],
-      "space": 72
-    },
     {
       "name": "CounterAccount",
       "fields": [
@@ -371,13 +318,12 @@
   ],
   "helperFns": [],
   "imports": [
-    "anchor_lang::prelude::*",
-    "super::*"
+    "anchor_lang::prelude::*"
   ],
   "metadata": {
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T11:00:27.841Z"
+    "parsedAt": "2026-03-28T11:53:05.226Z"
   }
 }
