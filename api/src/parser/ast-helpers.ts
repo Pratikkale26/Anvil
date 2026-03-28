@@ -75,6 +75,26 @@ export function findCtxAccountsAccess(node: SyntaxNode): string | null {
 }
 
 /**
+ * Check if a node is directly a `ctx.accounts.X` access or a direct borrow of it.
+ * Unlike findCtxAccountsAccess(), this does not search arbitrary descendants.
+ */
+export function findDirectCtxAccountsAccess(node: SyntaxNode): string | null {
+  if (node.type === "field_expression") {
+    const chain = getFieldChain(node);
+    if (chain[0] === "ctx" && chain[1] === "accounts" && chain[2] && chain.length === 3) {
+      return chain[2];
+    }
+  }
+
+  if (node.type === "reference_expression" || node.type === "mutable_reference_expression") {
+    const inner = node.namedChild(0);
+    if (inner) return findDirectCtxAccountsAccess(inner);
+  }
+
+  return null;
+}
+
+/**
  * Check if a node contains `ctx.bumps.X` pattern.
  * Returns the bump name X, or null.
  */

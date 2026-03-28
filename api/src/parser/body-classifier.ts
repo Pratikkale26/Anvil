@@ -16,6 +16,7 @@ import type { SyntaxNode } from "./ts-init.js";
 import type { BodyStatement } from "../ir/schema.js";
 import {
   findCtxAccountsAccess,
+  findDirectCtxAccountsAccess,
   findCtxBumpsAccess,
   getFieldChain,
   findDescendant,
@@ -149,7 +150,7 @@ function classifyLetDeclaration(
 
   // ── ctx.accounts.X access ──
   if (valueNode) {
-    const accountName = findCtxAccountsAccess(valueNode);
+    const accountName = findDirectCtxAccountsAccess(valueNode);
     if (accountName) {
       const isMut = text.includes("&mut") || (patternNode?.type === "mut_pattern");
       return {
@@ -159,6 +160,20 @@ function classifyLetDeclaration(
           localVar,
           mutable: isMut,
           accountType: "", // enriched by anchor-parser after extracting accounts struct
+        },
+      };
+    }
+
+    const directTextMatch = valueNode.text.match(/^&(?:mut\s+)?ctx\.accounts\.(\w+)$/);
+    if (directTextMatch?.[1]) {
+      const isMut = valueNode.text.startsWith("&mut ");
+      return {
+        stmt: {
+          kind: "state_read",
+          account: directTextMatch[1],
+          localVar,
+          mutable: isMut,
+          accountType: "",
         },
       };
     }
@@ -298,8 +313,9 @@ function classifyAssignment(node: SyntaxNode): BodyStatement | null {
   if (leftNode.type === "field_expression") {
     const chain = getFieldChain(leftNode);
     if (chain.length >= 2) {
-      const account = chain[0] ?? "unknown";
-      const field = chain[1] ?? "unknown";
+      const isCtxAccountsField = chain[0] === "ctx" && chain[1] === "accounts" && chain.length >= 4;
+      const account = isCtxAccountsField ? (chain[2] ?? "unknown") : (chain[0] ?? "unknown");
+      const field = isCtxAccountsField ? (chain[3] ?? "unknown") : (chain[1] ?? "unknown");
       let value = rightNode.text;
 
       // Transform ctx.accounts.X.key() → *X.key()

@@ -324,6 +324,53 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
 
     const resolveStateVar = (account: string): string => stateVars.get(account) ?? account;
     const resolveAccountInfoVar = (account: string): string => accountInfoVars.get(account) ?? account;
+    const ensureStateRead = (account: string, mutable = false): string => {
+      const normalized = snakeCase(account);
+      const existing = stateVars.get(normalized);
+      if (existing) return existing;
+      const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === normalized);
+      const typeName = accountRef?.accountType ?? "Unknown";
+      if (isProgramAccount(typeName) || typeName === "Unknown" || typeName === "Signer" || typeName === "SystemAccount" || typeName === "UncheckedAccount") {
+        return normalized;
+      }
+      const localVar = normalized;
+      const accountInfoVar = `${normalized}_account`;
+      lines.push(`    let ${accountInfoVar} = ${normalized};`);
+      stateVars.set(normalized, localVar);
+      accountInfoVars.set(normalized, accountInfoVar);
+      lines.push(this.emitStateRead(
+        accountInfoVar,
+        typeName,
+        localVar,
+        mutable || mutableStateAccounts.has(normalized)
+      ));
+      const hasOneConstraints = accountRef?.constraints.filter(
+        (constraint) => constraint.kind === "has_one" && constraint.value
+      ) ?? [];
+      for (const constraint of hasOneConstraints) {
+        const targetAccount = snakeCase(constraint.value!);
+        lines.push(`    if ${localVar}.${snakeCase(constraint.value!)} != *${targetAccount}.key() {`);
+        lines.push(`        return Err(ProgramError::InvalidAccountData);`);
+        lines.push(`    }`);
+      }
+      return localVar;
+    };
+    const transformCtxAccountsReferences = (code: string): string => {
+      let transformed = code;
+      transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\(\)/g, (_, name: string) => `*${resolveAccountInfoVar(snakeCase(name))}.key()`);
+      transformed = transformed.replace(/ctx\.accounts\.(\w+)\.lamports\(\)/g, (_, name: string) => `${resolveAccountInfoVar(snakeCase(name))}.lamports()`);
+      transformed = transformed.replace(/ctx\.accounts\.(\w+)\.(\w+)/g, (full, name: string, field: string) => {
+        if (field === "key" || field === "lamports") return full;
+        const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === snakeCase(name));
+        const typeName = accountRef?.accountType ?? "Unknown";
+        if (isProgramAccount(typeName) || typeName === "Unknown" || typeName === "Signer" || typeName === "SystemAccount" || typeName === "UncheckedAccount") {
+          return full;
+        }
+        const localVar = ensureStateRead(name);
+        return `${localVar}.${snakeCase(field)}`;
+      });
+      return transformed;
+    };
     const emitAutoCloseAccounts = (): void => {
       for (const account of instr.accounts) {
         const accountName = snakeCase(account.name);
@@ -389,20 +436,19 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           const requireMatch = rawCode.match(/^require!\(([\s\S]+),\s*([\w:]+(?:::\w+)*)\s*\);?$/);
           if (requireMatch?.[1] && requireMatch[2]) {
             this.transformedCount++;
-            let condition = requireMatch[1].trim();
-            // Transform ctx.accounts references inside the condition
-            condition = condition.replace(/ctx\.accounts\.(\w+)\.(\w+\(\))/g, (_, name, method) => `${snakeCase(name)}.${method}`);
-            condition = condition.replace(/ctx\.accounts\.(\w+)/g, (_, name) => snakeCase(name));
+            const condition = transformCtxAccountsReferences(requireMatch[1].trim());
             lines.push(this.emitRequire(condition, requireMatch[2]));
             break;
           }
 
+          const transformedRawCode = transformCtxAccountsReferences(rawCode);
+
           // Don't add extra semicolons if the code already ends with one, with }, or with )
           let code: string;
-          if (rawCode.endsWith(";") || rawCode.endsWith("}") || rawCode.endsWith(");")) {
-            code = `    ${rawCode}`;
+          if (transformedRawCode.endsWith(";") || transformedRawCode.endsWith("}") || transformedRawCode.endsWith(");")) {
+            code = `    ${transformedRawCode}`;
           } else {
-            code = `    ${rawCode};`;
+            code = `    ${transformedRawCode};`;
           }
           if (stmt.needsReview) {
             code = `    // ⚠️ Anvil: Review this section — ${stmt.reviewReason ?? "may need manual verification"}\n${code}`;
@@ -463,14 +509,10 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         case "state_field_assign": {
           this.transformedCount++;
           mutatedAccounts.add(stmt.account);
+          ensureStateRead(stmt.account, true);
           // State field assignments are largely pass-through since they're just Rust
           // but we need to adapt ctx.accounts and ctx.bumps references
-          let value = stmt.value;
-          // Replace ctx.accounts.X.key() with the local variable reference
-          value = value.replace(
-            /ctx\.accounts\.(\w+)\.key\(\)/g,
-            (_, name: string) => `*${snakeCase(name)}.key()`
-          );
+          let value = transformCtxAccountsReferences(stmt.value);
           // Replace ctx.bumps.X with bump derivation call
           if (value.includes("ctx.bumps.")) {
             const bumpAccount = value.match(/ctx\.bumps\.(\w+)/)?.[1] ?? stmt.account;

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { SolanaIR } from "../ir/schema.js";
@@ -7,9 +7,21 @@ import { parseAnchor } from "../parser/anchor-parser.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, "../ir/fixtures");
+const DEMO_SRC_DIR = join(__dirname, "../demo-programs");
 
-const VALID_DEMOS = ["counter", "vault", "escrow", "staking"] as const;
-type DemoName = (typeof VALID_DEMOS)[number];
+function discoverDemos(): string[] {
+  const names = new Set<string>();
+  for (const file of readdirSync(DEMO_SRC_DIR)) {
+    if (file.endsWith(".rs")) names.add(file.replace(/\.rs$/, ""));
+  }
+  for (const file of readdirSync(FIXTURES_DIR)) {
+    if (file.endsWith(".json")) names.add(file.replace(/\.json$/, ""));
+  }
+  return [...names].sort();
+}
+
+const VALID_DEMOS = discoverDemos();
+type DemoName = string;
 
 // Cache fixtures in memory at startup
 const fixtureCache = new Map<DemoName, SolanaIR>();
@@ -23,7 +35,6 @@ for (const name of VALID_DEMOS) {
 }
 
 // Cache source files in memory too
-const DEMO_SRC_DIR = join(__dirname, "../demo-programs");
 const sourceCache = new Map<DemoName, string>();
 for (const name of VALID_DEMOS) {
   try {

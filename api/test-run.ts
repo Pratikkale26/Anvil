@@ -1,6 +1,8 @@
-import { readFileSync, writeFileSync } from "fs";
-import { join, dirname } from "path";
+import { existsSync, readFileSync, statSync, writeFileSync } from "fs";
+import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
+import { parseAnchor } from "./src/parser/anchor-parser.js";
+import { resolveLocalSource } from "./src/parser/local-source.js";
 import { emitPinocchio, emitPinocchioFull } from "./src/emitter/pinocchio-emitter.js";
 import { emitQuasar, emitQuasarFull } from "./src/emitter/quasar-emitter.js";
 import { emitNative, emitNativeFull } from "./src/emitter/native-emitter.js";
@@ -8,14 +10,77 @@ import { emitNative, emitNativeFull } from "./src/emitter/native-emitter.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 async function run() {
-  const fixture = process.argv[2] ?? "counter";
+  const input = process.argv[2] ?? "counter";
   const target = process.argv[3] ?? "pinocchio";
+  const resolvedInputPath = existsSync(input) ? resolve(input) : "";
+  const inputStats = resolvedInputPath ? statSync(resolvedInputPath) : null;
 
-  console.log(`1. Reading pre-loaded IR fixture (${fixture}.json)...`);
+  const fixturePath = join(__dirname, `src/ir/fixtures/${input}.json`);
+  const demoSourcePath = join(__dirname, `src/demo-programs/${input}.rs`);
+  const explicitJsonPath = resolvedInputPath && resolvedInputPath.endsWith(".json") ? resolvedInputPath : "";
+  const explicitSourcePath = resolvedInputPath && resolvedInputPath.endsWith(".rs") ? resolvedInputPath : "";
+  const explicitProjectPath = resolvedInputPath && inputStats?.isDirectory() ? resolvedInputPath : "";
 
-  const fixturePath = join(__dirname, `src/ir/fixtures/${fixture}.json`);
-  const irRaw = readFileSync(fixturePath, "utf-8");
-  const ir = JSON.parse(irRaw);
+  let label = input.endsWith(".rs")
+    ? input.split("/").pop()?.replace(/\.rs$/, "") ?? "input"
+    : input.endsWith(".json")
+      ? input.split("/").pop()?.replace(/\.json$/, "") ?? "input"
+      : input;
+
+  let ir: unknown;
+  if (existsSync(fixturePath)) {
+    console.log(`1. Reading pre-loaded IR fixture (${input}.json)...`);
+    const irRaw = readFileSync(fixturePath, "utf-8");
+    ir = JSON.parse(irRaw);
+  } else if (explicitJsonPath) {
+    console.log(`1. Reading IR fixture from file: ${explicitJsonPath}`);
+    const irRaw = readFileSync(explicitJsonPath, "utf-8");
+    ir = JSON.parse(irRaw);
+  } else {
+    let sourcePath = "";
+    let source = "";
+
+    if (explicitProjectPath) {
+      const resolved = resolveLocalSource(explicitProjectPath);
+      sourcePath = resolved.resolvedPath;
+      source = resolved.source;
+      label = sourcePath.split("/").slice(-3).join("-").replace(/\.rs$/, "");
+      console.log(`1. Parsing project directory: ${explicitProjectPath}`);
+      if (resolved.candidates.length > 1) {
+        console.log(`   Found ${resolved.candidates.length} candidate entry files. Using: ${resolved.resolvedPath}`);
+      }
+    } else if (explicitSourcePath && existsSync(explicitSourcePath)) {
+      sourcePath = explicitSourcePath;
+      source = readFileSync(sourcePath, "utf-8");
+    } else if (existsSync(demoSourcePath)) {
+      sourcePath = demoSourcePath;
+      source = readFileSync(sourcePath, "utf-8");
+    }
+
+    if (!sourcePath) {
+      console.error(`❌ Could not resolve input: ${input}`);
+      console.error("   Supported inputs:");
+      console.error("   - demo name like `marketplace`");
+      console.error("   - fixture path like `./src/ir/fixtures/counter.json`");
+      console.error("   - Rust file path like `./src/demo-programs/marketplace.rs`");
+      console.error("   - project directory like `/tmp/my-anchor-workspace`");
+      return;
+    }
+
+    if (!source) {
+      console.log(`1. No fixture found. Parsing source from: ${sourcePath}`);
+      source = readFileSync(sourcePath, "utf-8");
+    } else {
+      console.log(`1. No fixture found. Parsing source from: ${sourcePath}`);
+    }
+    const parsed = await parseAnchor(source);
+    if (!parsed.ok) {
+      console.error(`❌ Parse failed: ${parsed.error}`);
+      if (parsed.details) console.error(parsed.details);
+      return;
+    }
+    ir = parsed.ir;
+  }
 
   console.log(`2. Sending IR to local /emit route for target: ${target}...`);
 
@@ -36,7 +101,7 @@ async function run() {
     const data = await res.json() as Record<string, unknown>;
     
     // Save the emitted Rust code to a file you can see in VS Code
-    const outPath = join(__dirname, `test-output-${fixture}-${target}.rs`);
+    const outPath = join(__dirname, `test-output-${label}-${target}.rs`);
     writeFileSync(outPath, data.code as string);
     
     console.log(`\n✅ Success! Emitted ${data.instructions} instructions and ${data.accounts} accounts.`);
@@ -67,7 +132,7 @@ async function run() {
       console.log(`\n📁 Multi-file output:`);
       const files = data.files as { path: string; content: string }[];
       for (const file of files) {
-        const filePath = join(__dirname, `test-output-${fixture}-${target}`, file.path);
+        const filePath = join(__dirname, `test-output-${label}-${target}`, file.path);
         console.log(`   → ${file.path}`);
       }
     }
@@ -88,10 +153,10 @@ async function run() {
     }
 
     const output = emitter(ir);
-    const outPath = join(__dirname, `test-output-${fixture}-${target}.rs`);
+    const outPath = join(__dirname, `test-output-${label}-${target}.rs`);
     writeFileSync(outPath, output.singleFile);
 
-    console.log(`\n✅ Local fallback succeeded for ${fixture} -> ${target}.`);
+    console.log(`\n✅ Local fallback succeeded for ${label} -> ${target}.`);
     console.log(`Saved emitted code to: ${outPath}`);
     console.log(`📊 Transform Report: ${output.transformReport?.transformedCount ?? 0} transformed, ${output.transformReport?.passedThroughCount ?? 0} passed through`);
     if (output.warnings.length > 0) {
