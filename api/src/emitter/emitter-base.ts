@@ -269,6 +269,13 @@ export abstract class BaseEmitter {
     // Body emission — the main event
     const bodyCode = this.emitBodyStatements(instr.body, instr, ir);
 
+    // Check if body already ends with Ok(()) — no `return_ok` in body means we add one
+    const bodyHasReturnOk = instr.body.some(s => s.kind === "return_ok");
+    const bodyHasOkPassThrough = instr.body.some(
+      s => s.kind === "pass_through" && s.code.trim() === "Ok(())"
+    );
+    const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough;
+
     return `fn ${snakeCase(instr.name)}(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -283,8 +290,7 @@ ${signerChecks ? `\n${signerChecks}\n` : ""}
 ${argsBlock}
 
 ${bodyCode}
-
-    Ok(())
+${needsOkReturn ? "\n    Ok(())" : ""}
 }`;
   }
 
@@ -297,12 +303,40 @@ ${bodyCode}
   ): string {
     const lines: string[] = [];
 
+    // Collect which accounts are mutated (for auto-save)
+    const mutatedAccounts = new Set<string>();
+
     for (const stmt of statements) {
       switch (stmt.kind) {
         // ── PASS-THROUGH ──
         case "pass_through": {
           this.passedThroughCount++;
-          let code = `    ${stmt.code};`;
+          const rawCode = stmt.code.trim();
+
+          // Skip pass_through Ok(()) — handled by instruction wrapper
+          if (rawCode === "Ok(())") {
+            break;
+          }
+
+          // Transform require!() macros that leaked through as pass_through
+          const requireMatch = rawCode.match(/^require!\(([\s\S]+),\s*([\w:]+(?:::\w+)*)\s*\);?$/);
+          if (requireMatch?.[1] && requireMatch[2]) {
+            this.transformedCount++;
+            let condition = requireMatch[1].trim();
+            // Transform ctx.accounts references inside the condition
+            condition = condition.replace(/ctx\.accounts\.(\w+)\.(\w+\(\))/g, (_, name, method) => `${snakeCase(name)}.${method}`);
+            condition = condition.replace(/ctx\.accounts\.(\w+)/g, (_, name) => snakeCase(name));
+            lines.push(this.emitRequire(condition, requireMatch[2]));
+            break;
+          }
+
+          // Don't add extra semicolons if the code already ends with one, with }, or with )
+          let code: string;
+          if (rawCode.endsWith(";") || rawCode.endsWith("}") || rawCode.endsWith(");")) {
+            code = `    ${rawCode}`;
+          } else {
+            code = `    ${rawCode};`;
+          }
           if (stmt.needsReview) {
             code = `    // ⚠️ Anvil: Review this section — ${stmt.reviewReason ?? "may need manual verification"}\n${code}`;
           }
@@ -314,6 +348,11 @@ ${bodyCode}
         case "state_read": {
           this.transformedCount++;
           this.details.push(`Transformed: ctx.accounts.${stmt.account} → framework state read`);
+          // Skip program accounts (system_program, token_program, etc.)
+          // They don't need from_account_info — they're just passed as AccountInfo
+          if (isProgramAccount(stmt.accountType || "")) {
+            break;
+          }
           lines.push(this.emitStateRead(
             snakeCase(stmt.account),
             stmt.accountType || "Unknown",
@@ -334,24 +373,34 @@ ${bodyCode}
         // ── TRANSFORM: state field assignment ──
         case "state_field_assign": {
           this.transformedCount++;
+          mutatedAccounts.add(stmt.account);
           // State field assignments are largely pass-through since they're just Rust
           // but we need to adapt ctx.accounts and ctx.bumps references
           let value = stmt.value;
           // Replace ctx.accounts.X.key() with the local variable reference
           value = value.replace(
             /ctx\.accounts\.(\w+)\.key\(\)/g,
-            (_, name) => `*${snakeCase(name)}.key()`
+            (_, name: string) => `*${snakeCase(name)}.key()`
           );
           // Replace ctx.bumps.X with bump derivation call
           if (value.includes("ctx.bumps.")) {
-            // ctx.bumps.X → computed bump from PDA derivation
-            // The bump_seed() helper is emitted separately; here we just reference the result
             const bumpAccount = value.match(/ctx\.bumps\.(\w+)/)?.[1] ?? stmt.account;
+            // Derive seeds from the account's PDA constraints in the IR
+            const accountRef = instr.accounts.find(a => snakeCase(a.name) === snakeCase(bumpAccount));
+            const pdaSeeds = accountRef?.pdaSeeds ?? [`b"${snakeCase(bumpAccount)}"`];
+            // Build seeds array: PDA seeds + authority ref if applicable
+            const seedExprs = pdaSeeds.map(s => s);
+            // Look for has_one constraints to find the authority field
+            const hasOneAuth = accountRef?.constraints?.find(
+              (c: { kind: string; value?: string }) => c.kind === "has_one" && (c.value === "authority" || c.value === "maker")
+            );
+            if (hasOneAuth?.value) {
+              seedExprs.push(`${snakeCase(stmt.account)}.${hasOneAuth.value}.as_ref()`);
+            }
             value = `bump`;
-            // Emit the bump derivation line before the assignment
             lines.push(this.emitBumpSeed(
               "program_id",
-              [`b"${snakeCase(bumpAccount)}"`, `${snakeCase(stmt.account)}.maker.as_ref()`],
+              seedExprs,
               snakeCase(bumpAccount)
             ));
           }
@@ -474,7 +523,15 @@ ${bodyCode}
 
         // ── Return Ok(()) ──
         case "return_ok": {
-          // Handled by the function wrapper — skip
+          // Emit save() for any mutated state accounts before returning
+          for (const accName of mutatedAccounts) {
+            const accRef = instr.accounts.find(a => snakeCase(a.name) === snakeCase(accName));
+            const typeName = accRef?.accountType || "Unknown";
+            if (!isProgramAccount(typeName) && typeName !== "Unknown" && typeName !== "Signer" && typeName !== "SystemAccount" && typeName !== "UncheckedAccount") {
+              lines.push(this.emitStateSave(snakeCase(accName), typeName, snakeCase(accName)));
+            }
+          }
+          lines.push(`    Ok(())`);
           break;
         }
 

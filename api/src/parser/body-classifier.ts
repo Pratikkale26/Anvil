@@ -38,6 +38,9 @@ export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
   // Track seeds definitions for PDA signer seeds grouping
   let pendingSeeds: { seeds: string[]; bumpField?: string; rawCode: string } | null = null;
 
+  // Track CPI context variables: varName → {from, to, authority, signerSeeds}
+  const cpiContexts = new Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>();
+
   for (let i = 0; i < bodyNode.namedChildCount; i++) {
     const child = bodyNode.namedChild(i);
     if (!child) continue;
@@ -45,7 +48,7 @@ export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
     // Skip comment nodes
     if (child.type === "line_comment" || child.type === "block_comment") continue;
 
-    const classified = classifyStatement(child, pendingSeeds);
+    const classified = classifyStatement(child, pendingSeeds, cpiContexts);
 
     // Track seeds for PDA signer seeds grouping
     if (classified._seedsData) {
@@ -57,16 +60,31 @@ export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
       pendingSeeds = null;
     }
 
+    // Track CPI context variables — don't emit the let statement
+    if (classified._cpiContext) {
+      cpiContexts.set(classified._cpiContext.varName, classified._cpiContext);
+      continue;
+    }
+
     statements.push(classified.stmt);
   }
 
   return statements;
 }
 
+interface CpiContextInfo {
+  varName: string;
+  from: string;
+  to: string;
+  authority?: string;
+  signerSeeds?: string;
+}
+
 interface ClassifyResult {
   stmt: BodyStatement;
   _seedsData?: { seeds: string[]; bumpField?: string; rawCode: string };
   _signerSeedsConsumed?: boolean;
+  _cpiContext?: CpiContextInfo;
 }
 
 // ─── Main dispatcher ────────────────────────────────────────────────────────
@@ -74,6 +92,7 @@ interface ClassifyResult {
 function classifyStatement(
   node: SyntaxNode,
   pendingSeeds: { seeds: string[]; bumpField?: string; rawCode: string } | null,
+  cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
 ): ClassifyResult {
   const text = node.text;
 
@@ -82,7 +101,7 @@ function classifyStatement(
       return classifyLetDeclaration(node, pendingSeeds);
 
     case "expression_statement":
-      return classifyExpressionStatement(node);
+      return classifyExpressionStatement(node, cpiContexts);
 
     case "macro_invocation":
       return { stmt: classifyMacroInvocation(node) };
@@ -115,6 +134,18 @@ function classifyLetDeclaration(
   const patternNode = node.childForFieldName("pattern");
   const valueNode = node.childForFieldName("value");
   const localVar = extractPatternName(patternNode);
+
+  // ── CpiContext::new(...) — Extract CPI details, don't emit ──
+  // MUST check this BEFORE ctx.accounts, because CpiContext contains ctx.accounts references
+  if (valueNode && text.includes("CpiContext::")) {
+    const cpiInfo = extractCpiContextInfo(valueNode, localVar, text);
+    if (cpiInfo) {
+      return {
+        stmt: { kind: "pass_through", code: "", needsReview: false }, // placeholder, won't be emitted
+        _cpiContext: cpiInfo,
+      };
+    }
+  }
 
   // ── ctx.accounts.X access ──
   if (valueNode) {
@@ -209,7 +240,10 @@ function classifyLetDeclaration(
 
 // ─── Expression statements ──────────────────────────────────────────────────
 
-function classifyExpressionStatement(node: SyntaxNode): ClassifyResult {
+function classifyExpressionStatement(
+  node: SyntaxNode,
+  cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
+): ClassifyResult {
   const text = node.text;
   const expr = node.namedChild(0);
   if (!expr) return { stmt: { kind: "pass_through", code: text, needsReview: false } };
@@ -223,13 +257,18 @@ function classifyExpressionStatement(node: SyntaxNode): ClassifyResult {
   // ── Try expression: something()? ──
   if (expr.type === "try_expression") {
     const cpi = detectCpi(expr);
-    if (cpi) return { stmt: cpi };
+    if (cpi) {
+      // Resolve from/to using CPI context if they're unresolved
+      return { stmt: resolveCpiFields(cpi, cpiContexts) };
+    }
   }
 
   // ── Direct call expression ──
   if (expr.type === "call_expression") {
     const cpi = detectCpi(expr);
-    if (cpi) return { stmt: cpi };
+    if (cpi) {
+      return { stmt: resolveCpiFields(cpi, cpiContexts) };
+    }
   }
 
   // ── Ok(()) ──
@@ -427,4 +466,74 @@ function extractPatternName(patternNode: SyntaxNode | null): string {
     default:
       return patternNode.text.replace(/^mut\s+/, "").trim();
   }
+}
+
+// ─── CPI context extraction ─────────────────────────────────────────────────
+
+/**
+ * Extract CPI context info from a CpiContext::new(...) call.
+ * Parses the Transfer/etc struct to get from/to/authority fields,
+ * and resolves ctx.accounts.X references to account names.
+ */
+function extractCpiContextInfo(
+  valueNode: SyntaxNode,
+  varName: string,
+  fullText: string,
+): CpiContextInfo | null {
+  // Check for CpiContext::new_with_signer → has signer_seeds
+  const hasSigner = fullText.includes("new_with_signer");
+
+  // Extract from/to/authority from the Transfer/etc struct literal
+  // Pattern: Transfer { from: ctx.accounts.X.., to: ctx.accounts.Y.. }
+  const fromMatch = fullText.match(/from:\s*ctx\.accounts\.(\w+)/);
+  const toMatch = fullText.match(/to:\s*ctx\.accounts\.(\w+)/);
+  const authorityMatch = fullText.match(/authority:\s*ctx\.accounts\.(\w+)/);
+
+  if (!fromMatch?.[1] || !toMatch?.[1]) return null;
+
+  // Check for signer_seeds variable reference
+  let signerSeeds: string | undefined;
+  if (hasSigner) {
+    const signerMatch = fullText.match(/signer_seeds/);
+    if (signerMatch) signerSeeds = "signer_seeds";
+  }
+
+  return {
+    varName,
+    from: fromMatch[1],
+    to: toMatch[1],
+    authority: authorityMatch?.[1],
+    signerSeeds,
+  };
+}
+
+/**
+ * Resolve CPI from/to fields using stored CPI context info.
+ * When the CPI detector found unresolved fields like "from"/"to" (from struct field names),
+ * we look up the CPI context variable to get the actual account names.
+ */
+function resolveCpiFields(
+  stmt: BodyStatement,
+  cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
+): BodyStatement {
+  // Only resolve system and SPL transfer CPI kinds
+  if (stmt.kind === "cpi_system_transfer" || stmt.kind === "cpi_spl_transfer") {
+    // Check if from/to are generic field names that need resolution
+    if (stmt.from === "from" || stmt.to === "to") {
+      // Look for any stored CPI context
+      for (const [, ctx] of cpiContexts) {
+        const resolved = { ...stmt };
+        if (stmt.from === "from") resolved.from = ctx.from;
+        if (stmt.to === "to") resolved.to = ctx.to;
+        if (ctx.authority && stmt.kind === "cpi_spl_transfer" && 'authority' in resolved) {
+          (resolved as { authority: string }).authority = ctx.authority;
+        }
+        if (ctx.signerSeeds && !resolved.signerSeeds) {
+          resolved.signerSeeds = ctx.signerSeeds;
+        }
+        return resolved;
+      }
+    }
+  }
+  return stmt;
 }

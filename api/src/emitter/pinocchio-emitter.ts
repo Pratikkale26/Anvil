@@ -144,7 +144,6 @@ ${arms}
 
   override emitPdaSignerSeeds(account: string, seeds: string[], bumpField?: string): string {
     // Detect the account name used as prefix in seed expressions
-    // e.g. seeds like "escrow.maker.as_ref()" → prefix is "escrow"
     let statePrefix = account;
     for (const seed of seeds) {
       const prefixMatch = seed.match(/^(\w+)\.\w+/);
@@ -173,6 +172,9 @@ ${arms}
     // Determine the type name — capitalize the account name
     const typeName = account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 
+    // Only emit from_account_info here if it's strictly needed for seeds
+    // (the body classifier should have already emitted a state_read for this account,
+    //  but the PDA seeds block needs to deserialize separately if the data is needed for seeds)
     return `    // PDA signer seeds for '${account}'
     let ${dataVar} = ${typeName}::from_account_info(${account})?;
     let seeds = &[
@@ -219,8 +221,7 @@ ${arms}
     const fields = acc.fields
       .map((f) => `    pub ${snakeCase(f.name)}: ${this.rustTypeForFramework(f.type)},`)
       .join("\n");
-    const bodyLen =
-      acc.space ?? acc.fields.reduce((s, f) => s + typeSize(f.type), 0);
+    const bodyLen = acc.fields.reduce((s, f) => s + typeSize(f.type), 0);
     const readLines = this.buildReadLines(acc);
     const writeLines = this.buildWriteLines(acc);
     const ctorFields = acc.fields.map((f) => snakeCase(f.name)).join(", ");
@@ -395,8 +396,9 @@ fn spl_token_close_account_signed(
 }`);
     }
 
-    // Always emit the token account amount reader — it's commonly needed
-    helpers.push(`/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
+    // Only emit the token account amount reader if SPL token operations are present
+    if (irNeedsHelper(ir, "spl_transfer") || irNeedsHelper(ir, "spl_mint_to") || irNeedsHelper(ir, "spl_burn")) {
+      helpers.push(`/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
 fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     let data = unsafe { account.borrow_data_unchecked() };
     if data.len() < 72 {
@@ -404,6 +406,7 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     }
     Ok(u64::from_le_bytes(data[64..72].try_into().unwrap()))
 }`);
+    }
 
     return helpers.join("\n\n");
   }
