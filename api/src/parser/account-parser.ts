@@ -71,6 +71,7 @@ function parseStructFields(body: string): AccountField[] {
     const rawType = m[2];
 
     // Skip special Rust fields
+    if (!name || !rawType) continue;
     if (name === "pub" || name === "self" || name === "_phantom") continue;
 
     fields.push({ name, type: normalizeSolanaType(rawType) });

@@ -3,11 +3,12 @@ import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { SolanaIR } from "../ir/schema.js";
+import { parseAnchor } from "../parser/anchor-parser.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, "../ir/fixtures");
 
-const VALID_DEMOS = ["counter", "vault"] as const;
+const VALID_DEMOS = ["counter", "vault", "escrow", "staking"] as const;
 type DemoName = (typeof VALID_DEMOS)[number];
 
 // Cache fixtures in memory at startup
@@ -37,7 +38,10 @@ export const demoRoute = Router();
 
 /**
  * GET /demo/:name
- * Returns pre-loaded IR fixture + source for counter|vault
+ * Returns pre-loaded IR fixture + source for counter|vault|escrow|staking
+ *
+ * If the fixture doesn't have body data (from pre-body-classifier era),
+ * automatically re-parses the source to produce a complete IR.
  */
 demoRoute.get("/:name", (req, res) => {
   const name = req.params.name as DemoName;
@@ -50,12 +54,38 @@ demoRoute.get("/:name", (req, res) => {
     return;
   }
 
-  const ir = fixtureCache.get(name);
   const source = sourceCache.get(name);
+  let ir = fixtureCache.get(name);
+
+  // Check if the fixture has body data. If not, try live parsing.
+  const needsReparse = ir && ir.instructions.some(
+    instr => instr.body.length === 0 && (instr.rawBody ?? "").length === 0
+  );
+
+  if (needsReparse && source) {
+    console.log(`🔄 Fixture '${name}' missing body data — re-parsing from source...`);
+    const result = parseAnchor(source);
+    if (result.ok) {
+      ir = result.ir;
+      fixtureCache.set(name, ir); // cache the upgraded version
+    } else {
+      console.warn(`⚠️ Re-parse failed for '${name}': ${result.error}`);
+    }
+  }
 
   if (!ir) {
-    res.status(500).json({ error: `Fixture for '${name}' not loaded` });
-    return;
+    // Try parsing from source as last resort
+    if (source) {
+      const result = parseAnchor(source);
+      if (result.ok) {
+        ir = result.ir;
+        fixtureCache.set(name, ir);
+      }
+    }
+    if (!ir) {
+      res.status(500).json({ error: `Fixture for '${name}' not loaded` });
+      return;
+    }
   }
 
   res.json({ name, ir, source: source ?? null });

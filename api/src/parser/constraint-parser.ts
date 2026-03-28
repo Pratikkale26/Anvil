@@ -19,6 +19,8 @@ const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
   address:          "address",
   "token::mint":    "token::mint",
   "token::authority": "token::authority",
+  "associated_token::mint":      "associated_token::mint",
+  "associated_token::authority":  "associated_token::authority",
 };
 
 /**

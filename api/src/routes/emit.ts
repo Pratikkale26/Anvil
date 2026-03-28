@@ -1,21 +1,30 @@
 import { Router } from "express";
 import { SolanaIRSchema, type SolanaIR } from "../ir/schema.js";
-import { emitPinocchio } from "../emitter/pinocchio-emitter.js";
-import { emitQuasar } from "../emitter/quasar-emitter.js";
-import { emitNative } from "../emitter/native-emitter.js";
+import { emitPinocchio, emitPinocchioFull } from "../emitter/pinocchio-emitter.js";
+import { emitQuasar, emitQuasarFull } from "../emitter/quasar-emitter.js";
+import { emitNative, emitNativeFull } from "../emitter/native-emitter.js";
 import { analyzeCU } from "../emitter/cu-analyzer.js";
 
 export const emitRoute = Router();
 
 /**
  * POST /emit
- * Body: { ir: SolanaIR, target: "pinocchio" | "quasar" | "native" }
- * Returns: { code: string, cu: CUEstimate[], target: string, programName: string }
+ * Body: { ir: SolanaIR, target: "pinocchio" | "quasar" | "native", multiFile?: boolean }
+ * Returns: {
+ *   code: string,                  // single-file combined output (backward compat)
+ *   files?: EmitterFile[],         // multi-file output (if multiFile=true)
+ *   cu: CUEstimate[],
+ *   target: string,
+ *   programName: string,
+ *   warnings: string[],            // any review warnings
+ *   transformReport: {...},         // what was transformed vs passed through
+ * }
  */
 emitRoute.post("/", (req, res) => {
-  const { ir: rawIr, target } = req.body as {
+  const { ir: rawIr, target, multiFile } = req.body as {
     ir?: unknown;
     target?: string;
+    multiFile?: boolean;
   };
 
   if (!rawIr || typeof rawIr !== "object") {
@@ -45,35 +54,43 @@ emitRoute.post("/", (req, res) => {
 
   const ir: SolanaIR = parsed.data;
 
-  // Run the correct emitter
-  let code: string;
+  // Run the full emitter to get warnings + transform report
   try {
-    switch (target as Target) {
-      case "pinocchio": code = emitPinocchio(ir); break;
-      case "quasar":    code = emitQuasar(ir);    break;
-      case "native":    code = emitNative(ir);     break;
+    const emitters = {
+      pinocchio: emitPinocchioFull,
+      quasar: emitQuasarFull,
+      native: emitNativeFull,
+    } as const;
+
+    const emitter = emitters[target as Target];
+    const output = emitter(ir);
+
+    // Compute CU estimates
+    const cu = ir.metadata.cuEstimates?.length
+      ? ir.metadata.cuEstimates
+      : analyzeCU(ir);
+
+    const response: Record<string, unknown> = {
+      code: output.singleFile,
+      cu,
+      target,
+      programName: ir.name,
+      instructions: ir.instructions.length,
+      accounts: ir.accounts.length,
+      warnings: output.warnings,
+      transformReport: output.transformReport,
+    };
+
+    // Include multi-file output if requested
+    if (multiFile) {
+      response.files = output.files;
     }
+
+    res.json(response);
   } catch (e) {
     res.status(500).json({
       error: "Emit failed",
       details: e instanceof Error ? e.message : String(e),
     });
-    return;
   }
-
-  // Compute CU estimates
-  // If fixture already has cuEstimates, use those (more accurate)
-  // otherwise run the static analyzer
-  const cu = ir.metadata.cuEstimates?.length
-    ? ir.metadata.cuEstimates
-    : analyzeCU(ir);
-
-  res.json({
-    code,
-    cu,
-    target,
-    programName: ir.name,
-    instructions: ir.instructions.length,
-    accounts: ir.accounts.length,
-  });
 });

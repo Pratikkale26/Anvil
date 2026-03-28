@@ -1,258 +1,334 @@
-import type { SolanaIR, AccountDef, Instruction, AccountRef } from "../ir/schema.js";
-
 /**
- * Emit a Native Rust Solana program from a SolanaIR.
+ * Native Emitter — Generic target emitter for native solana_program Rust.
  *
- * Native Rust = using solana_program directly, no framework.
- * More verbose than Anchor, less optimized than Pinocchio/Quasar.
- * Useful for: learning, auditing, comparison story.
+ * Extends BaseEmitter with native solana_program implementations.
+ * No framework abstractions — uses raw solana_program and borsh for serialization.
+ * Complete business logic generation via the BaseEmitter body walker.
  */
-export function emitNative(ir: SolanaIR): string {
-  const sections: string[] = [];
 
-  sections.push(fileHeader(ir.name));
-  sections.push(nativeUseStatements());
-  sections.push(instructionEnum(ir));
-  sections.push(entryPoint(ir));
+import type { SolanaIR, AccountDef } from "../ir/schema.js";
+import {
+  BaseEmitter,
+  instrDiscriminator,
+  typeSize,
+  snakeCase,
+  toPascalCase,
+  isProgramAccount,
+  irNeedsHelper,
+} from "./emitter-base.js";
 
-  for (const instr of ir.instructions) {
-    sections.push(nativeInstruction(instr, ir));
-  }
+class NativeEmitter extends BaseEmitter {
+  override readonly frameworkName = "Native";
 
-  for (const acc of ir.accounts) {
-    sections.push(nativeAccountStruct(acc));
-  }
-
-  if (ir.errors.length > 0) {
-    sections.push(errorEnum(ir));
-  }
-
-  return sections.join("\n\n");
-}
-
-// ─── Use statements ───────────────────────────────────────────────────────────
-
-function nativeUseStatements(): string {
-  return `use borsh::{BorshDeserialize, BorshSerialize};
+  override emitUseStatements(_ir: SolanaIR): string {
+    return `use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
     entrypoint,
     entrypoint::ProgramResult,
     msg,
     program::invoke,
+    program::invoke_signed,
     program_error::ProgramError,
     pubkey::Pubkey,
-    rent::Rent,
     system_instruction,
     sysvar::Sysvar,
 };`;
-}
+  }
 
-// ─── Instruction enum (for borsh dispatch) ───────────────────────────────────
-
-function instructionEnum(ir: SolanaIR): string {
-  const variants = ir.instructions
-    .map((instr) => {
-      if (instr.args.length === 0) {
-        return `    ${toPascalCase(instr.name)},`;
-      }
-      const fields = instr.args.map((a) => `${snakeCase(a.name)}: ${rustType(a.type)}`).join(", ");
-      return `    ${toPascalCase(instr.name)} { ${fields} },`;
-    })
-    .join("\n");
-
-  return `#[derive(BorshDeserialize, BorshSerialize, Debug)]
-pub enum ${toPascalCase(ir.name)}Instruction {
-${variants}
-}`;
-}
-
-// ─── Entrypoint ───────────────────────────────────────────────────────────────
-
-function entryPoint(ir: SolanaIR): string {
-  const arms = ir.instructions
-    .map((instr) => {
-      if (instr.args.length === 0) {
-        return `        ${toPascalCase(ir.name)}Instruction::${toPascalCase(instr.name)} => {
-            process_${snakeCase(instr.name)}(program_id, accounts)?
-        }`;
-      }
-      const argNames = instr.args.map((a) => snakeCase(a.name)).join(", ");
-      return `        ${toPascalCase(ir.name)}Instruction::${toPascalCase(instr.name)} { ${argNames} } => {
-            process_${snakeCase(instr.name)}(program_id, accounts, ${argNames})?
-        }`;
-    })
-    .join("\n");
-
-  return `entrypoint!(process_instruction);
+  override emitEntrypoint(_ir: SolanaIR): string {
+    return `entrypoint!(process_instruction);
 
 pub fn process_instruction(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    let instruction = ${toPascalCase(ir.name)}Instruction::try_from_slice(instruction_data)
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-
-    match instruction {
-${arms}
+    if instruction_data.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
     }
-    Ok(())
+
+    let (discriminator, data) = instruction_data.split_at(8);
+    router(program_id, accounts, discriminator, data)
 }`;
-}
+  }
 
-// ─── Processor function ───────────────────────────────────────────────────────
+  override emitRouter(ir: SolanaIR): string {
+    const arms = ir.instructions
+      .map(
+        (instr) =>
+          `        ${instrDiscriminator(instr.name)} => ${snakeCase(instr.name)}(program_id, accounts, data),`
+      )
+      .join("\n");
 
-function nativeInstruction(instr: Instruction, _ir: SolanaIR): string {
-  const nonProgramAccounts = instr.accounts.filter(
-    (a) => !isProgramAccount(a.accountType)
-  );
-
-  const argParams =
-    instr.args.length > 0
-      ? ", " + instr.args.map((a) => `${snakeCase(a.name)}: ${rustType(a.type)}`).join(", ")
-      : "";
-
-  const accountIter = nonProgramAccounts
-    .map((acc) => `    let ${snakeCase(acc.name)} = next_account_info(account_info_iter)?;`)
-    .join("\n");
-
-  const checks = buildChecks(instr.accounts);
-
-  return `pub fn process_${snakeCase(instr.name)}(
+    return `fn router(
     program_id: &Pubkey,
-    accounts: &[AccountInfo]${argParams},
+    accounts: &[AccountInfo],
+    discriminator: &[u8],
+    data: &[u8],
 ) -> ProgramResult {
-    let account_info_iter = &mut accounts.iter();
-${accountIter}
-${checks}
-    msg!("${instr.name} called");
-
-    // TODO: implement ${instr.name} business logic
-
-    Ok(())
+    match discriminator {
+${arms}
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
 }`;
-}
+  }
 
-// ─── Account struct ───────────────────────────────────────────────────────────
+  override emitAccountBinding(name: string, index: number): string {
+    return `    let ${name} = &accounts[${index}];`;
+  }
 
-function nativeAccountStruct(acc: AccountDef): string {
-  const fields = acc.fields
-    .map((f) => `    pub ${snakeCase(f.name)}: ${rustType(f.type)},`)
-    .join("\n");
+  override emitSignerCheck(name: string): string {
+    return `    if !${name}.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }`;
+  }
 
-  return `#[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
+  override emitOwnerCheck(name: string): string {
+    return `    if ${name}.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }`;
+  }
+
+  override emitWritableCheck(names: string[]): string {
+    const checks = names.map((n) => `!${n}.is_writable`).join(" || ");
+    return `    if ${checks} {
+        return Err(ProgramError::InvalidAccountData);
+    }`;
+  }
+
+  override emitStateRead(accountName: string, typeName: string, localVar: string, mutable: boolean): string {
+    const mutKeyword = mutable ? "mut " : "";
+    return `    let ${mutKeyword}${localVar} = ${typeName}::try_from_slice(&${accountName}.data.borrow())?;`;
+  }
+
+  override emitStateSave(accountName: string, _typeName: string, localVar: string): string {
+    return `    ${localVar}.serialize(&mut &mut ${accountName}.data.borrow_mut()[..])?;`;
+  }
+
+  override emitBumpSeed(_programId: string, seeds: string[], expectedKey: string): string {
+    const seedsStr = seeds.map((s) => `${s}`).join(", ");
+    return `    let (expected_key, bump) = Pubkey::find_program_address(&[${seedsStr}], program_id);
+    if expected_key != *${expectedKey}.key {
+        return Err(ProgramError::InvalidSeeds);
+    }`;
+  }
+
+  override emitSystemTransfer(from: string, to: string, amount: string, signerSeeds?: string): string {
+    if (signerSeeds) {
+      return `    // System transfer with PDA signer
+    let transfer_ix = system_instruction::transfer(${from}.key, ${to}.key, ${amount});
+    invoke_signed(
+        &transfer_ix,
+        &[${from}.clone(), ${to}.clone()],
+        ${signerSeeds},
+    )?;`;
+    }
+    return `    // System transfer
+    let transfer_ix = system_instruction::transfer(${from}.key, ${to}.key, ${amount});
+    invoke(
+        &transfer_ix,
+        &[${from}.clone(), ${to}.clone()],
+    )?;`;
+  }
+
+  override emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string): string {
+    if (signerSeeds) {
+      return `    // SPL Token transfer (PDA signed) — ${from} → ${to}
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        ${from}.key,
+        ${to}.key,
+        ${authority}.key,
+        &[],
+        ${amount},
+    )?;
+    invoke_signed(
+        &transfer_ix,
+        &[${from}.clone(), ${to}.clone(), ${authority}.clone()],
+        ${signerSeeds},
+    )?;`;
+    }
+    return `    // SPL Token transfer — ${from} → ${to}
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        ${from}.key,
+        ${to}.key,
+        ${authority}.key,
+        &[],
+        ${amount},
+    )?;
+    invoke(
+        &transfer_ix,
+        &[${from}.clone(), ${to}.clone(), ${authority}.clone()],
+    )?;`;
+  }
+
+  override emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // SPL Token mint_to — ${mint} → ${to}
+    let mint_ix = spl_token::instruction::mint_to(
+        &spl_token::id(),
+        ${mint}.key,
+        ${to}.key,
+        ${authority}.key,
+        &[],
+        ${amount},
+    )?;
+    ${invokeType}(
+        &mint_ix,
+        &[${mint}.clone(), ${to}.clone(), ${authority}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // SPL Token burn — ${from}
+    let burn_ix = spl_token::instruction::burn(
+        &spl_token::id(),
+        ${from}.key,
+        ${mint}.key,
+        ${authority}.key,
+        &[],
+        ${amount},
+    )?;
+    ${invokeType}(
+        &burn_ix,
+        &[${from}.clone(), ${mint}.clone(), ${authority}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // SPL Token close account — ${account}
+    let close_ix = spl_token::instruction::close_account(
+        &spl_token::id(),
+        ${account}.key,
+        ${destination}.key,
+        ${authority}.key,
+        &[],
+    )?;
+    ${invokeType}(
+        &close_ix,
+        &[${account}.clone(), ${destination}.clone(), ${authority}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitPdaSignerSeeds(account: string, seeds: string[], bumpField?: string): string {
+    // Detect the account name used as prefix in seed expressions
+    let statePrefix = account;
+    for (const seed of seeds) {
+      const prefixMatch = seed.match(/^(\w+)\.\w+/);
+      if (prefixMatch?.[1] && !seed.startsWith('b"') && !seed.startsWith("&[")) {
+        statePrefix = prefixMatch[1];
+        break;
+      }
+    }
+
+    const dataVar = `${account}_data`;
+    const typeName = account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+
+    const transformedSeeds = seeds.map(seed => {
+      if (seed.startsWith('b"') || seed.startsWith("b'")) return seed;
+      if (seed.startsWith("&[")) {
+        return seed.replace(new RegExp(`&\\[${statePrefix}\\.`), `&[${dataVar}.`);
+      }
+      return seed.replace(new RegExp(`^${statePrefix}\\.`), `${dataVar}.`);
+    });
+
+    const seedsStr = transformedSeeds.join(",\n            ");
+    return `    // PDA signer seeds for '${account}'
+    let ${dataVar} = ${typeName}::try_from_slice(&${account}.data.borrow())?;
+    let seeds = &[
+            ${seedsStr},
+        ];
+    let signer_seeds = &[&seeds[..]];`;
+  }
+
+  override emitRequire(condition: string, error: string): string {
+    return `    if !(${condition}) {
+        return Err(${error}.into());
+    }`;
+  }
+
+  override emitMsg(message: string): string {
+    return `    msg!(${message});`;
+  }
+
+  override emitEmit(event: string, _fields: string): string {
+    return `    // Event: ${event}
+    msg!("event:${event}");`;
+  }
+
+  override emitClockGet(localVar: string): string {
+    return `    let ${localVar} = solana_program::sysvar::clock::Clock::get()?;`;
+  }
+
+  override emitRentGet(localVar: string): string {
+    return `    let ${localVar} = solana_program::sysvar::rent::Rent::get()?;`;
+  }
+
+  override rustTypeForFramework(typeName: string): string {
+    return typeName;
+  }
+
+  protected override emitPubkeyDeserialize(start: number, end: number): string {
+    return `Pubkey::new_from_array(data[${start}..${end}].try_into().unwrap())`;
+  }
+
+  override emitAccountStruct(acc: AccountDef): string {
+    const fields = acc.fields
+      .map((f) => `    pub ${snakeCase(f.name)}: ${this.rustTypeForFramework(f.type)},`)
+      .join("\n");
+
+    return `#[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct ${acc.name} {
 ${fields}
-}
-
-impl ${acc.name} {
-    pub const LEN: usize = ${acc.space ?? acc.fields.reduce((s, f) => s + typeSize(f.type), 0)};
-
-    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
-        let data = account.try_borrow_data()?;
-        // Skip 8-byte discriminator
-        ${acc.name}::try_from_slice(&data[8..])
-            .map_err(|_| ProgramError::InvalidAccountData)
-    }
-
-    pub fn save(&self, account: &AccountInfo) -> ProgramResult {
-        let mut data = account.try_borrow_mut_data()?;
-        let serialized = borsh::to_vec(self).map_err(|_| ProgramError::AccountDataTooSmall)?;
-        data[8..8 + serialized.len()].copy_from_slice(&serialized);
-        Ok(())
-    }
 }`;
-}
+  }
 
-// ─── Error enum ───────────────────────────────────────────────────────────────
+  override emitErrorEnum(ir: SolanaIR): string {
+    const variants = ir.errors
+      .map((e) => `    /// ${e.msg}\n    ${e.name} = ${e.code},`)
+      .join("\n");
 
-function errorEnum(ir: SolanaIR): string {
-  const variants = ir.errors
-    .map((e) => `    /// ${e.msg}\n    ${e.name},`)
-    .join("\n");
+    const enumName = `${toPascalCase(ir.name)}Error`;
 
-  return `use solana_program::decode_error::DecodeError;
-use num_derive::FromPrimitive;
-use thiserror::Error;
-
-#[derive(Clone, Copy, Debug, Eq, Error, FromPrimitive, PartialEq)]
-pub enum ${toPascalCase(ir.name)}Error {
+    return `#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum ${enumName} {
 ${variants}
 }
 
-impl From<${toPascalCase(ir.name)}Error> for ProgramError {
-    fn from(e: ${toPascalCase(ir.name)}Error) -> Self {
-        ProgramError::Custom(e as u32)
+impl From<${enumName}> for ProgramError {
+    fn from(error: ${enumName}) -> Self {
+        ProgramError::Custom(error as u32)
     }
-}`;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function fileHeader(name: string): string {
-  return `//! ${toPascalCase(name)} — generated by Anvil v0.1.0
-//! Source framework: Anchor → Target: Native Rust (solana_program)
-//!
-//! Uses borsh serialization. More verbose than Anchor but fully transparent.
-//! ⚠️  Review before deploying. Business logic marked with TODO.`;
+impl std::fmt::Display for ${enumName} {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
-function buildChecks(accounts: AccountRef[]): string {
-  const lines: string[] = [];
-
-  for (const acc of accounts) {
-    if (isProgramAccount(acc.accountType)) continue;
-
-    if (acc.isSigner) {
-      lines.push(
-        `    if !${snakeCase(acc.name)}.is_signer {\n        return Err(ProgramError::MissingRequiredSignature);\n    }`
-      );
-    }
-    for (const c of acc.constraints) {
-      if (c.kind === "owner") {
-        lines.push(
-          `    if ${snakeCase(acc.name)}.owner != program_id {\n        return Err(ProgramError::IncorrectProgramId);\n    }`
-        );
-      }
-      if (c.kind === "has_one" && c.value) {
-        lines.push(
-          `    // TODO: verify ${snakeCase(acc.name)}.${c.value} == ${c.value}.key`
-        );
-      }
-    }
+impl std::error::Error for ${enumName} {}`;
   }
 
-  return lines.length > 0 ? "\n" + lines.join("\n") : "";
+  override emitHelperFunctions(_ir: SolanaIR): string {
+    return "";
+  }
 }
 
-function isProgramAccount(t: string): boolean {
-  return (
-    t.includes("Program") ||
-    t === "SystemProgram" ||
-    t === "TokenProgram" ||
-    t === "AssociatedTokenProgram"
-  );
+const emitter = new NativeEmitter();
+
+export function emitNative(ir: SolanaIR): string {
+  return emitter.emit(ir).singleFile;
 }
 
-function rustType(t: string): string {
-  if (t === "Pubkey") return "Pubkey";
-  return t;
-}
-
-function typeSize(t: string): number {
-  const sizes: Record<string, number> = {
-    u8: 1, u16: 2, u32: 4, u64: 8, u128: 16,
-    i8: 1, i16: 2, i32: 4, i64: 8, i128: 16,
-    bool: 1, Pubkey: 32, String: 36, "Vec<u8>": 4,
-  };
-  return sizes[t] ?? 32;
-}
-
-function snakeCase(s: string): string {
-  return s.replace(/([A-Z])/g, "_$1").toLowerCase().replace(/^_/, "");
-}
-
-function toPascalCase(s: string): string {
-  return s.replace(/(^|_)([a-z])/g, (_, __, c) => c.toUpperCase());
+export function emitNativeFull(ir: SolanaIR) {
+  return emitter.emit(ir);
 }

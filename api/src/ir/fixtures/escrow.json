@@ -11,23 +11,41 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
-          "constraints": []
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
         },
         {
           "name": "mint_a",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": false,
+          "isMut": true,
           "isInit": false,
-          "constraints": []
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
         },
         {
           "name": "mint_b",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": false,
+          "isMut": true,
           "isInit": false,
-          "constraints": []
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
         },
         {
           "name": "maker_ata_a",
@@ -35,9 +53,20 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isPda": false,
+          "pdaSeeds": [],
           "constraints": [
-            { "kind": "token::mint",      "value": "mint_a" },
-            { "kind": "token::authority", "value": "maker" }
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "maker"
+            }
           ]
         },
         {
@@ -46,10 +75,18 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"escrow\""
+          ],
           "constraints": [
-            { "kind": "init" },
-            { "kind": "seeds", "value": "[b\"escrow\", maker.key().as_ref(), seed.to_le_bytes().as_ref()]" },
-            { "kind": "bump" }
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"escrow\""
+            }
           ]
         },
         {
@@ -58,34 +95,154 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isPda": false,
+          "pdaSeeds": [],
           "constraints": [
-            { "kind": "init" },
-            { "kind": "token::mint",      "value": "mint_a" },
-            { "kind": "token::authority", "value": "escrow" }
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "escrow"
+            }
           ]
         },
         {
           "name": "system_program",
-          "accountType": "SystemProgram",
+          "accountType": "System",
           "isSigner": false,
-          "isMut": false,
-          "isInit": false,
-          "constraints": []
+          "isMut": true,
+          "isInit": true,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "escrow"
+            }
+          ]
         },
         {
           "name": "token_program",
-          "accountType": "TokenProgram",
+          "accountType": "Program<'info, anchor_spl::token::Token>",
           "isSigner": false,
-          "isMut": false,
-          "isInit": false,
-          "constraints": []
+          "isMut": true,
+          "isInit": true,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "escrow"
+            }
+          ]
+        },
+        {
+          "name": "associated_token_program",
+          "accountType": "Program<'info, anchor_spl::associated_token::AssociatedToken>",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "escrow"
+            }
+          ]
         }
       ],
       "args": [
-        { "name": "seed",           "type": "u64" },
-        { "name": "receive_amount", "type": "u64" }
+        {
+          "name": "seed",
+          "type": "u64"
+        },
+        {
+          "name": "receive_amount",
+          "type": "u64"
+        }
       ],
-      "estimatedCU": 1150
+      "body": [
+        {
+          "kind": "state_read",
+          "account": "escrow",
+          "localVar": "escrow",
+          "mutable": true,
+          "accountType": "Escrow"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "escrow",
+          "field": "maker",
+          "value": "*signer_key"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "escrow",
+          "field": "mint_a",
+          "value": "*signer_key"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "escrow",
+          "field": "mint_b",
+          "value": "*signer_key"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "escrow",
+          "field": "receive_amount",
+          "value": "receive_amount"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "escrow",
+          "field": "seed",
+          "value": "seed"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "escrow",
+          "field": "bump",
+          "value": "ctx.bumps.escrow"
+        },
+        {
+          "kind": "pass_through",
+          "code": "anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.maker_ata_a.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.maker.to_account_info(),\n                },\n            ),\n            ctx.accounts.maker_ata_a.amount,\n        )?",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+        },
+        {
+          "kind": "return_ok"
+        }
+      ],
+      "rawBody": "{\n        let escrow = &mut ctx.accounts.escrow;\n        escrow.maker = ctx.accounts.maker.key();\n        escrow.mint_a = ctx.accounts.mint_a.key();\n        escrow.mint_b = ctx.accounts.mint_b.key();\n        escrow.receive_amount = receive_amount;\n        escrow.seed = seed;\n        escrow.bump = ctx.bumps.escrow;\n\n        \n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.maker_ata_a.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.maker.to_account_info(),\n                },\n            ),\n            ctx.accounts.maker_ata_a.amount,\n        )?;\n        Ok(())\n    }"
     },
     {
       "name": "accept_escrow",
@@ -96,31 +253,55 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
-          "constraints": []
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
         },
         {
           "name": "maker",
           "accountType": "SystemAccount",
           "isSigner": false,
-          "isMut": false,
+          "isMut": true,
           "isInit": false,
-          "constraints": []
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
         },
         {
           "name": "mint_a",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": false,
+          "isMut": true,
           "isInit": false,
-          "constraints": []
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
         },
         {
           "name": "mint_b",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": false,
+          "isMut": true,
           "isInit": false,
-          "constraints": []
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
         },
         {
           "name": "taker_ata_b",
@@ -128,9 +309,20 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isPda": false,
+          "pdaSeeds": [],
           "constraints": [
-            { "kind": "token::mint",      "value": "mint_b" },
-            { "kind": "token::authority", "value": "taker" }
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "mint_b"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "taker"
+            }
           ]
         },
         {
@@ -139,10 +331,20 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isPda": false,
+          "pdaSeeds": [],
           "constraints": [
-            { "kind": "init_if_needed" },
-            { "kind": "token::mint",      "value": "mint_a" },
-            { "kind": "token::authority", "value": "taker" }
+            {
+              "kind": "init_if_needed"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "taker"
+            }
           ]
         },
         {
@@ -151,10 +353,20 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isPda": false,
+          "pdaSeeds": [],
           "constraints": [
-            { "kind": "init_if_needed" },
-            { "kind": "token::mint",      "value": "mint_b" },
-            { "kind": "token::authority", "value": "maker" }
+            {
+              "kind": "init_if_needed"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "mint_b"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "maker"
+            }
           ]
         },
         {
@@ -163,13 +375,34 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"escrow\""
+          ],
           "constraints": [
-            { "kind": "has_one", "value": "maker" },
-            { "kind": "has_one", "value": "mint_a" },
-            { "kind": "has_one", "value": "mint_b" },
-            { "kind": "close",   "value": "maker" },
-            { "kind": "seeds",   "value": "[b\"escrow\", maker.key().as_ref(), escrow.seed.to_le_bytes().as_ref()]" },
-            { "kind": "bump" }
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "has_one",
+              "value": "maker"
+            },
+            {
+              "kind": "has_one",
+              "value": "mint_a"
+            },
+            {
+              "kind": "has_one",
+              "value": "mint_b"
+            },
+            {
+              "kind": "close",
+              "value": "maker"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"escrow\""
+            }
           ]
         },
         {
@@ -178,22 +411,126 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isPda": false,
+          "pdaSeeds": [],
           "constraints": [
-            { "kind": "token::mint",      "value": "mint_a" },
-            { "kind": "token::authority", "value": "escrow" }
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "escrow"
+            }
+          ]
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "escrow"
+            }
           ]
         },
         {
           "name": "token_program",
-          "accountType": "TokenProgram",
+          "accountType": "Program<'info, anchor_spl::token::Token>",
           "isSigner": false,
-          "isMut": false,
+          "isMut": true,
           "isInit": false,
-          "constraints": []
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "escrow"
+            }
+          ]
+        },
+        {
+          "name": "associated_token_program",
+          "accountType": "Program<'info, anchor_spl::associated_token::AssociatedToken>",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "escrow"
+            }
+          ]
         }
       ],
       "args": [],
-      "estimatedCU": 1480
+      "body": [
+        {
+          "kind": "pass_through",
+          "code": "let escrow = &ctx.accounts.escrow",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "escrow",
+          "seeds": [
+            "b\"escrow\"",
+            "escrow.maker.as_ref()",
+            "&escrow.seed.to_le_bytes()",
+            "&[escrow.bump]"
+          ],
+          "bumpField": "escrow.bump",
+          "rawCode": "let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\nlet signer_seeds = &[&seeds[..]]"
+        },
+        {
+          "kind": "pass_through",
+          "code": "anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.taker_ata_b.to_account_info(),\n                    to: ctx.accounts.maker_ata_b.to_account_info(),\n                    authority: ctx.accounts.taker.to_account_info(),\n                },\n            ),\n            escrow.receive_amount,\n        )?",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+        },
+        {
+          "kind": "pass_through",
+          "code": "anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.taker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+        },
+        {
+          "kind": "return_ok"
+        }
+      ],
+      "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        \n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.taker_ata_b.to_account_info(),\n                    to: ctx.accounts.maker_ata_b.to_account_info(),\n                    authority: ctx.accounts.taker.to_account_info(),\n                },\n            ),\n            escrow.receive_amount,\n        )?;\n\n        \n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.taker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?;\n        Ok(())\n    }"
     },
     {
       "name": "cancel_escrow",
@@ -204,15 +541,27 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
-          "constraints": []
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
         },
         {
           "name": "mint_a",
           "accountType": "Mint",
           "isSigner": false,
-          "isMut": false,
+          "isMut": true,
           "isInit": false,
-          "constraints": []
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
         },
         {
           "name": "maker_ata_a",
@@ -220,9 +569,20 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isPda": false,
+          "pdaSeeds": [],
           "constraints": [
-            { "kind": "token::mint",      "value": "mint_a" },
-            { "kind": "token::authority", "value": "maker" }
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "maker"
+            }
           ]
         },
         {
@@ -231,12 +591,30 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"escrow\""
+          ],
           "constraints": [
-            { "kind": "has_one", "value": "maker" },
-            { "kind": "has_one", "value": "mint_a" },
-            { "kind": "close",   "value": "maker" },
-            { "kind": "seeds",   "value": "[b\"escrow\", maker.key().as_ref(), escrow.seed.to_le_bytes().as_ref()]" },
-            { "kind": "bump" }
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "has_one",
+              "value": "maker"
+            },
+            {
+              "kind": "has_one",
+              "value": "mint_a"
+            },
+            {
+              "kind": "close",
+              "value": "maker"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"escrow\""
+            }
           ]
         },
         {
@@ -245,61 +623,121 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isPda": false,
+          "pdaSeeds": [],
           "constraints": [
-            { "kind": "token::mint",      "value": "mint_a" },
-            { "kind": "token::authority", "value": "escrow" }
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "escrow"
+            }
           ]
         },
         {
           "name": "token_program",
-          "accountType": "TokenProgram",
+          "accountType": "Program<'info, anchor_spl::token::Token>",
           "isSigner": false,
-          "isMut": false,
+          "isMut": true,
           "isInit": false,
-          "constraints": []
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "escrow"
+            }
+          ]
         }
       ],
       "args": [],
-      "estimatedCU": 980
+      "body": [
+        {
+          "kind": "pass_through",
+          "code": "let escrow = &ctx.accounts.escrow",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "escrow",
+          "seeds": [
+            "b\"escrow\"",
+            "escrow.maker.as_ref()",
+            "&escrow.seed.to_le_bytes()",
+            "&[escrow.bump]"
+          ],
+          "bumpField": "escrow.bump",
+          "rawCode": "let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\nlet signer_seeds = &[&seeds[..]]"
+        },
+        {
+          "kind": "pass_through",
+          "code": "anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.maker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern — verify after transformation"
+        },
+        {
+          "kind": "return_ok"
+        }
+      ],
+      "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        \n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.maker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?;\n        Ok(())\n    }"
     }
   ],
   "accounts": [
     {
       "name": "Escrow",
       "fields": [
-        { "name": "maker",          "type": "Pubkey" },
-        { "name": "mint_a",         "type": "Pubkey" },
-        { "name": "mint_b",         "type": "Pubkey" },
-        { "name": "receive_amount", "type": "u64" },
-        { "name": "seed",           "type": "u64" },
-        { "name": "bump",           "type": "u8" }
+        {
+          "name": "maker",
+          "type": "Pubkey"
+        },
+        {
+          "name": "mint_a",
+          "type": "Pubkey"
+        },
+        {
+          "name": "mint_b",
+          "type": "Pubkey"
+        },
+        {
+          "name": "receive_amount",
+          "type": "u64"
+        },
+        {
+          "name": "seed",
+          "type": "u64"
+        },
+        {
+          "name": "bump",
+          "type": "u8"
+        }
       ],
-      "space": 105
+      "space": 113
     }
   ],
   "types": [],
   "errors": [],
+  "helperFns": [],
+  "imports": [
+    "anchor_lang::prelude::*",
+    "super::*"
+  ],
   "metadata": {
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
-    "anvilVersion": "0.1.0",
-    "parsedAt": "2026-03-25T00:00:00.000Z",
-    "cuEstimates": [
-      {
-        "instruction": "create_escrow",
-        "anchor": 1150, "pinocchio": 270, "quasar": 240, "native": 310,
-        "savingsPinocchio": "77%", "savingsQuasar": "79%"
-      },
-      {
-        "instruction": "accept_escrow",
-        "anchor": 1480, "pinocchio": 345, "quasar": 305, "native": 390,
-        "savingsPinocchio": "77%", "savingsQuasar": "79%"
-      },
-      {
-        "instruction": "cancel_escrow",
-        "anchor": 980, "pinocchio": 220, "quasar": 195, "native": 255,
-        "savingsPinocchio": "78%", "savingsQuasar": "80%"
-      }
-    ]
+    "anvilVersion": "0.2.0",
+    "parsedAt": "2026-03-28T11:00:27.857Z"
   }
 }

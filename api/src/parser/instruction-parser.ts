@@ -19,13 +19,16 @@ export function parseInstructions(source: string): Instruction[] {
   const programBlocks = extractBlock(cleaned, /#\[program\]\s*pub\s+mod\s+\w+/g);
   if (programBlocks.length === 0) return [];
 
-  const programBody = programBlocks[0].block;
+  const firstProgramBlock = programBlocks[0];
+  if (!firstProgramBlock) return [];
+  const programBody = firstProgramBlock.block;
   const instructions: Instruction[] = [];
 
   // Each pub fn inside the program mod is an instruction
   const fnBlocks = extractBlock(programBody, /pub\s+fn\s+(\w+)\s*\(/g, "{", "}");
   for (const { match, block, startIdx } of fnBlocks) {
     const fnName = match[1];
+    if (!fnName) continue;
 
     // Get full signature: text between the fn name and opening brace
     const fnStart = programBody.indexOf(match[0]);
@@ -39,7 +42,7 @@ export function parseInstructions(source: string): Instruction[] {
     // Parse accounts and args from signature
     const { accounts, args } = parseSignature(fullSig, fnName, cleaned);
 
-    instructions.push({ name: fnName, accounts, args });
+    instructions.push({ name: fnName, accounts, args, body: [] });
   }
 
   return instructions;
@@ -65,7 +68,7 @@ function parseSignature(
   for (const param of params) {
     // Skip `ctx: Context<T>` — extract T
     const ctxMatch = param.match(/ctx\s*:\s*Context\s*<\s*(\w+)\s*>/);
-    if (ctxMatch) {
+    if (ctxMatch?.[1]) {
       contextType = ctxMatch[1];
       continue;
     }
@@ -117,7 +120,8 @@ function parseAccountsStruct(structName: string, source: string): AccountRef[] {
 
   while ((m = fieldRe.exec(structBody)) !== null) {
     const fieldName = m[1];
-    const rawType = m[2].trim().replace(/,$/, "");
+    const rawType = m[2]?.trim().replace(/,$/, "") ?? "";
+    if (!fieldName || !rawType) continue;
 
     // Determine the account type
     const accountType = extractAccountType(rawType);
@@ -148,11 +152,13 @@ function parseAccountsStruct(structName: string, source: string): AccountRef[] {
     if (rawType.includes("Signer")) isSigner = true;
 
     accounts.push({
-      name: fieldName,
+      name: fieldName ?? "",
       accountType,
       isSigner,
       isMut,
       isInit,
+      isPda: false,
+      pdaSeeds: [],
       constraints,
     });
   }
@@ -165,10 +171,10 @@ function extractAccountType(rawType: string): string {
   const t = rawType.trim();
   // Account<'info, T> -> T
   const accountMatch = t.match(/^Account\s*<\s*'info\s*,\s*(\w+)\s*>/);
-  if (accountMatch) return accountMatch[1];
+  if (accountMatch?.[1]) return accountMatch[1];
   // Program<'info, T> -> T
   const programMatch = t.match(/^Program\s*<\s*'info\s*,\s*(\w+)\s*>/);
-  if (programMatch) return programMatch[1];
+  if (programMatch?.[1]) return programMatch[1];
   // Signer<'info>
   if (t.startsWith("Signer")) return "Signer";
   // SystemAccount<'info>

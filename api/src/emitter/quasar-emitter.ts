@@ -1,44 +1,44 @@
-import { createHash } from "crypto";
-import type { SolanaIR, AccountDef, Instruction, Arg } from "../ir/schema.js";
+/**
+ * Quasar Emitter — Generic target emitter for the Quasar framework.
+ *
+ * Extends BaseEmitter with Quasar-specific implementations.
+ * All hardcoded counter/vault logic has been removed.
+ * Business logic is now driven entirely by IR body statements.
+ *
+ * Key differences from Pinocchio:
+ *   - Uses try_borrow_data() instead of borrow_data_unchecked()
+ *   - Uses .key (field) instead of .key() (method)
+ *   - More Anchor-like safety model
+ */
 
-export function emitQuasar(ir: SolanaIR): string {
-  const sections: string[] = [];
+import type { SolanaIR, AccountDef } from "../ir/schema.js";
+import {
+  BaseEmitter,
+  instrDiscriminator,
+  accountDiscriminator,
+  typeSize,
+  snakeCase,
+  toPascalCase,
+  isProgramAccount,
+  irNeedsHelper,
+} from "./emitter-base.js";
 
-  sections.push(fileHeader(ir.name, "quasar"));
-  sections.push(quasarUseStatements());
-  sections.push(entryPoint());
-  sections.push(routeFunction(ir));
+class QuasarEmitter extends BaseEmitter {
+  override readonly frameworkName = "Quasar";
 
-  for (const instr of ir.instructions) {
-    sections.push(quasarInstruction(instr, ir));
-  }
-
-  for (const acc of ir.accounts) {
-    sections.push(quasarAccountStruct(acc));
-  }
-
-  sections.push(quasarHelpers(ir));
-
-  if (ir.errors.length > 0) {
-    sections.push(errorEnum(ir));
-  }
-
-  return sections.join("\n\n");
-}
-
-function quasarUseStatements(): string {
-  return `use core::convert::TryInto;
-use solana_program::{
+  override emitUseStatements(_ir: SolanaIR): string {
+    return `use core::convert::TryInto;
+use quasar::{
     account_info::AccountInfo,
     entrypoint,
-    entrypoint::ProgramResult,
     program_error::ProgramError,
     pubkey::Pubkey,
+    ProgramResult,
 };`;
-}
+  }
 
-function entryPoint(): string {
-  return `entrypoint!(process_instruction);
+  override emitEntrypoint(_ir: SolanaIR): string {
+    return `entrypoint!(process_instruction);
 
 pub fn process_instruction(
     program_id: &Pubkey,
@@ -49,69 +49,180 @@ pub fn process_instruction(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    let (disc, data) = instruction_data.split_at(8);
-    route(program_id, accounts, disc, data)
+    let (discriminator, data) = instruction_data.split_at(8);
+    router(program_id, accounts, discriminator, data)
 }`;
-}
+  }
 
-function routeFunction(ir: SolanaIR): string {
-  const arms = ir.instructions
-    .map(
-      (instr) =>
-        `    if disc == &${instrDiscriminatorArray(instr.name)} {\n        return ${snakeCase(instr.name)}(program_id, accounts, data);\n    }`
-    )
-    .join("\n");
+  override emitRouter(ir: SolanaIR): string {
+    const arms = ir.instructions
+      .map(
+        (instr) =>
+          `        ${instrDiscriminator(instr.name)} => ${snakeCase(instr.name)}(program_id, accounts, data),`
+      )
+      .join("\n");
 
-  return `fn route(
+    return `fn router(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    disc: &[u8],
+    discriminator: &[u8],
     data: &[u8],
 ) -> ProgramResult {
+    match discriminator {
 ${arms}
-    Err(ProgramError::InvalidInstructionData)
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
 }`;
-}
+  }
 
-function quasarInstruction(instr: Instruction, ir: SolanaIR): string {
-  const nonProgramAccounts = instr.accounts.filter((account) => !isProgramAccount(account.accountType));
-  const bindings = nonProgramAccounts
-    .map((account, index) => `    let ${snakeCase(account.name)} = accounts.get(${index}).ok_or(ProgramError::NotEnoughAccountKeys)?;`)
-    .join("\n");
-  const signerChecks = nonProgramAccounts
-    .filter((account) => account.isSigner)
-    .map(
-      (account) =>
-        `    if !${snakeCase(account.name)}.is_signer {\n        return Err(ProgramError::MissingRequiredSignature);\n    }`
-    )
-    .join("\n");
-  const argsBlock = parseArgs(instr.args);
-  const logic = buildQuasarLogic(ir.name, instr.name);
+  override emitAccountBinding(name: string, index: number): string {
+    return `    let ${name} = &accounts[${index}];`;
+  }
 
-  return `fn ${snakeCase(instr.name)}(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    data: &[u8],
-) -> ProgramResult {
-${bindings}
-${signerChecks ? `\n${signerChecks}` : ""}
-${argsBlock}
-${logic}
+  override emitSignerCheck(name: string): string {
+    return `    if !${name}.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }`;
+  }
 
-    Ok(())
-}`;
-}
+  override emitOwnerCheck(name: string): string {
+    return `    if ${name}.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }`;
+  }
 
-function quasarAccountStruct(acc: AccountDef): string {
-  const fields = acc.fields
-    .map((field) => `    pub ${snakeCase(field.name)}: ${quasarType(field.type)},`)
-    .join("\n");
-  const bodyLen = acc.space ?? acc.fields.reduce((size, field) => size + typeSize(field.type), 0);
-  const readLines = buildQuasarReadLines(acc);
-  const writeLines = buildQuasarWriteLines(acc);
-  const ctorFields = acc.fields.map((field) => snakeCase(field.name)).join(", ");
+  override emitWritableCheck(names: string[]): string {
+    const checks = names.map((n) => `!${n}.is_writable`).join(" || ");
+    return `    if ${checks} {
+        return Err(ProgramError::InvalidAccountData);
+    }`;
+  }
 
-  return `#[repr(C)]
+  override emitStateRead(accountName: string, typeName: string, localVar: string, mutable: boolean): string {
+    const mutKeyword = mutable ? "mut " : "";
+    return `    let ${mutKeyword}${localVar} = ${typeName}::from_account_info(${accountName})?;`;
+  }
+
+  override emitStateSave(accountName: string, typeName: string, localVar: string): string {
+    return `    ${typeName}::save(${accountName}, &${localVar})?;`;
+  }
+
+  override emitBumpSeed(_programId: string, seeds: string[], expectedKey: string): string {
+    const seedsStr = seeds.map((s) => `${s}`).join(", ");
+    return `    let bump = bump_seed(program_id, &[${seedsStr}], ${expectedKey}.key)?;`;
+  }
+
+  override emitSystemTransfer(from: string, to: string, amount: string, signerSeeds?: string): string {
+    if (signerSeeds) {
+      return `    // System transfer with PDA signer
+    transfer_lamports_signed(${from}, ${to}, ${amount}, ${signerSeeds})?;`;
+    }
+    return `    transfer_lamports(${from}, ${to}, ${amount})?;`;
+  }
+
+  override emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string): string {
+    if (signerSeeds) {
+      return `    // SPL Token transfer (PDA signed) — ${from} → ${to}
+    spl_token_transfer_signed(${from}, ${to}, ${authority}, ${amount}, ${signerSeeds})?;`;
+    }
+    return `    // SPL Token transfer — ${from} → ${to}
+    spl_token_transfer(${from}, ${to}, ${authority}, ${amount})?;`;
+  }
+
+  override emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string): string {
+    const signed = signerSeeds ? "_signed" : "";
+    return `    // SPL Token mint_to — ${mint} → ${to}
+    spl_token_mint_to${signed}(${mint}, ${to}, ${authority}, ${amount}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
+  }
+
+  override emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string): string {
+    const signed = signerSeeds ? "_signed" : "";
+    return `    // SPL Token burn — ${from}
+    spl_token_burn${signed}(${from}, ${mint}, ${authority}, ${amount}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
+  }
+
+  override emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string): string {
+    const signed = signerSeeds ? "_signed" : "";
+    return `    // SPL Token close account — ${account}
+    spl_token_close_account${signed}(${account}, ${destination}, ${authority}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
+  }
+
+  override emitPdaSignerSeeds(account: string, seeds: string[], bumpField?: string): string {
+    // Detect the account name used as prefix in seed expressions
+    let statePrefix = account;
+    for (const seed of seeds) {
+      const prefixMatch = seed.match(/^(\w+)\.\w+/);
+      if (prefixMatch?.[1] && !seed.startsWith('b"') && !seed.startsWith("&[")) {
+        statePrefix = prefixMatch[1];
+        break;
+      }
+    }
+
+    const dataVar = `${account}_data`;
+    const typeName = account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+
+    const transformedSeeds = seeds.map(seed => {
+      if (seed.startsWith('b"') || seed.startsWith("b'")) return seed;
+      if (seed.startsWith("&[")) {
+        return seed.replace(new RegExp(`&\\[${statePrefix}\\.`), `&[${dataVar}.`);
+      }
+      return seed.replace(new RegExp(`^${statePrefix}\\.`), `${dataVar}.`);
+    });
+
+    const seedsStr = transformedSeeds.join(",\n            ");
+    return `    // PDA signer seeds for '${account}'
+    let ${dataVar} = ${typeName}::from_account_info(${account})?;
+    let seeds = &[
+            ${seedsStr},
+        ];
+    let signer_seeds = &[&seeds[..]];`;
+  }
+
+  override emitRequire(condition: string, error: string): string {
+    return `    if !(${condition}) {
+        return Err(${error}.into());
+    }`;
+  }
+
+  override emitMsg(message: string): string {
+    return `    quasar::msg!(${message});`;
+  }
+
+  override emitEmit(event: string, _fields: string): string {
+    return `    // Event: ${event}
+    // ⚠️ Anvil: Quasar doesn't have Anchor's emit!() — log via msg! or instruction data
+    quasar::msg!("event:${event}");`;
+  }
+
+  override emitClockGet(localVar: string): string {
+    return `    let ${localVar} = quasar::sysvar::clock::Clock::get()?;`;
+  }
+
+  override emitRentGet(localVar: string): string {
+    return `    let ${localVar} = quasar::sysvar::rent::Rent::get()?;`;
+  }
+
+  override rustTypeForFramework(typeName: string): string {
+    if (typeName === "Pubkey") return "Pubkey";
+    if (typeName === "String") return "[u8; 64]";
+    return typeName;
+  }
+
+  protected override emitPubkeyDeserialize(start: number, end: number): string {
+    return `Pubkey::try_from(&data[${start}..${end}]).unwrap()`;
+  }
+
+  override emitAccountStruct(acc: AccountDef): string {
+    const fields = acc.fields
+      .map((f) => `    pub ${snakeCase(f.name)}: ${this.rustTypeForFramework(f.type)},`)
+      .join("\n");
+    const bodyLen =
+      acc.space ?? acc.fields.reduce((s, f) => s + typeSize(f.type), 0);
+    const readLines = this.buildReadLines(acc);
+    const writeLines = this.buildWriteLines(acc);
+    const ctorFields = acc.fields.map((f) => snakeCase(f.name)).join(", ");
+
+    return `#[repr(C)]
 pub struct ${acc.name} {
 ${fields}
 }
@@ -153,263 +264,32 @@ ${writeLines}
         Self::write(&mut data, value)
     }
 }`;
-}
+  }
 
-function errorEnum(ir: SolanaIR): string {
-  const variants = ir.errors
-    .map((error) => `    /// ${error.msg}\n    ${error.name} = ${error.code},`)
-    .join("\n");
+  override emitErrorEnum(ir: SolanaIR): string {
+    const variants = ir.errors
+      .map((e) => `    /// ${e.msg}\n    ${e.name} = ${e.code},`)
+      .join("\n");
 
-  return `#[derive(Clone, Copy, Debug, PartialEq)]
+    const enumName = `${toPascalCase(ir.name)}Error`;
+
+    return `#[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
-pub enum ${toPascalCase(ir.name)}Error {
+pub enum ${enumName} {
 ${variants}
 }
 
-impl From<${toPascalCase(ir.name)}Error> for ProgramError {
-    fn from(error: ${toPascalCase(ir.name)}Error) -> Self {
+impl From<${enumName}> for ProgramError {
+    fn from(error: ${enumName}) -> Self {
         ProgramError::Custom(error as u32)
     }
 }`;
-}
-
-function fileHeader(name: string, framework: string): string {
-  return `//! ${toPascalCase(name)} — generated by Anvil v0.1.0
-//! Source framework: Anchor → Target: ${framework}
-//!
-//! Supported reference paths are currently focused on the simpler demos.
-#![deny(clippy::all)]`;
-}
-
-function parseArgs(args: Arg[]): string {
-  if (args.length === 0) {
-    return `    if !data.is_empty() {
-        return Err(ProgramError::InvalidInstructionData);
-    }`;
   }
 
-  let offset = 0;
-  const lines = args.map((arg) => {
-    const line = parseArg(arg, offset);
-    offset += typeSize(arg.type);
-    return line;
-  });
-  return `    // Args\n${lines.join("\n")}`;
-}
+  override emitHelperFunctions(ir: SolanaIR): string {
+    const helpers: string[] = [];
 
-function parseArg(arg: Arg, offset: number): string {
-  const start = offset;
-  const end = offset + typeSize(arg.type);
-  const name = snakeCase(arg.name);
-
-  switch (arg.type) {
-    case "u8":
-      return `    if data.len() < ${end} {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let ${name}: u8 = data[${start}];`;
-    case "u16":
-    case "u32":
-    case "u64":
-    case "u128":
-    case "i16":
-    case "i32":
-    case "i64":
-    case "i128":
-      return `    if data.len() < ${end} {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let ${name}: ${arg.type} = ${arg.type}::from_le_bytes(data[${start}..${end}].try_into().unwrap());`;
-    case "i8":
-      return `    if data.len() < ${end} {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let ${name}: i8 = data[${start}] as i8;`;
-    case "bool":
-      return `    if data.len() < ${end} {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let ${name}: bool = match data[${start}] {
-        0 => false,
-        1 => true,
-        _ => return Err(ProgramError::InvalidInstructionData),
-    };`;
-    case "Pubkey":
-      return `    if data.len() < ${end} {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let ${name}: Pubkey = Pubkey::new_from_array(data[${start}..${end}].try_into().unwrap());`;
-    default:
-      return `    // TODO: parse ${name}: ${arg.type}`;
-  }
-}
-
-function buildQuasarLogic(programName: string, instructionName: string): string {
-  if (programName === "counter") {
-    return buildQuasarCounterLogic(instructionName);
-  }
-  if (programName === "vault") {
-    return buildQuasarVaultLogic(instructionName);
-  }
-  return `    // TODO: ${programName}.${instructionName} is not in the supported reference set yet.`;
-}
-
-function buildQuasarCounterLogic(instructionName: string): string {
-  switch (instructionName) {
-    case "initialize":
-      return `    let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
-    if counter.owner != program_id {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    if !counter.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let counter_state = CounterAccount {
-        authority: *authority.key,
-        count: start_value,
-        bump: counter_bump,
-    };
-    CounterAccount::save(counter, &counter_state)?;`;
-    case "increment":
-      return `    if counter.owner != program_id {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    if !counter.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
-    let mut counter_state = CounterAccount::from_account_info(counter)?;
-    if counter_state.authority != *authority.key {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if counter_state.bump != counter_bump {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    counter_state.count = counter_state
-        .count
-        .checked_add(amount)
-        .ok_or(CounterError::Overflow)?;
-    CounterAccount::save(counter, &counter_state)?;`;
-    case "decrement":
-      return `    if counter.owner != program_id {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    if !counter.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
-    let mut counter_state = CounterAccount::from_account_info(counter)?;
-    if counter_state.authority != *authority.key {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if counter_state.bump != counter_bump {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    counter_state.count = counter_state
-        .count
-        .checked_sub(amount)
-        .ok_or(CounterError::Underflow)?;
-    CounterAccount::save(counter, &counter_state)?;`;
-    case "reset":
-      return `    if counter.owner != program_id {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    if !counter.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let counter_bump = bump_seed(program_id, &[b"counter", authority.key.as_ref()], counter.key)?;
-    let mut counter_state = CounterAccount::from_account_info(counter)?;
-    if counter_state.authority != *authority.key {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if counter_state.bump != counter_bump {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    counter_state.count = 0;
-    CounterAccount::save(counter, &counter_state)?;`;
-    default:
-      return `    // TODO: counter.${instructionName}`;
-  }
-}
-
-function buildQuasarVaultLogic(instructionName: string): string {
-  switch (instructionName) {
-    case "initialize":
-      return `    let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key.as_ref()], vault_state.key)?;
-    let vault_bump = bump_seed(program_id, &[b"vault", authority.key.as_ref()], vault.key)?;
-    if vault_state.owner != program_id {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    if !vault_state.is_writable || !vault.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let vault_state_state = VaultState {
-        authority: *authority.key,
-        total_deposited: 0,
-        bump: vault_state_bump,
-        vault_bump,
-    };
-    VaultState::save(vault_state, &vault_state_state)?;`;
-    case "deposit":
-      return `    if amount == 0 {
-        return Err(VaultError::InvalidAmount.into());
-    }
-    if vault_state.owner != program_id {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    if !vault_state.is_writable || !vault.is_writable || !user.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key.as_ref()], vault_state.key)?;
-    let vault_bump = bump_seed(program_id, &[b"vault", authority.key.as_ref()], vault.key)?;
-    let mut vault_state_state = VaultState::from_account_info(vault_state)?;
-    if vault_state_state.authority != *authority.key {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if vault_state_state.bump != vault_state_bump || vault_state_state.vault_bump != vault_bump {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    transfer_lamports(user, vault, amount)?;
-    vault_state_state.total_deposited = vault_state_state
-        .total_deposited
-        .checked_add(amount)
-        .ok_or(VaultError::Overflow)?;
-    VaultState::save(vault_state, &vault_state_state)?;`;
-    case "withdraw":
-      return `    if amount == 0 {
-        return Err(VaultError::InvalidAmount.into());
-    }
-    if vault_state.owner != program_id {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    if !vault_state.is_writable || !vault.is_writable || !user.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if vault.lamports() < amount {
-        return Err(VaultError::InsufficientFunds.into());
-    }
-    let vault_state_bump = bump_seed(program_id, &[b"vault_state", authority.key.as_ref()], vault_state.key)?;
-    let vault_bump = bump_seed(program_id, &[b"vault", authority.key.as_ref()], vault.key)?;
-    let mut vault_state_state = VaultState::from_account_info(vault_state)?;
-    if vault_state_state.authority != *authority.key {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if vault_state_state.bump != vault_state_bump || vault_state_state.vault_bump != vault_bump {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    transfer_lamports(vault, user, amount)?;
-    vault_state_state.total_deposited = vault_state_state
-        .total_deposited
-        .checked_sub(amount)
-        .ok_or(VaultError::Underflow)?;
-    VaultState::save(vault_state, &vault_state_state)?;`;
-    default:
-      return `    // TODO: vault.${instructionName}`;
-  }
-}
-
-function quasarHelpers(ir: SolanaIR): string {
-  const helpers = [`fn bump_seed(
+    helpers.push(`fn bump_seed(
     program_id: &Pubkey,
     seeds: &[&[u8]],
     expected: &Pubkey,
@@ -419,10 +299,10 @@ function quasarHelpers(ir: SolanaIR): string {
         return Err(ProgramError::InvalidSeeds);
     }
     Ok(bump)
-}`];
+}`);
 
-  if (ir.name === "vault") {
-    helpers.push(`fn transfer_lamports(
+    if (irNeedsHelper(ir, "transfer_lamports")) {
+      helpers.push(`fn transfer_lamports(
     from: &AccountInfo,
     to: &AccountInfo,
     amount: u64,
@@ -430,129 +310,115 @@ function quasarHelpers(ir: SolanaIR): string {
     if from.key == to.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    let mut from_lamports = from.try_borrow_mut_lamports()?;
-    let mut to_lamports = to.try_borrow_mut_lamports()?;
-    **from_lamports = from_lamports
-        .checked_sub(amount)
-        .ok_or(ProgramError::InsufficientFunds)?;
-    **to_lamports = to_lamports
-        .checked_add(amount)
-        .ok_or(ProgramError::ArithmeticOverflow)?;
+    **from.try_borrow_mut_lamports()? -= amount;
+    **to.try_borrow_mut_lamports()? += amount;
     Ok(())
 }`);
+    }
+
+    if (irNeedsHelper(ir, "spl_transfer")) {
+      helpers.push(`fn spl_token_transfer(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    let ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        from.key,
+        to.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+    quasar::program::invoke(&ix, &[from.clone(), to.clone(), authority.clone()])
+}
+
+fn spl_token_transfer_signed(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        from.key,
+        to.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+    quasar::program::invoke_signed(&ix, &[from.clone(), to.clone(), authority.clone()], signer_seeds)
+}`);
+    }
+
+    return helpers.join("\n\n");
   }
 
-  return helpers.join("\n\n");
-}
+  private buildReadLines(acc: AccountDef): string {
+    return acc.fields
+      .map((f) => this.buildReadLine(f.type, snakeCase(f.name)))
+      .join("\n");
+  }
 
-function buildQuasarReadLines(acc: AccountDef): string {
-  return acc.fields.map((field) => buildQuasarReadLine(field.type, snakeCase(field.name))).join("\n");
-}
+  private buildWriteLines(acc: AccountDef): string {
+    return acc.fields
+      .map((f) => this.buildWriteLine(f.type, snakeCase(f.name)))
+      .join("\n");
+  }
 
-function buildQuasarWriteLines(acc: AccountDef): string {
-  return acc.fields.map((field) => buildQuasarWriteLine(field.type, snakeCase(field.name))).join("\n");
-}
-
-function buildQuasarReadLine(typeName: string, fieldName: string): string {
-  const size = typeSize(typeName);
-  if (typeName === "Pubkey") {
-    return `        let ${fieldName}: Pubkey = Pubkey::new_from_array(data[offset..offset + 32].try_into().unwrap());
+  private buildReadLine(typeName: string, fieldName: string): string {
+    const size = typeSize(typeName);
+    if (typeName === "Pubkey") {
+      return `        let ${fieldName} = Pubkey::try_from(&data[offset..offset + 32]).unwrap();
         offset += 32;`;
-  }
-  if (typeName === "bool") {
-    return `        let ${fieldName}: bool = match data[offset] {
+    }
+    if (typeName === "bool") {
+      return `        let ${fieldName}: bool = match data[offset] {
             0 => false,
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
         };
         offset += 1;`;
-  }
-  if (typeName === "u8") {
-    return `        let ${fieldName}: u8 = data[offset];
+    }
+    if (typeName === "u8") {
+      return `        let ${fieldName}: u8 = data[offset];
         offset += 1;`;
-  }
-  if (typeName === "i8") {
-    return `        let ${fieldName}: i8 = data[offset] as i8;
+    }
+    if (typeName === "i8") {
+      return `        let ${fieldName}: i8 = data[offset] as i8;
         offset += 1;`;
-  }
-  return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(data[offset..offset + ${size}].try_into().unwrap());
+    }
+    return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(data[offset..offset + ${size}].try_into().unwrap());
         offset += ${size};`;
-}
+  }
 
-function buildQuasarWriteLine(typeName: string, fieldName: string): string {
-  if (typeName === "Pubkey") {
-    return `        data[offset..offset + 32].copy_from_slice(value.${fieldName}.as_ref());
+  private buildWriteLine(typeName: string, fieldName: string): string {
+    if (typeName === "Pubkey") {
+      return `        data[offset..offset + 32].copy_from_slice(value.${fieldName}.as_ref());
         offset += 32;`;
-  }
-  if (typeName === "bool") {
-    return `        data[offset] = if value.${fieldName} { 1 } else { 0 };
+    }
+    if (typeName === "bool") {
+      return `        data[offset] = if value.${fieldName} { 1 } else { 0 };
         offset += 1;`;
-  }
-  if (typeName === "u8" || typeName === "i8") {
-    return `        data[offset] = value.${fieldName} as u8;
+    }
+    if (typeName === "u8" || typeName === "i8") {
+      return `        data[offset] = value.${fieldName} as u8;
         offset += 1;`;
-  }
-  const size = typeSize(typeName);
-  return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName}.to_le_bytes());
+    }
+    const size = typeSize(typeName);
+    return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName}.to_le_bytes());
         offset += ${size};`;
+  }
 }
 
-function instrDiscriminatorArray(name: string): string {
-  return formatByteArray(discriminatorBytes(`global:${name}`));
+const emitter = new QuasarEmitter();
+
+export function emitQuasar(ir: SolanaIR): string {
+  return emitter.emit(ir).singleFile;
 }
 
-function accountDiscriminator(name: string): string {
-  return formatByteArray(discriminatorBytes(`account:${name}`));
-}
-
-function discriminatorBytes(namespace: string): number[] {
-  return [...createHash("sha256").update(namespace).digest().subarray(0, 8)];
-}
-
-function formatByteArray(bytes: number[]): string {
-  return `[${bytes.join(", ")}]`;
-}
-
-function isProgramAccount(accountType: string): boolean {
-  return (
-    accountType.includes("Program") ||
-    accountType === "SystemProgram" ||
-    accountType === "TokenProgram" ||
-    accountType === "AssociatedTokenProgram"
-  );
-}
-
-function quasarType(typeName: string): string {
-  if (typeName === "Pubkey") return "Pubkey";
-  if (typeName === "String") return "[u8; 64]";
-  return typeName;
-}
-
-function typeSize(typeName: string): number {
-  const sizes: Record<string, number> = {
-    u8: 1,
-    u16: 2,
-    u32: 4,
-    u64: 8,
-    u128: 16,
-    i8: 1,
-    i16: 2,
-    i32: 4,
-    i64: 8,
-    i128: 16,
-    bool: 1,
-    Pubkey: 32,
-    String: 64,
-    "Vec<u8>": 4,
-  };
-
-  return sizes[typeName] ?? 32;
-}
-
-function snakeCase(value: string): string {
-  return value.replace(/([A-Z])/g, "_$1").toLowerCase().replace(/^_/, "");
-}
-
-function toPascalCase(value: string): string {
-  return value.replace(/(^|_)([a-z])/g, (_, __, char: string) => char.toUpperCase());
+export function emitQuasarFull(ir: SolanaIR) {
+  return emitter.emit(ir);
 }

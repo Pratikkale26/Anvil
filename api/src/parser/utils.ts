@@ -25,7 +25,7 @@ export function extractAttributes(block: string): string[] {
   const re = /#\[([^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*)\]/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(block)) !== null) {
-    attrs.push(m[1].trim());
+    if (m[1]) attrs.push(m[1].trim());
   }
   return attrs;
 }

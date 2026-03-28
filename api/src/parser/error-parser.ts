@@ -23,7 +23,7 @@ export function parseErrors(source: string): ErrorDef[] {
   let enumMatch: RegExpExecArray | null;
 
   while ((enumMatch = errorEnumRe.exec(cleaned)) !== null) {
-    const enumBody = enumMatch[2];
+    const enumBody = enumMatch[2] ?? "";
 
     // Extract variants: optional #[msg("...")] followed by VariantName,
     const variantRe = /(?:#\[msg\("([^"]*)"\)\]\s*)?(\w+)\s*,?/g;
@@ -31,7 +31,7 @@ export function parseErrors(source: string): ErrorDef[] {
     let code = 6000;
 
     while ((vMatch = variantRe.exec(enumBody)) !== null) {
-      const msg = vMatch[1] ?? vMatch[2]; // fallback to variant name as msg
+      const msg = vMatch[1] ?? vMatch[2] ?? "";
       const name = vMatch[2];
       if (!name || name === "pub" || name === "enum") continue;
       errors.push({ code: code++, name, msg });
