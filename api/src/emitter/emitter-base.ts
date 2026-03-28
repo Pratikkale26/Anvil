@@ -309,6 +309,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     ir: SolanaIR
   ): string {
     const lines: string[] = [];
+    const mutableStateAccounts = new Set(
+      statements
+        .filter((stmt): stmt is Extract<BodyStatement, { kind: "state_field_assign" }> => stmt.kind === "state_field_assign")
+        .map((stmt) => snakeCase(stmt.account))
+    );
 
     // Collect which accounts are mutated (for auto-save)
     const mutatedAccounts = new Set<string>();
@@ -382,6 +387,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           }
           const accountName = snakeCase(stmt.account);
           const localVar = snakeCase(stmt.localVar);
+          if (stateVars.has(accountName)) {
+            break;
+          }
           const needsAlias = accountName === localVar;
           const accountInfoVar = needsAlias ? `${accountName}_account` : accountName;
           if (needsAlias) {
@@ -393,8 +401,18 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             accountInfoVar,
             stmt.accountType || "Unknown",
             localVar,
-            stmt.mutable
+            stmt.mutable || mutableStateAccounts.has(accountName)
           ));
+          const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === accountName);
+          const hasOneConstraints = accountRef?.constraints.filter(
+            (constraint) => constraint.kind === "has_one" && constraint.value
+          ) ?? [];
+          for (const constraint of hasOneConstraints) {
+            const targetAccount = snakeCase(constraint.value!);
+            lines.push(`    if ${localVar}.${snakeCase(constraint.value!)} != *${targetAccount}.key() {`);
+            lines.push(`        return Err(ProgramError::InvalidAccountData);`);
+            lines.push(`    }`);
+          }
           break;
         }
 
@@ -471,9 +489,12 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         case "cpi_spl_transfer": {
           this.transformedCount++;
           this.details.push(`Transformed: token::transfer(${stmt.from} → ${stmt.to})`);
+          const authority = stmt.signerSeeds
+            ? resolveAccountInfoVar(snakeCase(stmt.authority))
+            : snakeCase(stmt.authority);
           lines.push(this.emitSplTransfer(
             snakeCase(stmt.from), snakeCase(stmt.to),
-            snakeCase(stmt.authority),
+            authority,
             this.transformAmountExpr(stmt.amount), stmt.signerSeeds
           ));
           break;
@@ -482,9 +503,12 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: CPI SPL mint_to ──
         case "cpi_spl_mint_to": {
           this.transformedCount++;
+          const authority = stmt.signerSeeds
+            ? resolveAccountInfoVar(snakeCase(stmt.authority))
+            : snakeCase(stmt.authority);
           lines.push(this.emitSplMintTo(
             snakeCase(stmt.mint), snakeCase(stmt.to),
-            snakeCase(stmt.authority),
+            authority,
             this.transformAmountExpr(stmt.amount), stmt.signerSeeds
           ));
           break;
@@ -493,9 +517,12 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: CPI SPL burn ──
         case "cpi_spl_burn": {
           this.transformedCount++;
+          const authority = stmt.signerSeeds
+            ? resolveAccountInfoVar(snakeCase(stmt.authority))
+            : snakeCase(stmt.authority);
           lines.push(this.emitSplBurn(
             snakeCase(stmt.from), snakeCase(stmt.mint),
-            snakeCase(stmt.authority),
+            authority,
             this.transformAmountExpr(stmt.amount), stmt.signerSeeds
           ));
           break;
@@ -504,9 +531,12 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: CPI SPL close_account ──
         case "cpi_spl_close_account": {
           this.transformedCount++;
+          const authority = stmt.signerSeeds
+            ? resolveAccountInfoVar(snakeCase(stmt.authority))
+            : snakeCase(stmt.authority);
           lines.push(this.emitSplCloseAccount(
             snakeCase(stmt.account), snakeCase(stmt.destination),
-            snakeCase(stmt.authority), stmt.signerSeeds
+            authority, stmt.signerSeeds
           ));
           break;
         }

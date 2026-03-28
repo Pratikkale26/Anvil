@@ -332,8 +332,12 @@ impl From<${enumName}> for ProgramError {
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
-    let ix = pinocchio::system_instruction::transfer(from.key(), to.key(), amount);
-    pinocchio::program::invoke_signed(&ix, &[from.clone(), to.clone()], signer_seeds)
+    pinocchio_system::instructions::Transfer {
+        from,
+        to,
+        lamports: amount,
+    }
+    .invoke_signed(signer_seeds)
 }`);
     }
 
@@ -344,15 +348,13 @@ impl From<${enumName}> for ProgramError {
     authority: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
-    let ix = spl_token::instruction::transfer(
-        &spl_token::id(),
-        from.key(),
-        to.key(),
-        authority.key(),
-        &[],
+    pinocchio_token::instructions::Transfer {
+        from,
+        to,
+        authority,
         amount,
-    )?;
-    pinocchio::program::invoke(&ix, &[from.clone(), to.clone(), authority.clone()])
+    }
+    .invoke()
 }
 
 fn spl_token_transfer_signed(
@@ -362,15 +364,13 @@ fn spl_token_transfer_signed(
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
-    let ix = spl_token::instruction::transfer(
-        &spl_token::id(),
-        from.key(),
-        to.key(),
-        authority.key(),
-        &[],
+    pinocchio_token::instructions::Transfer {
+        from,
+        to,
+        authority,
         amount,
-    )?;
-    pinocchio::program::invoke_signed(&ix, &[from.clone(), to.clone(), authority.clone()], signer_seeds)
+    }
+    .invoke_signed(signer_seeds)
 }`);
     }
 
@@ -380,14 +380,12 @@ fn spl_token_transfer_signed(
     destination: &AccountInfo,
     authority: &AccountInfo,
 ) -> ProgramResult {
-    let ix = spl_token::instruction::close_account(
-        &spl_token::id(),
-        account.key(),
-        destination.key(),
-        authority.key(),
-        &[],
-    )?;
-    pinocchio::program::invoke(&ix, &[account.clone(), destination.clone(), authority.clone()])
+    pinocchio_token::instructions::CloseAccount {
+        account,
+        destination,
+        authority,
+    }
+    .invoke()
 }
 
 fn spl_token_close_account_signed(
@@ -396,14 +394,12 @@ fn spl_token_close_account_signed(
     authority: &AccountInfo,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
-    let ix = spl_token::instruction::close_account(
-        &spl_token::id(),
-        account.key(),
-        destination.key(),
-        authority.key(),
-        &[],
-    )?;
-    pinocchio::program::invoke_signed(&ix, &[account.clone(), destination.clone(), authority.clone()], signer_seeds)
+    pinocchio_token::instructions::CloseAccount {
+        account,
+        destination,
+        authority,
+    }
+    .invoke_signed(signer_seeds)
 }`);
     }
 

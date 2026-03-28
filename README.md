@@ -1,14 +1,14 @@
 # Anvil
 
-Anvil is a compiler-style toolchain for Solana programs.
+Anvil is a compiler-style Solana transpiler.
 
-It takes Anchor-style Rust, parses it into a framework-agnostic intermediate representation, and emits alternative runtime-oriented Rust targets such as Pinocchio and Quasar.
+It parses Anchor-style Rust into a typed intermediate representation, then emits lower-level runtime-oriented Rust targets such as Pinocchio, Quasar, and a native Solana target.
 
-The current prototype is intentionally narrow and honest:
+The product story is still intentionally honest:
 
-- Live demo programs today: `counter`, `vault`
-- Live emit targets today: `pinocchio`, `quasar`
-- Visible roadmap items: `native`, `escrow`, `staking`, repo/local-file input
+- The frontend demo path is narrow and polished
+- The backend/parser/emitter path is broader and useful for local testing
+- Some advanced contracts still need manual review before deployment
 
 ## What Anvil Does
 
@@ -25,21 +25,21 @@ This lets us keep Anchor ergonomics on the input side while experimenting with l
 
 ## Current Scope
 
-Supported today:
+Working today:
 
 - Anchor-style source -> IR
 - IR -> Pinocchio Rust
 - IR -> Quasar Rust
-- Demo fixtures for `counter` and `vault`
-- Live frontend playground against the API
+- IR -> native Solana Rust
+- Demo sources and IR fixtures for `counter`, `vault`, `escrow`, and `staking`
+- Local emitter testing through the API and `api/test-run.ts`
 
-Not production-complete yet:
+Still not production-complete:
 
-- Generic SPL-token CPI generation
-- Full `escrow` support
-- Full `staking` support
-- Native target parity
-- GitHub repo / local-file ingestion from the frontend
+- Full semantic validation of every Anchor constraint
+- Automatic account close / lifecycle rewrites for every escrow-like flow
+- End-to-end compile verification for every generated backend
+- Frontend repo/local-file ingestion
 
 ## Repo Layout
 
@@ -72,7 +72,7 @@ Available routes:
 - `GET /` health check and capabilities
 - `POST /parse` Anchor source -> IR
 - `POST /emit` IR -> target output
-- `GET /demo/:name` preloaded demo IR for `counter` and `vault`
+- `GET /demo/:name` preloaded demo IR for bundled demo programs
 
 ### Frontend
 
@@ -89,6 +89,82 @@ NEXT_PUBLIC_API_URL=http://localhost:8080
 ```
 
 If unset, the frontend falls back to `http://localhost:8080`.
+
+## Testing The Transpiler
+
+### Quick local emitter checks
+
+Start the API first:
+
+```bash
+cd api
+bun install
+bun run dev
+```
+
+Then in another terminal:
+
+```bash
+cd api
+bun test-run.ts counter pinocchio
+bun test-run.ts vault pinocchio
+bun test-run.ts escrow pinocchio
+bun test-run.ts staking pinocchio
+```
+
+You can swap targets too:
+
+```bash
+cd api
+bun test-run.ts vault quasar
+bun test-run.ts vault native
+```
+
+Generated output is written to files like:
+
+- `api/test-output-vault-pinocchio.rs`
+- `api/test-output-escrow-pinocchio.rs`
+
+### Test via the parse API with a source file
+
+Parse a demo program directly:
+
+```bash
+curl -s http://localhost:8080/parse \
+  -H 'Content-Type: application/json' \
+  --data-binary @<(jq -Rs '{source: .}' api/src/demo-programs/escrow.rs)
+```
+
+Emit from an existing IR fixture:
+
+```bash
+cd api
+bun -e 'import { readFileSync } from "fs"; const ir = JSON.parse(readFileSync("./src/ir/fixtures/escrow.json", "utf8")); const res = await fetch("http://localhost:8080/emit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ir, target: "pinocchio", multiFile: true }) }); console.log(await res.text());'
+```
+
+If you want to test a different contract, the easiest path is:
+
+1. Put the Anchor-style Rust file under `api/src/demo-programs/`
+2. Call `POST /parse` with that file’s contents
+3. Feed the returned IR into `POST /emit`
+4. Compare the emitted Rust against the original contract’s constraints and CPI flow
+
+### Test parser + emitter in one shell
+
+This is handy when you want to inspect parser output and emitted code without the frontend:
+
+```bash
+cd api
+bun -e 'import { readFileSync } from "fs"; import { parseAnchor } from "./src/parser/anchor-parser.ts"; import { emitPinocchioFull } from "./src/emitter/pinocchio-emitter.ts"; const src = readFileSync("./src/demo-programs/staking.rs", "utf8"); const parsed = await parseAnchor(src); if (!parsed.ok) throw new Error(parsed.error); console.log(emitPinocchioFull(parsed.ir).singleFile);'
+```
+
+### What to sanity-check on new contracts
+
+- PDA seeds are preserved exactly from `#[account(seeds = [...])]`
+- PDA signer authorities stay as `AccountInfo`, not deserialized state structs
+- Mutated state accounts are saved once before return
+- Signed CPI helpers use the right backend-specific instruction style
+- Any Anchor-only lifecycle behavior like `close`, `init_if_needed`, or ATA setup is either emitted correctly or clearly marked for review
 
 ## Deploying
 
@@ -125,13 +201,14 @@ For many hosts, the platform will inject `PORT` automatically.
 
 For demos, grants, and public posts, the most accurate framing right now is:
 
-- “Anchor -> Pinocchio and Quasar for supported contracts today”
-- “Counter is the clean proof path”
-- “Vault is the richer path”
-- “Escrow, staking, native target, and repo ingestion are on the roadmap”
+- “Anchor -> alternative Solana runtimes through a typed IR”
+- “Counter and vault are the easiest proof paths”
+- “Escrow and staking are strong local validation cases”
+- “Manual review is still required for advanced lifecycle logic”
 
 That framing is strong and credible without overstating support.
 
-## Architecture
+## More Docs
 
-A deeper technical breakdown lives in [ARCHITECTURE.md](/home/pk/Anvil/ARCHITECTURE.md).
+- Architecture: [ARCHITECTURE.md](/home/pk/Anvil/ARCHITECTURE.md)
+- Project summary: [PROJECT_SUMMARY.md](/home/pk/Anvil/PROJECT_SUMMARY.md)

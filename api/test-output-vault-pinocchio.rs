@@ -106,6 +106,9 @@ fn deposit(
     }
     let vault_state_account = vault_state;
     let mut vault_state = VaultState::from_account_info(vault_state_account)?;
+    if vault_state.authority != *authority.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
     transfer_lamports(user, vault, amount)?;
     vault_state.total_deposited = vault_state.total_deposited.checked_add(amount)
             .ok_or(VaultError::Overflow)?;
@@ -142,7 +145,10 @@ fn withdraw(
         return Err(VaultError::InvalidAmount.into());
     }
     let vault_state_account = vault_state;
-    let vault_state = VaultState::from_account_info(vault_state_account)?;
+    let mut vault_state = VaultState::from_account_info(vault_state_account)?;
+    if vault_state.authority != *authority.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
     if !(vault.lamports() >= amount) {
         return Err(VaultError::InsufficientFunds.into());
     }
@@ -155,8 +161,6 @@ fn withdraw(
     let signer_seeds = &[&seeds[..]];
     // System transfer with PDA signer
     transfer_lamports_signed(vault, user, amount, signer_seeds)?;
-    let vault_state_account = vault_state;
-    let mut vault_state = VaultState::from_account_info(vault_state_account)?;
     vault_state.total_deposited = vault_state.total_deposited.checked_sub(amount)
             .ok_or(VaultError::Underflow)?;
     VaultState::save(vault_state_account, &vault_state)?;
@@ -261,8 +265,12 @@ fn transfer_lamports_signed(
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
-    let ix = pinocchio::system_instruction::transfer(from.key(), to.key(), amount);
-    pinocchio::program::invoke_signed(&ix, &[from.clone(), to.clone()], signer_seeds)
+    pinocchio_system::instructions::Transfer {
+        from,
+        to,
+        lamports: amount,
+    }
+    .invoke_signed(signer_seeds)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

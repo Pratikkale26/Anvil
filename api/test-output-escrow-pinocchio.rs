@@ -118,6 +118,15 @@ fn accept_escrow(
 
     let escrow_account = escrow;
     let escrow = Escrow::from_account_info(escrow_account)?;
+    if escrow.maker != *maker.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if escrow.mint_a != *mint_a.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if escrow.mint_b != *mint_b.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
     // PDA signer seeds for 'escrow'
     let seeds = &[
             b"escrow",
@@ -129,7 +138,7 @@ fn accept_escrow(
     // SPL Token transfer — taker_ata_b → maker_ata_b
     spl_token_transfer(taker_ata_b, maker_ata_b, taker, escrow.receive_amount)?;
     // SPL Token transfer (PDA signed) — vault → taker_ata_a
-    spl_token_transfer_signed(vault, taker_ata_a, escrow, token_account_amount(vault)?, signer_seeds)?;
+    spl_token_transfer_signed(vault, taker_ata_a, escrow_account, token_account_amount(vault)?, signer_seeds)?;
     Ok(())
 
 }
@@ -159,6 +168,12 @@ fn cancel_escrow(
 
     let escrow_account = escrow;
     let escrow = Escrow::from_account_info(escrow_account)?;
+    if escrow.maker != *maker.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if escrow.mint_a != *mint_a.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
     // PDA signer seeds for 'escrow'
     let seeds = &[
             b"escrow",
@@ -168,7 +183,7 @@ fn cancel_escrow(
         ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → maker_ata_a
-    spl_token_transfer_signed(vault, maker_ata_a, escrow, token_account_amount(vault)?, signer_seeds)?;
+    spl_token_transfer_signed(vault, maker_ata_a, escrow_account, token_account_amount(vault)?, signer_seeds)?;
     Ok(())
 
 }
@@ -261,15 +276,13 @@ fn spl_token_transfer(
     authority: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
-    let ix = spl_token::instruction::transfer(
-        &spl_token::id(),
-        from.key(),
-        to.key(),
-        authority.key(),
-        &[],
+    pinocchio_token::instructions::Transfer {
+        from,
+        to,
+        authority,
         amount,
-    )?;
-    pinocchio::program::invoke(&ix, &[from.clone(), to.clone(), authority.clone()])
+    }
+    .invoke()
 }
 
 fn spl_token_transfer_signed(
@@ -279,15 +292,13 @@ fn spl_token_transfer_signed(
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
-    let ix = spl_token::instruction::transfer(
-        &spl_token::id(),
-        from.key(),
-        to.key(),
-        authority.key(),
-        &[],
+    pinocchio_token::instructions::Transfer {
+        from,
+        to,
+        authority,
         amount,
-    )?;
-    pinocchio::program::invoke_signed(&ix, &[from.clone(), to.clone(), authority.clone()], signer_seeds)
+    }
+    .invoke_signed(signer_seeds)
 }
 
 /// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)

@@ -49,14 +49,6 @@ Main responsibilities:
 
 ## Parser Layer
 
-Relevant files:
-
-- [api/src/parser/anchor-parser.ts](/home/pk/Anvil/api/src/parser/anchor-parser.ts)
-- [api/src/parser/account-parser.ts](/home/pk/Anvil/api/src/parser/account-parser.ts)
-- [api/src/parser/instruction-parser.ts](/home/pk/Anvil/api/src/parser/instruction-parser.ts)
-- [api/src/parser/constraint-parser.ts](/home/pk/Anvil/api/src/parser/constraint-parser.ts)
-- [api/src/parser/error-parser.ts](/home/pk/Anvil/api/src/parser/error-parser.ts)
-
 The parser extracts:
 
 - instructions
@@ -64,8 +56,20 @@ The parser extracts:
 - args
 - constraints
 - custom errors
+- helper functions
+- body statements classified into transform vs pass-through IR
 
 This information is normalized into a typed IR so emitters do not need to depend on source-text quirks.
+
+Actual parser files in the current codebase:
+
+- [api/src/parser/anchor-parser.ts](/home/pk/Anvil/api/src/parser/anchor-parser.ts)
+- [api/src/parser/body-classifier.ts](/home/pk/Anvil/api/src/parser/body-classifier.ts)
+- [api/src/parser/constraint-parser.ts](/home/pk/Anvil/api/src/parser/constraint-parser.ts)
+- [api/src/parser/cpi-detector.ts](/home/pk/Anvil/api/src/parser/cpi-detector.ts)
+- [api/src/parser/ast-helpers.ts](/home/pk/Anvil/api/src/parser/ast-helpers.ts)
+- [api/src/parser/utils.ts](/home/pk/Anvil/api/src/parser/utils.ts)
+- [api/src/parser/ts-init.ts](/home/pk/Anvil/api/src/parser/ts-init.ts)
 
 ## IR
 
@@ -106,6 +110,7 @@ Relevant files:
 - [api/src/emitter/pinocchio-emitter.ts](/home/pk/Anvil/api/src/emitter/pinocchio-emitter.ts)
 - [api/src/emitter/quasar-emitter.ts](/home/pk/Anvil/api/src/emitter/quasar-emitter.ts)
 - [api/src/emitter/native-emitter.ts](/home/pk/Anvil/api/src/emitter/native-emitter.ts)
+- [api/src/emitter/emitter-base.ts](/home/pk/Anvil/api/src/emitter/emitter-base.ts)
 - [api/src/emitter/cu-analyzer.ts](/home/pk/Anvil/api/src/emitter/cu-analyzer.ts)
 
 ### Pinocchio emitter
@@ -114,8 +119,10 @@ Current strengths:
 
 - working counter path
 - working vault path
-- real discriminators
-- signer/owner/PDA validation in generated code
+- local escrow/staking generation is now much stronger
+- full PDA seed preservation from parser -> IR -> emitter
+- account-info aliasing prevents state/account shadow bugs
+- signer-side CPI authority stays as `AccountInfo`
 - manual account byte encoding to avoid layout/alignment pitfalls
 
 ### Quasar emitter
@@ -129,7 +136,7 @@ Current strengths:
 
 ### Native emitter
 
-This exists as a roadmap target, but it is not yet at the same completeness level as Pinocchio and Quasar.
+This target exists and can be exercised locally, but it is still not at the same maturity level as Pinocchio for complex contracts.
 
 ## Frontend
 
@@ -180,10 +187,10 @@ than to claim broad contract support before token-heavy flows are correct.
 
 The biggest remaining technical gaps are:
 
-- generic SPL-token CPI generation
-- ATA creation and `init_if_needed` support
-- native target parity
-- richer fixture/source parity for `escrow` and `staking`
+- richer semantic validation for Anchor constraints like `has_one`, `close`, and `init_if_needed`
+- ATA creation and lifecycle rewriting
+- generated-code compile verification across all targets
+- native/quasar parity on more token-heavy contracts
 - direct repo/local-file ingestion in the frontend
 
 ## Next Milestones
@@ -192,8 +199,8 @@ Recommended order:
 
 1. repo/local-file ingestion
 2. stronger output validation and integration tests
-3. escrow support
-4. staking support
+3. richer constraint validation
+4. lifecycle rewrites for escrow-like flows
 5. native target completion
 
 That ordering keeps the public product story strong while expanding backend depth in a controlled way.
