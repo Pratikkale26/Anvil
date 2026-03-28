@@ -22,7 +22,11 @@ import {
   isProgramAccount,
   irNeedsHelper,
   irNeedsSignedLamportsHelper,
+  irNeedsSignedSplBurnHelper,
+  irNeedsSignedSplMintToHelper,
   irNeedsUnsignedLamportsHelper,
+  irNeedsUnsignedSplBurnHelper,
+  irNeedsUnsignedSplMintToHelper,
   irNeedsSignedSplCloseAccountHelper,
   irNeedsUnsignedSplCloseAccountHelper,
 } from "./emitter-base.js";
@@ -119,6 +123,10 @@ ${arms}
 
   override emitAccountKeyExpr(accountName: string): string {
     return `${accountName}.key`;
+  }
+
+  override emitAccountKeyAsRefExpr(accountName: string): string {
+    return `${accountName}.key.as_ref()`;
   }
 
   override emitAccountLamportsExpr(accountName: string): string {
@@ -448,7 +456,9 @@ fn spl_token_transfer_signed(
 }`);
     }
 
-    if (irNeedsHelper(ir, "spl_mint_to")) {
+    const needsUnsignedMintTo = irNeedsUnsignedSplMintToHelper(ir);
+    const needsSignedMintTo = irNeedsSignedSplMintToHelper(ir);
+    if (needsUnsignedMintTo) {
       helpers.push(`fn spl_token_mint_to(
     mint: &AccountInfo,
     to: &AccountInfo,
@@ -462,9 +472,10 @@ fn spl_token_transfer_signed(
         amount,
     }
     .invoke()
-}
-
-fn spl_token_mint_to_signed(
+}`);
+    }
+    if (needsSignedMintTo) {
+      helpers.push(`fn spl_token_mint_to_signed(
     mint: &AccountInfo,
     to: &AccountInfo,
     authority: &AccountInfo,
@@ -481,7 +492,9 @@ fn spl_token_mint_to_signed(
 }`);
     }
 
-    if (irNeedsHelper(ir, "spl_burn")) {
+    const needsUnsignedBurn = irNeedsUnsignedSplBurnHelper(ir);
+    const needsSignedBurn = irNeedsSignedSplBurnHelper(ir);
+    if (needsUnsignedBurn) {
       helpers.push(`fn spl_token_burn(
     from: &AccountInfo,
     mint: &AccountInfo,
@@ -495,9 +508,10 @@ fn spl_token_mint_to_signed(
         amount,
     }
     .invoke()
-}
-
-fn spl_token_burn_signed(
+}`);
+    }
+    if (needsSignedBurn) {
+      helpers.push(`fn spl_token_burn_signed(
     from: &AccountInfo,
     mint: &AccountInfo,
     authority: &AccountInfo,

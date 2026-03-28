@@ -101,6 +101,10 @@ ${arms}
     return `*${accountName}.key`;
   }
 
+  override emitAccountKeyAsRefExpr(accountName: string): string {
+    return `${accountName}.key.as_ref()`;
+  }
+
   override emitAccountLamportsExpr(accountName: string): string {
     return `${accountName}.lamports()`;
   }
