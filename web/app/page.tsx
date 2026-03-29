@@ -171,6 +171,12 @@ export default function Home() {
     }), { anchor: 0, pinocchio: 0, quasar: 0, native: 0 })
     , [cuData]);
 
+  const overallSavings = useMemo(() => {
+    if (totals.anchor === 0) return "~79%";
+    const t = totals[target];
+    return `${Math.round(((totals.anchor - t) / totals.anchor) * 100)}%`;
+  }, [totals, target]);
+
   const run = useCallback(async () => {
     if (stage === "fetching" || stage === "parsing" || stage === "generating") return;
     abortRef.current?.abort();
@@ -292,7 +298,7 @@ export default function Home() {
           </div>
           <div style={{ display: "flex", justifyContent: "center", gap: 56, marginTop: 64, flexWrap: "wrap" }}>
             {[
-              { value: "~79%", label: "CU reduction vs Anchor" },
+              { value: overallSavings, label: "CU reduction vs Anchor" },
               { value: "4", label: "input modes supported" },
               { value: "2", label: "live emit targets" },
             ].map((s) => (
