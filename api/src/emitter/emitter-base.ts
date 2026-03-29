@@ -481,7 +481,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       transformed = transformed.replace(
         /require!\(([\s\S]+?),\s*([\w:]+(?:::\w+)*)\s*\);/g,
         (_full, condition: string, error: string) =>
-          `if !(${cleanInlineExpr(condition)}) {\n            return Err(${error}.into());\n        }`
+          emitRequireGuard(condition, error, "").replace(/\n/g, "\n        ")
       );
       transformed = transformed.replace(
         /emit!\(\s*(\w+)\s*\{\s*([\s\S]*?)\s*\}\s*\);/g,
@@ -1055,12 +1055,17 @@ export function emitRequireGuard(condition: string, error: string, indent = "   
     return `${indent}if ${expr} {\n${indent}    return Err(${error}.into());\n${indent}}`;
   }
 
+  if (/^[A-Za-z_][A-Za-z0-9_:.]*$/.test(expr)) {
+    return `${indent}if !${expr} {\n${indent}    return Err(${error}.into());\n${indent}}`;
+  }
+
   return `${indent}if !(${expr}) {\n${indent}    return Err(${error}.into());\n${indent}}`;
 }
 
 function simplifyPassThroughCode(value: string): string {
   let simplified = stripAnchorConstraintError(value);
   simplified = simplified.replace(/\bif\s+!\(!([A-Za-z0-9_:.]+)\)/g, "if $1");
+  simplified = simplified.replace(/!\(([A-Za-z_][A-Za-z0-9_:.]*)\)/g, "!$1");
   return simplified;
 }
 

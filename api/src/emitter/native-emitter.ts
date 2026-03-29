@@ -15,6 +15,14 @@ import {
   toPascalCase,
   isProgramAccount,
   irNeedsHelper,
+  irNeedsUnsignedLamportsHelper,
+  irNeedsSignedLamportsHelper,
+  irNeedsUnsignedSplMintToHelper,
+  irNeedsSignedSplMintToHelper,
+  irNeedsUnsignedSplBurnHelper,
+  irNeedsSignedSplBurnHelper,
+  irNeedsSignedSplCloseAccountHelper,
+  irNeedsUnsignedSplCloseAccountHelper,
   emitRequireGuard,
 } from "./emitter-base.js";
 
@@ -341,10 +349,234 @@ impl std::error::Error for ${enumName} {}`;
   }
 
   override emitHelperFunctions(_ir: SolanaIR): string {
-    if (!irNeedsHelper(_ir, "close_program_account")) {
-      return "";
+    const helpers: string[] = [];
+
+    if (irNeedsUnsignedLamportsHelper(_ir)) {
+      helpers.push(`fn transfer_lamports(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    let transfer_ix = system_instruction::transfer(from.key, to.key, amount);
+    invoke(
+        &transfer_ix,
+        &[from.clone(), to.clone()],
+    )?;
+    Ok(())
+}`);
     }
-    return `fn close_program_account(
+
+    if (irNeedsSignedLamportsHelper(_ir)) {
+      helpers.push(`fn transfer_lamports_signed(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let transfer_ix = system_instruction::transfer(from.key, to.key, amount);
+    invoke_signed(
+        &transfer_ix,
+        &[from.clone(), to.clone()],
+        signer_seeds,
+    )?;
+    Ok(())
+}`);
+    }
+
+    if (irNeedsHelper(_ir, "spl_transfer")) {
+      helpers.push(`fn spl_token_transfer(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        from.key,
+        to.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+    invoke(
+        &transfer_ix,
+        &[from.clone(), to.clone(), authority.clone()],
+    )?;
+    Ok(())
+}
+
+fn spl_token_transfer_signed(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        from.key,
+        to.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+    invoke_signed(
+        &transfer_ix,
+        &[from.clone(), to.clone(), authority.clone()],
+        signer_seeds,
+    )?;
+    Ok(())
+}`);
+    }
+
+    const needsUnsignedMintTo = irNeedsUnsignedSplMintToHelper(_ir);
+    if (needsUnsignedMintTo) {
+      helpers.push(`fn spl_token_mint_to(
+    mint: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    let mint_ix = spl_token::instruction::mint_to(
+        &spl_token::id(),
+        mint.key,
+        to.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+    invoke(
+        &mint_ix,
+        &[mint.clone(), to.clone(), authority.clone()],
+    )?;
+    Ok(())
+}`);
+    }
+
+    const needsSignedMintTo = irNeedsSignedSplMintToHelper(_ir);
+    if (needsSignedMintTo) {
+      helpers.push(`fn spl_token_mint_to_signed(
+    mint: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let mint_ix = spl_token::instruction::mint_to(
+        &spl_token::id(),
+        mint.key,
+        to.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+    invoke_signed(
+        &mint_ix,
+        &[mint.clone(), to.clone(), authority.clone()],
+        signer_seeds,
+    )?;
+    Ok(())
+}`);
+    }
+
+    const needsUnsignedBurn = irNeedsUnsignedSplBurnHelper(_ir);
+    if (needsUnsignedBurn) {
+      helpers.push(`fn spl_token_burn(
+    from: &AccountInfo,
+    mint: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    let burn_ix = spl_token::instruction::burn(
+        &spl_token::id(),
+        from.key,
+        mint.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+    invoke(
+        &burn_ix,
+        &[from.clone(), mint.clone(), authority.clone()],
+    )?;
+    Ok(())
+}`);
+    }
+
+    const needsSignedBurn = irNeedsSignedSplBurnHelper(_ir);
+    if (needsSignedBurn) {
+      helpers.push(`fn spl_token_burn_signed(
+    from: &AccountInfo,
+    mint: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let burn_ix = spl_token::instruction::burn(
+        &spl_token::id(),
+        from.key,
+        mint.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+    invoke_signed(
+        &burn_ix,
+        &[from.clone(), mint.clone(), authority.clone()],
+        signer_seeds,
+    )?;
+    Ok(())
+}`);
+    }
+
+    const needsUnsignedClose = irNeedsUnsignedSplCloseAccountHelper(_ir);
+    if (needsUnsignedClose) {
+      helpers.push(`fn spl_token_close_account(
+    account: &AccountInfo,
+    destination: &AccountInfo,
+    authority: &AccountInfo,
+) -> ProgramResult {
+    let close_ix = spl_token::instruction::close_account(
+        &spl_token::id(),
+        account.key,
+        destination.key,
+        authority.key,
+        &[],
+    )?;
+    invoke(
+        &close_ix,
+        &[account.clone(), destination.clone(), authority.clone()],
+    )?;
+    Ok(())
+}`);
+    }
+
+    const needsSignedClose = irNeedsSignedSplCloseAccountHelper(_ir);
+    if (needsSignedClose) {
+      helpers.push(`fn spl_token_close_account_signed(
+    account: &AccountInfo,
+    destination: &AccountInfo,
+    authority: &AccountInfo,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let close_ix = spl_token::instruction::close_account(
+        &spl_token::id(),
+        account.key,
+        destination.key,
+        authority.key,
+        &[],
+    )?;
+    invoke_signed(
+        &close_ix,
+        &[account.clone(), destination.clone(), authority.clone()],
+        signer_seeds,
+    )?;
+    Ok(())
+}`);
+    }
+
+    if (irNeedsHelper(_ir, "close_program_account")) {
+      helpers.push(`fn close_program_account(
     account: &AccountInfo,
     destination: &AccountInfo,
 ) -> ProgramResult {
@@ -359,7 +591,10 @@ impl std::error::Error for ${enumName} {}`;
     **account.try_borrow_mut_lamports()? = 0;
     account.data.borrow_mut().fill(0);
     Ok(())
-}`;
+}`);
+    }
+
+    return helpers.join("\n\n");
   }
 }
 

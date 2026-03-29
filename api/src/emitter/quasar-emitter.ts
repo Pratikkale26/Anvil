@@ -123,7 +123,7 @@ ${arms}
   }
 
   override emitAccountKeyExpr(accountName: string): string {
-    return `${accountName}.key`;
+    return `*${accountName}.key`;
   }
 
   override emitAccountKeyAsRefExpr(accountName: string): string {
@@ -264,13 +264,13 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override emitMsg(message: string): string {
-    return `    quasar::msg!(${message});`;
+    return `    quasar::log::sol_log(${message});`;
   }
 
   override emitEmit(event: string, _fields: string): string {
     return `    // Event: ${event}
-    // ⚠️ Anvil: Quasar doesn't have Anchor's emit!() — log via msg! or instruction data
-    quasar::msg!("event:${event}");`;
+    // ⚠️ Anvil: Quasar doesn't have Anchor's emit!() — logging event name only
+    quasar::log::sol_log("event:${event}");`;
   }
 
   override emitClockGet(localVar: string): string {
