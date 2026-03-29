@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
@@ -240,6 +241,12 @@ export default function Home() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <ApiDot ok={apiOk} />
+            <Link
+              href="/workbench"
+              style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: C.amber, padding: "7px 16px", borderRadius: 100, border: `1px solid rgba(245,166,35,0.3)`, background: "rgba(245,166,35,0.07)", textDecoration: "none" }}
+            >
+              Workbench <ArrowRight size={13} />
+            </Link>
             <a href="https://github.com" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.textSub, padding: "7px 16px", borderRadius: 100, border: `1px solid ${C.cardBorder}`, textDecoration: "none" }}>
               GitHub <GitBranch size={13} />
             </a>
@@ -270,6 +277,13 @@ export default function Home() {
             >
               Try the Compiler <ArrowRight size={15} />
             </Btn>
+            <Link
+              href="/workbench"
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 100, fontWeight: 700, fontSize: 14, textDecoration: "none",
+                background: "rgba(255,255,255,0.06)", color: C.textSub }}
+            >
+              Open Workbench <Layers3 size={14} />
+            </Link>
             <Btn onClick={() => document.getElementById("cu-analysis")?.scrollIntoView({ behavior: "smooth" })}>
               View CU Analysis <Cpu size={14} />
             </Btn>
@@ -277,7 +291,7 @@ export default function Home() {
           <div style={{ display: "flex", justifyContent: "center", gap: 56, marginTop: 64, flexWrap: "wrap" }}>
             {[
               { value: "~79%", label: "CU reduction vs Anchor" },
-              { value: "2", label: "live demo programs" },
+              { value: "4", label: "input modes supported" },
               { value: "2", label: "live emit targets" },
             ].map((s) => (
               <div key={s.label} style={{ textAlign: "center" }}>
@@ -320,7 +334,8 @@ export default function Home() {
               Select a program, pick a target, compile.
             </h2>
             <p style={{ fontSize: 14, color: C.textSub, marginTop: 10, maxWidth: 720, lineHeight: 1.7 }}>
-              Today the playground is wired to the live <code>counter</code> and <code>vault</code> demos. Next up: paste your own Anchor source, or point Anvil at a GitHub repo or local file.
+              The quick demo playground is wired to the live <code>counter</code> and <code>vault</code> fixtures. For full power — paste source, upload a file or folder, or point Anvil at a GitHub repo — use the{" "}
+              <Link href="/workbench" style={{ color: C.amber, textDecoration: "none", fontWeight: 600 }}>Workbench →</Link>
             </p>
           </div>
 
@@ -510,14 +525,14 @@ export default function Home() {
                   <div style={{ fontWeight: 700, fontSize: 17, color: C.text }}>Working today</div>
                 </div>
                 {[
-                  "Anchor IR parser — instructions, accounts, constraints, errors",
-                  "Pinocchio and Quasar emitters ready for the live demo path",
-                  "Native Rust emitter scaffold on the roadmap",
+                  "Anchor IR parser (tree-sitter AST) — instructions, accounts, constraints, errors",
+                  "Pinocchio and Quasar emitters with full multi-file output",
+                  "Native Rust emitter scaffold (Pinocchio parity next)",
                   "Static CU analysis with per-instruction cost tables",
-                  "2 live demo programs today (counter, vault)",
-                  "Escrow and staking visible as upcoming support",
+                  "GitHub repo ingestion — paste any public repo URL and compile",
+                  "Local file + folder upload — pick your own .rs entry file",
                   "Express API with /parse, /emit, /demo routes",
-                  "Live playground with compilation pipeline animation",
+                  "Workbench: paste source, upload file/folder, or clone a repo",
                 ].map((item) => (
                   <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 11 }}>
                     <CheckCircle2 size={14} style={{ color: C.teal, flexShrink: 0, marginTop: 3 }} />
@@ -536,12 +551,12 @@ export default function Home() {
                 </div>
                 {[
                   "Production-grade CPI generation for SPL token flows",
-                  "tree-sitter parser for precise Anchor AST traversal",
                   "Account space auto-calculation from IR field definitions",
                   "CLI: `anvil compile program.rs --target pinocchio`",
-                  "GitHub repo and local-file ingestion from the frontend",
                   "IDL import — parse Anchor IDL JSON as IR input",
+                  "VS Code extension for inline CU previews",
                   "Deploy-ready output validation + Anchor test compatibility",
+                  "Escrow + staking demos with SPL token instructions",
                 ].map((item) => (
                   <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 11 }}>
                     <ChevronRight size={14} style={{ color: C.indigo, flexShrink: 0, marginTop: 3 }} />
@@ -560,9 +575,12 @@ export default function Home() {
               <Sparkles size={13} style={{ color: "#fff" }} />
             </div>
             <span style={{ fontWeight: 800, fontSize: 14, color: C.text }}>Anvil</span>
-            <span style={{ fontSize: 13, color: C.textMuted }}>— Solana Compiler IR v0.1.0 POC</span>
+            <span style={{ fontSize: 13, color: C.textMuted }}>— Solana Compiler IR v0.2.0</span>
           </div>
-          <div style={{ fontSize: 13, color: C.textMuted }}>Built for Solana Foundation India Grants Program</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+            <Link href="/workbench" style={{ fontSize: 13, color: C.amber, textDecoration: "none", fontWeight: 600 }}>Open Workbench →</Link>
+            <span style={{ fontSize: 13, color: C.textMuted }}>Built for Solana Foundation India Grants Program</span>
+          </div>
         </footer>
       </div>
     </main>
