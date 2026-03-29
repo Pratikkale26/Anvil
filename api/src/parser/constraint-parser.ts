@@ -48,6 +48,10 @@ export function parseConstraints(attrBody: string): Constraint[] {
       value = token.slice(eqIdx + 1).trim();
     }
 
+    if (key === "constraint" && value) {
+      value = value.replace(/\s*@\s*[\w:]+(?:::\w+)*/g, "").trim();
+    }
+
     // skip unknown / payer / space — they don't map to IR constraints
     if (key === "payer" || key === "space" || key === "rent_exempt" || key === "discriminator") {
       continue;

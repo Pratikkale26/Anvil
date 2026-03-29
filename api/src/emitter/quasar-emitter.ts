@@ -29,6 +29,7 @@ import {
   irNeedsUnsignedSplMintToHelper,
   irNeedsSignedSplCloseAccountHelper,
   irNeedsUnsignedSplCloseAccountHelper,
+  emitRequireGuard,
 } from "./emitter-base.js";
 
 class QuasarEmitter extends BaseEmitter {
@@ -259,9 +260,7 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override emitRequire(condition: string, error: string): string {
-    return `    if !(${condition}) {
-        return Err(${error}.into());
-    }`;
+    return emitRequireGuard(condition, error);
   }
 
   override emitMsg(message: string): string {

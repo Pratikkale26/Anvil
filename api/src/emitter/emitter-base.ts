@@ -492,7 +492,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         (_full, prefix: string, message: string) => `${prefix}${this.emitMsg(cleanInlineExpr(message)).replace(/^    /gm, "")}`
       );
 
-      return transformed;
+      return simplifyPassThroughCode(transformed);
     };
     const transformCtxAccountsReferences = (code: string): string => {
       let transformed = code;
@@ -510,11 +510,35 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       });
       return transformed;
     };
+    const bodyRequireConditions = new Set(
+      statements.flatMap((stmt) => {
+        if (stmt.kind === "require") {
+          return [normalizeConditionKey(transformAccountReferences(transformCtxAccountsReferences(stmt.condition)))];
+        }
+        if (stmt.kind === "pass_through") {
+          const raw = stmt.code.trim();
+          const requireMatch = raw.match(/^require!\(([\s\S]+),\s*[\w:]+(?:::\w+)*\s*\);?$/);
+          if (requireMatch?.[1]) {
+            return [normalizeConditionKey(transformAccountReferences(transformCtxAccountsReferences(requireMatch[1].trim())))];
+          }
+          const guardMatch = raw.match(/^if\s+!\(([\s\S]+)\)\s*\{\s*return Err\([\s\S]+\);\s*\}$/);
+          if (guardMatch?.[1]) {
+            return [normalizeConditionKey(transformAccountReferences(transformCtxAccountsReferences(guardMatch[1].trim())))];
+          }
+        }
+        return [];
+      }).filter(Boolean)
+    );
     const emitAccountConstraintChecks = (): void => {
       for (const account of instr.accounts) {
         for (const constraint of account.constraints) {
           if (constraint.kind !== "constraint" || !constraint.value) continue;
-          const condition = transformAccountReferences(transformCtxAccountsReferences(constraint.value));
+          const condition = transformAccountReferences(
+            transformCtxAccountsReferences(stripAnchorConstraintError(constraint.value))
+          );
+          if (bodyRequireConditions.has(normalizeConditionKey(condition))) {
+            continue;
+          }
           lines.push(this.emitRequire(condition, "ProgramError::InvalidAccountData"));
         }
       }
@@ -591,7 +615,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             break;
           }
 
-          const transformedRawCode = transformCtxAccountsReferences(transformAccountReferences(transformNestedAnchorCode(rawCode)));
+          const transformedRawCode = simplifyPassThroughCode(
+            transformCtxAccountsReferences(transformAccountReferences(transformNestedAnchorCode(rawCode)))
+          );
 
           // Don't add extra semicolons if the code already ends with one, with }, or with )
           let code: string;
@@ -977,6 +1003,65 @@ export function capitalize(value: string): string {
 
 function cleanInlineExpr(value: string): string {
   return value.replace(/\s+/g, " ").trim().replace(/,$/, "");
+}
+
+export function stripAnchorConstraintError(value: string): string {
+  return value.replace(/\s*@\s*[\w:]+(?:::\w+)*/g, "").trim();
+}
+
+function trimOuterParens(value: string): string {
+  let current = value.trim();
+  while (current.startsWith("(") && current.endsWith(")")) {
+    let depth = 0;
+    let balanced = true;
+    for (let i = 0; i < current.length; i++) {
+      const char = current[i];
+      if (char === "(") depth++;
+      if (char === ")") depth--;
+      if (depth === 0 && i < current.length - 1) {
+        balanced = false;
+        break;
+      }
+    }
+    if (!balanced) break;
+    current = current.slice(1, -1).trim();
+  }
+  return current;
+}
+
+function unwrapTopLevelNegation(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("!") || trimmed.startsWith("!=")) return null;
+  const rest = trimmed.slice(1).trim();
+  return trimOuterParens(rest);
+}
+
+export function normalizeConditionKey(value: string): string {
+  return trimOuterParens(stripAnchorConstraintError(cleanInlineExpr(value))).replace(/\s+/g, "");
+}
+
+export function emitRequireGuard(condition: string, error: string, indent = "    "): string {
+  let expr = trimOuterParens(stripAnchorConstraintError(cleanInlineExpr(condition)));
+  let isNegated = false;
+
+  while (true) {
+    const inner = unwrapTopLevelNegation(expr);
+    if (!inner) break;
+    isNegated = !isNegated;
+    expr = inner;
+  }
+
+  if (isNegated) {
+    return `${indent}if ${expr} {\n${indent}    return Err(${error}.into());\n${indent}}`;
+  }
+
+  return `${indent}if !(${expr}) {\n${indent}    return Err(${error}.into());\n${indent}}`;
+}
+
+function simplifyPassThroughCode(value: string): string {
+  let simplified = stripAnchorConstraintError(value);
+  simplified = simplified.replace(/\bif\s+!\(!([A-Za-z0-9_:.]+)\)/g, "if $1");
+  return simplified;
 }
 
 function hasResidualAnchorPatterns(value: string): boolean {

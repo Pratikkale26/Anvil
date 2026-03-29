@@ -25,6 +25,7 @@ import {
   irNeedsUnsignedSplMintToHelper,
   irNeedsSignedSplCloseAccountHelper,
   irNeedsUnsignedSplCloseAccountHelper,
+  emitRequireGuard,
 } from "./emitter-base.js";
 
 class PinocchioEmitter extends BaseEmitter {
@@ -262,19 +263,17 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override emitRequire(condition: string, error: string): string {
-    return `    if !(${condition}) {
-        return Err(${error}.into());
-    }`;
+    return emitRequireGuard(condition, error);
   }
 
   override emitMsg(message: string): string {
-    return `    pinocchio::msg!(${message});`;
+    return `    pinocchio::log::sol_log(${message});`;
   }
 
   override emitEmit(event: string, _fields: string): string {
     return `    // Event: ${event}
-    // ⚠️ Anvil: Pinocchio doesn't have Anchor's emit!() — log via msg! or instruction data
-    pinocchio::msg!("event:${event}");`;
+    // ⚠️ Anvil: Pinocchio doesn't have Anchor's emit!() — logging event name only
+    pinocchio::log::sol_log("event:${event}");`;
   }
 
   override emitClockGet(localVar: string): string {

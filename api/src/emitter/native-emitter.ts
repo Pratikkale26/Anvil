@@ -15,6 +15,7 @@ import {
   toPascalCase,
   isProgramAccount,
   irNeedsHelper,
+  emitRequireGuard,
 } from "./emitter-base.js";
 
 class NativeEmitter extends BaseEmitter {
@@ -272,9 +273,7 @@ ${maybeRead}    let seeds = &[
   }
 
   override emitRequire(condition: string, error: string): string {
-    return `    if !(${condition}) {
-        return Err(${error}.into());
-    }`;
+    return emitRequireGuard(condition, error);
   }
 
   override emitMsg(message: string): string {
