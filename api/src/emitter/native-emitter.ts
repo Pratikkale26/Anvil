@@ -22,6 +22,7 @@ import {
   irNeedsSignedSplBurnHelper,
   irNeedsSignedSplCloseAccountHelper,
   irNeedsUnsignedSplCloseAccountHelper,
+  irNeedsTokenAmountHelper,
   emitRequireGuard,
 } from "./emitter-base.js";
 
@@ -119,11 +120,11 @@ ${arms}
 
   override emitStateRead(accountName: string, typeName: string, localVar: string, mutable: boolean): string {
     const mutKeyword = mutable ? "mut " : "";
-    return `    let ${mutKeyword}${localVar} = ${typeName}::try_from_slice(&${accountName}.data.borrow())?;`;
+    return `    let ${mutKeyword}${localVar} = ${typeName}::try_from_slice(&${accountName}.data.borrow()[8..])?;`;
   }
 
   override emitStateSave(accountName: string, _typeName: string, localVar: string): string {
-    return `    ${localVar}.serialize(&mut &mut ${accountName}.data.borrow_mut()[..])?;`;
+    return `    ${localVar}.serialize(&mut &mut ${accountName}.data.borrow_mut()[8..])?;`;
   }
 
   override emitBumpSeed(_programId: string, seeds: string[], expectedKey: string): string {
@@ -249,29 +250,28 @@ ${arms}
     stateVar?: string,
     typeName?: string,
   ): string {
-    // Detect the account name used as prefix in seed expressions
-    let statePrefix = account;
-    for (const seed of seeds) {
-      const prefixMatch = seed.match(/^(\w+)\.\w+/);
-      if (prefixMatch?.[1] && !seed.startsWith('b"') && !seed.startsWith("&[")) {
-        statePrefix = prefixMatch[1];
-        break;
-      }
-    }
-
     const dataVar = stateVar || `${account}_data`;
     const resolvedTypeName = typeName || account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 
     const transformedSeeds = seeds.map(seed => {
       if (seed.startsWith('b"') || seed.startsWith("b'")) return seed;
-      if (seed.startsWith("&[")) {
-        return seed.replace(new RegExp(`&\\[${statePrefix}\\.`), `&[${dataVar}.`);
+      if (seed.startsWith("&[") && stateVar) {
+        return seed.replace(new RegExp(`&\\[${stateVar}\\.`), `&[${dataVar}.`);
       }
-      return seed.replace(new RegExp(`^${statePrefix}\\.`), `${dataVar}.`);
+      if (stateVar && seed.startsWith(`${stateVar}.`)) {
+        return seed.replace(new RegExp(`^${stateVar}\\.`), `${dataVar}.`);
+      }
+      if (!stateVar && seed.startsWith(`${account}.`)) {
+        return seed.replace(new RegExp(`^${account}\\.`), `${dataVar}.`);
+      }
+      return seed;
     });
 
     const seedsStr = transformedSeeds.join(",\n            ");
-    const maybeRead = stateVar ? "" : `    let ${dataVar} = ${resolvedTypeName}::try_from_slice(&${accountInfoVar}.data.borrow())?;\n`;
+    const shouldReadState = !!typeName && !!this.currentIr?.accounts.find((acc) => acc.name === typeName);
+    const maybeRead = stateVar || !shouldReadState
+      ? ""
+      : `    let ${dataVar} = ${resolvedTypeName}::try_from_slice(&${accountInfoVar}.data.borrow()[8..])?;\n`;
     return `    // PDA signer seeds for '${account}'
 ${maybeRead}    let seeds = &[
             ${seedsStr},
@@ -590,6 +590,17 @@ fn spl_token_transfer_signed(
     **account.try_borrow_mut_lamports()? = 0;
     account.data.borrow_mut().fill(0);
     Ok(())
+}`);
+    }
+
+    if (irNeedsTokenAmountHelper(_ir)) {
+      helpers.push(`/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
+fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
+    let data = account.data.borrow();
+    if data.len() < 72 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(u64::from_le_bytes(data[64..72].try_into().unwrap()))
 }`);
     }
 

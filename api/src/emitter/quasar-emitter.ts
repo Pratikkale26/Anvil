@@ -28,6 +28,7 @@ import {
   irNeedsUnsignedSplMintToHelper,
   irNeedsSignedSplCloseAccountHelper,
   irNeedsUnsignedSplCloseAccountHelper,
+  irNeedsTokenAmountHelper,
   emitRequireGuard,
 } from "./emitter-base.js";
 
@@ -590,6 +591,17 @@ fn spl_token_transfer_signed(
     **account.try_borrow_mut_lamports()? = 0;
     account.try_borrow_mut_data()?.fill(0);
     Ok(())
+}`);
+    }
+
+    if (irNeedsTokenAmountHelper(ir)) {
+      helpers.push(`/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
+fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
+    let data = account.try_borrow_data()?;
+    if data.len() < 72 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(u64::from_le_bytes(data[64..72].try_into().unwrap()))
 }`);
     }
 

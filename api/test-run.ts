@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
-import { parseAnchor } from "./src/parser/anchor-parser.js";
-import { resolveLocalSource } from "./src/parser/local-source.js";
-import { buildProjectSource } from "./src/parser/project-source.js";
-import { emitPinocchio, emitPinocchioFull } from "./src/emitter/pinocchio-emitter.js";
-import { emitQuasar, emitQuasarFull } from "./src/emitter/quasar-emitter.js";
-import { emitNative, emitNativeFull } from "./src/emitter/native-emitter.js";
+import { parseAnchor } from "./src/parser/anchor-parser.ts";
+import { resolveLocalSource } from "./src/parser/local-source.ts";
+import { buildProjectSource } from "./src/parser/project-source.ts";
+import { emitPinocchio, emitPinocchioFull } from "./src/emitter/pinocchio-emitter.ts";
+import { emitQuasar, emitQuasarFull } from "./src/emitter/quasar-emitter.ts";
+import { emitNative, emitNativeFull } from "./src/emitter/native-emitter.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = join(__dirname, "generated-outputs");
@@ -68,15 +68,11 @@ async function run() {
     } else if (explicitSourcePath && existsSync(explicitSourcePath)) {
       const resolved = resolveLocalSource(explicitSourcePath);
       sourcePath = resolved.resolvedPath;
-      source = resolved.projectFiles?.length && resolved.projectEntryPath
-        ? buildProjectSource(resolved.projectEntryPath, resolved.projectFiles)
-        : resolved.source;
+      source = resolved.source;
     } else if (existsSync(demoSourcePath)) {
       const resolved = resolveLocalSource(demoSourcePath);
       sourcePath = resolved.resolvedPath;
-      source = resolved.projectFiles?.length && resolved.projectEntryPath
-        ? buildProjectSource(resolved.projectEntryPath, resolved.projectFiles)
-        : resolved.source;
+      source = resolved.source;
     }
 
     if (!sourcePath) {

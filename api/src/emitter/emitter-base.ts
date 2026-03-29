@@ -428,7 +428,21 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         pdaSeeds,
         resolveAccountInfoVar(snakeCase(accountName))
       );
-      return emitted.replace(/\blet bump =/g, `let bump_${snakeCase(accountName)} =`);
+      return emitted
+        .replace(/\blet bump =/g, `let bump_${snakeCase(accountName)} =`)
+        .replace(/\blet\s+\(expected_key,\s*bump\)\s*=/g, `let (expected_key, bump_${snakeCase(accountName)}) =`);
+    };
+    const emitCanonicalSignerSeeds = (accountRef: typeof instr.accounts[number]): string => {
+      const canonical = snakeCase(accountRef.name);
+      const pdaSeeds = (accountRef.pdaSeeds ?? [`b"${canonical}"`]).map(normalizeSeedExpr);
+      const bumpLine = normalizedBumpLine(canonical);
+      const bumpVar = `bump_${canonical}`;
+      const seedsWithBump = [...pdaSeeds, `&[${bumpVar}]`].join(",\n            ");
+      return `${bumpLine}
+    let seeds = &[
+            ${seedsWithBump},
+        ];
+    let signer_seeds = &[&seeds[..]];`;
     };
     const replaceBumpRefs = (code: string): { prelude: string[]; code: string } => {
       const prelude: string[] = [];
@@ -491,18 +505,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         accountsWithSignerSeeds.add(normalized);
         return [];
       }
-      const seedStateVar = stateVars.get(canonical);
-      const seedStateType = accRef.accountType;
       accountsWithSignerSeeds.add(canonical);
       accountsWithSignerSeeds.add(normalized);
-      return [this.emitPdaSignerSeeds(
-        canonical,
-        resolveAccountInfoVar(canonical),
-        accRef.pdaSeeds.map(normalizeSeedExpr),
-        undefined,
-        seedStateVar,
-        seedStateType
-      )];
+      return [emitCanonicalSignerSeeds(accRef)];
     };
     const ensureSignerSeedsForCode = (code: string): string[] => {
       const patterns = [
@@ -530,7 +535,15 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           () => `${this.emitAccountKeyExpr(accountInfoVar)}`
         );
         transformed = transformed.replace(
+          new RegExp(`\\b${accountName}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
+          () => `${this.emitAccountKeyExpr(accountInfoVar)}`
+        );
+        transformed = transformed.replace(
           new RegExp(`\\b${resolveStateVar(accountName)}\\.key\\(\\)`, "g"),
+          () => `${this.emitAccountKeyExpr(accountInfoVar)}`
+        );
+        transformed = transformed.replace(
+          new RegExp(`\\b${resolveStateVar(accountName)}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
           () => `${this.emitAccountKeyExpr(accountInfoVar)}`
         );
         transformed = transformed.replace(
@@ -577,7 +590,15 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           `$1${keyExpr}`
         );
         transformed = transformed.replace(
+          new RegExp(`([=,(]\\s*)${accountName}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
+          `$1${keyExpr}`
+        );
+        transformed = transformed.replace(
           new RegExp(`(^|\\s)${accountName}\\.key\\(\\)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
+          (_full, prefix: string) => `${prefix}${keyExpr}`
+        );
+        transformed = transformed.replace(
+          new RegExp(`(^|\\s)${accountName}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
           (_full, prefix: string) => `${prefix}${keyExpr}`
         );
         transformed = transformed.replace(
@@ -585,7 +606,15 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           `$1${keyExpr}`
         );
         transformed = transformed.replace(
+          new RegExp(`([=,(]\\s*)${accountInfoVar}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
+          `$1${keyExpr}`
+        );
+        transformed = transformed.replace(
           new RegExp(`(^|\\s)${accountInfoVar}\\.key\\(\\)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
+          (_full, prefix: string) => `${prefix}${keyExpr}`
+        );
+        transformed = transformed.replace(
+          new RegExp(`(^|\\s)${accountInfoVar}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
           (_full, prefix: string) => `${prefix}${keyExpr}`
         );
       }
@@ -959,23 +988,24 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           this.transformedCount++;
           mutatedAccounts.add(stmt.account);
           ensureStateRead(stmt.account, true);
+          const stateAccountDef = ir.accounts.find((account) => snakeCase(account.name) === snakeCase(stmt.account));
+          const fieldDef = stateAccountDef?.fields.find((field) => snakeCase(field.name) === snakeCase(stmt.field));
           // State field assignments are largely pass-through since they're just Rust
           // but we need to adapt ctx.accounts and ctx.bumps references
           let value = transformCtxAccountsReferences(stmt.value);
           value = normalizeKeyValueUsages(transformAccountReferences(value));
+          if (fieldDef && (fieldDef.type === "Pubkey" || fieldDef.type === "[u8; 32]")) {
+            value = value.replace(
+              /^(\w+)\.key(?:\(\))?$/,
+              (_full, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name)))
+            );
+          }
           value = transformHelperCalls(value);
           // Replace ctx.bumps.X with bump derivation call
           if (value.includes("ctx.bumps.")) {
             const bumpAccount = value.match(/ctx\.bumps\.(\w+)/)?.[1] ?? stmt.account;
-            // Derive seeds from the account's PDA constraints in the IR
-            const accountRef = instr.accounts.find(a => snakeCase(a.name) === snakeCase(bumpAccount));
-          const pdaSeeds = (accountRef?.pdaSeeds ?? [`b"${snakeCase(bumpAccount)}"`]).map(normalizeSeedExpr);
-            value = `bump`;
-            lines.push(this.emitBumpSeed(
-              "program_id",
-              pdaSeeds,
-              resolveAccountInfoVar(snakeCase(bumpAccount))
-            ));
+            value = `bump_${snakeCase(bumpAccount)}`;
+            lines.push(normalizedBumpLine(snakeCase(bumpAccount)));
           }
           lines.push(`    ${resolveStateVar(snakeCase(stmt.account))}.${snakeCase(stmt.field)} = ${value};`);
           break;
