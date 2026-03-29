@@ -263,6 +263,11 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override emitMsg(message: string): string {
+    const commaIdx = message.indexOf(",");
+    if (commaIdx !== -1) {
+      const literal = message.slice(0, commaIdx).trim();
+      return `    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Quasar\n    quasar::log::sol_log(${literal});`;
+    }
     return `    quasar::log::sol_log(${message});`;
   }
 

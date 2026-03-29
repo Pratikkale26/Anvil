@@ -396,6 +396,37 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       }
       return normalized;
     };
+    const normalizedBumpLine = (accountName: string): string => {
+      const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === snakeCase(accountName));
+      const pdaSeeds = (accountRef?.pdaSeeds ?? [`b"${snakeCase(accountName)}"`]).map(normalizeSeedExpr);
+      const emitted = this.emitBumpSeed(
+        "program_id",
+        pdaSeeds,
+        resolveAccountInfoVar(snakeCase(accountName))
+      );
+      return emitted.replace(/\blet bump =/g, `let bump_${snakeCase(accountName)} =`);
+    };
+    const replaceBumpRefs = (code: string): { prelude: string[]; code: string } => {
+      const prelude: string[] = [];
+      const seen = new Set<string>();
+      const transformed = code.replace(/ctx\.bumps\.(\w+)/g, (_full, accountName: string) => {
+        const normalized = snakeCase(accountName);
+        if (!seen.has(normalized)) {
+          seen.add(normalized);
+          prelude.push(normalizedBumpLine(normalized));
+        }
+        return `bump_${normalized}`;
+      });
+      return { prelude, code: transformed };
+    };
+    const normalizeAccountExpr = (expr: string): string => {
+      const trimmed = cleanInlineExpr(expr).replace(/\.to_account_info\(\)$/, "");
+      const ctxMatch = trimmed.match(/^ctx\.accounts\.(\w+)$/);
+      if (ctxMatch?.[1]) return snakeCase(ctxMatch[1]);
+      const localMatch = trimmed.match(/^(\w+)$/);
+      if (localMatch?.[1]) return snakeCase(localMatch[1]);
+      return trimmed;
+    };
     const transformAccountReferences = (code: string): string => {
       let transformed = code;
       for (const account of instr.accounts) {
@@ -477,14 +508,14 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           `spl_token_close_account(${snakeCase(account)}, ${snakeCase(destination)}, ${resolveAccountInfoVar(snakeCase(authority))})?;`
       );
       replaceCpi(
-        /(?:anchor_lang::)?system_program::transfer\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_lang::)?system_program::transfer\(\s*CpiContext::new_with_signer\(\s*[\s\S]*?\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (from, to, signerSeeds, amount) =>
-          `transfer_lamports_signed(${snakeCase(from)}, ${snakeCase(to)}, ${cleanInlineExpr(amount)}, ${signerSeeds})?;`
+          `transfer_lamports_signed(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)}, ${signerSeeds})?;`
       );
       replaceCpi(
-        /(?:anchor_lang::)?system_program::transfer\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_lang::)?system_program::transfer\(\s*CpiContext::new\(\s*[\s\S]*?\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (from, to, amount) =>
-          `transfer_lamports(${snakeCase(from)}, ${snakeCase(to)}, ${cleanInlineExpr(amount)})?;`
+          `transfer_lamports(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)})?;`
       );
 
       transformed = transformed.replace(
@@ -542,7 +573,6 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         const localVar = ensureStateRead(name);
         return `${localVar}.${snakeCase(field)}`;
       });
-      transformed = transformed.replace(/ctx\.bumps\.(\w+)/g, "bump");
       return transformed;
     };
     const bodyRequireConditions = new Set(
@@ -614,6 +644,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       for (const accName of mutatedAccounts) {
         const accRef = instr.accounts.find(a => snakeCase(a.name) === snakeCase(accName));
         const typeName = accRef?.accountType || "Unknown";
+        if (accRef?.isOptional) continue;
         if (isGeneratedStateType(typeName)) {
           lines.push(this.emitStateSave(
             resolveAccountInfoVar(snakeCase(accName)),
@@ -650,9 +681,13 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             break;
           }
 
+          const { prelude, code: bumpAdjustedRawCode } = replaceBumpRefs(rawCode);
           const transformedRawCode = simplifyPassThroughCode(
-            transformCtxAccountsReferences(transformAccountReferences(transformNestedAnchorCode(rawCode)))
+            transformCtxAccountsReferences(transformAccountReferences(transformNestedAnchorCode(bumpAdjustedRawCode)))
           );
+          for (const preludeLine of prelude) {
+            lines.push(preludeLine);
+          }
 
           // Don't add extra semicolons if the code already ends with one, with }, or with )
           let code: string;
@@ -682,6 +717,13 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           if (stateVars.has(accountName)) {
             break;
           }
+          const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === accountName);
+          if (accountRef?.isOptional) {
+            stateVars.set(accountName, localVar);
+            accountInfoVars.set(accountName, accountName);
+            lines.push(`    let ${localVar} = ${accountName};`);
+            break;
+          }
           const needsAlias = accountName === localVar;
           const accountInfoVar = needsAlias ? `${accountName}_account` : accountName;
           if (needsAlias) {
@@ -695,7 +737,6 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             localVar,
             stmt.mutable || mutableStateAccounts.has(accountName)
           ));
-          const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === accountName);
           const hasOneConstraints = accountRef?.constraints.filter(
             (constraint) => constraint.kind === "has_one" && constraint.value
           ) ?? [];
