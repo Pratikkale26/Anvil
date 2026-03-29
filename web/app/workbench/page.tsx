@@ -179,6 +179,7 @@ export default function Workbench() {
 
   const fileInputRef   = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(1280);
 
   useEffect(() => {
     fetch(`${API_BASE}/`, { cache: "no-store" })
@@ -193,6 +194,13 @@ export default function Workbench() {
         }
       })
       .catch(() => setDemoNames(["counter", "vault", "escrow", "staking"]));
+  }, []);
+
+  useEffect(() => {
+    const update = () => setViewportWidth(window.innerWidth);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
   }, []);
 
   const folderCandidates = useMemo(() => {
@@ -349,6 +357,9 @@ export default function Workbench() {
 
   const tm = TARGET_META[target];
   const hasOutput = !!(singleFileCode || irText);
+  const isTablet = viewportWidth < 1100;
+  const isMobile = viewportWidth < 760;
+  const editorHeight = isMobile ? 420 : 560;
 
   return (
     <main style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
@@ -362,7 +373,7 @@ export default function Workbench() {
 
       {/* Nav */}
       <nav style={{ borderBottom: `1px solid ${C.line}`, position: "sticky", top: 0, zIndex: 40, background: "rgba(13,15,26,0.88)", backdropFilter: "blur(16px)" }}>
-        <div style={{ maxWidth: 1360, margin: "0 auto", padding: "0 28px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 58 }}>
+        <div style={{ maxWidth: 1360, margin: "0 auto", padding: isMobile ? "10px 16px" : "0 28px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", minHeight: 58 }}>
           {/* Logo */}
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <Link href="/" style={{ display: "flex", alignItems: "center", gap: 8, textDecoration: "none", color: C.textSub, fontSize: 13, fontWeight: 600 }}>
@@ -387,7 +398,7 @@ export default function Workbench() {
         </div>
       </nav>
 
-      <div style={{ maxWidth: 1360, margin: "0 auto", padding: "32px 28px 64px" }}>
+      <div style={{ maxWidth: 1360, margin: "0 auto", padding: isMobile ? "24px 16px 48px" : "32px 28px 64px" }}>
 
         {/* Page header */}
         <div style={{ marginBottom: 28 }}>
@@ -403,17 +414,17 @@ export default function Workbench() {
         </div>
 
         {/* Two-column layout */}
-        <div style={{ display: "grid", gridTemplateColumns: "360px minmax(0,1fr)", gap: 20, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: isTablet ? "1fr" : "360px minmax(0,1fr)", gap: 20, alignItems: "start" }}>
 
           {/* ── LEFT: Input panel ───────────────────────────────────────── */}
-          <div style={{ position: "sticky", top: 70, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ position: isTablet ? "static" : "sticky", top: 70, display: "flex", flexDirection: "column", gap: 12 }}>
 
             {/* Input source card */}
             <Panel>
               <PanelHead icon={Layers3} title="Input source" />
               <div style={{ padding: "14px 14px 0" }}>
                 {/* Mode tabs */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 6, marginBottom: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,minmax(0,1fr))" : isTablet ? "repeat(3,minmax(0,1fr))" : "repeat(5,minmax(0,1fr))", gap: 6, marginBottom: 16 }}>
                   {(Object.keys(MODE_META) as InputMode[]).map((m) => {
                     const { icon: Icon, label } = MODE_META[m];
                     const active = mode === m;
@@ -563,7 +574,7 @@ export default function Workbench() {
             {/* Transform summary */}
             {transformSummary && (
               <Panel>
-                <div style={{ padding: "12px 16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div style={{ padding: "12px 16px", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
                   <StatTile label="Transformed" value={transformSummary.transformedCount} color={C.teal} />
                   <StatTile label="Passed through" value={transformSummary.passedThroughCount} color={C.textSub} />
                 </div>
@@ -592,7 +603,7 @@ export default function Workbench() {
               </div>
 
               {/* Tabs */}
-              <div style={{ display: "flex", gap: 4, padding: "12px 20px 0", borderBottom: `1px solid ${C.line}` }}>
+              <div style={{ display: "flex", gap: 4, padding: "12px 20px 0", borderBottom: `1px solid ${C.line}`, overflowX: "auto" }}>
                 <PaneTab active={activePane === "single"} onClick={() => setActivePane("single")} label="Single file" />
                 <PaneTab active={activePane === "files"}  onClick={() => setActivePane("files")}  label={`File tree (${outputFiles.length})`} />
                 <PaneTab active={activePane === "ir"}     onClick={() => setActivePane("ir")}     label="IR (JSON)" />
@@ -614,9 +625,9 @@ export default function Workbench() {
                 <>
                   {/* Single file tab */}
                   {activePane === "single" && (
-                    <div style={{ height: 560 }}>
+                    <div style={{ height: editorHeight }}>
                       <Editor
-                        height="560px"
+                        height={`${editorHeight}px`}
                         language="rust"
                         value={singleFileCode}
                         theme="vs-dark"
@@ -632,9 +643,9 @@ export default function Workbench() {
                         No multi-file output yet. Run the pipeline first.
                       </div>
                     ) : (
-                      <div style={{ display: "grid", gridTemplateColumns: "260px minmax(0,1fr)" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "260px minmax(0,1fr)" }}>
                         {/* File tree sidebar */}
-                        <div style={{ borderRight: `1px solid ${C.line}`, overflowY: "auto", maxHeight: 560 }}>
+                        <div style={{ borderRight: isMobile ? "none" : `1px solid ${C.line}`, borderBottom: isMobile ? `1px solid ${C.line}` : "none", overflowY: "auto", maxHeight: isMobile ? 180 : editorHeight }}>
                           {outputFiles.map((f) => (
                             <button key={f.path} onClick={() => setActiveFilePath(f.path)} style={{
                               width: "100%", textAlign: "left", padding: "11px 16px",
@@ -650,9 +661,9 @@ export default function Workbench() {
                           ))}
                         </div>
                         {/* Editor */}
-                        <div style={{ height: 560 }}>
+                        <div style={{ height: editorHeight }}>
                           <Editor
-                            height="560px"
+                            height={`${editorHeight}px`}
                             language="rust"
                             value={selectedFileContent}
                             theme="vs-dark"
@@ -665,9 +676,9 @@ export default function Workbench() {
 
                   {/* IR tab */}
                   {activePane === "ir" && (
-                    <div style={{ height: 560 }}>
+                    <div style={{ height: editorHeight }}>
                       <Editor
-                        height="560px"
+                        height={`${editorHeight}px`}
                         language="json"
                         value={irText}
                         theme="vs-dark"
@@ -697,9 +708,9 @@ export default function Workbench() {
             <Panel>
               <div style={{ padding: "16px 20px" }}>
                 <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", color: C.textDim, marginBottom: 12 }}>WHAT'S SUPPORTED</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
                   {[
-                    "Demo programs (counter, vault)",
+                    "Demo programs (counter, vault, escrow, staking, perp)",
                     "Paste raw Anchor source",
                     "Upload a local .rs file",
                     "Upload a local folder — pick entry",

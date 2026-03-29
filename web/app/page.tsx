@@ -138,10 +138,18 @@ export default function Home() {
   const [apiOk, setApiOk] = useState(false);
   const [activeTab, setActiveTab] = useState<"code" | "ir">("code");
   const abortRef = useRef<AbortController | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(1280);
 
   useEffect(() => {
     fetch(`${API_BASE}/`, { cache: "no-store" })
       .then((r) => setApiOk(r.ok)).catch(() => setApiOk(false));
+  }, []);
+
+  useEffect(() => {
+    const update = () => setViewportWidth(window.innerWidth);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
   }, []);
 
   useEffect(() => {
@@ -221,6 +229,8 @@ export default function Home() {
   }
 
   const isRunning = stage === "fetching" || stage === "parsing" || stage === "generating";
+  const isTablet = viewportWidth < 1100;
+  const isMobile = viewportWidth < 760;
 
   return (
     <main style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
@@ -232,10 +242,10 @@ export default function Home() {
         <div style={{ position: "absolute", inset: 0, backgroundImage: "linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)", backgroundSize: "64px 64px" }} />
       </div>
 
-      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "0 28px" }}>
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: isMobile ? "0 16px" : "0 28px" }}>
 
         {/* Nav */}
-        <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 0 16px", borderBottom: `1px solid ${C.line}` }}>
+        <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "20px 0 16px", borderBottom: `1px solid ${C.line}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ width: 38, height: 38, borderRadius: 11, background: "linear-gradient(135deg, #f5a623, #e8820a)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Sparkles size={17} style={{ color: "#fff" }} />
@@ -347,7 +357,7 @@ export default function Home() {
             </p>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "330px 1fr", gap: 16, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: isTablet ? "1fr" : "330px 1fr", gap: 16, alignItems: "start" }}>
             {/* Left controls */}
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <Panel>
@@ -484,7 +494,7 @@ export default function Home() {
                 ) : (
                   <pre className="animate-fade-in" style={{
                     margin: 0, padding: "20px 24px", fontSize: 13, lineHeight: 1.8, color: "#bcc0d8",
-                    overflowX: "auto", overflowY: "auto", maxHeight: 560,
+                    overflowX: "auto", overflowY: "auto", maxHeight: isMobile ? 420 : 560,
                     fontFamily: "var(--font-mono, 'SFMono-Regular', monospace)",
                   }}>
                     <code><Highlight code={activeTab === "code" ? code : ir} isJson={activeTab === "ir"} /></code>
@@ -502,14 +512,16 @@ export default function Home() {
             {DEMOS[demo].title} — savings per instruction
           </h2>
           <Panel>
-            <div style={{ padding: "24px 28px" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", gap: "0 20px", marginBottom: 16, padding: "0 4px" }}>
+            <div style={{ padding: isMobile ? "20px 16px" : "24px 28px", overflowX: "auto" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", gap: "0 20px", marginBottom: 16, padding: "0 4px", minWidth: 760 }}>
                 {["INSTRUCTION", "ANCHOR", "PINOCCHIO", "QUASAR", "NATIVE"].map((h) => (
                   <div key={h} style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: C.textMuted }}>{h}</div>
                 ))}
               </div>
-              {cuData.map((row) => <CuRow key={row.instruction} row={row} />)}
-              <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", gap: "0 20px", marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.line}` }}>
+              <div style={{ minWidth: 760 }}>
+                {cuData.map((row) => <CuRow key={row.instruction} row={row} />)}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", gap: "0 20px", marginTop: 20, paddingTop: 16, borderTop: `1px solid ${C.line}`, minWidth: 760 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.textSub, alignSelf: "center" }}>TOTAL</div>
                 <TotalCell value={totals.anchor} />
                 <TotalCell value={totals.pinocchio} color="#e8820a" savings={pct(totals.anchor, totals.pinocchio)} />
@@ -523,7 +535,7 @@ export default function Home() {
         {/* Readiness */}
         <section style={{ paddingBottom: 80 }}>
           <Label>READINESS</Label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isTablet ? "1fr" : "1fr 1fr", gap: 16, marginTop: 20 }}>
             <Panel>
               <div style={{ padding: 28 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
