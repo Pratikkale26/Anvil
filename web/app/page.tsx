@@ -315,10 +315,10 @@ export default function Home() {
           <Label>HOW IT WORKS</Label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 1, background: C.cardBorder, borderRadius: 20, overflow: "hidden", marginTop: 20 }}>
             {[
-              { icon: Code2, step: "01", title: "Write Anchor", desc: "Your contract stays in familiar Anchor syntax — no refactoring." },
-              { icon: Layers3, step: "02", title: "Parse to IR", desc: "Anvil extracts instructions, accounts, constraints, errors into a typed SolanaIR." },
-              { icon: Blocks, step: "03", title: "Emit Target", desc: "Choose Pinocchio or Quasar today. Native is shown as the next target in the roadmap." },
-              { icon: Cpu, step: "04", title: "CU Analysis", desc: "Static cost tables compute savings per instruction across all frameworks." },
+              { icon: Code2, step: "01", title: "Provide Anchor", desc: "Paste raw source, select a GitHub repo, or upload local files. No refactoring required." },
+              { icon: Layers3, step: "02", title: "Generate IR", desc: "Our tree-sitter AST parser extracts accounts, constraints, and logic into a typed SolanaIR." },
+              { icon: Blocks, step: "03", title: "Target Emit", desc: "Transpile the IR into idiomatic Pinocchio, Quasar, or Native Rust with full multi-file support." },
+              { icon: Cpu, step: "04", title: "CU Analysis", desc: "Analyze accurate cost tables mapping your original Anchor operations to low-level syscalls." },
             ].map((item) => (
               <div key={item.step} style={{ padding: "28px 24px", background: C.card }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
@@ -520,7 +520,7 @@ export default function Home() {
           </Panel>
         </section>
 
-        {/* Grant Readiness */}
+        {/* Readiness */}
         <section style={{ paddingBottom: 80 }}>
           <Label>GRANT READINESS</Label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 20 }}>
@@ -534,8 +534,8 @@ export default function Home() {
                 </div>
                 {[
                   "Anchor IR parser (tree-sitter AST) — instructions, accounts, constraints, errors",
-                  "Pinocchio and Quasar emitters with full multi-file output",
-                  "Native Rust emitter scaffold (Pinocchio parity next)",
+                  "Pinocchio, Quasar, and Native emitters with full multi-file output",
+                  "4 live demo programs (Counter, Vault, Escrow, Staking)",
                   "Static CU analysis with per-instruction cost tables",
                   "GitHub repo ingestion — paste any public repo URL and compile",
                   "Local file + folder upload — pick your own .rs entry file",
@@ -564,7 +564,7 @@ export default function Home() {
                   "IDL import — parse Anchor IDL JSON as IR input",
                   "VS Code extension for inline CU previews",
                   "Deploy-ready output validation + Anchor test compatibility",
-                  "Escrow + staking demos with SPL token instructions",
+                  "Auto-generated test suites for emitted code",
                 ].map((item) => (
                   <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 11 }}>
                     <ChevronRight size={14} style={{ color: C.indigo, flexShrink: 0, marginTop: 3 }} />
@@ -587,7 +587,7 @@ export default function Home() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
             <Link href="/workbench" style={{ fontSize: 13, color: C.amber, textDecoration: "none", fontWeight: 600 }}>Open Workbench →</Link>
-            <span style={{ fontSize: 13, color: C.textMuted }}>Built for Solana Foundation India Grants Program</span>
+            <span style={{ fontSize: 13, color: C.textMuted }}>Built for Solana Developers</span>
           </div>
         </footer>
       </div>
