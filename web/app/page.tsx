@@ -104,7 +104,7 @@ const DEMOS: Record<DemoName, {
 const TARGETS: { id: Target; label: string; color: string; tagline: string; available: boolean }[] = [
   { id: "pinocchio", label: "Pinocchio", color: "#e8820a", tagline: "Zero-copy, zero-dependency by Anza", available: true },
   { id: "quasar", label: "Quasar", color: "#0ea880", tagline: "Zero-allocation by Blueshift", available: true },
-  { id: "native", label: "Native", color: "#6b7bff", tagline: "Raw solana_program + borsh", available: false },
+  { id: "native", label: "Native", color: "#6b7bff", tagline: "Raw solana_program + borsh", available: true },
 ];
 
 const STAGES: { id: PipelineStage; label: string; sublabel: string }[] = [
@@ -300,7 +300,7 @@ export default function Home() {
             {[
               { value: overallSavings, label: "CU reduction vs Anchor" },
               { value: "4", label: "input modes supported" },
-              { value: "2", label: "live emit targets" },
+              { value: "3", label: "live emit targets" },
             ].map((s) => (
               <div key={s.label} style={{ textAlign: "center" }}>
                 <div style={{ fontSize: 36, fontWeight: 800, color: C.amber, letterSpacing: "-0.03em" }}>{s.value}</div>
