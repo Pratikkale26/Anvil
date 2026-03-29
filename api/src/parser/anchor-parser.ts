@@ -107,6 +107,7 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
 
     // ── Parse custom types ──
     const types = topLevel.customTypes.map((t) => parseCustomType(t.node, t.kind));
+    const constants = topLevel.constants.map((node) => node.text);
 
     const irRaw: SolanaIR = {
       name: programName,
@@ -114,6 +115,7 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
       instructions,
       accounts,
       types,
+      constants,
       errors,
       helperFns,
       imports,
@@ -155,6 +157,7 @@ interface TopLevelItems {
   helperFns: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[];
   customTypes: { node: SyntaxNode; attrs: SyntaxNode[]; kind: "struct" | "enum" }[];
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[];
+  constants: SyntaxNode[];
 }
 
 function classifyTopLevel(root: SyntaxNode): TopLevelItems {
@@ -166,6 +169,7 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
     helperFns: [],
     customTypes: [],
     functionIndex: [],
+    constants: [],
   };
 
   function walk(node: SyntaxNode, modulePath: string[] = [], inProgramModule = false): void {
@@ -229,6 +233,10 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
 
         case "impl_item":
         case "use_declaration":
+          break;
+
+        case "const_item":
+          items.constants.push(child);
           break;
       }
     }
@@ -452,6 +460,7 @@ function parseAccountField(
   let isSigner = rawType.includes("Signer");
   let isMut = false;
   let isInit = false;
+  const isOptional = rawType.includes("Option<");
   let isPda = false;
   let pdaSeeds: string[] = [];
   let constraints: ReturnType<typeof parseConstraints> = [];
@@ -478,6 +487,7 @@ function parseAccountField(
     isSigner,
     isMut,
     isInit,
+    isOptional,
     isPda,
     pdaSeeds,
     constraints,
@@ -662,6 +672,9 @@ function extractStructName(node: SyntaxNode): string | null {
 
 function extractAccountType(rawType: string): string {
   const t = rawType.trim();
+  if (t.startsWith("Option<") && t.endsWith(">")) {
+    return extractAccountType(t.slice("Option<".length, -1).trim());
+  }
   const accountMatch = t.match(/^Account\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
   if (accountMatch?.[1]) return accountMatch[1].split("::").pop() ?? accountMatch[1];
   const programMatch = t.match(/^Program\s*<\s*'info\s*,\s*(\w+)\s*>/);

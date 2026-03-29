@@ -60,6 +60,7 @@ export const AccountRefSchema = z.object({
   isSigner: z.boolean().default(false),
   isMut: z.boolean().default(false),
   isInit: z.boolean().default(false),
+  isOptional: z.boolean().default(false),
   isPda: z.boolean().default(false),
   pdaSeeds: z.array(z.string()).default([]),
   constraints: z.array(ConstraintSchema).default([]),
@@ -362,6 +363,7 @@ export const SolanaIRSchema = z.object({
   instructions: z.array(InstructionSchema),
   accounts: z.array(AccountDefSchema),
   types: z.array(TypeDefSchema).default([]),
+  constants: z.array(z.string()).default([]),
   errors: z.array(ErrorDefSchema).default([]),
   /** Helper functions defined outside #[program] mod (carried to output) */
   helperFns: z.array(HelperFnSchema).default([]),

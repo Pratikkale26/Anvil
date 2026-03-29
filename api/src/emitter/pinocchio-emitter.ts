@@ -11,7 +11,6 @@ import {
   BaseEmitter,
   instrDiscriminator,
   accountDiscriminator,
-  typeSize,
   snakeCase,
   toPascalCase,
   isProgramAccount,
@@ -298,7 +297,7 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
     const fields = acc.fields
       .map((f) => `    pub ${snakeCase(f.name)}: ${this.rustTypeForFramework(f.type)},`)
       .join("\n");
-    const bodyLen = acc.fields.reduce((s, f) => s + typeSize(f.type), 0);
+    const bodyLen = acc.fields.reduce((s, f) => s + this.resolveTypeSize(f.type), 0);
     const readLines = this.buildReadLines(acc);
     const writeLines = this.buildWriteLines(acc);
     const ctorFields = acc.fields.map((f) => snakeCase(f.name)).join(", ");
@@ -352,7 +351,7 @@ ${writeLines}
       .map((e) => `    /// ${e.msg}\n    ${e.name} = ${e.code},`)
       .join("\n");
 
-    const enumName = `${toPascalCase(ir.name)}Error`;
+    const enumName = this.sourceErrorEnumName(ir);
 
     return `#[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
@@ -610,10 +609,20 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
   }
 
   private buildReadLine(typeName: string, fieldName: string): string {
-    const size = typeSize(typeName);
+    const size = this.resolveTypeSize(typeName);
+    const typeDef = this.customTypeDef(typeName);
     if (typeName === "Pubkey") {
       return `        let ${fieldName}: [u8; 32] = data[offset..offset + 32].try_into().unwrap();
         offset += 32;`;
+    }
+    if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(typeName)) {
+      return `        let ${fieldName}: ${typeName} = data[offset..offset + ${size}].try_into().unwrap();
+        offset += ${size};`;
+    }
+    if (typeDef?.kind === "enum") {
+      return `        let ${fieldName}: ${typeName} = ${typeName}::try_from(data[offset])
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += 1;`;
     }
     if (typeName === "bool") {
       return `        let ${fieldName}: bool = match data[offset] {
@@ -636,9 +645,19 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
   }
 
   private buildWriteLine(typeName: string, fieldName: string): string {
+    const size = this.resolveTypeSize(typeName);
+    const typeDef = this.customTypeDef(typeName);
     if (typeName === "Pubkey") {
       return `        data[offset..offset + 32].copy_from_slice(&value.${fieldName});
         offset += 32;`;
+    }
+    if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(typeName)) {
+      return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName});
+        offset += ${size};`;
+    }
+    if (typeDef?.kind === "enum") {
+      return `        data[offset] = value.${fieldName} as u8;
+        offset += 1;`;
     }
     if (typeName === "bool") {
       return `        data[offset] = if value.${fieldName} { 1 } else { 0 };
@@ -648,7 +667,6 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
       return `        data[offset] = value.${fieldName} as u8;
         offset += 1;`;
     }
-    const size = typeSize(typeName);
     return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName}.to_le_bytes());
         offset += ${size};`;
   }

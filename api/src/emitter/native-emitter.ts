@@ -10,7 +10,6 @@ import type { SolanaIR, AccountDef } from "../ir/schema.js";
 import {
   BaseEmitter,
   instrDiscriminator,
-  typeSize,
   snakeCase,
   toPascalCase,
   isProgramAccount,
@@ -325,7 +324,7 @@ ${fields}
       .map((e) => `    /// ${e.msg}\n    ${e.name} = ${e.code},`)
       .join("\n");
 
-    const enumName = `${toPascalCase(ir.name)}Error`;
+    const enumName = this.sourceErrorEnumName(ir);
 
     return `#[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]

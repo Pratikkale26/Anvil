@@ -172,6 +172,8 @@ export abstract class BaseEmitter {
     const sections: string[] = [];
     sections.push(this.fileHeader(ir.name));
     sections.push(this.emitUseStatements(ir));
+    if (ir.constants.length > 0) sections.push(ir.constants.join("\n\n"));
+    if (ir.types.length > 0) sections.push(this.emitCustomTypes(ir));
 
     if (ir.accounts.length > 0) sections.push("mod state;");
     if (ir.instructions.length > 0) sections.push("mod instructions;");
@@ -232,6 +234,8 @@ export abstract class BaseEmitter {
 
     sections.push(this.fileHeader(ir.name));
     sections.push(this.emitUseStatements(ir));
+    if (ir.constants.length > 0) sections.push(ir.constants.join("\n\n"));
+    if (ir.types.length > 0) sections.push(this.emitCustomTypes(ir));
     sections.push(this.emitEntrypoint(ir));
     sections.push(this.emitRouter(ir));
 
@@ -264,15 +268,18 @@ export abstract class BaseEmitter {
     const nonProgramAccounts = instr.accounts.filter(
       (a) => !isProgramAccount(a.accountType)
     );
+    const requiredAccountCount = nonProgramAccounts.filter((a) => !a.isOptional).length;
 
     // Account bindings
     const bindings = nonProgramAccounts
-      .map((acc, idx) => this.emitAccountBinding(snakeCase(acc.name), idx))
+      .map((acc, idx) => acc.isOptional
+        ? `    let ${snakeCase(acc.name)} = accounts.get(${idx});`
+        : this.emitAccountBinding(snakeCase(acc.name), idx))
       .join("\n");
 
     // Signer checks
     const signerChecks = nonProgramAccounts
-      .filter((a) => a.isSigner)
+      .filter((a) => a.isSigner && !a.isOptional)
       .map((a) => this.emitSignerCheck(snakeCase(a.name)))
       .join("\n");
 
@@ -294,7 +301,7 @@ export abstract class BaseEmitter {
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if accounts.len() < ${nonProgramAccounts.length} {
+    if accounts.len() < ${requiredAccountCount} {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
 
@@ -430,54 +437,78 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       };
 
       replaceCpi(
-        /token::transfer\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::transfer\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (from, to, authority, signerSeeds, amount) =>
           `spl_token_transfer_signed(${snakeCase(from)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${signerSeeds})?;`
       );
       replaceCpi(
-        /token::transfer\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::transfer\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (from, to, authority, amount) =>
           `spl_token_transfer(${snakeCase(from)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
       );
       replaceCpi(
-        /token::mint_to\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::mint_to\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (mint, to, authority, signerSeeds, amount) =>
           `spl_token_mint_to_signed(${snakeCase(mint)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${signerSeeds})?;`
       );
       replaceCpi(
-        /token::mint_to\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::mint_to\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (mint, to, authority, amount) =>
           `spl_token_mint_to(${snakeCase(mint)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
       );
       replaceCpi(
-        /token::burn\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::burn\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (mint, from, authority, signerSeeds, amount) =>
           `spl_token_burn_signed(${snakeCase(from)}, ${snakeCase(mint)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${signerSeeds})?;`
       );
       replaceCpi(
-        /token::burn\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::burn\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (mint, from, authority, amount) =>
           `spl_token_burn(${snakeCase(from)}, ${snakeCase(mint)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
       );
       replaceCpi(
-        /token::close_account\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::close_account\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*\)\?;/g,
         (account, destination, authority, signerSeeds) =>
           `spl_token_close_account_signed(${snakeCase(account)}, ${snakeCase(destination)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${signerSeeds})?;`
       );
       replaceCpi(
-        /token::close_account\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::close_account\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*\)\?;/g,
         (account, destination, authority) =>
           `spl_token_close_account(${snakeCase(account)}, ${snakeCase(destination)}, ${resolveAccountInfoVar(snakeCase(authority))})?;`
       );
       replaceCpi(
-        /anchor_lang::system_program::transfer\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*anchor_lang::system_program::Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_lang::)?system_program::transfer\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (from, to, signerSeeds, amount) =>
           `transfer_lamports_signed(${snakeCase(from)}, ${snakeCase(to)}, ${cleanInlineExpr(amount)}, ${signerSeeds})?;`
       );
       replaceCpi(
-        /anchor_lang::system_program::transfer\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*anchor_lang::system_program::Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_lang::)?system_program::transfer\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (from, to, amount) =>
           `transfer_lamports(${snakeCase(from)}, ${snakeCase(to)}, ${cleanInlineExpr(amount)})?;`
+      );
+
+      transformed = transformed.replace(
+        /ctx\.accounts\.(\w+)\.is_some\(\)/g,
+        (_full, name: string) => `${snakeCase(name)}.is_some()`
+      );
+
+      transformed = transformed.replace(
+        /if\s+let\s+Some\((\w+)\)\s*=\s*&mut\s*ctx\.accounts\.(\w+)\s*\{([\s\S]*?)\n?\}/g,
+        (_full, localVar: string, accountName: string, body: string) => {
+          const normalizedAccount = snakeCase(accountName);
+          const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === normalizedAccount);
+          const typeName = accountRef?.accountType ?? "Unknown";
+          if (!isGeneratedStateType(typeName)) {
+            return `if let Some(${localVar}) = ${normalizedAccount} {\n${body}\n}`;
+          }
+          const accountInfoVar = `${localVar}_account`;
+          const transformedBody = simplifyPassThroughCode(
+            transformCtxAccountsReferences(
+              transformAccountReferences(transformNestedAnchorCode(body))
+            )
+          );
+          return `if let Some(${accountInfoVar}) = ${normalizedAccount} {\n        let mut ${localVar} = ${typeName}::from_account_info(${accountInfoVar})?;\n${indentBlock(transformedBody.trim(), "        ")}\n        ${typeName}::save(${accountInfoVar}, &${localVar})?;\n    }`;
+        }
       );
 
       transformed = transformed.replace(
@@ -499,6 +530,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     const transformCtxAccountsReferences = (code: string): string => {
       let transformed = code;
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\(\)/g, (_, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name))));
+      transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\b/g, (_, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name))));
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.lamports\(\)/g, (_, name: string) => this.emitAccountLamportsExpr(resolveAccountInfoVar(snakeCase(name))));
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.(\w+)/g, (full, name: string, field: string) => {
         if (field === "key" || field === "lamports") return full;
@@ -510,6 +542,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         const localVar = ensureStateRead(name);
         return `${localVar}.${snakeCase(field)}`;
       });
+      transformed = transformed.replace(/ctx\.bumps\.(\w+)/g, "bump");
       return transformed;
     };
     const bodyRequireConditions = new Set(
@@ -889,7 +922,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     let offset = 0;
     const lines = args.map((arg) => {
       const line = this.emitArgDeserialize(arg, offset);
-      offset += typeSize(arg.type);
+      offset += this.resolveTypeSize(arg.type);
       return line;
     });
     return `    // Args\n${lines.join("\n")}`;
@@ -897,7 +930,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
 
   protected emitArgDeserialize(arg: Arg, offset: number): string {
     const start = offset;
-    const end = offset + typeSize(arg.type);
+    const end = offset + this.resolveTypeSize(arg.type);
     const name = snakeCase(arg.name);
 
     switch (arg.type) {
@@ -938,7 +971,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     }
     let ${name}: ${arg.type} = data[${start}..${end}].try_into().unwrap();`;
         }
-        const typeDef = this.currentIr?.types.find((type) => type.name === arg.type);
+        const typeDef = this.customTypeDef(arg.type);
         if (typeDef?.kind === "enum" && typeDef.variants?.length) {
           const arms = typeDef.variants
             .map((variant, index) => `        ${index} => ${arg.type}::${variant},`)
@@ -957,6 +990,100 @@ ${arms}
 
   protected emitPubkeyDeserialize(start: number, end: number): string {
     return `data[${start}..${end}].try_into().unwrap()`;
+  }
+
+  protected customTypeDef(typeName: string) {
+    return this.currentIr?.types.find((type) => type.name === typeName);
+  }
+
+  protected sourceErrorEnumName(ir: SolanaIR): string {
+    const variantNames = new Set(ir.errors.map((error) => error.name));
+    const prefixes = new Map<string, number>();
+    const recordPrefixes = (text: string | undefined): void => {
+      if (!text) return;
+      for (const variant of variantNames) {
+        const matches = [...text.matchAll(new RegExp(`\\b([A-Za-z_][A-Za-z0-9_]*)::${variant}\\b`, "g"))];
+        for (const match of matches) {
+          const prefix = match[1];
+          if (!prefix) continue;
+          prefixes.set(prefix, (prefixes.get(prefix) ?? 0) + 1);
+        }
+      }
+    };
+
+    for (const instr of ir.instructions) {
+      recordPrefixes(instr.rawBody);
+      for (const stmt of instr.body) {
+        switch (stmt.kind) {
+          case "require":
+            recordPrefixes(stmt.error);
+            break;
+          case "return_err":
+            recordPrefixes(stmt.error);
+            break;
+          case "pass_through":
+            recordPrefixes(stmt.code);
+            break;
+        }
+      }
+    }
+
+    const ranked = [...prefixes.entries()].sort((a, b) => b[1] - a[1]);
+    return ranked[0]?.[0] ?? `${toPascalCase(ir.name)}Error`;
+  }
+
+  protected resolveTypeSize(typeName: string, visited = new Set<string>()): number {
+    const fixedBytes = typeName.match(/^\[\s*u8\s*;\s*(\d+)\s*\]$/);
+    if (fixedBytes?.[1]) {
+      return Number.parseInt(fixedBytes[1], 10);
+    }
+
+    if (visited.has(typeName)) return 0;
+    const typeDef = this.customTypeDef(typeName);
+    if (!typeDef) {
+      return typeSize(typeName);
+    }
+
+    if (typeDef.kind === "enum") return 1;
+    if (!typeDef.fields) return typeSize(typeName);
+
+    visited.add(typeName);
+    const size = typeDef.fields.reduce((sum, field) => sum + this.resolveTypeSize(field.type, visited), 0);
+    visited.delete(typeName);
+    return size;
+  }
+
+  protected emitCustomTypes(ir: SolanaIR): string {
+    return ir.types.map((typeDef) => {
+      if (typeDef.kind === "enum") {
+        const variants = (typeDef.variants ?? []).map((variant, index) => `    ${variant} = ${index},`).join("\n");
+        const arms = (typeDef.variants ?? []).map((variant, index) => `            ${index} => Ok(Self::${variant}),`).join("\n");
+        return `#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u8)]
+pub enum ${typeDef.name} {
+${variants}
+}
+
+impl TryFrom<u8> for ${typeDef.name} {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+${arms}
+            _ => Err(()),
+        }
+    }
+}`;
+      }
+
+      const fields = (typeDef.fields ?? [])
+        .map((field) => `    pub ${snakeCase(field.name)}: ${this.rustTypeForFramework(field.type)},`)
+        .join("\n");
+      return `#[repr(C)]
+pub struct ${typeDef.name} {
+${fields}
+}`;
+    }).join("\n\n");
   }
 
   // ─── File header ───────────────────────────────────────────────────────────
@@ -1032,6 +1159,13 @@ function cleanInlineExpr(value: string): string {
 
 export function stripAnchorConstraintError(value: string): string {
   return value.replace(/\s*@\s*[\w:]+(?:::\w+)*/g, "").trim();
+}
+
+function indentBlock(value: string, indent: string): string {
+  return value
+    .split("\n")
+    .map((line) => (line.trim() ? `${indent}${line}` : line))
+    .join("\n");
 }
 
 function trimOuterParens(value: string): string {
