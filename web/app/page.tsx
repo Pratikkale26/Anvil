@@ -1,5 +1,6 @@
 "use client";
 
+import Editor from "@monaco-editor/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -125,6 +126,19 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+const LANDING_MONACO_OPTS = {
+  readOnly: true,
+  minimap: { enabled: false },
+  fontSize: 13,
+  lineNumbers: "on" as const,
+  scrollBeyondLastLine: false,
+  wordWrap: "off" as const,
+  padding: { top: 16, bottom: 16 },
+  folding: true,
+  renderLineHighlight: "none" as const,
+  fontFamily: "SFMono-Regular, 'JetBrains Mono', 'Fira Code', Menlo, monospace",
+};
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -231,6 +245,7 @@ export default function Home() {
   const isRunning = stage === "fetching" || stage === "parsing" || stage === "generating";
   const isTablet = viewportWidth < 1100;
   const isMobile = viewportWidth < 760;
+  const outputHeight = isMobile ? 420 : 560;
 
   return (
     <main style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
@@ -359,7 +374,7 @@ export default function Home() {
 
           <div style={{ display: "grid", gridTemplateColumns: isTablet ? "1fr" : "330px 1fr", gap: 16, alignItems: "start" }}>
             {/* Left controls */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
               <Panel>
                 <PanelHead icon={FileCode2} title="Program" />
                 <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -467,8 +482,8 @@ export default function Home() {
               {/* Code output */}
               <Panel>
                 {/* Tab bar */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: `1px solid ${C.line}` }}>
-                  <div style={{ display: "flex", gap: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", padding: "12px 16px", borderBottom: `1px solid ${C.line}` }}>
+                  <div style={{ display: "flex", gap: 4, overflowX: "auto", maxWidth: "100%" }}>
                     {(["code", "ir"] as const).map((tab) => (
                       <button key={tab} onClick={() => setActiveTab(tab)} style={{
                         padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", border: "none",
@@ -492,13 +507,15 @@ export default function Home() {
                     }
                   </div>
                 ) : (
-                  <pre className="animate-fade-in" style={{
-                    margin: 0, padding: "20px 24px", fontSize: 13, lineHeight: 1.8, color: "#bcc0d8",
-                    overflowX: "auto", overflowY: "auto", maxHeight: isMobile ? 420 : 560,
-                    fontFamily: "var(--font-mono, 'SFMono-Regular', monospace)",
-                  }}>
-                    <code><Highlight code={activeTab === "code" ? code : ir} isJson={activeTab === "ir"} /></code>
-                  </pre>
+                  <div className="animate-fade-in" style={{ height: outputHeight, minWidth: 0, maxWidth: "100%" }}>
+                    <Editor
+                      height={`${outputHeight}px`}
+                      language={activeTab === "ir" ? "json" : "rust"}
+                      value={activeTab === "code" ? code : ir}
+                      theme="vs-dark"
+                      options={LANDING_MONACO_OPTS}
+                    />
+                  </div>
                 )}
               </Panel>
             </div>
@@ -688,27 +705,4 @@ function TotalCell({ value, color, savings }: { value: number; color?: string; s
       {savings && <div style={{ fontSize: 12, color: color, marginTop: 2, fontWeight: 600 }}>{savings} saved</div>}
     </div>
   );
-}
-
-function Highlight({ code, isJson }: { code: string; isJson: boolean }) {
-  if (!code) return null;
-  let h = code
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-  if (isJson) {
-    h = h
-      .replace(/("[\w]+")\s*:/g, `<span style="color:#8aafff">$1</span>:`)
-      .replace(/:\s*"([^"]*)"/g, `: <span style="color:#a8d9a0">"$1"</span>`)
-      .replace(/:\s*(\d+)/g, `: <span style="color:#f5a623">$1</span>`)
-      .replace(/:\s*(true|false|null)/g, `: <span style="color:#cc88ff">$1</span>`);
-  } else {
-    h = h
-      .replace(/(\/\/[^\n]*)/g, `<span style="color:#404668">$1</span>`)
-      .replace(/("(?:[^"\\]|\\.)*")/g, `<span style="color:#98c98a">$1</span>`)
-      .replace(/\b(pub|fn|use|let|mut|impl|struct|enum|match|return|if|else|for|while|loop|type|const|static|unsafe|extern|mod|self|Ok|Err|Some|None|true|false)\b/g, `<span style="color:#c990f0">$&</span>`)
-      .replace(/\b(u8|u16|u32|u64|u128|i8|i16|i32|i64|i128|bool|usize|f32|f64|String|Vec|Option|Result|Pubkey|ProgramResult|ProgramError|AccountInfo)\b/g, `<span style="color:#6cafff">$&</span>`)
-      .replace(/\b(\d+)\b/g, `<span style="color:#f0a94e">$&</span>`)
-      .replace(/(#\[(?:[^\[\]])*\])/g, `<span style="color:#7a7d9e">$1</span>`);
-  }
-  return <span dangerouslySetInnerHTML={{ __html: h }} />;
 }
