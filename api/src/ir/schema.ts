@@ -280,6 +280,7 @@ export const TypeDefSchema = z.object({
   kind: z.enum(["struct", "enum"]),
   fields: z.array(AccountFieldSchema).optional(),
   variants: z.array(z.string()).optional(),
+  rawCode: z.string().optional(),
 });
 
 export type TypeDef = z.infer<typeof TypeDefSchema>;

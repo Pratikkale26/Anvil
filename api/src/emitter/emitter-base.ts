@@ -170,10 +170,12 @@ export abstract class BaseEmitter {
 
   private emitLibFile(ir: SolanaIR): string {
     const sections: string[] = [];
+    const constants = ir.constants ?? [];
+    const types = ir.types ?? [];
     sections.push(this.fileHeader(ir.name));
     sections.push(this.emitUseStatements(ir));
-    if (ir.constants.length > 0) sections.push(ir.constants.join("\n\n"));
-    if (ir.types.length > 0) sections.push(this.emitCustomTypes(ir));
+    if (constants.length > 0) sections.push(constants.join("\n\n"));
+    if (types.length > 0) sections.push(this.emitCustomTypes({ ...ir, types }));
 
     if (ir.accounts.length > 0) sections.push("mod state;");
     if (ir.instructions.length > 0) sections.push("mod instructions;");
@@ -220,7 +222,7 @@ export abstract class BaseEmitter {
 
     // Carry over helper functions from source
     for (const helper of ir.helperFns) {
-      sections.push(`// Carried from source\n${helper.rawCode}`);
+      sections.push(`// Carried from source\n${this.transformHelperCode(helper.rawCode)}`);
     }
 
     if (sections.length === 0) return "";
@@ -231,11 +233,13 @@ export abstract class BaseEmitter {
 
   protected emitSingleFile(ir: SolanaIR): string {
     const sections: string[] = [];
+    const constants = ir.constants ?? [];
+    const types = ir.types ?? [];
 
     sections.push(this.fileHeader(ir.name));
     sections.push(this.emitUseStatements(ir));
-    if (ir.constants.length > 0) sections.push(ir.constants.join("\n\n"));
-    if (ir.types.length > 0) sections.push(this.emitCustomTypes(ir));
+    if (constants.length > 0) sections.push(constants.join("\n\n"));
+    if (types.length > 0) sections.push(this.emitCustomTypes({ ...ir, types }));
     sections.push(this.emitEntrypoint(ir));
     sections.push(this.emitRouter(ir));
 
@@ -252,7 +256,7 @@ export abstract class BaseEmitter {
 
     // Carry over helper functions from source
     for (const helper of ir.helperFns) {
-      sections.push(`// Carried from source\n${helper.rawCode}`);
+      sections.push(`// Carried from source\n${this.transformHelperCode(helper.rawCode)}`);
     }
 
     if (ir.errors.length > 0) {
@@ -376,7 +380,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         (constraint) => constraint.kind === "has_one" && constraint.value
       ) ?? [];
       for (const constraint of hasOneConstraints) {
-        const targetAccount = snakeCase(constraint.value!);
+        const targetAccount = snakeCase(stripAnchorConstraintError(constraint.value!));
+        const targetRef = instr.accounts.find((acc) => snakeCase(acc.name) === targetAccount);
+        if (!targetRef) continue;
         lines.push(`    if ${localVar}.${snakeCase(constraint.value!)} != ${this.emitAccountKeyExpr(resolveAccountInfoVar(targetAccount))} {`);
         lines.push(`        return Err(ProgramError::InvalidAccountData);`);
         lines.push(`    }`);
@@ -385,13 +391,31 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     };
     const normalizeSeedExpr = (seed: string): string => {
       let normalized = seed;
+      normalized = normalized.replace(/ctx\.accounts\.(\w+)\.(\w+)/g, (_full, name: string, field: string) => {
+        const accountName = snakeCase(name);
+        const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === accountName);
+        if (!accountRef) return `${accountName}.${snakeCase(field)}`;
+        if (field === "key") return resolveAccountInfoVar(accountName);
+        if (isGeneratedStateType(accountRef.accountType)) {
+          const localVar = ensureStateRead(accountName);
+          return `${localVar}.${snakeCase(field)}`;
+        }
+        return `${resolveAccountInfoVar(accountName)}.${snakeCase(field)}`;
+      });
       for (const account of instr.accounts) {
         const accountName = snakeCase(account.name);
+        const accountInfoVar = resolveAccountInfoVar(accountName);
         normalized = normalized.split(`${accountName}.key().as_ref()`).join(
-          this.emitAccountKeyAsRefExpr(resolveAccountInfoVar(accountName))
+          this.emitAccountKeyAsRefExpr(accountInfoVar)
         );
         normalized = normalized.split(`${accountName}.key.as_ref()`).join(
-          this.emitAccountKeyAsRefExpr(resolveAccountInfoVar(accountName))
+          this.emitAccountKeyAsRefExpr(accountInfoVar)
+        );
+        normalized = normalized.split(`${resolveStateVar(accountName)}.key().as_ref()`).join(
+          this.emitAccountKeyAsRefExpr(accountInfoVar)
+        );
+        normalized = normalized.split(`${resolveStateVar(accountName)}.key.as_ref()`).join(
+          this.emitAccountKeyAsRefExpr(accountInfoVar)
         );
       }
       return normalized;
@@ -427,19 +451,95 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       if (localMatch?.[1]) return snakeCase(localMatch[1]);
       return trimmed;
     };
+    const normalizeSignerSeedsExpr = (expr: string): string => {
+      const trimmed = cleanInlineExpr(expr);
+      if (trimmed.includes("[") || trimmed.includes("&")) return "signer_seeds";
+      return trimmed;
+    };
+    const canonicalAccountName = (name: string): string => {
+      const normalized = snakeCase(name);
+      for (const [accountName, accountInfoVar] of accountInfoVars.entries()) {
+        if (accountInfoVar === normalized) return accountName;
+      }
+      for (const [accountName, stateVar] of stateVars.entries()) {
+        if (stateVar === normalized) return accountName;
+      }
+      return normalized;
+    };
+    const ensureSignerSeedsForAccount = (accountName: string): string[] => {
+      const normalized = canonicalAccountName(accountName);
+      if (accountsWithSignerSeeds.has(normalized)) return [];
+      let accRef = instr.accounts.find((acc) => snakeCase(acc.name) === normalized);
+      if (!accRef?.isPda) {
+        const prefix = normalized
+          .replace(/_authority$/, "")
+          .replace(/_account$/, "")
+          .replace(/_ata$/, "");
+        accRef = instr.accounts.find((acc) => {
+          const candidate = snakeCase(acc.name);
+          return acc.isPda && (
+            candidate === prefix ||
+            candidate.includes(prefix) ||
+            candidate.includes(`${prefix}_bump`) ||
+            candidate.includes(`${prefix}_holder`)
+          );
+        });
+      }
+      if (!accRef?.isPda) return [];
+      const canonical = snakeCase(accRef.name);
+      const seedStateVar = stateVars.get(canonical);
+      const seedStateType = accRef.accountType;
+      accountsWithSignerSeeds.add(canonical);
+      return [this.emitPdaSignerSeeds(
+        canonical,
+        resolveAccountInfoVar(canonical),
+        accRef.pdaSeeds.map(normalizeSeedExpr),
+        undefined,
+        seedStateVar,
+        seedStateType
+      )];
+    };
+    const ensureSignerSeedsForCode = (code: string): string[] => {
+      const patterns = [
+        /transfer_lamports_signed\((\w+),\s*\w+,\s*[^,]+,\s*signer_seeds\)/,
+        /spl_token_transfer_signed\(\w+,\s*\w+,\s*(\w+),\s*[^,]+,\s*signer_seeds\)/,
+        /spl_token_mint_to_signed\(\w+,\s*\w+,\s*(\w+),\s*[^,]+,\s*signer_seeds\)/,
+        /spl_token_burn_signed\(\w+,\s*\w+,\s*(\w+),\s*[^,]+,\s*signer_seeds\)/,
+        /spl_token_close_account_signed\(\w+,\s*\w+,\s*(\w+),\s*signer_seeds\)/,
+      ];
+      for (const pattern of patterns) {
+        const match = code.match(pattern);
+        if (match?.[1]) {
+          return ensureSignerSeedsForAccount(match[1]);
+        }
+      }
+      return [];
+    };
     const transformAccountReferences = (code: string): string => {
       let transformed = code;
       for (const account of instr.accounts) {
         const accountName = snakeCase(account.name);
         const accountInfoVar = resolveAccountInfoVar(accountName);
         transformed = transformed.replace(
-          new RegExp(`(^|[^\\w.*])${accountName}\\.key\\(\\)`, "g"),
-          (_full, prefix: string) => `${prefix}${this.emitAccountKeyExpr(accountInfoVar)}`
+          new RegExp(`\\b${accountName}\\.key\\(\\)`, "g"),
+          () => `${this.emitAccountKeyExpr(accountInfoVar)}`
         );
         transformed = transformed.replace(
-          new RegExp(`(^|[^\\w.*])${accountName}\\.lamports\\(\\)`, "g"),
-          (_full, prefix: string) => `${prefix}${this.emitAccountLamportsExpr(accountInfoVar)}`
+          new RegExp(`\\b${resolveStateVar(accountName)}\\.key\\(\\)`, "g"),
+          () => `${this.emitAccountKeyExpr(accountInfoVar)}`
         );
+        transformed = transformed.replace(
+          new RegExp(`\\b${accountName}\\.lamports\\(\\)`, "g"),
+          () => `${this.emitAccountLamportsExpr(accountInfoVar)}`
+        );
+        const tokenLike = account.accountType.includes("TokenAccount")
+          || account.constraints.some((constraint) => constraint.kind.startsWith("token::") || constraint.kind.startsWith("associated_token::"));
+        if (tokenLike) {
+          transformed = transformed.replace(
+            new RegExp(`(^|[^\\w.])${accountName}\\.amount\\b`, "g"),
+            (_full, prefix: string) => `${prefix}token_account_amount(${accountInfoVar})?`
+          );
+        }
         if (!isGeneratedStateType(account.accountType)) continue;
         transformed = transformed.replace(
           new RegExp(`(^|[^\\w.])${accountName}\\.(\\w+)`, "g"),
@@ -448,6 +548,13 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             const localVar = ensureStateRead(accountName);
             return `${prefix}${localVar}.${snakeCase(field)}`;
           }
+        );
+      }
+      for (const account of instr.accounts) {
+        const accountInfoVar = resolveAccountInfoVar(snakeCase(account.name));
+        transformed = transformed.replace(
+          new RegExp(`(^|[^\\w.*])${accountInfoVar}\\.key\\(\\)(?!\\.as_ref\\(\\))`, "g"),
+          (_full, prefix: string) => `${prefix}${this.emitAccountKeyExpr(accountInfoVar)}`
         );
       }
       transformed = transformed.replace(/\*\*(\w+)\.key\(\)/g, "*$1.key()");
@@ -468,9 +575,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       };
 
       replaceCpi(
-        /(?:anchor_spl::)?token::transfer\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::transfer\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (from, to, authority, signerSeeds, amount) =>
-          `spl_token_transfer_signed(${snakeCase(from)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${signerSeeds})?;`
+          `spl_token_transfer_signed(${snakeCase(from)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
       replaceCpi(
         /(?:anchor_spl::)?token::transfer\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
@@ -478,9 +585,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           `spl_token_transfer(${snakeCase(from)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
       );
       replaceCpi(
-        /(?:anchor_spl::)?token::mint_to\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::mint_to\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (mint, to, authority, signerSeeds, amount) =>
-          `spl_token_mint_to_signed(${snakeCase(mint)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${signerSeeds})?;`
+          `spl_token_mint_to_signed(${snakeCase(mint)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
       replaceCpi(
         /(?:anchor_spl::)?token::mint_to\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
@@ -488,9 +595,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           `spl_token_mint_to(${snakeCase(mint)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
       );
       replaceCpi(
-        /(?:anchor_spl::)?token::burn\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::burn\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (mint, from, authority, signerSeeds, amount) =>
-          `spl_token_burn_signed(${snakeCase(from)}, ${snakeCase(mint)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${signerSeeds})?;`
+          `spl_token_burn_signed(${snakeCase(from)}, ${snakeCase(mint)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
       replaceCpi(
         /(?:anchor_spl::)?token::burn\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
@@ -498,9 +605,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           `spl_token_burn(${snakeCase(from)}, ${snakeCase(mint)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
       );
       replaceCpi(
-        /(?:anchor_spl::)?token::close_account\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*\)\?;/g,
+        /(?:anchor_spl::)?token::close_account\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*\)\?;/g,
         (account, destination, authority, signerSeeds) =>
-          `spl_token_close_account_signed(${snakeCase(account)}, ${snakeCase(destination)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${signerSeeds})?;`
+          `spl_token_close_account_signed(${snakeCase(account)}, ${snakeCase(destination)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
       replaceCpi(
         /(?:anchor_spl::)?token::close_account\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*\)\?;/g,
@@ -508,9 +615,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           `spl_token_close_account(${snakeCase(account)}, ${snakeCase(destination)}, ${resolveAccountInfoVar(snakeCase(authority))})?;`
       );
       replaceCpi(
-        /(?:anchor_lang::)?system_program::transfer\(\s*CpiContext::new_with_signer\(\s*[\s\S]*?\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*\},\s*(\w+)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        /(?:anchor_lang::)?system_program::transfer\(\s*CpiContext::new_with_signer\(\s*[\s\S]*?\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (from, to, signerSeeds, amount) =>
-          `transfer_lamports_signed(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)}, ${signerSeeds})?;`
+          `transfer_lamports_signed(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
       replaceCpi(
         /(?:anchor_lang::)?system_program::transfer\(\s*CpiContext::new\(\s*[\s\S]*?\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
@@ -534,8 +641,8 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           }
           const accountInfoVar = `${localVar}_account`;
           const transformedBody = simplifyPassThroughCode(
-            transformCtxAccountsReferences(
-              transformAccountReferences(transformNestedAnchorCode(body))
+            transformAccountReferences(
+              transformCtxAccountsReferences(transformNestedAnchorCode(body))
             )
           );
           return `if let Some(${accountInfoVar}) = ${normalizedAccount} {\n        let mut ${localVar} = ${typeName}::from_account_info(${accountInfoVar})?;\n${indentBlock(transformedBody.trim(), "        ")}\n        ${typeName}::save(${accountInfoVar}, &${localVar})?;\n    }`;
@@ -563,6 +670,10 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\(\)/g, (_, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name))));
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\b/g, (_, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name))));
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.lamports\(\)/g, (_, name: string) => this.emitAccountLamportsExpr(resolveAccountInfoVar(snakeCase(name))));
+      transformed = transformed.replace(/ctx\.accounts\.(\w+)\.amount\b/g, (_full, name: string) => `token_account_amount(${resolveAccountInfoVar(snakeCase(name))})?`);
+      transformed = transformed.replace(/&mut\s*ctx\.accounts\.(\w+)/g, (_full, name: string) => `&mut ${snakeCase(name)}`);
+      transformed = transformed.replace(/&\s*ctx\.accounts\.(\w+)/g, (_full, name: string) => `&${snakeCase(name)}`);
+      transformed = transformed.replace(/\bctx\.accounts\.(\w+)\b/g, (_full, name: string) => snakeCase(name));
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.(\w+)/g, (full, name: string, field: string) => {
         if (field === "key" || field === "lamports") return full;
         const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === snakeCase(name));
@@ -573,6 +684,44 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         const localVar = ensureStateRead(name);
         return `${localVar}.${snakeCase(field)}`;
       });
+      for (const account of instr.accounts) {
+        const accountName = snakeCase(account.name);
+        const accountInfoVar = resolveAccountInfoVar(accountName);
+        transformed = transformed.replace(
+          new RegExp(`(^|[^\\w.*])${accountName}\\.key\\(\\)(?!\\.as_ref\\(\\))`, "g"),
+          (_full, prefix: string) => `${prefix}${this.emitAccountKeyExpr(accountInfoVar)}`
+        );
+        transformed = transformed.replace(
+          new RegExp(`(^|[^\\w.*])${accountInfoVar}\\.key\\(\\)(?!\\.as_ref\\(\\))`, "g"),
+          (_full, prefix: string) => `${prefix}${this.emitAccountKeyExpr(accountInfoVar)}`
+        );
+      }
+      return transformed;
+    };
+    const helpers = ir.helperFns ?? [];
+    const helperMutRefNames = new Set(
+      helpers.flatMap((helper) => {
+        const code = helper.rawCode ?? "";
+        const fnName = helper.name;
+        if (!fnName) return [];
+        const match = code.match(
+          new RegExp(`fn\\s+${fnName}\\s*\\(\\s*(\\w+)\\s*:\\s*&mut\\s*(?:Account<)?(\\w+)`)
+        );
+        if (!match?.[1] || !match?.[2]) return [];
+        return isGeneratedStateType(match[2]) ? [fnName] : [];
+      })
+    );
+    const transformHelperCalls = (code: string): string => {
+      let transformed = code;
+      for (const helperName of helperMutRefNames) {
+        for (const accountName of stateAccountNames) {
+          const stateVar = resolveStateVar(accountName);
+          transformed = transformed.replace(
+            new RegExp(`\\b${helperName}\\(\\s*${stateVar}(\\s*,)`, "g"),
+            `${helperName}(&mut ${stateVar}$1`
+          );
+        }
+      }
       return transformed;
     };
     const bodyRequireConditions = new Set(
@@ -683,10 +832,15 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
 
           const { prelude, code: bumpAdjustedRawCode } = replaceBumpRefs(rawCode);
           const transformedRawCode = simplifyPassThroughCode(
-            transformCtxAccountsReferences(transformAccountReferences(transformNestedAnchorCode(bumpAdjustedRawCode)))
+            transformHelperCalls(
+              transformAccountReferences(transformCtxAccountsReferences(transformNestedAnchorCode(bumpAdjustedRawCode)))
+            )
           );
           for (const preludeLine of prelude) {
             lines.push(preludeLine);
+          }
+          for (const signerSeedsPrelude of ensureSignerSeedsForCode(transformedRawCode)) {
+            lines.push(signerSeedsPrelude);
           }
 
           // Don't add extra semicolons if the code already ends with one, with }, or with )
@@ -765,6 +919,8 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           // State field assignments are largely pass-through since they're just Rust
           // but we need to adapt ctx.accounts and ctx.bumps references
           let value = transformCtxAccountsReferences(stmt.value);
+          value = transformAccountReferences(value);
+          value = transformHelperCalls(value);
           // Replace ctx.bumps.X with bump derivation call
           if (value.includes("ctx.bumps.")) {
             const bumpAccount = value.match(/ctx\.bumps\.(\w+)/)?.[1] ?? stmt.account;
@@ -808,6 +964,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         case "cpi_system_transfer": {
           this.transformedCount++;
           this.details.push(`Transformed: system_program::transfer(${stmt.from} → ${stmt.to})`);
+          if (stmt.signerSeeds) {
+            for (const preludeLine of ensureSignerSeedsForAccount(stmt.from)) {
+              lines.push(preludeLine);
+            }
+          }
           lines.push(this.emitSystemTransfer(
             snakeCase(stmt.from), snakeCase(stmt.to),
             this.transformAmountExpr(stmt.amount), stmt.signerSeeds
@@ -819,6 +980,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         case "cpi_spl_transfer": {
           this.transformedCount++;
           this.details.push(`Transformed: token::transfer(${stmt.from} → ${stmt.to})`);
+          if (stmt.signerSeeds) {
+            for (const preludeLine of ensureSignerSeedsForAccount(stmt.authority)) {
+              lines.push(preludeLine);
+            }
+          }
           const authority = stmt.signerSeeds
             ? resolveAccountInfoVar(snakeCase(stmt.authority))
             : snakeCase(stmt.authority);
@@ -833,6 +999,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: CPI SPL mint_to ──
         case "cpi_spl_mint_to": {
           this.transformedCount++;
+          if (stmt.signerSeeds) {
+            for (const preludeLine of ensureSignerSeedsForAccount(stmt.authority)) {
+              lines.push(preludeLine);
+            }
+          }
           const authority = stmt.signerSeeds
             ? resolveAccountInfoVar(snakeCase(stmt.authority))
             : snakeCase(stmt.authority);
@@ -847,6 +1018,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: CPI SPL burn ──
         case "cpi_spl_burn": {
           this.transformedCount++;
+          if (stmt.signerSeeds) {
+            for (const preludeLine of ensureSignerSeedsForAccount(stmt.authority)) {
+              lines.push(preludeLine);
+            }
+          }
           const authority = stmt.signerSeeds
             ? resolveAccountInfoVar(snakeCase(stmt.authority))
             : snakeCase(stmt.authority);
@@ -861,6 +1037,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: CPI SPL close_account ──
         case "cpi_spl_close_account": {
           this.transformedCount++;
+          if (stmt.signerSeeds) {
+            for (const preludeLine of ensureSignerSeedsForAccount(stmt.authority)) {
+              lines.push(preludeLine);
+            }
+          }
           const authority = stmt.signerSeeds
             ? resolveAccountInfoVar(snakeCase(stmt.authority))
             : snakeCase(stmt.authority);
@@ -900,10 +1081,27 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         case "pda_signer_seeds": {
           this.transformedCount++;
           this.details.push(`Transformed: PDA signer seeds for '${stmt.account}'`);
-          const accountName = snakeCase(stmt.account);
-          const accRef = instr.accounts.find(a => snakeCase(a.name) === accountName);
+          let accountName = snakeCase(stmt.account);
+          let accRef = instr.accounts.find(a => snakeCase(a.name) === accountName);
           let seedStateAccount: string | undefined;
+          const bumpPrelude: string[] = [];
+          const seenBumps = new Set<string>();
           for (const seed of stmt.seeds) {
+            const ctxBumpMatch = seed.match(/ctx\.bumps\.(\w+)/)?.[1];
+            if (ctxBumpMatch) {
+              const normalizedBump = snakeCase(ctxBumpMatch);
+              if (!seenBumps.has(normalizedBump)) {
+                seenBumps.add(normalizedBump);
+                bumpPrelude.push(normalizedBumpLine(normalizedBump));
+              }
+              seedStateAccount = normalizedBump;
+              continue;
+            }
+            const ctxDirectMatch = seed.match(/ctx\.accounts\.(\w+)\.\w+/)?.[1];
+            if (ctxDirectMatch) {
+              seedStateAccount = snakeCase(ctxDirectMatch);
+              break;
+            }
             const directMatch = seed.match(/^(\w+)\.\w+/)?.[1];
             if (directMatch && stateVars.has(directMatch)) {
               seedStateAccount = directMatch;
@@ -915,14 +1113,25 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
               break;
             }
           }
-          const seedStateVar = seedStateAccount ? stateVars.get(seedStateAccount) : stateVars.get(accountName);
+          if (!accRef && seedStateAccount) {
+            accountName = snakeCase(seedStateAccount);
+            accRef = instr.accounts.find(a => snakeCase(a.name) === accountName);
+          }
+          for (const preludeLine of bumpPrelude) {
+            lines.push(preludeLine);
+          }
+          const seedStateVar = seedStateAccount
+            ? ensureStateRead(seedStateAccount)
+            : stateVars.get(accountName);
           const seedStateType = seedStateAccount
             ? instr.accounts.find(a => snakeCase(a.name) === seedStateAccount)?.accountType
             : accRef?.accountType;
           lines.push(this.emitPdaSignerSeeds(
             accountName,
             resolveAccountInfoVar(accountName),
-            stmt.seeds,
+            stmt.seeds
+              .map((seed) => seed.replace(/ctx\.bumps\.(\w+)/g, (_full, bumpName: string) => `bump_${snakeCase(bumpName)}`))
+              .map(normalizeSeedExpr),
             stmt.bumpField,
             seedStateVar,
             seedStateType
@@ -1096,6 +1305,9 @@ ${arms}
 
   protected emitCustomTypes(ir: SolanaIR): string {
     return ir.types.map((typeDef) => {
+      if (typeDef.rawCode && typeDef.kind === "enum" && /\w+\s*\([^)]*\)/.test(typeDef.rawCode)) {
+        return typeDef.rawCode;
+      }
       if (typeDef.kind === "enum") {
         const variants = (typeDef.variants ?? []).map((variant, index) => `    ${variant} = ${index},`).join("\n");
         const arms = (typeDef.variants ?? []).map((variant, index) => `            ${index} => Ok(Self::${variant}),`).join("\n");
@@ -1136,6 +1348,15 @@ ${fields}
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]`;
+  }
+
+  protected transformHelperCode(code: string): string {
+    let next = code;
+    next = next.replace(/&mut\s+Account\s*<\s*(?:'?\w+\s*,\s*)?([\w:]+)\s*>/g, "&mut $1");
+    next = next.replace(/&\s*Account\s*<\s*(?:'?\w+\s*,\s*)?([\w:]+)\s*>/g, "&$1");
+    next = next.replace(/->\s*Result<\s*\(\s*\)\s*>/g, "-> ProgramResult");
+    next = next.replace(/->\s*Result<\s*([^>]+)\s*>/g, "-> Result<$1, ProgramError>");
+    return next;
   }
 }
 
@@ -1379,7 +1600,15 @@ export function irNeedsTokenAmountHelper(ir: SolanaIR): boolean {
         case "cpi_spl_burn":
           return /\.amount$/.test(stmt.amount);
         case "pass_through":
-          return /token::(?:transfer|mint_to|burn)\(/.test(stmt.code) && /\.amount\b/.test(stmt.code);
+          if (/token::(?:transfer|mint_to|burn)\(/.test(stmt.code) && /\.amount\b/.test(stmt.code)) {
+            return true;
+          }
+          return instr.accounts.some((account) => {
+            const accountName = snakeCase(account.name);
+            const tokenLike = account.accountType.includes("TokenAccount")
+              || account.constraints.some((constraint) => constraint.kind.startsWith("token::") || constraint.kind.startsWith("associated_token::"));
+            return tokenLike && new RegExp(`\\b${accountName}\\.amount\\b`).test(stmt.code);
+          });
         default:
           return false;
       }

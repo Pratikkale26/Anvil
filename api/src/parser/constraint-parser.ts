@@ -48,7 +48,7 @@ export function parseConstraints(attrBody: string): Constraint[] {
       value = token.slice(eqIdx + 1).trim();
     }
 
-    if (key === "constraint" && value) {
+    if (value) {
       value = value.replace(/\s*@\s*[\w:]+(?:::\w+)*/g, "").trim();
     }
 

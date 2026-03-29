@@ -68,6 +68,25 @@ export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
       continue;
     }
 
+    if (
+      pendingSeeds &&
+      (classified.stmt.kind === "cpi_system_transfer"
+        || classified.stmt.kind === "cpi_spl_transfer"
+        || classified.stmt.kind === "cpi_spl_mint_to"
+        || classified.stmt.kind === "cpi_spl_burn"
+        || classified.stmt.kind === "cpi_spl_close_account")
+      && classified.stmt.signerSeeds
+    ) {
+      statements.push({
+        kind: "pda_signer_seeds",
+        account: detectSeedAccount(pendingSeeds.seeds),
+        seeds: pendingSeeds.seeds,
+        bumpField: pendingSeeds.bumpField,
+        rawCode: pendingSeeds.rawCode,
+      });
+      pendingSeeds = null;
+    }
+
     statements.push(classified.stmt);
   }
 
@@ -149,51 +168,6 @@ function classifyLetDeclaration(
     }
   }
 
-  // ── ctx.accounts.X access ──
-  if (valueNode) {
-    const accountName = findDirectCtxAccountsAccess(valueNode);
-    if (accountName) {
-      const isMut = text.includes("&mut") || (patternNode?.type === "mut_pattern");
-      return {
-        stmt: {
-          kind: "state_read",
-          account: accountName,
-          localVar,
-          mutable: isMut,
-          accountType: "", // enriched by anchor-parser after extracting accounts struct
-        },
-      };
-    }
-
-    const directTextMatch = valueNode.text.match(/^&(?:mut\s+)?ctx\.accounts\.(\w+)$/);
-    if (directTextMatch?.[1]) {
-      const isMut = valueNode.text.startsWith("&mut ");
-      return {
-        stmt: {
-          kind: "state_read",
-          account: directTextMatch[1],
-          localVar,
-          mutable: isMut,
-          accountType: "",
-        },
-      };
-    }
-  }
-
-  // ── ctx.bumps.X access ──
-  if (valueNode) {
-    const bumpName = findCtxBumpsAccess(valueNode);
-    if (bumpName) {
-      return {
-        stmt: {
-          kind: "bumps_access",
-          account: bumpName,
-          localVar,
-        },
-      };
-    }
-  }
-
   // ── Clock::get() sysvar ──
   if (text.includes("Clock::get()")) {
     return {
@@ -241,6 +215,51 @@ function classifyLetDeclaration(
       },
       _signerSeedsConsumed: true,
     };
+  }
+
+  // ── ctx.accounts.X access ──
+  if (valueNode) {
+    const accountName = findDirectCtxAccountsAccess(valueNode);
+    if (accountName) {
+      const isMut = text.includes("&mut") || (patternNode?.type === "mut_pattern");
+      return {
+        stmt: {
+          kind: "state_read",
+          account: accountName,
+          localVar,
+          mutable: isMut,
+          accountType: "", // enriched by anchor-parser after extracting accounts struct
+        },
+      };
+    }
+
+    const directTextMatch = valueNode.text.match(/^&(?:mut\s+)?ctx\.accounts\.(\w+)$/);
+    if (directTextMatch?.[1]) {
+      const isMut = valueNode.text.startsWith("&mut ");
+      return {
+        stmt: {
+          kind: "state_read",
+          account: directTextMatch[1],
+          localVar,
+          mutable: isMut,
+          accountType: "",
+        },
+      };
+    }
+  }
+
+  // ── ctx.bumps.X access ──
+  if (valueNode) {
+    const bumpName = findCtxBumpsAccess(valueNode);
+    if (bumpName) {
+      return {
+        stmt: {
+          kind: "bumps_access",
+          account: bumpName,
+          localVar,
+        },
+      };
+    }
   }
 
   // ── Default: pass through ──
@@ -460,14 +479,22 @@ function detectSeedAccount(seeds: string[]): string {
   }
 
   for (const seed of seeds) {
+    const ctxBumpMatch = seed.match(/ctx\.accounts\.(\w+)\.\w+/);
+    if (ctxBumpMatch?.[1]) return ctxBumpMatch[1];
+    // Also check inside &[ctx.accounts.account.bump]
+    const ctxArrayBumpMatch = seed.match(/&\[ctx\.accounts\.(\w+)\.\w+/);
+    if (ctxArrayBumpMatch?.[1]) return ctxArrayBumpMatch[1];
+    // Also check inside &[account.bump]
+    const bumpMatch = seed.match(/&\[(\w+)\.\w+/);
+    if (bumpMatch?.[1]) return bumpMatch[1];
+  }
+
+  for (const seed of seeds) {
     // Look for pattern: accountName.field
     const match = seed.match(/^(\w+)\.\w+/);
     if (match?.[1] && !seed.startsWith("b\"") && !seed.startsWith("b'") && !seed.startsWith("&[")) {
       return match[1];
     }
-    // Also check inside &[accountName.bump]
-    const bumpMatch = seed.match(/&\[(\w+)\.\w+/);
-    if (bumpMatch?.[1]) return bumpMatch[1];
   }
   return "unknown";
 }
@@ -480,6 +507,10 @@ function extractPatternName(patternNode: SyntaxNode | null): string {
   switch (patternNode.type) {
     case "identifier":
       return patternNode.text;
+    case "typed_pattern": {
+      const inner = patternNode.childForFieldName("pattern") ?? patternNode.namedChild(0);
+      return extractPatternName(inner);
+    }
     case "mut_pattern": {
       // mut x → extract x
       const inner = patternNode.namedChild(0);

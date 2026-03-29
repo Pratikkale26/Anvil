@@ -581,7 +581,7 @@ function parseCustomType(
 
   if (kind === "struct") {
     const fields = parseStructFields(node);
-    return { name, kind: "struct", fields };
+    return { name, kind: "struct", fields, rawCode: node.text };
   }
 
   // Enum variants
@@ -598,7 +598,7 @@ function parseCustomType(
     }
   }
 
-  return { name, kind: "enum", variants };
+  return { name, kind: "enum", variants, rawCode: node.text };
 }
 
 // ─── Struct fields parsing ──────────────────────────────────────────────────

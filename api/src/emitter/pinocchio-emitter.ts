@@ -211,17 +211,9 @@ ${arms}
     stateVar?: string,
     typeName?: string,
   ): string {
-    // Detect the account name used as prefix in seed expressions
-    let statePrefix = account;
-    for (const seed of seeds) {
-      const prefixMatch = seed.match(/^(\w+)\.\w+/);
-      if (prefixMatch?.[1] && !seed.startsWith('b"') && !seed.startsWith("&[")) {
-        statePrefix = prefixMatch[1];
-        break;
-      }
-    }
-
     const dataVar = stateVar || `${account}_data`;
+    const rewritePrefix = stateVar ? account : undefined;
+    const shouldReadState = !!typeName && !!this.currentIr?.accounts.find((acc) => acc.name === typeName);
 
     // Transform seed expressions from Anchor-style to Pinocchio-style
     const prelude: string[] = [];
@@ -243,17 +235,28 @@ ${arms}
         prelude.push(`    let ${varName} = ${asRefMatch[1].trim()}.to_le_bytes();`);
         return `${varName}.as_ref()`;
       }
-      // &[prefix.bump] → &[data_var.bump]
-      if (seed.startsWith("&[")) {
-        return seed.replace(new RegExp(`&\\[${statePrefix}\\.`), `&[${dataVar}.`);
+      const keyAsRefMatch = seed.match(/^(\w+)\.key\(\)\.as_ref\(\)$/);
+      if (keyAsRefMatch?.[1]) {
+        const name = keyAsRefMatch[1];
+        if (name.endsWith("_account")) return `${name}.key().as_ref()`;
+        if (name === account) return `${accountInfoVar}.key().as_ref()`;
+        if (stateVar && name === stateVar) return `${accountInfoVar}.key().as_ref()`;
+        return `${name}_account.key().as_ref()`;
       }
-      // prefix.field.method() → data_var.field.method()
-      return seed.replace(new RegExp(`^${statePrefix}\\.`), `${dataVar}.`);
+      // &[account.bump] → &[data_var.bump]
+      if (rewritePrefix && seed.startsWith("&[")) {
+        return seed.replace(new RegExp(`&\\[${rewritePrefix}\\.`), `&[${dataVar}.`);
+      }
+      // account.field.method() → data_var.field.method()
+      if (rewritePrefix) {
+        return seed.replace(new RegExp(`^${rewritePrefix}\\.`), `${dataVar}.`);
+      }
+      return seed;
     });
 
     const seedsStr = transformedSeeds.join(",\n            ");
     const resolvedTypeName = typeName || account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
-    const maybeRead = stateVar ? "" : `    let ${dataVar} = ${resolvedTypeName}::from_account_info(${accountInfoVar})?;\n`;
+    const maybeRead = stateVar || !shouldReadState ? "" : `    let ${dataVar} = ${resolvedTypeName}::from_account_info(${accountInfoVar})?;\n`;
     return `    // PDA signer seeds for '${account}'
 ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds = &[
             ${seedsStr},
@@ -266,6 +269,13 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override emitMsg(message: string): string {
+    const literalMatch = message.match(/^"([^"\\]|\\.)*"/);
+    if (literalMatch?.[0]) {
+      const literal = literalMatch[0];
+      if (literal !== message.trim()) {
+        return `    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio\n    pinocchio::log::sol_log(${literal});`;
+      }
+    }
     const commaIdx = message.indexOf(",");
     if (commaIdx !== -1) {
       const literal = message.slice(0, commaIdx).trim();
