@@ -253,8 +253,8 @@ export default function Home() {
             >
               Workbench <ArrowRight size={13} />
             </Link>
-            <a href="https://github.com" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.textSub, padding: "7px 16px", borderRadius: 100, border: `1px solid ${C.cardBorder}`, textDecoration: "none" }}>
-              GitHub <GitBranch size={13} />
+            <a href="https://x.com/pratikkale26" target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.textSub, padding: "7px 16px", borderRadius: 100, border: `1px solid ${C.cardBorder}`, textDecoration: "none", transition: "all 0.2s" }}>
+              𝕏 (follow) ↗
             </a>
           </div>
         </nav>
