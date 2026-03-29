@@ -522,7 +522,7 @@ export default function Home() {
 
         {/* Readiness */}
         <section style={{ paddingBottom: 80 }}>
-          <Label>GRANT READINESS</Label>
+          <Label>READINESS</Label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 20 }}>
             <Panel>
               <div style={{ padding: 28 }}>
