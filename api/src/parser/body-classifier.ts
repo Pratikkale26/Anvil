@@ -479,6 +479,8 @@ function detectSeedAccount(seeds: string[]): string {
   }
 
   for (const seed of seeds) {
+    const ctxBumpsMatch = seed.match(/ctx\.bumps\.(\w+)/);
+    if (ctxBumpsMatch?.[1]) return ctxBumpsMatch[1];
     const ctxBumpMatch = seed.match(/ctx\.accounts\.(\w+)\.\w+/);
     if (ctxBumpMatch?.[1]) return ctxBumpMatch[1];
     // Also check inside &[ctx.accounts.account.bump]

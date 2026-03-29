@@ -487,9 +487,14 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       }
       if (!accRef?.isPda) return [];
       const canonical = snakeCase(accRef.name);
+      if (accountsWithSignerSeeds.has(canonical)) {
+        accountsWithSignerSeeds.add(normalized);
+        return [];
+      }
       const seedStateVar = stateVars.get(canonical);
       const seedStateType = accRef.accountType;
       accountsWithSignerSeeds.add(canonical);
+      accountsWithSignerSeeds.add(normalized);
       return [this.emitPdaSignerSeeds(
         canonical,
         resolveAccountInfoVar(canonical),
@@ -559,6 +564,31 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       }
       transformed = transformed.replace(/\*\*(\w+)\.key\(\)/g, "*$1.key()");
       transformed = transformed.replace(/\*\*(\w+)\.key\b/g, "$1.key");
+      return transformed;
+    };
+    const normalizeKeyValueUsages = (code: string): string => {
+      let transformed = code;
+      for (const account of instr.accounts) {
+        const accountName = snakeCase(account.name);
+        const accountInfoVar = resolveAccountInfoVar(accountName);
+        const keyExpr = this.emitAccountKeyExpr(accountInfoVar);
+        transformed = transformed.replace(
+          new RegExp(`([=,(]\\s*)${accountName}\\.key\\(\\)(?!\\.as_ref\\(\\))`, "g"),
+          `$1${keyExpr}`
+        );
+        transformed = transformed.replace(
+          new RegExp(`(^|\\s)${accountName}\\.key\\(\\)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
+          (_full, prefix: string) => `${prefix}${keyExpr}`
+        );
+        transformed = transformed.replace(
+          new RegExp(`([=,(]\\s*)${accountInfoVar}\\.key\\(\\)(?!\\.as_ref\\(\\))`, "g"),
+          `$1${keyExpr}`
+        );
+        transformed = transformed.replace(
+          new RegExp(`(^|\\s)${accountInfoVar}\\.key\\(\\)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
+          (_full, prefix: string) => `${prefix}${keyExpr}`
+        );
+      }
       return transformed;
     };
     const transformNestedAnchorCode = (code: string): string => {
@@ -641,8 +671,10 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           }
           const accountInfoVar = `${localVar}_account`;
           const transformedBody = simplifyPassThroughCode(
-            transformAccountReferences(
-              transformCtxAccountsReferences(transformNestedAnchorCode(body))
+            normalizeKeyValueUsages(
+              transformAccountReferences(
+                transformCtxAccountsReferences(transformNestedAnchorCode(body))
+              )
             )
           );
           return `if let Some(${accountInfoVar}) = ${normalizedAccount} {\n        let mut ${localVar} = ${typeName}::from_account_info(${accountInfoVar})?;\n${indentBlock(transformedBody.trim(), "        ")}\n        ${typeName}::save(${accountInfoVar}, &${localVar})?;\n    }`;
@@ -727,17 +759,17 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     const bodyRequireConditions = new Set(
       statements.flatMap((stmt) => {
         if (stmt.kind === "require") {
-          return [normalizeConditionKey(transformAccountReferences(transformCtxAccountsReferences(stmt.condition)))];
+          return [normalizeConditionKey(normalizeKeyValueUsages(transformAccountReferences(transformCtxAccountsReferences(stmt.condition))))];
         }
         if (stmt.kind === "pass_through") {
           const raw = stmt.code.trim();
           const requireMatch = raw.match(/^require!\(([\s\S]+),\s*[\w:]+(?:::\w+)*\s*\);?$/);
           if (requireMatch?.[1]) {
-            return [normalizeConditionKey(transformAccountReferences(transformCtxAccountsReferences(requireMatch[1].trim())))];
+            return [normalizeConditionKey(normalizeKeyValueUsages(transformAccountReferences(transformCtxAccountsReferences(requireMatch[1].trim()))))];
           }
           const guardMatch = raw.match(/^if\s+!\(([\s\S]+)\)\s*\{\s*return Err\([\s\S]+\);\s*\}$/);
           if (guardMatch?.[1]) {
-            return [normalizeConditionKey(transformAccountReferences(transformCtxAccountsReferences(guardMatch[1].trim())))];
+            return [normalizeConditionKey(normalizeKeyValueUsages(transformAccountReferences(transformCtxAccountsReferences(guardMatch[1].trim()))))];
           }
         }
         return [];
@@ -746,10 +778,19 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     const emitAccountConstraintChecks = (): void => {
       for (const account of instr.accounts) {
         for (const constraint of account.constraints) {
-          if (constraint.kind !== "constraint" || !constraint.value) continue;
-          const condition = transformAccountReferences(
-            transformCtxAccountsReferences(stripAnchorConstraintError(constraint.value))
-          );
+          if (!constraint.value) continue;
+          let condition: string | null = null;
+          if (constraint.kind === "constraint") {
+            condition = transformAccountReferences(
+              transformCtxAccountsReferences(stripAnchorConstraintError(constraint.value))
+            );
+          } else if (constraint.kind === "address") {
+            condition = `${this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(account.name)))} == ${transformAccountReferences(
+              transformCtxAccountsReferences(stripAnchorConstraintError(constraint.value))
+            )}`;
+          }
+          if (!condition) continue;
+          condition = normalizeKeyValueUsages(condition);
           if (bodyRequireConditions.has(normalizeConditionKey(condition))) {
             continue;
           }
@@ -825,7 +866,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           const requireMatch = rawCode.match(/^require!\(([\s\S]+),\s*([\w:]+(?:::\w+)*)\s*\);?$/);
           if (requireMatch?.[1] && requireMatch[2]) {
             this.transformedCount++;
-            const condition = transformCtxAccountsReferences(requireMatch[1].trim());
+            const condition = normalizeKeyValueUsages(transformCtxAccountsReferences(requireMatch[1].trim()));
             lines.push(this.emitRequire(condition, requireMatch[2]));
             break;
           }
@@ -833,7 +874,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           const { prelude, code: bumpAdjustedRawCode } = replaceBumpRefs(rawCode);
           const transformedRawCode = simplifyPassThroughCode(
             transformHelperCalls(
-              transformAccountReferences(transformCtxAccountsReferences(transformNestedAnchorCode(bumpAdjustedRawCode)))
+              normalizeKeyValueUsages(
+                transformAccountReferences(transformCtxAccountsReferences(transformNestedAnchorCode(bumpAdjustedRawCode)))
+              )
             )
           );
           for (const preludeLine of prelude) {
@@ -919,7 +962,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           // State field assignments are largely pass-through since they're just Rust
           // but we need to adapt ctx.accounts and ctx.bumps references
           let value = transformCtxAccountsReferences(stmt.value);
-          value = transformAccountReferences(value);
+          value = normalizeKeyValueUsages(transformAccountReferences(value));
           value = transformHelperCalls(value);
           // Replace ctx.bumps.X with bump derivation call
           if (value.includes("ctx.bumps.")) {
@@ -941,7 +984,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: require macro ──
         case "require": {
           this.transformedCount++;
-          const condition = transformAccountReferences(transformCtxAccountsReferences(stmt.condition));
+          const condition = normalizeKeyValueUsages(transformAccountReferences(transformCtxAccountsReferences(stmt.condition)));
           lines.push(this.emitRequire(condition, stmt.error));
           break;
         }
@@ -1120,6 +1163,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           for (const preludeLine of bumpPrelude) {
             lines.push(preludeLine);
           }
+          const emittedSeeds = accRef?.isPda && bumpPrelude.length > 0
+            ? [...accRef.pdaSeeds.map(normalizeSeedExpr), `&[bump_${accountName}]`]
+            : stmt.seeds
+                .map((seed) => seed.replace(/ctx\.bumps\.(\w+)/g, (_full, bumpName: string) => `bump_${snakeCase(bumpName)}`))
+                .map(normalizeSeedExpr);
           const seedStateVar = seedStateAccount
             ? ensureStateRead(seedStateAccount)
             : stateVars.get(accountName);
@@ -1129,9 +1177,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           lines.push(this.emitPdaSignerSeeds(
             accountName,
             resolveAccountInfoVar(accountName),
-            stmt.seeds
-              .map((seed) => seed.replace(/ctx\.bumps\.(\w+)/g, (_full, bumpName: string) => `bump_${snakeCase(bumpName)}`))
-              .map(normalizeSeedExpr),
+            emittedSeeds,
             stmt.bumpField,
             seedStateVar,
             seedStateType
