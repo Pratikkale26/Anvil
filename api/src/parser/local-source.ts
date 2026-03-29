@@ -1,10 +1,13 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join, resolve } from "path";
+import { collectProjectFilesFromEntry, getProjectEntryPath, type ProjectFile } from "./project-source.js";
 
 export interface LocalSourceResolution {
   source: string;
   resolvedPath: string;
   candidates: string[];
+  projectFiles?: ProjectFile[];
+  projectEntryPath?: string;
 }
 
 function isRustFile(path: string): boolean {
@@ -68,6 +71,8 @@ export function resolveLocalSource(inputPath: string): LocalSourceResolution {
       source: readFileSync(resolvedPath, "utf8"),
       resolvedPath,
       candidates: [resolvedPath],
+      projectFiles: collectProjectFilesFromEntry(resolvedPath),
+      projectEntryPath: getProjectEntryPath(resolvedPath),
     };
   }
 
@@ -88,5 +93,7 @@ export function resolveLocalSource(inputPath: string): LocalSourceResolution {
     source: readFileSync(selected, "utf8"),
     resolvedPath: selected,
     candidates,
+    projectFiles: collectProjectFilesFromEntry(selected),
+    projectEntryPath: getProjectEntryPath(selected),
   };
 }

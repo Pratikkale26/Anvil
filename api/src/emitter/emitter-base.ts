@@ -25,6 +25,7 @@ import type {
 
 export abstract class BaseEmitter {
   abstract readonly frameworkName: string;
+  protected currentIr: SolanaIR | null = null;
 
   /** Warnings accumulated during emission */
   protected warnings: string[] = [];
@@ -109,6 +110,7 @@ export abstract class BaseEmitter {
    * Returns multi-file output + combined single file.
    */
   emit(ir: SolanaIR): EmitterOutput {
+    this.currentIr = ir;
     this.warnings = [];
     this.transformedCount = 0;
     this.passedThroughCount = 0;
@@ -930,6 +932,25 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     }
     let ${name} = ${this.emitPubkeyDeserialize(start, end)};`;
       default:
+        if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(arg.type)) {
+          return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: ${arg.type} = data[${start}..${end}].try_into().unwrap();`;
+        }
+        const typeDef = this.currentIr?.types.find((type) => type.name === arg.type);
+        if (typeDef?.kind === "enum" && typeDef.variants?.length) {
+          const arms = typeDef.variants
+            .map((variant, index) => `        ${index} => ${arg.type}::${variant},`)
+            .join("\n");
+          return `    if data.len() < ${end} {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let ${name}: ${arg.type} = match data[${start}] {
+${arms}
+        _ => return Err(ProgramError::InvalidInstructionData),
+    };`;
+        }
         return `    // TODO: parse ${name}: ${arg.type}`;
     }
   }
@@ -986,6 +1007,10 @@ export function typeSize(typeName: string): number {
     i8: 1, i16: 2, i32: 4, i64: 8, i128: 16,
     bool: 1, Pubkey: 32, String: 64, "Vec<u8>": 4,
   };
+  const fixedBytes = typeName.match(/^\[\s*u8\s*;\s*(\d+)\s*\]$/);
+  if (fixedBytes?.[1]) {
+    return Number.parseInt(fixedBytes[1], 10);
+  }
   return sizes[typeName] ?? 32;
 }
 

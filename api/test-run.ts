@@ -3,6 +3,7 @@ import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { parseAnchor } from "./src/parser/anchor-parser.js";
 import { resolveLocalSource } from "./src/parser/local-source.js";
+import { buildProjectSource } from "./src/parser/project-source.js";
 import { emitPinocchio, emitPinocchioFull } from "./src/emitter/pinocchio-emitter.js";
 import { emitQuasar, emitQuasarFull } from "./src/emitter/quasar-emitter.js";
 import { emitNative, emitNativeFull } from "./src/emitter/native-emitter.js";
@@ -56,18 +57,26 @@ async function run() {
     if (explicitProjectPath) {
       const resolved = resolveLocalSource(explicitProjectPath);
       sourcePath = resolved.resolvedPath;
-      source = resolved.source;
+      source = resolved.projectFiles?.length && resolved.projectEntryPath
+        ? buildProjectSource(resolved.projectEntryPath, resolved.projectFiles)
+        : resolved.source;
       label = labelFromPath(sourcePath);
       console.log(`1. Parsing project directory: ${explicitProjectPath}`);
       if (resolved.candidates.length > 1) {
         console.log(`   Found ${resolved.candidates.length} candidate entry files. Using: ${resolved.resolvedPath}`);
       }
     } else if (explicitSourcePath && existsSync(explicitSourcePath)) {
-      sourcePath = explicitSourcePath;
-      source = readFileSync(sourcePath, "utf-8");
+      const resolved = resolveLocalSource(explicitSourcePath);
+      sourcePath = resolved.resolvedPath;
+      source = resolved.projectFiles?.length && resolved.projectEntryPath
+        ? buildProjectSource(resolved.projectEntryPath, resolved.projectFiles)
+        : resolved.source;
     } else if (existsSync(demoSourcePath)) {
-      sourcePath = demoSourcePath;
-      source = readFileSync(sourcePath, "utf-8");
+      const resolved = resolveLocalSource(demoSourcePath);
+      sourcePath = resolved.resolvedPath;
+      source = resolved.projectFiles?.length && resolved.projectEntryPath
+        ? buildProjectSource(resolved.projectEntryPath, resolved.projectFiles)
+        : resolved.source;
     }
 
     if (!sourcePath) {

@@ -97,7 +97,7 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
     );
 
     // ── Parse instructions ──
-    const instructions = parseInstructions(topLevel.programModule.node, topLevel.accountsStructs, source);
+    const instructions = parseInstructions(topLevel.programModule.node, topLevel.accountsStructs, topLevel.functionIndex, source);
 
     // ── Parse errors ──
     const errors = topLevel.errorEnums.flatMap((e) => parseErrorEnum(e.node, e.attrs));
@@ -152,8 +152,9 @@ interface TopLevelItems {
   accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[] }[];
   accountDataStructs: { node: SyntaxNode; attrs: SyntaxNode[] }[];
   errorEnums: { node: SyntaxNode; attrs: SyntaxNode[] }[];
-  helperFns: { node: SyntaxNode; attrs: SyntaxNode[] }[];
+  helperFns: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[];
   customTypes: { node: SyntaxNode; attrs: SyntaxNode[]; kind: "struct" | "enum" }[];
+  functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[];
 }
 
 function classifyTopLevel(root: SyntaxNode): TopLevelItems {
@@ -164,68 +165,76 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
     errorEnums: [],
     helperFns: [],
     customTypes: [],
+    functionIndex: [],
   };
 
-  let currentAttrs: SyntaxNode[] = [];
+  function walk(node: SyntaxNode, modulePath: string[] = [], inProgramModule = false): void {
+    let currentAttrs: SyntaxNode[] = [];
 
-  for (let i = 0; i < root.namedChildCount; i++) {
-    const child = root.namedChild(i);
-    if (!child) continue;
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const child = node.namedChild(i);
+      if (!child) continue;
 
-    // Accumulate attributes
-    if (child.type === "attribute_item") {
-      currentAttrs.push(child);
-      continue;
-    }
+      if (child.type === "attribute_item") {
+        currentAttrs.push(child);
+        continue;
+      }
 
-    const attrs = [...currentAttrs];
-    currentAttrs = [];
+      const attrs = [...currentAttrs];
+      currentAttrs = [];
 
-    switch (child.type) {
-      case "mod_item": {
-        if (hasAttribute(attrs, "program")) {
-          items.programModule = { node: child, attrs };
+      switch (child.type) {
+        case "mod_item": {
+          const modName = extractModuleName(child);
+          const isProgramModule = hasAttribute(attrs, "program");
+          if (isProgramModule) {
+            items.programModule = { node: child, attrs };
+          }
+          const body = child.childForFieldName("body");
+          if (body && modName) {
+            walk(body, [...modulePath, modName], inProgramModule || isProgramModule);
+          }
+          break;
         }
-        break;
-      }
 
-      case "struct_item": {
-        if (hasDeriveAttribute(attrs, "Accounts")) {
-          const name = extractStructName(child);
-          if (name) items.accountsStructs.push({ name, node: child, attrs });
-        } else if (hasAttribute(attrs, "account")) {
-          items.accountDataStructs.push({ node: child, attrs });
-        } else {
-          items.customTypes.push({ node: child, attrs, kind: "struct" });
+        case "struct_item": {
+          if (hasDeriveAttribute(attrs, "Accounts")) {
+            const name = extractStructName(child);
+            if (name) items.accountsStructs.push({ name, node: child, attrs });
+          } else if (hasAttribute(attrs, "account")) {
+            items.accountDataStructs.push({ node: child, attrs });
+          } else {
+            items.customTypes.push({ node: child, attrs, kind: "struct" });
+          }
+          break;
         }
-        break;
-      }
 
-      case "enum_item": {
-        if (hasAttribute(attrs, "error_code")) {
-          items.errorEnums.push({ node: child, attrs });
-        } else {
-          items.customTypes.push({ node: child, attrs, kind: "enum" });
+        case "enum_item": {
+          if (hasAttribute(attrs, "error_code")) {
+            items.errorEnums.push({ node: child, attrs });
+          } else {
+            items.customTypes.push({ node: child, attrs, kind: "enum" });
+          }
+          break;
         }
-        break;
+
+        case "function_item": {
+          const functionName = child.childForFieldName("name")?.text ?? "";
+          items.functionIndex.push({ node: child, attrs, modulePath });
+          if (!inProgramModule && !(functionName === "handler" && modulePath.length > 0)) {
+            items.helperFns.push({ node: child, attrs, modulePath });
+          }
+          break;
+        }
+
+        case "impl_item":
+        case "use_declaration":
+          break;
       }
-
-      case "function_item": {
-        items.helperFns.push({ node: child, attrs });
-        break;
-      }
-
-      case "impl_item":
-        // Skip impl blocks — they're usually for custom types
-        break;
-
-      case "use_declaration":
-        // Imports handled separately
-        break;
-
-      // Skip macro_invocation for declare_id!, etc. — handled separately
     }
   }
+
+  walk(root);
 
   return items;
 }
@@ -242,6 +251,7 @@ function extractModuleName(modNode: SyntaxNode): string {
 function parseInstructions(
   programModNode: SyntaxNode,
   accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[] }[],
+  functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
   source: string,
 ): SolanaIR["instructions"] {
   const body = programModNode.childForFieldName("body");
@@ -260,7 +270,7 @@ function parseInstructions(
     }
 
     if (child.type === "function_item") {
-      const instr = parseInstructionFn(child, accountsStructs, source);
+      const instr = parseInstructionFn(child, accountsStructs, functionIndex, source);
       if (instr) instructions.push(instr);
     }
 
@@ -273,16 +283,30 @@ function parseInstructions(
 function parseInstructionFn(
   fnNode: SyntaxNode,
   accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[] }[],
+  functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
   source: string,
 ): SolanaIR["instructions"][0] | null {
   const fnName = fnNode.childForFieldName("name")?.text;
   if (!fnName) return null;
 
+  let bodyFnNode = fnNode;
+
   // ── Extract parameters ──
   const paramsNode = fnNode.childForFieldName("parameters");
-  const { contextType, args } = paramsNode
+  let { contextType, args } = paramsNode
     ? parseParameters(paramsNode)
     : { contextType: "", args: [] };
+
+  const wrapperTarget = resolveHandlerWrapper(fnNode, functionIndex);
+  if (wrapperTarget) {
+    bodyFnNode = wrapperTarget.node;
+    const wrapperParamsNode = wrapperTarget.node.childForFieldName("parameters");
+    if (wrapperParamsNode) {
+      const parsed = parseParameters(wrapperParamsNode);
+      contextType = parsed.contextType || contextType;
+      args = parsed.args.length > 0 ? parsed.args : args;
+    }
+  }
 
   // ── Resolve accounts from the Context<T> struct ──
   const accountsStruct = accountsStructs.find((s) => s.name === contextType);
@@ -291,7 +315,7 @@ function parseInstructionFn(
     : [];
 
   // ── Classify the function body using AST ──
-  const bodyNode = fnNode.childForFieldName("body");
+  const bodyNode = bodyFnNode.childForFieldName("body");
   const bodyStatements: BodyStatement[] = bodyNode ? classifyBody(bodyNode) : [];
 
   // ── Enrich state_read with account types from context struct ──
@@ -314,6 +338,24 @@ function parseInstructionFn(
     body: bodyStatements,
     rawBody,
   };
+}
+
+function resolveHandlerWrapper(
+  fnNode: SyntaxNode,
+  functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
+): { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] } | null {
+  const bodyNode = fnNode.childForFieldName("body");
+  if (!bodyNode) return null;
+
+  const bodyText = bodyNode.text.trim();
+  const wrapperMatch = bodyText.match(/^\{\s*([A-Za-z_][A-Za-z0-9_:]*)::handler\s*\([^)]*\)\s*;?\s*\}$/s);
+  if (!wrapperMatch?.[1]) return null;
+
+  const targetPath = wrapperMatch[1].split("::").filter(Boolean);
+  return functionIndex.find((entry) => {
+    const name = entry.node.childForFieldName("name")?.text;
+    return name === "handler" && entry.modulePath.join("::") === targetPath.join("::");
+  }) ?? null;
 }
 
 // ─── Parameter parsing ──────────────────────────────────────────────────────

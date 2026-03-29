@@ -288,13 +288,14 @@ export default function Workbench() {
         }
         parsed = await r.json() as ParseResponse;
 
-      } else if (mode === "folder") {
+                  } else if (mode === "folder") {
         if (!folderCandidate) throw new Error("Choose a Rust entry file from the selected folder");
-        const chosen = folderEntries.find((e) => e.path === folderCandidate);
-        if (!chosen) throw new Error("Selected folder entry could not be read");
         const r = await fetch(`${API_BASE}/parse`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ source: chosen.content }),
+          body: JSON.stringify({
+            files: folderEntries,
+            entryPath: folderCandidate,
+          }),
         });
         if (!r.ok) {
           const p = await r.json().catch(() => ({ error: "Parse failed" }));
