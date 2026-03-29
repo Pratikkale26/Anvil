@@ -814,5 +814,7 @@ const inputBase: React.CSSProperties = {
 };
 
 const selectStyle: React.CSSProperties = {
-  ...inputBase, cursor: "pointer",
+  ...inputBase, 
+  cursor: "pointer",
+  backgroundColor: C.card, // Overrides transparent inputBase to give dropdown options a readable background
 };

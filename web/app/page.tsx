@@ -30,18 +30,18 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 // ─── Color palette (readable) ────────────────────────────────────────────────
 const C = {
-  bg:          "#0d0f1a",
-  card:        "#131520",
-  cardBorder:  "rgba(255,255,255,0.09)",
-  text:        "#e8ecf4",        // main body text
-  textSub:     "#9095b0",        // secondary text — readable
-  textMuted:   "#5c6080",        // tertiary / placeholder
-  textDim:     "#3e4260",        // very muted — e.g. empty states
-  amber:       "#f5a623",
-  amberLight:  "#ffcf6e",
-  teal:        "#0ea880",
-  indigo:      "#6b7bff",
-  line:        "rgba(255,255,255,0.07)",
+  bg: "#0d0f1a",
+  card: "#131520",
+  cardBorder: "rgba(255,255,255,0.09)",
+  text: "#e8ecf4",        // main body text
+  textSub: "#9095b0",        // secondary text — readable
+  textMuted: "#5c6080",        // tertiary / placeholder
+  textDim: "#3e4260",        // very muted — e.g. empty states
+  amber: "#f5a623",
+  amberLight: "#ffcf6e",
+  teal: "#0ea880",
+  indigo: "#6b7bff",
+  line: "rgba(255,255,255,0.07)",
 };
 
 // ─── Demo metadata ───────────────────────────────────────────────────────────
@@ -60,9 +60,9 @@ const DEMOS: Record<DemoName, {
     available: true,
     cuSummary: [
       { instruction: "initialize", anchor: 520, pinocchio: 108, quasar: 95, native: 130 },
-      { instruction: "increment",  anchor: 290, pinocchio: 62,  quasar: 55, native: 75  },
-      { instruction: "decrement",  anchor: 290, pinocchio: 62,  quasar: 55, native: 75  },
-      { instruction: "reset",      anchor: 265, pinocchio: 55,  quasar: 48, native: 68  },
+      { instruction: "increment", anchor: 290, pinocchio: 62, quasar: 55, native: 75 },
+      { instruction: "decrement", anchor: 290, pinocchio: 62, quasar: 55, native: 75 },
+      { instruction: "reset", anchor: 265, pinocchio: 55, quasar: 48, native: 68 },
     ],
   },
   vault: {
@@ -72,46 +72,46 @@ const DEMOS: Record<DemoName, {
     available: true,
     cuSummary: [
       { instruction: "initialize", anchor: 580, pinocchio: 120, quasar: 105, native: 145 },
-      { instruction: "deposit",    anchor: 620, pinocchio: 145, quasar: 128, native: 165 },
-      { instruction: "withdraw",   anchor: 670, pinocchio: 158, quasar: 140, native: 180 },
+      { instruction: "deposit", anchor: 620, pinocchio: 145, quasar: 128, native: 165 },
+      { instruction: "withdraw", anchor: 670, pinocchio: 158, quasar: 140, native: 180 },
     ],
   },
   escrow: {
     title: "Escrow",
-    badge: "Coming",
+    badge: "SPL",
     description: "Token escrow with SPL transfers. Create, accept, cancel.",
-    available: false,
+    available: true,
     cuSummary: [
-      { instruction: "create_escrow",  anchor: 1150, pinocchio: 270, quasar: 240, native: 310 },
-      { instruction: "accept_escrow",  anchor: 1480, pinocchio: 345, quasar: 305, native: 390 },
-      { instruction: "cancel_escrow",  anchor: 980,  pinocchio: 220, quasar: 195, native: 255 },
+      { instruction: "create_escrow", anchor: 1150, pinocchio: 270, quasar: 240, native: 310 },
+      { instruction: "accept_escrow", anchor: 1480, pinocchio: 345, quasar: 305, native: 390 },
+      { instruction: "cancel_escrow", anchor: 980, pinocchio: 220, quasar: 195, native: 255 },
     ],
   },
   staking: {
     title: "Staking",
-    badge: "Coming",
+    badge: "Time",
     description: "Pool init, token staking, unstaking, time-based rewards.",
-    available: false,
+    available: true,
     cuSummary: [
       { instruction: "initialize_pool", anchor: 620, pinocchio: 142, quasar: 126, native: 168 },
-      { instruction: "stake",           anchor: 890, pinocchio: 205, quasar: 182, native: 238 },
-      { instruction: "unstake",         anchor: 840, pinocchio: 195, quasar: 172, native: 225 },
-      { instruction: "claim_rewards",   anchor: 920, pinocchio: 215, quasar: 190, native: 248 },
+      { instruction: "stake", anchor: 890, pinocchio: 205, quasar: 182, native: 238 },
+      { instruction: "unstake", anchor: 840, pinocchio: 195, quasar: 172, native: 225 },
+      { instruction: "claim_rewards", anchor: 920, pinocchio: 215, quasar: 190, native: 248 },
     ],
   },
 };
 
 const TARGETS: { id: Target; label: string; color: string; tagline: string; available: boolean }[] = [
   { id: "pinocchio", label: "Pinocchio", color: "#e8820a", tagline: "Zero-copy, zero-dependency by Anza", available: true },
-  { id: "quasar",    label: "Quasar",    color: "#0ea880", tagline: "Zero-allocation by Blueshift", available: true },
-  { id: "native",    label: "Native",    color: "#6b7bff", tagline: "Raw solana_program + borsh", available: false },
+  { id: "quasar", label: "Quasar", color: "#0ea880", tagline: "Zero-allocation by Blueshift", available: true },
+  { id: "native", label: "Native", color: "#6b7bff", tagline: "Raw solana_program + borsh", available: false },
 ];
 
 const STAGES: { id: PipelineStage; label: string; sublabel: string }[] = [
-  { id: "fetching",   label: "Load fixture",  sublabel: "GET /demo/:name" },
-  { id: "parsing",    label: "Parse IR",       sublabel: "Anchor → SolanaIR" },
-  { id: "generating", label: "Emit code",      sublabel: "IR → Rust" },
-  { id: "done",       label: "Complete",       sublabel: "Code ready" },
+  { id: "fetching", label: "Load fixture", sublabel: "GET /demo/:name" },
+  { id: "parsing", label: "Parse IR", sublabel: "Anchor → SolanaIR" },
+  { id: "generating", label: "Emit code", sublabel: "IR → Rust" },
+  { id: "done", label: "Complete", sublabel: "Code ready" },
 ];
 
 const STAGE_ORDER: Record<string, number> = {
@@ -128,14 +128,14 @@ function sleep(ms: number) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Home() {
-  const [demo, setDemo]         = useState<DemoName>("counter");
-  const [target, setTarget]     = useState<Target>("pinocchio");
-  const [stage, setStage]       = useState<PipelineStage>("idle");
-  const [code, setCode]         = useState("");
-  const [ir, setIr]             = useState("");
-  const [cuData, setCuData]     = useState(DEMOS.counter.cuSummary);
-  const [copied, setCopied]     = useState(false);
-  const [apiOk, setApiOk]       = useState(false);
+  const [demo, setDemo] = useState<DemoName>("counter");
+  const [target, setTarget] = useState<Target>("pinocchio");
+  const [stage, setStage] = useState<PipelineStage>("idle");
+  const [code, setCode] = useState("");
+  const [ir, setIr] = useState("");
+  const [cuData, setCuData] = useState(DEMOS.counter.cuSummary);
+  const [copied, setCopied] = useState(false);
+  const [apiOk, setApiOk] = useState(false);
   const [activeTab, setActiveTab] = useState<"code" | "ir">("code");
   const abortRef = useRef<AbortController | null>(null);
 
@@ -169,7 +169,7 @@ export default function Home() {
       anchor: acc.anchor + r.anchor, pinocchio: acc.pinocchio + r.pinocchio,
       quasar: acc.quasar + r.quasar, native: acc.native + r.native,
     }), { anchor: 0, pinocchio: 0, quasar: 0, native: 0 })
-  , [cuData]);
+    , [cuData]);
 
   const run = useCallback(async () => {
     if (stage === "fetching" || stage === "parsing" || stage === "generating") return;
@@ -210,7 +210,7 @@ export default function Home() {
   async function copy() {
     const text = activeTab === "code" ? code : ir;
     if (!text) return;
-    await navigator.clipboard.writeText(text).catch(() => {});
+    await navigator.clipboard.writeText(text).catch(() => { });
     setCopied(true); setTimeout(() => setCopied(false), 1800);
   }
 
@@ -279,8 +279,10 @@ export default function Home() {
             </Btn>
             <Link
               href="/workbench"
-              style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 100, fontWeight: 700, fontSize: 14, textDecoration: "none",
-                background: "rgba(255,255,255,0.06)", color: C.textSub }}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 100, fontWeight: 700, fontSize: 14, textDecoration: "none",
+                background: "rgba(255,255,255,0.06)", color: C.textSub
+              }}
             >
               Open Workbench <Layers3 size={14} />
             </Link>
@@ -307,10 +309,10 @@ export default function Home() {
           <Label>HOW IT WORKS</Label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 1, background: C.cardBorder, borderRadius: 20, overflow: "hidden", marginTop: 20 }}>
             {[
-              { icon: Code2,   step: "01", title: "Write Anchor",   desc: "Your contract stays in familiar Anchor syntax — no refactoring." },
-              { icon: Layers3, step: "02", title: "Parse to IR",    desc: "Anvil extracts instructions, accounts, constraints, errors into a typed SolanaIR." },
-              { icon: Blocks,  step: "03", title: "Emit Target",    desc: "Choose Pinocchio or Quasar today. Native is shown as the next target in the roadmap." },
-              { icon: Cpu,     step: "04", title: "CU Analysis",    desc: "Static cost tables compute savings per instruction across all frameworks." },
+              { icon: Code2, step: "01", title: "Write Anchor", desc: "Your contract stays in familiar Anchor syntax — no refactoring." },
+              { icon: Layers3, step: "02", title: "Parse to IR", desc: "Anvil extracts instructions, accounts, constraints, errors into a typed SolanaIR." },
+              { icon: Blocks, step: "03", title: "Emit Target", desc: "Choose Pinocchio or Quasar today. Native is shown as the next target in the roadmap." },
+              { icon: Cpu, step: "04", title: "CU Analysis", desc: "Static cost tables compute savings per instruction across all frameworks." },
             ].map((item) => (
               <div key={item.step} style={{ padding: "28px 24px", background: C.card }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
@@ -417,7 +419,7 @@ export default function Home() {
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 0 }}>
                     {STAGES.map((s, i) => {
                       const cur = STAGE_ORDER[stage] ?? -1;
-                      const isDone   = stage !== "error" && cur > i;
+                      const isDone = stage !== "error" && cur > i;
                       const isActive = stage !== "idle" && stage !== "error" && cur === i;
                       return (
                         <div key={s.id} style={{ display: "flex", alignItems: "flex-start", flex: 1 }}>
@@ -505,8 +507,8 @@ export default function Home() {
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.textSub, alignSelf: "center" }}>TOTAL</div>
                 <TotalCell value={totals.anchor} />
                 <TotalCell value={totals.pinocchio} color="#e8820a" savings={pct(totals.anchor, totals.pinocchio)} />
-                <TotalCell value={totals.quasar}    color={C.teal}  savings={pct(totals.anchor, totals.quasar)} />
-                <TotalCell value={totals.native}    color={C.indigo} savings={pct(totals.anchor, totals.native)} />
+                <TotalCell value={totals.quasar} color={C.teal} savings={pct(totals.anchor, totals.quasar)} />
+                <TotalCell value={totals.native} color={C.indigo} savings={pct(totals.anchor, totals.native)} />
               </div>
             </div>
           </Panel>
@@ -635,16 +637,16 @@ function CuRow({ row }: { row: { instruction: string; anchor: number; pinocchio:
         <div style={{ fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "var(--font-mono, monospace)" }}>{row.instruction}</div>
         <div />
         <div style={{ fontSize: 12, color: C.amber, fontWeight: 700 }}>{pct(row.anchor, row.pinocchio)} saved</div>
-        <div style={{ fontSize: 12, color: C.teal,  fontWeight: 700 }}>{pct(row.anchor, row.quasar)} saved</div>
+        <div style={{ fontSize: 12, color: C.teal, fontWeight: 700 }}>{pct(row.anchor, row.quasar)} saved</div>
         <div style={{ fontSize: 12, color: C.indigo, fontWeight: 700 }}>{pct(row.anchor, row.native)} saved</div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", gap: "0 20px", alignItems: "center" }}>
         <div />
         {[
-          { val: row.anchor,    color: "#3a4260" },
+          { val: row.anchor, color: "#3a4260" },
           { val: row.pinocchio, color: "#e8820a" },
-          { val: row.quasar,    color: C.teal },
-          { val: row.native,    color: C.indigo },
+          { val: row.quasar, color: C.teal },
+          { val: row.native, color: C.indigo },
         ].map(({ val, color }, i) => (
           <div key={i}>
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
