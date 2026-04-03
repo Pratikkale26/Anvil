@@ -44,3 +44,4 @@ bun.lock*
 
 docs/
 api/generated-outputs
+api/.anvil-data

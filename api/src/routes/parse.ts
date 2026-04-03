@@ -94,5 +94,6 @@ parseRoute.post("/", async (req, res) => {
     sourcePath: resolvedPath ?? null,
     candidates: candidates ?? null,
     repoUrl: repoUrl ?? null,
+    source: resolvedSource,
   });
 });

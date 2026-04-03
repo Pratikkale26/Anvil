@@ -34,6 +34,7 @@ type ParseResponse = {
   sourcePath: string | null;
   candidates: string[] | null;
   repoUrl?: string | null;
+  source?: string | null;
 };
 
 type EmitFile = { path: string; content: string };
@@ -45,9 +46,59 @@ type EmitResponse = {
   programName?: string;
   target: Target;
   transformReport?: { transformedCount: number; passedThroughCount: number };
+  validationIssues?: Array<{ severity: "error" | "warning"; message: string; path?: string }>;
 };
 
 type FolderEntry = { path: string; content: string };
+
+type AIReviewFinding = {
+  id: string;
+  severity: "info" | "warning" | "error";
+  title: string;
+  summary: string;
+  filePath?: string;
+  instructionName?: string;
+  fixCategory: string;
+  confidence: number;
+  evidence: string[];
+  suggestedAction?: string;
+};
+
+type AIReviewResponse = {
+  findings: AIReviewFinding[];
+  confidence: number;
+  summary: string;
+  promptVersion: string;
+  provider: "gemini";
+  model: string;
+  provenance: {
+    timestamp: string;
+    provider: "gemini";
+    model: string;
+    promptVersion: string;
+    sourceHash: string;
+    irHash: string;
+    target: Target | null;
+    selectedFile: string | null;
+    accepted: boolean | null;
+    findingsSummary: string[];
+  };
+};
+
+type AIRepairResponse = {
+  filePath: string;
+  originalContent: string;
+  patchedContent: string;
+  rationale: string;
+  usedFallbackRewrite: boolean;
+  accepted: boolean;
+  acceptanceReason: string;
+  validationIssues: Array<{ severity: "error" | "warning"; message: string; path?: string }>;
+  promptVersion: string;
+  provider: "gemini";
+  model: string;
+  provenance: AIReviewResponse["provenance"];
+};
 
 // ─── Color palette (matches landing page exactly) ─────────────────────────────
 
@@ -176,6 +227,15 @@ export default function Workbench() {
   const [warnings, setWarnings]         = useState<string[]>([]);
   const [copied, setCopied]             = useState(false);
   const [transformSummary, setTransformSummary] = useState<{ transformedCount: number; passedThroughCount: number } | null>(null);
+  const [validationIssues, setValidationIssues] = useState<Array<{ severity: "error" | "warning"; message: string; path?: string }>>([]);
+  const [aiBusy, setAiBusy] = useState<"ir" | "output" | "repair" | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiIrReview, setAiIrReview] = useState<AIReviewResponse | null>(null);
+  const [aiOutputReview, setAiOutputReview] = useState<AIReviewResponse | null>(null);
+  const [selectedFindingId, setSelectedFindingId] = useState<string>("");
+  const [repairProposal, setRepairProposal] = useState<AIRepairResponse | null>(null);
+  const [hasAppliedRepair, setHasAppliedRepair] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
 
   const fileInputRef   = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -220,6 +280,11 @@ export default function Workbench() {
     if (!activeFilePath) return "";
     return outputFiles.find((f) => f.path === activeFilePath)?.content ?? "";
   }, [activeFilePath, outputFiles]);
+
+  const aiFindings = aiOutputReview?.findings ?? [];
+  const selectedFinding = aiFindings.find((finding) => finding.id === selectedFindingId) ?? null;
+  const compareOriginalContent = repairProposal?.originalContent ?? "";
+  const comparePatchedContent = repairProposal?.patchedContent ?? "";
 
   const activeContent =
     activePane === "ir"    ? irText :
@@ -273,6 +338,14 @@ export default function Workbench() {
     setIsRunning(true);
     setError(null);
     setWarnings([]);
+    setValidationIssues([]);
+    setAiError(null);
+    setAiIrReview(null);
+    setAiOutputReview(null);
+    setSelectedFindingId("");
+    setRepairProposal(null);
+    setHasAppliedRepair(false);
+    setShowCompare(false);
 
     try {
       let parsed: ParseResponse;
@@ -282,6 +355,7 @@ export default function Workbench() {
         if (!r.ok) throw new Error("Failed to load demo source");
         const p = await r.json();
         parsed = { ir: p.ir, sourcePath: `${demoName}.rs`, candidates: null };
+        setResolvedSource(typeof p.source === "string" ? p.source : null);
 
       } else if (mode === "source" || mode === "file") {
         const src = resolvedSource ?? sourceText;
@@ -295,6 +369,7 @@ export default function Workbench() {
           throw new Error(p.details ?? p.error ?? "Parse failed");
         }
         parsed = await r.json() as ParseResponse;
+        setResolvedSource(parsed.source ?? src);
 
                   } else if (mode === "folder") {
         if (!folderCandidate) throw new Error("Choose a Rust entry file from the selected folder");
@@ -311,6 +386,7 @@ export default function Workbench() {
         }
         parsed = await r.json() as ParseResponse;
         parsed.sourcePath = folderCandidate;
+        setResolvedSource(parsed.source ?? null);
 
       } else {
         if (!repoUrl.trim()) throw new Error("Enter a public GitHub repository URL");
@@ -327,6 +403,7 @@ export default function Workbench() {
           throw new Error(p.details ?? p.error ?? "Repository parse failed");
         }
         parsed = await r.json() as ParseResponse;
+        setResolvedSource(parsed.source ?? null);
       }
 
       setIrText(JSON.stringify(parsed.ir, null, 2));
@@ -346,6 +423,7 @@ export default function Workbench() {
       setProgramName(emitted.programName ?? "anvil-output");
       setWarnings(emitted.warnings ?? []);
       setTransformSummary(emitted.transformReport ?? null);
+      setValidationIssues(emitted.validationIssues ?? []);
       setActivePane("single");
       setApiOk(true);
     } catch (err) {
@@ -355,8 +433,145 @@ export default function Workbench() {
     }
   }
 
+  function currentSourceForAI(): string {
+    if (resolvedSource?.trim()) return resolvedSource;
+    if ((mode === "source" || mode === "file") && sourceText.trim()) return sourceText;
+    throw new Error("Run the deterministic pipeline first so the source is available for AI review.");
+  }
+
+  async function runAIReview(kind: "ir" | "output") {
+    try {
+      setAiBusy(kind);
+      setAiError(null);
+      const source = currentSourceForAI();
+      const ir = JSON.parse(irText);
+
+      if (kind === "ir") {
+        const response = await fetch(`${API_BASE}/ai/review-ir`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source, ir, target }),
+        });
+        const payload = await response.json().catch(() => ({ error: "AI IR review failed" }));
+        if (!response.ok) throw new Error(payload.details ?? payload.error ?? "AI IR review failed");
+        const review = payload as AIReviewResponse;
+        setAiIrReview(review);
+      } else {
+        const response = await fetch(`${API_BASE}/ai/review-output`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source,
+            ir,
+            target,
+            files: outputFiles,
+            singleFile: singleFileCode,
+          }),
+        });
+        const payload = await response.json().catch(() => ({ error: "AI output review failed" }));
+        if (!response.ok) throw new Error(payload.details ?? payload.error ?? "AI output review failed");
+        const review = payload as AIReviewResponse;
+        setAiOutputReview(review);
+        setSelectedFindingId((current) => current || review.findings[0]?.id || "");
+      }
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAiBusy(null);
+    }
+  }
+
+  async function requestScopedRepair() {
+    if (!selectedFinding) {
+      setAiError("Select an AI finding first.");
+      return;
+    }
+
+    const selectedFilePath = selectedFinding.filePath ?? (activeFilePath || outputFiles[0]?.path);
+    if (!selectedFilePath) {
+      setAiError("Choose a generated file before requesting a fix.");
+      return;
+    }
+
+    try {
+      setAiBusy("repair");
+      setAiError(null);
+      const source = currentSourceForAI();
+      const ir = JSON.parse(irText);
+      const modeValue = selectedFinding.severity === "error" ? "fallback_rewrite_scoped" : "repair_scoped";
+      const response = await fetch(`${API_BASE}/ai/repair-output`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source,
+          ir,
+          target,
+          files: outputFiles,
+          selectedFinding,
+          selectedFilePath,
+          mode: modeValue,
+        }),
+      });
+      const payload = await response.json().catch(() => ({ error: "AI repair failed" }));
+      if (!response.ok) throw new Error(payload.details ?? payload.error ?? "AI repair failed");
+      const repair = payload as AIRepairResponse;
+      setRepairProposal(repair);
+      setShowCompare(true);
+      setActivePane("files");
+      setActiveFilePath(repair.filePath);
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAiBusy(null);
+    }
+  }
+
+  function applyRepairProposal() {
+    if (!repairProposal?.accepted) {
+      setAiError(repairProposal?.acceptanceReason ?? "Repair proposal was not accepted.");
+      return;
+    }
+
+    setOutputFiles((current) =>
+      current.map((file) =>
+        file.path === repairProposal.filePath
+          ? { ...file, content: repairProposal.patchedContent }
+          : file
+      )
+    );
+    if (outputFiles.length <= 1 || repairProposal.filePath === `${programName}-${target}.rs`) {
+      setSingleFileCode(repairProposal.patchedContent);
+    }
+    setWarnings((current) => [...current, "AI repaired output has been applied to the selected file."]);
+    setHasAppliedRepair(true);
+  }
+
+  function downloadDiagnostics() {
+    const blob = new Blob([
+      JSON.stringify(
+        {
+          irReview: aiIrReview,
+          outputReview: aiOutputReview,
+          repairProposal,
+        },
+        null,
+        2,
+      ),
+    ], { type: "application/json;charset=utf-8" });
+    downloadBlob(`${programName}-${target}-ai-diagnostics.json`, blob);
+  }
+
+  function downloadRepairPatch() {
+    if (!repairProposal) return;
+    downloadBlob(
+      `${programName}-${target}-${repairProposal.filePath.replace(/[\\/]/g, "_")}.rs`,
+      new Blob([repairProposal.patchedContent], { type: "text/plain;charset=utf-8" }),
+    );
+  }
+
   const tm = TARGET_META[target];
   const hasOutput = !!(singleFileCode || irText);
+  const strictValidated = validationIssues.filter((issue) => issue.severity === "error").length === 0 && hasOutput;
   const isTablet = viewportWidth < 1100;
   const isMobile = viewportWidth < 760;
   const editorHeight = isMobile ? 420 : 560;
@@ -552,6 +767,132 @@ export default function Workbench() {
               </div>
             </Panel>
 
+            <Panel>
+              <PanelHead icon={Sparkles} title="AI Assist" />
+              <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+                  <OutBtn
+                    icon={Sparkles}
+                    label={aiBusy === "ir" ? "Reviewing…" : "Review IR"}
+                    onClick={() => void runAIReview("ir")}
+                    disabled={!irText || aiBusy !== null}
+                  />
+                  <OutBtn
+                    icon={Sparkles}
+                    label={aiBusy === "output" ? "Reviewing…" : "Review Output"}
+                    onClick={() => void runAIReview("output")}
+                    disabled={!outputFiles.length || aiBusy !== null}
+                  />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+                  <OutBtn
+                    icon={Play}
+                    label={aiBusy === "repair" ? "Fixing…" : "Suggest Fix"}
+                    onClick={() => void requestScopedRepair()}
+                    disabled={!selectedFinding || aiBusy !== null}
+                    primary
+                  />
+                  <OutBtn
+                    icon={CheckCircle2}
+                    label="Apply Fix"
+                    onClick={applyRepairProposal}
+                    disabled={!repairProposal?.accepted || hasAppliedRepair}
+                    active={hasAppliedRepair}
+                  />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+                  <OutBtn
+                    icon={Layers3}
+                    label={showCompare ? "Hide Compare" : "Compare"}
+                    onClick={() => setShowCompare((current) => !current)}
+                    disabled={!repairProposal}
+                  />
+                  <OutBtn
+                    icon={Download}
+                    label="Diagnostics"
+                    onClick={downloadDiagnostics}
+                    disabled={!aiIrReview && !aiOutputReview && !repairProposal}
+                  />
+                </div>
+
+                {aiError && (
+                  <div style={{ padding: 12, borderRadius: 12, background: "rgba(224,90,90,0.1)", border: "1px solid rgba(224,90,90,0.22)", color: "#ffb5b5", fontSize: 12, lineHeight: 1.5 }}>
+                    {aiError}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <Badge label="Strict Validated" active={strictValidated} color={C.teal} />
+                  <Badge label="AI Reviewed" active={!!aiOutputReview || !!aiIrReview} color={C.amber} />
+                  <Badge label="AI Repaired" active={hasAppliedRepair || !!repairProposal} color={C.indigo} />
+                </div>
+
+                {aiOutputReview && (
+                  <div style={{ borderTop: `1px solid ${C.line}`, paddingTop: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.textSub, marginBottom: 8 }}>
+                      AI findings ({aiOutputReview.findings.length})
+                    </div>
+                    {aiOutputReview.findings.length === 0 ? (
+                      <Hint>No AI findings for the current output.</Hint>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 220, overflowY: "auto" }}>
+                        {aiOutputReview.findings.map((finding) => {
+                          const selected = selectedFindingId === finding.id;
+                          const tone = finding.severity === "error" ? C.red : finding.severity === "warning" ? C.amber : C.teal;
+                          return (
+                            <button
+                              key={finding.id}
+                              onClick={() => {
+                                setSelectedFindingId(finding.id);
+                                if (finding.filePath) {
+                                  setActivePane("files");
+                                  setActiveFilePath(finding.filePath);
+                                }
+                              }}
+                              style={{
+                                textAlign: "left",
+                                borderRadius: 12,
+                                border: `1px solid ${selected ? tone : C.cardBorder}`,
+                                background: selected ? `${tone}15` : "rgba(255,255,255,0.02)",
+                                padding: 10,
+                                cursor: "pointer",
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+                                <span style={{ fontSize: 11, fontWeight: 800, color: tone, letterSpacing: "0.08em" }}>{finding.severity.toUpperCase()}</span>
+                                <span style={{ fontSize: 11, color: C.textDim }}>{Math.round(finding.confidence * 100)}%</span>
+                              </div>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{finding.title}</div>
+                              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4, lineHeight: 1.5 }}>
+                                {finding.summary}
+                              </div>
+                              {(finding.filePath || finding.instructionName) && (
+                                <div style={{ marginTop: 6, fontSize: 10, color: C.textDim, fontFamily: "var(--font-mono, monospace)" }}>
+                                  {[finding.filePath, finding.instructionName].filter(Boolean).join(" • ")}
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {repairProposal && (
+                  <div style={{ borderTop: `1px solid ${C.line}`, paddingTop: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: repairProposal.accepted ? C.teal : C.red, marginBottom: 6 }}>
+                      Repair proposal {repairProposal.accepted ? "accepted" : "rejected"}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.6 }}>{repairProposal.acceptanceReason}</div>
+                    <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <OutBtn icon={Download} label="Download Fix" onClick={downloadRepairPatch} disabled={!repairProposal} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Panel>
+
             {/* Run button */}
             <button onClick={runPipeline} disabled={isRunning} style={{
               display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
@@ -589,16 +930,20 @@ export default function Workbench() {
               <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 15, color: C.text }}>Generated output</div>
-                  <div style={{ fontSize: 13, color: C.textSub, marginTop: 3, display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontSize: 13, color: C.textSub, marginTop: 3, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span style={{ fontFamily: "var(--font-mono, monospace)" }}>{programName}</span>
                     <span style={{ color: C.textDim }}>→</span>
                     <span style={{ color: tm.color, fontWeight: 700 }}>{tm.label}</span>
+                    <Badge label="Strict Validated" active={strictValidated} color={C.teal} />
+                    <Badge label="AI Reviewed" active={!!aiIrReview || !!aiOutputReview} color={C.amber} />
+                    <Badge label="AI Repaired" active={hasAppliedRepair} color={C.indigo} />
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <OutBtn icon={Copy} label={copied ? "Copied!" : "Copy"} onClick={copyActiveContent} disabled={!activeContent} active={copied} />
                   <OutBtn icon={Download} label="Download .rs" onClick={downloadSingleFile} disabled={!singleFileCode} />
                   <OutBtn icon={FileArchive} label="Download .tar" onClick={downloadProjectBundle} disabled={!outputFiles.length} primary />
+                  <OutBtn icon={Download} label="AI JSON" onClick={downloadDiagnostics} disabled={!aiIrReview && !aiOutputReview && !repairProposal} />
                 </div>
               </div>
 
@@ -623,6 +968,21 @@ export default function Workbench() {
                 </div>
               ) : (
                 <>
+                  {showCompare && repairProposal && (
+                    <div style={{ borderBottom: `1px solid ${C.line}`, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr" }}>
+                      <div style={{ borderRight: isMobile ? "none" : `1px solid ${C.line}` }}>
+                        <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: C.textSub }}>Original</div>
+                        <Editor height={`${Math.max(280, editorHeight / 2)}px`} language="rust" value={compareOriginalContent} theme="vs-dark" options={MONACO_OPTS} />
+                      </div>
+                      <div>
+                        <div style={{ padding: "10px 14px", fontSize: 12, fontWeight: 700, color: repairProposal.accepted ? C.teal : C.red }}>
+                          Proposed repair
+                        </div>
+                        <Editor height={`${Math.max(280, editorHeight / 2)}px`} language="rust" value={comparePatchedContent} theme="vs-dark" options={MONACO_OPTS} />
+                      </div>
+                    </div>
+                  )}
+
                   {/* Single file tab */}
                   {activePane === "single" && (
                     <div style={{ height: editorHeight }}>
@@ -704,6 +1064,28 @@ export default function Workbench() {
               </Panel>
             )}
 
+            {validationIssues.length > 0 && (
+              <Panel>
+                <div style={{ padding: "14px 20px" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: strictValidated ? C.teal : C.red, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                    <CheckCircle2 size={13} /> Validation issues ({validationIssues.length})
+                  </div>
+                  {validationIssues.map((issue, index) => (
+                    <div key={`${issue.path ?? "root"}-${index}`} style={{
+                      fontSize: 12,
+                      color: issue.severity === "error" ? "#ffb0b0" : "#e8d68a",
+                      marginBottom: 6,
+                      paddingLeft: 6,
+                      borderLeft: `2px solid ${issue.severity === "error" ? C.red : C.amber}`,
+                      lineHeight: 1.6,
+                    }}>
+                      {issue.path ? `${issue.path}: ` : ""}{issue.message}
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            )}
+
             {/* Capability card */}
             <Panel>
               <div style={{ padding: "16px 20px" }}>
@@ -715,6 +1097,7 @@ export default function Workbench() {
                     "Upload a local .rs file",
                     "Upload a local folder — pick entry",
                     "GitHub public repo URL + optional ref/subpath",
+                    "Gemini-powered IR/output review and scoped repair",
                     "Download single combined .rs file",
                     "Download whole generated codebase as .tar",
                     "Browse multi-file output in file tree",
@@ -803,6 +1186,27 @@ function OutBtn({
     }}>
       <Icon size={13} /> {label}
     </button>
+  );
+}
+
+function Badge({ label, active, color }: { label: string; active: boolean; color: string }) {
+  return (
+    <span style={{
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      padding: "4px 10px",
+      borderRadius: 999,
+      border: `1px solid ${active ? `${color}55` : C.cardBorder}`,
+      background: active ? `${color}18` : "rgba(255,255,255,0.03)",
+      color: active ? color : C.textMuted,
+      fontSize: 11,
+      fontWeight: 700,
+      letterSpacing: "0.05em",
+      textTransform: "uppercase",
+    }}>
+      {label}
+    </span>
   );
 }
 
