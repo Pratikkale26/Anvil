@@ -269,20 +269,17 @@ export abstract class BaseEmitter {
   // ─── Generic instruction function emitter ──────────────────────────────────
 
   protected emitInstructionFunction(instr: Instruction, ir: SolanaIR): string {
-    const nonProgramAccounts = instr.accounts.filter(
-      (a) => !isProgramAccount(a.accountType)
-    );
-    const requiredAccountCount = nonProgramAccounts.filter((a) => !a.isOptional).length;
+    const requiredAccountCount = instr.accounts.filter((a) => !a.isOptional).length;
 
     // Account bindings
-    const bindings = nonProgramAccounts
+    const bindings = instr.accounts
       .map((acc, idx) => acc.isOptional
         ? `    let ${snakeCase(acc.name)} = accounts.get(${idx});`
         : this.emitAccountBinding(snakeCase(acc.name), idx))
       .join("\n");
 
     // Signer checks
-    const signerChecks = nonProgramAccounts
+    const signerChecks = instr.accounts
       .filter((a) => a.isSigner && !a.isOptional)
       .map((a) => this.emitSignerCheck(snakeCase(a.name)))
       .join("\n");
@@ -293,14 +290,14 @@ export abstract class BaseEmitter {
     const isCustomState = (accountType: string) =>
       ir.accounts.some((a) => a.name === accountType);
 
-    const ownerChecks = nonProgramAccounts
+    const ownerChecks = instr.accounts
       .filter((a) => !a.isOptional && !a.isInit && a.isMut && isCustomState(a.accountType))
       .map((a) => this.emitOwnerCheck(snakeCase(a.name)))
       .join("\n");
 
     // Init TODOs — emit a comment for every account that needs to be allocated.
     // The exact space required is computed from the account struct definition.
-    const initTodos = nonProgramAccounts
+    const initTodos = instr.accounts
       .filter((a) => a.isInit && isCustomState(a.accountType))
       .map((a) => {
         const accDef = ir.accounts.find((d) => d.name === a.accountType);
@@ -378,6 +375,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     const stateVars = new Map<string, string>();
     const accountInfoVars = new Map<string, string>();
     const accountsWithSignerSeeds = new Set<string>();
+    let signerSeedsInScope = false;
 
     const resolveStateVar = (account: string): string => stateVars.get(account) ?? account;
     const resolveAccountInfoVar = (account: string): string => accountInfoVars.get(account) ?? account;
@@ -395,12 +393,22 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       lines.push(`    let ${accountInfoVar} = ${normalized};`);
       stateVars.set(normalized, localVar);
       accountInfoVars.set(normalized, accountInfoVar);
-      lines.push(this.emitStateRead(
-        accountInfoVar,
-        typeName,
-        localVar,
-        mutable || mutableStateAccounts.has(normalized)
-      ));
+
+      if (accountRef?.isInit) {
+        // Account is being initialized — it has no on-chain data yet.
+        // Calling from_account_info on an unallocated account would fail the
+        // discriminator check. Emit a zero-initialized struct instead; the
+        // instruction body will populate fields before saving.
+        lines.push(this.emitStateInit(typeName, localVar));
+      } else {
+        lines.push(this.emitStateRead(
+          accountInfoVar,
+          typeName,
+          localVar,
+          mutable || mutableStateAccounts.has(normalized)
+        ));
+      }
+
       const hasOneConstraints = accountRef?.constraints.filter(
         (constraint) => constraint.kind === "has_one" && constraint.value
       ) ?? [];
@@ -492,6 +500,10 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     };
     const normalizeSignerSeedsExpr = (expr: string): string => {
       const trimmed = cleanInlineExpr(expr);
+      if (trimmed === "signer_seeds") return "signer_seeds";
+      if (/\bseeds\b/.test(trimmed) && (trimmed.includes("[") || trimmed.includes("&"))) {
+        return trimmed;
+      }
       if (trimmed.includes("[") || trimmed.includes("&")) return "signer_seeds";
       return trimmed;
     };
@@ -982,12 +994,22 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           }
           stateVars.set(accountName, localVar);
           accountInfoVars.set(accountName, accountInfoVar);
-          lines.push(this.emitStateRead(
-            accountInfoVar,
-            stmt.accountType || "Unknown",
-            localVar,
-            stmt.mutable || mutableStateAccounts.has(accountName)
-          ));
+
+          if (accountRef?.isInit) {
+            // Account is being initialized — it has no on-chain data yet.
+            // from_account_info would fail the discriminator check on an
+            // unallocated account. Use emitStateInit() to produce a
+            // zero-initialized struct that the body will populate before saving.
+            lines.push(this.emitStateInit(stmt.accountType || "Unknown", localVar));
+          } else {
+            lines.push(this.emitStateRead(
+              accountInfoVar,
+              stmt.accountType || "Unknown",
+              localVar,
+              stmt.mutable || mutableStateAccounts.has(accountName)
+            ));
+          }
+
           const hasOneConstraints = accountRef?.constraints.filter(
             (constraint) => constraint.kind === "has_one" && constraint.value
           ) ?? [];
@@ -1020,10 +1042,21 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           let value = transformCtxAccountsReferences(stmt.value);
           value = normalizeKeyValueUsages(transformAccountReferences(value));
           if (fieldDef && (fieldDef.type === "Pubkey" || fieldDef.type === "[u8; 32]")) {
-            value = value.replace(
-              /^(\w+)\.key(?:\(\))?$/,
-              (_full, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name)))
-            );
+            const directCtxKeySource = stmt.value.match(/^ctx\.accounts\.(\w+)\.key\(\)$/)?.[1];
+            const trimmedValue = cleanInlineExpr(value);
+            const keySource = directCtxKeySource ?? trimmedValue.match(/^(\w+)\.key(?:\(\))?$/)?.[1];
+            if (keySource) {
+              value = this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(keySource)));
+            } else {
+              value = value.replace(
+                /\b(\w+)\.key\(\)/g,
+                (_full, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name)))
+              );
+              value = value.replace(
+                /\b(\w+)\.key\b(?!\s*\(|\.as_ref\b)/g,
+                (_full, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name)))
+              );
+            }
           }
           value = transformHelperCalls(value);
           // Replace ctx.bumps.X with bump derivation call
@@ -1062,7 +1095,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         case "cpi_system_transfer": {
           this.transformedCount++;
           this.details.push(`Transformed: system_program::transfer(${stmt.from} → ${stmt.to})`);
-          if (stmt.signerSeeds) {
+          if (stmt.signerSeeds && !(stmt.signerSeeds === "signer_seeds" && signerSeedsInScope)) {
             for (const preludeLine of ensureSignerSeedsForAccount(stmt.from)) {
               lines.push(preludeLine);
             }
@@ -1078,7 +1111,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         case "cpi_spl_transfer": {
           this.transformedCount++;
           this.details.push(`Transformed: token::transfer(${stmt.from} → ${stmt.to})`);
-          if (stmt.signerSeeds) {
+          if (stmt.signerSeeds && !(stmt.signerSeeds === "signer_seeds" && signerSeedsInScope)) {
             for (const preludeLine of ensureSignerSeedsForAccount(stmt.authority)) {
               lines.push(preludeLine);
             }
@@ -1097,7 +1130,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: CPI SPL mint_to ──
         case "cpi_spl_mint_to": {
           this.transformedCount++;
-          if (stmt.signerSeeds) {
+          if (stmt.signerSeeds && !(stmt.signerSeeds === "signer_seeds" && signerSeedsInScope)) {
             for (const preludeLine of ensureSignerSeedsForAccount(stmt.authority)) {
               lines.push(preludeLine);
             }
@@ -1116,7 +1149,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: CPI SPL burn ──
         case "cpi_spl_burn": {
           this.transformedCount++;
-          if (stmt.signerSeeds) {
+          if (stmt.signerSeeds && !(stmt.signerSeeds === "signer_seeds" && signerSeedsInScope)) {
             for (const preludeLine of ensureSignerSeedsForAccount(stmt.authority)) {
               lines.push(preludeLine);
             }
@@ -1135,7 +1168,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: CPI SPL close_account ──
         case "cpi_spl_close_account": {
           this.transformedCount++;
-          if (stmt.signerSeeds) {
+          if (stmt.signerSeeds && !(stmt.signerSeeds === "signer_seeds" && signerSeedsInScope)) {
             for (const preludeLine of ensureSignerSeedsForAccount(stmt.authority)) {
               lines.push(preludeLine);
             }
@@ -1184,6 +1217,17 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           let seedStateAccount: string | undefined;
           const bumpPrelude: string[] = [];
           const seenBumps = new Set<string>();
+
+          // ── Dedup guard ────────────────────────────────────────────────────
+          // A preceding pass_through CPI (handled by ensureSignerSeedsForCode)
+          // may already have emitted seeds + signer_seeds for this account.
+          // Emitting them again would shadow the first binding and, in the worst
+          // case, re-derive the bump instead of using the stored value.
+          // Check the tracking set before doing any work.
+          if (accountsWithSignerSeeds.has(accountName)) {
+            break;
+          }
+
           for (const seed of stmt.seeds) {
             const ctxBumpMatch = seed.match(/ctx\.bumps\.(\w+)/)?.[1];
             if (ctxBumpMatch) {
@@ -1238,6 +1282,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             seedStateType
           ));
           accountsWithSignerSeeds.add(accountName);
+          signerSeedsInScope = true;
           break;
         }
 
@@ -1554,20 +1599,46 @@ ${fields}
   }
 
   /**
-   * Wrap a helper function that was carried verbatim from the Anchor source with
-   * a ⚠️ warning banner. Developers will see immediately that the body still uses
-   * Anchor APIs (ctx, CpiContext, system_program::transfer, etc.) and must be
-   * rewritten for the target framework before the code will compile.
+   * Emit a zero-initialized local variable for an account struct that is being
+   * created (isInit). Calling `from_account_info` on an unallocated account
+   * would fail the discriminator check; instead we produce a zeroed struct that
+   * the instruction body will populate before saving.
+   *
+   * The default implementation uses `unsafe { core::mem::zeroed() }`, which is
+   * valid for any `#[repr(C)]` struct: integers zero to 0, booleans to false,
+   * `[u8;32]` Pubkeys to the default pubkey, and `#[repr(u8)]` enums to
+   * variant 0. Subclasses may override for a more explicit field-by-field init.
+   */
+  protected emitStateInit(typeName: string, localVar: string): string {
+    return `    // TODO(anvil): create + fund '${localVar}' account via system_program create_account CPI first
+    let mut ${localVar} = unsafe { core::mem::zeroed::<${typeName}>() };`;
+  }
+
+  /**
+   * Wrap a helper function that was carried verbatim from the Anchor source.
+   *
+   * If the function body contains Anchor-specific API patterns (ctx, CpiContext,
+   * system_program::transfer, anchor_spl, require!, emit!) it receives a full
+   * ⚠️ warning banner so the developer knows it must be rewritten.
+   *
+   * Pure Rust helpers (arithmetic, bit manipulation, lookups, etc.) that happen
+   * to live in the same Anchor file are plain-correct and get only a light
+   * comment — no false-positive warning.
    */
   protected carriedFunctionBlock(rawCode: string): string {
     const transformed = this.transformHelperCode(rawCode);
+    if (!hasResidualAnchorPatterns(rawCode)) {
+      // No Anchor-specific APIs detected — the function is likely pure Rust
+      // and will compile as-is in the target framework.
+      return `// Carried from source (pure Rust — no Anchor APIs detected)\n${transformed}`;
+    }
     return [
-      `// ╔══════════════════════════════════════════════════════════════════════════════╗`,
+      `// ╔════════════════════════════════════════════════════════════════════════════════╗`,
       `// ║  ⚠️  ANVIL: function below was carried verbatim from the Anchor source.      ║`,
       `// ║  It still uses Anchor APIs (ctx, CpiContext, system_program::transfer, etc.) ║`,
       `// ║  and MUST be rewritten for ${this.frameworkName.padEnd(48)} ║`,
       `// ║  before this code will compile.                                              ║`,
-      `// ╚══════════════════════════════════════════════════════════════════════════════╝`,
+      `// ╚════════════════════════════════════════════════════════════════════════════════╝`,
       transformed,
     ].join("\n");
   }

@@ -190,17 +190,6 @@ function classifyLetDeclaration(
     };
   }
 
-  // ── PDA seeds definition: let seeds / pool_seeds / vault_seeds = &[...] ──
-  if ((localVar === "seeds" || localVar.endsWith("_seeds")) && valueNode) {
-    const seedsData = extractPdaSeeds(valueNode);
-    if (seedsData) {
-      return {
-        stmt: { kind: "pass_through", code: text, needsReview: false }, // placeholder, consumed later
-        _seedsData: { ...seedsData, rawCode: text },
-      };
-    }
-  }
-
   // ── PDA signer_seeds: let signer_seeds / pool_signer_seeds = &[&seeds[..]] ──
   if ((localVar === "signer_seeds" || localVar.endsWith("_signer_seeds")) && pendingSeeds) {
     // Merge with the pending seeds definition
@@ -215,6 +204,20 @@ function classifyLetDeclaration(
       },
       _signerSeedsConsumed: true,
     };
+  }
+
+  // ── PDA seeds definition: let seeds / pool_seeds / vault_seeds = &[...] ──
+  if (
+    valueNode &&
+    (localVar === "seeds" || (localVar.endsWith("_seeds") && !localVar.endsWith("_signer_seeds")))
+  ) {
+    const seedsData = extractPdaSeeds(valueNode);
+    if (seedsData) {
+      return {
+        stmt: { kind: "pass_through", code: text, needsReview: false }, // placeholder, consumed later
+        _seedsData: { ...seedsData, rawCode: text },
+      };
+    }
   }
 
   // ── ctx.accounts.X access ──

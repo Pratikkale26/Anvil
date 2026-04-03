@@ -1,46 +1,55 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Mint, Transfer};
-use anchor_lang::solana_program::clock::Clock;
+use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("Vest1ngPr0gram1111111111111111111111111111111");
+declare_id!("Vest111111111111111111111111111111111111111");
+
+pub const VESTING_SEED: &[u8] = b"vesting";
+pub const VAULT_SEED: &[u8] = b"vault";
+pub const MAX_SCHEDULES: usize = 10;
 
 #[program]
-pub mod vesting {
+pub mod token_vesting {
     use super::*;
 
     pub fn create_vesting(
         ctx: Context<CreateVesting>,
+        beneficiary: Pubkey,
         total_amount: u64,
-        cliff_timestamp: i64,
-        end_timestamp: i64,
+        start_ts: i64,
+        cliff_ts: i64,
+        end_ts: i64,
         revocable: bool,
     ) -> Result<()> {
         require!(total_amount > 0, VestingError::InvalidAmount);
+        require!(cliff_ts >= start_ts, VestingError::InvalidSchedule);
+        require!(end_ts > cliff_ts, VestingError::InvalidSchedule);
+        require!(beneficiary != ctx.accounts.grantor.key(), VestingError::SelfVesting);
 
         let clock = Clock::get()?;
-        let now = clock.unix_timestamp;
+        require!(start_ts >= clock.unix_timestamp, VestingError::StartInPast);
 
-        require!(cliff_timestamp > now, VestingError::InvalidCliff);
-        require!(end_timestamp > cliff_timestamp, VestingError::InvalidEndTime);
+        let vesting = &mut ctx.accounts.vesting;
+        vesting.grantor = ctx.accounts.grantor.key();
+        vesting.beneficiary = beneficiary;
+        vesting.mint = ctx.accounts.mint.key();
+        vesting.vault = ctx.accounts.vault.key();
+        vesting.total_amount = total_amount;
+        vesting.released_amount = 0;
+        vesting.start_ts = start_ts;
+        vesting.cliff_ts = cliff_ts;
+        vesting.end_ts = end_ts;
+        vesting.revocable = revocable;
+        vesting.revoked = false;
+        vesting.created_at = clock.unix_timestamp;
+        vesting.bump = ctx.bumps.vesting;
+        vesting.vault_bump = ctx.bumps.vault;
 
-        let schedule = &mut ctx.accounts.schedule;
-        schedule.grantor = ctx.accounts.grantor.key();
-        schedule.beneficiary = ctx.accounts.beneficiary.key();
-        schedule.mint = ctx.accounts.mint.key();
-        schedule.total_amount = total_amount;
-        schedule.released_amount = 0;
-        schedule.start_timestamp = now;
-        schedule.cliff_timestamp = cliff_timestamp;
-        schedule.end_timestamp = end_timestamp;
-        schedule.revocable = revocable;
-        schedule.revoked = false;
-        schedule.bump = ctx.bumps.schedule;
-
+        // Transfer tokens from grantor to vault
         token::transfer(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
                 Transfer {
-                    from: ctx.accounts.grantor_ata.to_account_info(),
+                    from: ctx.accounts.grantor_token_account.to_account_info(),
                     to: ctx.accounts.vault.to_account_info(),
                     authority: ctx.accounts.grantor.to_account_info(),
                 },
@@ -48,14 +57,7 @@ pub mod vesting {
             total_amount,
         )?;
 
-        emit!(VestingCreated {
-            grantor: ctx.accounts.grantor.key(),
-            beneficiary: ctx.accounts.beneficiary.key(),
-            total_amount,
-            cliff_timestamp,
-            end_timestamp,
-        });
-
+        msg!("Vesting created: {} tokens for {}", total_amount, beneficiary);
         Ok(())
     }
 
@@ -63,198 +65,182 @@ pub mod vesting {
         let clock = Clock::get()?;
         let now = clock.unix_timestamp;
 
-        let schedule = &ctx.accounts.schedule;
+        let vesting = &ctx.accounts.vesting;
+        require!(!vesting.revoked, VestingError::VestingRevoked);
+        require!(now >= vesting.cliff_ts, VestingError::CliffNotReached);
 
-        require!(!schedule.revoked, VestingError::VestingRevoked);
-        require!(
-            schedule.beneficiary == ctx.accounts.beneficiary.key(),
-            VestingError::Unauthorized
+        let vested = vested_amount(
+            vesting.total_amount,
+            vesting.start_ts,
+            vesting.cliff_ts,
+            vesting.end_ts,
+            now,
         );
-        require!(now >= schedule.cliff_timestamp, VestingError::CliffNotReached);
 
-        let vested_amount = if now >= schedule.end_timestamp {
-            schedule.total_amount
-        } else {
-            let elapsed = now
-                .checked_sub(schedule.start_timestamp)
-                .ok_or(VestingError::Overflow)? as u64;
-            let duration = schedule.end_timestamp
-                .checked_sub(schedule.start_timestamp)
-                .ok_or(VestingError::Overflow)? as u64;
-            schedule.total_amount
-                .checked_mul(elapsed)
-                .ok_or(VestingError::Overflow)?
-                .checked_div(duration)
-                .ok_or(VestingError::Overflow)?
-        };
-
-        let releasable = vested_amount
-            .checked_sub(schedule.released_amount)
-            .ok_or(VestingError::Underflow)?;
+        let releasable = vested
+            .checked_sub(vesting.released_amount)
+            .ok_or(VestingError::ArithmeticOverflow)?;
 
         require!(releasable > 0, VestingError::NothingToRelease);
 
-        let seeds = &[
-            b"schedule",
-            schedule.grantor.as_ref(),
-            schedule.beneficiary.as_ref(),
-            schedule.mint.as_ref(),
-            &[schedule.bump],
-        ];
-        let signer_seeds = &[&seeds[..]];
+        let vesting = &mut ctx.accounts.vesting;
+        vesting.released_amount = vesting.released_amount
+            .checked_add(releasable)
+            .ok_or(VestingError::ArithmeticOverflow)?;
+
+        let vesting_key = ctx.accounts.vesting.key();
+        let vault_bump = ctx.accounts.vesting.vault_bump;
+        let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];
 
         token::transfer(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 Transfer {
                     from: ctx.accounts.vault.to_account_info(),
-                    to: ctx.accounts.beneficiary_ata.to_account_info(),
-                    authority: ctx.accounts.schedule.to_account_info(),
+                    to: ctx.accounts.beneficiary_token_account.to_account_info(),
+                    authority: ctx.accounts.vault.to_account_info(),
                 },
-                signer_seeds,
+                &[seeds],
             ),
             releasable,
         )?;
 
-        let schedule = &mut ctx.accounts.schedule;
-        schedule.released_amount = schedule.released_amount
-            .checked_add(releasable)
-            .ok_or(VestingError::Overflow)?;
-
-        emit!(TokensReleased {
-            beneficiary: ctx.accounts.beneficiary.key(),
-            amount: releasable,
-            timestamp: now,
-        });
-
+        msg!("Released {} tokens to beneficiary", releasable);
         Ok(())
     }
 
     pub fn revoke(ctx: Context<Revoke>) -> Result<()> {
-        let schedule = &ctx.accounts.schedule;
-
-        require!(schedule.revocable, VestingError::NotRevocable);
-        require!(
-            schedule.grantor == ctx.accounts.grantor.key(),
-            VestingError::Unauthorized
-        );
-        require!(!schedule.revoked, VestingError::VestingRevoked);
+        let vesting = &ctx.accounts.vesting;
+        require!(vesting.revocable, VestingError::NotRevocable);
+        require!(!vesting.revoked, VestingError::VestingRevoked);
 
         let clock = Clock::get()?;
         let now = clock.unix_timestamp;
 
-        let vested_amount = if now >= schedule.end_timestamp {
-            schedule.total_amount
-        } else if now < schedule.cliff_timestamp {
-            0u64
-        } else {
-            let elapsed = now
-                .checked_sub(schedule.start_timestamp)
-                .ok_or(VestingError::Overflow)? as u64;
-            let duration = schedule.end_timestamp
-                .checked_sub(schedule.start_timestamp)
-                .ok_or(VestingError::Overflow)? as u64;
-            schedule.total_amount
-                .checked_mul(elapsed)
-                .ok_or(VestingError::Overflow)?
-                .checked_div(duration)
-                .ok_or(VestingError::Overflow)?
-        };
+        let vested = vested_amount(
+            vesting.total_amount,
+            vesting.start_ts,
+            vesting.cliff_ts,
+            vesting.end_ts,
+            now,
+        );
 
-        let returnable = schedule.total_amount
-            .checked_sub(vested_amount)
-            .ok_or(VestingError::Underflow)?;
+        let unvested = vesting.total_amount
+            .checked_sub(vested)
+            .ok_or(VestingError::ArithmeticOverflow)?;
 
-        let seeds = &[
-            b"schedule",
-            schedule.grantor.as_ref(),
-            schedule.beneficiary.as_ref(),
-            schedule.mint.as_ref(),
-            &[schedule.bump],
-        ];
-        let signer_seeds = &[&seeds[..]];
+        let vesting = &mut ctx.accounts.vesting;
+        vesting.revoked = true;
 
-        if returnable > 0 {
+        if unvested > 0 {
+            let vesting_key = ctx.accounts.vesting.key();
+            let vault_bump = ctx.accounts.vesting.vault_bump;
+            let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];
+
             token::transfer(
                 CpiContext::new_with_signer(
                     ctx.accounts.token_program.to_account_info(),
                     Transfer {
                         from: ctx.accounts.vault.to_account_info(),
-                        to: ctx.accounts.grantor_ata.to_account_info(),
-                        authority: ctx.accounts.schedule.to_account_info(),
+                        to: ctx.accounts.grantor_token_account.to_account_info(),
+                        authority: ctx.accounts.vault.to_account_info(),
                     },
-                    signer_seeds,
+                    &[seeds],
                 ),
-                returnable,
+                unvested,
             )?;
         }
 
-        let schedule = &mut ctx.accounts.schedule;
-        schedule.revoked = true;
-
-        emit!(VestingRevoked {
-            grantor: ctx.accounts.grantor.key(),
-            beneficiary: schedule.beneficiary,
-            returned_amount: returnable,
-        });
-
+        msg!("Vesting revoked. {} unvested tokens returned to grantor.", unvested);
         Ok(())
     }
 
-    pub fn close_schedule(ctx: Context<CloseSchedule>) -> Result<()> {
-        let schedule = &ctx.accounts.schedule;
-
+    pub fn close(ctx: Context<Close>) -> Result<()> {
+        let vesting = &ctx.accounts.vesting;
         require!(
-            schedule.grantor == ctx.accounts.grantor.key(),
-            VestingError::Unauthorized
-        );
-        require!(
-            schedule.revoked || schedule.released_amount == schedule.total_amount,
-            VestingError::VestingNotComplete
+            vesting.revoked || vesting.released_amount == vesting.total_amount,
+            VestingError::NotCloseable
         );
 
+        // vault should be empty at this point — any dust goes back to grantor
+        let vault_balance = ctx.accounts.vault.amount;
+        if vault_balance > 0 {
+            let vesting_key = ctx.accounts.vesting.key();
+            let vault_bump = ctx.accounts.vesting.vault_bump;
+            let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];
+
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.vault.to_account_info(),
+                        to: ctx.accounts.grantor_token_account.to_account_info(),
+                        authority: ctx.accounts.vault.to_account_info(),
+                    },
+                    &[seeds],
+                ),
+                vault_balance,
+            )?;
+        }
+
+        msg!("Vesting account closed.");
         Ok(())
     }
 }
 
-// ── Accounts ────────────────────────────────────────────────────────────────
+fn vested_amount(
+    total: u64,
+    start_ts: i64,
+    cliff_ts: i64,
+    end_ts: i64,
+    now: i64,
+) -> u64 {
+    if now < cliff_ts {
+        return 0;
+    }
+    if now >= end_ts {
+        return total;
+    }
+    let elapsed = (now - start_ts) as u64;
+    let duration = (end_ts - start_ts) as u64;
+    total
+        .checked_mul(elapsed)
+        .and_then(|v| v.checked_div(duration))
+        .unwrap_or(0)
+}
 
 #[derive(Accounts)]
+#[instruction(beneficiary: Pubkey)]
 pub struct CreateVesting<'info> {
     #[account(mut)]
     pub grantor: Signer<'info>,
 
-    /// CHECK: beneficiary receives tokens
-    pub beneficiary: UncheckedAccount<'info>,
-
-    pub mint: Account<'info, Mint>,
-
     #[account(
         init,
         payer = grantor,
-        space = 8 + VestingSchedule::LEN,
-        seeds = [b"schedule", grantor.key().as_ref(), beneficiary.key().as_ref(), mint.key().as_ref()],
+        space = 8 + Vesting::LEN,
+        seeds = [VESTING_SEED, grantor.key().as_ref(), beneficiary.as_ref()],
         bump
     )]
-    pub schedule: Account<'info, VestingSchedule>,
-
-    #[account(
-        mut,
-        associated_token::mint = mint,
-        associated_token::authority = grantor,
-    )]
-    pub grantor_ata: Account<'info, TokenAccount>,
+    pub vesting: Account<'info, Vesting>,
 
     #[account(
         init,
         payer = grantor,
         token::mint = mint,
-        token::authority = schedule,
+        token::authority = vault,
+        seeds = [VAULT_SEED, vesting.key().as_ref()],
+        bump
     )]
     pub vault: Account<'info, TokenAccount>,
 
+    #[account(mut)]
+    pub grantor_token_account: Account<'info, TokenAccount>,
+
+    pub mint: Account<'info, Mint>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
 }
 
 #[derive(Accounts)]
@@ -263,26 +249,21 @@ pub struct Release<'info> {
 
     #[account(
         mut,
-        seeds = [
-            b"schedule",
-            schedule.grantor.as_ref(),
-            beneficiary.key().as_ref(),
-            schedule.mint.as_ref(),
-        ],
-        bump = schedule.bump,
-        constraint = schedule.beneficiary == beneficiary.key() @ VestingError::Unauthorized,
+        seeds = [VESTING_SEED, vesting.grantor.as_ref(), beneficiary.key().as_ref()],
+        bump = vesting.bump,
+        has_one = beneficiary,
     )]
-    pub schedule: Account<'info, VestingSchedule>,
-
-    #[account(mut)]
-    pub vault: Account<'info, TokenAccount>,
+    pub vesting: Account<'info, Vesting>,
 
     #[account(
         mut,
-        associated_token::mint = schedule.mint,
-        associated_token::authority = beneficiary,
+        seeds = [VAULT_SEED, vesting.key().as_ref()],
+        bump = vesting.vault_bump,
     )]
-    pub beneficiary_ata: Account<'info, TokenAccount>,
+    pub vault: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub beneficiary_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -293,118 +274,94 @@ pub struct Revoke<'info> {
 
     #[account(
         mut,
-        seeds = [
-            b"schedule",
-            grantor.key().as_ref(),
-            schedule.beneficiary.as_ref(),
-            schedule.mint.as_ref(),
-        ],
-        bump = schedule.bump,
-        constraint = schedule.grantor == grantor.key() @ VestingError::Unauthorized,
+        seeds = [VESTING_SEED, grantor.key().as_ref(), vesting.beneficiary.as_ref()],
+        bump = vesting.bump,
+        has_one = grantor,
     )]
-    pub schedule: Account<'info, VestingSchedule>,
-
-    #[account(mut)]
-    pub vault: Account<'info, TokenAccount>,
+    pub vesting: Account<'info, Vesting>,
 
     #[account(
         mut,
-        associated_token::mint = schedule.mint,
-        associated_token::authority = grantor,
+        seeds = [VAULT_SEED, vesting.key().as_ref()],
+        bump = vesting.vault_bump,
     )]
-    pub grantor_ata: Account<'info, TokenAccount>,
+    pub vault: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub grantor_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
-pub struct CloseSchedule<'info> {
+pub struct Close<'info> {
+    #[account(mut)]
     pub grantor: Signer<'info>,
 
     #[account(
         mut,
-        seeds = [
-            b"schedule",
-            grantor.key().as_ref(),
-            schedule.beneficiary.as_ref(),
-            schedule.mint.as_ref(),
-        ],
-        bump = schedule.bump,
+        seeds = [VESTING_SEED, grantor.key().as_ref(), vesting.beneficiary.as_ref()],
+        bump = vesting.bump,
+        has_one = grantor,
         close = grantor,
     )]
-    pub schedule: Account<'info, VestingSchedule>,
-}
+    pub vesting: Account<'info, Vesting>,
 
-// ── State ────────────────────────────────────────────────────────────────────
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, vesting.key().as_ref()],
+        bump = vesting.vault_bump,
+    )]
+    pub vault: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub grantor_token_account: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
 
 #[account]
-pub struct VestingSchedule {
-    pub grantor: Pubkey,
-    pub beneficiary: Pubkey,
-    pub mint: Pubkey,
-    pub total_amount: u64,
-    pub released_amount: u64,
-    pub start_timestamp: i64,
-    pub cliff_timestamp: i64,
-    pub end_timestamp: i64,
-    pub revocable: bool,
-    pub revoked: bool,
-    pub bump: u8,
+pub struct Vesting {
+    pub grantor: Pubkey,        // 32
+    pub beneficiary: Pubkey,    // 32
+    pub mint: Pubkey,           // 32
+    pub vault: Pubkey,          // 32
+    pub total_amount: u64,      // 8
+    pub released_amount: u64,   // 8
+    pub start_ts: i64,          // 8
+    pub cliff_ts: i64,          // 8
+    pub end_ts: i64,            // 8
+    pub revocable: bool,        // 1
+    pub revoked: bool,          // 1
+    pub created_at: i64,        // 8
+    pub bump: u8,               // 1
+    pub vault_bump: u8,         // 1
 }
 
-impl VestingSchedule {
-    pub const LEN: usize = 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 1; // = 139
+impl Vesting {
+    pub const LEN: usize = 32 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 8 + 1 + 1; // 180
 }
-
-// ── Events ───────────────────────────────────────────────────────────────────
-
-#[event]
-pub struct VestingCreated {
-    pub grantor: Pubkey,
-    pub beneficiary: Pubkey,
-    pub total_amount: u64,
-    pub cliff_timestamp: i64,
-    pub end_timestamp: i64,
-}
-
-#[event]
-pub struct TokensReleased {
-    pub beneficiary: Pubkey,
-    pub amount: u64,
-    pub timestamp: i64,
-}
-
-#[event]
-pub struct VestingRevoked {
-    pub grantor: Pubkey,
-    pub beneficiary: Pubkey,
-    pub returned_amount: u64,
-}
-
-// ── Errors ───────────────────────────────────────────────────────────────────
 
 #[error_code]
 pub enum VestingError {
     #[msg("Amount must be greater than zero")]
     InvalidAmount,
-    #[msg("Cliff must be in the future")]
-    InvalidCliff,
-    #[msg("End time must be after cliff")]
-    InvalidEndTime,
-    #[msg("Cliff period has not been reached")]
+    #[msg("Invalid vesting schedule: cliff must be >= start, end must be > cliff")]
+    InvalidSchedule,
+    #[msg("Cannot vest tokens to yourself")]
+    SelfVesting,
+    #[msg("Start timestamp is in the past")]
+    StartInPast,
+    #[msg("Cliff period has not been reached yet")]
     CliffNotReached,
-    #[msg("Nothing to release")]
+    #[msg("Nothing to release yet")]
     NothingToRelease,
-    #[msg("Vesting has been revoked")]
-    VestingRevoked,
-    #[msg("Vesting is not revocable")]
+    #[msg("This vesting is not revocable")]
     NotRevocable,
-    #[msg("Vesting is not yet complete")]
-    VestingNotComplete,
-    #[msg("Unauthorized")]
-    Unauthorized,
+    #[msg("This vesting has already been revoked")]
+    VestingRevoked,
+    #[msg("Vesting is not closeable yet")]
+    NotCloseable,
     #[msg("Arithmetic overflow")]
-    Overflow,
-    #[msg("Arithmetic underflow")]
-    Underflow,
+    ArithmeticOverflow,
 }

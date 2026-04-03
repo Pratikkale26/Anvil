@@ -608,19 +608,19 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     return helpers.join("\n\n");
   }
 
-  private buildReadLines(acc: AccountDef): string {
+  protected override buildReadLines(acc: AccountDef): string {
     return acc.fields
       .map((f) => this.buildReadLine(f.type, snakeCase(f.name)))
       .join("\n");
   }
 
-  private buildWriteLines(acc: AccountDef): string {
+  protected override buildWriteLines(acc: AccountDef): string {
     return acc.fields
       .map((f) => this.buildWriteLine(f.type, snakeCase(f.name)))
       .join("\n");
   }
 
-  private buildReadLine(typeName: string, fieldName: string): string {
+  protected override buildReadLine(typeName: string, fieldName: string): string {
     const size = this.resolveTypeSize(typeName);
     const typeDef = this.customTypeDef(typeName);
     if (typeName === "Pubkey") {
@@ -656,7 +656,7 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
         offset += ${size};`;
   }
 
-  private buildWriteLine(typeName: string, fieldName: string): string {
+  protected override buildWriteLine(typeName: string, fieldName: string): string {
     const size = this.resolveTypeSize(typeName);
     const typeDef = this.customTypeDef(typeName);
     if (typeName === "Pubkey") {
