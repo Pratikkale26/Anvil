@@ -21,52 +21,45 @@ parseRoute.post("/", async (req, res) => {
   let resolvedSource = source;
   let resolvedPath: string | undefined;
   let candidates: string[] | undefined;
-  let projectFiles: ProjectFile[] | undefined;
-  let projectEntryPath: string | undefined;
 
   try {
+    // ── 1. Folder upload: { files, entryPath } ──────────────────────────────
     if ((!resolvedSource || typeof resolvedSource !== "string") && Array.isArray(files) && typeof entryPath === "string") {
-      projectFiles = files
+      const projectFiles = files
         .filter((file) => file && typeof file.path === "string" && typeof file.content === "string" && file.path.endsWith(".rs"))
         .map((file) => ({ path: file.path, content: file.content }));
+
       if (projectFiles.length === 0) {
         throw new Error("Uploaded folder did not contain any Rust source files");
       }
+
       resolvedSource = buildProjectSource(entryPath, projectFiles);
       resolvedPath = entryPath;
       candidates = projectFiles.map((file) => file.path);
-      projectEntryPath = entryPath;
     }
 
+    // ── 2. Local server path: { sourcePath } ───────────────────────────────
     if ((!resolvedSource || typeof resolvedSource !== "string") && typeof sourcePath === "string") {
       const resolved = resolveLocalSource(sourcePath);
       resolvedSource = resolved.source;
       resolvedPath = resolved.resolvedPath;
       candidates = resolved.candidates;
-      projectFiles = resolved.projectFiles;
-      projectEntryPath = resolved.projectEntryPath;
     }
 
+    // ── 3. Local server path: { projectPath } ──────────────────────────────
     if ((!resolvedSource || typeof resolvedSource !== "string") && typeof projectPath === "string") {
       const resolved = resolveLocalSource(projectPath);
       resolvedSource = resolved.source;
       resolvedPath = resolved.resolvedPath;
       candidates = resolved.candidates;
-      projectFiles = resolved.projectFiles;
-      projectEntryPath = resolved.projectEntryPath;
     }
 
+    // ── 4. GitHub repo: { repoUrl, repoRef?, repoSubpath? } ────────────────
     if ((!resolvedSource || typeof resolvedSource !== "string") && typeof repoUrl === "string") {
-      const resolved = await resolveRepoSource({
-        repoUrl,
-        repoRef,
-        repoSubpath,
-      });
+      const resolved = await resolveRepoSource({ repoUrl, repoRef, repoSubpath });
       resolvedSource = resolved.source;
       resolvedPath = resolved.resolvedPath;
       candidates = resolved.candidates;
-      projectFiles = resolved.projectFiles;
-      projectEntryPath = resolved.projectEntryPath;
     }
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
@@ -78,10 +71,6 @@ parseRoute.post("/", async (req, res) => {
       error: "Missing required input: provide source, sourcePath, projectPath, files+entryPath, or repoUrl",
     });
     return;
-  }
-
-  if (projectFiles?.length && projectEntryPath) {
-    resolvedSource = buildProjectSource(projectEntryPath, projectFiles);
   }
 
   if (resolvedSource.length > 1_500_000) {
@@ -107,4 +96,3 @@ parseRoute.post("/", async (req, res) => {
     repoUrl: repoUrl ?? null,
   });
 });
-
