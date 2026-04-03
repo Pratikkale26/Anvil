@@ -39,7 +39,7 @@ import {
   findDescendant,
   extractAccountAttrInner,
 } from "./ast-helpers.js";
-import { parseConstraints } from "./constraint-parser.js";
+import { parseConstraints, parseInitMetadata } from "./constraint-parser.js";
 import { normalizeSolanaType } from "./utils.js";
 import { classifyBody } from "./body-classifier.js";
 
@@ -464,9 +464,14 @@ function parseAccountField(
   let isPda = false;
   let pdaSeeds: string[] = [];
   let constraints: ReturnType<typeof parseConstraints> = [];
+  let initPayer: string | undefined;
+  let initSpace: string | undefined;
 
   if (accountAttrInner) {
     constraints = parseConstraints(accountAttrInner);
+    const initMetadata = parseInitMetadata(accountAttrInner);
+    initPayer = initMetadata.payer;
+    initSpace = initMetadata.space;
     isMut = constraints.some(
       (c) => c.kind === "mut" || c.kind === "init" || c.kind === "init_if_needed",
     );
@@ -490,6 +495,8 @@ function parseAccountField(
     isOptional,
     isPda,
     pdaSeeds,
+    initPayer,
+    initSpace,
     constraints,
   };
 }

@@ -68,3 +68,27 @@ export function parseConstraints(attrBody: string): Constraint[] {
 
   return constraints;
 }
+
+export function parseInitMetadata(attrBody: string): {
+  payer?: string;
+  space?: string;
+} {
+  const tokens = splitConstraintTokens(attrBody);
+  const metadata: { payer?: string; space?: string } = {};
+
+  for (const token of tokens) {
+    const eqIdx = token.indexOf("=");
+    if (eqIdx === -1) continue;
+
+    const key = token.slice(0, eqIdx).trim();
+    const value = token.slice(eqIdx + 1).trim();
+
+    if (key === "payer" && value) {
+      metadata.payer = value;
+    } else if (key === "space" && value) {
+      metadata.space = value;
+    }
+  }
+
+  return metadata;
+}

@@ -23,6 +23,7 @@ import {
   irNeedsSignedSplCloseAccountHelper,
   irNeedsUnsignedSplCloseAccountHelper,
   irNeedsTokenAmountHelper,
+  irNeedsInitAccountHelper,
   emitRequireGuard,
 } from "./emitter-base.js";
 
@@ -245,6 +246,10 @@ ${arms}
     return `    close_program_account(${account}, ${destination})?;`;
   }
 
+  override emitCreateProgramAccount(account: string, payer: string, spaceExpr: string, signerSeeds?: string): string {
+    return `    create_program_account(${account}, ${payer}, (${spaceExpr}) as u64, program_id, ${signerSeeds ?? "&[]"})?;`;
+  }
+
   override emitPdaSignerSeeds(
     account: string,
     accountInfoVar: string,
@@ -400,6 +405,32 @@ impl std::error::Error for ${enumName} {}`;
 
   override emitHelperFunctions(_ir: SolanaIR): string {
     const helpers: string[] = [];
+
+    if (irNeedsInitAccountHelper(_ir)) {
+      helpers.push(`fn create_program_account(
+    account: &AccountInfo,
+    payer: &AccountInfo,
+    space: u64,
+    program_id: &Pubkey,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let rent = solana_program::sysvar::rent::Rent::get()?;
+    let lamports = rent.minimum_balance(space as usize);
+    let create_ix = system_instruction::create_account(
+        payer.key,
+        account.key,
+        lamports,
+        space,
+        program_id,
+    );
+    invoke_signed(
+        &create_ix,
+        &[payer.clone(), account.clone()],
+        signer_seeds,
+    )?;
+    Ok(())
+}`);
+    }
 
     if (irNeedsUnsignedLamportsHelper(_ir)) {
       helpers.push(`fn transfer_lamports(

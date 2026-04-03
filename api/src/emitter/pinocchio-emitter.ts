@@ -24,6 +24,7 @@ import {
   irNeedsUnsignedSplMintToHelper,
   irNeedsSignedSplCloseAccountHelper,
   irNeedsUnsignedSplCloseAccountHelper,
+  irNeedsInitAccountHelper,
   emitRequireGuard,
 } from "./emitter-base.js";
 
@@ -42,6 +43,10 @@ class PinocchioEmitter extends BaseEmitter {
 
     if (irNeedsHelper(_ir, "transfer_lamports")) {
       imports.push(`use pinocchio_system::instructions::Transfer as SystemTransfer;`);
+    }
+    if (irNeedsInitAccountHelper(_ir)) {
+      imports.push(`use pinocchio::instruction::{Seed, Signer};`);
+      imports.push(`use pinocchio_system::create_account_with_minimum_balance_signed;`);
     }
     if (irNeedsHelper(_ir, "spl_transfer") || irNeedsHelper(_ir, "spl_mint_to") || irNeedsHelper(_ir, "spl_burn")) {
       imports.push(`use pinocchio_token::instructions::Transfer as TokenTransfer;`);
@@ -201,6 +206,10 @@ ${arms}
 
   override emitProgramAccountClose(account: string, destination: string): string {
     return `    close_program_account(${account}, ${destination})?;`;
+  }
+
+  override emitCreateProgramAccount(account: string, payer: string, spaceExpr: string, signerSeeds?: string): string {
+    return `    create_program_account(${account}, ${payer}, (${spaceExpr}) as usize, program_id, ${signerSeeds ?? "&[]"})?;`;
   }
 
   override emitPdaSignerSeeds(
@@ -435,6 +444,40 @@ impl From<${enumName}> for ProgramError {
         lamports: amount,
     }
     .invoke_signed(signer_seeds)
+}`);
+    }
+
+    if (irNeedsInitAccountHelper(ir)) {
+      helpers.push(`fn create_program_account(
+    account: &AccountInfo,
+    payer: &AccountInfo,
+    space: usize,
+    program_id: &Pubkey,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    if signer_seeds.len() > 1 {
+        return Err(ProgramError::InvalidSeeds);
+    }
+
+    let signer_storage = signer_seeds.first().map(|seed_group| {
+        let mut seeds: [Seed<'_>; 8] = [Seed::from(&[][..]); 8];
+        for (index, seed) in seed_group.iter().enumerate() {
+            if index >= seeds.len() {
+                return Err(ProgramError::InvalidSeeds);
+            }
+            seeds[index] = Seed::from(*seed);
+        }
+        Ok((seeds, seed_group.len()))
+    }).transpose()?;
+
+    let signer_slice = if let Some((ref seeds, len)) = signer_storage {
+        let signer = Signer::from(&seeds[..len]);
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[signer])
+    } else {
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[])
+    };
+
+    signer_slice
 }`);
     }
 

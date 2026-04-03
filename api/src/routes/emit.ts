@@ -4,12 +4,13 @@ import { emitPinocchio, emitPinocchioFull } from "../emitter/pinocchio-emitter.j
 import { emitQuasar, emitQuasarFull } from "../emitter/quasar-emitter.js";
 import { emitNative, emitNativeFull } from "../emitter/native-emitter.js";
 import { analyzeCU } from "../emitter/cu-analyzer.js";
+import { validateEmitterOutput } from "../emitter/output-validator.js";
 
 export const emitRoute = Router();
 
 /**
  * POST /emit
- * Body: { ir: SolanaIR, target: "pinocchio" | "quasar" | "native", multiFile?: boolean }
+ * Body: { ir: SolanaIR, target: "pinocchio" | "quasar" | "native", multiFile?: boolean, strict?: boolean }
  * Returns: {
  *   code: string,                  // single-file combined output (backward compat)
  *   files?: EmitterFile[],         // multi-file output (if multiFile=true)
@@ -25,7 +26,9 @@ emitRoute.post("/", (req, res) => {
     ir?: unknown;
     target?: string;
     multiFile?: boolean;
+    strict?: boolean;
   };
+  const strict = Boolean((req.body as { strict?: boolean }).strict);
 
   if (!rawIr || typeof rawIr !== "object") {
     res.status(400).json({ error: "Missing required field: ir (SolanaIR object)" });
@@ -64,6 +67,22 @@ emitRoute.post("/", (req, res) => {
 
     const emitter = emitters[target as Target];
     const output = emitter(ir);
+    const validationIssues = validateEmitterOutput(ir, output);
+    const validationErrors = validationIssues.filter((issue) => issue.severity === "error");
+    const validationWarnings = validationIssues
+      .filter((issue) => issue.severity === "warning")
+      .map((issue) => issue.path ? `${issue.path}: ${issue.message}` : issue.message);
+
+    if (strict && validationErrors.length > 0) {
+      res.status(422).json({
+        error: "Emit validation failed in strict mode",
+        details: validationErrors.map((issue) =>
+          issue.path ? `${issue.path}: ${issue.message}` : issue.message
+        ),
+        warnings: validationWarnings,
+      });
+      return;
+    }
 
     // Compute CU estimates
     const cu = ir.metadata.cuEstimates?.length
@@ -77,8 +96,9 @@ emitRoute.post("/", (req, res) => {
       programName: ir.name,
       instructions: ir.instructions.length,
       accounts: ir.accounts.length,
-      warnings: output.warnings,
+      warnings: [...output.warnings, ...validationWarnings],
       transformReport: output.transformReport,
+      validationIssues,
     };
 
     // Include multi-file output if requested

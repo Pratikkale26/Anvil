@@ -29,6 +29,7 @@ import {
   irNeedsSignedSplCloseAccountHelper,
   irNeedsUnsignedSplCloseAccountHelper,
   irNeedsTokenAmountHelper,
+  irNeedsInitAccountHelper,
   emitRequireGuard,
 } from "./emitter-base.js";
 
@@ -203,6 +204,10 @@ ${arms}
 
   override emitProgramAccountClose(account: string, destination: string): string {
     return `    close_program_account(${account}, ${destination})?;`;
+  }
+
+  override emitCreateProgramAccount(account: string, payer: string, spaceExpr: string, signerSeeds?: string): string {
+    return `    create_program_account(${account}, ${payer}, (${spaceExpr}) as u64, program_id, ${signerSeeds ?? "&[]"})?;`;
   }
 
   override emitPdaSignerSeeds(
@@ -393,6 +398,21 @@ impl From<${enumName}> for ProgramError {
     }
     Ok(bump)
 }`);
+
+    if (irNeedsInitAccountHelper(ir)) {
+      helpers.push(`fn create_program_account(
+    account: &AccountInfo,
+    payer: &AccountInfo,
+    space: u64,
+    program_id: &Pubkey,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let rent = quasar::sysvar::rent::Rent::get()?;
+    let lamports = rent.minimum_balance(space as usize);
+    quasar::cpi::system::create_account(payer, account, lamports, space, program_id)
+        .invoke_signed(signer_seeds)
+}`);
+    }
 
     if (irNeedsUnsignedLamportsHelper(ir)) {
       helpers.push(`fn transfer_lamports(

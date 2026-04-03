@@ -60,6 +60,12 @@ export abstract class BaseEmitter {
   abstract emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string): string;
   abstract emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string): string;
   abstract emitProgramAccountClose(account: string, destination: string): string;
+  abstract emitCreateProgramAccount(
+    account: string,
+    payer: string,
+    spaceExpr: string,
+    signerSeeds?: string,
+  ): string;
 
   // ── PDA signer seeds ──
   abstract emitPdaSignerSeeds(
@@ -295,16 +301,10 @@ export abstract class BaseEmitter {
       .map((a) => this.emitOwnerCheck(snakeCase(a.name)))
       .join("\n");
 
-    // Init TODOs — emit a comment for every account that needs to be allocated.
-    // The exact space required is computed from the account struct definition.
-    const initTodos = instr.accounts
+    const initPreludes = instr.accounts
       .filter((a) => a.isInit && isCustomState(a.accountType))
-      .map((a) => {
-        const accDef = ir.accounts.find((d) => d.name === a.accountType);
-        const bodyLen = accDef?.fields.reduce((s, f) => s + this.resolveTypeSize(f.type), 0) ?? 0;
-        const totalLen = 8 + bodyLen; // 8-byte discriminator
-        return `    // TODO(anvil): allocate + fund '${snakeCase(a.name)}' via system_program create_account CPI\n    //   Space required: ${totalLen} bytes (8 discriminator + ${bodyLen} data)`;
-      })
+      .map((a) => this.emitInitAccountPrelude(a, instr, ir))
+      .filter(Boolean)
       .join("\n");
 
     // Arg parsing
@@ -320,7 +320,7 @@ export abstract class BaseEmitter {
     );
     const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough;
 
-    const preChecks = [signerChecks, ownerChecks, initTodos].filter(Boolean).join("\n");
+    const preChecks = [signerChecks, ownerChecks, initPreludes].filter(Boolean).join("\n");
 
     return `fn ${snakeCase(instr.name)}(
     program_id: &Pubkey,
@@ -1598,20 +1598,104 @@ ${fields}
     return "";
   }
 
+  protected emitInitAccountPrelude(
+    accountRef: Instruction["accounts"][number],
+    instr: Instruction,
+    ir: SolanaIR,
+  ): string {
+    const accountName = snakeCase(accountRef.name);
+    const payerName = accountRef.initPayer ? snakeCase(accountRef.initPayer) : undefined;
+    if (!payerName || !accountRef.initSpace) {
+      this.warnings.push(
+        `Init account '${accountName}' is missing payer/space metadata; generated output may require manual allocation wiring.`
+      );
+      return "";
+    }
+
+    const payerRef = instr.accounts.find((account) => snakeCase(account.name) === payerName);
+    if (!payerRef) {
+      this.warnings.push(
+        `Init account '${accountName}' references unknown payer '${payerName}'.`
+      );
+      return "";
+    }
+
+    let signerPrelude = "";
+    let signerSeedsExpr: string | undefined;
+    if (accountRef.isPda) {
+      const pdaSeeds = (accountRef.pdaSeeds ?? [`b"${accountName}"`]).map((seed) =>
+        this.normalizeInitSeedExpr(seed)
+      );
+      const bumpLine = this.emitBumpSeed(
+        "program_id",
+        pdaSeeds,
+        accountName,
+      )
+        .replace(/\blet bump =/g, `let bump_${accountName} =`)
+        .replace(/\blet\s+\(expected_key,\s*bump\)\s*=/g, `let (expected_key, bump_${accountName}) =`);
+      signerPrelude = `${bumpLine}
+    let init_${accountName}_seeds = &[
+            ${[...pdaSeeds, `&[bump_${accountName}]`].join(",\n            ")},
+        ];
+    let init_${accountName}_signer_seeds = &[&init_${accountName}_seeds[..]];`;
+      signerSeedsExpr = `init_${accountName}_signer_seeds`;
+    }
+
+    const createCall = this.emitCreateProgramAccount(
+      accountName,
+      payerName,
+      accountRef.initSpace,
+      signerSeedsExpr,
+    );
+    return [signerPrelude, createCall].filter(Boolean).join("\n");
+  }
+
+  protected normalizeInitSeedExpr(seed: string): string {
+    const trimmed = cleanInlineExpr(seed);
+    return trimmed
+      .replace(/ctx\.accounts\.(\w+)\.key\(\)\.as_ref\(\)/g, (_full, name: string) =>
+        this.emitAccountKeyAsRefExpr(snakeCase(name))
+      )
+      .replace(/ctx\.accounts\.(\w+)\.key\.as_ref\(\)/g, (_full, name: string) =>
+        this.emitAccountKeyAsRefExpr(snakeCase(name))
+      );
+  }
+
+  protected defaultValueForType(typeName: string): string {
+    const normalized = typeName.trim();
+    const typeDef = this.customTypeDef(normalized);
+
+    if (normalized === "bool") return "false";
+    if (/^(u|i)\d+$/.test(normalized)) return "0";
+    if (normalized === "Pubkey") return "Pubkey::default()";
+    const arrayMatch = normalized.match(/^\[\s*u8\s*;\s*(\d+)\s*\]$/);
+    if (arrayMatch?.[1]) return `[0; ${arrayMatch[1]}]`;
+    if (normalized === "String") return "String::new()";
+    if (normalized === "Vec<u8>") return "Vec::new()";
+    if (typeDef?.kind === "enum" && typeDef.variants?.[0]) {
+      return `${normalized}::${typeDef.variants[0]}`;
+    }
+    return `${normalized}::default()`;
+  }
+
   /**
-   * Emit a zero-initialized local variable for an account struct that is being
-   * created (isInit). Calling `from_account_info` on an unallocated account
-   * would fail the discriminator check; instead we produce a zeroed struct that
-   * the instruction body will populate before saving.
-   *
-   * The default implementation uses `unsafe { core::mem::zeroed() }`, which is
-   * valid for any `#[repr(C)]` struct: integers zero to 0, booleans to false,
-   * `[u8;32]` Pubkeys to the default pubkey, and `#[repr(u8)]` enums to
-   * variant 0. Subclasses may override for a more explicit field-by-field init.
+   * Emit a safe field-by-field initialized local variable for an account struct
+   * that is being created (isInit). This avoids reading discriminator-protected
+   * account data before the create-account CPI has happened and avoids `unsafe`
+   * zeroing in generated output.
    */
   protected emitStateInit(typeName: string, localVar: string): string {
-    return `    // TODO(anvil): create + fund '${localVar}' account via system_program create_account CPI first
-    let mut ${localVar} = unsafe { core::mem::zeroed::<${typeName}>() };`;
+    const accountDef = this.currentIr?.accounts.find((account) => account.name === typeName);
+    if (!accountDef) {
+      return `    let mut ${localVar} = ${typeName}::default();`;
+    }
+
+    const fields = accountDef.fields
+      .map((field) => `        ${snakeCase(field.name)}: ${this.defaultValueForType(field.type)},`)
+      .join("\n");
+    return `    let mut ${localVar} = ${typeName} {
+${fields}
+    };`;
   }
 
   /**
@@ -1995,4 +2079,10 @@ export function irNeedsUnsignedSplCloseAccountHelper(ir: SolanaIR): boolean {
     }
   }
   return false;
+}
+
+export function irNeedsInitAccountHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.accounts.some((account) => account.isInit)
+  );
 }

@@ -1,12 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
+import type { SolanaIR } from "./src/ir/schema.ts";
 import { parseAnchor } from "./src/parser/anchor-parser.ts";
 import { resolveLocalSource } from "./src/parser/local-source.ts";
 import { buildProjectSource } from "./src/parser/project-source.ts";
 import { emitPinocchio, emitPinocchioFull } from "./src/emitter/pinocchio-emitter.ts";
 import { emitQuasar, emitQuasarFull } from "./src/emitter/quasar-emitter.ts";
 import { emitNative, emitNativeFull } from "./src/emitter/native-emitter.ts";
+import { validateEmitterOutput } from "./src/emitter/output-validator.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = join(__dirname, "generated-outputs");
@@ -26,6 +28,7 @@ async function run() {
 
   const input = process.argv[2] ?? "counter";
   const target = process.argv[3] ?? "pinocchio";
+  const strict = process.argv.includes("--strict");
   const resolvedInputPath = existsSync(input) ? resolve(input) : "";
   const inputStats = resolvedInputPath ? statSync(resolvedInputPath) : null;
 
@@ -41,15 +44,15 @@ async function run() {
       ? labelFromPath(input)
       : input;
 
-  let ir: unknown;
+  let ir: SolanaIR;
   if (existsSync(fixturePath)) {
     console.log(`1. Reading pre-loaded IR fixture (${input}.json)...`);
     const irRaw = readFileSync(fixturePath, "utf-8");
-    ir = JSON.parse(irRaw);
+    ir = JSON.parse(irRaw) as SolanaIR;
   } else if (explicitJsonPath) {
     console.log(`1. Reading IR fixture from file: ${explicitJsonPath}`);
     const irRaw = readFileSync(explicitJsonPath, "utf-8");
-    ir = JSON.parse(irRaw);
+    ir = JSON.parse(irRaw) as SolanaIR;
   } else {
     let sourcePath = "";
     let source = "";
@@ -106,7 +109,7 @@ async function run() {
     const res = await fetch("http://localhost:8080/emit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ir, target, multiFile: true }),
+      body: JSON.stringify({ ir, target, multiFile: true, strict }),
     });
 
     if (!res.ok) {
@@ -174,6 +177,15 @@ async function run() {
     }
 
     const output = emitter(ir);
+    const validationIssues = validateEmitterOutput(ir, output);
+    const validationErrors = validationIssues.filter((issue) => issue.severity === "error");
+    if (strict && validationErrors.length > 0) {
+      console.error(`❌ Strict validation failed for ${label} -> ${target}`);
+      validationErrors.forEach((issue) => {
+        console.error(`   • ${issue.path ? `${issue.path}: ` : ""}${issue.message}`);
+      });
+      return;
+    }
     const outPath = join(OUTPUT_DIR, `${label}-${target}.rs`);
     writeFileSync(outPath, output.singleFile);
 

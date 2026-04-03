@@ -63,6 +63,8 @@ export const AccountRefSchema = z.object({
   isOptional: z.boolean().default(false),
   isPda: z.boolean().default(false),
   pdaSeeds: z.array(z.string()).default([]),
+  initPayer: z.string().optional(),
+  initSpace: z.string().optional(),
   constraints: z.array(ConstraintSchema).default([]),
   docs: z.string().optional(),
 });
