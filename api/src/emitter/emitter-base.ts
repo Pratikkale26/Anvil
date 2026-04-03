@@ -222,7 +222,7 @@ export abstract class BaseEmitter {
 
     // Carry over helper functions from source
     for (const helper of ir.helperFns) {
-      sections.push(`// Carried from source\n${this.transformHelperCode(helper.rawCode)}`);
+      sections.push(this.carriedFunctionBlock(helper.rawCode));
     }
 
     if (sections.length === 0) return "";
@@ -256,7 +256,7 @@ export abstract class BaseEmitter {
 
     // Carry over helper functions from source
     for (const helper of ir.helperFns) {
-      sections.push(`// Carried from source\n${this.transformHelperCode(helper.rawCode)}`);
+      sections.push(this.carriedFunctionBlock(helper.rawCode));
     }
 
     if (ir.errors.length > 0) {
@@ -287,6 +287,29 @@ export abstract class BaseEmitter {
       .map((a) => this.emitSignerCheck(snakeCase(a.name)))
       .join("\n");
 
+    // Owner checks — only for accounts whose type is a custom state struct
+    // (i.e., in ir.accounts). Token/System/Sysvar accounts are excluded:
+    // they are owned by their respective programs, not this one.
+    const isCustomState = (accountType: string) =>
+      ir.accounts.some((a) => a.name === accountType);
+
+    const ownerChecks = nonProgramAccounts
+      .filter((a) => !a.isOptional && !a.isInit && a.isMut && isCustomState(a.accountType))
+      .map((a) => this.emitOwnerCheck(snakeCase(a.name)))
+      .join("\n");
+
+    // Init TODOs — emit a comment for every account that needs to be allocated.
+    // The exact space required is computed from the account struct definition.
+    const initTodos = nonProgramAccounts
+      .filter((a) => a.isInit && isCustomState(a.accountType))
+      .map((a) => {
+        const accDef = ir.accounts.find((d) => d.name === a.accountType);
+        const bodyLen = accDef?.fields.reduce((s, f) => s + this.resolveTypeSize(f.type), 0) ?? 0;
+        const totalLen = 8 + bodyLen; // 8-byte discriminator
+        return `    // TODO(anvil): allocate + fund '${snakeCase(a.name)}' via system_program create_account CPI\n    //   Space required: ${totalLen} bytes (8 discriminator + ${bodyLen} data)`;
+      })
+      .join("\n");
+
     // Arg parsing
     const argsBlock = this.emitArgParsing(instr.args);
 
@@ -300,6 +323,8 @@ export abstract class BaseEmitter {
     );
     const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough;
 
+    const preChecks = [signerChecks, ownerChecks, initTodos].filter(Boolean).join("\n");
+
     return `fn ${snakeCase(instr.name)}(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -310,7 +335,7 @@ export abstract class BaseEmitter {
     }
 
 ${bindings}
-${signerChecks ? `\n${signerChecks}\n` : ""}
+${preChecks ? `\n${preChecks}\n` : ""}
 ${argsBlock}
 
 ${bodyCode}
@@ -1424,6 +1449,127 @@ ${fields}
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]`;
+  }
+
+  // ─── Shared byte-layout serialization helpers ──────────────────────────────
+  // These power the read()/write() impls emitted for every account struct.
+  // Subclasses inherit them; override rustTypeForFramework() to adapt the Pubkey
+  // representation ([u8;32] in Pinocchio, Pubkey in Native/Quasar).
+
+  protected accountDiscriminatorExpr(name: string): string {
+    return accountDiscriminator(name);
+  }
+
+  protected buildReadLines(acc: AccountDef): string {
+    return acc.fields
+      .map((f) => this.buildReadLine(f.type, snakeCase(f.name)))
+      .join("\n");
+  }
+
+  protected buildWriteLines(acc: AccountDef): string {
+    return acc.fields
+      .map((f) => this.buildWriteLine(f.type, snakeCase(f.name)))
+      .join("\n");
+  }
+
+  protected buildReadLine(typeName: string, fieldName: string): string {
+    const size = this.resolveTypeSize(typeName);
+    const typeDef = this.customTypeDef(typeName);
+    const rustType = this.rustTypeForFramework(typeName);
+
+    if (typeName === "Pubkey") {
+      // Use rustTypeForFramework so Pinocchio gets [u8;32], others get Pubkey
+      return `        let ${fieldName}: ${rustType} = ${this.emitPubkeyFieldRead(size)};
+        offset += ${size};`;
+    }
+    if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(typeName)) {
+      return `        let ${fieldName}: ${typeName} = data[offset..offset + ${size}].try_into().unwrap();
+        offset += ${size};`;
+    }
+    if (typeDef?.kind === "enum") {
+      return `        let ${fieldName}: ${typeName} = ${typeName}::try_from(data[offset])
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += 1;`;
+    }
+    if (typeName === "bool") {
+      return `        let ${fieldName}: bool = match data[offset] {
+            0 => false,
+            1 => true,
+            _ => return Err(ProgramError::InvalidAccountData),
+        };
+        offset += 1;`;
+    }
+    if (typeName === "u8") {
+      return `        let ${fieldName}: u8 = data[offset];
+        offset += 1;`;
+    }
+    if (typeName === "i8") {
+      return `        let ${fieldName}: i8 = data[offset] as i8;
+        offset += 1;`;
+    }
+    return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(data[offset..offset + ${size}].try_into().unwrap());
+        offset += ${size};`;
+  }
+
+  protected buildWriteLine(typeName: string, fieldName: string): string {
+    const size = this.resolveTypeSize(typeName);
+    const typeDef = this.customTypeDef(typeName);
+
+    if (typeName === "Pubkey" || /^\[\s*u8\s*;\s*\d+\s*\]$/.test(typeName)) {
+      return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName}${this.emitPubkeyFieldAsRef()});
+        offset += ${size};`;
+    }
+    if (typeDef?.kind === "enum") {
+      return `        data[offset] = value.${fieldName} as u8;
+        offset += 1;`;
+    }
+    if (typeName === "bool") {
+      return `        data[offset] = if value.${fieldName} { 1 } else { 0 };
+        offset += 1;`;
+    }
+    if (typeName === "u8" || typeName === "i8") {
+      return `        data[offset] = value.${fieldName} as u8;
+        offset += 1;`;
+    }
+    return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName}.to_le_bytes());
+        offset += ${size};`;
+  }
+
+  /**
+   * How to deserialize a Pubkey at the current `offset` in a read() body.
+   * Pinocchio overrides to return the raw array (since Pubkey IS [u8;32]).
+   * Native keeps it as Pubkey::new_from_array(...).
+   */
+  protected emitPubkeyFieldRead(_size: number): string {
+    return `data[offset..offset + 32].try_into().unwrap()`;
+  }
+
+  /**
+   * Whether a Pubkey field value needs `.as_ref()` to get &[u8] for copy_from_slice.
+   * Returns "" for Pinocchio ([u8;32] IS already a byte array),
+   * returns ".as_ref()" for frameworks where Pubkey wraps [u8;32].
+   */
+  protected emitPubkeyFieldAsRef(): string {
+    return "";
+  }
+
+  /**
+   * Wrap a helper function that was carried verbatim from the Anchor source with
+   * a ⚠️ warning banner. Developers will see immediately that the body still uses
+   * Anchor APIs (ctx, CpiContext, system_program::transfer, etc.) and must be
+   * rewritten for the target framework before the code will compile.
+   */
+  protected carriedFunctionBlock(rawCode: string): string {
+    const transformed = this.transformHelperCode(rawCode);
+    return [
+      `// ╔══════════════════════════════════════════════════════════════════════════════╗`,
+      `// ║  ⚠️  ANVIL: function below was carried verbatim from the Anchor source.      ║`,
+      `// ║  It still uses Anchor APIs (ctx, CpiContext, system_program::transfer, etc.) ║`,
+      `// ║  and MUST be rewritten for ${this.frameworkName.padEnd(48)} ║`,
+      `// ║  before this code will compile.                                              ║`,
+      `// ╚══════════════════════════════════════════════════════════════════════════════╝`,
+      transformed,
+    ].join("\n");
   }
 
   protected transformHelperCode(code: string): string {

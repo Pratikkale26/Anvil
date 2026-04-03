@@ -120,11 +120,14 @@ ${arms}
 
   override emitStateRead(accountName: string, typeName: string, localVar: string, mutable: boolean): string {
     const mutKeyword = mutable ? "mut " : "";
-    return `    let ${mutKeyword}${localVar} = ${typeName}::try_from_slice(&${accountName}.data.borrow()[8..])?;`;
+    // Use the manually-emitted read() method — correct for all account structs
+    // including those containing non-Borsh enum fields (which would fail try_from_slice)
+    return `    let ${mutKeyword}${localVar} = ${typeName}::read(&${accountName}.data.borrow())?;`;
   }
 
-  override emitStateSave(accountName: string, _typeName: string, localVar: string): string {
-    return `    ${localVar}.serialize(&mut &mut ${accountName}.data.borrow_mut()[8..])?;`;
+  override emitStateSave(accountName: string, typeName: string, localVar: string): string {
+    // Use the manually-emitted write() method — consistent with read()
+    return `    ${typeName}::write(&mut ${accountName}.data.borrow_mut(), &${localVar})?;`;
   }
 
   override emitBumpSeed(_programId: string, seeds: string[], expectedKey: string): string {
@@ -304,8 +307,18 @@ ${maybeRead}    let seeds = &[
     return typeName;
   }
 
-  protected override emitPubkeyDeserialize(start: number, end: number): string {
+  override emitPubkeyDeserialize(start: number, end: number): string {
     return `Pubkey::new_from_array(data[${start}..${end}].try_into().unwrap())`;
+  }
+
+  // Native Pubkey wraps [u8;32] via new_from_array — so field reads use that constructor
+  protected override emitPubkeyFieldRead(_size: number): string {
+    return `Pubkey::new_from_array(data[offset..offset + 32].try_into().unwrap())`;
+  }
+
+  // Native Pubkey.as_ref() gives &[u8] for copy_from_slice
+  protected override emitPubkeyFieldAsRef(): string {
+    return ".as_ref()";
   }
 
   override emitAccountStruct(acc: AccountDef): string {
@@ -313,9 +326,47 @@ ${maybeRead}    let seeds = &[
       .map((f) => `    pub ${snakeCase(f.name)}: ${this.rustTypeForFramework(f.type)},`)
       .join("\n");
 
-    return `#[derive(BorshSerialize, BorshDeserialize, Debug)]
+    const bodyLen = acc.fields.reduce((s, f) => s + this.resolveTypeSize(f.type), 0);
+    const readLines = this.buildReadLines(acc);
+    const writeLines = this.buildWriteLines(acc);
+    const ctorFields = acc.fields.map((f) => snakeCase(f.name)).join(", ");
+
+    // We emit a #[repr(C)] struct with a complete manual read()/write() implementation.
+    // We do NOT emit #[derive(BorshSerialize, BorshDeserialize)] because:
+    //  - The struct already has a correct byte-layout via read()/write().
+    //  - Structs containing custom enum fields (e.g. #[repr(u8)] enums) would
+    //    fail Borsh compilation since those enums don't implement BorshSerialize.
+    return `#[repr(C)]
 pub struct ${acc.name} {
 ${fields}
+}
+
+impl ${acc.name} {
+    pub const DISCRIMINATOR: [u8; 8] = ${this.accountDiscriminatorExpr(acc.name)};
+    pub const LEN: usize = ${bodyLen};
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut offset = 8usize;
+${readLines}
+        Ok(Self { ${ctorFields} })
+    }
+
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+${writeLines}
+        Ok(())
+    }
 }`;
   }
 

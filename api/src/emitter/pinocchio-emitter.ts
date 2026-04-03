@@ -102,7 +102,7 @@ ${arms}
   }
 
   override emitSignerCheck(name: string): string {
-    return `    if !${name}.is_signer() {
+    return `    if !${name}.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }`;
   }
@@ -114,7 +114,7 @@ ${arms}
   }
 
   override emitWritableCheck(names: string[]): string {
-    const checks = names.map((n) => `!${n}.is_writable()`).join(" || ");
+    const checks = names.map((n) => `!${n}.is_writable`).join(" || ");
     return `    if ${checks} {
         return Err(ProgramError::InvalidAccountData);
     }`;
@@ -304,8 +304,19 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
     return typeName;
   }
 
-  protected override emitPubkeyDeserialize(start: number, end: number): string {
+  // Pinocchio: Pubkey IS [u8; 32], so deserialization in arg parsing is a raw slice
+  override emitPubkeyDeserialize(start: number, end: number): string {
     return `data[${start}..${end}].try_into().unwrap()`;
+  }
+
+  // Pinocchio: Pubkey field in a struct is already [u8;32] — read directly
+  protected override emitPubkeyFieldRead(_size: number): string {
+    return `data[offset..offset + 32].try_into().unwrap()`;
+  }
+
+  // Pinocchio: [u8;32] IS a byte slice — no .as_ref() needed for copy_from_slice
+  protected override emitPubkeyFieldAsRef(): string {
+    return "";
   }
 
   override emitAccountStruct(acc: AccountDef): string {
@@ -609,82 +620,6 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     return helpers.join("\n\n");
   }
 
-  // ── Read/Write lines for account structs ──
-
-  private buildReadLines(acc: AccountDef): string {
-    return acc.fields
-      .map((f) => this.buildReadLine(f.type, snakeCase(f.name)))
-      .join("\n");
-  }
-
-  private buildWriteLines(acc: AccountDef): string {
-    return acc.fields
-      .map((f) => this.buildWriteLine(f.type, snakeCase(f.name)))
-      .join("\n");
-  }
-
-  private buildReadLine(typeName: string, fieldName: string): string {
-    const size = this.resolveTypeSize(typeName);
-    const typeDef = this.customTypeDef(typeName);
-    if (typeName === "Pubkey") {
-      return `        let ${fieldName}: [u8; 32] = data[offset..offset + 32].try_into().unwrap();
-        offset += 32;`;
-    }
-    if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(typeName)) {
-      return `        let ${fieldName}: ${typeName} = data[offset..offset + ${size}].try_into().unwrap();
-        offset += ${size};`;
-    }
-    if (typeDef?.kind === "enum") {
-      return `        let ${fieldName}: ${typeName} = ${typeName}::try_from(data[offset])
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        offset += 1;`;
-    }
-    if (typeName === "bool") {
-      return `        let ${fieldName}: bool = match data[offset] {
-            0 => false,
-            1 => true,
-            _ => return Err(ProgramError::InvalidAccountData),
-        };
-        offset += 1;`;
-    }
-    if (typeName === "u8") {
-      return `        let ${fieldName}: u8 = data[offset];
-        offset += 1;`;
-    }
-    if (typeName === "i8") {
-      return `        let ${fieldName}: i8 = data[offset] as i8;
-        offset += 1;`;
-    }
-    return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(data[offset..offset + ${size}].try_into().unwrap());
-        offset += ${size};`;
-  }
-
-  private buildWriteLine(typeName: string, fieldName: string): string {
-    const size = this.resolveTypeSize(typeName);
-    const typeDef = this.customTypeDef(typeName);
-    if (typeName === "Pubkey") {
-      return `        data[offset..offset + 32].copy_from_slice(&value.${fieldName});
-        offset += 32;`;
-    }
-    if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(typeName)) {
-      return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName});
-        offset += ${size};`;
-    }
-    if (typeDef?.kind === "enum") {
-      return `        data[offset] = value.${fieldName} as u8;
-        offset += 1;`;
-    }
-    if (typeName === "bool") {
-      return `        data[offset] = if value.${fieldName} { 1 } else { 0 };
-        offset += 1;`;
-    }
-    if (typeName === "u8" || typeName === "i8") {
-      return `        data[offset] = value.${fieldName} as u8;
-        offset += 1;`;
-    }
-    return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName}.to_le_bytes());
-        offset += ${size};`;
-  }
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
