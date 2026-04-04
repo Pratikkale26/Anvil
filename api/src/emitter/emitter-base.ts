@@ -290,12 +290,21 @@ export abstract class BaseEmitter {
       .map((a) => this.emitSignerCheck(snakeCase(a.name)))
       .join("\n");
 
-    // Owner checks — only for accounts whose type is a custom state struct
-    // (i.e., in ir.accounts). Token/System/Sysvar accounts are excluded:
-    // they are owned by their respective programs, not this one.
+    // Writable checks — ensure all mutable non-program accounts are actually writable.
+    // Missing this allows attackers to pass read-only accounts where writes are expected.
     const isCustomState = (accountType: string) =>
       ir.accounts.some((a) => a.name === accountType);
 
+    const writableAccountNames = instr.accounts
+      .filter((a) => a.isMut && !a.isOptional && !isProgramAccount(a.accountType))
+      .map((a) => snakeCase(a.name));
+    const writableCheck = writableAccountNames.length > 0
+      ? this.emitWritableCheck(writableAccountNames)
+      : "";
+
+    // Owner checks — only for accounts whose type is a custom state struct
+    // (i.e., in ir.accounts). Token/System/Sysvar accounts are excluded:
+    // they are owned by their respective programs, not this one.
     const ownerChecks = instr.accounts
       .filter((a) => !a.isOptional && !a.isInit && a.isMut && isCustomState(a.accountType))
       .map((a) => this.emitOwnerCheck(snakeCase(a.name)))
@@ -320,7 +329,7 @@ export abstract class BaseEmitter {
     );
     const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough;
 
-    const preChecks = [signerChecks, ownerChecks, initPreludes].filter(Boolean).join("\n");
+    const preChecks = [signerChecks, writableCheck, ownerChecks, initPreludes].filter(Boolean).join("\n");
 
     return `fn ${snakeCase(instr.name)}(
     program_id: &Pubkey,
@@ -1037,6 +1046,24 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           ensureStateRead(stmt.account, true);
           const stateAccountDef = ir.accounts.find((account) => snakeCase(account.name) === snakeCase(stmt.account));
           const fieldDef = stateAccountDef?.fields.find((field) => snakeCase(field.name) === snakeCase(stmt.field));
+          const stateVarName = resolveStateVar(snakeCase(stmt.account));
+          const fieldName = snakeCase(stmt.field);
+
+          // ── Checked arithmetic for compound assignments on numeric types ──
+          // Detect __compound_+= and __compound_-= prefixes injected by the classifier
+          // for += / -= statements on state fields. Use checked_add/checked_sub to
+          // prevent silent u64/u128 overflow in release mode (DeFi exploit vector).
+          const compoundMatch = stmt.value.match(/^__compound_([+\-*\/])=__(.+)$/);
+          if (compoundMatch?.[1] && compoundMatch[2] && fieldDef && isCheckedArithmeticType(fieldDef.type)) {
+            const op = compoundMatch[1];
+            let rhs = transformCtxAccountsReferences(compoundMatch[2]);
+            rhs = normalizeKeyValueUsages(transformAccountReferences(rhs));
+            rhs = transformHelperCalls(rhs);
+            const checkedMethod = op === "+" ? "checked_add" : op === "-" ? "checked_sub" : op === "*" ? "checked_mul" : "checked_div";
+            lines.push(`    ${stateVarName}.${fieldName} = ${stateVarName}.${fieldName}.${checkedMethod}(${rhs}).ok_or(ProgramError::ArithmeticOverflow)?;`);
+            break;
+          }
+
           // State field assignments are largely pass-through since they're just Rust
           // but we need to adapt ctx.accounts and ctx.bumps references
           let value = transformCtxAccountsReferences(stmt.value);
@@ -1065,7 +1092,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             value = `bump_${snakeCase(bumpAccount)}`;
             lines.push(normalizedBumpLine(snakeCase(bumpAccount)));
           }
-          lines.push(`    ${resolveStateVar(snakeCase(stmt.account))}.${snakeCase(stmt.field)} = ${value};`);
+          lines.push(`    ${stateVarName}.${fieldName} = ${value};`);
           break;
         }
 
@@ -1340,7 +1367,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         return `    if data.len() < ${end} {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let ${name}: ${arg.type} = ${arg.type}::from_le_bytes(data[${start}..${end}].try_into().unwrap());`;
+    let ${name}: ${arg.type} = ${arg.type}::from_le_bytes(
+        data[${start}..${end}].try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );`;
       case "i8":
         return `    if data.len() < ${end} {
         return Err(ProgramError::InvalidInstructionData);
@@ -1365,7 +1394,8 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           return `    if data.len() < ${end} {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let ${name}: ${arg.type} = data[${start}..${end}].try_into().unwrap();`;
+    let ${name}: ${arg.type} = data[${start}..${end}]
+        .try_into().map_err(|_| ProgramError::InvalidInstructionData)?;`;
         }
         const typeDef = this.customTypeDef(arg.type);
         if (typeDef?.kind === "enum" && typeDef.variants?.length) {
@@ -1385,7 +1415,7 @@ ${arms}
   }
 
   protected emitPubkeyDeserialize(start: number, end: number): string {
-    return `data[${start}..${end}].try_into().unwrap()`;
+    return `data[${start}..${end}].try_into().map_err(|_| ProgramError::InvalidInstructionData)?`;
   }
 
   protected customTypeDef(typeName: string) {
@@ -1528,7 +1558,8 @@ ${fields}
         offset += ${size};`;
     }
     if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(typeName)) {
-      return `        let ${fieldName}: ${typeName} = data[offset..offset + ${size}].try_into().unwrap();
+      return `        let ${fieldName}: ${typeName} = data[offset..offset + ${size}]
+            .try_into().map_err(|_| ProgramError::InvalidAccountData)?;
         offset += ${size};`;
     }
     if (typeDef?.kind === "enum") {
@@ -1552,7 +1583,9 @@ ${fields}
       return `        let ${fieldName}: i8 = data[offset] as i8;
         offset += 1;`;
     }
-    return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(data[offset..offset + ${size}].try_into().unwrap());
+    return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(
+            data[offset..offset + ${size}].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
         offset += ${size};`;
   }
 
@@ -1586,7 +1619,7 @@ ${fields}
    * Native keeps it as Pubkey::new_from_array(...).
    */
   protected emitPubkeyFieldRead(_size: number): string {
-    return `data[offset..offset + 32].try_into().unwrap()`;
+    return `data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?`;
   }
 
   /**
@@ -1661,21 +1694,34 @@ ${fields}
       );
   }
 
+  /**
+   * Return the default/zero value for a given Rust type in generated code.
+   * Subclasses can override for framework-specific type representations
+   * (e.g. Pinocchio uses [0u8; 32] instead of Pubkey::default()).
+   */
   protected defaultValueForType(typeName: string): string {
     const normalized = typeName.trim();
     const typeDef = this.customTypeDef(normalized);
 
     if (normalized === "bool") return "false";
     if (/^(u|i)\d+$/.test(normalized)) return "0";
-    if (normalized === "Pubkey") return "Pubkey::default()";
+    if (normalized === "Pubkey") return this.defaultPubkeyValue();
     const arrayMatch = normalized.match(/^\[\s*u8\s*;\s*(\d+)\s*\]$/);
-    if (arrayMatch?.[1]) return `[0; ${arrayMatch[1]}]`;
+    if (arrayMatch?.[1]) return `[0u8; ${arrayMatch[1]}]`;
     if (normalized === "String") return "String::new()";
     if (normalized === "Vec<u8>") return "Vec::new()";
     if (typeDef?.kind === "enum" && typeDef.variants?.[0]) {
       return `${normalized}::${typeDef.variants[0]}`;
     }
     return `${normalized}::default()`;
+  }
+
+  /**
+   * Returns the zero-value for a Pubkey field in generated struct initialization.
+   * Pinocchio overrides this because Pubkey IS [u8; 32] — Pubkey::default() doesn't exist.
+   */
+  protected defaultPubkeyValue(): string {
+    return "Pubkey::default()";
   }
 
   /**
@@ -1765,6 +1811,15 @@ export function isProgramAccount(accountType: string): boolean {
     accountType === "AssociatedTokenProgram" ||
     accountType === "AssociatedToken"
   );
+}
+
+/**
+ * Returns true if the type should use checked arithmetic (checked_add, checked_sub)
+ * to prevent silent overflow in release mode. Applies to 64-bit and wider integer
+ * types that are commonly used for financial values (lamports, token amounts, etc.).
+ */
+export function isCheckedArithmeticType(typeName: string): boolean {
+  return typeName === "u64" || typeName === "u128" || typeName === "i64" || typeName === "i128";
 }
 
 export function typeSize(typeName: string): number {

@@ -297,6 +297,13 @@ function classifyExpressionStatement(
     if (assignResult) return { stmt: assignResult };
   }
 
+  // ── Compound assignment: state.field += value / -= / *= / /= ──
+  // Encode the operator in the value so the emitter can apply checked arithmetic.
+  if (expr.type === "compound_assignment_expr") {
+    const compoundResult = classifyCompoundAssignment(expr);
+    if (compoundResult) return { stmt: compoundResult };
+  }
+
   // ── Try expression: something()? ──
   if (expr.type === "try_expression") {
     const cpi = detectCpi(expr);
@@ -371,6 +378,53 @@ function classifyAssignment(node: SyntaxNode): BodyStatement | null {
     }
   }
 
+  return null;
+}
+
+// ── Compound assignment classification ────────────────────────────────────────────
+
+/**
+ * Classify compound assignments (+=, -=, *=, /=) on state fields.
+ * The operator is encoded in the value string as `__compound_OP=__RHS`
+ * so the emitter can apply checked_add, checked_sub, etc. for numeric types.
+ *
+ * e.g. `vault.total_deposits += amount` →
+ *   { kind: "state_field_assign", account: "vault", field: "total_deposits",
+ *     value: "__compound_+=__amount" }
+ */
+function classifyCompoundAssignment(node: SyntaxNode): BodyStatement | null {
+  const leftNode = node.childForFieldName("left");
+  const rightNode = node.childForFieldName("right");
+  if (!leftNode || !rightNode) return null;
+
+  // Extract the operator (tree-sitter exposes it as a raw child token)
+  // Operator is a child like "+=", "-=", "*=", "/="
+  let operator = "";
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    const t = child.type;
+    if (t === "+=" || t === "-=" || t === "*=" || t === "/=") {
+      operator = t[0] ?? "+";
+      break;
+    }
+  }
+  if (!operator) return null;
+
+  if (leftNode.type === "field_expression") {
+    const chain = getFieldChain(leftNode);
+    if (chain.length >= 2) {
+      const isCtxAccountsField = chain[0] === "ctx" && chain[1] === "accounts" && chain.length >= 4;
+      const account = isCtxAccountsField ? (chain[2] ?? "unknown") : (chain[0] ?? "unknown");
+      const field = isCtxAccountsField ? (chain[3] ?? "unknown") : (chain[1] ?? "unknown");
+      return {
+        kind: "state_field_assign",
+        account,
+        field,
+        value: `__compound_${operator}=__${rightNode.text}`,
+      };
+    }
+  }
   return null;
 }
 

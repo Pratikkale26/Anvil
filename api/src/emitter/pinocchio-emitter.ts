@@ -315,17 +315,22 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
 
   // Pinocchio: Pubkey IS [u8; 32], so deserialization in arg parsing is a raw slice
   override emitPubkeyDeserialize(start: number, end: number): string {
-    return `data[${start}..${end}].try_into().unwrap()`;
+    return `data[${start}..${end}].try_into().map_err(|_| ProgramError::InvalidInstructionData)?`;
   }
 
-  // Pinocchio: Pubkey field in a struct is already [u8;32] — read directly
+  // Pinocchio: [u8;32] IS a byte slice — read directly, no .as_ref() needed.
   protected override emitPubkeyFieldRead(_size: number): string {
-    return `data[offset..offset + 32].try_into().unwrap()`;
+    return `data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?`;
   }
 
   // Pinocchio: [u8;32] IS a byte slice — no .as_ref() needed for copy_from_slice
   protected override emitPubkeyFieldAsRef(): string {
     return "";
+  }
+
+  // Pinocchio: Pubkey is [u8; 32] — Pubkey::default() does not exist
+  protected override defaultPubkeyValue(): string {
+    return "[0u8; 32]";
   }
 
   override emitAccountStruct(acc: AccountDef): string {

@@ -18,10 +18,8 @@ app.get("/", (_req, res) => {
     status: "ok",
     endpoints: [
       "POST /parse  — Anchor source|file|project → Solana IR",
-      "POST /emit   — Solana IR → target framework code",
-      "POST /ai/review-ir — Gemini review of parsed IR",
-      "POST /ai/review-output — Gemini review of generated output",
-      "POST /ai/repair-output — Gemini scoped repair of one generated file",
+      "POST /emit   — Solana IR → target framework code (?refine=1 for AI polish)",
+      "POST /ai/refine — AI-powered fix for validation issues (single focused call)",
       "GET  /demo/:name — pre-loaded demo IR (counter|vault|escrow|staking)",
     ],
   });
