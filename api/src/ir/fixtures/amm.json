@@ -1,0 +1,1645 @@
+{
+  "name": "amm",
+  "instructions": [
+    {
+      "name": "initialize_pool",
+      "accounts": [
+        {
+          "name": "pool",
+          "accountType": "AmmPool",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"pool\"",
+            "token_mint_a.key().as_ref()",
+            "token_mint_b.key().as_ref()"
+          ],
+          "initPayer": "admin",
+          "initSpace": "8 + AmmPool::LEN",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"pool\", token_mint_a.key().as_ref(), token_mint_b.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "vault_a",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"vault_a\"",
+            "pool.key().as_ref()"
+          ],
+          "initPayer": "admin",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "token::mint",
+              "value": "token_mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "pool"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"vault_a\", pool.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "vault_b",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"vault_b\"",
+            "pool.key().as_ref()"
+          ],
+          "initPayer": "admin",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "token::mint",
+              "value": "token_mint_b"
+            },
+            {
+              "kind": "token::authority",
+              "value": "pool"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"vault_b\", pool.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "lp_mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "initPayer": "admin",
+          "constraints": [
+            {
+              "kind": "init"
+            }
+          ]
+        },
+        {
+          "name": "token_mint_a",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "token_mint_b",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "admin",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_rate",
+          "type": "u64"
+        },
+        {
+          "name": "initial_price",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "fee_rate <= 10000",
+          "error": "AmmError::InvalidFeeRate"
+        },
+        {
+          "kind": "require",
+          "condition": "initial_price > 0",
+          "error": "AmmError::InvalidPrice"
+        },
+        {
+          "kind": "state_read",
+          "account": "pool",
+          "localVar": "pool",
+          "mutable": true,
+          "accountType": "AmmPool"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "admin",
+          "value": "ctx.accounts.admin.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "token_mint_a",
+          "value": "ctx.accounts.token_mint_a.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "token_mint_b",
+          "value": "ctx.accounts.token_mint_b.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "lp_mint",
+          "value": "ctx.accounts.lp_mint.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "fee_rate",
+          "value": "fee_rate"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "initial_price",
+          "value": "initial_price"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "reserve_a",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "reserve_b",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "lp_supply",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "total_fees_a",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "total_fees_b",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "bump",
+          "value": "ctx.bumps.pool"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "vault_a_bump",
+          "value": "ctx.bumps.vault_a"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "vault_b_bump",
+          "value": "ctx.bumps.vault_b"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "is_frozen",
+          "value": "false"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "protocol_fee_rate",
+          "value": "2000"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(fee_rate <= 10000, AmmError::InvalidFeeRate);\n        require!(initial_price > 0, AmmError::InvalidPrice);\n\n        let pool = &mut ctx.accounts.pool;\n        pool.admin = ctx.accounts.admin.key();\n        pool.token_mint_a = ctx.accounts.token_mint_a.key();\n        pool.token_mint_b = ctx.accounts.token_mint_b.key();\n        pool.lp_mint = ctx.accounts.lp_mint.key();\n        pool.fee_rate = fee_rate;\n        pool.initial_price = initial_price;\n        pool.reserve_a = 0;\n        pool.reserve_b = 0;\n        pool.lp_supply = 0;\n        pool.total_fees_a = 0;\n        pool.total_fees_b = 0;\n        pool.bump = ctx.bumps.pool;\n        pool.vault_a_bump = ctx.bumps.vault_a;\n        pool.vault_b_bump = ctx.bumps.vault_b;\n        pool.is_frozen = false;\n        pool.protocol_fee_rate = 2000;\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "add_liquidity",
+      "accounts": [
+        {
+          "name": "user",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "pool",
+          "accountType": "AmmPool",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"pool\"",
+            "pool.token_mint_a.as_ref()",
+            "pool.token_mint_b.as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"pool\", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.bump"
+            }
+          ]
+        },
+        {
+          "name": "user_token_a",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "pool.token_mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "user"
+            }
+          ]
+        },
+        {
+          "name": "user_token_b",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "pool.token_mint_b"
+            },
+            {
+              "kind": "token::authority",
+              "value": "user"
+            }
+          ]
+        },
+        {
+          "name": "vault_a",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"vault_a\"",
+            "pool.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"vault_a\", pool.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.vault_a_bump"
+            }
+          ]
+        },
+        {
+          "name": "vault_b",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"vault_b\"",
+            "pool.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"vault_b\", pool.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.vault_b_bump"
+            }
+          ]
+        },
+        {
+          "name": "lp_mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "pool.lp_mint"
+            }
+          ]
+        },
+        {
+          "name": "user_lp_token",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "lp_mint"
+            },
+            {
+              "kind": "token::authority",
+              "value": "user"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_a_desired",
+          "type": "u64"
+        },
+        {
+          "name": "amount_b_desired",
+          "type": "u64"
+        },
+        {
+          "name": "amount_a_min",
+          "type": "u64"
+        },
+        {
+          "name": "amount_b_min",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "!ctx.accounts.pool.is_frozen",
+          "error": "AmmError::PoolFrozen"
+        },
+        {
+          "kind": "require",
+          "condition": "amount_a_desired > 0 && amount_b_desired > 0",
+          "error": "AmmError::InvalidAmount"
+        },
+        {
+          "kind": "state_read",
+          "account": "pool",
+          "localVar": "pool",
+          "mutable": false,
+          "accountType": "AmmPool"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let (amount_a, amount_b, lp_tokens) = if pool.lp_supply == 0 {\n            // First liquidity provision\n            let lp = (amount_a_desired as u128)\n                .checked_mul(amount_b_desired as u128)\n                .ok_or(AmmError::Overflow)?;\n            let lp = integer_sqrt(lp);\n            (amount_a_desired, amount_b_desired, lp as u64)\n        } else {\n            // Subsequent liquidity provisions — maintain ratio\n            let amount_b_optimal = (amount_a_desired as u128)\n                .checked_mul(pool.reserve_b as u128)\n                .ok_or(AmmError::Overflow)?\n                .checked_div(pool.reserve_a as u128)\n                .ok_or(AmmError::Overflow)? as u64;\n\n            let (a, b) = if amount_b_optimal <= amount_b_desired {\n                require!(amount_b_optimal >= amount_b_min, AmmError::SlippageExceeded);\n                (amount_a_desired, amount_b_optimal)\n            } else {\n                let amount_a_optimal = (amount_b_desired as u128)\n                    .checked_mul(pool.reserve_a as u128)\n                    .ok_or(AmmError::Overflow)?\n                    .checked_div(pool.reserve_b as u128)\n                    .ok_or(AmmError::Overflow)? as u64;\n                require!(amount_a_optimal >= amount_a_min, AmmError::SlippageExceeded);\n                (amount_a_optimal, amount_b_desired)\n            };\n\n            let lp = std::cmp::min(\n                (a as u128)\n                    .checked_mul(pool.lp_supply as u128)\n                    .ok_or(AmmError::Overflow)?\n                    .checked_div(pool.reserve_a as u128)\n                    .ok_or(AmmError::Overflow)?,\n                (b as u128)\n                    .checked_mul(pool.lp_supply as u128)\n                    .ok_or(AmmError::Overflow)?\n                    .checked_div(pool.reserve_b as u128)\n                    .ok_or(AmmError::Overflow)?,\n            ) as u64;\n\n            (a, b, lp)\n        };",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "lp_tokens > 0",
+          "error": "AmmError::InsufficientLiquidity"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "user_token_a",
+          "to": "vault_a",
+          "authority": "user",
+          "amount": "amount_a"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "user_token_b",
+          "to": "vault_b",
+          "authority": "user",
+          "amount": "amount_b"
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "pool",
+          "seeds": [
+            "b\"pool\"",
+            "pool.token_mint_a.as_ref()",
+            "pool.token_mint_b.as_ref()",
+            "&[pool.bump]"
+          ],
+          "bumpField": "&[pool.bump]",
+          "rawCode": "let pool_seeds = &[\n            b\"pool\",\n            pool.token_mint_a.as_ref(),\n            pool.token_mint_b.as_ref(),\n            &[pool.bump],\n        ];\nlet signer_seeds = &[&pool_seeds[..]];"
+        },
+        {
+          "kind": "cpi_spl_mint_to",
+          "mint": "lp_mint",
+          "to": "user_lp_token",
+          "authority": "pool",
+          "amount": "lp_tokens",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "state_read",
+          "account": "pool",
+          "localVar": "pool",
+          "mutable": true,
+          "accountType": "AmmPool"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "reserve_a",
+          "value": "pool.reserve_a\n            .checked_add(amount_a)\n            .ok_or(AmmError::Overflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "reserve_b",
+          "value": "pool.reserve_b\n            .checked_add(amount_b)\n            .ok_or(AmmError::Overflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "lp_supply",
+          "value": "pool.lp_supply\n            .checked_add(lp_tokens)\n            .ok_or(AmmError::Overflow)?"
+        },
+        {
+          "kind": "emit",
+          "event": "LiquidityAdded",
+          "fields": "user: ctx.accounts.user.key(),\n            amount_a,\n            amount_b,\n            lp_tokens,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(!ctx.accounts.pool.is_frozen, AmmError::PoolFrozen);\n        require!(amount_a_desired > 0 && amount_b_desired > 0, AmmError::InvalidAmount);\n\n        let pool = &ctx.accounts.pool;\n\n        let (amount_a, amount_b, lp_tokens) = if pool.lp_supply == 0 {\n            // First liquidity provision\n            let lp = (amount_a_desired as u128)\n                .checked_mul(amount_b_desired as u128)\n                .ok_or(AmmError::Overflow)?;\n            let lp = integer_sqrt(lp);\n            (amount_a_desired, amount_b_desired, lp as u64)\n        } else {\n            // Subsequent liquidity provisions — maintain ratio\n            let amount_b_optimal = (amount_a_desired as u128)\n                .checked_mul(pool.reserve_b as u128)\n                .ok_or(AmmError::Overflow)?\n                .checked_div(pool.reserve_a as u128)\n                .ok_or(AmmError::Overflow)? as u64;\n\n            let (a, b) = if amount_b_optimal <= amount_b_desired {\n                require!(amount_b_optimal >= amount_b_min, AmmError::SlippageExceeded);\n                (amount_a_desired, amount_b_optimal)\n            } else {\n                let amount_a_optimal = (amount_b_desired as u128)\n                    .checked_mul(pool.reserve_a as u128)\n                    .ok_or(AmmError::Overflow)?\n                    .checked_div(pool.reserve_b as u128)\n                    .ok_or(AmmError::Overflow)? as u64;\n                require!(amount_a_optimal >= amount_a_min, AmmError::SlippageExceeded);\n                (amount_a_optimal, amount_b_desired)\n            };\n\n            let lp = std::cmp::min(\n                (a as u128)\n                    .checked_mul(pool.lp_supply as u128)\n                    .ok_or(AmmError::Overflow)?\n                    .checked_div(pool.reserve_a as u128)\n                    .ok_or(AmmError::Overflow)?,\n                (b as u128)\n                    .checked_mul(pool.lp_supply as u128)\n                    .ok_or(AmmError::Overflow)?\n                    .checked_div(pool.reserve_b as u128)\n                    .ok_or(AmmError::Overflow)?,\n            ) as u64;\n\n            (a, b, lp)\n        };\n\n        require!(lp_tokens > 0, AmmError::InsufficientLiquidity);\n\n        // Transfer token A to vault\n        token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.user_token_a.to_account_info(),\n                    to: ctx.accounts.vault_a.to_account_info(),\n                    authority: ctx.accounts.user.to_account_info(),\n                },\n            ),\n            amount_a,\n        )?;\n\n        // Transfer token B to vault\n        token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.user_token_b.to_account_info(),\n                    to: ctx.accounts.vault_b.to_account_info(),\n                    authority: ctx.accounts.user.to_account_info(),\n                },\n            ),\n            amount_b,\n        )?;\n\n        // Mint LP tokens\n        let pool_seeds = &[\n            b\"pool\",\n            pool.token_mint_a.as_ref(),\n            pool.token_mint_b.as_ref(),\n            &[pool.bump],\n        ];\n        let signer_seeds = &[&pool_seeds[..]];\n\n        token::mint_to(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                MintTo {\n                    mint: ctx.accounts.lp_mint.to_account_info(),\n                    to: ctx.accounts.user_lp_token.to_account_info(),\n                    authority: ctx.accounts.pool.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            lp_tokens,\n        )?;\n\n        let pool = &mut ctx.accounts.pool;\n        pool.reserve_a = pool.reserve_a\n            .checked_add(amount_a)\n            .ok_or(AmmError::Overflow)?;\n        pool.reserve_b = pool.reserve_b\n            .checked_add(amount_b)\n            .ok_or(AmmError::Overflow)?;\n        pool.lp_supply = pool.lp_supply\n            .checked_add(lp_tokens)\n            .ok_or(AmmError::Overflow)?;\n\n        emit!(LiquidityAdded {\n            user: ctx.accounts.user.key(),\n            amount_a,\n            amount_b,\n            lp_tokens,\n        });\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "remove_liquidity",
+      "accounts": [
+        {
+          "name": "user",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "pool",
+          "accountType": "AmmPool",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"pool\"",
+            "pool.token_mint_a.as_ref()",
+            "pool.token_mint_b.as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"pool\", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.bump"
+            }
+          ]
+        },
+        {
+          "name": "user_token_a",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "pool.token_mint_a"
+            },
+            {
+              "kind": "token::authority",
+              "value": "user"
+            }
+          ]
+        },
+        {
+          "name": "user_token_b",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "pool.token_mint_b"
+            },
+            {
+              "kind": "token::authority",
+              "value": "user"
+            }
+          ]
+        },
+        {
+          "name": "vault_a",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"vault_a\"",
+            "pool.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"vault_a\", pool.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.vault_a_bump"
+            }
+          ]
+        },
+        {
+          "name": "vault_b",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"vault_b\"",
+            "pool.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"vault_b\", pool.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.vault_b_bump"
+            }
+          ]
+        },
+        {
+          "name": "lp_mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "pool.lp_mint"
+            }
+          ]
+        },
+        {
+          "name": "user_lp_token",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "token::mint",
+              "value": "lp_mint"
+            },
+            {
+              "kind": "token::authority",
+              "value": "user"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "lp_amount",
+          "type": "u64"
+        },
+        {
+          "name": "min_amount_a",
+          "type": "u64"
+        },
+        {
+          "name": "min_amount_b",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "!ctx.accounts.pool.is_frozen",
+          "error": "AmmError::PoolFrozen"
+        },
+        {
+          "kind": "require",
+          "condition": "lp_amount > 0",
+          "error": "AmmError::InvalidAmount"
+        },
+        {
+          "kind": "state_read",
+          "account": "pool",
+          "localVar": "pool",
+          "mutable": false,
+          "accountType": "AmmPool"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let amount_a = (lp_amount as u128)\n            .checked_mul(pool.reserve_a as u128)\n            .ok_or(AmmError::Overflow)?\n            .checked_div(pool.lp_supply as u128)\n            .ok_or(AmmError::Overflow)? as u64;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let amount_b = (lp_amount as u128)\n            .checked_mul(pool.reserve_b as u128)\n            .ok_or(AmmError::Overflow)?\n            .checked_div(pool.lp_supply as u128)\n            .ok_or(AmmError::Overflow)? as u64;",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "amount_a >= min_amount_a",
+          "error": "AmmError::SlippageExceeded"
+        },
+        {
+          "kind": "require",
+          "condition": "amount_b >= min_amount_b",
+          "error": "AmmError::SlippageExceeded"
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "pool",
+          "seeds": [
+            "b\"pool\"",
+            "pool.token_mint_a.as_ref()",
+            "pool.token_mint_b.as_ref()",
+            "&[pool.bump]"
+          ],
+          "bumpField": "&[pool.bump]",
+          "rawCode": "let pool_seeds = &[\n            b\"pool\",\n            pool.token_mint_a.as_ref(),\n            pool.token_mint_b.as_ref(),\n            &[pool.bump],\n        ];\nlet signer_seeds = &[&pool_seeds[..]];"
+        },
+        {
+          "kind": "cpi_spl_burn",
+          "from": "user_lp_token",
+          "mint": "lp_mint",
+          "authority": "user",
+          "amount": "lp_amount"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "vault_a",
+          "to": "user_token_a",
+          "authority": "pool",
+          "amount": "amount_a",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "vault_b",
+          "to": "user_token_b",
+          "authority": "pool",
+          "amount": "amount_b",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "state_read",
+          "account": "pool",
+          "localVar": "pool",
+          "mutable": true,
+          "accountType": "AmmPool"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "reserve_a",
+          "value": "pool.reserve_a\n            .checked_sub(amount_a)\n            .ok_or(AmmError::Underflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "reserve_b",
+          "value": "pool.reserve_b\n            .checked_sub(amount_b)\n            .ok_or(AmmError::Underflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "lp_supply",
+          "value": "pool.lp_supply\n            .checked_sub(lp_amount)\n            .ok_or(AmmError::Underflow)?"
+        },
+        {
+          "kind": "emit",
+          "event": "LiquidityRemoved",
+          "fields": "user: ctx.accounts.user.key(),\n            amount_a,\n            amount_b,\n            lp_tokens: lp_amount,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(!ctx.accounts.pool.is_frozen, AmmError::PoolFrozen);\n        require!(lp_amount > 0, AmmError::InvalidAmount);\n\n        let pool = &ctx.accounts.pool;\n\n        let amount_a = (lp_amount as u128)\n            .checked_mul(pool.reserve_a as u128)\n            .ok_or(AmmError::Overflow)?\n            .checked_div(pool.lp_supply as u128)\n            .ok_or(AmmError::Overflow)? as u64;\n\n        let amount_b = (lp_amount as u128)\n            .checked_mul(pool.reserve_b as u128)\n            .ok_or(AmmError::Overflow)?\n            .checked_div(pool.lp_supply as u128)\n            .ok_or(AmmError::Overflow)? as u64;\n\n        require!(amount_a >= min_amount_a, AmmError::SlippageExceeded);\n        require!(amount_b >= min_amount_b, AmmError::SlippageExceeded);\n\n        let pool_seeds = &[\n            b\"pool\",\n            pool.token_mint_a.as_ref(),\n            pool.token_mint_b.as_ref(),\n            &[pool.bump],\n        ];\n        let signer_seeds = &[&pool_seeds[..]];\n\n        // Burn LP tokens\n        token::burn(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                Burn {\n                    mint: ctx.accounts.lp_mint.to_account_info(),\n                    from: ctx.accounts.user_lp_token.to_account_info(),\n                    authority: ctx.accounts.user.to_account_info(),\n                },\n            ),\n            lp_amount,\n        )?;\n\n        // Return token A\n        token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.vault_a.to_account_info(),\n                    to: ctx.accounts.user_token_a.to_account_info(),\n                    authority: ctx.accounts.pool.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            amount_a,\n        )?;\n\n        // Return token B\n        token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.vault_b.to_account_info(),\n                    to: ctx.accounts.user_token_b.to_account_info(),\n                    authority: ctx.accounts.pool.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            amount_b,\n        )?;\n\n        let pool = &mut ctx.accounts.pool;\n        pool.reserve_a = pool.reserve_a\n            .checked_sub(amount_a)\n            .ok_or(AmmError::Underflow)?;\n        pool.reserve_b = pool.reserve_b\n            .checked_sub(amount_b)\n            .ok_or(AmmError::Underflow)?;\n        pool.lp_supply = pool.lp_supply\n            .checked_sub(lp_amount)\n            .ok_or(AmmError::Underflow)?;\n\n        emit!(LiquidityRemoved {\n            user: ctx.accounts.user.key(),\n            amount_a,\n            amount_b,\n            lp_tokens: lp_amount,\n        });\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "swap",
+      "accounts": [
+        {
+          "name": "user",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "pool",
+          "accountType": "AmmPool",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"pool\"",
+            "pool.token_mint_a.as_ref()",
+            "pool.token_mint_b.as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"pool\", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.bump"
+            }
+          ]
+        },
+        {
+          "name": "user_token_in",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "user_token_out",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "vault_in",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"vault_a\"",
+            "pool.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"vault_a\", pool.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.vault_a_bump"
+            }
+          ]
+        },
+        {
+          "name": "vault_out",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"vault_b\"",
+            "pool.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"vault_b\", pool.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.vault_b_bump"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "minimum_amount_out",
+          "type": "u64"
+        },
+        {
+          "name": "a_to_b",
+          "type": "bool"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "!ctx.accounts.pool.is_frozen",
+          "error": "AmmError::PoolFrozen"
+        },
+        {
+          "kind": "require",
+          "condition": "amount_in > 0",
+          "error": "AmmError::InvalidAmount"
+        },
+        {
+          "kind": "state_read",
+          "account": "pool",
+          "localVar": "pool",
+          "mutable": false,
+          "accountType": "AmmPool"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let (reserve_in, reserve_out) = if a_to_b {\n            (pool.reserve_a, pool.reserve_b)\n        } else {\n            (pool.reserve_b, pool.reserve_a)\n        };",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "reserve_in > 0 && reserve_out > 0",
+          "error": "AmmError::InsufficientLiquidity"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let fee_amount = amount_in\n            .checked_mul(pool.fee_rate)\n            .ok_or(AmmError::Overflow)?\n            .checked_div(10000)\n            .ok_or(AmmError::Overflow)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let protocol_fee = fee_amount\n            .checked_mul(pool.protocol_fee_rate)\n            .ok_or(AmmError::Overflow)?\n            .checked_div(10000)\n            .ok_or(AmmError::Overflow)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let lp_fee = fee_amount\n            .checked_sub(protocol_fee)\n            .ok_or(AmmError::Underflow)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let amount_in_after_fee = amount_in\n            .checked_sub(fee_amount)\n            .ok_or(AmmError::Underflow)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let amount_out = (amount_in_after_fee as u128)\n            .checked_mul(reserve_out as u128)\n            .ok_or(AmmError::Overflow)?\n            .checked_div(\n                (reserve_in as u128)\n                    .checked_add(amount_in_after_fee as u128)\n                    .ok_or(AmmError::Overflow)?\n            )\n            .ok_or(AmmError::Overflow)? as u64;",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "amount_out >= minimum_amount_out",
+          "error": "AmmError::SlippageExceeded"
+        },
+        {
+          "kind": "require",
+          "condition": "amount_out < reserve_out",
+          "error": "AmmError::InsufficientLiquidity"
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "pool",
+          "seeds": [
+            "b\"pool\"",
+            "pool.token_mint_a.as_ref()",
+            "pool.token_mint_b.as_ref()",
+            "&[pool.bump]"
+          ],
+          "bumpField": "&[pool.bump]",
+          "rawCode": "let pool_seeds = &[\n            b\"pool\",\n            pool.token_mint_a.as_ref(),\n            pool.token_mint_b.as_ref(),\n            &[pool.bump],\n        ];\nlet signer_seeds = &[&pool_seeds[..]];"
+        },
+        {
+          "kind": "pass_through",
+          "code": "if a_to_b {\n            token::transfer(\n                CpiContext::new(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.user_token_in.to_account_info(),\n                        to: ctx.accounts.vault_in.to_account_info(),\n                        authority: ctx.accounts.user.to_account_info(),\n                    },\n                ),\n                amount_in,\n            )?;\n\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault_out.to_account_info(),\n                        to: ctx.accounts.user_token_out.to_account_info(),\n                        authority: ctx.accounts.pool.to_account_info(),\n                    },\n                    signer_seeds,\n                ),\n                amount_out,\n            )?;\n        } else {\n            token::transfer(\n                CpiContext::new(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.user_token_in.to_account_info(),\n                        to: ctx.accounts.vault_in.to_account_info(),\n                        authority: ctx.accounts.user.to_account_info(),\n                    },\n                ),\n                amount_in,\n            )?;\n\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault_out.to_account_info(),\n                        to: ctx.accounts.user_token_out.to_account_info(),\n                        authority: ctx.accounts.pool.to_account_info(),\n                    },\n                    signer_seeds,\n                ),\n                amount_out,\n            )?;\n        }",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern"
+        },
+        {
+          "kind": "state_read",
+          "account": "pool",
+          "localVar": "pool",
+          "mutable": true,
+          "accountType": "AmmPool"
+        },
+        {
+          "kind": "pass_through",
+          "code": "if a_to_b {\n            pool.reserve_a = pool.reserve_a\n                .checked_add(amount_in_after_fee)\n                .ok_or(AmmError::Overflow)?\n                .checked_add(lp_fee)\n                .ok_or(AmmError::Overflow)?;\n            pool.reserve_b = pool.reserve_b\n                .checked_sub(amount_out)\n                .ok_or(AmmError::Underflow)?;\n            pool.total_fees_a = pool.total_fees_a\n                .checked_add(lp_fee)\n                .ok_or(AmmError::Overflow)?;\n        } else {\n            pool.reserve_b = pool.reserve_b\n                .checked_add(amount_in_after_fee)\n                .ok_or(AmmError::Overflow)?\n                .checked_add(lp_fee)\n                .ok_or(AmmError::Overflow)?;\n            pool.reserve_a = pool.reserve_a\n                .checked_sub(amount_out)\n                .ok_or(AmmError::Underflow)?;\n            pool.total_fees_b = pool.total_fees_b\n                .checked_add(lp_fee)\n                .ok_or(AmmError::Overflow)?;\n        }",
+          "needsReview": false
+        },
+        {
+          "kind": "emit",
+          "event": "Swapped",
+          "fields": "user: ctx.accounts.user.key(),\n            amount_in,\n            amount_out,\n            fee_amount,\n            a_to_b,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(!ctx.accounts.pool.is_frozen, AmmError::PoolFrozen);\n        require!(amount_in > 0, AmmError::InvalidAmount);\n\n        let pool = &ctx.accounts.pool;\n\n        let (reserve_in, reserve_out) = if a_to_b {\n            (pool.reserve_a, pool.reserve_b)\n        } else {\n            (pool.reserve_b, pool.reserve_a)\n        };\n\n        require!(reserve_in > 0 && reserve_out > 0, AmmError::InsufficientLiquidity);\n\n        // Apply fee\n        let fee_amount = amount_in\n            .checked_mul(pool.fee_rate)\n            .ok_or(AmmError::Overflow)?\n            .checked_div(10000)\n            .ok_or(AmmError::Overflow)?;\n\n        let protocol_fee = fee_amount\n            .checked_mul(pool.protocol_fee_rate)\n            .ok_or(AmmError::Overflow)?\n            .checked_div(10000)\n            .ok_or(AmmError::Overflow)?;\n\n        let lp_fee = fee_amount\n            .checked_sub(protocol_fee)\n            .ok_or(AmmError::Underflow)?;\n\n        let amount_in_after_fee = amount_in\n            .checked_sub(fee_amount)\n            .ok_or(AmmError::Underflow)?;\n\n        // Constant product formula: x * y = k\n        let amount_out = (amount_in_after_fee as u128)\n            .checked_mul(reserve_out as u128)\n            .ok_or(AmmError::Overflow)?\n            .checked_div(\n                (reserve_in as u128)\n                    .checked_add(amount_in_after_fee as u128)\n                    .ok_or(AmmError::Overflow)?\n            )\n            .ok_or(AmmError::Overflow)? as u64;\n\n        require!(amount_out >= minimum_amount_out, AmmError::SlippageExceeded);\n        require!(amount_out < reserve_out, AmmError::InsufficientLiquidity);\n\n        let pool_seeds = &[\n            b\"pool\",\n            pool.token_mint_a.as_ref(),\n            pool.token_mint_b.as_ref(),\n            &[pool.bump],\n        ];\n        let signer_seeds = &[&pool_seeds[..]];\n\n        if a_to_b {\n            token::transfer(\n                CpiContext::new(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.user_token_in.to_account_info(),\n                        to: ctx.accounts.vault_in.to_account_info(),\n                        authority: ctx.accounts.user.to_account_info(),\n                    },\n                ),\n                amount_in,\n            )?;\n\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault_out.to_account_info(),\n                        to: ctx.accounts.user_token_out.to_account_info(),\n                        authority: ctx.accounts.pool.to_account_info(),\n                    },\n                    signer_seeds,\n                ),\n                amount_out,\n            )?;\n        } else {\n            token::transfer(\n                CpiContext::new(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.user_token_in.to_account_info(),\n                        to: ctx.accounts.vault_in.to_account_info(),\n                        authority: ctx.accounts.user.to_account_info(),\n                    },\n                ),\n                amount_in,\n            )?;\n\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault_out.to_account_info(),\n                        to: ctx.accounts.user_token_out.to_account_info(),\n                        authority: ctx.accounts.pool.to_account_info(),\n                    },\n                    signer_seeds,\n                ),\n                amount_out,\n            )?;\n        }\n\n        let pool = &mut ctx.accounts.pool;\n        if a_to_b {\n            pool.reserve_a = pool.reserve_a\n                .checked_add(amount_in_after_fee)\n                .ok_or(AmmError::Overflow)?\n                .checked_add(lp_fee)\n                .ok_or(AmmError::Overflow)?;\n            pool.reserve_b = pool.reserve_b\n                .checked_sub(amount_out)\n                .ok_or(AmmError::Underflow)?;\n            pool.total_fees_a = pool.total_fees_a\n                .checked_add(lp_fee)\n                .ok_or(AmmError::Overflow)?;\n        } else {\n            pool.reserve_b = pool.reserve_b\n                .checked_add(amount_in_after_fee)\n                .ok_or(AmmError::Overflow)?\n                .checked_add(lp_fee)\n                .ok_or(AmmError::Overflow)?;\n            pool.reserve_a = pool.reserve_a\n                .checked_sub(amount_out)\n                .ok_or(AmmError::Underflow)?;\n            pool.total_fees_b = pool.total_fees_b\n                .checked_add(lp_fee)\n                .ok_or(AmmError::Overflow)?;\n        }\n\n        emit!(Swapped {\n            user: ctx.accounts.user.key(),\n            amount_in,\n            amount_out,\n            fee_amount,\n            a_to_b,\n        });\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "freeze_pool",
+      "accounts": [
+        {
+          "name": "pool",
+          "accountType": "AmmPool",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"pool\"",
+            "pool.token_mint_a.as_ref()",
+            "pool.token_mint_b.as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"pool\", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.bump"
+            }
+          ]
+        },
+        {
+          "name": "admin",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        }
+      ],
+      "args": [],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "ctx.accounts.pool.admin == ctx.accounts.admin.key()",
+          "error": "AmmError::Unauthorized"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "is_frozen",
+          "value": "true"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(\n            ctx.accounts.pool.admin == ctx.accounts.admin.key(),\n            AmmError::Unauthorized\n        );\n        ctx.accounts.pool.is_frozen = true;\n        Ok(())\n    }"
+    },
+    {
+      "name": "unfreeze_pool",
+      "accounts": [
+        {
+          "name": "pool",
+          "accountType": "AmmPool",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"pool\"",
+            "pool.token_mint_a.as_ref()",
+            "pool.token_mint_b.as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"pool\", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.bump"
+            }
+          ]
+        },
+        {
+          "name": "admin",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        }
+      ],
+      "args": [],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "ctx.accounts.pool.admin == ctx.accounts.admin.key()",
+          "error": "AmmError::Unauthorized"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "is_frozen",
+          "value": "false"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(\n            ctx.accounts.pool.admin == ctx.accounts.admin.key(),\n            AmmError::Unauthorized\n        );\n        ctx.accounts.pool.is_frozen = false;\n        Ok(())\n    }"
+    },
+    {
+      "name": "update_fee_rate",
+      "accounts": [
+        {
+          "name": "pool",
+          "accountType": "AmmPool",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"pool\"",
+            "pool.token_mint_a.as_ref()",
+            "pool.token_mint_b.as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"pool\", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "pool.bump"
+            }
+          ]
+        },
+        {
+          "name": "admin",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_fee_rate",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "ctx.accounts.pool.admin == ctx.accounts.admin.key()",
+          "error": "AmmError::Unauthorized"
+        },
+        {
+          "kind": "require",
+          "condition": "new_fee_rate <= 10000",
+          "error": "AmmError::InvalidFeeRate"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "pool",
+          "field": "fee_rate",
+          "value": "new_fee_rate"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(\n            ctx.accounts.pool.admin == ctx.accounts.admin.key(),\n            AmmError::Unauthorized\n        );\n        require!(new_fee_rate <= 10000, AmmError::InvalidFeeRate);\n        ctx.accounts.pool.fee_rate = new_fee_rate;\n        Ok(())\n    }"
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AmmPool",
+      "fields": [
+        {
+          "name": "admin",
+          "type": "Pubkey"
+        },
+        {
+          "name": "token_mint_a",
+          "type": "Pubkey"
+        },
+        {
+          "name": "token_mint_b",
+          "type": "Pubkey"
+        },
+        {
+          "name": "lp_mint",
+          "type": "Pubkey"
+        },
+        {
+          "name": "fee_rate",
+          "type": "u64"
+        },
+        {
+          "name": "initial_price",
+          "type": "u64"
+        },
+        {
+          "name": "reserve_a",
+          "type": "u64"
+        },
+        {
+          "name": "reserve_b",
+          "type": "u64"
+        },
+        {
+          "name": "lp_supply",
+          "type": "u64"
+        },
+        {
+          "name": "total_fees_a",
+          "type": "u64"
+        },
+        {
+          "name": "total_fees_b",
+          "type": "u64"
+        },
+        {
+          "name": "bump",
+          "type": "u8"
+        },
+        {
+          "name": "vault_a_bump",
+          "type": "u8"
+        },
+        {
+          "name": "vault_b_bump",
+          "type": "u8"
+        },
+        {
+          "name": "is_frozen",
+          "type": "bool"
+        },
+        {
+          "name": "protocol_fee_rate",
+          "type": "u64"
+        }
+      ],
+      "space": 204
+    }
+  ],
+  "types": [
+    {
+      "name": "LiquidityAdded",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "user",
+          "type": "Pubkey"
+        },
+        {
+          "name": "amount_a",
+          "type": "u64"
+        },
+        {
+          "name": "amount_b",
+          "type": "u64"
+        },
+        {
+          "name": "lp_tokens",
+          "type": "u64"
+        }
+      ],
+      "rawCode": "pub struct LiquidityAdded {\n    pub user: Pubkey,\n    pub amount_a: u64,\n    pub amount_b: u64,\n    pub lp_tokens: u64,\n}"
+    },
+    {
+      "name": "LiquidityRemoved",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "user",
+          "type": "Pubkey"
+        },
+        {
+          "name": "amount_a",
+          "type": "u64"
+        },
+        {
+          "name": "amount_b",
+          "type": "u64"
+        },
+        {
+          "name": "lp_tokens",
+          "type": "u64"
+        }
+      ],
+      "rawCode": "pub struct LiquidityRemoved {\n    pub user: Pubkey,\n    pub amount_a: u64,\n    pub amount_b: u64,\n    pub lp_tokens: u64,\n}"
+    },
+    {
+      "name": "Swapped",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "user",
+          "type": "Pubkey"
+        },
+        {
+          "name": "amount_in",
+          "type": "u64"
+        },
+        {
+          "name": "amount_out",
+          "type": "u64"
+        },
+        {
+          "name": "fee_amount",
+          "type": "u64"
+        },
+        {
+          "name": "a_to_b",
+          "type": "bool"
+        }
+      ],
+      "rawCode": "pub struct Swapped {\n    pub user: Pubkey,\n    pub amount_in: u64,\n    pub amount_out: u64,\n    pub fee_amount: u64,\n    pub a_to_b: bool,\n}"
+    }
+  ],
+  "constants": [],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidFeeRate",
+      "msg": "Invalid fee rate"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidPrice",
+      "msg": "Invalid price"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidAmount",
+      "msg": "Invalid amount"
+    },
+    {
+      "code": 6003,
+      "name": "PoolFrozen",
+      "msg": "Pool is frozen"
+    },
+    {
+      "code": 6004,
+      "name": "SlippageExceeded",
+      "msg": "Slippage exceeded"
+    },
+    {
+      "code": 6005,
+      "name": "InsufficientLiquidity",
+      "msg": "Insufficient liquidity"
+    },
+    {
+      "code": 6006,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6007,
+      "name": "Overflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6008,
+      "name": "Underflow",
+      "msg": "Arithmetic underflow"
+    }
+  ],
+  "helperFns": [
+    {
+      "name": "integer_sqrt",
+      "signature": "fn integer_sqrt(n: u128) -> u128",
+      "body": "{\n    if n == 0 {\n        return 0;\n    }\n    let mut x = n;\n    let mut y = (x + 1) / 2;\n    while y < x {\n        x = y;\n        y = (x + n / x) / 2;\n    }\n    x\n}",
+      "isPublic": false,
+      "rawCode": "fn integer_sqrt(n: u128) -> u128 {\n    if n == 0 {\n        return 0;\n    }\n    let mut x = n;\n    let mut y = (x + 1) / 2;\n    while y < x {\n        x = y;\n        y = (x + n / x) / 2;\n    }\n    x\n}"
+    }
+  ],
+  "imports": [
+    "anchor_lang::prelude::*",
+    "anchor_spl::token::{self, Token, TokenAccount, Mint, Transfer, MintTo, Burn}",
+    "anchor_lang::solana_program::clock::Clock"
+  ],
+  "metadata": {
+    "sourceFramework": "anchor",
+    "sourceVersion": "0.30.0",
+    "anvilVersion": "0.2.0",
+    "parsedAt": "2026-04-04T09:37:14.659Z"
+  }
+}

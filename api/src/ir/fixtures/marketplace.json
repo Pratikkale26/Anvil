@@ -1,0 +1,1068 @@
+{
+  "name": "marketplace",
+  "instructions": [
+    {
+      "name": "initialize",
+      "accounts": [
+        {
+          "name": "marketplace",
+          "accountType": "Marketplace",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"marketplace\""
+          ],
+          "initPayer": "admin",
+          "initSpace": "8 + Marketplace::LEN",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"marketplace\"]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "admin",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "treasury",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_bps",
+          "type": "u16"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "fee_bps <= 10000",
+          "error": "MarketplaceError::InvalidFeeBps"
+        },
+        {
+          "kind": "state_read",
+          "account": "marketplace",
+          "localVar": "marketplace",
+          "mutable": true,
+          "accountType": "Marketplace"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "marketplace",
+          "field": "admin",
+          "value": "ctx.accounts.admin.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "marketplace",
+          "field": "fee_bps",
+          "value": "fee_bps"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "marketplace",
+          "field": "treasury",
+          "value": "ctx.accounts.treasury.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "marketplace",
+          "field": "bump",
+          "value": "ctx.bumps.marketplace"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "marketplace",
+          "field": "listing_count",
+          "value": "0"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(fee_bps <= 10000, MarketplaceError::InvalidFeeBps);\n\n        let marketplace = &mut ctx.accounts.marketplace;\n        marketplace.admin = ctx.accounts.admin.key();\n        marketplace.fee_bps = fee_bps;\n        marketplace.treasury = ctx.accounts.treasury.key();\n        marketplace.bump = ctx.bumps.marketplace;\n        marketplace.listing_count = 0;\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "list",
+      "accounts": [
+        {
+          "name": "seller",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "nft_mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "seller_ata",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "nft_mint"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "seller"
+            }
+          ]
+        },
+        {
+          "name": "listing",
+          "accountType": "Listing",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"listing\"",
+            "seller.key().as_ref()",
+            "&seed.to_le_bytes()"
+          ],
+          "initPayer": "seller",
+          "initSpace": "8 + Listing::LEN",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"listing\", seller.key().as_ref(), &seed.to_le_bytes()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "marketplace",
+          "accountType": "Marketplace",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"marketplace\""
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"marketplace\"]"
+            },
+            {
+              "kind": "bump",
+              "value": "marketplace.bump"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "initPayer": "seller",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "token::mint",
+              "value": "nft_mint"
+            },
+            {
+              "kind": "token::authority",
+              "value": "listing"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "associated_token_program",
+          "accountType": "AssociatedToken",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "price",
+          "type": "u64"
+        },
+        {
+          "name": "seed",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "price > 0",
+          "error": "MarketplaceError::InvalidPrice"
+        },
+        {
+          "kind": "state_read",
+          "account": "listing",
+          "localVar": "listing",
+          "mutable": true,
+          "accountType": "Listing"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "listing",
+          "field": "seller",
+          "value": "ctx.accounts.seller.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "listing",
+          "field": "mint",
+          "value": "ctx.accounts.nft_mint.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "listing",
+          "field": "price",
+          "value": "price"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "listing",
+          "field": "seed",
+          "value": "seed"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "listing",
+          "field": "bump",
+          "value": "ctx.bumps.listing"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "listing",
+          "field": "marketplace",
+          "value": "ctx.accounts.marketplace.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "listing",
+          "field": "is_active",
+          "value": "true"
+        },
+        {
+          "kind": "state_read",
+          "account": "marketplace",
+          "localVar": "marketplace",
+          "mutable": true,
+          "accountType": "Marketplace"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "marketplace",
+          "field": "listing_count",
+          "value": "marketplace.listing_count\n            .checked_add(1)\n            .ok_or(MarketplaceError::Overflow)?"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "seller_ata",
+          "to": "vault",
+          "authority": "seller",
+          "amount": "1"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(price > 0, MarketplaceError::InvalidPrice);\n\n        let listing = &mut ctx.accounts.listing;\n        listing.seller = ctx.accounts.seller.key();\n        listing.mint = ctx.accounts.nft_mint.key();\n        listing.price = price;\n        listing.seed = seed;\n        listing.bump = ctx.bumps.listing;\n        listing.marketplace = ctx.accounts.marketplace.key();\n        listing.is_active = true;\n\n        let marketplace = &mut ctx.accounts.marketplace;\n        marketplace.listing_count = marketplace.listing_count\n            .checked_add(1)\n            .ok_or(MarketplaceError::Overflow)?;\n\n        token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.seller_ata.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.seller.to_account_info(),\n                },\n            ),\n            1,\n        )?;\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "delist",
+      "accounts": [
+        {
+          "name": "seller",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "nft_mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "seller_ata",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "nft_mint"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "seller"
+            }
+          ]
+        },
+        {
+          "name": "listing",
+          "accountType": "Listing",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"listing\"",
+            "seller.key().as_ref()",
+            "&listing.seed.to_le_bytes()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"listing\", seller.key().as_ref(), &listing.seed.to_le_bytes()]"
+            },
+            {
+              "kind": "bump",
+              "value": "listing.bump"
+            },
+            {
+              "kind": "close",
+              "value": "seller"
+            }
+          ]
+        },
+        {
+          "name": "marketplace",
+          "accountType": "Marketplace",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"marketplace\""
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"marketplace\"]"
+            },
+            {
+              "kind": "bump",
+              "value": "marketplace.bump"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "associated_token_program",
+          "accountType": "AssociatedToken",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [],
+      "body": [
+        {
+          "kind": "state_read",
+          "account": "listing",
+          "localVar": "listing",
+          "mutable": false,
+          "accountType": "Listing"
+        },
+        {
+          "kind": "require",
+          "condition": "listing.is_active",
+          "error": "MarketplaceError::ListingNotActive"
+        },
+        {
+          "kind": "require",
+          "condition": "listing.seller == ctx.accounts.seller.key()",
+          "error": "MarketplaceError::Unauthorized"
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "listing",
+          "seeds": [
+            "b\"listing\"",
+            "listing.seller.as_ref()",
+            "&listing.seed.to_le_bytes()",
+            "&[listing.bump]"
+          ],
+          "bumpField": "&[listing.bump]",
+          "rawCode": "let seeds = &[\n            b\"listing\",\n            listing.seller.as_ref(),\n            &listing.seed.to_le_bytes(),\n            &[listing.bump],\n        ];\nlet signer_seeds = &[&seeds[..]];"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "vault",
+          "to": "seller_ata",
+          "authority": "listing",
+          "amount": "1",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "cpi_spl_close_account",
+          "account": "vault",
+          "destination": "seller",
+          "authority": "listing",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "state_read",
+          "account": "marketplace",
+          "localVar": "marketplace",
+          "mutable": true,
+          "accountType": "Marketplace"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "marketplace",
+          "field": "listing_count",
+          "value": "marketplace.listing_count\n            .checked_sub(1)\n            .ok_or(MarketplaceError::Underflow)?"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        let listing = &ctx.accounts.listing;\n\n        require!(listing.is_active, MarketplaceError::ListingNotActive);\n        require!(\n            listing.seller == ctx.accounts.seller.key(),\n            MarketplaceError::Unauthorized\n        );\n\n        let seeds = &[\n            b\"listing\",\n            listing.seller.as_ref(),\n            &listing.seed.to_le_bytes(),\n            &[listing.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.seller_ata.to_account_info(),\n                    authority: ctx.accounts.listing.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            1,\n        )?;\n\n        token::close_account(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                CloseAccount {\n                    account: ctx.accounts.vault.to_account_info(),\n                    destination: ctx.accounts.seller.to_account_info(),\n                    authority: ctx.accounts.listing.to_account_info(),\n                },\n                signer_seeds,\n            ),\n        )?;\n\n        let marketplace = &mut ctx.accounts.marketplace;\n        marketplace.listing_count = marketplace.listing_count\n            .checked_sub(1)\n            .ok_or(MarketplaceError::Underflow)?;\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "purchase",
+      "accounts": [
+        {
+          "name": "buyer",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "seller",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "nft_mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "buyer_ata",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "initPayer": "buyer",
+          "constraints": [
+            {
+              "kind": "init_if_needed"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "nft_mint"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "buyer"
+            }
+          ]
+        },
+        {
+          "name": "listing",
+          "accountType": "Listing",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"listing\"",
+            "seller.key().as_ref()",
+            "&listing.seed.to_le_bytes()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"listing\", seller.key().as_ref(), &listing.seed.to_le_bytes()]"
+            },
+            {
+              "kind": "bump",
+              "value": "listing.bump"
+            },
+            {
+              "kind": "close",
+              "value": "seller"
+            }
+          ]
+        },
+        {
+          "name": "marketplace",
+          "accountType": "Marketplace",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"marketplace\""
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"marketplace\"]"
+            },
+            {
+              "kind": "bump",
+              "value": "marketplace.bump"
+            }
+          ]
+        },
+        {
+          "name": "treasury",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "constraint",
+              "value": "treasury.key() == marketplace.treasury"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "associated_token_program",
+          "accountType": "AssociatedToken",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [],
+      "body": [
+        {
+          "kind": "state_read",
+          "account": "listing",
+          "localVar": "listing",
+          "mutable": false,
+          "accountType": "Listing"
+        },
+        {
+          "kind": "require",
+          "condition": "listing.is_active",
+          "error": "MarketplaceError::ListingNotActive"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let fee = listing.price\n            .checked_mul(ctx.accounts.marketplace.fee_bps as u64)\n            .ok_or(MarketplaceError::Overflow)?\n            .checked_div(10000)\n            .ok_or(MarketplaceError::Overflow)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let seller_amount = listing.price\n            .checked_sub(fee)\n            .ok_or(MarketplaceError::Underflow)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "cpi_system_transfer",
+          "from": "buyer",
+          "to": "seller",
+          "amount": "seller_amount"
+        },
+        {
+          "kind": "cpi_system_transfer",
+          "from": "buyer",
+          "to": "treasury",
+          "amount": "fee"
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "listing",
+          "seeds": [
+            "b\"listing\"",
+            "listing.seller.as_ref()",
+            "&listing.seed.to_le_bytes()",
+            "&[listing.bump]"
+          ],
+          "bumpField": "&[listing.bump]",
+          "rawCode": "let seeds = &[\n            b\"listing\",\n            listing.seller.as_ref(),\n            &listing.seed.to_le_bytes(),\n            &[listing.bump],\n        ];\nlet signer_seeds = &[&seeds[..]];"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "vault",
+          "to": "buyer_ata",
+          "authority": "listing",
+          "amount": "1",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "cpi_spl_close_account",
+          "account": "vault",
+          "destination": "seller",
+          "authority": "listing",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "state_read",
+          "account": "marketplace",
+          "localVar": "marketplace",
+          "mutable": true,
+          "accountType": "Marketplace"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "marketplace",
+          "field": "listing_count",
+          "value": "marketplace.listing_count\n            .checked_sub(1)\n            .ok_or(MarketplaceError::Underflow)?"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        let listing = &ctx.accounts.listing;\n\n        require!(listing.is_active, MarketplaceError::ListingNotActive);\n\n        let fee = listing.price\n            .checked_mul(ctx.accounts.marketplace.fee_bps as u64)\n            .ok_or(MarketplaceError::Overflow)?\n            .checked_div(10000)\n            .ok_or(MarketplaceError::Overflow)?;\n\n        let seller_amount = listing.price\n            .checked_sub(fee)\n            .ok_or(MarketplaceError::Underflow)?;\n\n        // Pay seller\n        anchor_lang::system_program::transfer(\n            CpiContext::new(\n                ctx.accounts.system_program.to_account_info(),\n                anchor_lang::system_program::Transfer {\n                    from: ctx.accounts.buyer.to_account_info(),\n                    to: ctx.accounts.seller.to_account_info(),\n                },\n            ),\n            seller_amount,\n        )?;\n\n        // Pay treasury fee\n        anchor_lang::system_program::transfer(\n            CpiContext::new(\n                ctx.accounts.system_program.to_account_info(),\n                anchor_lang::system_program::Transfer {\n                    from: ctx.accounts.buyer.to_account_info(),\n                    to: ctx.accounts.treasury.to_account_info(),\n                },\n            ),\n            fee,\n        )?;\n\n        let seeds = &[\n            b\"listing\",\n            listing.seller.as_ref(),\n            &listing.seed.to_le_bytes(),\n            &[listing.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        // Transfer NFT to buyer\n        token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.buyer_ata.to_account_info(),\n                    authority: ctx.accounts.listing.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            1,\n        )?;\n\n        // Close vault\n        token::close_account(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                CloseAccount {\n                    account: ctx.accounts.vault.to_account_info(),\n                    destination: ctx.accounts.seller.to_account_info(),\n                    authority: ctx.accounts.listing.to_account_info(),\n                },\n                signer_seeds,\n            ),\n        )?;\n\n        let marketplace = &mut ctx.accounts.marketplace;\n        marketplace.listing_count = marketplace.listing_count\n            .checked_sub(1)\n            .ok_or(MarketplaceError::Underflow)?;\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "update_fee",
+      "accounts": [
+        {
+          "name": "marketplace",
+          "accountType": "Marketplace",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"marketplace\""
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"marketplace\"]"
+            },
+            {
+              "kind": "bump",
+              "value": "marketplace.bump"
+            }
+          ]
+        },
+        {
+          "name": "admin",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_fee_bps",
+          "type": "u16"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "new_fee_bps <= 10000",
+          "error": "MarketplaceError::InvalidFeeBps"
+        },
+        {
+          "kind": "require",
+          "condition": "ctx.accounts.marketplace.admin == ctx.accounts.admin.key()",
+          "error": "MarketplaceError::Unauthorized"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "marketplace",
+          "field": "fee_bps",
+          "value": "new_fee_bps"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(new_fee_bps <= 10000, MarketplaceError::InvalidFeeBps);\n        require!(\n            ctx.accounts.marketplace.admin == ctx.accounts.admin.key(),\n            MarketplaceError::Unauthorized\n        );\n\n        ctx.accounts.marketplace.fee_bps = new_fee_bps;\n\n        Ok(())\n    }"
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Marketplace",
+      "fields": [
+        {
+          "name": "admin",
+          "type": "Pubkey"
+        },
+        {
+          "name": "fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "treasury",
+          "type": "Pubkey"
+        },
+        {
+          "name": "bump",
+          "type": "u8"
+        },
+        {
+          "name": "listing_count",
+          "type": "u64"
+        }
+      ],
+      "space": 83
+    },
+    {
+      "name": "Listing",
+      "fields": [
+        {
+          "name": "seller",
+          "type": "Pubkey"
+        },
+        {
+          "name": "mint",
+          "type": "Pubkey"
+        },
+        {
+          "name": "price",
+          "type": "u64"
+        },
+        {
+          "name": "seed",
+          "type": "u64"
+        },
+        {
+          "name": "bump",
+          "type": "u8"
+        },
+        {
+          "name": "marketplace",
+          "type": "Pubkey"
+        },
+        {
+          "name": "is_active",
+          "type": "bool"
+        }
+      ],
+      "space": 122
+    }
+  ],
+  "types": [],
+  "constants": [],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidPrice",
+      "msg": "Price must be greater than zero"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidFeeBps",
+      "msg": "Fee must be between 0 and 10000 bps"
+    },
+    {
+      "code": 6002,
+      "name": "ListingNotActive",
+      "msg": "Listing is not active"
+    },
+    {
+      "code": 6003,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6004,
+      "name": "Overflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6005,
+      "name": "Underflow",
+      "msg": "Arithmetic underflow"
+    }
+  ],
+  "helperFns": [],
+  "imports": [
+    "anchor_lang::prelude::*",
+    "anchor_spl::token::{self, Token, TokenAccount, Mint, Transfer, CloseAccount}",
+    "anchor_spl::associated_token::AssociatedToken"
+  ],
+  "metadata": {
+    "sourceFramework": "anchor",
+    "sourceVersion": "0.30.0",
+    "anvilVersion": "0.2.0",
+    "parsedAt": "2026-04-04T09:37:14.718Z"
+  }
+}

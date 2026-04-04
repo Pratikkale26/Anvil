@@ -313,12 +313,20 @@ ${maybeRead}    let seeds = &[
   }
 
   override emitPubkeyDeserialize(start: number, end: number): string {
-    return `Pubkey::new_from_array(data[${start}..${end}].try_into().unwrap())`;
+    return `Pubkey::new_from_array(
+        data[${start}..${end}]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?
+    )`;
   }
 
   // Native Pubkey wraps [u8;32] via new_from_array — so field reads use that constructor
   protected override emitPubkeyFieldRead(_size: number): string {
-    return `Pubkey::new_from_array(data[offset..offset + 32].try_into().unwrap())`;
+    return `Pubkey::new_from_array(
+            data[offset..offset + 32]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        )`;
   }
 
   // Native Pubkey.as_ref() gives &[u8] for copy_from_slice
@@ -682,7 +690,11 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     if data.len() < 72 {
         return Err(ProgramError::InvalidAccountData);
     }
-    Ok(u64::from_le_bytes(data[64..72].try_into().unwrap()))
+    Ok(u64::from_le_bytes(
+        data[64..72]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidAccountData)?
+    ))
 }`);
     }
 

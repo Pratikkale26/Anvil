@@ -1,0 +1,959 @@
+{
+  "name": "token_vesting",
+  "instructions": [
+    {
+      "name": "create_vesting",
+      "accounts": [
+        {
+          "name": "grantor",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "vesting",
+          "accountType": "Vesting",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VESTING_SEED",
+            "grantor.key().as_ref()",
+            "beneficiary.as_ref()"
+          ],
+          "initPayer": "grantor",
+          "initSpace": "8 + Vesting::LEN",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "seeds",
+              "value": "[VESTING_SEED, grantor.key().as_ref(), beneficiary.as_ref()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VAULT_SEED",
+            "vesting.key().as_ref()"
+          ],
+          "initPayer": "grantor",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "token::mint",
+              "value": "mint"
+            },
+            {
+              "kind": "token::authority",
+              "value": "vault"
+            },
+            {
+              "kind": "seeds",
+              "value": "[VAULT_SEED, vesting.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "grantor_token_account",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "rent",
+          "accountType": "Sysvar<'info, Rent>",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "beneficiary",
+          "type": "Pubkey"
+        },
+        {
+          "name": "total_amount",
+          "type": "u64"
+        },
+        {
+          "name": "start_ts",
+          "type": "i64"
+        },
+        {
+          "name": "cliff_ts",
+          "type": "i64"
+        },
+        {
+          "name": "end_ts",
+          "type": "i64"
+        },
+        {
+          "name": "revocable",
+          "type": "bool"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "total_amount > 0",
+          "error": "VestingError::InvalidAmount"
+        },
+        {
+          "kind": "require",
+          "condition": "cliff_ts >= start_ts",
+          "error": "VestingError::InvalidSchedule"
+        },
+        {
+          "kind": "require",
+          "condition": "end_ts > cliff_ts",
+          "error": "VestingError::InvalidSchedule"
+        },
+        {
+          "kind": "require",
+          "condition": "beneficiary != ctx.accounts.grantor.key()",
+          "error": "VestingError::SelfVesting"
+        },
+        {
+          "kind": "sysvar_clock",
+          "localVar": "clock",
+          "code": "let clock = Clock::get()?;"
+        },
+        {
+          "kind": "require",
+          "condition": "start_ts >= clock.unix_timestamp",
+          "error": "VestingError::StartInPast"
+        },
+        {
+          "kind": "state_read",
+          "account": "vesting",
+          "localVar": "vesting",
+          "mutable": true,
+          "accountType": "Vesting"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "grantor",
+          "value": "ctx.accounts.grantor.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "beneficiary",
+          "value": "beneficiary"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "mint",
+          "value": "ctx.accounts.mint.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "vault",
+          "value": "ctx.accounts.vault.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "total_amount",
+          "value": "total_amount"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "released_amount",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "start_ts",
+          "value": "start_ts"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "cliff_ts",
+          "value": "cliff_ts"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "end_ts",
+          "value": "end_ts"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "revocable",
+          "value": "revocable"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "revoked",
+          "value": "false"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "created_at",
+          "value": "clock.unix_timestamp"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "bump",
+          "value": "ctx.bumps.vesting"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "vault_bump",
+          "value": "ctx.bumps.vault"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "grantor_token_account",
+          "to": "vault",
+          "authority": "grantor",
+          "amount": "total_amount"
+        },
+        {
+          "kind": "msg",
+          "message": "\"Vesting created: {} tokens for {}\", total_amount, beneficiary"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(total_amount > 0, VestingError::InvalidAmount);\n        require!(cliff_ts >= start_ts, VestingError::InvalidSchedule);\n        require!(end_ts > cliff_ts, VestingError::InvalidSchedule);\n        require!(beneficiary != ctx.accounts.grantor.key(), VestingError::SelfVesting);\n\n        let clock = Clock::get()?;\n        require!(start_ts >= clock.unix_timestamp, VestingError::StartInPast);\n\n        let vesting = &mut ctx.accounts.vesting;\n        vesting.grantor = ctx.accounts.grantor.key();\n        vesting.beneficiary = beneficiary;\n        vesting.mint = ctx.accounts.mint.key();\n        vesting.vault = ctx.accounts.vault.key();\n        vesting.total_amount = total_amount;\n        vesting.released_amount = 0;\n        vesting.start_ts = start_ts;\n        vesting.cliff_ts = cliff_ts;\n        vesting.end_ts = end_ts;\n        vesting.revocable = revocable;\n        vesting.revoked = false;\n        vesting.created_at = clock.unix_timestamp;\n        vesting.bump = ctx.bumps.vesting;\n        vesting.vault_bump = ctx.bumps.vault;\n\n        // Transfer tokens from grantor to vault\n        token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.grantor_token_account.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.grantor.to_account_info(),\n                },\n            ),\n            total_amount,\n        )?;\n\n        msg!(\"Vesting created: {} tokens for {}\", total_amount, beneficiary);\n        Ok(())\n    }"
+    },
+    {
+      "name": "release",
+      "accounts": [
+        {
+          "name": "beneficiary",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "vesting",
+          "accountType": "Vesting",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VESTING_SEED",
+            "vesting.grantor.as_ref()",
+            "beneficiary.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[VESTING_SEED, vesting.grantor.as_ref(), beneficiary.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "vesting.bump"
+            },
+            {
+              "kind": "has_one",
+              "value": "beneficiary"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VAULT_SEED",
+            "vesting.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[VAULT_SEED, vesting.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "vesting.vault_bump"
+            }
+          ]
+        },
+        {
+          "name": "beneficiary_token_account",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [],
+      "body": [
+        {
+          "kind": "sysvar_clock",
+          "localVar": "clock",
+          "code": "let clock = Clock::get()?;"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let now = clock.unix_timestamp;",
+          "needsReview": false
+        },
+        {
+          "kind": "state_read",
+          "account": "vesting",
+          "localVar": "vesting",
+          "mutable": false,
+          "accountType": "Vesting"
+        },
+        {
+          "kind": "require",
+          "condition": "!vesting.revoked",
+          "error": "VestingError::VestingRevoked"
+        },
+        {
+          "kind": "require",
+          "condition": "now >= vesting.cliff_ts",
+          "error": "VestingError::CliffNotReached"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let vested = vested_amount(\n            vesting.total_amount,\n            vesting.start_ts,\n            vesting.cliff_ts,\n            vesting.end_ts,\n            now,\n        );",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let releasable = vested\n            .checked_sub(vesting.released_amount)\n            .ok_or(VestingError::ArithmeticOverflow)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "releasable > 0",
+          "error": "VestingError::NothingToRelease"
+        },
+        {
+          "kind": "state_read",
+          "account": "vesting",
+          "localVar": "vesting",
+          "mutable": true,
+          "accountType": "Vesting"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "released_amount",
+          "value": "vesting.released_amount\n            .checked_add(releasable)\n            .ok_or(VestingError::ArithmeticOverflow)?"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let vesting_key = ctx.accounts.vesting.key();",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let vault_bump = ctx.accounts.vesting.vault_bump;",
+          "needsReview": false
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "vesting_key",
+          "seeds": [
+            "VAULT_SEED",
+            "vesting_key.as_ref()",
+            "&[vault_bump]"
+          ],
+          "rawCode": "let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "vault",
+          "to": "beneficiary_token_account",
+          "authority": "vault",
+          "amount": "releasable",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "msg",
+          "message": "\"Released {} tokens to beneficiary\", releasable"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        let clock = Clock::get()?;\n        let now = clock.unix_timestamp;\n\n        let vesting = &ctx.accounts.vesting;\n        require!(!vesting.revoked, VestingError::VestingRevoked);\n        require!(now >= vesting.cliff_ts, VestingError::CliffNotReached);\n\n        let vested = vested_amount(\n            vesting.total_amount,\n            vesting.start_ts,\n            vesting.cliff_ts,\n            vesting.end_ts,\n            now,\n        );\n\n        let releasable = vested\n            .checked_sub(vesting.released_amount)\n            .ok_or(VestingError::ArithmeticOverflow)?;\n\n        require!(releasable > 0, VestingError::NothingToRelease);\n\n        let vesting = &mut ctx.accounts.vesting;\n        vesting.released_amount = vesting.released_amount\n            .checked_add(releasable)\n            .ok_or(VestingError::ArithmeticOverflow)?;\n\n        let vesting_key = ctx.accounts.vesting.key();\n        let vault_bump = ctx.accounts.vesting.vault_bump;\n        let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];\n\n        token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.beneficiary_token_account.to_account_info(),\n                    authority: ctx.accounts.vault.to_account_info(),\n                },\n                &[seeds],\n            ),\n            releasable,\n        )?;\n\n        msg!(\"Released {} tokens to beneficiary\", releasable);\n        Ok(())\n    }"
+    },
+    {
+      "name": "revoke",
+      "accounts": [
+        {
+          "name": "grantor",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "vesting",
+          "accountType": "Vesting",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VESTING_SEED",
+            "grantor.key().as_ref()",
+            "vesting.beneficiary.as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[VESTING_SEED, grantor.key().as_ref(), vesting.beneficiary.as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "vesting.bump"
+            },
+            {
+              "kind": "has_one",
+              "value": "grantor"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VAULT_SEED",
+            "vesting.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[VAULT_SEED, vesting.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "vesting.vault_bump"
+            }
+          ]
+        },
+        {
+          "name": "grantor_token_account",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [],
+      "body": [
+        {
+          "kind": "state_read",
+          "account": "vesting",
+          "localVar": "vesting",
+          "mutable": false,
+          "accountType": "Vesting"
+        },
+        {
+          "kind": "require",
+          "condition": "vesting.revocable",
+          "error": "VestingError::NotRevocable"
+        },
+        {
+          "kind": "require",
+          "condition": "!vesting.revoked",
+          "error": "VestingError::VestingRevoked"
+        },
+        {
+          "kind": "sysvar_clock",
+          "localVar": "clock",
+          "code": "let clock = Clock::get()?;"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let now = clock.unix_timestamp;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let vested = vested_amount(\n            vesting.total_amount,\n            vesting.start_ts,\n            vesting.cliff_ts,\n            vesting.end_ts,\n            now,\n        );",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let unvested = vesting.total_amount\n            .checked_sub(vested)\n            .ok_or(VestingError::ArithmeticOverflow)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "state_read",
+          "account": "vesting",
+          "localVar": "vesting",
+          "mutable": true,
+          "accountType": "Vesting"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "vesting",
+          "field": "revoked",
+          "value": "true"
+        },
+        {
+          "kind": "pass_through",
+          "code": "if unvested > 0 {\n            let vesting_key = ctx.accounts.vesting.key();\n            let vault_bump = ctx.accounts.vesting.vault_bump;\n            let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];\n\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.grantor_token_account.to_account_info(),\n                        authority: ctx.accounts.vault.to_account_info(),\n                    },\n                    &[seeds],\n                ),\n                unvested,\n            )?;\n        }",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern"
+        },
+        {
+          "kind": "msg",
+          "message": "\"Vesting revoked. {} unvested tokens returned to grantor.\", unvested"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        let vesting = &ctx.accounts.vesting;\n        require!(vesting.revocable, VestingError::NotRevocable);\n        require!(!vesting.revoked, VestingError::VestingRevoked);\n\n        let clock = Clock::get()?;\n        let now = clock.unix_timestamp;\n\n        let vested = vested_amount(\n            vesting.total_amount,\n            vesting.start_ts,\n            vesting.cliff_ts,\n            vesting.end_ts,\n            now,\n        );\n\n        let unvested = vesting.total_amount\n            .checked_sub(vested)\n            .ok_or(VestingError::ArithmeticOverflow)?;\n\n        let vesting = &mut ctx.accounts.vesting;\n        vesting.revoked = true;\n\n        if unvested > 0 {\n            let vesting_key = ctx.accounts.vesting.key();\n            let vault_bump = ctx.accounts.vesting.vault_bump;\n            let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];\n\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.grantor_token_account.to_account_info(),\n                        authority: ctx.accounts.vault.to_account_info(),\n                    },\n                    &[seeds],\n                ),\n                unvested,\n            )?;\n        }\n\n        msg!(\"Vesting revoked. {} unvested tokens returned to grantor.\", unvested);\n        Ok(())\n    }"
+    },
+    {
+      "name": "close",
+      "accounts": [
+        {
+          "name": "grantor",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "vesting",
+          "accountType": "Vesting",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VESTING_SEED",
+            "grantor.key().as_ref()",
+            "vesting.beneficiary.as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[VESTING_SEED, grantor.key().as_ref(), vesting.beneficiary.as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "vesting.bump"
+            },
+            {
+              "kind": "has_one",
+              "value": "grantor"
+            },
+            {
+              "kind": "close",
+              "value": "grantor"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VAULT_SEED",
+            "vesting.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[VAULT_SEED, vesting.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "vesting.vault_bump"
+            }
+          ]
+        },
+        {
+          "name": "grantor_token_account",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [],
+      "body": [
+        {
+          "kind": "state_read",
+          "account": "vesting",
+          "localVar": "vesting",
+          "mutable": false,
+          "accountType": "Vesting"
+        },
+        {
+          "kind": "require",
+          "condition": "vesting.revoked || vesting.released_amount == vesting.total_amount",
+          "error": "VestingError::NotCloseable"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let vault_balance = ctx.accounts.vault.amount;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "if vault_balance > 0 {\n            let vesting_key = ctx.accounts.vesting.key();\n            let vault_bump = ctx.accounts.vesting.vault_bump;\n            let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];\n\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.grantor_token_account.to_account_info(),\n                        authority: ctx.accounts.vault.to_account_info(),\n                    },\n                    &[seeds],\n                ),\n                vault_balance,\n            )?;\n        }",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern"
+        },
+        {
+          "kind": "msg",
+          "message": "\"Vesting account closed.\""
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        let vesting = &ctx.accounts.vesting;\n        require!(\n            vesting.revoked || vesting.released_amount == vesting.total_amount,\n            VestingError::NotCloseable\n        );\n\n        // vault should be empty at this point — any dust goes back to grantor\n        let vault_balance = ctx.accounts.vault.amount;\n        if vault_balance > 0 {\n            let vesting_key = ctx.accounts.vesting.key();\n            let vault_bump = ctx.accounts.vesting.vault_bump;\n            let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];\n\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.grantor_token_account.to_account_info(),\n                        authority: ctx.accounts.vault.to_account_info(),\n                    },\n                    &[seeds],\n                ),\n                vault_balance,\n            )?;\n        }\n\n        msg!(\"Vesting account closed.\");\n        Ok(())\n    }"
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Vesting",
+      "fields": [
+        {
+          "name": "grantor",
+          "type": "Pubkey"
+        },
+        {
+          "name": "beneficiary",
+          "type": "Pubkey"
+        },
+        {
+          "name": "mint",
+          "type": "Pubkey"
+        },
+        {
+          "name": "vault",
+          "type": "Pubkey"
+        },
+        {
+          "name": "total_amount",
+          "type": "u64"
+        },
+        {
+          "name": "released_amount",
+          "type": "u64"
+        },
+        {
+          "name": "start_ts",
+          "type": "i64"
+        },
+        {
+          "name": "cliff_ts",
+          "type": "i64"
+        },
+        {
+          "name": "end_ts",
+          "type": "i64"
+        },
+        {
+          "name": "revocable",
+          "type": "bool"
+        },
+        {
+          "name": "revoked",
+          "type": "bool"
+        },
+        {
+          "name": "created_at",
+          "type": "i64"
+        },
+        {
+          "name": "bump",
+          "type": "u8"
+        },
+        {
+          "name": "vault_bump",
+          "type": "u8"
+        }
+      ],
+      "space": 188
+    }
+  ],
+  "types": [],
+  "constants": [
+    "pub const VESTING_SEED: &[u8] = b\"vesting\";",
+    "pub const VAULT_SEED: &[u8] = b\"vault\";",
+    "pub const MAX_SCHEDULES: usize = 10;"
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidAmount",
+      "msg": "Amount must be greater than zero"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidSchedule",
+      "msg": "Invalid vesting schedule: cliff must be >= start, end must be > cliff"
+    },
+    {
+      "code": 6002,
+      "name": "SelfVesting",
+      "msg": "Cannot vest tokens to yourself"
+    },
+    {
+      "code": 6003,
+      "name": "StartInPast",
+      "msg": "Start timestamp is in the past"
+    },
+    {
+      "code": 6004,
+      "name": "CliffNotReached",
+      "msg": "Cliff period has not been reached yet"
+    },
+    {
+      "code": 6005,
+      "name": "NothingToRelease",
+      "msg": "Nothing to release yet"
+    },
+    {
+      "code": 6006,
+      "name": "NotRevocable",
+      "msg": "This vesting is not revocable"
+    },
+    {
+      "code": 6007,
+      "name": "VestingRevoked",
+      "msg": "This vesting has already been revoked"
+    },
+    {
+      "code": 6008,
+      "name": "NotCloseable",
+      "msg": "Vesting is not closeable yet"
+    },
+    {
+      "code": 6009,
+      "name": "ArithmeticOverflow",
+      "msg": "Arithmetic overflow"
+    }
+  ],
+  "helperFns": [
+    {
+      "name": "vested_amount",
+      "signature": "fn vested_amount(\n    total: u64,\n    start_ts: i64,\n    cliff_ts: i64,\n    end_ts: i64,\n    now: i64,\n) -> u64",
+      "body": "{\n    if now < cliff_ts {\n        return 0;\n    }\n    if now >= end_ts {\n        return total;\n    }\n    let elapsed = (now - start_ts) as u64;\n    let duration = (end_ts - start_ts) as u64;\n    total\n        .checked_mul(elapsed)\n        .and_then(|v| v.checked_div(duration))\n        .unwrap_or(0)\n}",
+      "isPublic": false,
+      "rawCode": "fn vested_amount(\n    total: u64,\n    start_ts: i64,\n    cliff_ts: i64,\n    end_ts: i64,\n    now: i64,\n) -> u64 {\n    if now < cliff_ts {\n        return 0;\n    }\n    if now >= end_ts {\n        return total;\n    }\n    let elapsed = (now - start_ts) as u64;\n    let duration = (end_ts - start_ts) as u64;\n    total\n        .checked_mul(elapsed)\n        .and_then(|v| v.checked_div(duration))\n        .unwrap_or(0)\n}"
+    }
+  ],
+  "imports": [
+    "anchor_lang::prelude::*",
+    "anchor_spl::token::{self, Token, TokenAccount, Transfer}"
+  ],
+  "metadata": {
+    "sourceFramework": "anchor",
+    "sourceVersion": "0.30.0",
+    "anvilVersion": "0.2.0",
+    "parsedAt": "2026-04-04T09:37:14.726Z"
+  }
+}

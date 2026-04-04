@@ -23,6 +23,16 @@ function discoverDemos(): string[] {
 const VALID_DEMOS = discoverDemos();
 type DemoName = string;
 
+function fixtureNeedsReparse(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.length === 0 ||
+    (instr.rawBody ?? "").length === 0 ||
+    instr.accounts.some((account) =>
+      account.isInit && (!account.initPayer || !account.initSpace)
+    )
+  );
+}
+
 // Cache fixtures in memory at startup
 const fixtureCache = new Map<DemoName, SolanaIR>();
 for (const name of VALID_DEMOS) {
@@ -69,12 +79,10 @@ demoRoute.get("/:name", async (req, res) => {
   let ir = fixtureCache.get(name);
 
   // Check if the fixture has body data. If not, try live parsing.
-  const needsReparse = ir && ir.instructions.some(
-    instr => instr.body.length === 0 && (instr.rawBody ?? "").length === 0
-  );
+  const needsReparse = ir ? fixtureNeedsReparse(ir) : false;
 
   if (needsReparse && source) {
-    console.log(`🔄 Fixture '${name}' missing body data — re-parsing from source...`);
+    console.log(`🔄 Fixture '${name}' is stale/incomplete — re-parsing from source...`);
     const result = await parseAnchor(source);
     if (result.ok) {
       ir = result.ir;

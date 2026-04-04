@@ -10,6 +10,16 @@ import { emitQuasar, emitQuasarFull } from "./src/emitter/quasar-emitter.ts";
 import { emitNative, emitNativeFull } from "./src/emitter/native-emitter.ts";
 import { validateEmitterOutput } from "./src/emitter/output-validator.ts";
 
+function fixtureNeedsReparse(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.length === 0 ||
+    (instr.rawBody ?? "").length === 0 ||
+    instr.accounts.some((account) =>
+      account.isInit && (!account.initPayer || !account.initSpace)
+    )
+  );
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = join(__dirname, "generated-outputs");
 
@@ -49,6 +59,17 @@ async function run() {
     console.log(`1. Reading pre-loaded IR fixture (${input}.json)...`);
     const irRaw = readFileSync(fixturePath, "utf-8");
     ir = JSON.parse(irRaw) as SolanaIR;
+    if (fixtureNeedsReparse(ir) && existsSync(demoSourcePath)) {
+      console.log(`   Fixture is stale/incomplete. Re-parsing source from: ${demoSourcePath}`);
+      const source = readFileSync(demoSourcePath, "utf-8");
+      const parsed = await parseAnchor(source);
+      if (!parsed.ok) {
+        console.error(`❌ Parse failed while refreshing fixture: ${parsed.error}`);
+        if (parsed.details) console.error(parsed.details);
+        return;
+      }
+      ir = parsed.ir;
+    }
   } else if (explicitJsonPath) {
     console.log(`1. Reading IR fixture from file: ${explicitJsonPath}`);
     const irRaw = readFileSync(explicitJsonPath, "utf-8");

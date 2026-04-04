@@ -10,11 +10,14 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"counter\"",
             "authority.key().as_ref()"
           ],
+          "initPayer": "authority",
+          "initSpace": "8 + CounterAccount::INIT_SPACE",
           "constraints": [
             {
               "kind": "init"
@@ -34,6 +37,7 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -48,6 +52,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -102,6 +107,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"counter\"",
@@ -131,6 +137,7 @@
           "isSigner": true,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -173,6 +180,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"counter\"",
@@ -202,6 +210,7 @@
           "isSigner": true,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -244,6 +253,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"counter\"",
@@ -273,6 +283,7 @@
           "isSigner": true,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -323,6 +334,7 @@
     }
   ],
   "types": [],
+  "constants": [],
   "errors": [
     {
       "code": 6000,
@@ -343,6 +355,6 @@
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T18:25:56.651Z"
+    "parsedAt": "2026-04-04T09:37:14.636Z"
   }
 }

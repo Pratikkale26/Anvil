@@ -10,11 +10,14 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"pool\"",
             "stake_mint.key().as_ref()"
           ],
+          "initPayer": "admin",
+          "initSpace": "8 + StakingPool::LEN",
           "constraints": [
             {
               "kind": "init"
@@ -34,11 +37,13 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"reward_vault\"",
             "pool.key().as_ref()"
           ],
+          "initPayer": "admin",
           "constraints": [
             {
               "kind": "init"
@@ -66,6 +71,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -76,6 +82,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -86,6 +93,7 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -100,6 +108,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -110,6 +119,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -131,19 +141,19 @@
       ],
       "body": [
         {
-          "kind": "pass_through",
-          "code": "require!(reward_rate > 0, StakingError::InvalidRewardRate);",
-          "needsReview": false
+          "kind": "require",
+          "condition": "reward_rate > 0",
+          "error": "StakingError::InvalidRewardRate"
         },
         {
-          "kind": "pass_through",
-          "code": "require!(lock_duration > 0, StakingError::InvalidLockDuration);",
-          "needsReview": false
+          "kind": "require",
+          "condition": "lock_duration > 0",
+          "error": "StakingError::InvalidLockDuration"
         },
         {
-          "kind": "pass_through",
-          "code": "require!(max_stake > 0, StakingError::InvalidMaxStake);",
-          "needsReview": false
+          "kind": "require",
+          "condition": "max_stake > 0",
+          "error": "StakingError::InvalidMaxStake"
         },
         {
           "kind": "state_read",
@@ -229,6 +239,7 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -243,12 +254,15 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"user_stake\"",
             "user.key().as_ref()",
             "pool.key().as_ref()"
           ],
+          "initPayer": "user",
+          "initSpace": "8 + UserStake::LEN",
           "constraints": [
             {
               "kind": "init"
@@ -268,6 +282,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"pool\"",
@@ -293,6 +308,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -315,6 +331,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -337,6 +354,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -347,6 +365,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -360,14 +379,14 @@
       ],
       "body": [
         {
-          "kind": "pass_through",
-          "code": "require!(!ctx.accounts.pool.is_paused, StakingError::PoolPaused);",
-          "needsReview": false
+          "kind": "require",
+          "condition": "!ctx.accounts.pool.is_paused",
+          "error": "StakingError::PoolPaused"
         },
         {
-          "kind": "pass_through",
-          "code": "require!(amount > 0, StakingError::InvalidAmount);",
-          "needsReview": false
+          "kind": "require",
+          "condition": "amount > 0",
+          "error": "StakingError::InvalidAmount"
         },
         {
           "kind": "state_read",
@@ -377,9 +396,9 @@
           "accountType": "StakingPool"
         },
         {
-          "kind": "pass_through",
-          "code": "require!(\n            ctx.accounts.pool.total_staked.checked_add(amount).ok_or(StakingError::Overflow)? <= pool.max_stake,\n            StakingError::MaxStakeExceeded\n        );",
-          "needsReview": false
+          "kind": "require",
+          "condition": "ctx.accounts.pool.total_staked.checked_add(amount).ok_or(StakingError::Overflow)? <= pool.max_stake",
+          "error": "StakingError::MaxStakeExceeded"
         },
         {
           "kind": "sysvar_clock",
@@ -455,9 +474,9 @@
           "amount": "amount"
         },
         {
-          "kind": "pass_through",
-          "code": "emit!(StakeEvent {\n            user: ctx.accounts.user.key(),\n            amount,\n            timestamp: now,\n        });",
-          "needsReview": false
+          "kind": "emit",
+          "event": "StakeEvent",
+          "fields": "user: ctx.accounts.user.key(),\n            amount,\n            timestamp: now,"
         },
         {
           "kind": "pass_through",
@@ -476,6 +495,7 @@
           "isSigner": true,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -486,6 +506,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"user_stake\"",
@@ -506,7 +527,7 @@
             },
             {
               "kind": "constraint",
-              "value": "user_stake.owner == user.key() @ StakingError::Unauthorized"
+              "value": "user_stake.owner == user.key()"
             }
           ]
         },
@@ -516,6 +537,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"pool\"",
@@ -541,6 +563,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -555,6 +578,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -577,6 +601,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -585,9 +610,9 @@
       "args": [],
       "body": [
         {
-          "kind": "pass_through",
-          "code": "require!(!ctx.accounts.pool.is_paused, StakingError::PoolPaused);",
-          "needsReview": false
+          "kind": "require",
+          "condition": "!ctx.accounts.pool.is_paused",
+          "error": "StakingError::PoolPaused"
         },
         {
           "kind": "sysvar_clock",
@@ -624,19 +649,20 @@
           "needsReview": false
         },
         {
-          "kind": "pass_through",
-          "code": "require!(rewards > 0, StakingError::NoRewards);",
-          "needsReview": false
+          "kind": "require",
+          "condition": "rewards > 0",
+          "error": "StakingError::NoRewards"
         },
         {
-          "kind": "pass_through",
-          "code": "let pool_seeds = &[\n            b\"pool\",\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];",
-          "needsReview": false
-        },
-        {
-          "kind": "pass_through",
-          "code": "let signer_seeds = &[&pool_seeds[..]];",
-          "needsReview": false
+          "kind": "pda_signer_seeds",
+          "account": "pool",
+          "seeds": [
+            "b\"pool\"",
+            "pool.stake_mint.as_ref()",
+            "&[pool.bump]"
+          ],
+          "bumpField": "&[pool.bump]",
+          "rawCode": "let pool_seeds = &[\n            b\"pool\",\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\nlet signer_seeds = &[&pool_seeds[..]];"
         },
         {
           "kind": "cpi_spl_mint_to",
@@ -660,9 +686,9 @@
           "value": "now"
         },
         {
-          "kind": "pass_through",
-          "code": "emit!(RewardEvent {\n            user: ctx.accounts.user.key(),\n            rewards,\n            timestamp: now,\n        });",
-          "needsReview": false
+          "kind": "emit",
+          "event": "RewardEvent",
+          "fields": "user: ctx.accounts.user.key(),\n            rewards,\n            timestamp: now,"
         },
         {
           "kind": "pass_through",
@@ -681,6 +707,7 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -695,6 +722,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"user_stake\"",
@@ -715,7 +743,7 @@
             },
             {
               "kind": "constraint",
-              "value": "user_stake.owner == user.key() @ StakingError::Unauthorized"
+              "value": "user_stake.owner == user.key()"
             },
             {
               "kind": "close",
@@ -729,6 +757,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"pool\"",
@@ -754,6 +783,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -768,6 +798,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -790,6 +821,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -812,6 +844,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -834,6 +867,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -844,6 +878,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -852,9 +887,9 @@
       "args": [],
       "body": [
         {
-          "kind": "pass_through",
-          "code": "require!(!ctx.accounts.pool.is_paused, StakingError::PoolPaused);",
-          "needsReview": false
+          "kind": "require",
+          "condition": "!ctx.accounts.pool.is_paused",
+          "error": "StakingError::PoolPaused"
         },
         {
           "kind": "sysvar_clock",
@@ -886,9 +921,9 @@
           "needsReview": false
         },
         {
-          "kind": "pass_through",
-          "code": "require!(now >= unlock_time, StakingError::StillLocked);",
-          "needsReview": false
+          "kind": "require",
+          "condition": "now >= unlock_time",
+          "error": "StakingError::StillLocked"
         },
         {
           "kind": "pass_through",
@@ -901,14 +936,15 @@
           "needsReview": false
         },
         {
-          "kind": "pass_through",
-          "code": "let stake_seeds = &[\n            b\"pool\",\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];",
-          "needsReview": false
-        },
-        {
-          "kind": "pass_through",
-          "code": "let signer_seeds = &[&stake_seeds[..]];",
-          "needsReview": false
+          "kind": "pda_signer_seeds",
+          "account": "pool",
+          "seeds": [
+            "b\"pool\"",
+            "pool.stake_mint.as_ref()",
+            "&[pool.bump]"
+          ],
+          "bumpField": "&[pool.bump]",
+          "rawCode": "let stake_seeds = &[\n            b\"pool\",\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\nlet signer_seeds = &[&stake_seeds[..]];"
         },
         {
           "kind": "cpi_spl_transfer",
@@ -938,9 +974,9 @@
           "value": "pool.total_staked\n            .checked_sub(user_stake.amount)\n            .ok_or(StakingError::Underflow)?"
         },
         {
-          "kind": "pass_through",
-          "code": "emit!(UnstakeEvent {\n            user: ctx.accounts.user.key(),\n            amount: user_stake.amount,\n            rewards: pending_rewards,\n            timestamp: now,\n        });",
-          "needsReview": false
+          "kind": "emit",
+          "event": "UnstakeEvent",
+          "fields": "user: ctx.accounts.user.key(),\n            amount: user_stake.amount,\n            rewards: pending_rewards,\n            timestamp: now,"
         },
         {
           "kind": "pass_through",
@@ -959,6 +995,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"pool\"",
@@ -984,6 +1021,7 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -996,9 +1034,9 @@
       "args": [],
       "body": [
         {
-          "kind": "pass_through",
-          "code": "require!(\n            ctx.accounts.pool.admin == ctx.accounts.admin.key(),\n            StakingError::Unauthorized\n        );",
-          "needsReview": false
+          "kind": "require",
+          "condition": "ctx.accounts.pool.admin == ctx.accounts.admin.key()",
+          "error": "StakingError::Unauthorized"
         },
         {
           "kind": "state_field_assign",
@@ -1023,6 +1061,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"pool\"",
@@ -1048,6 +1087,7 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -1060,9 +1100,9 @@
       "args": [],
       "body": [
         {
-          "kind": "pass_through",
-          "code": "require!(\n            ctx.accounts.pool.admin == ctx.accounts.admin.key(),\n            StakingError::Unauthorized\n        );",
-          "needsReview": false
+          "kind": "require",
+          "condition": "ctx.accounts.pool.admin == ctx.accounts.admin.key()",
+          "error": "StakingError::Unauthorized"
         },
         {
           "kind": "state_field_assign",
@@ -1087,6 +1127,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"pool\"",
@@ -1112,6 +1153,7 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -1129,14 +1171,14 @@
       ],
       "body": [
         {
-          "kind": "pass_through",
-          "code": "require!(\n            ctx.accounts.pool.admin == ctx.accounts.admin.key(),\n            StakingError::Unauthorized\n        );",
-          "needsReview": false
+          "kind": "require",
+          "condition": "ctx.accounts.pool.admin == ctx.accounts.admin.key()",
+          "error": "StakingError::Unauthorized"
         },
         {
-          "kind": "pass_through",
-          "code": "require!(new_rate > 0, StakingError::InvalidRewardRate);",
-          "needsReview": false
+          "kind": "require",
+          "condition": "new_rate > 0",
+          "error": "StakingError::InvalidRewardRate"
         },
         {
           "kind": "state_field_assign",
@@ -1248,7 +1290,8 @@
           "name": "timestamp",
           "type": "i64"
         }
-      ]
+      ],
+      "rawCode": "pub struct StakeEvent {\n    pub user: Pubkey,\n    pub amount: u64,\n    pub timestamp: i64,\n}"
     },
     {
       "name": "RewardEvent",
@@ -1266,7 +1309,8 @@
           "name": "timestamp",
           "type": "i64"
         }
-      ]
+      ],
+      "rawCode": "pub struct RewardEvent {\n    pub user: Pubkey,\n    pub rewards: u64,\n    pub timestamp: i64,\n}"
     },
     {
       "name": "UnstakeEvent",
@@ -1288,9 +1332,11 @@
           "name": "timestamp",
           "type": "i64"
         }
-      ]
+      ],
+      "rawCode": "pub struct UnstakeEvent {\n    pub user: Pubkey,\n    pub amount: u64,\n    pub rewards: u64,\n    pub timestamp: i64,\n}"
     }
   ],
+  "constants": [],
   "errors": [
     {
       "code": 6000,
@@ -1358,6 +1404,6 @@
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T18:25:56.698Z"
+    "parsedAt": "2026-04-04T09:37:14.677Z"
   }
 }

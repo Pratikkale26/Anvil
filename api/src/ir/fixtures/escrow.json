@@ -10,6 +10,7 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -24,6 +25,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -34,6 +36,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -44,6 +47,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -66,12 +70,15 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"escrow\"",
             "maker.key().as_ref()",
             "seed.to_le_bytes().as_ref()"
           ],
+          "initPayer": "maker",
+          "initSpace": "8 + Escrow::INIT_SPACE",
           "constraints": [
             {
               "kind": "init"
@@ -91,8 +98,10 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
+          "initPayer": "maker",
           "constraints": [
             {
               "kind": "init"
@@ -113,6 +122,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -123,6 +133,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -133,6 +144,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -216,6 +228,7 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -230,6 +243,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -240,6 +254,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -250,6 +265,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -260,6 +276,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -282,8 +299,10 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
+          "initPayer": "taker",
           "constraints": [
             {
               "kind": "init_if_needed"
@@ -304,8 +323,10 @@
           "isSigner": false,
           "isMut": true,
           "isInit": true,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
+          "initPayer": "taker",
           "constraints": [
             {
               "kind": "init_if_needed"
@@ -326,6 +347,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"escrow\"",
@@ -368,6 +390,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -390,6 +413,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -400,6 +424,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -410,6 +435,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -468,6 +494,7 @@
           "isSigner": true,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -482,6 +509,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -492,6 +520,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -514,6 +543,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": true,
           "pdaSeeds": [
             "b\"escrow\"",
@@ -552,6 +582,7 @@
           "isSigner": false,
           "isMut": true,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": [
@@ -574,6 +605,7 @@
           "isSigner": false,
           "isMut": false,
           "isInit": false,
+          "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
           "constraints": []
@@ -650,6 +682,7 @@
     }
   ],
   "types": [],
+  "constants": [],
   "errors": [],
   "helperFns": [],
   "imports": [
@@ -659,6 +692,6 @@
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",
     "anvilVersion": "0.2.0",
-    "parsedAt": "2026-03-28T18:25:56.680Z"
+    "parsedAt": "2026-04-04T09:37:14.629Z"
   }
 }

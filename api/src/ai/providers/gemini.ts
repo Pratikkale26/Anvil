@@ -11,7 +11,7 @@ export class GeminiProvider implements LLMProvider {
 
   async generateStructured<T>({ schema, prompt, model, onProgress }: StructuredGenerationParams): Promise<T> {
     const timeoutMs = parseInt(process.env.AI_PROVIDER_TIMEOUT_MS ?? "180000", 10);
-    const maxRetries = parseInt(process.env.AI_PROVIDER_RETRIES ?? "1", 10);
+    const maxRetries = parseInt(process.env.AI_PROVIDER_RETRIES ?? "0", 10);
     const promptSizeKB = (Buffer.byteLength(prompt, "utf-8") / 1024).toFixed(1);
 
     onProgress?.("provider_request", `Sending ${promptSizeKB}KB prompt to Gemini '${model}'.`);

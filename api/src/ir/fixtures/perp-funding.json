@@ -1,0 +1,3497 @@
+{
+  "name": "perp_funding",
+  "instructions": [
+    {
+      "name": "initialize_market",
+      "accounts": [
+        {
+          "name": "authority",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "market",
+          "accountType": "Market",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "MARKET_SEED",
+            "authority.key().as_ref()",
+            "&market_index.to_le_bytes()"
+          ],
+          "initPayer": "authority",
+          "initSpace": "Market::LEN",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "seeds",
+              "value": "[MARKET_SEED, authority.key().as_ref(), &market_index.to_le_bytes()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "collateral_mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VAULT_SEED",
+            "market.key().as_ref()"
+          ],
+          "initPayer": "authority",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "token::mint",
+              "value": "collateral_mint"
+            },
+            {
+              "kind": "token::authority",
+              "value": "vault_authority"
+            },
+            {
+              "kind": "seeds",
+              "value": "[VAULT_SEED, market.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "vault_authority",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VAULT_SEED",
+            "market.key().as_ref()",
+            "b\"auth\""
+          ],
+          "constraints": [
+            {
+              "kind": "seeds",
+              "value": "[VAULT_SEED, market.key().as_ref(), b\"auth\"]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "fee_vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "FEE_VAULT_SEED",
+            "market.key().as_ref()"
+          ],
+          "initPayer": "authority",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "token::mint",
+              "value": "collateral_mint"
+            },
+            {
+              "kind": "token::authority",
+              "value": "fee_vault_authority"
+            },
+            {
+              "kind": "seeds",
+              "value": "[FEE_VAULT_SEED, market.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "fee_vault_authority",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "FEE_VAULT_SEED",
+            "market.key().as_ref()",
+            "b\"auth\""
+          ],
+          "constraints": [
+            {
+              "kind": "seeds",
+              "value": "[FEE_VAULT_SEED, market.key().as_ref(), b\"auth\"]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "insurance_fund",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "INSURANCE_SEED",
+            "market.key().as_ref()"
+          ],
+          "initPayer": "authority",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "token::mint",
+              "value": "collateral_mint"
+            },
+            {
+              "kind": "token::authority",
+              "value": "insurance_authority"
+            },
+            {
+              "kind": "seeds",
+              "value": "[INSURANCE_SEED, market.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "insurance_authority",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "INSURANCE_SEED",
+            "market.key().as_ref()",
+            "b\"auth\""
+          ],
+          "constraints": [
+            {
+              "kind": "seeds",
+              "value": "[INSURANCE_SEED, market.key().as_ref(), b\"auth\"]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "lp_mint",
+          "accountType": "Mint",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "LP_MINT_SEED",
+            "market.key().as_ref()"
+          ],
+          "initPayer": "authority",
+          "constraints": [
+            {
+              "kind": "init"
+            },
+            {
+              "kind": "seeds",
+              "value": "[LP_MINT_SEED, market.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "lp_mint_authority",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "LP_MINT_SEED",
+            "market.key().as_ref()",
+            "b\"auth\""
+          ],
+          "constraints": [
+            {
+              "kind": "seeds",
+              "value": "[LP_MINT_SEED, market.key().as_ref(), b\"auth\"]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "rent",
+          "accountType": "Sysvar<'info, Rent>",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "market_index",
+          "type": "u16"
+        },
+        {
+          "name": "oracle_price_feed",
+          "type": "Pubkey"
+        },
+        {
+          "name": "max_open_interest",
+          "type": "u64"
+        },
+        {
+          "name": "base_decimals",
+          "type": "u8"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "max_open_interest > 0",
+          "error": "FundingError::InvalidParam"
+        },
+        {
+          "kind": "require",
+          "condition": "base_decimals <= 9",
+          "error": "FundingError::InvalidParam"
+        },
+        {
+          "kind": "state_read",
+          "account": "market",
+          "localVar": "market",
+          "mutable": true,
+          "accountType": "Market"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "authority",
+          "value": "ctx.accounts.authority.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "market_index",
+          "value": "market_index"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "oracle_price_feed",
+          "value": "oracle_price_feed"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "collateral_mint",
+          "value": "ctx.accounts.collateral_mint.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "vault",
+          "value": "ctx.accounts.vault.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "fee_vault",
+          "value": "ctx.accounts.fee_vault.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "insurance_fund",
+          "value": "ctx.accounts.insurance_fund.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "lp_mint",
+          "value": "ctx.accounts.lp_mint.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "max_open_interest",
+          "value": "max_open_interest"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "base_decimals",
+          "value": "base_decimals"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_long_oi",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_short_oi",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "cumulative_funding_rate_long",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "cumulative_funding_rate_short",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "last_funding_ts",
+          "value": "Clock::get()?.unix_timestamp"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "funding_rate",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_lp_shares",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_liquidity",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "paused",
+          "value": "false"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "bump",
+          "value": "ctx.bumps.market"
+        },
+        {
+          "kind": "emit",
+          "event": "MarketInitialized",
+          "fields": "market_index,\n            authority: market.authority,\n            oracle: oracle_price_feed,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(max_open_interest > 0, FundingError::InvalidParam);\n        require!(base_decimals <= 9, FundingError::InvalidParam);\n\n        let market = &mut ctx.accounts.market;\n        market.authority = ctx.accounts.authority.key();\n        market.market_index = market_index;\n        market.oracle_price_feed = oracle_price_feed;\n        market.collateral_mint = ctx.accounts.collateral_mint.key();\n        market.vault = ctx.accounts.vault.key();\n        market.fee_vault = ctx.accounts.fee_vault.key();\n        market.insurance_fund = ctx.accounts.insurance_fund.key();\n        market.lp_mint = ctx.accounts.lp_mint.key();\n        market.max_open_interest = max_open_interest;\n        market.base_decimals = base_decimals;\n        market.total_long_oi = 0;\n        market.total_short_oi = 0;\n        market.cumulative_funding_rate_long = 0;\n        market.cumulative_funding_rate_short = 0;\n        market.last_funding_ts = Clock::get()?.unix_timestamp;\n        market.funding_rate = 0;\n        market.total_lp_shares = 0;\n        market.total_liquidity = 0;\n        market.paused = false;\n        market.bump = ctx.bumps.market;\n\n        emit!(MarketInitialized {\n            market_index,\n            authority: market.authority,\n            oracle: oracle_price_feed,\n        });\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "deposit_liquidity",
+      "accounts": [
+        {
+          "name": "provider",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "market",
+          "accountType": "Market",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "market.vault"
+            }
+          ]
+        },
+        {
+          "name": "provider_collateral",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "market.collateral_mint"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "provider"
+            }
+          ]
+        },
+        {
+          "name": "lp_position",
+          "accountType": "LpPosition",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "LP_POSITION_SEED",
+            "market.key().as_ref()",
+            "provider.key().as_ref()"
+          ],
+          "initPayer": "provider",
+          "initSpace": "LpPosition::LEN",
+          "constraints": [
+            {
+              "kind": "init_if_needed"
+            },
+            {
+              "kind": "seeds",
+              "value": "[LP_POSITION_SEED, market.key().as_ref(), provider.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "amount >= MIN_POSITION_SIZE",
+          "error": "FundingError::BelowMinSize"
+        },
+        {
+          "kind": "require",
+          "condition": "!ctx.accounts.market.paused",
+          "error": "FundingError::MarketPaused"
+        },
+        {
+          "kind": "state_read",
+          "account": "market",
+          "localVar": "market",
+          "mutable": true,
+          "accountType": "Market"
+        },
+        {
+          "kind": "state_read",
+          "account": "lp_position",
+          "localVar": "lp_position",
+          "mutable": true,
+          "accountType": "LpPosition"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let shares_to_mint = if market.total_lp_shares == 0 || market.total_liquidity == 0 {\n            amount as u128\n        } else {\n            (amount as u128)\n                .checked_mul(market.total_lp_shares as u128)\n                .ok_or(FundingError::MathOverflow)?\n                .checked_div(market.total_liquidity as u128)\n                .ok_or(FundingError::MathOverflow)?\n        };",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "shares_to_mint > 0",
+          "error": "FundingError::ZeroShares"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "provider_collateral",
+          "to": "vault",
+          "authority": "provider",
+          "amount": "amount"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_liquidity",
+          "value": "market\n            .total_liquidity\n            .checked_add(amount)\n            .ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_lp_shares",
+          "value": "market\n            .total_lp_shares\n            .checked_add(shares_to_mint as u64)\n            .ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "lp_position",
+          "field": "owner",
+          "value": "ctx.accounts.provider.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "lp_position",
+          "field": "market",
+          "value": "market.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "lp_position",
+          "field": "shares",
+          "value": "lp_position\n            .shares\n            .checked_add(shares_to_mint as u64)\n            .ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "lp_position",
+          "field": "deposited_amount",
+          "value": "lp_position\n            .deposited_amount\n            .checked_add(amount)\n            .ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "lp_position",
+          "field": "bump",
+          "value": "ctx.bumps.lp_position"
+        },
+        {
+          "kind": "emit",
+          "event": "LiquidityDeposited",
+          "fields": "provider: ctx.accounts.provider.key(),\n            amount,\n            shares_minted: shares_to_mint as u64,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(amount >= MIN_POSITION_SIZE, FundingError::BelowMinSize);\n        require!(!ctx.accounts.market.paused, FundingError::MarketPaused);\n\n        let market = &mut ctx.accounts.market;\n        let lp_position = &mut ctx.accounts.lp_position;\n\n        // Shares to mint = (amount / total_liquidity) * total_shares\n        // If first deposit, shares = amount\n        let shares_to_mint = if market.total_lp_shares == 0 || market.total_liquidity == 0 {\n            amount as u128\n        } else {\n            (amount as u128)\n                .checked_mul(market.total_lp_shares as u128)\n                .ok_or(FundingError::MathOverflow)?\n                .checked_div(market.total_liquidity as u128)\n                .ok_or(FundingError::MathOverflow)?\n        };\n\n        require!(shares_to_mint > 0, FundingError::ZeroShares);\n\n        // Transfer collateral from provider to vault\n        token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.provider_collateral.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.provider.to_account_info(),\n                },\n            ),\n            amount,\n        )?;\n\n        market.total_liquidity = market\n            .total_liquidity\n            .checked_add(amount)\n            .ok_or(FundingError::MathOverflow)?;\n        market.total_lp_shares = market\n            .total_lp_shares\n            .checked_add(shares_to_mint as u64)\n            .ok_or(FundingError::MathOverflow)?;\n\n        lp_position.owner = ctx.accounts.provider.key();\n        lp_position.market = market.key();\n        lp_position.shares = lp_position\n            .shares\n            .checked_add(shares_to_mint as u64)\n            .ok_or(FundingError::MathOverflow)?;\n        lp_position.deposited_amount = lp_position\n            .deposited_amount\n            .checked_add(amount)\n            .ok_or(FundingError::MathOverflow)?;\n        lp_position.bump = ctx.bumps.lp_position;\n\n        emit!(LiquidityDeposited {\n            provider: ctx.accounts.provider.key(),\n            amount,\n            shares_minted: shares_to_mint as u64,\n        });\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "withdraw_liquidity",
+      "accounts": [
+        {
+          "name": "provider",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "market",
+          "accountType": "Market",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "market.vault"
+            }
+          ]
+        },
+        {
+          "name": "vault_authority",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "vault_bump_holder",
+          "accountType": "VaultBumpHolder",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "provider_collateral",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "market.collateral_mint"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "provider"
+            }
+          ]
+        },
+        {
+          "name": "lp_position",
+          "accountType": "LpPosition",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "LP_POSITION_SEED",
+            "market.key().as_ref()",
+            "provider.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[LP_POSITION_SEED, market.key().as_ref(), provider.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "lp_position.bump"
+            },
+            {
+              "kind": "has_one",
+              "value": "owner"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "shares",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "state_read",
+          "account": "lp_position",
+          "localVar": "lp_position",
+          "mutable": true,
+          "accountType": "LpPosition"
+        },
+        {
+          "kind": "require",
+          "condition": "lp_position.shares >= shares",
+          "error": "FundingError::InsufficientShares"
+        },
+        {
+          "kind": "state_read",
+          "account": "market",
+          "localVar": "market",
+          "mutable": true,
+          "accountType": "Market"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let amount_out = (shares as u128)\n            .checked_mul(market.total_liquidity as u128)\n            .ok_or(FundingError::MathOverflow)?\n            .checked_div(market.total_lp_shares as u128)\n            .ok_or(FundingError::MathOverflow)? as u64;",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "amount_out > 0",
+          "error": "FundingError::ZeroWithdraw"
+        },
+        {
+          "kind": "require",
+          "condition": "market.total_liquidity >= amount_out",
+          "error": "FundingError::InsufficientLiquidity"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let remaining_liquidity = market.total_liquidity.saturating_sub(amount_out);",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let max_oi = market.max_open_interest.min(remaining_liquidity);",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "market.total_long_oi <= max_oi && market.total_short_oi <= max_oi",
+          "error": "FundingError::WithdrawExceedsOILimit"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let market_key = market.key();",
+          "needsReview": false
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "vault_bump_holder",
+          "seeds": [
+            "VAULT_SEED",
+            "market_key.as_ref()",
+            "&[ctx.accounts.vault_bump_holder.bump]"
+          ],
+          "bumpField": "&[ctx.accounts.vault_bump_holder.bump]",
+          "rawCode": "let vault_seeds = &[\n            VAULT_SEED,\n            market_key.as_ref(),\n            &[ctx.accounts.vault_bump_holder.bump],\n        ];"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "vault",
+          "to": "provider_collateral",
+          "authority": "vault_authority",
+          "amount": "amount_out",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_liquidity",
+          "value": "market\n            .total_liquidity\n            .checked_sub(amount_out)\n            .ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_lp_shares",
+          "value": "market\n            .total_lp_shares\n            .checked_sub(shares)\n            .ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "lp_position",
+          "field": "shares",
+          "value": "lp_position\n            .shares\n            .checked_sub(shares)\n            .ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "lp_position",
+          "field": "deposited_amount",
+          "value": "lp_position.deposited_amount.saturating_sub(amount_out)"
+        },
+        {
+          "kind": "emit",
+          "event": "LiquidityWithdrawn",
+          "fields": "provider: ctx.accounts.provider.key(),\n            amount: amount_out,\n            shares_burned: shares,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        let lp_position = &mut ctx.accounts.lp_position;\n        require!(lp_position.shares >= shares, FundingError::InsufficientShares);\n\n        let market = &mut ctx.accounts.market;\n\n        // Amount = (shares / total_shares) * total_liquidity\n        let amount_out = (shares as u128)\n            .checked_mul(market.total_liquidity as u128)\n            .ok_or(FundingError::MathOverflow)?\n            .checked_div(market.total_lp_shares as u128)\n            .ok_or(FundingError::MathOverflow)? as u64;\n\n        require!(amount_out > 0, FundingError::ZeroWithdraw);\n        require!(\n            market.total_liquidity >= amount_out,\n            FundingError::InsufficientLiquidity\n        );\n\n        // Ensure liquidity withdrawal doesn't break OI limits\n        let remaining_liquidity = market.total_liquidity.saturating_sub(amount_out);\n        let max_oi = market.max_open_interest.min(remaining_liquidity);\n        require!(\n            market.total_long_oi <= max_oi && market.total_short_oi <= max_oi,\n            FundingError::WithdrawExceedsOILimit\n        );\n\n        // Transfer back using vault PDA signer\n        let market_key = market.key();\n        let vault_seeds = &[\n            VAULT_SEED,\n            market_key.as_ref(),\n            &[ctx.accounts.vault_bump_holder.bump],\n        ];\n        token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.provider_collateral.to_account_info(),\n                    authority: ctx.accounts.vault_authority.to_account_info(),\n                },\n                &[vault_seeds],\n            ),\n            amount_out,\n        )?;\n\n        market.total_liquidity = market\n            .total_liquidity\n            .checked_sub(amount_out)\n            .ok_or(FundingError::MathOverflow)?;\n        market.total_lp_shares = market\n            .total_lp_shares\n            .checked_sub(shares)\n            .ok_or(FundingError::MathOverflow)?;\n\n        lp_position.shares = lp_position\n            .shares\n            .checked_sub(shares)\n            .ok_or(FundingError::MathOverflow)?;\n        lp_position.deposited_amount = lp_position.deposited_amount.saturating_sub(amount_out);\n\n        emit!(LiquidityWithdrawn {\n            provider: ctx.accounts.provider.key(),\n            amount: amount_out,\n            shares_burned: shares,\n        });\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "open_position",
+      "accounts": [
+        {
+          "name": "trader",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "market",
+          "accountType": "Market",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "market.vault"
+            }
+          ]
+        },
+        {
+          "name": "fee_vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "market.fee_vault"
+            }
+          ]
+        },
+        {
+          "name": "vault_authority",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "vault_bump_cpi",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VAULT_SEED",
+            "market.key().as_ref()",
+            "b\"auth\""
+          ],
+          "constraints": [
+            {
+              "kind": "seeds",
+              "value": "[VAULT_SEED, market.key().as_ref(), b\"auth\"]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "trader_collateral",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "market.collateral_mint"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "trader"
+            }
+          ]
+        },
+        {
+          "name": "position",
+          "accountType": "Position",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": true,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "POSITION_SEED",
+            "market.key().as_ref()",
+            "trader.key().as_ref()"
+          ],
+          "initPayer": "trader",
+          "initSpace": "Position::LEN",
+          "constraints": [
+            {
+              "kind": "init_if_needed"
+            },
+            {
+              "kind": "seeds",
+              "value": "[POSITION_SEED, market.key().as_ref(), trader.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "size_usd",
+          "type": "u64"
+        },
+        {
+          "name": "collateral",
+          "type": "u64"
+        },
+        {
+          "name": "is_long",
+          "type": "bool"
+        },
+        {
+          "name": "oracle_price",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "!ctx.accounts.market.paused",
+          "error": "FundingError::MarketPaused"
+        },
+        {
+          "kind": "require",
+          "condition": "size_usd >= MIN_POSITION_SIZE",
+          "error": "FundingError::BelowMinSize"
+        },
+        {
+          "kind": "require",
+          "condition": "collateral > 0",
+          "error": "FundingError::InvalidParam"
+        },
+        {
+          "kind": "state_read",
+          "account": "market",
+          "localVar": "market",
+          "mutable": true,
+          "accountType": "Market"
+        },
+        {
+          "kind": "state_read",
+          "account": "position",
+          "localVar": "position",
+          "mutable": true,
+          "accountType": "Position"
+        },
+        {
+          "kind": "sysvar_clock",
+          "localVar": "clock",
+          "code": "let clock = Clock::get()?;"
+        },
+        {
+          "kind": "pass_through",
+          "code": "settle_funding_rate(market, clock.unix_timestamp)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let leverage = (size_usd as u128)\n            .checked_mul(1_000)\n            .ok_or(FundingError::MathOverflow)?\n            .checked_div(collateral as u128)\n            .ok_or(FundingError::MathOverflow)? as u64;",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "leverage <= MAX_LEVERAGE",
+          "error": "FundingError::LeverageTooHigh"
+        },
+        {
+          "kind": "require",
+          "condition": "leverage * collateral / 1_000 >= size_usd.saturating_sub(1)",
+          "error": "FundingError::InvalidParam"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let new_oi = if is_long {\n            market.total_long_oi.checked_add(size_usd).ok_or(FundingError::MathOverflow)?\n        } else {\n            market.total_short_oi.checked_add(size_usd).ok_or(FundingError::MathOverflow)?\n        };",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "new_oi <= market.max_open_interest",
+          "error": "FundingError::OILimitExceeded"
+        },
+        {
+          "kind": "require",
+          "condition": "new_oi <= market.total_liquidity",
+          "error": "FundingError::InsufficientLiquidity"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let current_oi = market.total_long_oi.max(market.total_short_oi);",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let (taker_fee_bps, _maker_fee_bps) = get_fee_tier(current_oi);",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let open_fee = size_usd\n            .checked_mul(taker_fee_bps)\n            .ok_or(FundingError::MathOverflow)?\n            / 10_000;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let required_collateral = collateral.checked_add(open_fee).ok_or(FundingError::MathOverflow)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "trader_collateral",
+          "to": "vault",
+          "authority": "trader",
+          "amount": "required_collateral"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let market_key = market.key();",
+          "needsReview": false
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "vault_bump_cpi",
+          "seeds": [
+            "VAULT_SEED",
+            "market_key.as_ref()",
+            "&[ctx.bumps.vault_bump_cpi]"
+          ],
+          "bumpField": "&[ctx.bumps.vault_bump_cpi]",
+          "rawCode": "let vault_seeds = &[VAULT_SEED, market_key.as_ref(), &[ctx.bumps.vault_bump_cpi]];"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "vault",
+          "to": "fee_vault",
+          "authority": "vault_authority",
+          "amount": "open_fee",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "pass_through",
+          "code": "if is_long {\n            market.total_long_oi = new_oi;\n        } else {\n            market.total_short_oi = new_oi;\n        }",
+          "needsReview": false
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_liquidity",
+          "value": "market\n            .total_liquidity\n            .checked_add(collateral)\n            .ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let cumulative_rate = if is_long {\n            market.cumulative_funding_rate_long\n        } else {\n            market.cumulative_funding_rate_short\n        };",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "if position.size_usd == 0 {\n            // Fresh position\n            position.owner = ctx.accounts.trader.key();\n            position.market = market.key();\n            position.is_long = is_long;\n            position.entry_price = oracle_price;\n            position.bump = ctx.bumps.position;\n        } else {\n            // Increase existing — blend entry price\n            require!(position.is_long == is_long, FundingError::SideConflict);\n            let total_size = position.size_usd.checked_add(size_usd).ok_or(FundingError::MathOverflow)?;\n            position.entry_price = ((position.entry_price as u128 * position.size_usd as u128\n                + oracle_price as u128 * size_usd as u128)\n                / total_size as u128) as u64;\n        }",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "size_usd",
+          "value": "position.size_usd.checked_add(size_usd).ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "collateral",
+          "value": "position.collateral.checked_add(collateral).ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "last_cumulative_funding_rate",
+          "value": "cumulative_rate"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "opened_at",
+          "value": "clock.unix_timestamp"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "last_updated_at",
+          "value": "clock.unix_timestamp"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "fees_paid",
+          "value": "position.fees_paid.checked_add(open_fee).ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "emit",
+          "event": "PositionOpened",
+          "fields": "trader: ctx.accounts.trader.key(),\n            size_usd,\n            collateral,\n            is_long,\n            entry_price: oracle_price,\n            fee: open_fee,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(!ctx.accounts.market.paused, FundingError::MarketPaused);\n        require!(size_usd >= MIN_POSITION_SIZE, FundingError::BelowMinSize);\n        require!(collateral > 0, FundingError::InvalidParam);\n\n        let market = &mut ctx.accounts.market;\n        let position = &mut ctx.accounts.position;\n        let clock = Clock::get()?;\n\n        // ── Settle funding before opening ─────────────────────────────────────\n        settle_funding_rate(market, clock.unix_timestamp)?;\n\n        // ── Leverage check ────────────────────────────────────────────────────\n        // leverage = size_usd / collateral (both in 1e6), stored as 1e3\n        let leverage = (size_usd as u128)\n            .checked_mul(1_000)\n            .ok_or(FundingError::MathOverflow)?\n            .checked_div(collateral as u128)\n            .ok_or(FundingError::MathOverflow)? as u64;\n\n        require!(leverage <= MAX_LEVERAGE, FundingError::LeverageTooHigh);\n        require!(\n            leverage * collateral / 1_000 >= size_usd.saturating_sub(1),\n            FundingError::InvalidParam\n        );\n\n        // ── Open interest check ───────────────────────────────────────────────\n        let new_oi = if is_long {\n            market.total_long_oi.checked_add(size_usd).ok_or(FundingError::MathOverflow)?\n        } else {\n            market.total_short_oi.checked_add(size_usd).ok_or(FundingError::MathOverflow)?\n        };\n        require!(new_oi <= market.max_open_interest, FundingError::OILimitExceeded);\n        require!(new_oi <= market.total_liquidity, FundingError::InsufficientLiquidity);\n\n        // ── Fee calculation ───────────────────────────────────────────────────\n        let current_oi = market.total_long_oi.max(market.total_short_oi);\n        let (taker_fee_bps, _maker_fee_bps) = get_fee_tier(current_oi);\n        let open_fee = size_usd\n            .checked_mul(taker_fee_bps)\n            .ok_or(FundingError::MathOverflow)?\n            / 10_000;\n\n        let required_collateral = collateral.checked_add(open_fee).ok_or(FundingError::MathOverflow)?;\n\n        // ── Transfer collateral + fee ─────────────────────────────────────────\n        token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.trader_collateral.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.trader.to_account_info(),\n                },\n            ),\n            required_collateral,\n        )?;\n\n        // Move fee portion to fee vault\n        let market_key = market.key();\n        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), &[ctx.bumps.vault_bump_cpi]];\n        token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.fee_vault.to_account_info(),\n                    authority: ctx.accounts.vault_authority.to_account_info(),\n                },\n                &[vault_seeds],\n            ),\n            open_fee,\n        )?;\n\n        // ── Update market OI ──────────────────────────────────────────────────\n        if is_long {\n            market.total_long_oi = new_oi;\n        } else {\n            market.total_short_oi = new_oi;\n        }\n        market.total_liquidity = market\n            .total_liquidity\n            .checked_add(collateral)\n            .ok_or(FundingError::MathOverflow)?;\n\n        // ── Write position ────────────────────────────────────────────────────\n        let cumulative_rate = if is_long {\n            market.cumulative_funding_rate_long\n        } else {\n            market.cumulative_funding_rate_short\n        };\n\n        if position.size_usd == 0 {\n            // Fresh position\n            position.owner = ctx.accounts.trader.key();\n            position.market = market.key();\n            position.is_long = is_long;\n            position.entry_price = oracle_price;\n            position.bump = ctx.bumps.position;\n        } else {\n            // Increase existing — blend entry price\n            require!(position.is_long == is_long, FundingError::SideConflict);\n            let total_size = position.size_usd.checked_add(size_usd).ok_or(FundingError::MathOverflow)?;\n            position.entry_price = ((position.entry_price as u128 * position.size_usd as u128\n                + oracle_price as u128 * size_usd as u128)\n                / total_size as u128) as u64;\n        }\n\n        position.size_usd = position.size_usd.checked_add(size_usd).ok_or(FundingError::MathOverflow)?;\n        position.collateral = position.collateral.checked_add(collateral).ok_or(FundingError::MathOverflow)?;\n        position.last_cumulative_funding_rate = cumulative_rate;\n        position.opened_at = clock.unix_timestamp;\n        position.last_updated_at = clock.unix_timestamp;\n        position.fees_paid = position.fees_paid.checked_add(open_fee).ok_or(FundingError::MathOverflow)?;\n\n        emit!(PositionOpened {\n            trader: ctx.accounts.trader.key(),\n            size_usd,\n            collateral,\n            is_long,\n            entry_price: oracle_price,\n            fee: open_fee,\n        });\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "close_position",
+      "accounts": [
+        {
+          "name": "trader",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "market",
+          "accountType": "Market",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "market.vault"
+            }
+          ]
+        },
+        {
+          "name": "fee_vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "market.fee_vault"
+            }
+          ]
+        },
+        {
+          "name": "vault_authority",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "vault_bump_cpi",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VAULT_SEED",
+            "market.key().as_ref()",
+            "b\"auth\""
+          ],
+          "constraints": [
+            {
+              "kind": "seeds",
+              "value": "[VAULT_SEED, market.key().as_ref(), b\"auth\"]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "trader_collateral",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "market.collateral_mint"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "trader"
+            }
+          ]
+        },
+        {
+          "name": "position",
+          "accountType": "Position",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "POSITION_SEED",
+            "market.key().as_ref()",
+            "trader.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[POSITION_SEED, market.key().as_ref(), trader.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "position.bump"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "size_usd",
+          "type": "u64"
+        },
+        {
+          "name": "oracle_price",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "state_read",
+          "account": "position",
+          "localVar": "position",
+          "mutable": true,
+          "accountType": "Position"
+        },
+        {
+          "kind": "state_read",
+          "account": "market",
+          "localVar": "market",
+          "mutable": true,
+          "accountType": "Market"
+        },
+        {
+          "kind": "sysvar_clock",
+          "localVar": "clock",
+          "code": "let clock = Clock::get()?;"
+        },
+        {
+          "kind": "require",
+          "condition": "position.owner == ctx.accounts.trader.key()",
+          "error": "FundingError::Unauthorized"
+        },
+        {
+          "kind": "require",
+          "condition": "size_usd > 0 && size_usd <= position.size_usd",
+          "error": "FundingError::InvalidCloseSize"
+        },
+        {
+          "kind": "pass_through",
+          "code": "settle_funding_rate(market, clock.unix_timestamp)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let current_cumulative = if position.is_long {\n            market.cumulative_funding_rate_long\n        } else {\n            market.cumulative_funding_rate_short\n        };",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let funding_pnl = compute_funding_pnl(\n            position.size_usd,\n            position.last_cumulative_funding_rate,\n            current_cumulative,\n            position.is_long,\n        )?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let close_ratio_num = size_usd as u128;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let close_ratio_den = position.size_usd as u128;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let price_pnl = compute_price_pnl(\n            size_usd,\n            position.entry_price,\n            oracle_price,\n            position.is_long,\n        )?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let collateral_released = (position.collateral as u128 * close_ratio_num / close_ratio_den) as u64;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let current_oi = market.total_long_oi.max(market.total_short_oi);",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let (taker_fee_bps, _) = get_fee_tier(current_oi);",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let close_fee = size_usd\n            .checked_mul(taker_fee_bps)\n            .ok_or(FundingError::MathOverflow)?\n            / 10_000;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let gross_payout = apply_pnl(collateral_released, price_pnl, funding_pnl)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let net_payout = gross_payout.saturating_sub(close_fee);",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let vault_balance = ctx.accounts.vault.amount;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let actual_payout = net_payout.min(vault_balance);",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let market_key = market.key();",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "if actual_payout > 0 {\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.trader_collateral.to_account_info(),\n                        authority: ctx.accounts.vault_authority.to_account_info(),\n                    },\n                    &[vault_seeds],\n                ),\n                actual_payout,\n            )?;\n        }",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern"
+        },
+        {
+          "kind": "pass_through",
+          "code": "if close_fee > 0 {\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.fee_vault.to_account_info(),\n                        authority: ctx.accounts.vault_authority.to_account_info(),\n                    },\n                    &[vault_seeds],\n                ),\n                close_fee,\n            )?;\n        }",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern"
+        },
+        {
+          "kind": "pass_through",
+          "code": "if position.is_long {\n            market.total_long_oi = market.total_long_oi.saturating_sub(size_usd);\n        } else {\n            market.total_short_oi = market.total_short_oi.saturating_sub(size_usd);\n        }",
+          "needsReview": false
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_liquidity",
+          "value": "market.total_liquidity.saturating_sub(collateral_released)"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "size_usd",
+          "value": "position.size_usd.saturating_sub(size_usd)"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "collateral",
+          "value": "position.collateral.saturating_sub(collateral_released)"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "last_cumulative_funding_rate",
+          "value": "current_cumulative"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "last_updated_at",
+          "value": "clock.unix_timestamp"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "fees_paid",
+          "value": "position.fees_paid.saturating_add(close_fee)"
+        },
+        {
+          "kind": "emit",
+          "event": "PositionClosed",
+          "fields": "trader: ctx.accounts.trader.key(),\n            size_usd,\n            oracle_price,\n            price_pnl,\n            funding_pnl,\n            fee: close_fee,\n            payout: actual_payout,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        let position = &mut ctx.accounts.position;\n        let market = &mut ctx.accounts.market;\n        let clock = Clock::get()?;\n\n        require!(position.owner == ctx.accounts.trader.key(), FundingError::Unauthorized);\n        require!(size_usd > 0 && size_usd <= position.size_usd, FundingError::InvalidCloseSize);\n\n        // ── Settle funding ─────────────────────────────────────────────────────\n        settle_funding_rate(market, clock.unix_timestamp)?;\n\n        // ── Funding PnL for this position ──────────────────────────────────────\n        let current_cumulative = if position.is_long {\n            market.cumulative_funding_rate_long\n        } else {\n            market.cumulative_funding_rate_short\n        };\n        let funding_pnl = compute_funding_pnl(\n            position.size_usd,\n            position.last_cumulative_funding_rate,\n            current_cumulative,\n            position.is_long,\n        )?;\n\n        // ── Price PnL ──────────────────────────────────────────────────────────\n        let close_ratio_num = size_usd as u128;\n        let close_ratio_den = position.size_usd as u128;\n\n        let price_pnl = compute_price_pnl(\n            size_usd,\n            position.entry_price,\n            oracle_price,\n            position.is_long,\n        )?;\n\n        // Prorated collateral for this partial close\n        let collateral_released = (position.collateral as u128 * close_ratio_num / close_ratio_den) as u64;\n\n        // ── Close fee ─────────────────────────────────────────────────────────\n        let current_oi = market.total_long_oi.max(market.total_short_oi);\n        let (taker_fee_bps, _) = get_fee_tier(current_oi);\n        let close_fee = size_usd\n            .checked_mul(taker_fee_bps)\n            .ok_or(FundingError::MathOverflow)?\n            / 10_000;\n\n        // ── Net payout ─────────────────────────────────────────────────────────\n        // net = collateral_released + price_pnl + funding_pnl - close_fee\n        let gross_payout = apply_pnl(collateral_released, price_pnl, funding_pnl)?;\n        let net_payout = gross_payout.saturating_sub(close_fee);\n\n        // Cap payout at vault balance (insurance absorbs overflow losses — not implemented here\n        // for simplicity, but in production you'd draw from insurance fund)\n        let vault_balance = ctx.accounts.vault.amount;\n        let actual_payout = net_payout.min(vault_balance);\n\n        // ── Transfer payout ────────────────────────────────────────────────────\n        let market_key = market.key();\n        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), &[ctx.bumps.vault_bump_cpi]];\n\n        if actual_payout > 0 {\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.trader_collateral.to_account_info(),\n                        authority: ctx.accounts.vault_authority.to_account_info(),\n                    },\n                    &[vault_seeds],\n                ),\n                actual_payout,\n            )?;\n        }\n\n        // Move close fee to fee vault\n        if close_fee > 0 {\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.fee_vault.to_account_info(),\n                        authority: ctx.accounts.vault_authority.to_account_info(),\n                    },\n                    &[vault_seeds],\n                ),\n                close_fee,\n            )?;\n        }\n\n        // ── Update market state ───────────────────────────────────────────────\n        if position.is_long {\n            market.total_long_oi = market.total_long_oi.saturating_sub(size_usd);\n        } else {\n            market.total_short_oi = market.total_short_oi.saturating_sub(size_usd);\n        }\n        market.total_liquidity = market.total_liquidity.saturating_sub(collateral_released);\n\n        // ── Update position ───────────────────────────────────────────────────\n        position.size_usd = position.size_usd.saturating_sub(size_usd);\n        position.collateral = position.collateral.saturating_sub(collateral_released);\n        position.last_cumulative_funding_rate = current_cumulative;\n        position.last_updated_at = clock.unix_timestamp;\n        position.fees_paid = position.fees_paid.saturating_add(close_fee);\n\n        emit!(PositionClosed {\n            trader: ctx.accounts.trader.key(),\n            size_usd,\n            oracle_price,\n            price_pnl,\n            funding_pnl,\n            fee: close_fee,\n            payout: actual_payout,\n        });\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "add_collateral",
+      "accounts": [
+        {
+          "name": "trader",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "market",
+          "accountType": "Market",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "market.vault"
+            }
+          ]
+        },
+        {
+          "name": "vault_authority",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "vault_bump_cpi",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VAULT_SEED",
+            "market.key().as_ref()",
+            "b\"auth\""
+          ],
+          "constraints": [
+            {
+              "kind": "seeds",
+              "value": "[VAULT_SEED, market.key().as_ref(), b\"auth\"]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "trader_collateral",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "market.collateral_mint"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "trader"
+            }
+          ]
+        },
+        {
+          "name": "position",
+          "accountType": "Position",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "POSITION_SEED",
+            "market.key().as_ref()",
+            "trader.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[POSITION_SEED, market.key().as_ref(), trader.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "position.bump"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "amount > 0",
+          "error": "FundingError::InvalidParam"
+        },
+        {
+          "kind": "state_read",
+          "account": "position",
+          "localVar": "position",
+          "mutable": true,
+          "accountType": "Position"
+        },
+        {
+          "kind": "require",
+          "condition": "position.owner == ctx.accounts.trader.key()",
+          "error": "FundingError::Unauthorized"
+        },
+        {
+          "kind": "require",
+          "condition": "position.size_usd > 0",
+          "error": "FundingError::PositionEmpty"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "trader_collateral",
+          "to": "vault",
+          "authority": "trader",
+          "amount": "amount"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "collateral",
+          "value": "position.collateral.checked_add(amount).ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_liquidity",
+          "value": "ctx.accounts.market.total_liquidity.checked_add(amount).ok_or(FundingError::MathOverflow)?"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "last_updated_at",
+          "value": "Clock::get()?.unix_timestamp"
+        },
+        {
+          "kind": "emit",
+          "event": "CollateralAdded",
+          "fields": "trader: ctx.accounts.trader.key(),\n            amount,\n            new_collateral: position.collateral,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(amount > 0, FundingError::InvalidParam);\n        let position = &mut ctx.accounts.position;\n        require!(position.owner == ctx.accounts.trader.key(), FundingError::Unauthorized);\n        require!(position.size_usd > 0, FundingError::PositionEmpty);\n\n        token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.trader_collateral.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.trader.to_account_info(),\n                },\n            ),\n            amount,\n        )?;\n\n        position.collateral = position.collateral.checked_add(amount).ok_or(FundingError::MathOverflow)?;\n        ctx.accounts.market.total_liquidity = ctx.accounts.market.total_liquidity.checked_add(amount).ok_or(FundingError::MathOverflow)?;\n        position.last_updated_at = Clock::get()?.unix_timestamp;\n\n        emit!(CollateralAdded {\n            trader: ctx.accounts.trader.key(),\n            amount,\n            new_collateral: position.collateral,\n        });\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "remove_collateral",
+      "accounts": [
+        {
+          "name": "trader",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "market",
+          "accountType": "Market",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "market.vault"
+            }
+          ]
+        },
+        {
+          "name": "vault_authority",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "vault_bump_cpi",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VAULT_SEED",
+            "market.key().as_ref()",
+            "b\"auth\""
+          ],
+          "constraints": [
+            {
+              "kind": "seeds",
+              "value": "[VAULT_SEED, market.key().as_ref(), b\"auth\"]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "trader_collateral",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "market.collateral_mint"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "trader"
+            }
+          ]
+        },
+        {
+          "name": "position",
+          "accountType": "Position",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "POSITION_SEED",
+            "market.key().as_ref()",
+            "trader.key().as_ref()"
+          ],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "seeds",
+              "value": "[POSITION_SEED, market.key().as_ref(), trader.key().as_ref()]"
+            },
+            {
+              "kind": "bump",
+              "value": "position.bump"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "oracle_price",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "amount > 0",
+          "error": "FundingError::InvalidParam"
+        },
+        {
+          "kind": "state_read",
+          "account": "position",
+          "localVar": "position",
+          "mutable": true,
+          "accountType": "Position"
+        },
+        {
+          "kind": "require",
+          "condition": "position.owner == ctx.accounts.trader.key()",
+          "error": "FundingError::Unauthorized"
+        },
+        {
+          "kind": "require",
+          "condition": "position.size_usd > 0",
+          "error": "FundingError::PositionEmpty"
+        },
+        {
+          "kind": "require",
+          "condition": "position.collateral > amount",
+          "error": "FundingError::InsufficientCollateral"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let new_collateral = position.collateral.checked_sub(amount).ok_or(FundingError::MathOverflow)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let required_margin = position\n            .size_usd\n            .checked_mul(INIT_MARGIN_BPS)\n            .ok_or(FundingError::MathOverflow)?\n            / 10_000;",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "new_collateral >= required_margin",
+          "error": "FundingError::MarginTooLow"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let margin_ratio = compute_margin_ratio(new_collateral, position.size_usd, position.entry_price, oracle_price, position.is_long)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "margin_ratio > MAINT_MARGIN_BPS",
+          "error": "FundingError::WouldBeLiquidatable"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let market_key = ctx.accounts.market.key();",
+          "needsReview": false
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "vault_bump_cpi",
+          "seeds": [
+            "VAULT_SEED",
+            "market_key.as_ref()",
+            "&[ctx.bumps.vault_bump_cpi]"
+          ],
+          "bumpField": "&[ctx.bumps.vault_bump_cpi]",
+          "rawCode": "let vault_seeds = &[VAULT_SEED, market_key.as_ref(), &[ctx.bumps.vault_bump_cpi]];"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "vault",
+          "to": "trader_collateral",
+          "authority": "vault_authority",
+          "amount": "amount",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "collateral",
+          "value": "new_collateral"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_liquidity",
+          "value": "ctx.accounts.market.total_liquidity.saturating_sub(amount)"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "last_updated_at",
+          "value": "Clock::get()?.unix_timestamp"
+        },
+        {
+          "kind": "emit",
+          "event": "CollateralRemoved",
+          "fields": "trader: ctx.accounts.trader.key(),\n            amount,\n            new_collateral,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(amount > 0, FundingError::InvalidParam);\n        let position = &mut ctx.accounts.position;\n        require!(position.owner == ctx.accounts.trader.key(), FundingError::Unauthorized);\n        require!(position.size_usd > 0, FundingError::PositionEmpty);\n        require!(position.collateral > amount, FundingError::InsufficientCollateral);\n\n        let new_collateral = position.collateral.checked_sub(amount).ok_or(FundingError::MathOverflow)?;\n\n        // Check initial margin requirement holds after removal\n        let required_margin = position\n            .size_usd\n            .checked_mul(INIT_MARGIN_BPS)\n            .ok_or(FundingError::MathOverflow)?\n            / 10_000;\n        require!(new_collateral >= required_margin, FundingError::MarginTooLow);\n\n        // Check not immediately liquidatable\n        let margin_ratio = compute_margin_ratio(new_collateral, position.size_usd, position.entry_price, oracle_price, position.is_long)?;\n        require!(margin_ratio > MAINT_MARGIN_BPS, FundingError::WouldBeLiquidatable);\n\n        let market_key = ctx.accounts.market.key();\n        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), &[ctx.bumps.vault_bump_cpi]];\n\n        token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.trader_collateral.to_account_info(),\n                    authority: ctx.accounts.vault_authority.to_account_info(),\n                },\n                &[vault_seeds],\n            ),\n            amount,\n        )?;\n\n        position.collateral = new_collateral;\n        ctx.accounts.market.total_liquidity = ctx.accounts.market.total_liquidity.saturating_sub(amount);\n        position.last_updated_at = Clock::get()?.unix_timestamp;\n\n        emit!(CollateralRemoved {\n            trader: ctx.accounts.trader.key(),\n            amount,\n            new_collateral,\n        });\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "liquidate",
+      "accounts": [
+        {
+          "name": "liquidator",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "market",
+          "accountType": "Market",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "market.vault"
+            }
+          ]
+        },
+        {
+          "name": "insurance_fund",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "market.insurance_fund"
+            }
+          ]
+        },
+        {
+          "name": "vault_authority",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "vault_bump_cpi",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "VAULT_SEED",
+            "market.key().as_ref()",
+            "b\"auth\""
+          ],
+          "constraints": [
+            {
+              "kind": "seeds",
+              "value": "[VAULT_SEED, market.key().as_ref(), b\"auth\"]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "liquidator_collateral",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "associated_token::mint",
+              "value": "market.collateral_mint"
+            },
+            {
+              "kind": "associated_token::authority",
+              "value": "liquidator"
+            }
+          ]
+        },
+        {
+          "name": "position",
+          "accountType": "Position",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "system_program",
+          "accountType": "System",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "oracle_price",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "state_read",
+          "account": "position",
+          "localVar": "position",
+          "mutable": true,
+          "accountType": "Position"
+        },
+        {
+          "kind": "state_read",
+          "account": "market",
+          "localVar": "market",
+          "mutable": true,
+          "accountType": "Market"
+        },
+        {
+          "kind": "sysvar_clock",
+          "localVar": "clock",
+          "code": "let clock = Clock::get()?;"
+        },
+        {
+          "kind": "require",
+          "condition": "position.size_usd > 0",
+          "error": "FundingError::PositionEmpty"
+        },
+        {
+          "kind": "pass_through",
+          "code": "settle_funding_rate(market, clock.unix_timestamp)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let current_cumulative = if position.is_long {\n            market.cumulative_funding_rate_long\n        } else {\n            market.cumulative_funding_rate_short\n        };",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let funding_pnl = compute_funding_pnl(\n            position.size_usd,\n            position.last_cumulative_funding_rate,\n            current_cumulative,\n            position.is_long,\n        )?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let effective_collateral = apply_pnl(position.collateral, SignedAmount::Zero, funding_pnl)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let margin_ratio = compute_margin_ratio(\n            effective_collateral,\n            position.size_usd,\n            position.entry_price,\n            oracle_price,\n            position.is_long,\n        )?;",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "margin_ratio <= MAINT_MARGIN_BPS",
+          "error": "FundingError::NotLiquidatable"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let liq_fee_total = position\n            .size_usd\n            .checked_mul(LIQ_FEE_BPS + INSURANCE_FEE_BPS)\n            .ok_or(FundingError::MathOverflow)?\n            / 10_000;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let liquidator_fee = position\n            .size_usd\n            .checked_mul(LIQ_FEE_BPS)\n            .ok_or(FundingError::MathOverflow)?\n            / 10_000;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let insurance_fee = liq_fee_total.saturating_sub(liquidator_fee);",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let vault_balance = ctx.accounts.vault.amount;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let liquidator_payout = liquidator_fee.min(vault_balance);",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let insurance_payout = insurance_fee.min(vault_balance.saturating_sub(liquidator_payout));",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let market_key = market.key();",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "if liquidator_payout > 0 {\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.liquidator_collateral.to_account_info(),\n                        authority: ctx.accounts.vault_authority.to_account_info(),\n                    },\n                    &[vault_seeds],\n                ),\n                liquidator_payout,\n            )?;\n        }",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern"
+        },
+        {
+          "kind": "pass_through",
+          "code": "if insurance_payout > 0 {\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.insurance_fund.to_account_info(),\n                        authority: ctx.accounts.vault_authority.to_account_info(),\n                    },\n                    &[vault_seeds],\n                ),\n                insurance_payout,\n            )?;\n        }",
+          "needsReview": true,
+          "reviewReason": "Contains possible Anchor-specific pattern"
+        },
+        {
+          "kind": "pass_through",
+          "code": "if position.is_long {\n            market.total_long_oi = market.total_long_oi.saturating_sub(position.size_usd);\n        } else {\n            market.total_short_oi = market.total_short_oi.saturating_sub(position.size_usd);\n        }",
+          "needsReview": false
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "total_liquidity",
+          "value": "market.total_liquidity.saturating_sub(position.collateral)"
+        },
+        {
+          "kind": "emit",
+          "event": "PositionLiquidated",
+          "fields": "trader: position.owner,\n            liquidator: ctx.accounts.liquidator.key(),\n            size_usd: position.size_usd,\n            oracle_price,\n            liquidator_fee: liquidator_payout,\n            insurance_fee: insurance_payout,\n            margin_ratio,"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "size_usd",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "collateral",
+          "value": "0"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "last_cumulative_funding_rate",
+          "value": "current_cumulative"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "position",
+          "field": "last_updated_at",
+          "value": "clock.unix_timestamp"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        let position = &mut ctx.accounts.position;\n        let market = &mut ctx.accounts.market;\n        let clock = Clock::get()?;\n\n        require!(position.size_usd > 0, FundingError::PositionEmpty);\n\n        // ── Settle funding ─────────────────────────────────────────────────────\n        settle_funding_rate(market, clock.unix_timestamp)?;\n\n        let current_cumulative = if position.is_long {\n            market.cumulative_funding_rate_long\n        } else {\n            market.cumulative_funding_rate_short\n        };\n\n        let funding_pnl = compute_funding_pnl(\n            position.size_usd,\n            position.last_cumulative_funding_rate,\n            current_cumulative,\n            position.is_long,\n        )?;\n\n        // Effective collateral after funding\n        let effective_collateral = apply_pnl(position.collateral, SignedAmount::Zero, funding_pnl)?;\n\n        let margin_ratio = compute_margin_ratio(\n            effective_collateral,\n            position.size_usd,\n            position.entry_price,\n            oracle_price,\n            position.is_long,\n        )?;\n\n        require!(margin_ratio <= MAINT_MARGIN_BPS, FundingError::NotLiquidatable);\n\n        // ── Liquidation fees ──────────────────────────────────────────────────\n        let liq_fee_total = position\n            .size_usd\n            .checked_mul(LIQ_FEE_BPS + INSURANCE_FEE_BPS)\n            .ok_or(FundingError::MathOverflow)?\n            / 10_000;\n        let liquidator_fee = position\n            .size_usd\n            .checked_mul(LIQ_FEE_BPS)\n            .ok_or(FundingError::MathOverflow)?\n            / 10_000;\n        let insurance_fee = liq_fee_total.saturating_sub(liquidator_fee);\n\n        let vault_balance = ctx.accounts.vault.amount;\n        let liquidator_payout = liquidator_fee.min(vault_balance);\n        let insurance_payout = insurance_fee.min(vault_balance.saturating_sub(liquidator_payout));\n\n        let market_key = market.key();\n        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), &[ctx.bumps.vault_bump_cpi]];\n\n        // Pay liquidator\n        if liquidator_payout > 0 {\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.liquidator_collateral.to_account_info(),\n                        authority: ctx.accounts.vault_authority.to_account_info(),\n                    },\n                    &[vault_seeds],\n                ),\n                liquidator_payout,\n            )?;\n        }\n\n        // Pay insurance fund\n        if insurance_payout > 0 {\n            token::transfer(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    Transfer {\n                        from: ctx.accounts.vault.to_account_info(),\n                        to: ctx.accounts.insurance_fund.to_account_info(),\n                        authority: ctx.accounts.vault_authority.to_account_info(),\n                    },\n                    &[vault_seeds],\n                ),\n                insurance_payout,\n            )?;\n        }\n\n        // ── Update OI ─────────────────────────────────────────────────────────\n        if position.is_long {\n            market.total_long_oi = market.total_long_oi.saturating_sub(position.size_usd);\n        } else {\n            market.total_short_oi = market.total_short_oi.saturating_sub(position.size_usd);\n        }\n        market.total_liquidity = market.total_liquidity.saturating_sub(position.collateral);\n\n        emit!(PositionLiquidated {\n            trader: position.owner,\n            liquidator: ctx.accounts.liquidator.key(),\n            size_usd: position.size_usd,\n            oracle_price,\n            liquidator_fee: liquidator_payout,\n            insurance_fee: insurance_payout,\n            margin_ratio,\n        });\n\n        // ── Zero out position ─────────────────────────────────────────────────\n        position.size_usd = 0;\n        position.collateral = 0;\n        position.last_cumulative_funding_rate = current_cumulative;\n        position.last_updated_at = clock.unix_timestamp;\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "update_funding_rate",
+      "accounts": [
+        {
+          "name": "caller",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "market",
+          "accountType": "Market",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "oracle_price",
+          "type": "u64"
+        },
+        {
+          "name": "index_price",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "state_read",
+          "account": "market",
+          "localVar": "market",
+          "mutable": true,
+          "accountType": "Market"
+        },
+        {
+          "kind": "sysvar_clock",
+          "localVar": "clock",
+          "code": "let clock = Clock::get()?;"
+        },
+        {
+          "kind": "require",
+          "condition": "clock.unix_timestamp >= market.last_funding_ts + FUNDING_INTERVAL",
+          "error": "FundingError::FundingTooEarly"
+        },
+        {
+          "kind": "pass_through",
+          "code": "settle_funding_rate(market, clock.unix_timestamp)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let new_rate = compute_new_funding_rate(oracle_price, index_price)?;",
+          "needsReview": false
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "funding_rate",
+          "value": "new_rate"
+        },
+        {
+          "kind": "emit",
+          "event": "FundingRateUpdated",
+          "fields": "market: market.key(),\n            funding_rate: new_rate,\n            oracle_price,\n            index_price,\n            timestamp: clock.unix_timestamp,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        let market = &mut ctx.accounts.market;\n        let clock = Clock::get()?;\n\n        require!(\n            clock.unix_timestamp >= market.last_funding_ts + FUNDING_INTERVAL,\n            FundingError::FundingTooEarly\n        );\n\n        settle_funding_rate(market, clock.unix_timestamp)?;\n\n        // Funding rate = clamp((mark - index) / index, -max, +max)\n        // Positive rate = longs pay shorts, negative = shorts pay longs\n        let new_rate = compute_new_funding_rate(oracle_price, index_price)?;\n        market.funding_rate = new_rate;\n\n        emit!(FundingRateUpdated {\n            market: market.key(),\n            funding_rate: new_rate,\n            oracle_price,\n            index_price,\n            timestamp: clock.unix_timestamp,\n        });\n\n        Ok(())\n    }"
+    },
+    {
+      "name": "set_market_paused",
+      "accounts": [
+        {
+          "name": "authority",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "address",
+              "value": "market.authority"
+            }
+          ]
+        },
+        {
+          "name": "market",
+          "accountType": "Market",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "paused",
+          "type": "bool"
+        }
+      ],
+      "body": [
+        {
+          "kind": "state_field_assign",
+          "account": "market",
+          "field": "paused",
+          "value": "paused"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        ctx.accounts.market.paused = paused;\n        Ok(())\n    }"
+    },
+    {
+      "name": "claim_fees",
+      "accounts": [
+        {
+          "name": "authority",
+          "accountType": "Signer",
+          "isSigner": true,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "market",
+          "accountType": "Market",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "fee_vault",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            },
+            {
+              "kind": "address",
+              "value": "market.fee_vault"
+            }
+          ]
+        },
+        {
+          "name": "fee_vault_authority",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        },
+        {
+          "name": "fee_vault_bump",
+          "accountType": "UncheckedAccount",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": true,
+          "pdaSeeds": [
+            "FEE_VAULT_SEED",
+            "market.key().as_ref()",
+            "b\"auth\""
+          ],
+          "constraints": [
+            {
+              "kind": "seeds",
+              "value": "[FEE_VAULT_SEED, market.key().as_ref(), b\"auth\"]"
+            },
+            {
+              "kind": "bump"
+            }
+          ]
+        },
+        {
+          "name": "recipient",
+          "accountType": "TokenAccount",
+          "isSigner": false,
+          "isMut": true,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ]
+        },
+        {
+          "name": "token_program",
+          "accountType": "Token",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": []
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ],
+      "body": [
+        {
+          "kind": "require",
+          "condition": "ctx.accounts.authority.key() == ctx.accounts.market.authority",
+          "error": "FundingError::Unauthorized"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let fee_balance = ctx.accounts.fee_vault.amount;",
+          "needsReview": false
+        },
+        {
+          "kind": "require",
+          "condition": "amount <= fee_balance",
+          "error": "FundingError::InsufficientFees"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let market_key = ctx.accounts.market.key();",
+          "needsReview": false
+        },
+        {
+          "kind": "pda_signer_seeds",
+          "account": "fee_vault_bump",
+          "seeds": [
+            "FEE_VAULT_SEED",
+            "market_key.as_ref()",
+            "&[ctx.bumps.fee_vault_bump]"
+          ],
+          "bumpField": "&[ctx.bumps.fee_vault_bump]",
+          "rawCode": "let fee_vault_seeds = &[FEE_VAULT_SEED, market_key.as_ref(), &[ctx.bumps.fee_vault_bump]];"
+        },
+        {
+          "kind": "cpi_spl_transfer",
+          "from": "fee_vault",
+          "to": "recipient",
+          "authority": "fee_vault_authority",
+          "amount": "amount",
+          "signerSeeds": "signer_seeds"
+        },
+        {
+          "kind": "emit",
+          "event": "FeesClaimed",
+          "fields": "authority: ctx.accounts.authority.key(),\n            amount,"
+        },
+        {
+          "kind": "pass_through",
+          "code": "Ok(())",
+          "needsReview": false
+        }
+      ],
+      "rawBody": "{\n        require!(\n            ctx.accounts.authority.key() == ctx.accounts.market.authority,\n            FundingError::Unauthorized\n        );\n        let fee_balance = ctx.accounts.fee_vault.amount;\n        require!(amount <= fee_balance, FundingError::InsufficientFees);\n\n        let market_key = ctx.accounts.market.key();\n        let fee_vault_seeds = &[FEE_VAULT_SEED, market_key.as_ref(), &[ctx.bumps.fee_vault_bump]];\n\n        token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.fee_vault.to_account_info(),\n                    to: ctx.accounts.recipient.to_account_info(),\n                    authority: ctx.accounts.fee_vault_authority.to_account_info(),\n                },\n                &[fee_vault_seeds],\n            ),\n            amount,\n        )?;\n\n        emit!(FeesClaimed {\n            authority: ctx.accounts.authority.key(),\n            amount,\n        });\n\n        Ok(())\n    }"
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Market",
+      "fields": [
+        {
+          "name": "authority",
+          "type": "Pubkey"
+        },
+        {
+          "name": "market_index",
+          "type": "u16"
+        },
+        {
+          "name": "oracle_price_feed",
+          "type": "Pubkey"
+        },
+        {
+          "name": "collateral_mint",
+          "type": "Pubkey"
+        },
+        {
+          "name": "vault",
+          "type": "Pubkey"
+        },
+        {
+          "name": "fee_vault",
+          "type": "Pubkey"
+        },
+        {
+          "name": "insurance_fund",
+          "type": "Pubkey"
+        },
+        {
+          "name": "lp_mint",
+          "type": "Pubkey"
+        },
+        {
+          "name": "max_open_interest",
+          "type": "u64"
+        },
+        {
+          "name": "base_decimals",
+          "type": "u8"
+        },
+        {
+          "name": "total_long_oi",
+          "type": "u64"
+        },
+        {
+          "name": "total_short_oi",
+          "type": "u64"
+        },
+        {
+          "name": "cumulative_funding_rate_long",
+          "type": "i64"
+        },
+        {
+          "name": "cumulative_funding_rate_short",
+          "type": "i64"
+        },
+        {
+          "name": "last_funding_ts",
+          "type": "i64"
+        },
+        {
+          "name": "funding_rate",
+          "type": "i64"
+        },
+        {
+          "name": "total_lp_shares",
+          "type": "u64"
+        },
+        {
+          "name": "total_liquidity",
+          "type": "u64"
+        },
+        {
+          "name": "paused",
+          "type": "bool"
+        },
+        {
+          "name": "bump",
+          "type": "u8"
+        },
+        {
+          "name": "_padding",
+          "type": "[u8; 5]"
+        }
+      ],
+      "space": 341
+    },
+    {
+      "name": "Position",
+      "fields": [
+        {
+          "name": "owner",
+          "type": "Pubkey"
+        },
+        {
+          "name": "market",
+          "type": "Pubkey"
+        },
+        {
+          "name": "size_usd",
+          "type": "u64"
+        },
+        {
+          "name": "collateral",
+          "type": "u64"
+        },
+        {
+          "name": "entry_price",
+          "type": "u64"
+        },
+        {
+          "name": "is_long",
+          "type": "bool"
+        },
+        {
+          "name": "last_cumulative_funding_rate",
+          "type": "i64"
+        },
+        {
+          "name": "opened_at",
+          "type": "i64"
+        },
+        {
+          "name": "last_updated_at",
+          "type": "i64"
+        },
+        {
+          "name": "fees_paid",
+          "type": "u64"
+        },
+        {
+          "name": "bump",
+          "type": "u8"
+        },
+        {
+          "name": "_padding",
+          "type": "[u8; 6]"
+        }
+      ],
+      "space": 162
+    },
+    {
+      "name": "LpPosition",
+      "fields": [
+        {
+          "name": "owner",
+          "type": "Pubkey"
+        },
+        {
+          "name": "market",
+          "type": "Pubkey"
+        },
+        {
+          "name": "shares",
+          "type": "u64"
+        },
+        {
+          "name": "deposited_amount",
+          "type": "u64"
+        },
+        {
+          "name": "bump",
+          "type": "u8"
+        },
+        {
+          "name": "_padding",
+          "type": "[u8; 7]"
+        }
+      ],
+      "space": 121
+    },
+    {
+      "name": "VaultBumpHolder",
+      "fields": [
+        {
+          "name": "bump",
+          "type": "u8"
+        }
+      ],
+      "space": 9
+    }
+  ],
+  "types": [
+    {
+      "name": "SignedAmount",
+      "kind": "enum",
+      "variants": [
+        "Positive",
+        "Negative",
+        "Zero"
+      ],
+      "rawCode": "pub enum SignedAmount {\n    Positive(u64),\n    Negative(u64),\n    Zero,\n}"
+    },
+    {
+      "name": "MarketInitialized",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "market_index",
+          "type": "u16"
+        },
+        {
+          "name": "authority",
+          "type": "Pubkey"
+        },
+        {
+          "name": "oracle",
+          "type": "Pubkey"
+        }
+      ],
+      "rawCode": "pub struct MarketInitialized {\n    pub market_index: u16,\n    pub authority: Pubkey,\n    pub oracle: Pubkey,\n}"
+    },
+    {
+      "name": "LiquidityDeposited",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "provider",
+          "type": "Pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "shares_minted",
+          "type": "u64"
+        }
+      ],
+      "rawCode": "pub struct LiquidityDeposited {\n    pub provider: Pubkey,\n    pub amount: u64,\n    pub shares_minted: u64,\n}"
+    },
+    {
+      "name": "LiquidityWithdrawn",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "provider",
+          "type": "Pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "shares_burned",
+          "type": "u64"
+        }
+      ],
+      "rawCode": "pub struct LiquidityWithdrawn {\n    pub provider: Pubkey,\n    pub amount: u64,\n    pub shares_burned: u64,\n}"
+    },
+    {
+      "name": "PositionOpened",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "trader",
+          "type": "Pubkey"
+        },
+        {
+          "name": "size_usd",
+          "type": "u64"
+        },
+        {
+          "name": "collateral",
+          "type": "u64"
+        },
+        {
+          "name": "is_long",
+          "type": "bool"
+        },
+        {
+          "name": "entry_price",
+          "type": "u64"
+        },
+        {
+          "name": "fee",
+          "type": "u64"
+        }
+      ],
+      "rawCode": "pub struct PositionOpened {\n    pub trader: Pubkey,\n    pub size_usd: u64,\n    pub collateral: u64,\n    pub is_long: bool,\n    pub entry_price: u64,\n    pub fee: u64,\n}"
+    },
+    {
+      "name": "PositionClosed",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "trader",
+          "type": "Pubkey"
+        },
+        {
+          "name": "size_usd",
+          "type": "u64"
+        },
+        {
+          "name": "oracle_price",
+          "type": "u64"
+        },
+        {
+          "name": "price_pnl",
+          "type": "SignedAmount"
+        },
+        {
+          "name": "funding_pnl",
+          "type": "SignedAmount"
+        },
+        {
+          "name": "fee",
+          "type": "u64"
+        },
+        {
+          "name": "payout",
+          "type": "u64"
+        }
+      ],
+      "rawCode": "pub struct PositionClosed {\n    pub trader: Pubkey,\n    pub size_usd: u64,\n    pub oracle_price: u64,\n    pub price_pnl: SignedAmount,\n    pub funding_pnl: SignedAmount,\n    pub fee: u64,\n    pub payout: u64,\n}"
+    },
+    {
+      "name": "CollateralAdded",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "trader",
+          "type": "Pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "new_collateral",
+          "type": "u64"
+        }
+      ],
+      "rawCode": "pub struct CollateralAdded {\n    pub trader: Pubkey,\n    pub amount: u64,\n    pub new_collateral: u64,\n}"
+    },
+    {
+      "name": "CollateralRemoved",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "trader",
+          "type": "Pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "new_collateral",
+          "type": "u64"
+        }
+      ],
+      "rawCode": "pub struct CollateralRemoved {\n    pub trader: Pubkey,\n    pub amount: u64,\n    pub new_collateral: u64,\n}"
+    },
+    {
+      "name": "PositionLiquidated",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "trader",
+          "type": "Pubkey"
+        },
+        {
+          "name": "liquidator",
+          "type": "Pubkey"
+        },
+        {
+          "name": "size_usd",
+          "type": "u64"
+        },
+        {
+          "name": "oracle_price",
+          "type": "u64"
+        },
+        {
+          "name": "liquidator_fee",
+          "type": "u64"
+        },
+        {
+          "name": "insurance_fee",
+          "type": "u64"
+        },
+        {
+          "name": "margin_ratio",
+          "type": "u64"
+        }
+      ],
+      "rawCode": "pub struct PositionLiquidated {\n    pub trader: Pubkey,\n    pub liquidator: Pubkey,\n    pub size_usd: u64,\n    pub oracle_price: u64,\n    pub liquidator_fee: u64,\n    pub insurance_fee: u64,\n    pub margin_ratio: u64,\n}"
+    },
+    {
+      "name": "FundingRateUpdated",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "market",
+          "type": "Pubkey"
+        },
+        {
+          "name": "funding_rate",
+          "type": "i64"
+        },
+        {
+          "name": "oracle_price",
+          "type": "u64"
+        },
+        {
+          "name": "index_price",
+          "type": "u64"
+        },
+        {
+          "name": "timestamp",
+          "type": "i64"
+        }
+      ],
+      "rawCode": "pub struct FundingRateUpdated {\n    pub market: Pubkey,\n    pub funding_rate: i64,\n    pub oracle_price: u64,\n    pub index_price: u64,\n    pub timestamp: i64,\n}"
+    },
+    {
+      "name": "FeesClaimed",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "authority",
+          "type": "Pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ],
+      "rawCode": "pub struct FeesClaimed {\n    pub authority: Pubkey,\n    pub amount: u64,\n}"
+    }
+  ],
+  "constants": [
+    "pub const MARKET_SEED: &[u8] = b\"market\";",
+    "pub const POSITION_SEED: &[u8] = b\"position\";",
+    "pub const VAULT_SEED: &[u8] = b\"vault\";",
+    "pub const FEE_VAULT_SEED: &[u8] = b\"fee_vault\";",
+    "pub const INSURANCE_SEED: &[u8] = b\"insurance\";",
+    "pub const LP_MINT_SEED: &[u8] = b\"lp_mint\";",
+    "pub const LP_POSITION_SEED: &[u8] = b\"lp_position\";",
+    "pub const RATE_PRECISION: u128 = 1_000_000_000;",
+    "pub const PRICE_PRECISION: u128 = 1_000_000;",
+    "pub const MAX_LEVERAGE: u64 = 20_000;",
+    "pub const MAINT_MARGIN_BPS: u64 = 500;",
+    "pub const INIT_MARGIN_BPS: u64 = 1_000;",
+    "pub const LIQ_FEE_BPS: u64 = 150;",
+    "pub const INSURANCE_FEE_BPS: u64 = 50;",
+    "pub const MAX_FUNDING_RATE: i64 = 1_000;",
+    "pub const FUNDING_INTERVAL: i64 = 3600;",
+    "pub const MIN_POSITION_SIZE: u64 = 1_000_000;",
+    "pub const TIER1_OI_THRESHOLD: u64 = 100_000 * 1_000_000;",
+    "pub const TIER2_OI_THRESHOLD: u64 = 500_000 * 1_000_000;",
+    "pub const TIER0_TAKER_FEE: u64 = 10;",
+    "pub const TIER1_TAKER_FEE: u64 = 8;",
+    "pub const TIER2_TAKER_FEE: u64 = 6;",
+    "pub const TIER0_MAKER_FEE: u64 = 2;",
+    "pub const TIER1_MAKER_FEE: u64 = 1;",
+    "pub const TIER2_MAKER_FEE: u64 = 0;"
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "MathOverflow",
+      "msg": "Math overflow"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidParam",
+      "msg": "Invalid parameter"
+    },
+    {
+      "code": 6002,
+      "name": "BelowMinSize",
+      "msg": "Below minimum position size"
+    },
+    {
+      "code": 6003,
+      "name": "LeverageTooHigh",
+      "msg": "Leverage exceeds maximum"
+    },
+    {
+      "code": 6004,
+      "name": "OILimitExceeded",
+      "msg": "Open interest limit exceeded"
+    },
+    {
+      "code": 6005,
+      "name": "InsufficientLiquidity",
+      "msg": "Insufficient liquidity in vault"
+    },
+    {
+      "code": 6006,
+      "name": "MarketPaused",
+      "msg": "Market is paused"
+    },
+    {
+      "code": 6007,
+      "name": "InsufficientShares",
+      "msg": "Insufficient LP shares"
+    },
+    {
+      "code": 6008,
+      "name": "ZeroShares",
+      "msg": "Zero LP shares would be minted"
+    },
+    {
+      "code": 6009,
+      "name": "ZeroWithdraw",
+      "msg": "Zero withdraw amount"
+    },
+    {
+      "code": 6010,
+      "name": "WithdrawExceedsOILimit",
+      "msg": "Withdrawal would break OI limit"
+    },
+    {
+      "code": 6011,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6012,
+      "name": "PositionEmpty",
+      "msg": "Position is empty"
+    },
+    {
+      "code": 6013,
+      "name": "InvalidCloseSize",
+      "msg": "Invalid close size"
+    },
+    {
+      "code": 6014,
+      "name": "SideConflict",
+      "msg": "Cannot change position side"
+    },
+    {
+      "code": 6015,
+      "name": "NotLiquidatable",
+      "msg": "Position is not liquidatable"
+    },
+    {
+      "code": 6016,
+      "name": "MarginTooLow",
+      "msg": "Margin ratio too low after removal"
+    },
+    {
+      "code": 6017,
+      "name": "WouldBeLiquidatable",
+      "msg": "Position would be immediately liquidatable"
+    },
+    {
+      "code": 6018,
+      "name": "InsufficientCollateral",
+      "msg": "Insufficient collateral"
+    },
+    {
+      "code": 6019,
+      "name": "FundingTooEarly",
+      "msg": "Funding updated too recently"
+    },
+    {
+      "code": 6020,
+      "name": "InsufficientFees",
+      "msg": "Insufficient fees to claim"
+    }
+  ],
+  "helperFns": [
+    {
+      "name": "settle_funding_rate",
+      "signature": "fn settle_funding_rate(market: &mut Account<Market>, now: i64) -> Result<()>",
+      "body": "{\n    let elapsed = now.saturating_sub(market.last_funding_ts);\n    if elapsed <= 0 || market.funding_rate == 0 {\n        market.last_funding_ts = now;\n        return Ok(());\n    }\n\n    // funding accrued = rate * elapsed / FUNDING_INTERVAL\n    // Positive rate: longs pay, shorts receive\n    let rate_magnitude = (market.funding_rate.unsigned_abs() as u128)\n        .checked_mul(elapsed as u128)\n        .ok_or(FundingError::MathOverflow)?\n        .checked_div(FUNDING_INTERVAL as u128)\n        .ok_or(FundingError::MathOverflow)? as i64;\n\n    if market.funding_rate > 0 {\n        // longs pay shorts\n        market.cumulative_funding_rate_long = market\n            .cumulative_funding_rate_long\n            .checked_add(rate_magnitude)\n            .ok_or(FundingError::MathOverflow)?;\n        market.cumulative_funding_rate_short = market\n            .cumulative_funding_rate_short\n            .checked_sub(rate_magnitude)\n            .ok_or(FundingError::MathOverflow)?;\n    } else {\n        // shorts pay longs\n        market.cumulative_funding_rate_long = market\n            .cumulative_funding_rate_long\n            .checked_sub(rate_magnitude)\n            .ok_or(FundingError::MathOverflow)?;\n        market.cumulative_funding_rate_short = market\n            .cumulative_funding_rate_short\n            .checked_add(rate_magnitude)\n            .ok_or(FundingError::MathOverflow)?;\n    }\n\n    market.last_funding_ts = now;\n    Ok(())\n}",
+      "isPublic": false,
+      "rawCode": "fn settle_funding_rate(market: &mut Account<Market>, now: i64) -> Result<()> {\n    let elapsed = now.saturating_sub(market.last_funding_ts);\n    if elapsed <= 0 || market.funding_rate == 0 {\n        market.last_funding_ts = now;\n        return Ok(());\n    }\n\n    // funding accrued = rate * elapsed / FUNDING_INTERVAL\n    // Positive rate: longs pay, shorts receive\n    let rate_magnitude = (market.funding_rate.unsigned_abs() as u128)\n        .checked_mul(elapsed as u128)\n        .ok_or(FundingError::MathOverflow)?\n        .checked_div(FUNDING_INTERVAL as u128)\n        .ok_or(FundingError::MathOverflow)? as i64;\n\n    if market.funding_rate > 0 {\n        // longs pay shorts\n        market.cumulative_funding_rate_long = market\n            .cumulative_funding_rate_long\n            .checked_add(rate_magnitude)\n            .ok_or(FundingError::MathOverflow)?;\n        market.cumulative_funding_rate_short = market\n            .cumulative_funding_rate_short\n            .checked_sub(rate_magnitude)\n            .ok_or(FundingError::MathOverflow)?;\n    } else {\n        // shorts pay longs\n        market.cumulative_funding_rate_long = market\n            .cumulative_funding_rate_long\n            .checked_sub(rate_magnitude)\n            .ok_or(FundingError::MathOverflow)?;\n        market.cumulative_funding_rate_short = market\n            .cumulative_funding_rate_short\n            .checked_add(rate_magnitude)\n            .ok_or(FundingError::MathOverflow)?;\n    }\n\n    market.last_funding_ts = now;\n    Ok(())\n}"
+    },
+    {
+      "name": "compute_funding_pnl",
+      "signature": "fn compute_funding_pnl(\n    size_usd: u64,\n    entry_cumulative: i64,\n    current_cumulative: i64,\n    is_long: bool,\n) -> Result<SignedAmount>",
+      "body": "{\n    let delta = current_cumulative.checked_sub(entry_cumulative).ok_or(FundingError::MathOverflow)?;\n    if delta == 0 {\n        return Ok(SignedAmount::Zero);\n    }\n\n    // funding_pnl = size * delta / RATE_PRECISION\n    // For longs: positive delta means you paid funding (loss)\n    // For shorts: positive delta in short cumulative means you received (gain)\n    let pnl_magnitude = (size_usd as u128)\n        .checked_mul(delta.unsigned_abs() as u128)\n        .ok_or(FundingError::MathOverflow)?\n        .checked_div(RATE_PRECISION)\n        .ok_or(FundingError::MathOverflow)? as u64;\n\n    let is_gain = if is_long { delta < 0 } else { delta > 0 };\n    if is_gain {\n        Ok(SignedAmount::Positive(pnl_magnitude))\n    } else {\n        Ok(SignedAmount::Negative(pnl_magnitude))\n    }\n}",
+      "isPublic": false,
+      "rawCode": "fn compute_funding_pnl(\n    size_usd: u64,\n    entry_cumulative: i64,\n    current_cumulative: i64,\n    is_long: bool,\n) -> Result<SignedAmount> {\n    let delta = current_cumulative.checked_sub(entry_cumulative).ok_or(FundingError::MathOverflow)?;\n    if delta == 0 {\n        return Ok(SignedAmount::Zero);\n    }\n\n    // funding_pnl = size * delta / RATE_PRECISION\n    // For longs: positive delta means you paid funding (loss)\n    // For shorts: positive delta in short cumulative means you received (gain)\n    let pnl_magnitude = (size_usd as u128)\n        .checked_mul(delta.unsigned_abs() as u128)\n        .ok_or(FundingError::MathOverflow)?\n        .checked_div(RATE_PRECISION)\n        .ok_or(FundingError::MathOverflow)? as u64;\n\n    let is_gain = if is_long { delta < 0 } else { delta > 0 };\n    if is_gain {\n        Ok(SignedAmount::Positive(pnl_magnitude))\n    } else {\n        Ok(SignedAmount::Negative(pnl_magnitude))\n    }\n}"
+    },
+    {
+      "name": "compute_price_pnl",
+      "signature": "fn compute_price_pnl(\n    size_usd: u64,\n    entry_price: u64,\n    exit_price: u64,\n    is_long: bool,\n) -> Result<SignedAmount>",
+      "body": "{\n    if entry_price == 0 {\n        return Ok(SignedAmount::Zero);\n    }\n    // pnl = size * (exit - entry) / entry  [for long]\n    // pnl = size * (entry - exit) / entry  [for short]\n    let (numerator, is_gain) = if is_long {\n        if exit_price >= entry_price {\n            (exit_price - entry_price, true)\n        } else {\n            (entry_price - exit_price, false)\n        }\n    } else {\n        if entry_price >= exit_price {\n            (entry_price - exit_price, true)\n        } else {\n            (exit_price - entry_price, false)\n        }\n    };\n\n    let pnl = (size_usd as u128)\n        .checked_mul(numerator as u128)\n        .ok_or(FundingError::MathOverflow)?\n        .checked_div(entry_price as u128)\n        .ok_or(FundingError::MathOverflow)? as u64;\n\n    if is_gain {\n        Ok(SignedAmount::Positive(pnl))\n    } else {\n        Ok(SignedAmount::Negative(pnl))\n    }\n}",
+      "isPublic": false,
+      "rawCode": "fn compute_price_pnl(\n    size_usd: u64,\n    entry_price: u64,\n    exit_price: u64,\n    is_long: bool,\n) -> Result<SignedAmount> {\n    if entry_price == 0 {\n        return Ok(SignedAmount::Zero);\n    }\n    // pnl = size * (exit - entry) / entry  [for long]\n    // pnl = size * (entry - exit) / entry  [for short]\n    let (numerator, is_gain) = if is_long {\n        if exit_price >= entry_price {\n            (exit_price - entry_price, true)\n        } else {\n            (entry_price - exit_price, false)\n        }\n    } else {\n        if entry_price >= exit_price {\n            (entry_price - exit_price, true)\n        } else {\n            (exit_price - entry_price, false)\n        }\n    };\n\n    let pnl = (size_usd as u128)\n        .checked_mul(numerator as u128)\n        .ok_or(FundingError::MathOverflow)?\n        .checked_div(entry_price as u128)\n        .ok_or(FundingError::MathOverflow)? as u64;\n\n    if is_gain {\n        Ok(SignedAmount::Positive(pnl))\n    } else {\n        Ok(SignedAmount::Negative(pnl))\n    }\n}"
+    },
+    {
+      "name": "apply_pnl",
+      "signature": "fn apply_pnl(base: u64, price_pnl: SignedAmount, funding_pnl: SignedAmount) -> Result<u64>",
+      "body": "{\n    let mut result = base as i128;\n\n    match price_pnl {\n        SignedAmount::Positive(v) => result = result.checked_add(v as i128).ok_or(FundingError::MathOverflow)?,\n        SignedAmount::Negative(v) => result = result.checked_sub(v as i128).ok_or(FundingError::MathOverflow)?,\n        SignedAmount::Zero => {}\n    }\n\n    match funding_pnl {\n        SignedAmount::Positive(v) => result = result.checked_add(v as i128).ok_or(FundingError::MathOverflow)?,\n        SignedAmount::Negative(v) => result = result.checked_sub(v as i128).ok_or(FundingError::MathOverflow)?,\n        SignedAmount::Zero => {}\n    }\n\n    Ok(result.max(0) as u64)\n}",
+      "isPublic": false,
+      "rawCode": "fn apply_pnl(base: u64, price_pnl: SignedAmount, funding_pnl: SignedAmount) -> Result<u64> {\n    let mut result = base as i128;\n\n    match price_pnl {\n        SignedAmount::Positive(v) => result = result.checked_add(v as i128).ok_or(FundingError::MathOverflow)?,\n        SignedAmount::Negative(v) => result = result.checked_sub(v as i128).ok_or(FundingError::MathOverflow)?,\n        SignedAmount::Zero => {}\n    }\n\n    match funding_pnl {\n        SignedAmount::Positive(v) => result = result.checked_add(v as i128).ok_or(FundingError::MathOverflow)?,\n        SignedAmount::Negative(v) => result = result.checked_sub(v as i128).ok_or(FundingError::MathOverflow)?,\n        SignedAmount::Zero => {}\n    }\n\n    Ok(result.max(0) as u64)\n}"
+    },
+    {
+      "name": "compute_margin_ratio",
+      "signature": "fn compute_margin_ratio(\n    collateral: u64,\n    size_usd: u64,\n    entry_price: u64,\n    current_price: u64,\n    is_long: bool,\n) -> Result<u64>",
+      "body": "{\n    if size_usd == 0 {\n        return Ok(u64::MAX);\n    }\n\n    let price_pnl = compute_price_pnl(size_usd, entry_price, current_price, is_long)?;\n    let effective_collateral = apply_pnl(collateral, price_pnl, SignedAmount::Zero)?;\n\n    let ratio = (effective_collateral as u128)\n        .checked_mul(10_000)\n        .ok_or(FundingError::MathOverflow)?\n        .checked_div(size_usd as u128)\n        .ok_or(FundingError::MathOverflow)? as u64;\n\n    Ok(ratio)\n}",
+      "isPublic": false,
+      "rawCode": "fn compute_margin_ratio(\n    collateral: u64,\n    size_usd: u64,\n    entry_price: u64,\n    current_price: u64,\n    is_long: bool,\n) -> Result<u64> {\n    if size_usd == 0 {\n        return Ok(u64::MAX);\n    }\n\n    let price_pnl = compute_price_pnl(size_usd, entry_price, current_price, is_long)?;\n    let effective_collateral = apply_pnl(collateral, price_pnl, SignedAmount::Zero)?;\n\n    let ratio = (effective_collateral as u128)\n        .checked_mul(10_000)\n        .ok_or(FundingError::MathOverflow)?\n        .checked_div(size_usd as u128)\n        .ok_or(FundingError::MathOverflow)? as u64;\n\n    Ok(ratio)\n}"
+    },
+    {
+      "name": "compute_new_funding_rate",
+      "signature": "fn compute_new_funding_rate(oracle_price: u64, index_price: u64) -> Result<i64>",
+      "body": "{\n    if index_price == 0 {\n        return Ok(0);\n    }\n\n    let oracle = oracle_price as i128;\n    let index = index_price as i128;\n\n    // rate = (mark - index) / index * RATE_PRECISION\n    let rate = (oracle - index)\n        .checked_mul(RATE_PRECISION as i128)\n        .ok_or(FundingError::MathOverflow)?\n        .checked_div(index)\n        .ok_or(FundingError::MathOverflow)?;\n\n    // Clamp to [-MAX_FUNDING_RATE, MAX_FUNDING_RATE]\n    let clamped = rate\n        .max(-(MAX_FUNDING_RATE as i128))\n        .min(MAX_FUNDING_RATE as i128) as i64;\n\n    Ok(clamped)\n}",
+      "isPublic": false,
+      "rawCode": "fn compute_new_funding_rate(oracle_price: u64, index_price: u64) -> Result<i64> {\n    if index_price == 0 {\n        return Ok(0);\n    }\n\n    let oracle = oracle_price as i128;\n    let index = index_price as i128;\n\n    // rate = (mark - index) / index * RATE_PRECISION\n    let rate = (oracle - index)\n        .checked_mul(RATE_PRECISION as i128)\n        .ok_or(FundingError::MathOverflow)?\n        .checked_div(index)\n        .ok_or(FundingError::MathOverflow)?;\n\n    // Clamp to [-MAX_FUNDING_RATE, MAX_FUNDING_RATE]\n    let clamped = rate\n        .max(-(MAX_FUNDING_RATE as i128))\n        .min(MAX_FUNDING_RATE as i128) as i64;\n\n    Ok(clamped)\n}"
+    },
+    {
+      "name": "get_fee_tier",
+      "signature": "fn get_fee_tier(current_oi: u64) -> (u64, u64)",
+      "body": "{\n    if current_oi >= TIER2_OI_THRESHOLD {\n        (TIER2_TAKER_FEE, TIER2_MAKER_FEE)\n    } else if current_oi >= TIER1_OI_THRESHOLD {\n        (TIER1_TAKER_FEE, TIER1_MAKER_FEE)\n    } else {\n        (TIER0_TAKER_FEE, TIER0_MAKER_FEE)\n    }\n}",
+      "isPublic": false,
+      "rawCode": "fn get_fee_tier(current_oi: u64) -> (u64, u64) {\n    if current_oi >= TIER2_OI_THRESHOLD {\n        (TIER2_TAKER_FEE, TIER2_MAKER_FEE)\n    } else if current_oi >= TIER1_OI_THRESHOLD {\n        (TIER1_TAKER_FEE, TIER1_MAKER_FEE)\n    } else {\n        (TIER0_TAKER_FEE, TIER0_MAKER_FEE)\n    }\n}"
+    }
+  ],
+  "imports": [
+    "anchor_lang::prelude::*",
+    "anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer}"
+  ],
+  "metadata": {
+    "sourceFramework": "anchor",
+    "sourceVersion": "0.30.0",
+    "anvilVersion": "0.2.0",
+    "parsedAt": "2026-04-04T09:37:14.706Z"
+  }
+}

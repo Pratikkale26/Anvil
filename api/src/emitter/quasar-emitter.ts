@@ -308,7 +308,7 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   protected override emitPubkeyDeserialize(start: number, end: number): string {
-    return `Pubkey::try_from(&data[${start}..${end}]).unwrap()`;
+    return `Pubkey::try_from(&data[${start}..${end}]).map_err(|_| ProgramError::InvalidInstructionData)?`;
   }
 
   override emitAccountStruct(acc: AccountDef): string {
@@ -621,7 +621,11 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     if data.len() < 72 {
         return Err(ProgramError::InvalidAccountData);
     }
-    Ok(u64::from_le_bytes(data[64..72].try_into().unwrap()))
+    Ok(u64::from_le_bytes(
+        data[64..72]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidAccountData)?
+    ))
 }`);
     }
 
@@ -644,11 +648,14 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     const size = this.resolveTypeSize(typeName);
     const typeDef = this.customTypeDef(typeName);
     if (typeName === "Pubkey") {
-      return `        let ${fieldName} = Pubkey::try_from(&data[offset..offset + 32]).unwrap();
+      return `        let ${fieldName} = Pubkey::try_from(&data[offset..offset + 32])
+            .map_err(|_| ProgramError::InvalidAccountData)?;
         offset += 32;`;
     }
     if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(typeName)) {
-      return `        let ${fieldName}: ${typeName} = data[offset..offset + ${size}].try_into().unwrap();
+      return `        let ${fieldName}: ${typeName} = data[offset..offset + ${size}]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidAccountData)?;
         offset += ${size};`;
     }
     if (typeDef?.kind === "enum") {
@@ -672,7 +679,11 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
       return `        let ${fieldName}: i8 = data[offset] as i8;
         offset += 1;`;
     }
-    return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(data[offset..offset + ${size}].try_into().unwrap());
+    return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(
+            data[offset..offset + ${size}]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        );
         offset += ${size};`;
   }
 

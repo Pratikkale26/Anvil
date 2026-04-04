@@ -186,6 +186,9 @@ export abstract class BaseEmitter {
     if (ir.accounts.length > 0) sections.push("mod state;");
     if (ir.instructions.length > 0) sections.push("mod instructions;");
     if (ir.errors.length > 0) sections.push("mod errors;");
+    if (ir.instructions.length > 0) {
+      sections.push("use instructions::*;");
+    }
 
     sections.push(this.emitEntrypoint(ir));
     sections.push(this.emitRouter(ir));
@@ -206,7 +209,10 @@ export abstract class BaseEmitter {
 
   private emitInstructionsModFile(ir: SolanaIR): string {
     const mods = ir.instructions
-      .map((i) => `pub mod ${snakeCase(i.name)};`)
+      .map((i) => {
+        const name = snakeCase(i.name);
+        return `pub mod ${name};\npub use ${name}::${name};`;
+      })
       .join("\n");
     return `//! Instruction processors for ${toPascalCase(ir.name)}\n\n${mods}\n`;
   }
@@ -384,6 +390,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     const stateVars = new Map<string, string>();
     const accountInfoVars = new Map<string, string>();
     const accountsWithSignerSeeds = new Set<string>();
+    const emittedBumps = new Set<string>();
     let signerSeedsInScope = false;
 
     const resolveStateVar = (account: string): string => stateVars.get(account) ?? account;
@@ -446,6 +453,18 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       });
       for (const account of instr.accounts) {
         const accountName = snakeCase(account.name);
+        if (!isGeneratedStateType(account.accountType)) continue;
+        normalized = normalized.replace(
+          new RegExp(`\\b${accountName}\\.(\\w+)`, "g"),
+          (full, field: string) => {
+            if (field === "key" || field === "lamports") return full;
+            const localVar = ensureStateRead(accountName);
+            return `${localVar}.${snakeCase(field)}`;
+          }
+        );
+      }
+      for (const account of instr.accounts) {
+        const accountName = snakeCase(account.name);
         const accountInfoVar = resolveAccountInfoVar(accountName);
         normalized = normalized.split(`${accountName}.key().as_ref()`).join(
           this.emitAccountKeyAsRefExpr(accountInfoVar)
@@ -463,6 +482,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       return normalized;
     };
     const normalizedBumpLine = (accountName: string): string => {
+      const normalizedAccount = snakeCase(accountName);
+      if (emittedBumps.has(normalizedAccount)) {
+        return "";
+      }
+      emittedBumps.add(normalizedAccount);
       const accountRef = instr.accounts.find((acc) => snakeCase(acc.name) === snakeCase(accountName));
       const pdaSeeds = (accountRef?.pdaSeeds ?? [`b"${snakeCase(accountName)}"`]).map(normalizeSeedExpr);
       const emitted = this.emitBumpSeed(
@@ -805,6 +829,12 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       }
       return transformed;
     };
+    for (const account of instr.accounts.filter((acc) => acc.isPda && !acc.isInit && !acc.isOptional)) {
+      const bumpLine = normalizedBumpLine(snakeCase(account.name));
+      if (bumpLine) {
+        lines.push(bumpLine);
+      }
+    }
     const helpers = ir.helperFns ?? [];
     const helperMutRefNames = new Set(
       helpers.flatMap((helper) => {
@@ -1090,7 +1120,10 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           if (value.includes("ctx.bumps.")) {
             const bumpAccount = value.match(/ctx\.bumps\.(\w+)/)?.[1] ?? stmt.account;
             value = `bump_${snakeCase(bumpAccount)}`;
-            lines.push(normalizedBumpLine(snakeCase(bumpAccount)));
+            const bumpLine = normalizedBumpLine(snakeCase(bumpAccount));
+            if (bumpLine) {
+              lines.push(bumpLine);
+            }
           }
           lines.push(`    ${stateVarName}.${fieldName} = ${value};`);
           break;
@@ -1261,7 +1294,10 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
               const normalizedBump = snakeCase(ctxBumpMatch);
               if (!seenBumps.has(normalizedBump)) {
                 seenBumps.add(normalizedBump);
-                bumpPrelude.push(normalizedBumpLine(normalizedBump));
+                const bumpLine = normalizedBumpLine(normalizedBump);
+                if (bumpLine) {
+                  bumpPrelude.push(bumpLine);
+                }
               }
               seedStateAccount = normalizedBump;
               continue;

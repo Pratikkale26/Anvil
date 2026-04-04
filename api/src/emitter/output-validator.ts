@@ -13,7 +13,7 @@ export type ValidationIssue = {
 
 // ─── Error patterns (compile-blockers and semantic issues) ────────────────────
 
-const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string }> = [
+const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<DetectedTarget> }> = [
   {
     pattern: /\bctx\.accounts\b|\bctx\.bumps\b/,
     message: "Anchor ctx.accounts / ctx.bumps reference leaked into generated output.",
@@ -67,6 +67,7 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string }> = [
     // msg!() only exists in Anchor / native SDK — Pinocchio/Quasar use sol_log
     pattern: /\bmsg!\s*\(/,
     message: "msg!() macro is not available in the target framework — use pinocchio::log::sol_log() or framework equivalent.",
+    targets: ["pinocchio", "quasar"],
   },
 ];
 
@@ -126,6 +127,7 @@ function checkDuplicateSeedBindings(content: string, path: string): ValidationIs
  */
 function checkAccountCountGuards(content: string, ir: SolanaIR, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  if (!shouldRunInstructionBodyChecks(path, content)) return issues;
   for (const instr of ir.instructions) {
     const fnName = snakeCase(instr.name);
     const fnStart = content.indexOf(`fn ${fnName}(`);
@@ -137,17 +139,7 @@ function checkAccountCountGuards(content: string, ir: SolanaIR, path: string): V
     if (!guardMatch?.[1]) continue;
 
     const guardCount = parseInt(guardMatch[1], 10);
-    const nonProgramAccounts = instr.accounts.filter(
-      (a) =>
-        !a.accountType.includes("Program") &&
-        a.accountType !== "SystemProgram" &&
-        a.accountType !== "System" &&
-        a.accountType !== "TokenProgram" &&
-        a.accountType !== "Token" &&
-        a.accountType !== "AssociatedTokenProgram" &&
-        a.accountType !== "AssociatedToken"
-    );
-    const expectedCount = nonProgramAccounts.filter((a) => !a.isOptional).length;
+    const expectedCount = instr.accounts.filter((a) => !a.isOptional).length;
 
     if (guardCount !== expectedCount) {
       issues.push({
@@ -166,6 +158,7 @@ function checkAccountCountGuards(content: string, ir: SolanaIR, path: string): V
  */
 function checkOwnerChecks(content: string, ir: SolanaIR, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  if (!shouldRunInstructionBodyChecks(path, content)) return issues;
   const stateNames = new Set(ir.accounts.map((a) => a.name));
 
   for (const instr of ir.instructions) {
@@ -201,14 +194,59 @@ function checkOwnerChecks(content: string, ir: SolanaIR, path: string): Validati
  */
 function checkAllInstructionsEmitted(content: string, ir: SolanaIR, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  for (const instr of ir.instructions) {
-    const fnName = snakeCase(instr.name);
-    if (!content.includes(`fn ${fnName}(`)) {
+  if (isInstructionFile(path)) {
+    const fileInstruction = path.split("/").pop()?.replace(/\.rs$/, "");
+    if (!fileInstruction || fileInstruction === "mod") return issues;
+    if (!content.includes(`fn ${fileInstruction}(`)) {
       issues.push({
         severity: "error",
-        message: `Instruction '${fnName}' from IR was not emitted into output — router will fail.`,
+        message: `Instruction file '${path}' does not define fn '${fileInstruction}(... )'.`,
         path,
       });
+    }
+    return issues;
+  }
+
+  if (path === "lib.rs") {
+    for (const instr of ir.instructions) {
+      const fnName = snakeCase(instr.name);
+      const bareCall = `${fnName}(program_id, accounts, data)`;
+      const moduleCall = `instructions::${fnName}::${fnName}(program_id, accounts, data)`;
+      if (!content.includes(bareCall) && !content.includes(moduleCall)) {
+        issues.push({
+          severity: "error",
+          message: `Router in lib.rs does not dispatch instruction '${fnName}'.`,
+          path,
+        });
+      }
+    }
+    return issues;
+  }
+
+  if (path === "instructions/mod.rs") {
+    for (const instr of ir.instructions) {
+      const fnName = snakeCase(instr.name);
+      if (!content.includes(`pub mod ${fnName};`)) {
+        issues.push({
+          severity: "error",
+          message: `instructions/mod.rs is missing module declaration for '${fnName}'.`,
+          path,
+        });
+      }
+    }
+    return issues;
+  }
+
+  if (!path.includes("/") && path !== "lib.rs" && path !== "state.rs" && path !== "errors.rs" && path !== "helpers.rs") {
+    for (const instr of ir.instructions) {
+      const fnName = snakeCase(instr.name);
+      if (!content.includes(`fn ${fnName}(`)) {
+        issues.push({
+          severity: "error",
+          message: `Instruction '${fnName}' from IR was not emitted into output — router will fail.`,
+          path,
+        });
+      }
     }
   }
   return issues;
@@ -220,6 +258,7 @@ function checkAllInstructionsEmitted(content: string, ir: SolanaIR, path: string
  */
 function checkPdaVerification(content: string, ir: SolanaIR, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  if (!shouldRunInstructionBodyChecks(path, content)) return issues;
   for (const instr of ir.instructions) {
     const fnName = snakeCase(instr.name);
     const fnStart = content.indexOf(`fn ${fnName}(`);
@@ -255,6 +294,9 @@ function checkPdaVerification(content: string, ir: SolanaIR, path: string): Vali
  */
 function checkLongFunctions(content: string, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  if (path === "state.rs" || path === "errors.rs" || path === "helpers.rs" || path === "instructions/mod.rs") {
+    return issues;
+  }
   const fnMatches = [...content.matchAll(/\nfn (\w+)\s*\(/g)];
   for (let i = 0; i < fnMatches.length; i++) {
     const match = fnMatches[i];
@@ -291,12 +333,16 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
   const files = output.files.length > 0
     ? output.files
     : [{ path: `${ir.name}.rs`, content: output.singleFile }];
+  const aggregateTarget = detectTarget(files.map((file) => file.content).join("\n"));
 
   for (const file of files) {
+    const target = aggregateTarget ?? detectTarget(file.content);
+    const codeForPatternChecks = stripLineComments(file.content);
     // ── Regex pattern checks ──
-    for (const { pattern, message } of ERROR_PATTERNS) {
-      if (pattern.test(file.content)) {
-        const lines = file.content.split("\n");
+    for (const { pattern, message, targets } of ERROR_PATTERNS) {
+      if (targets && target && !targets.includes(target)) continue;
+      if (pattern.test(codeForPatternChecks)) {
+        const lines = codeForPatternChecks.split("\n");
         const lineIdx = lines.findIndex((line) => pattern.test(line));
         issues.push({
           severity: "error",
@@ -307,7 +353,7 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
       }
     }
     for (const { pattern, message } of WARNING_PATTERNS) {
-      if (pattern.test(file.content)) {
+      if (pattern.test(codeForPatternChecks)) {
         issues.push({ severity: "warning", message, path: file.path });
       }
     }
@@ -332,4 +378,35 @@ function dedupeIssues(issues: ValidationIssue[]): ValidationIssue[] {
     seen.add(key);
     return true;
   });
+}
+
+type DetectedTarget = "pinocchio" | "quasar" | "native";
+
+function detectTarget(content: string): DetectedTarget | null {
+  if (content.includes("pinocchio::")) return "pinocchio";
+  if (content.includes("quasar::")) return "quasar";
+  if (content.includes("solana_program::")) return "native";
+  return null;
+}
+
+function stripLineComments(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => line.replace(/\/\/.*$/, ""))
+    .join("\n");
+}
+
+function isInstructionFile(path: string): boolean {
+  return /^instructions\/[^/]+\.rs$/.test(path) && path !== "instructions/mod.rs";
+}
+
+function shouldRunInstructionBodyChecks(path: string, content: string): boolean {
+  if (path.endsWith(".rs") && isInstructionFile(path)) return true;
+  if (path === "lib.rs" || path === "state.rs" || path === "errors.rs" || path === "helpers.rs" || path === "instructions/mod.rs") {
+    return false;
+  }
+  if (path.startsWith("instructions/")) {
+    return false;
+  }
+  return true;
 }
