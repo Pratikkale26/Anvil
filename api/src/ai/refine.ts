@@ -22,7 +22,7 @@ export type RefineInput = {
  * Unified AI refinement — makes exactly ONE LLM call.
  *
  * 1. Builds a focused prompt containing ONLY the problematic code sections
- * 2. Sends to Gemini Flash for targeted patches
+ * 2. Sends to the configured repair model for targeted patches
  * 3. Validates the patched output using the deterministic validator
  * 4. Returns the result (accepted/rejected per file)
  */

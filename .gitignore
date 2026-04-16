@@ -45,3 +45,4 @@ bun.lock*
 docs/
 api/generated-outputs
 api/.anvil-data
+codex-session.jsonl

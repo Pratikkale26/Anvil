@@ -231,7 +231,7 @@ export default function Workbench() {
   const folderCandidates = useMemo(() => {
     const paths = folderEntries.map((e) => e.path);
     const preferred = paths.filter((p) =>
-      /(^|\/)( programs\/[^/]+\/src\/lib\.rs|program\/src\/lib\.rs|src\/lib\.rs|src\/main\.rs)$/.test(p)
+      /(^|\/)(programs\/[^/]+\/src\/lib\.rs|program\/src\/lib\.rs|src\/lib\.rs|src\/main\.rs)$/.test(p)
     );
     return preferred.length > 0 ? preferred : paths.filter((p) => p.endsWith(".rs"));
   }, [folderEntries]);
@@ -254,9 +254,6 @@ export default function Workbench() {
     activePane === "ir"    ? irText :
     activePane === "files" ? selectedFileContent :
     singleFileCode;
-
-  const activeLanguage =
-    activePane === "ir" ? "json" : "rust";
 
   async function copyActiveContent() {
     if (!activeContent) return;
@@ -605,7 +602,7 @@ export default function Workbench() {
                       <div>
                         <InputLabel>Public GitHub repo URL</InputLabel>
                         <input value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)}
-                          placeholder="https://github.com/org/repo" style={inputBase} />
+                          placeholder="https://github.com/org/repo or /tree/main/programs/app" style={inputBase} />
                       </div>
                       <div>
                         <InputLabel>Git ref <span style={{ color: C.textDim }}>(optional)</span></InputLabel>
@@ -652,7 +649,7 @@ export default function Workbench() {
               <PanelHead icon={Sparkles} title="AI Refine" />
               <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ fontSize: 12, color: C.textMuted, lineHeight: 1.5 }}>
-                  One-click AI fix for validation errors. Uses a single focused LLM call (&lt;10KB prompt).
+                  One-click AI fix for validation errors. Uses a single focused repair-model call with strict acceptance checks.
                 </div>
 
                 {/* Refine + Compare + Diagnostics */}
@@ -799,7 +796,7 @@ export default function Workbench() {
               {!hasOutput && !isRunning ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 480, gap: 14 }}>
                   <TerminalSquare size={36} style={{ color: C.textDim }} />
-                  <div style={{ fontSize: 14, color: C.textMuted }}>Click "Parse + Emit" to generate {tm.label} code</div>
+                  <div style={{ fontSize: 14, color: C.textMuted }}>Click &quot;Parse + Emit&quot; to generate {tm.label} code</div>
                   <div style={{ fontSize: 12, color: C.textDim }}>Supports demo, paste, file upload, folder upload, and GitHub repo</div>
                 </div>
               ) : isRunning && !hasOutput ? (
@@ -930,15 +927,15 @@ export default function Workbench() {
             {/* Capability card */}
             <Panel>
               <div style={{ padding: "16px 20px" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", color: C.textDim, marginBottom: 12 }}>WHAT'S SUPPORTED</div>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", color: C.textDim, marginBottom: 12 }}>WHAT&apos;S SUPPORTED</div>
                 <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
                   {[
                     "Demo programs (counter, vault, escrow, staking, perp)",
                     "Paste raw Anchor source",
                     "Upload a local .rs file",
                     "Upload a local folder — pick entry",
-                    "GitHub public repo URL + optional ref/subpath",
-                    "Gemini-powered single-click AI refine (0-1 LLM calls, focused prompt)",
+                    "GitHub public repo URL, tree URL, or blob URL + optional ref/subpath",
+                    "Single-click AI refine (0-1 model calls, focused prompt)",
                     "Download single combined .rs file",
                     "Download whole generated codebase as .tar",
                     "Browse multi-file output in file tree",

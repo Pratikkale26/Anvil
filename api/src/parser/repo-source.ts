@@ -1,5 +1,5 @@
 import type { ProjectFile } from "./project-source.js";
-import { buildProjectSource } from "./project-source.js";
+import { buildProjectSourceGraph } from "./project-source.js";
 
 export interface RepoSourceInput {
   repoUrl: string;
@@ -15,13 +15,45 @@ export interface RepoSourceResolution {
   projectEntryPath: string;
 }
 
-function parseGitHubUrl(url: string): { owner: string; repo: string } | null {
+interface ParsedGitHubInput {
+  owner: string;
+  repo: string;
+  ref?: string;
+  subpath?: string;
+}
+
+function parseGitHubUrl(url: string): ParsedGitHubInput | null {
   try {
     const parsed = new URL(url);
-    if (parsed.hostname !== "github.com") return null;
-    const parts = parsed.pathname.replace(/^\//, "").replace(/\.git$/, "").split("/");
-    if (parts.length < 2) return null;
-    return { owner: parts[0]!, repo: parts[1]! };
+    const parts = parsed.pathname.replace(/^\//, "").replace(/\.git$/, "").split("/").filter(Boolean);
+
+    if (parsed.hostname === "github.com") {
+      if (parts.length < 2) return null;
+      const owner = parts[0]!;
+      const repo = parts[1]!;
+      const kind = parts[2];
+      if (kind === "tree" || kind === "blob") {
+        return {
+          owner,
+          repo,
+          ref: parts[3],
+          subpath: parts.slice(4).join("/") || undefined,
+        };
+      }
+      return { owner, repo };
+    }
+
+    if (parsed.hostname === "raw.githubusercontent.com") {
+      if (parts.length < 4) return null;
+      return {
+        owner: parts[0]!,
+        repo: parts[1]!,
+        ref: parts[2],
+        subpath: parts.slice(3).join("/") || undefined,
+      };
+    }
+
+    return null;
   } catch {
     return null;
   }
@@ -45,7 +77,7 @@ async function resolveDefaultBranch(owner: string, repo: string): Promise<string
 
 async function fetchRepoTree(owner: string, repo: string, ref: string): Promise<string[]> {
   const payload = await githubJson<{ tree?: { path: string; type: string }[] }>(
-    `https://api.github.com/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`
+    `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`
   );
   return (payload.tree ?? [])
     .filter((node) => node.type === "blob" && node.path.endsWith(".rs"))
@@ -77,28 +109,33 @@ function findSourceRoot(entryPath: string): string {
 }
 
 async function fetchRawFile(owner: string, repo: string, ref: string, path: string): Promise<string> {
-  const res = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${path}`, {
-    headers: { "User-Agent": "anvil-compiler/0.2" },
-  });
-  if (!res.ok) throw new Error(`Could not fetch ${path} from GitHub (HTTP ${res.status})`);
-  return res.text();
+  const payload = await githubJson<{ content?: string; encoding?: string; message?: string }>(
+    `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`
+  );
+
+  if (payload.encoding !== "base64" || !payload.content) {
+    throw new Error(`Could not decode ${path} from GitHub contents API`);
+  }
+
+  return Buffer.from(payload.content.replace(/\n/g, ""), "base64").toString("utf8");
 }
 
 export async function resolveRepoSource(input: RepoSourceInput): Promise<RepoSourceResolution> {
   const parsed = parseGitHubUrl(input.repoUrl.trim());
   if (!parsed) {
-    throw new Error("Invalid GitHub URL — must be https://github.com/owner/repo");
+    throw new Error("Invalid GitHub URL — must be a github.com or raw.githubusercontent.com repository URL");
   }
 
-  const ref = input.repoRef?.trim() || await resolveDefaultBranch(parsed.owner, parsed.repo);
-  const allRustPaths = await fetchRepoTree(parsed.owner, parsed.repo, ref);
+  const ref = input.repoRef?.trim() || parsed.ref?.trim() || await resolveDefaultBranch(parsed.owner, parsed.repo);
+  const repoSubpath = input.repoSubpath?.trim() || parsed.subpath?.trim();
+  const allRustPaths = (await fetchRepoTree(parsed.owner, parsed.repo, ref)).sort((a, b) => a.localeCompare(b));
   if (allRustPaths.length === 0) {
     throw new Error("No Rust (.rs) files found in this repository");
   }
 
-  const entry = pickBestEntry(allRustPaths, input.repoSubpath?.trim());
+  const entry = pickBestEntry(allRustPaths, repoSubpath);
   if (!entry) {
-    throw new Error(`No suitable Rust entry file found${input.repoSubpath ? ` under '${input.repoSubpath}'` : ""}`);
+    throw new Error(`No suitable Rust entry file found${repoSubpath ? ` under '${repoSubpath}'` : ""}`);
   }
 
   const sourceRoot = findSourceRoot(entry);
@@ -109,14 +146,13 @@ export async function resolveRepoSource(input: RepoSourceInput): Promise<RepoSou
   })));
 
   const projectEntryPath = sourceRoot ? entry.slice(sourceRoot.length + 1) : entry;
-  const source = buildProjectSource(projectEntryPath, projectFiles);
+  const build = buildProjectSourceGraph(projectEntryPath, projectFiles);
 
   return {
-    source,
+    source: build.source,
     resolvedPath: entry,
     candidates: allRustPaths,
     projectFiles,
     projectEntryPath,
   };
 }
-

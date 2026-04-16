@@ -1,9 +1,15 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
-import { dirname, join, relative, resolve, sep } from "path";
+import { dirname, join, posix, relative, resolve, sep } from "path";
 
 export interface ProjectFile {
   path: string;
   content: string;
+}
+
+export interface ProjectSourceBuild {
+  source: string;
+  includedFiles: string[];
+  missingModules: string[];
 }
 
 function normalizePath(path: string): string {
@@ -60,22 +66,8 @@ export function getProjectEntryPath(entryPath: string): string {
   return normalizePath(relative(sourceRoot, resolvedEntry));
 }
 
-// ─── Flat-concatenation builder ───────────────────────────────────────────────
-//
-// Strategy: keep ALL Rust items at the top level of the returned source string.
-//
-// The tree-sitter anchor parser's classifyTopLevel() only sees items directly
-// under the parse-tree root. If child modules are wrapped in `pub mod name { }`
-// blocks, their #[account], #[derive(Accounts)], and #[program] items become
-// nested and invisible to the classifier, producing empty IR.
-//
-// Solution: strip `mod <name>;` sentinel declarations from the entry file, then
-// append every other .rs file's content verbatim at the top level — exactly
-// how the parser was designed to handle single large files.
-//
-
 /** Names of Rust modules declared with `mod X;` or `pub mod X;` in a source string. */
-function extractModuleNames(source: string): string[] {
+function extractExternalModuleNames(source: string): string[] {
   const names: string[] = [];
   for (const m of source.matchAll(/^\s*(?:pub\s+)?mod\s+(\w+)\s*;/gm)) {
     if (m[1]) names.push(m[1]);
@@ -84,7 +76,7 @@ function extractModuleNames(source: string): string[] {
 }
 
 /** Remove `mod X;` / `pub mod X;` declarations for the given names. */
-function stripModDeclarations(source: string, names: string[]): string {
+function stripExternalModuleDeclarations(source: string, names: string[]): string {
   if (names.length === 0) return source;
   let s = source;
   for (const name of names) {
@@ -94,84 +86,76 @@ function stripModDeclarations(source: string, names: string[]): string {
   return s;
 }
 
-/**
- * Collect top-level `use` paths already declared in a source string.
- * Used to avoid duplicating imports that are already in the entry file.
- */
-function collectUseDeclarations(source: string): Set<string> {
-  const uses = new Set<string>();
-  for (const m of source.matchAll(/^\s*(?:pub\s+)?use\s+([^;]+);/gm)) {
-    if (m[1]) uses.add(m[1].trim());
-  }
-  return uses;
+function normalizeProjectPath(path: string): string {
+  return normalizePath(path).replace(/^\.\//, "");
 }
 
-/**
- * Build a single concatenated Rust source string from multiple project files.
- *
- * All child file contents are appended at the top level so the tree-sitter
- * parser sees every Anchor attribute without nested module wrapping.
- *
- * This replaces the previous `pub mod name { ... }` inline-expansion strategy
- * which caused the parser's classifyTopLevel() to miss #[program] and
- * #[derive(Accounts)] items that ended up nested inside those wrappers.
- */
-export function buildProjectSource(entryPath: string, files: ProjectFile[]): string {
-  const normalizedEntry = normalizePath(entryPath).replace(/^\.\//, "");
+function resolveModulePath(currentFile: string, moduleName: string, fileMap: Map<string, ProjectFile>): string | null {
+  const currentDir = posix.dirname(currentFile);
+  const candidates = [
+    posix.join(currentDir, `${moduleName}.rs`),
+    posix.join(currentDir, moduleName, "mod.rs"),
+  ].map((candidate) => candidate.replace(/^\.\//, ""));
 
-  const entryFile = files.find(
-    (f) => normalizePath(f.path).replace(/^\.\//, "") === normalizedEntry,
+  return candidates.find((candidate) => fileMap.has(candidate)) ?? null;
+}
+
+export function buildProjectSourceGraph(entryPath: string, files: ProjectFile[]): ProjectSourceBuild {
+  const normalizedEntry = normalizeProjectPath(entryPath);
+  const fileMap = new Map(
+    files.map((file) => [normalizeProjectPath(file.path), { ...file, path: normalizeProjectPath(file.path) }]),
   );
-  if (!entryFile) {
+
+  if (!fileMap.has(normalizedEntry)) {
     throw new Error(`Entry file not found in project source: ${entryPath}`);
   }
 
-  // Determine which module names the entry declares with `mod X;`
-  const childModuleNames = extractModuleNames(entryFile.content);
+  const visited = new Set<string>();
+  const includedFiles: string[] = [];
+  const missingModules: string[] = [];
+  const sections: string[] = [];
 
-  // Strip those declarations from the entry so we don't keep dead stubs
-  const strippedEntry = stripModDeclarations(entryFile.content, childModuleNames);
+  const visit = (filePath: string, isEntry = false): void => {
+    if (visited.has(filePath)) return;
+    visited.add(filePath);
 
-  // Collect `use` paths already present in entry to avoid duplication
-  const entryUses = collectUseDeclarations(strippedEntry);
+    const file = fileMap.get(filePath);
+    if (!file) return;
 
-  // Gather child files (everything except the entry itself)
-  const childFiles = files.filter(
-    (f) => normalizePath(f.path).replace(/^\.\//, "") !== normalizedEntry,
-  );
+    includedFiles.push(filePath);
 
-  if (childFiles.length === 0) {
-    return strippedEntry;
-  }
-
-  const sections: string[] = [strippedEntry.trimEnd()];
-
-  for (const file of childFiles) {
-    let content = file.content;
-
-    // Strip sub-`mod X;` declarations — the referenced files will also be
-    // inlined at the top level, so the stubs would be dangling references.
-    const subModNames = extractModuleNames(content);
-    content = stripModDeclarations(content, subModNames);
-
-    // Strip `use` declarations that duplicate ones already in the entry file
-    for (const usePath of collectUseDeclarations(content)) {
-      if (entryUses.has(usePath)) {
-        // Escape the use path for use in a regex
-        const escaped = usePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const re = new RegExp(
-          `^[ \\t]*(?:pub\\s+)?use\\s+${escaped}\\s*;[ \\t]*\\r?\\n?`,
-          "gm",
-        );
-        content = content.replace(re, "");
-      }
+    const moduleNames = extractExternalModuleNames(file.content);
+    const content = stripExternalModuleDeclarations(file.content, moduleNames).trim();
+    if (content) {
+      sections.push(isEntry ? content : `// --- anvil: ${file.path} ---\n\n${content}`);
     }
 
-    content = content.trim();
-    if (!content) continue;
+    for (const moduleName of moduleNames) {
+      const resolved = resolveModulePath(filePath, moduleName, fileMap);
+      if (!resolved) {
+        missingModules.push(`${filePath} -> ${moduleName}`);
+        continue;
+      }
+      visit(resolved, false);
+    }
+  };
 
-    sections.push(`\n// --- anvil: ${file.path} ---\n\n${content}`);
-  }
+  visit(normalizedEntry, true);
 
-  return sections.join("\n") + "\n";
+  return {
+    source: `${sections.join("\n\n")}\n`,
+    includedFiles,
+    missingModules,
+  };
+}
+
+/**
+ * Build a single concatenated Rust source string from a reachable module graph.
+ *
+ * The output keeps all discovered items at the top level so the tree-sitter
+ * parser can classify nested Anchor items without requiring a full Rust module
+ * resolver.
+ */
+export function buildProjectSource(entryPath: string, files: ProjectFile[]): string {
+  return buildProjectSourceGraph(entryPath, files).source;
 }

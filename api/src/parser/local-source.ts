@@ -1,6 +1,11 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "fs";
+import { existsSync, readdirSync, statSync } from "fs";
 import { join, resolve } from "path";
-import { collectProjectFilesFromEntry, getProjectEntryPath, type ProjectFile } from "./project-source.js";
+import {
+  buildProjectSourceGraph,
+  collectProjectFilesFromEntry,
+  getProjectEntryPath,
+  type ProjectFile,
+} from "./project-source.js";
 
 export interface LocalSourceResolution {
   source: string;
@@ -67,12 +72,14 @@ export function resolveLocalSource(inputPath: string): LocalSourceResolution {
     if (!isRustFile(resolvedPath)) {
       throw new Error(`Expected a Rust source file: ${resolvedPath}`);
     }
+    const projectFiles = collectProjectFilesFromEntry(resolvedPath);
+    const projectEntryPath = getProjectEntryPath(resolvedPath);
     return {
-      source: readFileSync(resolvedPath, "utf8"),
+      source: buildProjectSourceGraph(projectEntryPath, projectFiles).source,
       resolvedPath,
       candidates: [resolvedPath],
-      projectFiles: collectProjectFilesFromEntry(resolvedPath),
-      projectEntryPath: getProjectEntryPath(resolvedPath),
+      projectFiles,
+      projectEntryPath,
     };
   }
 
@@ -88,12 +95,14 @@ export function resolveLocalSource(inputPath: string): LocalSourceResolution {
   if (!selected) {
     throw new Error(`No Rust program entry file found under: ${resolvedPath}`);
   }
+  const projectFiles = collectProjectFilesFromEntry(selected);
+  const projectEntryPath = getProjectEntryPath(selected);
 
   return {
-    source: readFileSync(selected, "utf8"),
+    source: buildProjectSourceGraph(projectEntryPath, projectFiles).source,
     resolvedPath: selected,
     candidates,
-    projectFiles: collectProjectFilesFromEntry(selected),
-    projectEntryPath: getProjectEntryPath(selected),
+    projectFiles,
+    projectEntryPath,
   };
 }

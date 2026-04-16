@@ -8,7 +8,8 @@
     "start": "bun src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun",
     "typecheck": "tsc --noEmit",
-    "verify-compiler": "bun verify-compiler.ts"
+    "verify-compiler": "bun verify-compiler.ts",
+    "verify-parser": "bun verify-parser.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

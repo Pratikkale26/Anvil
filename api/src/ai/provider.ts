@@ -8,6 +8,6 @@ export type StructuredGenerationParams = {
 export type AIProgressReporter = (step: string, message: string) => void;
 
 export interface LLMProvider {
-  readonly name: "gemini";
+  readonly name: "anthropic" | "gemini";
   generateStructured<T>(params: StructuredGenerationParams): Promise<T>;
 }

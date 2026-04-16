@@ -12,7 +12,6 @@ import {
   Copy,
   Cpu,
   FileCode2,
-  GitBranch,
   Layers3,
   Loader2,
   Rocket,
