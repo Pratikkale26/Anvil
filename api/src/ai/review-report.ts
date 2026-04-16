@@ -71,6 +71,27 @@ function suggestedFixForIssue(issue: ValidationIssue): string {
   if (message.includes("has no bump derivation")) {
     return "Derive and verify the PDA bump inside the emitted instruction before trusting the account.";
   }
+  if (message.includes("has_one constraint")) {
+    return "Emit an equality guard that compares the state field named by has_one to the referenced account public key.";
+  }
+  if (message.includes("does not emit program-account close")) {
+    return "Emit the close helper for the constrained account and route lamports to the declared close destination.";
+  }
+  if (message.includes("should also close dependent token accounts")) {
+    return "Emit token-account cleanup before closing the parent PDA when dependent token accounts use it as authority.";
+  }
+  if (message.includes("has no emitted create_program_account allocation path")) {
+    return "Emit deterministic allocation for init accounts using create_program_account with the parsed payer and space.";
+  }
+  if (message.includes("has no emitted signer-seed derivation")) {
+    return "Generate PDA signer seeds and bump derivation before creating the PDA-backed init account.";
+  }
+  if (message.includes("init_if_needed account")) {
+    return "Add an explicit existence guard so allocation only happens when the target account has not been initialized yet.";
+  }
+  if (message.includes("token/ATA constraints")) {
+    return "Emit explicit runtime checks for token mint/authority and ATA invariants instead of relying on implicit assumptions.";
+  }
   if (message.includes("Code section flagged for manual review")) {
     return "Inspect the flagged block and lower any remaining Anchor-specific behavior into deterministic target code.";
   }

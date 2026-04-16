@@ -11,6 +11,17 @@ export type ValidationIssue = {
   line?: number;
 };
 
+function normalizedConstraintValue(value: string): string {
+  return value.replace(/\s*@\s*[\w:]+(?:::\w+)*/g, "").trim();
+}
+
+function extractInstructionBody(content: string, fnName: string): string | null {
+  const fnStart = content.indexOf(`fn ${fnName}(`);
+  if (fnStart === -1) return null;
+  const fnEnd = content.indexOf("\nfn ", fnStart + 1);
+  return content.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
+}
+
 // ─── Error patterns (compile-blockers and semantic issues) ────────────────────
 
 const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<DetectedTarget> }> = [
@@ -163,10 +174,8 @@ function checkOwnerChecks(content: string, ir: SolanaIR, path: string): Validati
 
   for (const instr of ir.instructions) {
     const fnName = snakeCase(instr.name);
-    const fnStart = content.indexOf(`fn ${fnName}(`);
-    if (fnStart === -1) continue;
-    const fnEnd = content.indexOf("\nfn ", fnStart + 1);
-    const fnBody = content.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
+    const fnBody = extractInstructionBody(content, fnName);
+    if (!fnBody) continue;
 
     for (const acc of instr.accounts) {
       if (!acc.isMut || acc.isInit || acc.isOptional) continue;
@@ -261,10 +270,8 @@ function checkPdaVerification(content: string, ir: SolanaIR, path: string): Vali
   if (!shouldRunInstructionBodyChecks(path, content)) return issues;
   for (const instr of ir.instructions) {
     const fnName = snakeCase(instr.name);
-    const fnStart = content.indexOf(`fn ${fnName}(`);
-    if (fnStart === -1) continue;
-    const fnEnd = content.indexOf("\nfn ", fnStart + 1);
-    const fnBody = content.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
+    const fnBody = extractInstructionBody(content, fnName);
+    if (!fnBody) continue;
 
     for (const acc of instr.accounts) {
       // Init accounts: bump derivation happens in the preamble (emitInitAccountPrelude)
@@ -285,6 +292,200 @@ function checkPdaVerification(content: string, ir: SolanaIR, path: string): Vali
       }
     }
   }
+  return issues;
+}
+
+/**
+ * Verify that every has_one constraint turned into a runtime equality check.
+ * The emitter currently emits `if state.field != other.key { ... }`.
+ */
+function checkHasOneConstraints(content: string, ir: SolanaIR, path: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!shouldRunInstructionBodyChecks(path, content)) return issues;
+
+  for (const instr of ir.instructions) {
+    const fnName = snakeCase(instr.name);
+    const fnBody = extractInstructionBody(content, fnName);
+    if (!fnBody) continue;
+
+    for (const acc of instr.accounts) {
+      const accountName = snakeCase(acc.name);
+      for (const constraint of acc.constraints) {
+        if (constraint.kind !== "has_one" || !constraint.value) continue;
+        const fieldName = snakeCase(normalizedConstraintValue(constraint.value));
+        const hasCheck =
+          fnBody.includes(`${accountName}.${fieldName}`) &&
+          fnBody.includes("ProgramError::InvalidAccountData");
+
+        if (!hasCheck) {
+          issues.push({
+            severity: "error",
+            message: `'${fnName}': has_one constraint '${acc.name}.${fieldName}' is not enforced in emitted output.`,
+            path,
+          });
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Verify close = destination constraints emit the expected cleanup path.
+ */
+function checkCloseConstraints(content: string, ir: SolanaIR, path: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!shouldRunInstructionBodyChecks(path, content)) return issues;
+
+  for (const instr of ir.instructions) {
+    const fnName = snakeCase(instr.name);
+    const fnBody = extractInstructionBody(content, fnName);
+    if (!fnBody) continue;
+
+    for (const acc of instr.accounts) {
+      const accountName = snakeCase(acc.name);
+      const closeConstraint = acc.constraints.find((constraint) => constraint.kind === "close" && constraint.value);
+      if (!closeConstraint?.value) continue;
+
+      const destination = snakeCase(normalizedConstraintValue(closeConstraint.value));
+      const closesProgramAccount =
+        fnBody.includes(`close_program_account(${accountName}`) &&
+        fnBody.includes(destination);
+
+      if (!closesProgramAccount) {
+        issues.push({
+          severity: "error",
+          message: `'${fnName}': close constraint on '${accountName}' does not emit program-account close to '${destination}'.`,
+          path,
+        });
+      }
+
+      const hasDependentTokenAccount = instr.accounts.some((dependent) =>
+        dependent.constraints.some((constraint) =>
+          constraint.kind === "token::authority" && normalizedConstraintValue(constraint.value ?? "") === acc.name
+        )
+      );
+
+      if (hasDependentTokenAccount) {
+        const closesTokenAccount =
+          fnBody.includes("spl_token_close_account(") ||
+          fnBody.includes("spl_token_close_account_signed(");
+        if (!closesTokenAccount) {
+          issues.push({
+            severity: "warning",
+            message: `'${fnName}': close constraint on '${accountName}' should also close dependent token accounts, but no token close helper was emitted.`,
+            path,
+          });
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Verify init accounts have deterministic allocation wiring.
+ * init_if_needed is currently treated more conservatively and must surface a warning
+ * unless a future emitter adds explicit conditional allocation semantics.
+ */
+function checkInitConstraintCoverage(content: string, ir: SolanaIR, path: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!shouldRunInstructionBodyChecks(path, content)) return issues;
+  const stateNames = new Set(ir.accounts.map((a) => a.name));
+
+  for (const instr of ir.instructions) {
+    const fnName = snakeCase(instr.name);
+    const fnBody = extractInstructionBody(content, fnName);
+    if (!fnBody) continue;
+
+    for (const acc of instr.accounts) {
+      if (!stateNames.has(acc.accountType)) continue;
+
+      const accountName = snakeCase(acc.name);
+      const isInitIfNeeded = acc.constraints.some((constraint) => constraint.kind === "init_if_needed");
+      const isInit = acc.constraints.some((constraint) => constraint.kind === "init");
+
+      if (!isInit && !isInitIfNeeded) continue;
+
+      if (!fnBody.includes(`create_program_account(${accountName}`)) {
+        issues.push({
+          severity: "error",
+          message: `'${fnName}': init account '${accountName}' has no emitted create_program_account allocation path.`,
+          path,
+        });
+      }
+
+      if (acc.isPda && !fnBody.includes(`init_${accountName}_signer_seeds`) && !fnBody.includes(`bump_${accountName}`)) {
+        issues.push({
+          severity: "error",
+          message: `'${fnName}': PDA init account '${accountName}' has no emitted signer-seed derivation.`,
+          path,
+        });
+      }
+
+      if (isInitIfNeeded) {
+        const hasConditionalGuard =
+          fnBody.includes(`if ${accountName}`) ||
+          fnBody.includes(`${accountName}.data_is_empty`) ||
+          fnBody.includes(`${accountName}.data_len() == 0`) ||
+          fnBody.includes(`${accountName}.owner()`) ||
+          fnBody.includes(`${accountName}.owner `);
+
+        if (!hasConditionalGuard) {
+          issues.push({
+            severity: "warning",
+            message: `'${fnName}': init_if_needed account '${accountName}' has no obvious conditional existence guard; allocation may still be unconditional.`,
+            path,
+          });
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Surface token / ATA constraints that the validator cannot prove are enforced.
+ * This turns silent semantic drift into explicit review output.
+ */
+function checkTokenConstraintCoverage(content: string, ir: SolanaIR, path: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!shouldRunInstructionBodyChecks(path, content)) return issues;
+
+  for (const instr of ir.instructions) {
+    const fnName = snakeCase(instr.name);
+    const fnBody = extractInstructionBody(content, fnName);
+    if (!fnBody) continue;
+
+    for (const acc of instr.accounts) {
+      const accountName = snakeCase(acc.name);
+      const tokenConstraints = acc.constraints.filter((constraint) =>
+        constraint.kind === "token::mint" ||
+        constraint.kind === "token::authority" ||
+        constraint.kind === "associated_token::mint" ||
+        constraint.kind === "associated_token::authority"
+      );
+      if (tokenConstraints.length === 0) continue;
+
+      const referencesAccount = fnBody.includes(accountName);
+      const referencesTokenLogic =
+        fnBody.includes("token_account_") ||
+        fnBody.includes("spl_token_") ||
+        fnBody.includes("InvalidAccountData");
+
+      if (!referencesAccount || !referencesTokenLogic) {
+        issues.push({
+          severity: "warning",
+          message: `'${fnName}': token/ATA constraints for '${accountName}' are present in IR, but validator cannot prove the emitted runtime checks.`,
+          path,
+        });
+      }
+    }
+  }
+
   return issues;
 }
 
@@ -320,6 +521,13 @@ function checkLongFunctions(content: string, path: string): ValidationIssue[] {
 
 // ─── Main validator ──────────────────────────────────────────────────────────
 
+/**
+ * Read-only validation pass over emitted code.
+ *
+ * The validator never mutates generated output. It reports deterministic
+ * findings that can be shown directly to the user or handed to a later
+ * fixer stage (human, deterministic re-emitter changes, or a single AI pass).
+ */
 export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
@@ -364,6 +572,10 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     issues.push(...checkOwnerChecks(file.content, ir, file.path));
     issues.push(...checkAllInstructionsEmitted(file.content, ir, file.path));
     issues.push(...checkPdaVerification(file.content, ir, file.path));
+    issues.push(...checkHasOneConstraints(file.content, ir, file.path));
+    issues.push(...checkCloseConstraints(file.content, ir, file.path));
+    issues.push(...checkInitConstraintCoverage(file.content, ir, file.path));
+    issues.push(...checkTokenConstraintCoverage(file.content, ir, file.path));
     issues.push(...checkLongFunctions(file.content, file.path));
   }
 
