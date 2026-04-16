@@ -15,6 +15,15 @@ export const RefineRequestSchema = z.object({
 });
 export type RefineRequest = z.infer<typeof RefineRequestSchema>;
 
+export const AIFindingSchema = z.object({
+  severity: z.enum(["error", "warning", "info"]),
+  filePath: z.string().optional(),
+  title: z.string(),
+  explanation: z.string(),
+  suggestedFix: z.string(),
+});
+export type AIFinding = z.infer<typeof AIFindingSchema>;
+
 /**
  * A single file patch from the AI.
  */
@@ -29,6 +38,7 @@ export type RefinePatch = z.infer<typeof RefinePatchSchema>;
  */
 export const RefineModelResponseSchema = z.object({
   rationale: z.string(),
+  findings: z.array(AIFindingSchema).default([]),
   patches: z.array(RefinePatchSchema).min(1),
 });
 export type RefineModelResponse = z.infer<typeof RefineModelResponseSchema>;
@@ -38,6 +48,7 @@ export type RefineModelResponse = z.infer<typeof RefineModelResponseSchema>;
  */
 export const RefineResponseSchema = z.object({
   rationale: z.string(),
+  findings: z.array(AIFindingSchema).default([]),
   patches: z.array(z.object({
     filePath: z.string(),
     originalContent: z.string(),
@@ -47,5 +58,7 @@ export const RefineResponseSchema = z.object({
   })),
   summary: z.string(),
   aiCallMade: z.boolean(),
+  cacheKey: z.string().optional(),
+  cached: z.boolean().optional(),
 });
 export type RefineResponse = z.infer<typeof RefineResponseSchema>;

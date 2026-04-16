@@ -3,6 +3,7 @@ import { validateEmitterOutput, type ValidationIssue } from "../emitter/output-v
 import type { SolanaIR, EmitterFile } from "../ir/schema.js";
 import { RefineModelResponseSchema } from "./refine-schemas.js";
 import type { RefineResponse } from "./refine-schemas.js";
+import { createAICacheKey, readAICache, writeAICache } from "./cache.js";
 import {
   buildRefinePrompt,
   REFINE_PROMPT_VERSION,
@@ -39,6 +40,25 @@ export async function refineOutput(
     files: input.files,
   });
 
+  const cacheKey = createAICacheKey({
+    version: REFINE_PROMPT_VERSION,
+    provider: provider.name,
+    model: repairModel,
+    target: input.target,
+    files: input.files,
+    validationIssues: input.validationIssues,
+  });
+
+  const cached = await readAICache(cacheKey);
+  if (cached) {
+    onProgress?.("cache_hit", `Using cached AI refine result ${cacheKey.slice(0, 12)}.`);
+    return {
+      ...cached,
+      aiCallMade: false,
+      cached: true,
+      cacheKey,
+    };
+  }
 
   onProgress?.("ai_call", `Sending to ${repairModel} (${(prompt.length / 1024).toFixed(1)}KB prompt).`);
   const raw = await provider.generateStructured({
@@ -116,10 +136,17 @@ export async function refineOutput(
 
   onProgress?.("complete", `Refine completed: ${accepted}/${total} patches accepted.`);
 
-  return {
+  const result: RefineResponse = {
     rationale: parsed.rationale,
+    findings: parsed.findings,
     patches,
     summary: `${accepted}/${total} patches accepted`,
     aiCallMade: true,
+    cacheKey,
+    cached: false,
   };
+
+  await writeAICache(cacheKey, result);
+
+  return result;
 }

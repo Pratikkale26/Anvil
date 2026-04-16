@@ -6,6 +6,7 @@ import { emitNative, emitNativeFull } from "../emitter/native-emitter.js";
 import { analyzeCU } from "../emitter/cu-analyzer.js";
 import { validateEmitterOutput } from "../emitter/output-validator.js";
 import { refineOutput } from "../ai/refine.js";
+import { buildDeterministicReviewReport } from "../ai/review-report.js";
 
 export const emitRoute = Router();
 
@@ -22,6 +23,7 @@ export const emitRoute = Router();
  *   warnings: string[],            // any review warnings
  *   transformReport: {...},         // what was transformed vs passed through
  *   validationIssues: [...],        // deterministic validation results
+ *   reviewReport: {...},            // deterministic review findings + fix guidance
  *   refined?: boolean,             // true if AI refine was applied
  *   refineResult?: RefineResponse,  // details of AI refinement (if applied)
  * }
@@ -78,6 +80,7 @@ emitRoute.post("/", async (req, res) => {
     const validationWarnings = validationIssues
       .filter((issue) => issue.severity === "warning")
       .map((issue) => issue.path ? `${issue.path}: ${issue.message}` : issue.message);
+    let reviewReport = buildDeterministicReviewReport(validationIssues);
 
     if (strict && validationErrors.length > 0 && !refine) {
       res.status(422).json({
@@ -86,6 +89,7 @@ emitRoute.post("/", async (req, res) => {
           issue.path ? `${issue.path}: ${issue.message}` : issue.message
         ),
         warnings: validationWarnings,
+        reviewReport,
       });
       return;
     }
@@ -131,6 +135,7 @@ emitRoute.post("/", async (req, res) => {
             singleFile: currentSingleFile,
             warnings: output.warnings,
           });
+          reviewReport = buildDeterministicReviewReport(validationIssues);
           refined = true;
         }
 
@@ -153,6 +158,7 @@ emitRoute.post("/", async (req, res) => {
       warnings: [...output.warnings, ...validationWarnings],
       transformReport: output.transformReport,
       validationIssues,
+      reviewReport,
       refined,
       refineResult: refineResult ?? undefined,
     };

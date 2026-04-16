@@ -27,7 +27,7 @@ export function getAIProvider(): { provider: LLMProvider; repairModel: string } 
     const apiKey = requiredEnv("ANTHROPIC_API_KEY");
     return {
       provider: new AnthropicProvider(apiKey),
-      repairModel: process.env.AI_MODEL_REPAIR ?? "claude-sonnet-4-20250514",
+      repairModel: process.env.AI_MODEL_REPAIR ?? "claude-sonnet-4-6",
     };
   }
 

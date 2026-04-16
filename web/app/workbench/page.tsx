@@ -47,6 +47,7 @@ type EmitResponse = {
   target: Target;
   transformReport?: { transformedCount: number; passedThroughCount: number };
   validationIssues?: Array<{ severity: "error" | "warning"; message: string; path?: string }>;
+  reviewReport?: ReviewReport;
   refined?: boolean;
   refineResult?: RefineResult;
 };
@@ -61,11 +62,34 @@ type RefinePatch = {
   acceptanceReason: string;
 };
 
+type ReviewFinding = {
+  severity: "error" | "warning";
+  path?: string;
+  message: string;
+  suggestedFix: string;
+};
+
+type ReviewReport = {
+  summary: string;
+  findings: ReviewFinding[];
+  requiresAI: boolean;
+  recommendedAction: string;
+};
+
 type RefineResult = {
   rationale: string;
+  findings?: Array<{
+    severity: "error" | "warning" | "info";
+    filePath?: string;
+    title: string;
+    explanation: string;
+    suggestedFix: string;
+  }>;
   patches: RefinePatch[];
   summary: string;
   aiCallMade: boolean;
+  cacheKey?: string;
+  cached?: boolean;
 };
 
 // ─── Color palette (matches landing page exactly) ─────────────────────────────
@@ -196,6 +220,7 @@ export default function Workbench() {
   const [copied, setCopied]             = useState(false);
   const [transformSummary, setTransformSummary] = useState<{ transformedCount: number; passedThroughCount: number } | null>(null);
   const [validationIssues, setValidationIssues] = useState<Array<{ severity: "error" | "warning"; message: string; path?: string }>>([]);
+  const [reviewReport, setReviewReport] = useState<ReviewReport | null>(null);
   const [refineResult, setRefineResult] = useState<RefineResult | null>(null);
   const [refineBusy, setRefineBusy] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
@@ -300,6 +325,7 @@ export default function Workbench() {
     setError(null);
     setWarnings([]);
     setValidationIssues([]);
+    setReviewReport(null);
     setRefineResult(null);
     setRefineError(null);
     setHasAppliedRefine(false);
@@ -382,6 +408,7 @@ export default function Workbench() {
       setWarnings(emitted.warnings ?? []);
       setTransformSummary(emitted.transformReport ?? null);
       setValidationIssues(emitted.validationIssues ?? []);
+      setReviewReport(emitted.reviewReport ?? null);
       setActivePane("single");
       setApiOk(true);
     } catch (err) {
@@ -427,6 +454,7 @@ export default function Workbench() {
         setActiveFilePath(emitted.files?.[0]?.path ?? "");
         setWarnings(emitted.warnings ?? []);
         setValidationIssues(emitted.validationIssues ?? []);
+        setReviewReport(emitted.reviewReport ?? null);
         setHasAppliedRefine(true);
         setShowCompare(true);
         setActivePane("files");
@@ -703,6 +731,9 @@ export default function Workbench() {
                     <div style={{ fontSize: 12, fontWeight: 700, color: refineResult.patches.some((p) => p.accepted) ? C.teal : C.red, marginBottom: 6 }}>
                       {refineResult.summary}
                     </div>
+                    <div style={{ fontSize: 11, color: C.textDim, marginBottom: 6 }}>
+                      {refineResult.cached ? "Served from local AI cache" : refineResult.aiCallMade ? "Fresh AI call made" : "No new AI call made"}
+                    </div>
                     <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.6, marginBottom: 8 }}>
                       {refineResult.rationale}
                     </div>
@@ -924,6 +955,30 @@ export default function Workbench() {
               </Panel>
             )}
 
+            {reviewReport && (
+              <Panel>
+                <div style={{ padding: "14px 20px" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: reviewReport.requiresAI ? C.amberLight : C.teal, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                    <Sparkles size={13} /> Deterministic review
+                  </div>
+                  <div style={{ fontSize: 12, color: C.textSub, marginBottom: 8, lineHeight: 1.6 }}>{reviewReport.summary}</div>
+                  <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 12, lineHeight: 1.6 }}>{reviewReport.recommendedAction}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {reviewReport.findings.map((finding, index) => (
+                      <div key={`${finding.path ?? "root"}-${index}`} style={{ paddingLeft: 8, borderLeft: `2px solid ${finding.severity === "error" ? C.red : C.amber}` }}>
+                        <div style={{ fontSize: 12, color: finding.severity === "error" ? "#ffb0b0" : "#e8d68a", lineHeight: 1.6 }}>
+                          {finding.path ? `${finding.path}: ` : ""}{finding.message}
+                        </div>
+                        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4, lineHeight: 1.6 }}>
+                          Fix: {finding.suggestedFix}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Panel>
+            )}
+
             {/* Capability card */}
             <Panel>
               <div style={{ padding: "16px 20px" }}>
@@ -935,7 +990,8 @@ export default function Workbench() {
                     "Upload a local .rs file",
                     "Upload a local folder — pick entry",
                     "GitHub public repo URL, tree URL, or blob URL + optional ref/subpath",
-                    "Single-click AI refine (0-1 model calls, focused prompt)",
+                    "Deterministic review with suggested fixes before any AI call",
+                    "Single-click AI refine with local cache (0-1 fresh model calls)",
                     "Download single combined .rs file",
                     "Download whole generated codebase as .tar",
                     "Browse multi-file output in file tree",

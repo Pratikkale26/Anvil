@@ -3,6 +3,7 @@ import type { Response } from "express";
 import { RefineRequestSchema } from "../ai/refine-schemas.js";
 import { refineOutput } from "../ai/refine.js";
 import { type SolanaIR, SolanaIRSchema } from "../ir/schema.js";
+import { buildDeterministicReviewReport } from "../ai/review-report.js";
 
 export const aiRoute = Router();
 
@@ -87,16 +88,17 @@ aiRoute.post("/refine", async (req, res) => {
         if (stream) writeStreamChunk(res, { type: "status", requestId, step, message });
       },
     );
+    const reviewReport = buildDeterministicReviewReport(refineData.data.validationIssues);
 
     const accepted = result.patches.filter((p) => p.accepted).length;
     log("done", `Completed AI refine: ${accepted}/${result.patches.length} patches accepted.`);
 
     if (stream) {
-      writeStreamChunk(res, { type: "result", requestId, data: result });
+      writeStreamChunk(res, { type: "result", requestId, data: { ...result, reviewReport } });
       res.end();
       return;
     }
-    res.json(result);
+    res.json({ ...result, reviewReport });
   } catch (error) {
     log("error", error instanceof Error ? error.message : String(error));
     if (stream) {

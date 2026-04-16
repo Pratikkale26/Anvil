@@ -74,7 +74,7 @@ export function buildRefinePrompt(input: {
     "Return JSON with the exact schema shown below. No markdown, no prose outside JSON.",
     "",
     "Response schema:",
-    '{ "patches": [{ "filePath": string, "patchedContent": string }], "rationale": string }',
+    '{ "rationale": string, "findings": [{ "severity": "error" | "warning" | "info", "filePath"?: string, "title": string, "explanation": string, "suggestedFix": string }], "patches": [{ "filePath": string, "patchedContent": string }] }',
     "",
     "Rules:",
     "- Output the COMPLETE patched file content for each file, not just diffs",
@@ -82,6 +82,7 @@ export function buildRefinePrompt(input: {
     "- Preserve all comments, structure, function names, and behavior",
     "- Do NOT change the framework target or API conventions",
     "- If an issue cannot be fixed without more context, leave a // TODO(manual) comment",
+    "- findings should be compact and only cover the most important issues you addressed or could not fully address",
     "",
     "Issues to fix:",
     issueList,
@@ -95,6 +96,20 @@ export const REFINE_RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
     rationale: { type: "string" },
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          severity: { type: "string", enum: ["error", "warning", "info"] },
+          filePath: { type: "string" },
+          title: { type: "string" },
+          explanation: { type: "string" },
+          suggestedFix: { type: "string" },
+        },
+        required: ["severity", "title", "explanation", "suggestedFix"],
+      },
+    },
     patches: {
       type: "array",
       items: {
@@ -107,7 +122,7 @@ export const REFINE_RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
       },
     },
   },
-  required: ["rationale", "patches"],
+  required: ["rationale", "findings", "patches"],
 };
 
 function mergeRanges(ranges: Array<[number, number]>): Array<[number, number]> {
