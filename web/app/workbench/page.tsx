@@ -28,6 +28,7 @@ import {
 
 type Target = "pinocchio" | "quasar" | "native";
 type InputMode = "demo" | "source" | "file" | "folder" | "repo";
+type PipelineStage = "idle" | "resolving" | "parsing" | "emitting" | "validating" | "done" | "error";
 
 type ParseResponse = {
   ir: unknown;
@@ -128,6 +129,20 @@ const MODE_META: Record<InputMode, { icon: React.ElementType; label: string }> =
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 const TARGETS: Target[] = ["pinocchio", "quasar", "native"];
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+const STAGES: { id: PipelineStage; label: string; sublabel: string }[] = [
+  { id: "resolving",  label: "Resolve input",  sublabel: "Load / fetch source" },
+  { id: "parsing",    label: "Parse IR",        sublabel: "Anchor → SolanaIR" },
+  { id: "emitting",   label: "Emit code",       sublabel: "IR → Rust files" },
+  { id: "validating", label: "Validate",        sublabel: "Structural checks" },
+  { id: "done",       label: "Complete",        sublabel: "Code ready" },
+];
+
+const STAGE_ORDER: Record<string, number> = {
+  idle: -1, resolving: 0, parsing: 1, emitting: 2, validating: 3, done: 4, error: -1,
+};
+
 // ─── Tar builder (client-side) ────────────────────────────────────────────────
 
 function downloadBlob(filename: string, blob: Blob) {
@@ -196,6 +211,7 @@ export default function Workbench() {
   const [target, setTarget] = useState<Target>("pinocchio");
   const [apiOk, setApiOk] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [pipelineStage, setPipelineStage] = useState<PipelineStage>("idle");
   const [error, setError] = useState<string | null>(null);
 
   const [demoNames, setDemoNames] = useState<string[]>([]);
@@ -321,10 +337,18 @@ export default function Workbench() {
   }
 
   async function runPipeline() {
+    // ── Wipe previous output immediately so editor goes blank ────────────────
     setIsRunning(true);
+    setPipelineStage("resolving");
     setError(null);
+    setSingleFileCode("");
+    setIrText("");
+    setOutputFiles([]);
+    setActiveFilePath("");
+    setProgramName("anvil-output");
     setWarnings([]);
     setValidationIssues([]);
+    setTransformSummary(null);
     setReviewReport(null);
     setRefineResult(null);
     setRefineError(null);
@@ -334,6 +358,7 @@ export default function Workbench() {
     try {
       let parsed: ParseResponse;
 
+      // ── Stage 1: Resolve / load input (advances when real fetch completes) ──
       if (mode === "demo") {
         const r = await fetch(`${API_BASE}/demo/${demoName}`, { cache: "no-store" });
         if (!r.ok) throw new Error("Failed to load demo source");
@@ -355,14 +380,11 @@ export default function Workbench() {
         parsed = await r.json() as ParseResponse;
         setResolvedSource(parsed.source ?? src);
 
-                  } else if (mode === "folder") {
+      } else if (mode === "folder") {
         if (!folderCandidate) throw new Error("Choose a Rust entry file from the selected folder");
         const r = await fetch(`${API_BASE}/parse`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            files: folderEntries,
-            entryPath: folderCandidate,
-          }),
+          body: JSON.stringify({ files: folderEntries, entryPath: folderCandidate }),
         });
         if (!r.ok) {
           const p = await r.json().catch(() => ({ error: "Parse failed" }));
@@ -390,8 +412,14 @@ export default function Workbench() {
         setResolvedSource(parsed.source ?? null);
       }
 
+      // ── Stage 2: IR ready — brief pause so the step is visible ─────────────
+      setPipelineStage("parsing");
+      await sleep(280);
       setIrText(JSON.stringify(parsed.ir, null, 2));
 
+      // ── Stage 3: Emit ────────────────────────────────────────────────────────
+      setPipelineStage("emitting");
+      await sleep(220);
       const emitRes = await fetch(`${API_BASE}/emit`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ir: parsed.ir, target, multiFile: true }),
@@ -401,6 +429,10 @@ export default function Workbench() {
         throw new Error(p.details ?? p.error ?? "Emit failed");
       }
       const emitted = await emitRes.json() as EmitResponse;
+
+      // ── Stage 4: Validate ────────────────────────────────────────────────────
+      setPipelineStage("validating");
+      await sleep(260);
       setSingleFileCode(emitted.code);
       setOutputFiles(emitted.files ?? []);
       setActiveFilePath(emitted.files?.[0]?.path ?? "");
@@ -411,12 +443,18 @@ export default function Workbench() {
       setReviewReport(emitted.reviewReport ?? null);
       setActivePane("single");
       setApiOk(true);
+
+      // ── Done ─────────────────────────────────────────────────────────────────
+      await sleep(200);
+      setPipelineStage("done");
     } catch (err) {
+      setPipelineStage("error");
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsRunning(false);
     }
   }
+
 
   /**
    * Single-click AI refine: re-emits with ?refine=1 so the backend
@@ -795,45 +833,131 @@ export default function Workbench() {
 
           {/* ── RIGHT: Output panel ─────────────────────────────────────── */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+
             <Panel>
               {/* Output header */}
-              <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 15, color: C.text }}>Generated output</div>
-                  <div style={{ fontSize: 13, color: C.textSub, marginTop: 3, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ fontFamily: "var(--font-mono, monospace)" }}>{programName}</span>
-                    <span style={{ color: C.textDim }}>→</span>
-                    <span style={{ color: tm.color, fontWeight: 700 }}>{tm.label}</span>
-                    <Badge label="Strict Validated" active={strictValidated} color={C.teal} />
-                    <Badge label="AI Refined" active={hasAppliedRefine} color={C.indigo} />
+              <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.line}` }}>
+                {/* Title row */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>Generated output</div>
+                    {hasOutput && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 12, color: C.textDim }}>·</span>
+                        <span style={{ fontSize: 12, fontFamily: "var(--font-mono, monospace)", color: C.textMuted }}>{programName}</span>
+                        <span style={{ fontSize: 12, color: C.textDim }}>→</span>
+                        <span style={{ fontSize: 12, color: tm.color, fontWeight: 700 }}>{tm.label}</span>
+                        {strictValidated && <span style={{ fontSize: 10, color: C.teal, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: "rgba(14,168,128,0.1)", border: "1px solid rgba(14,168,128,0.2)" }}>✓ valid</span>}
+                        {hasAppliedRefine && <span style={{ fontSize: 10, color: C.indigo, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: "rgba(107,123,255,0.1)", border: "1px solid rgba(107,123,255,0.2)" }}>AI refined</span>}
+                      </div>
+                    )}
+                  </div>
+                  {/* Icon actions */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <IconBtn title={copied ? "Copied!" : "Copy"} onClick={copyActiveContent} disabled={!activeContent} active={copied}>
+                      {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+                    </IconBtn>
+                    <IconBtn title="Download .rs" onClick={downloadSingleFile} disabled={!singleFileCode}>
+                      <Download size={14} />
+                    </IconBtn>
+                    <IconBtn title="Download .tar" onClick={downloadProjectBundle} disabled={!outputFiles.length} primary>
+                      <FileArchive size={14} />
+                    </IconBtn>
+                    {refineResult && (
+                      <IconBtn title="Download AI diagnostics" onClick={downloadDiagnostics}>
+                        <Sparkles size={14} />
+                      </IconBtn>
+                    )}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <OutBtn icon={Copy} label={copied ? "Copied!" : "Copy"} onClick={copyActiveContent} disabled={!activeContent} active={copied} />
-                  <OutBtn icon={Download} label="Download .rs" onClick={downloadSingleFile} disabled={!singleFileCode} />
-                  <OutBtn icon={FileArchive} label="Download .tar" onClick={downloadProjectBundle} disabled={!outputFiles.length} primary />
-                  <OutBtn icon={Download} label="AI JSON" onClick={downloadDiagnostics} disabled={!refineResult} />
-                </div>
+
+                {/* Inline pipeline strip — only shown during/after a run */}
+                {pipelineStage !== "idle" && (
+                  <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                    {STAGES.map((s, i) => {
+                      const cur = STAGE_ORDER[pipelineStage] ?? -1;
+                      const isDone   = pipelineStage !== "error" && cur > i;
+                      const isActive = pipelineStage !== "error" && cur === i;
+                      const isErr    = pipelineStage === "error" && cur === i;
+                      const dotColor = isDone ? C.teal : isActive ? C.amber : isErr ? "#e05a5a" : C.textDim;
+                      return (
+                        <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, flex: i < STAGES.length - 1 ? "none" : undefined }}>
+                          {/* Dot + label */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            <div style={{
+                              width: 6, height: 6, borderRadius: "50%",
+                              background: dotColor,
+                              boxShadow: isActive ? `0 0 6px ${C.amber}` : isDone ? `0 0 4px ${C.teal}55` : "none",
+                              transition: "all 0.4s",
+                              flexShrink: 0,
+                            }} />
+                            <span style={{
+                              fontSize: 11, fontWeight: isActive ? 700 : 500,
+                              color: isDone ? C.textMuted : isActive ? C.amber : isErr ? "#e05a5a" : C.textDim,
+                              transition: "color 0.3s",
+                              whiteSpace: "nowrap",
+                            }}>
+                              {isActive ? <>{s.label}<span style={{ display: "inline-block", animation: "pulse 1s infinite", opacity: 0.6 }}>…</span></> : s.label}
+                            </span>
+                          </div>
+                          {/* Connector line */}
+                          {i < STAGES.length - 1 && (
+                            <div style={{
+                              flex: 1, height: 1, minWidth: 12, maxWidth: 32,
+                              background: isDone ? "rgba(14,168,128,0.4)" : "rgba(255,255,255,0.08)",
+                              transition: "background 0.5s",
+                            }} />
+                          )}
+                        </div>
+                      );
+                    })}
+                    {pipelineStage === "error" && (
+                      <span style={{ fontSize: 11, color: "#e05a5a", marginLeft: 4 }}>failed</span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Tabs */}
-              <div style={{ display: "flex", gap: 4, padding: "12px 20px 0", borderBottom: `1px solid ${C.line}`, overflowX: "auto" }}>
+              <div style={{ display: "flex", gap: 4, padding: "10px 20px 0", borderBottom: `1px solid ${C.line}`, overflowX: "auto" }}>
                 <PaneTab active={activePane === "single"} onClick={() => setActivePane("single")} label="Single file" />
-                <PaneTab active={activePane === "files"}  onClick={() => setActivePane("files")}  label={`File tree (${outputFiles.length})`} />
-                <PaneTab active={activePane === "ir"}     onClick={() => setActivePane("ir")}     label="IR (JSON)" />
+                <PaneTab active={activePane === "files"}  onClick={() => setActivePane("files")}  label={`Files (${outputFiles.length})`} />
+                <PaneTab active={activePane === "ir"}     onClick={() => setActivePane("ir")}     label="IR" />
               </div>
 
-              {/* Content */}
-              {!hasOutput && !isRunning ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 480, gap: 14 }}>
-                  <TerminalSquare size={36} style={{ color: C.textDim }} />
-                  <div style={{ fontSize: 14, color: C.textMuted }}>Click &quot;Parse + Emit&quot; to generate {tm.label} code</div>
-                  <div style={{ fontSize: 12, color: C.textDim }}>Supports demo, paste, file upload, folder upload, and GitHub repo</div>
+              {/* Content: idle / loading / output */}
+              {isRunning ? (
+                // Real loading state — shows which stage is actually executing
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: editorHeight, gap: 20 }}>
+                  {/* Progress bar */}
+                  <div style={{ width: 220, height: 2, borderRadius: 2, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                    <div style={{
+                      height: "100%",
+                      borderRadius: 2,
+                      background: `linear-gradient(90deg, ${C.amber}, ${C.teal})`,
+                      width: `${Math.max(6, ((STAGE_ORDER[pipelineStage] ?? 0) / (STAGES.length - 1)) * 100)}%`,
+                      transition: "width 0.6s cubic-bezier(0.4, 0, 0.2, 1)",
+                    }} />
+                  </div>
+                  {/* Spinner + stage label */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <Loader2 size={16} style={{ color: C.amber }} className="animate-spin" />
+                    <span style={{ fontSize: 13, color: C.textSub, fontWeight: 600 }}>
+                      {STAGES.find(s => s.id === pipelineStage)?.label ?? "Running"}
+                    </span>
+                    <span style={{ fontSize: 13, color: C.textDim }}>→ {tm.label}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: C.textDim }}>
+                    {STAGES.find(s => s.id === pipelineStage)?.sublabel}
+                  </div>
                 </div>
-              ) : isRunning && !hasOutput ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 480, gap: 14 }}>
-                  <Loader2 size={32} style={{ color: C.amber }} className="animate-spin" />
-                  <div style={{ fontSize: 14, color: C.textSub }}>Compiling → {tm.label}…</div>
+              ) : !hasOutput ? (
+                // Empty state
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: editorHeight, gap: 14 }}>
+                  <TerminalSquare size={32} style={{ color: C.textDim }} />
+                  <div style={{ fontSize: 14, color: C.textMuted }}>Click &quot;Parse + Emit&quot; to generate {tm.label} code</div>
+                  <div style={{ fontSize: 12, color: C.textDim }}>Demo · Paste · File · Folder · GitHub repo</div>
                 </div>
               ) : (
                 <>
@@ -1079,6 +1203,32 @@ function OutBtn({
       fontSize: 13, fontWeight: 600, cursor: disabled ? "not-allowed" : "pointer",
     }}>
       <Icon size={13} /> {label}
+    </button>
+  );
+}
+
+function IconBtn({
+  children, onClick, disabled, active, primary, title,
+}: {
+  children: React.ReactNode; onClick: () => void; title?: string;
+  disabled?: boolean; active?: boolean; primary?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        width: 30, height: 30, borderRadius: 8, border: `1px solid ${primary ? "rgba(245,166,35,0.3)" : C.cardBorder}`,
+        background: primary ? "rgba(245,166,35,0.1)" : active ? "rgba(14,168,128,0.1)" : "rgba(255,255,255,0.03)",
+        color: primary ? C.amber : active ? C.teal : disabled ? C.textDim : C.textSub,
+        cursor: disabled ? "not-allowed" : "pointer",
+        transition: "all 0.15s",
+        flexShrink: 0,
+      }}
+    >
+      {children}
     </button>
   );
 }
