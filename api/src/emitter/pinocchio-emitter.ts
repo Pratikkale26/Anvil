@@ -33,6 +33,7 @@ class PinocchioEmitter extends BaseEmitter {
 
   override emitUseStatements(_ir: SolanaIR): string {
     const imports = [`use core::convert::TryInto;`,
+`use borsh::{BorshDeserialize, BorshSerialize};`,
 `use pinocchio::{
     account_info::AccountInfo,
     entrypoint,
@@ -60,6 +61,8 @@ class PinocchioEmitter extends BaseEmitter {
     if (irNeedsHelper(_ir, "spl_close_account")) {
       imports.push(`use pinocchio_token::instructions::CloseAccount as TokenCloseAccount;`);
     }
+
+    imports.push(...this.filteredSourceImports(_ir));
 
     return imports.join("\n");
   }
@@ -316,6 +319,10 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   // Pinocchio: Pubkey IS [u8; 32], so deserialization in arg parsing is a raw slice
   override emitPubkeyDeserialize(start: number, end: number): string {
     return `data[${start}..${end}].try_into().map_err(|_| ProgramError::InvalidInstructionData)?`;
+  }
+
+  protected override emitPubkeyDeserializeSlice(sliceExpr: string): string {
+    return `${sliceExpr}.try_into().map_err(|_| ProgramError::InvalidInstructionData)?`;
   }
 
   // Pinocchio: [u8;32] IS a byte slice — read directly, no .as_ref() needed.

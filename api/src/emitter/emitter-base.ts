@@ -109,6 +109,25 @@ export abstract class BaseEmitter {
     return amount;
   }
 
+  protected filteredSourceImports(ir: SolanaIR): string[] {
+    return (ir.imports ?? [])
+      .map((statement) => {
+        const trimmed = statement.trim().replace(/;$/, "");
+        return trimmed.startsWith("use ") ? trimmed : `use ${trimmed};`;
+      })
+      .filter((statement) => {
+        if (statement.startsWith("use anchor_lang::")) return false;
+        if (statement.startsWith("use anchor_spl::")) return false;
+        if (statement.startsWith("use super::")) return false;
+        return true;
+      });
+  }
+
+  protected rustTypeForCustomType(typeName: string): string {
+    if (typeName === "String" || typeName === "Vec<u8>") return typeName;
+    return this.rustTypeForFramework(typeName);
+  }
+
   // ─── Generic emission pipeline ─────────────────────────────────────────────
 
   /**
@@ -546,6 +565,16 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       }
       if (trimmed.includes("[") || trimmed.includes("&")) return "signer_seeds";
       return trimmed;
+    };
+    const normalizeToAccountInfoCalls = (code: string): string => {
+      let transformed = code;
+      transformed = transformed.replace(/&\s*(\w+)\.to_account_info\(\)/g, (_full, name: string) =>
+        resolveAccountInfoVar(canonicalAccountName(name))
+      );
+      transformed = transformed.replace(/\b(\w+)\.to_account_info\(\)/g, (_full, name: string) =>
+        `${resolveAccountInfoVar(canonicalAccountName(name))}.clone()`
+      );
+      return transformed;
     };
     const canonicalAccountName = (name: string): string => {
       const normalized = snakeCase(name);
@@ -1016,6 +1045,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
               )
             )
           );
+          transformedRawCode = normalizeToAccountInfoCalls(transformedRawCode);
           transformedRawCode = transformedRawCode
             .replace(/(?<!:)\bClock::get\(\)\?/g, qualifiedClockGetExpr())
             .replace(/(?<!:)\bRent::get\(\)\?/g, qualifiedRentGetExpr())
@@ -1415,73 +1445,81 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     }`;
     }
 
-    let offset = 0;
-    const lines = args.map((arg) => {
-      const line = this.emitArgDeserialize(arg, offset);
-      offset += this.resolveTypeSize(arg.type);
-      return line;
-    });
-    return `    // Args\n${lines.join("\n")}`;
+    const lines = ["    // Args", "    let mut remaining = data;"];
+    for (const arg of args) {
+      lines.push(this.emitArgDeserialize(arg));
+    }
+    lines.push(`    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }`);
+    return lines.join("\n");
   }
 
-  protected emitArgDeserialize(arg: Arg, offset: number): string {
-    const start = offset;
-    const end = offset + this.resolveTypeSize(arg.type);
+  protected emitArgDeserialize(arg: Arg): string {
+    const size = this.resolveTypeSize(arg.type);
     const name = snakeCase(arg.name);
 
     switch (arg.type) {
       case "u8":
-        return `    if data.len() < ${end} {
+        return `    if remaining.len() < 1 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let ${name}: u8 = data[${start}];`;
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let ${name}: u8 = arg_bytes[0];`;
       case "u16": case "u32": case "u64": case "u128":
       case "i16": case "i32": case "i64": case "i128":
-        return `    if data.len() < ${end} {
+        return `    if remaining.len() < ${size} {
         return Err(ProgramError::InvalidInstructionData);
     }
+    let (arg_bytes, rest) = remaining.split_at(${size});
+    remaining = rest;
     let ${name}: ${arg.type} = ${arg.type}::from_le_bytes(
-        data[${start}..${end}].try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
     );`;
       case "i8":
-        return `    if data.len() < ${end} {
+        return `    if remaining.len() < 1 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let ${name}: i8 = data[${start}] as i8;`;
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let ${name}: i8 = arg_bytes[0] as i8;`;
       case "bool":
-        return `    if data.len() < ${end} {
+        return `    if remaining.len() < 1 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let ${name}: bool = match data[${start}] {
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let ${name}: bool = match arg_bytes[0] {
         0 => false,
         1 => true,
         _ => return Err(ProgramError::InvalidInstructionData),
     };`;
       case "Pubkey":
-        return `    if data.len() < ${end} {
+        return `    if remaining.len() < 32 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let ${name} = ${this.emitPubkeyDeserialize(start, end)};`;
+    let (arg_bytes, rest) = remaining.split_at(32);
+    remaining = rest;
+    let ${name} = ${this.emitPubkeyDeserializeSlice("arg_bytes")};`;
+      case "String":
+      case "Vec<u8>":
+        return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;`;
       default:
         if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(arg.type)) {
-          return `    if data.len() < ${end} {
+          return `    if remaining.len() < ${size} {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let ${name}: ${arg.type} = data[${start}..${end}]
+    let (arg_bytes, rest) = remaining.split_at(${size});
+    remaining = rest;
+    let ${name}: ${arg.type} = arg_bytes
         .try_into().map_err(|_| ProgramError::InvalidInstructionData)?;`;
         }
         const typeDef = this.customTypeDef(arg.type);
-        if (typeDef?.kind === "enum" && typeDef.variants?.length) {
-          const arms = typeDef.variants
-            .map((variant, index) => `        ${index} => ${arg.type}::${variant},`)
-            .join("\n");
-          return `    if data.len() < ${end} {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let ${name}: ${arg.type} = match data[${start}] {
-${arms}
-        _ => return Err(ProgramError::InvalidInstructionData),
-    };`;
+        if (typeDef) {
+          return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;`;
         }
         return `    // TODO: parse ${name}: ${arg.type}`;
     }
@@ -1489,6 +1527,10 @@ ${arms}
 
   protected emitPubkeyDeserialize(start: number, end: number): string {
     return `data[${start}..${end}].try_into().map_err(|_| ProgramError::InvalidInstructionData)?`;
+  }
+
+  protected emitPubkeyDeserializeSlice(sliceExpr: string): string {
+    return `${sliceExpr}.try_into().map_err(|_| ProgramError::InvalidInstructionData)?`;
   }
 
   protected customTypeDef(typeName: string) {
@@ -1560,7 +1602,7 @@ ${arms}
       if (typeDef.kind === "enum") {
         const variants = (typeDef.variants ?? []).map((variant, index) => `    ${variant} = ${index},`).join("\n");
         const arms = (typeDef.variants ?? []).map((variant, index) => `            ${index} => Ok(Self::${variant}),`).join("\n");
-        return `#[derive(Clone, Copy, Debug, PartialEq)]
+        return `#[derive(Clone, Copy, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
 #[repr(u8)]
 pub enum ${typeDef.name} {
 ${variants}
@@ -1579,9 +1621,9 @@ ${arms}
       }
 
       const fields = (typeDef.fields ?? [])
-        .map((field) => `    pub ${snakeCase(field.name)}: ${this.rustTypeForFramework(field.type)},`)
+        .map((field) => `    pub ${snakeCase(field.name)}: ${this.rustTypeForCustomType(field.type)},`)
         .join("\n");
-      return `#[repr(C)]
+      return `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
 pub struct ${typeDef.name} {
 ${fields}
 }`;

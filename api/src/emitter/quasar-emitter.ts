@@ -38,6 +38,7 @@ class QuasarEmitter extends BaseEmitter {
 
   override emitUseStatements(_ir: SolanaIR): string {
     const imports = [`use core::convert::TryInto;`,
+`use borsh::{BorshDeserialize, BorshSerialize};`,
 `use quasar::{
     account_info::AccountInfo,
     entrypoint,
@@ -58,6 +59,8 @@ class QuasarEmitter extends BaseEmitter {
     if (irNeedsHelper(_ir, "spl_close_account")) {
       imports.push(`use quasar_token::instructions::CloseAccount as TokenCloseAccount;`);
     }
+
+    imports.push(...this.filteredSourceImports(_ir));
 
     return imports.join("\n");
   }
@@ -309,6 +312,10 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
 
   protected override emitPubkeyDeserialize(start: number, end: number): string {
     return `Pubkey::try_from(&data[${start}..${end}]).map_err(|_| ProgramError::InvalidInstructionData)?`;
+  }
+
+  protected override emitPubkeyDeserializeSlice(sliceExpr: string): string {
+    return `Pubkey::try_from(${sliceExpr}).map_err(|_| ProgramError::InvalidInstructionData)?`;
   }
 
   override emitAccountStruct(acc: AccountDef): string {

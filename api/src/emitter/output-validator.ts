@@ -58,6 +58,11 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<
     message: "Argument deserialization not implemented for a custom type.",
   },
   {
+    pattern: /\b[A-Z][A-Za-z0-9_]*CpiBuilder::new\s*\(/,
+    message: "Third-party Anchor CPI builder leaked into a non-native target; this target cannot safely carry external Anchor-style builder CPIs.",
+    targets: ["pinocchio", "quasar"],
+  },
+  {
     pattern: /unsafe\s*\{\s*core::mem::zeroed::<[^>]+>\(\)\s*\}/,
     message: "Init account uses zero-initialized placeholder — create_account CPI is needed.",
   },

@@ -31,7 +31,7 @@ class NativeEmitter extends BaseEmitter {
   override readonly frameworkName = "Native";
 
   override emitUseStatements(_ir: SolanaIR): string {
-    return `use borsh::{BorshDeserialize, BorshSerialize};
+    const imports = [`use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
     entrypoint,
@@ -43,7 +43,13 @@ use solana_program::{
     pubkey::Pubkey,
     system_instruction,
     sysvar::Sysvar,
-};`;
+};`];
+    imports.push(...this.filteredSourceImports(_ir));
+    return imports.join("\n");
+  }
+
+  protected override emitPubkeyDeserializeSlice(sliceExpr: string): string {
+    return `Pubkey::new_from_array(${sliceExpr}.try_into().map_err(|_| ProgramError::InvalidInstructionData)?)`;
   }
 
   override emitEntrypoint(_ir: SolanaIR): string {
