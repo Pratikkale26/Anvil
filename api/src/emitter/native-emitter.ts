@@ -31,18 +31,42 @@ class NativeEmitter extends BaseEmitter {
   override readonly frameworkName = "Native";
 
   override emitUseStatements(_ir: SolanaIR): string {
+    const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
+      || irNeedsUnsignedSplMintToHelper(_ir)
+      || irNeedsUnsignedSplBurnHelper(_ir)
+      || irNeedsUnsignedSplCloseAccountHelper(_ir);
+    const needsInvokeSigned = irNeedsSignedLamportsHelper(_ir)
+      || irNeedsSignedSplMintToHelper(_ir)
+      || irNeedsSignedSplBurnHelper(_ir)
+      || irNeedsSignedSplCloseAccountHelper(_ir)
+      || irNeedsInitAccountHelper(_ir);
+    const needsSystemInstruction = irNeedsUnsignedLamportsHelper(_ir)
+      || irNeedsSignedLamportsHelper(_ir)
+      || irNeedsInitAccountHelper(_ir);
+    const needsMsg = _ir.instructions.some((instr) =>
+      instr.body.some((stmt) =>
+        stmt.kind === "msg" ||
+        stmt.kind === "emit" ||
+        (stmt.kind === "pass_through" && /\bmsg!\(/.test(stmt.code))
+      )
+    );
+
+    const solanaItems = [
+      `account_info::AccountInfo`,
+      `entrypoint`,
+      `entrypoint::ProgramResult`,
+      needsMsg ? `msg` : null,
+      needsInvoke ? `program::invoke` : null,
+      needsInvokeSigned ? `program::invoke_signed` : null,
+      `program_error::ProgramError`,
+      `pubkey::Pubkey`,
+      needsSystemInstruction ? `system_instruction` : null,
+      `sysvar::Sysvar`,
+    ].filter(Boolean).join(",\n    ");
+
     const imports = [`use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint,
-    entrypoint::ProgramResult,
-    msg,
-    program::invoke,
-    program::invoke_signed,
-    program_error::ProgramError,
-    pubkey::Pubkey,
-    system_instruction,
-    sysvar::Sysvar,
+    ${solanaItems},
 };`];
     imports.push(...this.filteredSourceImports(_ir));
     return imports.join("\n");

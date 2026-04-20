@@ -1,4 +1,6 @@
 import type { ValidationIssue } from "../emitter/output-validator.js";
+import type { SolanaIR } from "../ir/schema.js";
+import { analyzeTargetSuitability, type TargetRecommendation } from "./target-advisor.js";
 
 export type ReviewFinding = {
   severity: "error" | "warning";
@@ -12,6 +14,7 @@ export type DeterministicReviewReport = {
   findings: ReviewFinding[];
   requiresAI: boolean;
   recommendedAction: string;
+  targetRecommendation?: TargetRecommendation;
 };
 
 function suggestedFixForIssue(issue: ValidationIssue): string {
@@ -108,7 +111,11 @@ function suggestedFixForIssue(issue: ValidationIssue): string {
   return "Review the emitted code near this issue and replace framework-specific leftovers or unsafe patterns with target-native code.";
 }
 
-export function buildDeterministicReviewReport(validationIssues: ValidationIssue[]): DeterministicReviewReport {
+export function buildDeterministicReviewReport(
+  validationIssues: ValidationIssue[],
+  ir?: SolanaIR,
+  target?: "native" | "pinocchio" | "quasar",
+): DeterministicReviewReport {
   const findings = validationIssues.map((issue) => ({
     severity: issue.severity,
     path: issue.path,
@@ -119,15 +126,22 @@ export function buildDeterministicReviewReport(validationIssues: ValidationIssue
   const errorCount = findings.filter((finding) => finding.severity === "error").length;
   const warningCount = findings.length - errorCount;
   const requiresAI = errorCount > 0;
+  const targetRecommendation = ir ? analyzeTargetSuitability(ir) : null;
+  const targetMismatch = targetRecommendation && target
+    ? targetRecommendation.unsupportedTargets?.includes(target) || targetRecommendation.preferredTarget !== target
+    : false;
 
   return {
     summary: `${errorCount} error(s), ${warningCount} warning(s) from deterministic review`,
     findings,
     requiresAI,
-    recommendedAction: requiresAI
-      ? "Fix deterministic errors first or run one focused AI refine pass after review."
-      : warningCount > 0
-        ? "No hard validation errors remain. Review warnings manually before treating output as production-ready."
-        : "No deterministic issues found. Generated output is ready for the next validation phase.",
+    recommendedAction: targetMismatch && targetRecommendation
+      ? `Pre-flight analysis recommends '${targetRecommendation.preferredTarget}' for this contract. ${targetRecommendation.reason}`
+      : requiresAI
+        ? "Fix deterministic errors first or run one focused AI refine pass after review."
+        : warningCount > 0
+          ? "No hard validation errors remain. Review warnings manually before treating output as production-ready."
+          : "No deterministic issues found. Generated output is ready for the next validation phase.",
+    targetRecommendation: targetRecommendation ?? undefined,
   };
 }

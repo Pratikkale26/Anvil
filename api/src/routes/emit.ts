@@ -80,7 +80,7 @@ emitRoute.post("/", async (req, res) => {
     const validationWarnings = validationIssues
       .filter((issue) => issue.severity === "warning")
       .map((issue) => issue.path ? `${issue.path}: ${issue.message}` : issue.message);
-    let reviewReport = buildDeterministicReviewReport(validationIssues);
+    let reviewReport = buildDeterministicReviewReport(validationIssues, ir, target as Target);
 
     if (strict && validationErrors.length > 0 && !refine) {
       res.status(422).json({
@@ -135,7 +135,7 @@ emitRoute.post("/", async (req, res) => {
             singleFile: currentSingleFile,
             warnings: output.warnings,
           });
-          reviewReport = buildDeterministicReviewReport(validationIssues);
+          reviewReport = buildDeterministicReviewReport(validationIssues, ir, target as Target);
           refined = true;
         }
 

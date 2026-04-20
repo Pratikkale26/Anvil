@@ -88,7 +88,11 @@ aiRoute.post("/refine", async (req, res) => {
         if (stream) writeStreamChunk(res, { type: "status", requestId, step, message });
       },
     );
-    const reviewReport = buildDeterministicReviewReport(refineData.data.validationIssues);
+    const reviewReport = buildDeterministicReviewReport(
+      refineData.data.validationIssues,
+      ir,
+      refineData.data.target,
+    );
 
     const accepted = result.patches.filter((p) => p.accepted).length;
     log("done", `Completed AI refine: ${accepted}/${result.patches.length} patches accepted.`);
