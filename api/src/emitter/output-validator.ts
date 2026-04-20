@@ -22,6 +22,24 @@ function extractInstructionBody(content: string, fnName: string): string | null 
   return content.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
 }
 
+function extractStateAliases(fnBody: string, accountName: string): string[] {
+  const aliases = new Set([accountName]);
+  const patterns = [
+    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*\\w+::from_account_info\\(\\s*${accountName}\\s*\\)\\?;`, "g"),
+    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*\\w+::from_account_info\\(\\s*${accountName}_account\\s*\\)\\?;`, "g"),
+    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*\\w+::read\\([^;]*\\b${accountName}\\b[^;]*\\)\\?;`, "g"),
+    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*\\w+::read\\([^;]*\\b${accountName}_account\\b[^;]*\\)\\?;`, "g"),
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of fnBody.matchAll(pattern)) {
+      if (match[1]) aliases.add(match[1]);
+    }
+  }
+
+  return [...aliases];
+}
+
 // ─── Error patterns (compile-blockers and semantic issues) ────────────────────
 
 const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<DetectedTarget> }> = [
@@ -318,9 +336,9 @@ function checkHasOneConstraints(content: string, ir: SolanaIR, path: string): Va
       for (const constraint of acc.constraints) {
         if (constraint.kind !== "has_one" || !constraint.value) continue;
         const fieldName = snakeCase(normalizedConstraintValue(constraint.value));
-        const hasCheck =
-          fnBody.includes(`${accountName}.${fieldName}`) &&
-          fnBody.includes("ProgramError::InvalidAccountData");
+        const aliases = extractStateAliases(fnBody, accountName);
+        const hasCheck = aliases.some((alias) => fnBody.includes(`${alias}.${fieldName}`))
+          && fnBody.includes("ProgramError::InvalidAccountData");
 
         if (!hasCheck) {
           issues.push({
@@ -546,6 +564,8 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
   const files = output.files.length > 0
     ? output.files
     : [{ path: `${ir.name}.rs`, content: output.singleFile }];
+  issues.push(...checkUndefinedAssociatedConsts(files));
+  issues.push(...checkExternalCrateDependencies(files));
   const aggregateTarget = detectTarget(files.map((file) => file.content).join("\n"));
 
   for (const file of files) {
@@ -611,6 +631,148 @@ function stripLineComments(content: string): string {
     .split("\n")
     .map((line) => line.replace(/\/\/.*$/, ""))
     .join("\n");
+}
+
+function collectDefinedModules(files: EmitterOutput["files"]): Set<string> {
+  const names = new Set<string>();
+  for (const file of files) {
+    for (const match of file.content.matchAll(/\b(?:pub\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:[;{])/g)) {
+      if (match[1]) names.add(match[1]);
+    }
+  }
+  return names;
+}
+
+function collectDefinedTypes(files: EmitterOutput["files"]): Set<string> {
+  const names = new Set<string>();
+  for (const file of files) {
+    for (const match of file.content.matchAll(/\b(?:pub\s+)?(?:struct|enum)\s+([A-Z][A-Za-z0-9_]*)\b/g)) {
+      if (match[1]) names.add(match[1]);
+    }
+  }
+  return names;
+}
+
+function collectDefinedAssociatedConsts(files: EmitterOutput["files"]): Map<string, Set<string>> {
+  const defs = new Map<string, Set<string>>();
+  for (const file of files) {
+    const implMatches = [...file.content.matchAll(/impl\s+([A-Z][A-Za-z0-9_]*)\s*\{([\s\S]*?)\n\}/g)];
+    for (const match of implMatches) {
+      const typeName = match[1];
+      const body = match[2];
+      if (!typeName || !body) continue;
+      const consts = defs.get(typeName) ?? new Set<string>();
+      for (const constMatch of body.matchAll(/\bpub\s+const\s+([A-Z][A-Z0-9_]*)\b/g)) {
+        if (constMatch[1]) consts.add(constMatch[1]);
+      }
+      defs.set(typeName, consts);
+    }
+  }
+  return defs;
+}
+
+function checkUndefinedAssociatedConsts(files: EmitterOutput["files"]): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const definedTypes = collectDefinedTypes(files);
+  const definedConsts = collectDefinedAssociatedConsts(files);
+
+  for (const file of files) {
+    for (const match of file.content.matchAll(/\b([A-Z][A-Za-z0-9_]*)::([A-Z][A-Z0-9_]*)\b/g)) {
+      const typeName = match[1];
+      const constName = match[2];
+      if (!typeName || !constName) continue;
+      if (!definedTypes.has(typeName)) continue;
+      if (definedConsts.get(typeName)?.has(constName)) continue;
+      const line = file.content.slice(0, match.index ?? 0).split("\n").length;
+      issues.push({
+        severity: "error",
+        message: `Associated constant '${typeName}::${constName}' is referenced but not defined in emitted output.`,
+        path: file.path,
+        line,
+      });
+    }
+  }
+
+  return issues;
+}
+
+function checkExternalCrateDependencies(files: EmitterOutput["files"]): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const modules = collectDefinedModules(files);
+  const allowed = new Set([
+    "clippy",
+    "std",
+    "core",
+    "alloc",
+    "crate",
+    "self",
+    "super",
+    "borsh",
+    "solana_program",
+    "pinocchio",
+    "pinocchio_system",
+    "pinocchio_token",
+    "quasar",
+    "quasar_token",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "u128",
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "i128",
+  ]);
+
+  for (const file of files) {
+    const seen = new Set<string>();
+    const lines = file.content.split("\n");
+    let inUseBlock = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line) continue;
+
+      if (/^\s*use\s+/.test(line)) {
+        inUseBlock = true;
+        const useMatch = line.match(/^\s*use\s+([a-z][a-z0-9_]*)::/);
+        if (useMatch?.[1]) {
+          const prefix = useMatch[1];
+          if (!allowed.has(prefix) && !modules.has(prefix) && !seen.has(prefix)) {
+            seen.add(prefix);
+            issues.push({
+              severity: "warning",
+              message: `External crate '${prefix}' is referenced in emitted output; ensure the target manifest includes this dependency.`,
+              path: file.path,
+              line: i + 1,
+            });
+          }
+        }
+        if (line.includes(";")) inUseBlock = false;
+        continue;
+      }
+
+      if (inUseBlock) {
+        if (line.includes(";")) inUseBlock = false;
+        continue;
+      }
+
+      for (const match of line.matchAll(/(?<![:\w])([a-z][a-z0-9_]*)::[A-Za-z_][A-Za-z0-9_:]*/g)) {
+        const prefix = match[1];
+        if (!prefix || allowed.has(prefix) || modules.has(prefix) || seen.has(prefix)) continue;
+        seen.add(prefix);
+        issues.push({
+          severity: "warning",
+          message: `External crate '${prefix}' is referenced in emitted output; ensure the target manifest includes this dependency.`,
+          path: file.path,
+          line: i + 1,
+        });
+      }
+    }
+  }
+
+  return issues;
 }
 
 function isInstructionFile(path: string): boolean {

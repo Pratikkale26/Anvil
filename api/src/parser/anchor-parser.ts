@@ -900,13 +900,25 @@ function parseStructFields(
 
 function extractImports(root: SyntaxNode): string[] {
   const imports: string[] = [];
-  for (let i = 0; i < root.namedChildCount; i++) {
-    const child = root.namedChild(i);
-    if (!child || child.type !== "use_declaration") continue;
-    // Get everything after "use" and before ";"
-    const text = child.text.replace(/^use\s+/, "").replace(/;\s*$/, "");
-    imports.push(text);
-  }
+  const seen = new Set<string>();
+
+  const walk = (node: SyntaxNode): void => {
+    if (node.type === "use_declaration") {
+      const text = node.text.trim().replace(/;\s*$/, "");
+      if (!seen.has(text)) {
+        seen.add(text);
+        imports.push(text);
+      }
+    }
+
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const child = node.namedChild(i);
+      if (!child) continue;
+      walk(child);
+    }
+  };
+
+  walk(root);
   return imports;
 }
 

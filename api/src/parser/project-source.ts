@@ -12,6 +12,11 @@ export interface ProjectSourceBuild {
   missingModules: string[];
 }
 
+interface ExternalModuleDecl {
+  name: string;
+  isPublic: boolean;
+}
+
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/");
 }
@@ -66,13 +71,17 @@ export function getProjectEntryPath(entryPath: string): string {
   return normalizePath(relative(sourceRoot, resolvedEntry));
 }
 
-/** Names of Rust modules declared with `mod X;` or `pub mod X;` in a source string. */
-function extractExternalModuleNames(source: string): string[] {
-  const names: string[] = [];
-  for (const m of source.matchAll(/^\s*(?:pub\s+)?mod\s+(\w+)\s*;/gm)) {
-    if (m[1]) names.push(m[1]);
+/** External module declarations like `mod X;` or `pub mod X;`. */
+function extractExternalModuleDecls(source: string): ExternalModuleDecl[] {
+  const decls: ExternalModuleDecl[] = [];
+  for (const match of source.matchAll(/^\s*(pub\s+)?mod\s+(\w+)\s*;/gm)) {
+    if (!match[2]) continue;
+    decls.push({
+      name: match[2],
+      isPublic: Boolean(match[1]),
+    });
   }
-  return names;
+  return decls;
 }
 
 /** Remove `mod X;` / `pub mod X;` declarations for the given names. */
@@ -113,37 +122,49 @@ export function buildProjectSourceGraph(entryPath: string, files: ProjectFile[])
   const visited = new Set<string>();
   const includedFiles: string[] = [];
   const missingModules: string[] = [];
-  const sections: string[] = [];
+  const indentBlock = (source: string, indent: string): string => source
+    .split("\n")
+    .map((line) => line.length > 0 ? `${indent}${line}` : line)
+    .join("\n");
 
-  const visit = (filePath: string, isEntry = false): void => {
-    if (visited.has(filePath)) return;
+  const renderFile = (filePath: string): string => {
+    if (visited.has(filePath)) return "";
     visited.add(filePath);
 
     const file = fileMap.get(filePath);
-    if (!file) return;
+    if (!file) return "";
 
     includedFiles.push(filePath);
 
-    const moduleNames = extractExternalModuleNames(file.content);
-    const content = stripExternalModuleDeclarations(file.content, moduleNames).trim();
-    if (content) {
-      sections.push(isEntry ? content : `// --- anvil: ${file.path} ---\n\n${content}`);
-    }
+    const moduleDecls = extractExternalModuleDecls(file.content);
+    const content = stripExternalModuleDeclarations(
+      file.content,
+      moduleDecls.map((decl) => decl.name),
+    ).trim();
 
-    for (const moduleName of moduleNames) {
-      const resolved = resolveModulePath(filePath, moduleName, fileMap);
+    const moduleBlocks = moduleDecls.map((decl) => {
+      const resolved = resolveModulePath(filePath, decl.name, fileMap);
       if (!resolved) {
-        missingModules.push(`${filePath} -> ${moduleName}`);
-        continue;
+        missingModules.push(`${filePath} -> ${decl.name}`);
+        return "";
       }
-      visit(resolved, false);
-    }
+
+      const moduleBody = renderFile(resolved).trim();
+      const visibility = decl.isPublic ? "pub " : "";
+      if (!moduleBody) {
+        return `${visibility}mod ${decl.name} {}`;
+      }
+
+      return `${visibility}mod ${decl.name} {\n${indentBlock(moduleBody, "    ")}\n}`;
+    }).filter(Boolean);
+
+    return [content, ...moduleBlocks].filter(Boolean).join("\n\n");
   };
 
-  visit(normalizedEntry, true);
+  const source = renderFile(normalizedEntry);
 
   return {
-    source: `${sections.join("\n\n")}\n`,
+    source: `${source.trim()}\n`,
     includedFiles,
     missingModules,
   };

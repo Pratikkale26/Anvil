@@ -24,8 +24,10 @@ async function verifyPath(label: string, inputPath: string) {
     `${label}: expected 4 reachable project files, got ${resolved.projectFiles?.length ?? 0}`,
   );
   assert(
-    resolved.source.includes("// --- anvil: instructions/initialize.rs ---"),
-    `${label}: combined source is missing nested instruction module content`,
+    resolved.source.includes("mod instructions {")
+      && resolved.source.includes("mod initialize {")
+      && resolved.source.includes("pub fn handler(ctx: Context<Initialize>, value: u64) -> Result<()>"),
+    `${label}: combined source is missing reconstructed nested instruction modules`,
   );
   assert(parsed.ir.instructions.length === 1, `${label}: expected 1 instruction`);
   assert(parsed.ir.instructions[0]?.name === "initialize", `${label}: wrong instruction name`);
