@@ -356,6 +356,7 @@ ${fields}
 
 impl ${acc.name} {
     pub const DISCRIMINATOR: [u8; 8] = ${this.accountDiscriminatorExpr(acc.name)};
+    pub const INIT_SPACE: usize = ${bodyLen};
     pub const LEN: usize = ${bodyLen};
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
 

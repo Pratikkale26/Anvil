@@ -316,14 +316,14 @@ export abstract class BaseEmitter {
       .map((a) => this.emitOwnerCheck(snakeCase(a.name)))
       .join("\n");
 
+    // Arg parsing
+    const argsBlock = this.emitArgParsing(instr.args);
+
     const initPreludes = instr.accounts
       .filter((a) => a.isInit && isCustomState(a.accountType))
       .map((a) => this.emitInitAccountPrelude(a, instr, ir))
       .filter(Boolean)
       .join("\n");
-
-    // Arg parsing
-    const argsBlock = this.emitArgParsing(instr.args);
 
     // Body emission — the main event
     const bodyCode = this.emitBodyStatements(instr.body, instr, ir);
@@ -335,7 +335,7 @@ export abstract class BaseEmitter {
     );
     const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough;
 
-    const preChecks = [signerChecks, writableCheck, ownerChecks, initPreludes].filter(Boolean).join("\n");
+    const preChecks = [signerChecks, writableCheck, ownerChecks].filter(Boolean).join("\n");
 
     return `fn ${snakeCase(instr.name)}(
     program_id: &Pubkey,
@@ -349,6 +349,7 @@ export abstract class BaseEmitter {
 ${bindings}
 ${preChecks ? `\n${preChecks}\n` : ""}
 ${argsBlock}
+${initPreludes ? `\n${initPreludes}\n` : ""}
 
 ${bodyCode}
 ${needsOkReturn ? "\n    Ok(())" : ""}
@@ -392,6 +393,12 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     const accountsWithSignerSeeds = new Set<string>();
     const emittedBumps = new Set<string>();
     let signerSeedsInScope = false;
+    const qualifiedClockGetExpr = (): string =>
+      this.emitClockGet("__anvil_clock").trim().replace(/^let\s+__anvil_clock\s*=\s*/, "").replace(/;$/, "");
+    const qualifiedRentGetExpr = (): string =>
+      this.emitRentGet("__anvil_rent").trim().replace(/^let\s+__anvil_rent\s*=\s*/, "").replace(/;$/, "");
+    const qualifiedClockGetValueExpr = (): string => qualifiedClockGetExpr().replace(/\?$/, "");
+    const qualifiedRentGetValueExpr = (): string => qualifiedRentGetExpr().replace(/\?$/, "");
 
     const resolveStateVar = (account: string): string => stateVars.get(account) ?? account;
     const resolveAccountInfoVar = (account: string): string => accountInfoVars.get(account) ?? account;
@@ -753,6 +760,31 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         (from, to, amount) =>
           `transfer_lamports(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)})?;`
       );
+      replaceCpi(
+        /let\s+cpi_accounts\s*=\s*MintTo\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new_with_signer\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts,\s*([\w\[\]&\s.]+?)\s*,\s*\);\s*mint_to\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
+        (mint, to, authority, signerSeeds, amount) =>
+          `spl_token_mint_to_signed(${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(to)}, ${normalizeAccountExpr(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
+      );
+      replaceCpi(
+        /let\s+cpi_accounts\s*=\s*MintTo\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts\s*\);\s*mint_to\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
+        (mint, to, authority, amount) =>
+          `spl_token_mint_to(${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(to)}, ${normalizeAccountExpr(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
+      );
+      replaceCpi(
+        /let\s+cpi_accounts\s*=\s*Burn\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*from:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new_with_signer\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts,\s*([\w\[\]&\s.]+?)\s*,\s*\);\s*burn\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
+        (mint, from, authority, signerSeeds, amount) =>
+          `spl_token_burn_signed(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
+      );
+      replaceCpi(
+        /let\s+cpi_accounts\s*=\s*Burn\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*from:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts\s*\);\s*burn\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
+        (mint, from, authority, amount) =>
+          `spl_token_burn(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
+      );
+      replaceCpi(
+        /let\s+ix\s*=\s*anchor_lang::solana_program::system_instruction::transfer\(\s*&([\w.]+)\.key\(\),\s*&([\w.]+)\.key\(\),\s*([\s\S]*?)\s*,\s*\);\s*anchor_lang::solana_program::program::invoke_signed\(\s*&ix,\s*&\[[\s\S]*?\],\s*(signer_seeds)\s*,\s*\)\?;/g,
+        (from, to, amount, signerSeeds) =>
+          `transfer_lamports_signed(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
+      );
 
       transformed = transformed.replace(
         /ctx\.accounts\.(\w+)\.is_some\(\)/g,
@@ -977,13 +1009,18 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           }
 
           const { prelude, code: bumpAdjustedRawCode } = replaceBumpRefs(rawCode);
-          const transformedRawCode = simplifyPassThroughCode(
+          let transformedRawCode = simplifyPassThroughCode(
             transformHelperCalls(
               normalizeKeyValueUsages(
                 transformAccountReferences(transformCtxAccountsReferences(transformNestedAnchorCode(bumpAdjustedRawCode)))
               )
             )
           );
+          transformedRawCode = transformedRawCode
+            .replace(/(?<!:)\bClock::get\(\)\?/g, qualifiedClockGetExpr())
+            .replace(/(?<!:)\bRent::get\(\)\?/g, qualifiedRentGetExpr())
+            .replace(/(?<!:)\bClock::get\(\)/g, qualifiedClockGetValueExpr())
+            .replace(/(?<!:)\bRent::get\(\)/g, qualifiedRentGetValueExpr());
           for (const preludeLine of prelude) {
             lines.push(preludeLine);
           }
@@ -1815,6 +1852,18 @@ ${fields}
     next = next.replace(/&\s*Account\s*<\s*(?:'?\w+\s*,\s*)?([\w:]+)\s*>/g, "&$1");
     next = next.replace(/->\s*Result<\s*\(\s*\)\s*>/g, "-> ProgramResult");
     next = next.replace(/->\s*Result<\s*([^>]+)\s*>/g, "-> Result<$1, ProgramError>");
+    next = next.replace(
+      /require!\(([\s\S]+?),\s*([\w:]+(?:::\w+)*)\s*\);/g,
+      (_full, condition: string, error: string) => emitRequireGuard(condition.trim(), error.trim(), "")
+    );
+    next = next.replace(
+      /emit!\(\s*(\w+)\s*\{\s*([\s\S]*?)\s*\}\s*\);/g,
+      (_full, event: string, fields: string) => this.emitEmit(event, fields).replace(/^    /gm, "")
+    );
+    next = next.replace(
+      /(^|[^\w:])msg!\(([\s\S]*?)\);/g,
+      (_full, prefix: string, message: string) => `${prefix}${this.emitMsg(cleanInlineExpr(message)).replace(/^    /gm, "")}`
+    );
     return next;
   }
 }

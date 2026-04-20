@@ -35,6 +35,8 @@ function collectCandidates(projectPath: string): string[] {
   const walk = (dir: string, depth: number): void => {
     if (depth > 4) return;
 
+    tryAdd(join(dir, "lib.rs"));
+    tryAdd(join(dir, "main.rs"));
     tryAdd(join(dir, "src/lib.rs"));
     tryAdd(join(dir, "src/main.rs"));
     tryAdd(join(dir, "program/src/lib.rs"));
@@ -58,7 +60,21 @@ function collectCandidates(projectPath: string): string[] {
     }
   }
 
-  return candidates;
+  const priority = (path: string): number => {
+    const normalized = path.replace(/\\/g, "/");
+    if (/(^|\/)programs\/[^/]+\/src\/lib\.rs$/.test(normalized)) return 0;
+    if (/(^|\/)program\/src\/lib\.rs$/.test(normalized)) return 1;
+    if (/(^|\/)src\/lib\.rs$/.test(normalized)) return 2;
+    if (/(^|\/)lib\.rs$/.test(normalized)) return 3;
+    if (/(^|\/)src\/main\.rs$/.test(normalized)) return 4;
+    if (/(^|\/)main\.rs$/.test(normalized)) return 5;
+    return 10;
+  };
+
+  return candidates.sort((a, b) => {
+    const score = priority(a) - priority(b);
+    return score !== 0 ? score : a.localeCompare(b);
+  });
 }
 
 export function resolveLocalSource(inputPath: string): LocalSourceResolution {

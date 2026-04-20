@@ -32,12 +32,13 @@ import type {
   BodyStatement,
 } from "../ir/schema.js";
 import { getParser } from "./ts-init.js";
-import type { SyntaxNode } from "./ts-init.js";
+import type { Parser, SyntaxNode } from "./ts-init.js";
 import {
   hasAttribute,
   hasDeriveAttribute,
   findDescendant,
   extractAccountAttrInner,
+  findTopLevelComma,
 } from "./ast-helpers.js";
 import { parseConstraints, parseInitMetadata } from "./constraint-parser.js";
 import { normalizeSolanaType } from "./utils.js";
@@ -97,7 +98,14 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
     );
 
     // ── Parse instructions ──
-    const instructions = parseInstructions(topLevel.programModule.node, topLevel.accountsStructs, topLevel.functionIndex, source);
+    const instructions = parseInstructions(
+      parser,
+      topLevel.programModule.node,
+      topLevel.accountsStructs,
+      topLevel.implMethods,
+      topLevel.functionIndex,
+      source,
+    );
 
     // ── Parse errors ──
     const errors = topLevel.errorEnums.flatMap((e) => parseErrorEnum(e.node, e.attrs));
@@ -155,6 +163,7 @@ interface TopLevelItems {
   accountDataStructs: { node: SyntaxNode; attrs: SyntaxNode[] }[];
   errorEnums: { node: SyntaxNode; attrs: SyntaxNode[] }[];
   helperFns: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[];
+  implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[];
   customTypes: { node: SyntaxNode; attrs: SyntaxNode[]; kind: "struct" | "enum" }[];
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[];
   constants: SyntaxNode[];
@@ -167,6 +176,7 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
     accountDataStructs: [],
     errorEnums: [],
     helperFns: [],
+    implMethods: [],
     customTypes: [],
     functionIndex: [],
     constants: [],
@@ -231,7 +241,19 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
           break;
         }
 
-        case "impl_item":
+        case "impl_item": {
+          const implName = extractImplTargetName(child);
+          const implBody = child.childForFieldName("body") ?? findDescendant(child, "declaration_list");
+          if (!implName || !implBody) break;
+          for (let j = 0; j < implBody.namedChildCount; j++) {
+            const implChild = implBody.namedChild(j);
+            if (!implChild || implChild.type !== "function_item") continue;
+            const methodName = implChild.childForFieldName("name")?.text;
+            if (!methodName) continue;
+            items.implMethods.push({ implName, name: methodName, node: implChild, modulePath });
+          }
+          break;
+        }
         case "use_declaration":
           break;
 
@@ -257,8 +279,10 @@ function extractModuleName(modNode: SyntaxNode): string {
 // ─── Instruction parsing ────────────────────────────────────────────────────
 
 function parseInstructions(
+  parser: Parser,
   programModNode: SyntaxNode,
   accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[] }[],
+  implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
   source: string,
 ): SolanaIR["instructions"] {
@@ -278,7 +302,7 @@ function parseInstructions(
     }
 
     if (child.type === "function_item") {
-      const instr = parseInstructionFn(child, accountsStructs, functionIndex, source);
+      const instr = parseInstructionFn(parser, child, accountsStructs, implMethods, functionIndex, source);
       if (instr) instructions.push(instr);
     }
 
@@ -289,8 +313,10 @@ function parseInstructions(
 }
 
 function parseInstructionFn(
+  parser: Parser,
   fnNode: SyntaxNode,
   accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[] }[],
+  implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
   source: string,
 ): SolanaIR["instructions"][0] | null {
@@ -322,8 +348,10 @@ function parseInstructionFn(
     ? parseAccountsStructFields(accountsStruct.node, accountsStruct.attrs)
     : [];
 
+  const expandedWrapper = expandAccountsMethodWrapper(parser, bodyFnNode, contextType, accounts, implMethods);
+
   // ── Classify the function body using AST ──
-  const bodyNode = bodyFnNode.childForFieldName("body");
+  const bodyNode = expandedWrapper?.bodyNode ?? bodyFnNode.childForFieldName("body");
   const bodyStatements: BodyStatement[] = bodyNode ? classifyBody(bodyNode) : [];
 
   // ── Enrich state_read with account types from context struct ──
@@ -337,7 +365,7 @@ function parseInstructionFn(
   }
 
   // ── Raw body text ──
-  const rawBody = bodyNode?.text ?? "";
+  const rawBody = expandedWrapper?.rawBody ?? bodyNode?.text ?? "";
 
   return {
     name: fnName,
@@ -364,6 +392,237 @@ function resolveHandlerWrapper(
     const name = entry.node.childForFieldName("name")?.text;
     return name === "handler" && entry.modulePath.join("::") === targetPath.join("::");
   }) ?? null;
+}
+
+interface AccountsMethodWrapperCall {
+  methodName: string;
+  argExprs: string[];
+}
+
+function parseAccountsMethodWrapper(bodyText: string): AccountsMethodWrapperCall | null {
+  const match = bodyText.trim().match(/^\{\s*ctx\.accounts\s*\.\s*(\w+)\s*\(([\s\S]*?)\)\s*;?\s*\}$/s);
+  if (!match?.[1]) return null;
+  return {
+    methodName: match[1],
+    argExprs: splitTopLevelArgs(match[2] ?? ""),
+  };
+}
+
+function splitTopLevelArgs(text: string): string[] {
+  const args: string[] = [];
+  let remaining = text.trim();
+  while (remaining.length > 0) {
+    const commaIdx = findTopLevelComma(remaining);
+    if (commaIdx === -1) {
+      const tail = remaining.trim();
+      if (tail) args.push(tail);
+      break;
+    }
+    const next = remaining.slice(0, commaIdx).trim();
+    if (next) args.push(next);
+    remaining = remaining.slice(commaIdx + 1).trim();
+  }
+  return args.filter(Boolean);
+}
+
+function extractImplTargetName(implNode: SyntaxNode): string | null {
+  const explicitType = implNode.childForFieldName("type")?.text;
+  if (explicitType) {
+    const explicitMatch = explicitType.match(/([A-Za-z_][A-Za-z0-9_]*)/);
+    if (explicitMatch?.[1]) return explicitMatch[1];
+  }
+
+  for (let i = 0; i < implNode.namedChildCount; i++) {
+    const child = implNode.namedChild(i);
+    if (!child) continue;
+    if (child.type === "generic_type" || child.type === "type_identifier" || child.type === "scoped_type_identifier") {
+      const match = child.text.match(/([A-Za-z_][A-Za-z0-9_]*)/);
+      if (match?.[1]) return match[1];
+    }
+  }
+
+  const textMatch = implNode.text.match(/^impl(?:<[^>]+>)?\s+([A-Za-z_][A-Za-z0-9_]*)/);
+  return textMatch?.[1] ?? null;
+}
+
+function parseMethodParameterNames(paramsNode: SyntaxNode): string[] {
+  const names: string[] = [];
+
+  for (let i = 0; i < paramsNode.namedChildCount; i++) {
+    const param = paramsNode.namedChild(i);
+    if (!param || param.type !== "parameter") continue;
+
+    const paramText = param.text.trim();
+    if (paramText === "&self" || paramText === "&mut self" || paramText === "self") continue;
+
+    const patternNode = param.childForFieldName("pattern");
+    if (!patternNode) continue;
+    const name = patternNode.text.replace(/^mut\s+/, "").replace(/^pub\s+/, "").trim();
+    if (name) names.push(name);
+  }
+
+  return names;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function replaceIdentifier(source: string, name: string, replacement: string): string {
+  return source.replace(new RegExp(`(?<!\\.)\\b${escapeRegExp(name)}\\b`, "g"), replacement);
+}
+
+function normalizeArgumentSubstitution(argExpr: string): string {
+  const trimmed = argExpr.trim();
+  return /^[A-Za-z_][A-Za-z0-9_:.]*$/.test(trimmed) ? trimmed : `(${trimmed})`;
+}
+
+function stripOuterBraces(blockText: string): string {
+  const trimmed = blockText.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function expandAccountsMethodWrapper(
+  parser: Parser,
+  fnNode: SyntaxNode,
+  contextType: string,
+  accounts: AccountRef[],
+  implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
+): { bodyNode: SyntaxNode; rawBody: string } | null {
+  const bodyNode = fnNode.childForFieldName("body");
+  if (!bodyNode || !contextType) return null;
+
+  const wrapper = parseAccountsMethodWrapper(bodyNode.text);
+  if (!wrapper) return null;
+
+  const scopedMethods = implMethods.filter((entry) => entry.implName === contextType);
+  if (scopedMethods.length === 0) return null;
+
+  const expandedBody = expandImplMethod(
+    wrapper.methodName,
+    wrapper.argExprs,
+    scopedMethods,
+    accounts,
+    new Set(),
+  );
+  if (!expandedBody) return null;
+
+  const synthetic = parser.parse(`fn __anvil_wrapper__() ${expandedBody}`);
+  if (!synthetic) return null;
+  const syntheticRoot = synthetic.rootNode;
+  const syntheticFn = findDescendant(syntheticRoot, "function_item");
+  const syntheticBody = syntheticFn?.childForFieldName("body");
+  if (!syntheticBody) return null;
+
+  return {
+    bodyNode: syntheticBody,
+    rawBody: syntheticBody.text,
+  };
+}
+
+function expandImplMethod(
+  methodName: string,
+  argExprs: string[],
+  implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
+  accounts: AccountRef[],
+  stack: Set<string>,
+): string | null {
+  const target = implMethods.find((entry) => entry.name === methodName);
+  if (!target) return null;
+
+  const stackKey = `${target.implName}::${methodName}`;
+  if (stack.has(stackKey)) return target.node.childForFieldName("body")?.text ?? null;
+
+  const paramsNode = target.node.childForFieldName("parameters");
+  const paramNames = paramsNode ? parseMethodParameterNames(paramsNode) : [];
+  let inner = stripOuterBraces(target.node.childForFieldName("body")?.text ?? "{}");
+
+  for (let i = 0; i < paramNames.length; i++) {
+    const paramName = paramNames[i];
+    const argExpr = argExprs[i];
+    if (!paramName || !argExpr) continue;
+    inner = replaceIdentifier(inner, paramName, normalizeArgumentSubstitution(argExpr));
+  }
+
+  stack.add(stackKey);
+  inner = inlineSelfMethodCalls(inner, implMethods, accounts, stack);
+  stack.delete(stackKey);
+
+  for (const account of accounts) {
+    inner = inner.replace(
+      new RegExp(`\\bself\\s*\\.\\s*${escapeRegExp(account.name)}\\b`, "g"),
+      `ctx.accounts.${account.name}`,
+    );
+  }
+
+  return `{\n${inner}\n}`;
+}
+
+function inlineSelfMethodCalls(
+  source: string,
+  implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
+  accounts: AccountRef[],
+  stack: Set<string>,
+): string {
+  let result = "";
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    const selfIdx = source.indexOf("self.", cursor);
+    if (selfIdx === -1) {
+      result += source.slice(cursor);
+      break;
+    }
+
+    result += source.slice(cursor, selfIdx);
+
+    const methodMatch = source.slice(selfIdx).match(/^self\.(\w+)\s*\(/);
+    if (!methodMatch?.[1]) {
+      result += "self.";
+      cursor = selfIdx + 5;
+      continue;
+    }
+
+    const methodName = methodMatch[1];
+    const openParenIdx = source.indexOf("(", selfIdx + 5 + methodName.length - 1);
+    if (openParenIdx === -1) {
+      result += source.slice(selfIdx);
+      break;
+    }
+
+    let depth = 0;
+    let closeParenIdx = -1;
+    for (let i = openParenIdx; i < source.length; i++) {
+      const ch = source[i];
+      if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+      if (depth === 0) {
+        closeParenIdx = i;
+        break;
+      }
+    }
+
+    if (closeParenIdx === -1) {
+      result += source.slice(selfIdx);
+      break;
+    }
+
+    const calleeArgs = splitTopLevelArgs(source.slice(openParenIdx + 1, closeParenIdx));
+    const expanded = expandImplMethod(methodName, calleeArgs, implMethods, accounts, stack);
+    if (!expanded) {
+      result += source.slice(selfIdx, closeParenIdx + 1);
+      cursor = closeParenIdx + 1;
+      continue;
+    }
+
+    result += expanded;
+    cursor = closeParenIdx + 1;
+  }
+
+  return result;
 }
 
 // ─── Parameter parsing ──────────────────────────────────────────────────────

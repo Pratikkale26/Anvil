@@ -169,7 +169,7 @@ function classifyLetDeclaration(
   }
 
   // ── Clock::get() sysvar ──
-  if (text.includes("Clock::get()")) {
+  if (valueNode && /^Clock::get\(\)/.test(valueNode.text.trim())) {
     return {
       stmt: {
         kind: "sysvar_clock",
@@ -180,7 +180,7 @@ function classifyLetDeclaration(
   }
 
   // ── Rent::get() sysvar ──
-  if (text.includes("Rent::get()")) {
+  if (valueNode && /^Rent::get\(\)/.test(valueNode.text.trim())) {
     return {
       stmt: {
         kind: "sysvar_rent",

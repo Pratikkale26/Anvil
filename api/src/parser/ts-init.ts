@@ -70,4 +70,5 @@ export function getParser(): Promise<Parser> {
 
 /** Re-export the Node type for use in other modules */
 export type SyntaxNode = Node;
+export type { Parser };
 export type { Tree };
