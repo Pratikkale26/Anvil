@@ -15,9 +15,11 @@ function pickProviderName(): "anthropic" | "gemini" {
   if (explicit === "anthropic" || explicit === "gemini") {
     return explicit;
   }
+  // Default to Anthropic; fall back to Gemini only when its key is present
+  // and Anthropic's is not.
   if (process.env.ANTHROPIC_API_KEY) return "anthropic";
   if (process.env.GEMINI_API_KEY) return "gemini";
-  throw new Error("Missing AI provider configuration: set ANTHROPIC_API_KEY or GEMINI_API_KEY");
+  throw new Error("Missing AI provider configuration: set ANTHROPIC_API_KEY (recommended) or GEMINI_API_KEY");
 }
 
 export function getAIProvider(): { provider: LLMProvider; repairModel: string } {
@@ -27,13 +29,13 @@ export function getAIProvider(): { provider: LLMProvider; repairModel: string } 
     const apiKey = requiredEnv("ANTHROPIC_API_KEY");
     return {
       provider: new AnthropicProvider(apiKey),
-      repairModel: process.env.AI_MODEL_REPAIR ?? "claude-sonnet-4-6",
+      repairModel: process.env.AI_REPAIR_MODEL ?? "claude-sonnet-4-20250514",
     };
   }
 
   const apiKey = requiredEnv("GEMINI_API_KEY");
   return {
     provider: new GeminiProvider(apiKey),
-    repairModel: process.env.AI_MODEL_REPAIR ?? "gemini-2.5-flash",
+    repairModel: process.env.AI_REPAIR_MODEL ?? "gemini-2.5-flash",
   };
 }
