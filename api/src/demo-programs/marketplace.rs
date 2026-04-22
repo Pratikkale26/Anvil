@@ -35,6 +35,7 @@ pub mod marketplace {
         listing.seed = seed;
         listing.bump = ctx.bumps.listing;
         listing.marketplace = ctx.accounts.marketplace.key();
+        listing.vault = ctx.accounts.vault.key();
         listing.is_active = true;
 
         let marketplace = &mut ctx.accounts.marketplace;
@@ -287,6 +288,7 @@ pub struct Delist<'info> {
         seeds = [b"listing", seller.key().as_ref(), &listing.seed.to_le_bytes()],
         bump = listing.bump,
         close = seller,
+        has_one = marketplace @ MarketplaceError::Unauthorized,
     )]
     pub listing: Account<'info, Listing>,
 
@@ -297,7 +299,10 @@ pub struct Delist<'info> {
     )]
     pub marketplace: Account<'info, Marketplace>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = vault.key() == listing.vault @ MarketplaceError::InvalidVault,
+    )]
     pub vault: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
@@ -329,6 +334,7 @@ pub struct Purchase<'info> {
         seeds = [b"listing", seller.key().as_ref(), &listing.seed.to_le_bytes()],
         bump = listing.bump,
         close = seller,
+        has_one = marketplace @ MarketplaceError::Unauthorized,
     )]
     pub listing: Account<'info, Listing>,
 
@@ -346,7 +352,10 @@ pub struct Purchase<'info> {
     )]
     pub treasury: UncheckedAccount<'info>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = vault.key() == listing.vault @ MarketplaceError::InvalidVault,
+    )]
     pub vault: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
@@ -390,11 +399,12 @@ pub struct Listing {
     pub seed: u64,
     pub bump: u8,
     pub marketplace: Pubkey,
+    pub vault: Pubkey,
     pub is_active: bool,
 }
 
 impl Listing {
-    pub const LEN: usize = 32 + 32 + 8 + 8 + 1 + 32 + 1; // = 114
+    pub const LEN: usize = 32 + 32 + 8 + 8 + 1 + 32 + 32 + 1; // = 146
 }
 
 // ── Errors ───────────────────────────────────────────────────────────────────
@@ -413,4 +423,6 @@ pub enum MarketplaceError {
     Overflow,
     #[msg("Arithmetic underflow")]
     Underflow,
+    #[msg("Invalid vault account")]
+    InvalidVault,
 }

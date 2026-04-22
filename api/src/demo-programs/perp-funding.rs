@@ -196,7 +196,8 @@ pub mod perp_funding {
         let vault_seeds = &[
             VAULT_SEED,
             market_key.as_ref(),
-            &[ctx.accounts.vault_bump_holder.bump],
+            b"auth",
+            &[ctx.bumps.vault_bump_cpi],
         ];
         token::transfer(
             CpiContext::new_with_signer(
@@ -302,7 +303,7 @@ pub mod perp_funding {
 
         // Move fee portion to fee vault
         let market_key = market.key();
-        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), &[ctx.bumps.vault_bump_cpi]];
+        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), b"auth", &[ctx.bumps.vault_bump_cpi]];
         token::transfer(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
@@ -432,7 +433,7 @@ pub mod perp_funding {
 
         // ── Transfer payout ────────────────────────────────────────────────────
         let market_key = market.key();
-        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), &[ctx.bumps.vault_bump_cpi]];
+        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), b"auth", &[ctx.bumps.vault_bump_cpi]];
 
         if actual_payout > 0 {
             token::transfer(
@@ -555,7 +556,7 @@ pub mod perp_funding {
         require!(margin_ratio > MAINT_MARGIN_BPS, FundingError::WouldBeLiquidatable);
 
         let market_key = ctx.accounts.market.key();
-        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), &[ctx.bumps.vault_bump_cpi]];
+        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), b"auth", &[ctx.bumps.vault_bump_cpi]];
 
         token::transfer(
             CpiContext::new_with_signer(
@@ -641,7 +642,7 @@ pub mod perp_funding {
         let insurance_payout = insurance_fee.min(vault_balance.saturating_sub(liquidator_payout));
 
         let market_key = market.key();
-        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), &[ctx.bumps.vault_bump_cpi]];
+        let vault_seeds = &[VAULT_SEED, market_key.as_ref(), b"auth", &[ctx.bumps.vault_bump_cpi]];
 
         // Pay liquidator
         if liquidator_payout > 0 {
@@ -750,7 +751,7 @@ pub mod perp_funding {
         require!(amount <= fee_balance, FundingError::InsufficientFees);
 
         let market_key = ctx.accounts.market.key();
-        let fee_vault_seeds = &[FEE_VAULT_SEED, market_key.as_ref(), &[ctx.bumps.fee_vault_bump]];
+        let fee_vault_seeds = &[FEE_VAULT_SEED, market_key.as_ref(), b"auth", &[ctx.bumps.fee_vault_bump]];
 
         token::transfer(
             CpiContext::new_with_signer(
@@ -967,7 +968,7 @@ fn get_fee_tier(current_oi: u64) -> (u64, u64) {
 
 // ─── Signed Amount Helper ────────────────────────────────────────────────────
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, AnchorSerialize, AnchorDeserialize)]
 pub enum SignedAmount {
     Positive(u64),
     Negative(u64),
@@ -1175,8 +1176,9 @@ pub struct WithdrawLiquidity<'info> {
     /// CHECK: vault PDA authority
     pub vault_authority: UncheckedAccount<'info>,
 
-    /// Holds the bump for the vault authority PDA — see note in VaultBumpHolder
-    pub vault_bump_holder: Account<'info, VaultBumpHolder>,
+    #[account(seeds = [VAULT_SEED, market.key().as_ref(), b"auth"], bump)]
+    /// CHECK: vault auth pda — bump captured via ctx.bumps
+    pub vault_bump_cpi: UncheckedAccount<'info>,
 
     #[account(
         mut,
@@ -1189,7 +1191,7 @@ pub struct WithdrawLiquidity<'info> {
         mut,
         seeds = [LP_POSITION_SEED, market.key().as_ref(), provider.key().as_ref()],
         bump = lp_position.bump,
-        has_one = owner @ FundingError::Unauthorized,
+        constraint = lp_position.owner == provider.key() @ FundingError::Unauthorized,
     )]
     pub lp_position: Account<'info, LpPosition>,
 

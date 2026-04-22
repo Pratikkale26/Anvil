@@ -9,6 +9,7 @@ pub mod escrow {
     pub fn create_escrow(
         ctx: Context<CreateEscrow>,
         seed: u64,
+        deposit_amount: u64,
         receive_amount: u64,
     ) -> Result<()> {
         let escrow = &mut ctx.accounts.escrow;
@@ -29,7 +30,7 @@ pub mod escrow {
                     authority: ctx.accounts.maker.to_account_info(),
                 },
             ),
-            ctx.accounts.maker_ata_a.amount,
+            deposit_amount,
         )?;
         Ok(())
     }
@@ -70,6 +71,20 @@ pub mod escrow {
             ),
             ctx.accounts.vault.amount,
         )?;
+
+        // Close the vault token account and return rent to maker
+        anchor_spl::token::close_account(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                anchor_spl::token::CloseAccount {
+                    account: ctx.accounts.vault.to_account_info(),
+                    destination: ctx.accounts.maker.to_account_info(),
+                    authority: ctx.accounts.escrow.to_account_info(),
+                },
+                signer_seeds,
+            ),
+        )?;
+
         Ok(())
     }
 
@@ -96,12 +111,26 @@ pub mod escrow {
             ),
             ctx.accounts.vault.amount,
         )?;
+
+        // Close the vault token account and return rent to maker
+        anchor_spl::token::close_account(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                anchor_spl::token::CloseAccount {
+                    account: ctx.accounts.vault.to_account_info(),
+                    destination: ctx.accounts.maker.to_account_info(),
+                    authority: ctx.accounts.escrow.to_account_info(),
+                },
+                signer_seeds,
+            ),
+        )?;
+
         Ok(())
     }
 }
 
 #[derive(Accounts)]
-#[instruction(seed: u64)]
+#[instruction(seed: u64, deposit_amount: u64)]
 pub struct CreateEscrow<'info> {
     #[account(mut)]
     pub maker: Signer<'info>,

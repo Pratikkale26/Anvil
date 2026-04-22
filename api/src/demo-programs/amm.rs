@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Mint, Transfer, MintTo, Burn};
-use anchor_lang::solana_program::clock::Clock;
 
 declare_id!("AMM111111111111111111111111111111111111111111");
 
@@ -322,57 +321,36 @@ pub mod amm {
         ];
         let signer_seeds = &[&pool_seeds[..]];
 
-        if a_to_b {
-            token::transfer(
-                CpiContext::new(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: ctx.accounts.user_token_in.to_account_info(),
-                        to: ctx.accounts.vault_in.to_account_info(),
-                        authority: ctx.accounts.user.to_account_info(),
-                    },
-                ),
-                amount_in,
-            )?;
-
-            token::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: ctx.accounts.vault_out.to_account_info(),
-                        to: ctx.accounts.user_token_out.to_account_info(),
-                        authority: ctx.accounts.pool.to_account_info(),
-                    },
-                    signer_seeds,
-                ),
-                amount_out,
-            )?;
+        let (vault_in, vault_out) = if a_to_b {
+            (ctx.accounts.vault_a.to_account_info(), ctx.accounts.vault_b.to_account_info())
         } else {
-            token::transfer(
-                CpiContext::new(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: ctx.accounts.user_token_in.to_account_info(),
-                        to: ctx.accounts.vault_in.to_account_info(),
-                        authority: ctx.accounts.user.to_account_info(),
-                    },
-                ),
-                amount_in,
-            )?;
+            (ctx.accounts.vault_b.to_account_info(), ctx.accounts.vault_a.to_account_info())
+        };
 
-            token::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: ctx.accounts.vault_out.to_account_info(),
-                        to: ctx.accounts.user_token_out.to_account_info(),
-                        authority: ctx.accounts.pool.to_account_info(),
-                    },
-                    signer_seeds,
-                ),
-                amount_out,
-            )?;
-        }
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.user_token_in.to_account_info(),
+                    to: vault_in,
+                    authority: ctx.accounts.user.to_account_info(),
+                },
+            ),
+            amount_in,
+        )?;
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: vault_out,
+                    to: ctx.accounts.user_token_out.to_account_info(),
+                    authority: ctx.accounts.pool.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            amount_out,
+        )?;
 
         let pool = &mut ctx.accounts.pool;
         if a_to_b {
@@ -579,17 +557,17 @@ pub struct Swap<'info> {
     )]
     pub pool: Account<'info, AmmPool>,
 
-    #[account(mut)]
+    #[account(mut, token::authority = user)]
     pub user_token_in: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(mut, token::authority = user)]
     pub user_token_out: Account<'info, TokenAccount>,
 
     #[account(mut, seeds = [b"vault_a", pool.key().as_ref()], bump = pool.vault_a_bump)]
-    pub vault_in: Account<'info, TokenAccount>,
+    pub vault_a: Account<'info, TokenAccount>,
 
     #[account(mut, seeds = [b"vault_b", pool.key().as_ref()], bump = pool.vault_b_bump)]
-    pub vault_out: Account<'info, TokenAccount>,
+    pub vault_b: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
 }

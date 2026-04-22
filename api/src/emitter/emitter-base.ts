@@ -841,6 +841,28 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           `transfer_lamports_signed(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
 
+      // Convert var.set_inner(TypeName { field: value, ... }) into individual field assignments
+      transformed = transformed.replace(
+        /(\w+)\.set_inner\(\s*(\w+)\s*\{([\s\S]*?)\}\s*\);?/g,
+        (_full, localVar: string, _typeName: string, fieldsStr: string) => {
+          const assignments = fieldsStr
+            .split(",")
+            .map(f => f.trim())
+            .filter(f => f.length > 0)
+            .map(f => {
+              const colonIdx = f.indexOf(":");
+              if (colonIdx !== -1) {
+                const fieldName = f.slice(0, colonIdx).trim();
+                const fieldValue = f.slice(colonIdx + 1).trim();
+                return `${localVar}.${fieldName} = ${fieldValue};`;
+              }
+              // Shorthand: field name equals variable name
+              return `${localVar}.${f} = ${f};`;
+            });
+          return assignments.join("\n    ");
+        }
+      );
+
       transformed = transformed.replace(
         /ctx\.accounts\.(\w+)\.is_some\(\)/g,
         (_full, name: string) => `${snakeCase(name)}.is_some()`
@@ -1084,6 +1106,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             lines.push(signerSeedsPrelude);
           }
 
+          // Strip .to_account_info() — not available in pinocchio/quasar
+          if (this.frameworkName !== "Native") {
+            transformedRawCode = transformedRawCode.replace(/\.to_account_info\(\)/g, '');
+          }
+
           // Don't add extra semicolons if the code already ends with one, with }, or with )
           let code: string;
           if (transformedRawCode.endsWith(";") || transformedRawCode.endsWith("}") || transformedRawCode.endsWith(");")) {
@@ -1105,6 +1132,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           // Skip program accounts (system_program, token_program, etc.)
           // They don't need from_account_info — they're just passed as AccountInfo
           if (isProgramAccount(stmt.accountType || "")) {
+            break;
+          }
+          // Skip unknown/unresolved types — emitting Unknown::from_account_info() would
+          // cause a compile failure. Just bind the account name without deserialization.
+          if (!stmt.accountType || stmt.accountType === "Unknown" || !isGeneratedStateType(stmt.accountType)) {
             break;
           }
           const accountName = snakeCase(stmt.account);
@@ -1539,6 +1571,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
         .map_err(|_| ProgramError::InvalidInstructionData)?;`;
       default:
+        // Handle Option<T> types — Borsh format: first byte 0=None, 1=Some, then inner value
+        if (arg.type.startsWith("Option<") && arg.type.endsWith(">")) {
+          return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;`;
+        }
         if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(arg.type)) {
           return `    if remaining.len() < ${size} {
         return Err(ProgramError::InvalidInstructionData);
@@ -1861,6 +1898,14 @@ ${fields}
         this.emitAccountKeyAsRefExpr(snakeCase(name))
       )
       .replace(/ctx\.accounts\.(\w+)\.key\.as_ref\(\)/g, (_full, name: string) =>
+        this.emitAccountKeyAsRefExpr(snakeCase(name))
+      )
+      // Catch non-prefixed .key().as_ref() forms (e.g. authority.key().as_ref())
+      .replace(/(\w+)\.key\(\)\.as_ref\(\)/g, (_full, name: string) =>
+        this.emitAccountKeyAsRefExpr(snakeCase(name))
+      )
+      // Catch non-prefixed .key.as_ref() forms (e.g. authority.key.as_ref())
+      .replace(/(\w+)\.key\.as_ref\(\)/g, (_full, name: string) =>
         this.emitAccountKeyAsRefExpr(snakeCase(name))
       );
   }

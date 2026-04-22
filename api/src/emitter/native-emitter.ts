@@ -416,7 +416,14 @@ ${writeLines}
   }
 
   override emitErrorEnum(ir: SolanaIR): string {
-    const variants = ir.errors
+    // Deduplicate error variants by name (keep first occurrence)
+    const seen = new Set<string>();
+    const dedupedErrors = ir.errors.filter(e => {
+      if (seen.has(e.name)) return false;
+      seen.add(e.name);
+      return true;
+    });
+    const variants = dedupedErrors
       .map((e) => `    /// ${e.msg}\n    ${e.name} = ${e.code},`)
       .join("\n");
 

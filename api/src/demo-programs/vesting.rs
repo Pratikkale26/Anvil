@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
 declare_id!("Vest111111111111111111111111111111111111111");
 
@@ -234,7 +234,7 @@ pub struct CreateVesting<'info> {
     )]
     pub vault: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(mut, token::mint = mint, token::authority = grantor)]
     pub grantor_token_account: Account<'info, TokenAccount>,
 
     pub mint: Account<'info, Mint>,
@@ -262,7 +262,7 @@ pub struct Release<'info> {
     )]
     pub vault: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(mut, token::mint = vesting.mint)]
     pub beneficiary_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
@@ -287,7 +287,7 @@ pub struct Revoke<'info> {
     )]
     pub vault: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(mut, token::mint = vesting.mint)]
     pub grantor_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
@@ -314,7 +314,7 @@ pub struct Close<'info> {
     )]
     pub vault: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(mut, token::mint = vesting.mint)]
     pub grantor_token_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,

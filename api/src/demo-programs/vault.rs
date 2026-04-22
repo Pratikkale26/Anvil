@@ -22,7 +22,7 @@ pub mod vault {
         let cpi_ctx = CpiContext::new(
             ctx.accounts.system_program.to_account_info(),
             anchor_lang::system_program::Transfer {
-                from: ctx.accounts.user.to_account_info(),
+                from: ctx.accounts.authority.to_account_info(),
                 to: ctx.accounts.vault.to_account_info(),
             },
         );
@@ -52,7 +52,7 @@ pub mod vault {
             ctx.accounts.system_program.to_account_info(),
             anchor_lang::system_program::Transfer {
                 from: ctx.accounts.vault.to_account_info(),
-                to: ctx.accounts.user.to_account_info(),
+                to: ctx.accounts.authority.to_account_info(),
             },
             signer_seeds,
         );
@@ -96,7 +96,7 @@ pub struct VaultAction<'info> {
         bump = vault_state.bump
     )]
     pub vault_state: Account<'info, VaultState>,
-    /// CHECK: PDA vault
+    /// CHECK: PDA that holds SOL
     #[account(
         mut,
         seeds = [b"vault", authority.key().as_ref()],
@@ -104,8 +104,7 @@ pub struct VaultAction<'info> {
     )]
     pub vault: UncheckedAccount<'info>,
     #[account(mut)]
-    pub user: Signer<'info>,
-    pub authority: SystemAccount<'info>,
+    pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 

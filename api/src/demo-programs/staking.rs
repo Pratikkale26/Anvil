@@ -92,15 +92,17 @@ pub mod staking {
 
         let elapsed = now
             .checked_sub(user_stake.last_claim)
-            .ok_or(StakingError::Underflow)?;
+            .ok_or(StakingError::Underflow)? as u64;
 
-        let rewards = (user_stake.amount as i64)
-            .checked_mul(elapsed)
+        let rewards: u64 = (user_stake.amount as u128)
+            .checked_mul(elapsed as u128)
             .ok_or(StakingError::Overflow)?
-            .checked_mul(pool.reward_rate as i64)
+            .checked_mul(pool.reward_rate as u128)
             .ok_or(StakingError::Overflow)?
             .checked_div(1_000_000)
-            .ok_or(StakingError::Overflow)? as u64;
+            .ok_or(StakingError::Overflow)?
+            .try_into()
+            .map_err(|_| error!(StakingError::Overflow))?;
 
         require!(rewards > 0, StakingError::NoRewards);
 
@@ -153,15 +155,17 @@ pub mod staking {
 
         let elapsed = now
             .checked_sub(user_stake.last_claim)
-            .ok_or(StakingError::Underflow)?;
+            .ok_or(StakingError::Underflow)? as u64;
 
-        let pending_rewards = (user_stake.amount as i64)
-            .checked_mul(elapsed)
+        let pending_rewards: u64 = (user_stake.amount as u128)
+            .checked_mul(elapsed as u128)
             .ok_or(StakingError::Overflow)?
-            .checked_mul(pool.reward_rate as i64)
+            .checked_mul(pool.reward_rate as u128)
             .ok_or(StakingError::Overflow)?
             .checked_div(1_000_000)
-            .ok_or(StakingError::Overflow)? as u64;
+            .ok_or(StakingError::Overflow)?
+            .try_into()
+            .map_err(|_| error!(StakingError::Overflow))?;
 
         let stake_seeds = &[
             b"pool",
@@ -216,28 +220,16 @@ pub mod staking {
     }
 
     pub fn pause_pool(ctx: Context<AdminOnly>) -> Result<()> {
-        require!(
-            ctx.accounts.pool.admin == ctx.accounts.admin.key(),
-            StakingError::Unauthorized
-        );
         ctx.accounts.pool.is_paused = true;
         Ok(())
     }
 
     pub fn resume_pool(ctx: Context<AdminOnly>) -> Result<()> {
-        require!(
-            ctx.accounts.pool.admin == ctx.accounts.admin.key(),
-            StakingError::Unauthorized
-        );
         ctx.accounts.pool.is_paused = false;
         Ok(())
     }
 
     pub fn update_reward_rate(ctx: Context<AdminOnly>, new_rate: u64) -> Result<()> {
-        require!(
-            ctx.accounts.pool.admin == ctx.accounts.admin.key(),
-            StakingError::Unauthorized
-        );
         require!(new_rate > 0, StakingError::InvalidRewardRate);
         ctx.accounts.pool.reward_rate = new_rate;
         Ok(())
@@ -401,12 +393,12 @@ pub struct Unstake<'info> {
 pub struct AdminOnly<'info> {
     #[account(
         mut,
+        has_one = admin,
         seeds = [b"pool", pool.stake_mint.as_ref()],
         bump = pool.bump,
     )]
     pub pool: Account<'info, StakingPool>,
 
-    #[account(mut)]
     pub admin: Signer<'info>,
 }
 
