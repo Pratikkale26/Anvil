@@ -44,9 +44,9 @@ export function useAnvilPipeline() {
   const [singleFileCode, setSingleFileCode] = useState("");
   const [outputFiles, setOutputFiles] = useState<EmitFile[]>([]);
   const [programName, setProgramName] = useState("anvil-output");
-  const [activePane, setActivePane] = useState<"single" | "ir" | "files">(
-    "single"
-  );
+  const [activePane, setActivePane] = useState<
+    "source" | "single" | "files" | "ir" | "diff"
+  >("single");
   const [activeFilePath, setActiveFilePath] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
@@ -138,11 +138,15 @@ export function useAnvilPipeline() {
   const comparePatchedContent = activeRefinePatch?.patchedContent ?? "";
 
   const activeContent =
-    activePane === "ir"
-      ? irText
-      : activePane === "files"
-        ? selectedFileContent
-        : singleFileCode;
+    activePane === "source"
+      ? resolvedSource ?? ""
+      : activePane === "ir"
+        ? irText
+        : activePane === "files"
+          ? selectedFileContent
+          : activePane === "diff"
+            ? singleFileCode
+            : singleFileCode;
 
   const hasOutput = !!(singleFileCode || irText);
   const strictValidated =
@@ -425,6 +429,9 @@ export function useAnvilPipeline() {
     setRepoRef,
     repoSubpath,
     setRepoSubpath,
+
+    // Resolved source
+    resolvedSource,
 
     // Output
     irText,

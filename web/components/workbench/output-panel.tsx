@@ -53,6 +53,7 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     downloadSingleFile,
     downloadProjectBundle,
     downloadDiagnostics,
+    resolvedSource,
   } = state;
 
   const tm = TARGET_META[target];
@@ -144,6 +145,11 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
       {/* Tabs */}
       <div className="flex gap-1 px-5 pt-2.5 border-b border-anvil-line overflow-x-auto">
         <PaneTab
+          active={activePane === "source"}
+          onClick={() => setActivePane("source")}
+          label="Source"
+        />
+        <PaneTab
           active={activePane === "single"}
           onClick={() => setActivePane("single")}
           label="Single file"
@@ -157,6 +163,11 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
           active={activePane === "ir"}
           onClick={() => setActivePane("ir")}
           label="IR"
+        />
+        <PaneTab
+          active={activePane === "diff"}
+          onClick={() => setActivePane("diff")}
+          label="Diff"
         />
       </div>
 
@@ -256,6 +267,89 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
               </div>
             </div>
           )}
+
+          {/* Source tab */}
+          {activePane === "source" &&
+            (resolvedSource ? (
+              <div style={{ height: editorHeight }}>
+                <Editor
+                  height={`${editorHeight}px`}
+                  language="rust"
+                  value={resolvedSource}
+                  theme="vs-dark"
+                  options={MONACO_OPTS}
+                />
+              </div>
+            ) : (
+              <div
+                className="flex flex-col items-center justify-center gap-3.5"
+                style={{ height: editorHeight }}
+              >
+                <FileCode2 size={32} className="text-anvil-text-dim" />
+                <div className="text-sm text-anvil-text-muted">
+                  No Anchor source available
+                </div>
+                <div className="text-xs text-anvil-text-dim">
+                  Source is captured when you run the pipeline
+                </div>
+              </div>
+            ))}
+
+          {/* Diff tab — side-by-side Anchor source vs generated output */}
+          {activePane === "diff" &&
+            (resolvedSource && singleFileCode ? (
+              <div
+                className={cn(
+                  "grid",
+                  isMobile ? "grid-cols-1" : "grid-cols-2"
+                )}
+              >
+                <div
+                  className={cn(!isMobile && "border-r border-anvil-line")}
+                >
+                  <div className="px-3.5 py-2.5 text-xs font-bold text-anvil-text-sub border-b border-anvil-line">
+                    Anchor Source
+                  </div>
+                  <Editor
+                    height={`${editorHeight - 33}px`}
+                    language="rust"
+                    value={resolvedSource}
+                    theme="vs-dark"
+                    options={MONACO_OPTS}
+                  />
+                </div>
+                <div>
+                  <div
+                    className="px-3.5 py-2.5 text-xs font-bold border-b border-anvil-line"
+                    style={{ color: tm.color }}
+                  >
+                    Generated {tm.label}
+                  </div>
+                  <Editor
+                    height={`${editorHeight - 33}px`}
+                    language="rust"
+                    value={singleFileCode}
+                    theme="vs-dark"
+                    options={MONACO_OPTS}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div
+                className="flex flex-col items-center justify-center gap-3.5"
+                style={{ height: editorHeight }}
+              >
+                <TerminalSquare size={32} className="text-anvil-text-dim" />
+                <div className="text-sm text-anvil-text-muted">
+                  {!resolvedSource
+                    ? "No Anchor source available for comparison"
+                    : "No generated output yet"}
+                </div>
+                <div className="text-xs text-anvil-text-dim">
+                  Run the pipeline to see the source transformation
+                </div>
+              </div>
+            ))}
 
           {/* Single file tab */}
           {activePane === "single" && (

@@ -12,6 +12,7 @@ import {
   Copy,
   Cpu,
   FileCode2,
+  ExternalLink,
   Layers3,
   Loader2,
   Rocket,
@@ -20,7 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+// --- Types ------------------------------------------------------------------
 
 type Target = "pinocchio" | "quasar" | "native";
 type DemoName = "counter" | "vault" | "escrow" | "staking";
@@ -28,15 +29,15 @@ type PipelineStage = "idle" | "fetching" | "parsing" | "generating" | "done" | "
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
-// ─── Color palette (readable) ────────────────────────────────────────────────
+// --- Color palette (readable) -----------------------------------------------
 const C = {
   bg: "#0d0f1a",
   card: "#131520",
   cardBorder: "rgba(255,255,255,0.09)",
-  text: "#e8ecf4",        // main body text
-  textSub: "#9095b0",        // secondary text — readable
-  textMuted: "#5c6080",        // tertiary / placeholder
-  textDim: "#3e4260",        // very muted — e.g. empty states
+  text: "#e8ecf4",
+  textSub: "#9095b0",
+  textMuted: "#5c6080",
+  textDim: "#3e4260",
   amber: "#f5a623",
   amberLight: "#ffcf6e",
   teal: "#0ea880",
@@ -44,7 +45,7 @@ const C = {
   line: "rgba(255,255,255,0.07)",
 };
 
-// ─── Demo metadata ───────────────────────────────────────────────────────────
+// --- Demo metadata ----------------------------------------------------------
 
 const DEMOS: Record<DemoName, {
   title: string;
@@ -109,8 +110,8 @@ const TARGETS: { id: Target; label: string; color: string; tagline: string; avai
 
 const STAGES: { id: PipelineStage; label: string; sublabel: string }[] = [
   { id: "fetching", label: "Load fixture", sublabel: "GET /demo/:name" },
-  { id: "parsing", label: "Parse IR", sublabel: "Anchor → SolanaIR" },
-  { id: "generating", label: "Emit code", sublabel: "IR → Rust" },
+  { id: "parsing", label: "Parse IR", sublabel: "Anchor -> SolanaIR" },
+  { id: "generating", label: "Emit code", sublabel: "IR -> Rust" },
   { id: "done", label: "Complete", sublabel: "Code ready" },
 ];
 
@@ -138,7 +139,7 @@ const LANDING_MONACO_OPTS = {
   fontFamily: "SFMono-Regular, 'JetBrains Mono', 'Fira Code', Menlo, monospace",
 };
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// --- Main -------------------------------------------------------------------
 
 export default function Home() {
   const [demo, setDemo] = useState<DemoName>("counter");
@@ -146,10 +147,11 @@ export default function Home() {
   const [stage, setStage] = useState<PipelineStage>("idle");
   const [code, setCode] = useState("");
   const [ir, setIr] = useState("");
+  const [sourceCode, setSourceCode] = useState("");
   const [cuData, setCuData] = useState(DEMOS.counter.cuSummary);
   const [copied, setCopied] = useState(false);
   const [apiOk, setApiOk] = useState(false);
-  const [activeTab, setActiveTab] = useState<"code" | "ir">("code");
+  const [activeTab, setActiveTab] = useState<"source" | "code" | "ir">("code");
   const abortRef = useRef<AbortController | null>(null);
   const [viewportWidth, setViewportWidth] = useState(1280);
 
@@ -167,7 +169,7 @@ export default function Home() {
 
   useEffect(() => {
     setCuData(DEMOS[demo].cuSummary);
-    setCode(""); setIr(""); setStage("idle");
+    setCode(""); setIr(""); setSourceCode(""); setStage("idle");
   }, [demo]);
 
   useEffect(() => {
@@ -203,12 +205,15 @@ export default function Home() {
     abortRef.current?.abort();
     abortRef.current = new AbortController();
     const signal = abortRef.current.signal;
-    setStage("fetching"); setCode(""); setIr("");
+    setStage("fetching"); setCode(""); setIr(""); setSourceCode("");
     try {
       await sleep(300);
       const demoRes = await fetch(`${API_BASE}/demo/${demo}`, { cache: "no-store", signal });
       if (!demoRes.ok) throw new Error("Failed to load demo.");
       const demoPayload = await demoRes.json();
+      if (demoPayload.source) {
+        setSourceCode(demoPayload.source);
+      }
       setStage("parsing"); await sleep(600);
       setIr(JSON.stringify(demoPayload.ir, null, 2));
       setStage("generating"); await sleep(400);
@@ -235,7 +240,7 @@ export default function Home() {
   }, [demo, target, stage]);
 
   async function copy() {
-    const text = activeTab === "code" ? code : ir;
+    const text = activeTab === "code" ? code : activeTab === "ir" ? ir : sourceCode;
     if (!text) return;
     await navigator.clipboard.writeText(text).catch(() => { });
     setCopied(true); setTimeout(() => setCopied(false), 1800);
@@ -246,47 +251,51 @@ export default function Home() {
   const isMobile = viewportWidth < 760;
   const outputHeight = isMobile ? 420 : 560;
 
+  const activeTabValue = activeTab === "code" ? code : activeTab === "ir" ? ir : sourceCode;
+  const activeTabLang = activeTab === "ir" ? "json" : "rust";
+
   return (
-    <main style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
+    <main className="min-h-screen" style={{ background: C.bg, color: C.text }}>
       {/* Ambient */}
-      <div style={{ position: "fixed", inset: 0, zIndex: -10, overflow: "hidden", pointerEvents: "none" }}>
-        <div style={{ position: "absolute", top: "-10%", left: "-5%", width: "50%", height: "50%", background: "radial-gradient(circle, rgba(245,166,35,0.07) 0%, transparent 70%)" }} />
-        <div style={{ position: "absolute", top: "35%", right: "-10%", width: "45%", height: "45%", background: "radial-gradient(circle, rgba(14,168,128,0.055) 0%, transparent 70%)" }} />
-        <div style={{ position: "absolute", bottom: 0, left: "30%", width: "40%", height: "40%", background: "radial-gradient(circle, rgba(107,123,255,0.045) 0%, transparent 70%)" }} />
-        <div style={{ position: "absolute", inset: 0, backgroundImage: "linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)", backgroundSize: "64px 64px" }} />
+      <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+        <div className="absolute" style={{ top: "-10%", left: "-5%", width: "50%", height: "50%", background: "radial-gradient(circle, rgba(245,166,35,0.07) 0%, transparent 70%)" }} />
+        <div className="absolute" style={{ top: "35%", right: "-10%", width: "45%", height: "45%", background: "radial-gradient(circle, rgba(14,168,128,0.055) 0%, transparent 70%)" }} />
+        <div className="absolute" style={{ bottom: 0, left: "30%", width: "40%", height: "40%", background: "radial-gradient(circle, rgba(107,123,255,0.045) 0%, transparent 70%)" }} />
+        <div className="absolute inset-0" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)", backgroundSize: "64px 64px" }} />
       </div>
 
-      <div style={{ maxWidth: 1280, margin: "0 auto", padding: isMobile ? "0 16px" : "0 28px" }}>
+      <div className="mx-auto" style={{ maxWidth: 1280, padding: isMobile ? "0 16px" : "0 28px" }}>
 
         {/* Nav */}
-        <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "20px 0 16px", borderBottom: `1px solid ${C.line}` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 38, height: 38, borderRadius: 11, background: "linear-gradient(135deg, #f5a623, #e8820a)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <nav className="flex items-center justify-between flex-wrap" style={{ gap: 12, padding: "20px 0 16px", borderBottom: `1px solid ${C.line}` }}>
+          <div className="flex items-center" style={{ gap: 12 }}>
+            <div className="flex items-center justify-center" style={{ width: 38, height: 38, borderRadius: 11, background: "linear-gradient(135deg, #f5a623, #e8820a)" }}>
               <Sparkles size={17} style={{ color: "#fff" }} />
             </div>
             <div>
-              <div style={{ fontWeight: 800, fontSize: 16, letterSpacing: "0.1em", color: C.text }}>ANVIL</div>
-              <div style={{ fontSize: 12, color: C.textSub, marginTop: 1 }}>Solana Compiler IR</div>
+              <div className="font-extrabold" style={{ fontSize: 16, letterSpacing: "0.1em", color: C.text }}>ANVIL</div>
+              <div style={{ fontSize: 12, color: C.textSub, marginTop: 1 }}>Solana Transpiler</div>
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div className="flex items-center" style={{ gap: 12 }}>
             <ApiDot ok={apiOk} />
             <Link
               href="/workbench"
-              style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: C.amber, padding: "7px 16px", borderRadius: 100, border: `1px solid rgba(245,166,35,0.3)`, background: "rgba(245,166,35,0.07)", textDecoration: "none" }}
+              className="flex items-center no-underline"
+              style={{ gap: 6, fontSize: 13, fontWeight: 700, color: C.amber, padding: "7px 16px", borderRadius: 100, border: `1px solid rgba(245,166,35,0.3)`, background: "rgba(245,166,35,0.07)" }}
             >
               Workbench <ArrowRight size={13} />
             </Link>
-            <a href="https://x.com/pratikkale26" target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.textSub, padding: "7px 16px", borderRadius: 100, border: `1px solid ${C.cardBorder}`, textDecoration: "none", transition: "all 0.2s" }}>
-              𝕏 (follow) ↗
+            <a href="https://x.com/pratikkale26" target="_blank" rel="noopener noreferrer" className="flex items-center no-underline" style={{ gap: 6, fontSize: 13, color: C.textSub, padding: "7px 16px", borderRadius: 100, border: `1px solid ${C.cardBorder}`, transition: "all 0.2s" }}>
+              X (follow)
             </a>
           </div>
         </nav>
 
         {/* Hero */}
-        <section style={{ padding: "80px 0 60px", textAlign: "center" }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 16px", borderRadius: 100, border: "1px solid rgba(245,166,35,0.25)", background: "rgba(245,166,35,0.08)", marginBottom: 32, fontSize: 13, color: C.amber, fontWeight: 600 }}>
-            <Zap size={12} /> LLVM for Solana — Compiler Infrastructure Layer
+        <section className="text-center" style={{ padding: "80px 0 60px" }}>
+          <div className="inline-flex items-center" style={{ gap: 8, padding: "5px 16px", borderRadius: 100, border: "1px solid rgba(245,166,35,0.25)", background: "rgba(245,166,35,0.08)", marginBottom: 32, fontSize: 13, color: C.amber, fontWeight: 600 }}>
+            <Zap size={12} /> LLVM for Solana -- Compiler Infrastructure Layer
           </div>
           <h1 style={{ fontSize: "clamp(44px, 7vw, 82px)", fontWeight: 800, lineHeight: 1.02, letterSpacing: "-0.04em", margin: "0 0 28px" }}>
             <span style={{ color: C.text }}>Write </span>
@@ -300,7 +309,7 @@ export default function Home() {
           <p style={{ fontSize: 18, color: C.textSub, maxWidth: 600, margin: "0 auto 44px", lineHeight: 1.75 }}>
             Anvil parses Anchor programs into a framework-agnostic IR, then emits optimized Pinocchio or Quasar Rust with live CU analysis.
           </p>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+          <div className="flex items-center justify-center flex-wrap" style={{ gap: 12 }}>
             <Btn
               primary
               onClick={() => document.getElementById("playground")?.scrollIntoView({ behavior: "smooth" })}
@@ -309,8 +318,9 @@ export default function Home() {
             </Btn>
             <Link
               href="/workbench"
+              className="inline-flex items-center no-underline"
               style={{
-                display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 100, fontWeight: 700, fontSize: 14, textDecoration: "none",
+                gap: 8, padding: "12px 28px", borderRadius: 100, fontWeight: 700, fontSize: 14,
                 background: "rgba(255,255,255,0.06)", color: C.textSub
               }}
             >
@@ -320,14 +330,14 @@ export default function Home() {
               View CU Analysis <Cpu size={14} />
             </Btn>
           </div>
-          <div style={{ display: "flex", justifyContent: "center", gap: 56, marginTop: 64, flexWrap: "wrap" }}>
+          <div className="flex justify-center flex-wrap" style={{ gap: 56, marginTop: 64 }}>
             {[
+              { value: "27/27", label: "Programs parsed" },
               { value: overallSavings, label: "CU reduction vs Anchor" },
-              { value: "4", label: "input modes supported" },
-              { value: "3", label: "live emit targets" },
+              { value: "3", label: "Emit targets" },
             ].map((s) => (
-              <div key={s.label} style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 36, fontWeight: 800, color: C.amber, letterSpacing: "-0.03em" }}>{s.value}</div>
+              <div key={s.label} className="text-center">
+                <div className="font-extrabold" style={{ fontSize: 36, color: C.amber, letterSpacing: "-0.03em" }}>{s.value}</div>
                 <div style={{ fontSize: 14, color: C.textSub, marginTop: 4 }}>{s.label}</div>
               </div>
             ))}
@@ -345,8 +355,8 @@ export default function Home() {
               { icon: Cpu, step: "04", title: "CU Analysis", desc: "Analyze accurate cost tables mapping your original Anchor operations to low-level syscalls." },
             ].map((item) => (
               <div key={item.step} style={{ padding: "28px 24px", background: C.card }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(245,166,35,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div className="flex items-center" style={{ gap: 10, marginBottom: 16 }}>
+                  <div className="flex items-center justify-center" style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(245,166,35,0.1)" }}>
                     <item.icon size={17} style={{ color: C.amber }} />
                   </div>
                   <span style={{ fontSize: 11, color: C.textDim, fontWeight: 700, letterSpacing: "0.1em" }}>{item.step}</span>
@@ -362,21 +372,21 @@ export default function Home() {
         <section id="playground" style={{ paddingBottom: 72 }}>
           <div style={{ marginBottom: 28 }}>
             <Label>COMPILER PLAYGROUND</Label>
-            <h2 style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", marginTop: 8, color: C.text }}>
+            <h2 className="font-extrabold" style={{ fontSize: 30, letterSpacing: "-0.03em", marginTop: 8, color: C.text }}>
               Select a program, pick a target, compile.
             </h2>
             <p style={{ fontSize: 14, color: C.textSub, marginTop: 10, maxWidth: 720, lineHeight: 1.7 }}>
-              The quick demo playground is wired to the live <code>counter</code> and <code>vault</code> fixtures. For full power — paste source, upload a file or folder, or point Anvil at a GitHub repo — use the{" "}
-              <Link href="/workbench" style={{ color: C.amber, textDecoration: "none", fontWeight: 600 }}>Workbench →</Link>
+              All 4 demo programs are live. For full power -- paste source, upload a file or folder, or point Anvil at a GitHub repo -- use the{" "}
+              <Link href="/workbench" className="no-underline" style={{ color: C.amber, fontWeight: 600 }}>Workbench</Link>
             </p>
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: isTablet ? "1fr" : "330px 1fr", gap: 16, alignItems: "start" }}>
             {/* Left controls */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+            <div className="flex flex-col" style={{ gap: 12, minWidth: 0 }}>
               <Panel>
                 <PanelHead icon={FileCode2} title="Program" />
-                <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div className="flex flex-col" style={{ padding: 12, gap: 8 }}>
                   {(Object.keys(DEMOS) as DemoName[]).map((d) => {
                     const info = DEMOS[d]; const active = d === demo;
                     return (
@@ -387,7 +397,7 @@ export default function Home() {
                         opacity: info.available ? 1 : 0.58,
                         cursor: info.available ? "pointer" : "not-allowed",
                       }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <div className="flex items-center justify-between">
                           <span style={{ fontWeight: 600, fontSize: 14, color: active ? C.amber : C.text }}>{info.title}</span>
                           <span style={{ fontSize: 11, padding: "2px 9px", borderRadius: 100, background: info.available ? (active ? "rgba(245,166,35,0.15)" : "rgba(255,255,255,0.05)") : "rgba(107,123,255,0.12)", color: info.available ? (active ? C.amber : C.textSub) : "#aeb8ff", fontWeight: 600 }}>{info.badge}</span>
                         </div>
@@ -400,23 +410,23 @@ export default function Home() {
 
               <Panel>
                 <PanelHead icon={Rocket} title="Target Framework" />
-                <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div className="flex flex-col" style={{ padding: 12, gap: 6 }}>
                   {TARGETS.map((t) => {
                     const active = t.id === target;
                     return (
-                      <button key={t.id} disabled={!t.available} onClick={() => t.available && setTarget(t.id)} style={{
-                        textAlign: "left", padding: "11px 15px", borderRadius: 10, border: "1px solid", display: "flex", alignItems: "center", gap: 12,
+                      <button key={t.id} disabled={!t.available} onClick={() => t.available && setTarget(t.id)} className="flex items-center" style={{
+                        textAlign: "left", padding: "11px 15px", borderRadius: 10, border: "1px solid", gap: 12,
                         background: active ? `${t.color}12` : "transparent",
                         borderColor: active ? `${t.color}45` : C.cardBorder,
                         opacity: t.available ? 1 : 0.58,
                         cursor: t.available ? "pointer" : "not-allowed",
                       }}>
-                        <div style={{ width: 10, height: 10, borderRadius: "50%", background: active ? t.color : C.textDim, flexShrink: 0 }} />
+                        <div className="shrink-0" style={{ width: 10, height: 10, borderRadius: "50%", background: active ? t.color : C.textDim }} />
                         <div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div className="flex items-center" style={{ gap: 8 }}>
                             <div style={{ fontWeight: 600, fontSize: 14, color: active ? C.text : C.textSub }}>{t.label}</div>
                             {!t.available && (
-                              <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: "rgba(107,123,255,0.12)", color: "#aeb8ff", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                              <span className="uppercase" style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, background: "rgba(107,123,255,0.12)", color: "#aeb8ff", fontWeight: 700, letterSpacing: "0.04em" }}>
                                 Coming
                               </span>
                             )}
@@ -429,40 +439,39 @@ export default function Home() {
                 </div>
               </Panel>
 
-              <button onClick={run} disabled={isRunning} style={{
-                padding: 15, borderRadius: 14, border: "none", cursor: isRunning ? "default" : "pointer", fontWeight: 700, fontSize: 15,
+              <button onClick={run} disabled={isRunning} className="flex items-center justify-center" style={{
+                padding: 15, borderRadius: 14, border: "none", cursor: isRunning ? "default" : "pointer", fontWeight: 700, fontSize: 15, gap: 8,
                 background: isRunning ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg, #f5a623, #e8820a)",
                 color: isRunning ? C.textMuted : "#0a0600",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
               }}>
                 {isRunning
-                  ? <><Loader2 size={15} className="animate-spin" /> Compiling…</>
-                  : <><Sparkles size={14} /> Compile → {activeTarget.label}</>}
+                  ? <><Loader2 size={15} className="animate-spin" /> Compiling...</>
+                  : <><Sparkles size={14} /> Compile {"\u2192"} {activeTarget.label}</>}
               </button>
             </div>
 
             {/* Right: pipeline + output */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="flex flex-col" style={{ gap: 12 }}>
               {/* Pipeline */}
               <Panel>
                 <div style={{ padding: "18px 24px" }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 0 }}>
+                  <div className="flex" style={{ alignItems: "flex-start", gap: 0 }}>
                     {STAGES.map((s, i) => {
                       const cur = STAGE_ORDER[stage] ?? -1;
                       const isDone = stage !== "error" && cur > i;
                       const isActive = stage !== "idle" && stage !== "error" && cur === i;
                       return (
-                        <div key={s.id} style={{ display: "flex", alignItems: "flex-start", flex: 1 }}>
-                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
-                            <div style={{
-                              width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700,
+                        <div key={s.id} className="flex" style={{ alignItems: "flex-start", flex: 1 }}>
+                          <div className="flex flex-col items-center" style={{ gap: 8, flex: "0 0 auto" }}>
+                            <div className={`flex items-center justify-center ${isActive ? "pipeline-active" : ""}`} style={{
+                              width: 36, height: 36, borderRadius: 10, fontSize: 13, fontWeight: 700,
                               background: isDone ? "rgba(14,168,128,0.12)" : isActive ? "rgba(245,166,35,0.12)" : "rgba(255,255,255,0.04)",
                               border: `1px solid ${isDone ? "rgba(14,168,128,0.35)" : isActive ? "rgba(245,166,35,0.35)" : C.cardBorder}`,
                               color: isDone ? C.teal : isActive ? C.amber : C.textMuted,
-                            }} className={isActive ? "pipeline-active" : ""}>
+                            }}>
                               {isDone ? <CheckCircle2 size={14} /> : isActive ? <Loader2 size={13} className="animate-spin" /> : <span>{i + 1}</span>}
                             </div>
-                            <div style={{ textAlign: "center", minWidth: 80 }}>
+                            <div className="text-center" style={{ minWidth: 80 }}>
                               <div style={{ fontSize: 12, fontWeight: 600, color: isDone ? C.teal : isActive ? C.amber : C.textSub }}>{s.label}</div>
                               <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{s.sublabel}</div>
                             </div>
@@ -474,34 +483,34 @@ export default function Home() {
                       );
                     })}
                   </div>
-                  {stage === "error" && <div style={{ fontSize: 13, color: "#e05a5a", marginTop: 12 }}>⚠ Could not reach API — check that `bun run dev` is running in api/</div>}
+                  {stage === "error" && <div style={{ fontSize: 13, color: "#e05a5a", marginTop: 12 }}>Could not reach API -- check that the server is running</div>}
                 </div>
               </Panel>
 
               {/* Code output */}
               <Panel>
                 {/* Tab bar */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", padding: "12px 16px", borderBottom: `1px solid ${C.line}` }}>
-                  <div style={{ display: "flex", gap: 4, overflowX: "auto", maxWidth: "100%" }}>
-                    {(["code", "ir"] as const).map((tab) => (
+                <div className="flex items-center justify-between flex-wrap" style={{ gap: 10, padding: "12px 16px", borderBottom: `1px solid ${C.line}` }}>
+                  <div className="flex overflow-x-auto" style={{ gap: 4, maxWidth: "100%" }}>
+                    {(["source", "code", "ir"] as const).map((tab) => (
                       <button key={tab} onClick={() => setActiveTab(tab)} style={{
                         padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", border: "none",
                         background: activeTab === tab ? "rgba(255,255,255,0.09)" : "transparent",
                         color: activeTab === tab ? C.text : C.textSub,
                       }}>
-                        {tab === "code" ? `${activeTarget.label} output` : "IR (JSON)"}
+                        {tab === "source" ? "Anchor Source" : tab === "code" ? `${activeTarget.label} output` : "IR (JSON)"}
                       </button>
                     ))}
                   </div>
-                  <button onClick={copy} disabled={!(activeTab === "code" ? code : ir)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "rgba(255,255,255,0.05)", border: `1px solid ${C.cardBorder}`, color: copied ? C.teal : C.textSub, cursor: "pointer" }}>
+                  <button onClick={copy} disabled={!activeTabValue} className="flex items-center cursor-pointer" style={{ gap: 5, padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "rgba(255,255,255,0.05)", border: `1px solid ${C.cardBorder}`, color: copied ? C.teal : C.textSub }}>
                     {copied ? <><CheckCircle2 size={11} /> Copied!</> : <><Copy size={11} /> Copy</>}
                   </button>
                 </div>
                 {/* Content */}
-                {!(code || ir) ? (
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 340, gap: 12 }}>
+                {!activeTabValue ? (
+                  <div className="flex flex-col items-center justify-center" style={{ height: 340, gap: 12 }}>
                     {isRunning
-                      ? <><Loader2 size={30} style={{ color: C.amber }} className="animate-spin" /><div style={{ fontSize: 14, color: C.textSub }}>Compiling {DEMOS[demo].title} → {activeTarget.label}…</div></>
+                      ? <><Loader2 size={30} style={{ color: C.amber }} className="animate-spin" /><div style={{ fontSize: 14, color: C.textSub }}>Compiling {DEMOS[demo].title} {"\u2192"} {activeTarget.label}...</div></>
                       : <><TerminalSquare size={30} style={{ color: C.textDim }} /><div style={{ fontSize: 14, color: C.textMuted }}>Click &quot;Compile&quot; to generate {activeTarget.label} code</div></>
                     }
                   </div>
@@ -509,8 +518,8 @@ export default function Home() {
                   <div className="animate-fade-in" style={{ height: outputHeight, minWidth: 0, maxWidth: "100%" }}>
                     <Editor
                       height={`${outputHeight}px`}
-                      language={activeTab === "ir" ? "json" : "rust"}
-                      value={activeTab === "code" ? code : ir}
+                      language={activeTabLang}
+                      value={activeTabValue}
                       theme="vs-dark"
                       options={LANDING_MONACO_OPTS}
                     />
@@ -524,8 +533,8 @@ export default function Home() {
         {/* CU Analysis */}
         <section id="cu-analysis" style={{ paddingBottom: 80 }}>
           <Label>COMPUTE UNIT ANALYSIS</Label>
-          <h2 style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", margin: "8px 0 28px", color: C.text }}>
-            {DEMOS[demo].title} — savings per instruction
+          <h2 className="font-extrabold" style={{ fontSize: 30, letterSpacing: "-0.03em", margin: "8px 0 28px", color: C.text }}>
+            {DEMOS[demo].title} -- savings per instruction
           </h2>
           <Panel>
             <div style={{ padding: isMobile ? "20px 16px" : "24px 28px", overflowX: "auto" }}>
@@ -554,24 +563,24 @@ export default function Home() {
           <div style={{ display: "grid", gridTemplateColumns: isTablet ? "1fr" : "1fr 1fr", gap: 16, marginTop: 20 }}>
             <Panel>
               <div style={{ padding: 28 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(14,168,128,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div className="flex items-center" style={{ gap: 12, marginBottom: 20 }}>
+                  <div className="flex items-center justify-center" style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(14,168,128,0.12)" }}>
                     <CheckCircle2 size={17} style={{ color: C.teal }} />
                   </div>
                   <div style={{ fontWeight: 700, fontSize: 17, color: C.text }}>Working today</div>
                 </div>
                 {[
-                  "Anchor IR parser (tree-sitter AST) — instructions, accounts, constraints, errors",
-                  "Pinocchio, Quasar, and Native emitters with full multi-file output",
-                  "4 live demo programs (Counter, Vault, Escrow, Staking)",
-                  "Static CU analysis with per-instruction cost tables",
-                  "GitHub repo ingestion — paste any public repo URL and compile",
-                  "Local file + folder upload — pick your own .rs entry file",
-                  "Express API with /parse, /emit, /demo routes",
-                  "Workbench: paste source, upload file/folder, or clone a repo",
+                  "100% parse rate on 27 real-world Anchor programs",
+                  "Pinocchio + Native output passes cargo build on all 8 demo programs",
+                  "Quasar emitter rewritten for real quasar-lang API (46 example reference)",
+                  "Parser supports Anchor 1.0.0, Token-2022, Box<Account>, InterfaceAccount",
+                  "8 demo programs: counter, vault, escrow, staking, AMM, marketplace, vesting, perp-funding",
+                  "GitHub repo ingestion \u2014 paste any public repo URL and compile",
+                  "Full multi-file project output (lib.rs, state.rs, instructions/)",
+                  "27 automated tests (parser snapshots + emitter validation + API integration)",
                 ].map((item) => (
-                  <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 11 }}>
-                    <CheckCircle2 size={14} style={{ color: C.teal, flexShrink: 0, marginTop: 3 }} />
+                  <div key={item} className="flex" style={{ alignItems: "flex-start", gap: 10, marginBottom: 11 }}>
+                    <CheckCircle2 size={14} className="shrink-0" style={{ color: C.teal, marginTop: 3 }} />
                     <span style={{ fontSize: 14, color: C.textSub, lineHeight: 1.6 }}>{item}</span>
                   </div>
                 ))}
@@ -579,23 +588,23 @@ export default function Home() {
             </Panel>
             <Panel>
               <div style={{ padding: 28 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(107,123,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div className="flex items-center" style={{ gap: 12, marginBottom: 20 }}>
+                  <div className="flex items-center justify-center" style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(107,123,255,0.12)" }}>
                     <Rocket size={17} style={{ color: C.indigo }} />
                   </div>
                   <div style={{ fontWeight: 700, fontSize: 17, color: C.text }}>Phase 2 roadmap</div>
                 </div>
                 {[
-                  "Production-grade CPI generation for SPL token flows",
-                  "Account space auto-calculation from IR field definitions",
-                  "CLI: `anvil compile program.rs --target pinocchio`",
-                  "IDL import — parse Anchor IDL JSON as IR input",
-                  "VS Code extension for inline CU previews",
-                  "Deploy-ready output validation + Anchor test compatibility",
-                  "Auto-generated test suites for emitted code",
+                  "On-chain deployment verification (devnet transaction testing)",
+                  "CLI tool: anvil compile program.rs --target pinocchio",
+                  "Quasar target cargo build verification",
+                  "Token-2022 end-to-end emission",
+                  "IDE plugin for inline CU previews",
+                  "Automated regression testing with 50+ real-world repos",
+                  "AI-powered code refinement for validation errors",
                 ].map((item) => (
-                  <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 11 }}>
-                    <ChevronRight size={14} style={{ color: C.indigo, flexShrink: 0, marginTop: 3 }} />
+                  <div key={item} className="flex" style={{ alignItems: "flex-start", gap: 10, marginBottom: 11 }}>
+                    <ChevronRight size={14} className="shrink-0" style={{ color: C.indigo, marginTop: 3 }} />
                     <span style={{ fontSize: 14, color: C.textSub, lineHeight: 1.6 }}>{item}</span>
                   </div>
                 ))}
@@ -605,16 +614,19 @@ export default function Home() {
         </section>
 
         {/* Footer */}
-        <footer style={{ borderTop: `1px solid ${C.line}`, padding: "28px 0", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 30, height: 30, borderRadius: 8, background: "linear-gradient(135deg, #f5a623, #e8820a)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <footer className="flex items-center justify-between flex-wrap" style={{ borderTop: `1px solid ${C.line}`, padding: "28px 0", gap: 12 }}>
+          <div className="flex items-center" style={{ gap: 10 }}>
+            <div className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 8, background: "linear-gradient(135deg, #f5a623, #e8820a)" }}>
               <Sparkles size={13} style={{ color: "#fff" }} />
             </div>
-            <span style={{ fontWeight: 800, fontSize: 14, color: C.text }}>Anvil</span>
-            <span style={{ fontSize: 13, color: C.textMuted }}>— Solana Compiler IR v0.2.0</span>
+            <span className="font-extrabold" style={{ fontSize: 14, color: C.text }}>Anvil</span>
+            <span style={{ fontSize: 13, color: C.textMuted }}>-- Solana Transpiler v0.3.0</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-            <Link href="/workbench" style={{ fontSize: 13, color: C.amber, textDecoration: "none", fontWeight: 600 }}>Open Workbench →</Link>
+          <div className="flex items-center" style={{ gap: 20 }}>
+            <a href="https://github.com/pratikkale26/anvil" target="_blank" rel="noopener noreferrer" className="flex items-center no-underline" style={{ gap: 6, fontSize: 13, color: C.textSub, fontWeight: 600 }}>
+              <ExternalLink size={14} /> GitHub
+            </a>
+            <Link href="/workbench" className="no-underline" style={{ fontSize: 13, color: C.amber, fontWeight: 600 }}>Open Workbench</Link>
             <span style={{ fontSize: 13, color: C.textMuted }}>Built for Solana Developers</span>
           </div>
         </footer>
@@ -623,7 +635,7 @@ export default function Home() {
   );
 }
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
+// --- Sub-components ---------------------------------------------------------
 
 function Label({ children }: { children: React.ReactNode }) {
   return <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.18em", color: C.textMuted }}>{children}</div>;
@@ -631,8 +643,8 @@ function Label({ children }: { children: React.ReactNode }) {
 
 function Btn({ children, onClick, primary }: { children: React.ReactNode; onClick?: () => void; primary?: boolean }) {
   return (
-    <button onClick={onClick} style={{
-      display: "inline-flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 100, fontWeight: 700, fontSize: 14, cursor: "pointer", border: "none",
+    <button onClick={onClick} className="inline-flex items-center cursor-pointer" style={{
+      gap: 8, padding: "12px 28px", borderRadius: 100, fontWeight: 700, fontSize: 14, border: "none",
       background: primary ? "linear-gradient(135deg, #f5a623, #e8820a)" : "rgba(255,255,255,0.06)",
       color: primary ? "#0a0600" : C.textSub,
     }}>
@@ -642,12 +654,12 @@ function Btn({ children, onClick, primary }: { children: React.ReactNode; onClic
 }
 
 function Panel({ children }: { children: React.ReactNode }) {
-  return <div style={{ borderRadius: 18, border: `1px solid ${C.cardBorder}`, background: C.card, overflow: "hidden" }}>{children}</div>;
+  return <div className="overflow-hidden" style={{ borderRadius: 18, border: `1px solid ${C.cardBorder}`, background: C.card }}>{children}</div>;
 }
 
 function PanelHead({ icon: Icon, title }: { icon: React.ElementType; title: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", borderBottom: `1px solid ${C.line}` }}>
+    <div className="flex items-center" style={{ gap: 8, padding: "12px 16px", borderBottom: `1px solid ${C.line}` }}>
       <Icon size={14} style={{ color: C.amber }} />
       <span style={{ fontSize: 13, fontWeight: 600, color: C.textSub }}>{title}</span>
     </div>
@@ -656,7 +668,7 @@ function PanelHead({ icon: Icon, title }: { icon: React.ElementType; title: stri
 
 function ApiDot({ ok }: { ok: boolean }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, padding: "6px 14px", borderRadius: 100, background: ok ? "rgba(14,168,128,0.08)" : "rgba(255,255,255,0.04)", border: `1px solid ${ok ? "rgba(14,168,128,0.22)" : C.cardBorder}` }}>
+    <div className="flex items-center" style={{ gap: 7, fontSize: 12, padding: "6px 14px", borderRadius: 100, background: ok ? "rgba(14,168,128,0.08)" : "rgba(255,255,255,0.04)", border: `1px solid ${ok ? "rgba(14,168,128,0.22)" : C.cardBorder}` }}>
       <div style={{ width: 7, height: 7, borderRadius: "50%", background: ok ? C.teal : C.textDim }} />
       <span style={{ color: ok ? C.teal : C.textMuted, fontWeight: 600 }}>{ok ? "API live" : "API offline"}</span>
     </div>
@@ -683,10 +695,10 @@ function CuRow({ row }: { row: { instruction: string; anchor: number; pinocchio:
           { val: row.native, color: C.indigo },
         ].map(({ val, color }, i) => (
           <div key={i}>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+            <div className="flex justify-end" style={{ marginBottom: 4 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: C.textSub, fontFamily: "var(--font-mono, monospace)" }}>{val} CU</span>
             </div>
-            <div style={{ height: 6, borderRadius: 100, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+            <div className="overflow-hidden" style={{ height: 6, borderRadius: 100, background: "rgba(255,255,255,0.05)" }}>
               <div style={{ height: "100%", borderRadius: 100, background: color, width: `${Math.max((val / max) * 100, 5)}%`, transition: "width .5s ease-out" }} />
             </div>
           </div>
@@ -699,7 +711,7 @@ function CuRow({ row }: { row: { instruction: string; anchor: number; pinocchio:
 function TotalCell({ value, color, savings }: { value: number; color?: string; savings?: string }) {
   return (
     <div>
-      <div style={{ fontSize: 24, fontWeight: 800, color: color ?? C.textMuted, letterSpacing: "-0.03em", fontFamily: "var(--font-mono, monospace)" }}>{value}</div>
+      <div className="font-extrabold" style={{ fontSize: 24, color: color ?? C.textMuted, letterSpacing: "-0.03em", fontFamily: "var(--font-mono, monospace)" }}>{value}</div>
       <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>CU total</div>
       {savings && <div style={{ fontSize: 12, color: color, marginTop: 2, fontWeight: 600 }}>{savings} saved</div>}
     </div>
