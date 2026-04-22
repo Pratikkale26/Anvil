@@ -9,7 +9,11 @@
     "build": "bun build src/index.ts --outdir dist --target bun",
     "typecheck": "tsc --noEmit",
     "verify-compiler": "bun verify-compiler.ts",
-    "verify-parser": "bun verify-parser.ts"
+    "verify-parser": "bun verify-parser.ts",
+    "test": "bun test tests/",
+    "test:parser": "bun test tests/parser-snapshots.test.ts",
+    "test:emitter": "bun test tests/emitter-validation.test.ts",
+    "test:api": "bun test tests/api.test.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
