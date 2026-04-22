@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  api:
+    build: ./api
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      - PORT=8080
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
+      - RATE_LIMIT=${RATE_LIMIT:-60}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AI_PROVIDER=anthropic
+      - AI_REPAIR_MODEL=${AI_REPAIR_MODEL:-claude-sonnet-4-20250514}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

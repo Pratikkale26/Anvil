@@ -1,0 +1,10 @@
+node_modules
+dist
+generated-outputs
+.env
+*.ts.map
+test-run.ts
+verify-compiler.ts
+verify-parser.ts
+regenerate-fixtures.ts
+.anvil-data
