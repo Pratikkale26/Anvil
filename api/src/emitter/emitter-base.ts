@@ -237,8 +237,20 @@ export abstract class BaseEmitter {
   // ─── Generic emission pipeline ─────────────────────────────────────────────
 
   /**
-   * Main entry point: emit the full program.
-   * Returns multi-file output + combined single file.
+   * Main entry point: emit the full program from a SolanaIR.
+   *
+   * Generates both a multi-file project layout (lib.rs, state.rs,
+   * instructions/*.rs, errors.rs, helpers.rs) and a combined single-file
+   * output for backward compatibility. Also collects warnings and a
+   * transform report showing how many body statements were transformed
+   * vs passed through.
+   *
+   * Subclasses do not override this method. Instead they implement the
+   * abstract methods (`emitUseStatements`, `emitEntrypoint`, etc.) that
+   * this method calls.
+   *
+   * @param ir - The validated SolanaIR to emit
+   * @returns `EmitterOutput` containing files, singleFile, warnings, and transformReport
    */
   emit(ir: SolanaIR): EmitterOutput {
     this.currentIr = ir;
@@ -1063,16 +1075,18 @@ ${fields}
    */
   protected carriedFunctionBlock(rawCode: string): string {
     const transformed = this.transformHelperCode(rawCode);
-    if (!hasResidualAnchorPatterns(rawCode)) {
-      // No Anchor-specific APIs detected — the function is likely pure Rust
-      // and will compile as-is in the target framework.
-      return `// Carried from source (pure Rust — no Anchor APIs detected)\n${transformed}`;
+    // Check the *transformed* code for residual Anchor patterns — the transform
+    // may have cleaned up everything that was originally Anchor-specific.
+    if (!hasResidualAnchorPatterns(transformed)) {
+      // No Anchor-specific APIs detected after transformation — the function
+      // is pure Rust (or was fully transformed) and should compile as-is.
+      return `// Carried from source (transformed for ${this.frameworkName})\n${transformed}`;
     }
     return [
       `// ╔════════════════════════════════════════════════════════════════════════════════╗`,
-      `// ║  ⚠️  ANVIL: function below was carried verbatim from the Anchor source.      ║`,
-      `// ║  It still uses Anchor APIs (ctx, CpiContext, system_program::transfer, etc.) ║`,
-      `// ║  and MUST be rewritten for ${this.frameworkName.padEnd(48)} ║`,
+      `// ║  ⚠️  ANVIL: function below was carried from the Anchor source and partially  ║`,
+      `// ║  transformed. It may still use Anchor APIs (ctx, CpiContext, etc.) and        ║`,
+      `// ║  MUST be reviewed for ${this.frameworkName.padEnd(52)} ║`,
       `// ║  before this code will compile.                                              ║`,
       `// ╚════════════════════════════════════════════════════════════════════════════════╝`,
       transformed,

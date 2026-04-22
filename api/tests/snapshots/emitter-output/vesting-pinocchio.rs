@@ -662,7 +662,7 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     ))
 }
 
-// Carried from source (pure Rust — no Anchor APIs detected)
+// Carried from source (transformed for Pinocchio)
 fn vested_amount(
     total: u64,
     start_ts: i64,

@@ -680,7 +680,7 @@ fn token_account_amount<'a>(account: &AccountInfo<'a>) -> Result<u64, ProgramErr
     ))
 }
 
-// Carried from source (pure Rust — no Anchor APIs detected)
+// Carried from source (transformed for Native)
 fn vested_amount(
     total: u64,
     start_ts: i64,

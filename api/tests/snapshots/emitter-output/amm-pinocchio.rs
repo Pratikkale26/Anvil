@@ -969,7 +969,7 @@ fn spl_token_burn(
     .invoke()
 }
 
-// Carried from source (pure Rust — no Anchor APIs detected)
+// Carried from source (transformed for Pinocchio)
 fn integer_sqrt(n: u128) -> u128 {
     if n == 0 {
         return 0;

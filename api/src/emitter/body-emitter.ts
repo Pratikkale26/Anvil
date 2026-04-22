@@ -737,8 +737,11 @@ export function emitBodyStatements(
     transformed = transformed.replace(/\bctx\.program_id\b/g, "program_id");
     // Transform ctx.bumps.X → bump_X (computed at runtime)
     transformed = transformed.replace(/\bctx\.bumps\.(\w+)\b/g, (_full, name: string) => `bump_${snakeCase(name)}`);
-    // Transform ctx.remaining_accounts → remaining accounts (not directly available, use &accounts[N..])
-    transformed = transformed.replace(/\bctx\.remaining_accounts\b/g, "&accounts[required_accounts_count..]");
+    // Transform ctx.remaining_accounts → slice of accounts after the named ones
+    {
+      const namedAccountCount = instr.accounts.filter((a) => !a.isOptional).length;
+      transformed = transformed.replace(/\bctx\.remaining_accounts\b/g, `&accounts[${namedAccountCount}..]`);
+    }
     transformed = transformed.replace(/&mut\s*ctx\.accounts\.(\w+)/g, (_full, name: string) => `&mut ${snakeCase(name)}`);
     transformed = transformed.replace(/&\s*ctx\.accounts\.(\w+)/g, (_full, name: string) => `&${snakeCase(name)}`);
     transformed = transformed.replace(/\bctx\.accounts\.(\w+)\b/g, (_full, name: string) => snakeCase(name));
