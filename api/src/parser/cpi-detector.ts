@@ -45,6 +45,39 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
 
   const funcText = funcNode.text;
 
+  // ── Token-2022 / token_interface CPI patterns ──
+  // These mirror token::* but use the Token-2022 program
+  if (funcText.includes("token_2022::") || funcText.includes("token_interface::")) {
+    if (funcText.includes("transfer_checked") || funcText.includes("transfer")) {
+      const result = extractSplTransfer(callNode);
+      if (result.kind === "cpi_spl_transfer") {
+        return { ...result, tokenProgram: "token_2022" as const };
+      }
+      return result;
+    }
+    if (funcText.includes("mint_to")) {
+      const result = extractSplMintTo(callNode);
+      if (result.kind === "cpi_spl_mint_to") {
+        return { ...result, tokenProgram: "token_2022" as const };
+      }
+      return result;
+    }
+    if (funcText.includes("burn")) {
+      const result = extractSplBurn(callNode);
+      if (result.kind === "cpi_spl_burn") {
+        return { ...result, tokenProgram: "token_2022" as const };
+      }
+      return result;
+    }
+    if (funcText.includes("close_account") || funcText.includes("CloseAccount")) {
+      const result = extractSplCloseAccount(callNode);
+      if (result.kind === "cpi_spl_close_account") {
+        return { ...result, tokenProgram: "token_2022" as const };
+      }
+      return result;
+    }
+  }
+
   // ── SPL Token transfer ──
   if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
     return extractSplTransfer(callNode);

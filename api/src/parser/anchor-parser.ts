@@ -159,7 +159,7 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
 
 interface TopLevelItems {
   programModule: { node: SyntaxNode; attrs: SyntaxNode[] } | null;
-  accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[] }[];
+  accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[]; instructionArgs: string[] }[];
   accountDataStructs: { node: SyntaxNode; attrs: SyntaxNode[] }[];
   errorEnums: { node: SyntaxNode; attrs: SyntaxNode[] }[];
   helperFns: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[];
@@ -214,7 +214,10 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
         case "struct_item": {
           if (hasDeriveAttribute(attrs, "Accounts")) {
             const name = extractStructName(child);
-            if (name) items.accountsStructs.push({ name, node: child, attrs });
+            if (name) {
+              const instructionArgs = extractInstructionArgs(attrs);
+              items.accountsStructs.push({ name, node: child, attrs, instructionArgs });
+            }
           } else if (hasAttribute(attrs, "account")) {
             items.accountDataStructs.push({ node: child, attrs });
           } else {
@@ -281,7 +284,7 @@ function extractModuleName(modNode: SyntaxNode): string {
 function parseInstructions(
   parser: Parser,
   programModNode: SyntaxNode,
-  accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[] }[],
+  accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[]; instructionArgs: string[] }[],
   implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
   source: string,
@@ -302,7 +305,7 @@ function parseInstructions(
     }
 
     if (child.type === "function_item") {
-      const instr = parseInstructionFn(parser, child, accountsStructs, implMethods, functionIndex, source);
+      const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, source);
       if (instr) instructions.push(instr);
     }
 
@@ -315,13 +318,17 @@ function parseInstructions(
 function parseInstructionFn(
   parser: Parser,
   fnNode: SyntaxNode,
-  accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[] }[],
+  fnAttrs: SyntaxNode[],
+  accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[]; instructionArgs: string[] }[],
   implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
   source: string,
 ): SolanaIR["instructions"][0] | null {
   const fnName = fnNode.childForFieldName("name")?.text;
   if (!fnName) return null;
+
+  // ── Extract #[access_control(...)] from function attributes ──
+  const accessControl = extractAccessControl(fnAttrs);
 
   let bodyFnNode = fnNode;
 
@@ -373,6 +380,7 @@ function parseInstructionFn(
     args,
     body: bodyStatements,
     rawBody,
+    ...(accessControl ? { accessControl } : {}),
   };
 }
 
@@ -713,8 +721,13 @@ function parseAccountField(
   const rawType = typeNode.text;
   const accountType = extractAccountType(rawType);
 
-  // Parse all #[account(...)] attributes for this field
-  const accountAttrInner = extractAccountAttrInner(attrs);
+  // Parse all #[account(...)] attributes for this field (there may be multiple)
+  const accountAttrParts: string[] = [];
+  for (const attr of attrs) {
+    const inner = extractAccountAttrInner([attr]);
+    if (inner) accountAttrParts.push(inner);
+  }
+  const accountAttrInner = accountAttrParts.length > 0 ? accountAttrParts.join(', ') : null;
 
   let isSigner = rawType.includes("Signer");
   let isMut = false;
@@ -931,7 +944,7 @@ function extractProgramId(root: SyntaxNode): string | undefined {
     if (!child || child.type !== "macro_invocation") continue;
 
     const macroName = child.namedChild(0)?.text;
-    if (macroName === "declare_id") {
+    if (macroName === "declare_id" || macroName === "declare_program") {
       const tokenTree = child.children.find((c: { type: string }) => c.type === "token_tree");
       if (tokenTree) {
         const idMatch = tokenTree.text.match(/"([^"]+)"/);
@@ -953,10 +966,27 @@ function extractAccountType(rawType: string): string {
   if (t.startsWith("Option<") && t.endsWith(">")) {
     return extractAccountType(t.slice("Option<".length, -1).trim());
   }
+  // Unwrap Box<...> before extracting inner type
+  if (t.startsWith("Box<") && t.endsWith(">")) {
+    return extractAccountType(t.slice(4, -1).trim());
+  }
   const accountMatch = t.match(/^Account\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
   if (accountMatch?.[1]) return accountMatch[1].split("::").pop() ?? accountMatch[1];
+  // InterfaceAccount is treated the same as Account (covers token_interface types)
+  const interfaceMatch = t.match(/^InterfaceAccount\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
+  if (interfaceMatch?.[1]) return interfaceMatch[1].split("::").pop() ?? interfaceMatch[1];
+  // Token-2022 / token_interface Account types: InterfaceAccount<'info, token_interface::TokenAccount|Mint>
+  // Also matches plain Account<'info, token_interface::TokenAccount>
+  const tokenAccountMatch = t.match(/^(?:Interface)?Account\s*<\s*'info\s*,\s*(?:token_interface::)?(?:TokenAccount|Mint)\s*>/);
+  if (tokenAccountMatch) {
+    const innerMatch = t.match(/(?:token_interface::)?(TokenAccount|Mint)/);
+    if (innerMatch?.[1]) return innerMatch[1];
+  }
   const programMatch = t.match(/^Program\s*<\s*'info\s*,\s*(\w+)\s*>/);
   if (programMatch?.[1]) return programMatch[1];
+  // Interface<'info, T> for Token-2022 program references
+  const interfaceProgramMatch = t.match(/^Interface\s*<\s*'info\s*,\s*(\w+)\s*>/);
+  if (interfaceProgramMatch?.[1]) return interfaceProgramMatch[1];
   if (t.startsWith("Signer")) return "Signer";
   if (t.startsWith("SystemAccount")) return "SystemAccount";
   if (t.startsWith("UncheckedAccount")) return "UncheckedAccount";
@@ -991,6 +1021,40 @@ function fieldSize(type: string): number {
     bool: 1, Pubkey: 32, String: 36, "Vec<u8>": 4,
   };
   return sizes[type] ?? 32;
+}
+
+function extractAccessControl(attrs: SyntaxNode[]): string | undefined {
+  for (const attr of attrs) {
+    const text = attr.text;
+    const prefix = "#[access_control(";
+    const start = text.indexOf(prefix);
+    if (start === -1) continue;
+
+    let depth = 1;
+    const bodyStart = start + prefix.length;
+    for (let i = bodyStart; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth === 0) {
+          return text.slice(bodyStart, i).trim();
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+function extractInstructionArgs(attrs: SyntaxNode[]): string[] {
+  for (const attr of attrs) {
+    const text = attr.text;
+    const match = text.match(/#\[instruction\(([^)]*)\)\]/);
+    if (match?.[1]) {
+      return match[1].split(",").map((s) => s.trim().replace(/:.*$/, "").trim()).filter(Boolean);
+    }
+  }
+  return [];
 }
 
 function detectAnchorVersion(source: string): string {

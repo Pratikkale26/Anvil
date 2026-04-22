@@ -21,6 +21,7 @@ const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
   "token::authority": "token::authority",
   "associated_token::mint":      "associated_token::mint",
   "associated_token::authority":  "associated_token::authority",
+  realloc:                        "constraint",
 };
 
 /**
@@ -53,7 +54,7 @@ export function parseConstraints(attrBody: string): Constraint[] {
     }
 
     // skip unknown / payer / space — they don't map to IR constraints
-    if (key === "payer" || key === "space" || key === "rent_exempt" || key === "discriminator") {
+    if (key === "payer" || key === "space" || key === "rent_exempt" || key === "discriminator" || key === "realloc::payer" || key === "realloc::zero") {
       continue;
     }
 

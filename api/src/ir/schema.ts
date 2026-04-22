@@ -162,6 +162,8 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     authority: z.string(),
     amount: z.string(),
     signerSeeds: z.string().optional(),
+    /** Which token program to invoke: "token" (default) or "token_2022" */
+    tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
   }),
 
   // SPL Token mint_to CPI
@@ -172,6 +174,8 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     authority: z.string(),
     amount: z.string(),
     signerSeeds: z.string().optional(),
+    /** Which token program to invoke: "token" (default) or "token_2022" */
+    tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
   }),
 
   // SPL Token burn CPI
@@ -182,6 +186,8 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     authority: z.string(),
     amount: z.string(),
     signerSeeds: z.string().optional(),
+    /** Which token program to invoke: "token" (default) or "token_2022" */
+    tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
   }),
 
   // SPL Token close_account CPI
@@ -191,6 +197,8 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     destination: z.string(),
     authority: z.string(),
     signerSeeds: z.string().optional(),
+    /** Which token program to invoke: "token" (default) or "token_2022" */
+    tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
   }),
 
   // Generic / custom CPI (invoke or invoke_signed)
@@ -249,6 +257,8 @@ export const InstructionSchema = z.object({
   body: z.array(BodyStatementSchema).default([]),
   /** Original Rust function body text (for debugging & fallback) */
   rawBody: z.string().optional(),
+  /** Access control expression from #[access_control(...)] attribute */
+  accessControl: z.string().optional(),
   docs: z.string().optional(),
   /** naive CU estimate from static analysis */
   estimatedCU: z.number().optional(),
