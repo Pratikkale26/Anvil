@@ -25,6 +25,8 @@ import {
   irNeedsSignedSplCloseAccountHelper,
   irNeedsUnsignedSplCloseAccountHelper,
   irNeedsInitAccountHelper,
+  irNeedsToken2022Helper,
+  irNeedsAtaCreationHelper,
   emitRequireGuard,
 } from "./emitter-base.js";
 
@@ -60,6 +62,13 @@ class PinocchioEmitter extends BaseEmitter {
     }
     if (irNeedsHelper(_ir, "spl_close_account")) {
       imports.push(`use pinocchio_token::instructions::CloseAccount as TokenCloseAccount;`);
+    }
+    if (irNeedsToken2022Helper(_ir)) {
+      imports.push(`// Token-2022: same instruction structs, routed to token_2022 program at runtime`);
+      imports.push(`use pinocchio_token::instructions::TransferChecked as Token2022TransferChecked;`);
+    }
+    if (irNeedsAtaCreationHelper(_ir)) {
+      imports.push(`use pinocchio_associated_token::instructions::Create as CreateAssociatedToken;`);
     }
 
     imports.push(...this.filteredSourceImports(_ir));
@@ -215,6 +224,17 @@ ${arms}
     return `    create_program_account(${account}, ${payer}, (${spaceExpr}) as usize, program_id, ${signerSeeds ?? "&[]"})?;`;
   }
 
+  override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string): string {
+    return `    // Create Associated Token Account: ${ata}
+    CreateAssociatedToken {
+        funding_account: ${payer},
+        associated_account: ${ata},
+        wallet_address: ${authority},
+        token_mint: ${mint},
+    }
+    .invoke()?;`;
+  }
+
   override emitPdaSignerSeeds(
     account: string,
     accountInfoVar: string,
@@ -296,10 +316,14 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
     return `    pinocchio::log::sol_log(${message});`;
   }
 
-  override emitEmit(event: string, _fields: string): string {
+  override emitEmit(event: string, fields: string): string {
+    if (!fields.trim()) {
+      return `    pinocchio::log::sol_log("event:${event}");`;
+    }
+    // Preserve event field data as comments so the developer can add proper serialization
     return `    // Event: ${event}
-    // ⚠️ Anvil: Pinocchio doesn't have Anchor's emit!() — logging event name only
-    pinocchio::log::sol_log("event:${event}");`;
+    pinocchio::log::sol_log("event:${event}");
+    // Event data: ${fields.replace(/\n/g, " ")}`;
   }
 
   override emitClockGet(localVar: string): string {

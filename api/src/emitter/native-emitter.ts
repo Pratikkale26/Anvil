@@ -24,6 +24,8 @@ import {
   irNeedsUnsignedSplCloseAccountHelper,
   irNeedsTokenAmountHelper,
   irNeedsInitAccountHelper,
+  irNeedsToken2022Helper,
+  irNeedsAtaCreationHelper,
   emitRequireGuard,
 } from "./emitter-base.js";
 
@@ -68,6 +70,13 @@ class NativeEmitter extends BaseEmitter {
 use solana_program::{
     ${solanaItems},
 };`];
+    if (irNeedsToken2022Helper(_ir)) {
+      imports.push(`// Token-2022: uses spl_token_2022 crate for instruction building`);
+      imports.push(`use spl_token_2022;`);
+    }
+    if (irNeedsAtaCreationHelper(_ir)) {
+      imports.push(`use spl_associated_token_account::instruction::create_associated_token_account;`);
+    }
     imports.push(...this.filteredSourceImports(_ir));
     return imports.join("\n");
   }
@@ -280,6 +289,20 @@ ${arms}
     return `    create_program_account(${account}, ${payer}, (${spaceExpr}) as u64, program_id, ${signerSeeds ?? "&[]"})?;`;
   }
 
+  override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string): string {
+    return `    // Create Associated Token Account: ${ata}
+    let create_ata_ix = create_associated_token_account(
+        ${payer}.key,
+        ${authority}.key,
+        ${mint}.key,
+        &spl_token::id(),
+    );
+    invoke(
+        &create_ata_ix,
+        &[${payer}.clone(), ${ata}.clone(), ${authority}.clone(), ${mint}.clone()],
+    )?;`;
+  }
+
   override emitPdaSignerSeeds(
     account: string,
     accountInfoVar: string,
@@ -325,9 +348,14 @@ ${maybeRead}    let seeds = &[
     return `    msg!(${message});`;
   }
 
-  override emitEmit(event: string, _fields: string): string {
+  override emitEmit(event: string, fields: string): string {
+    if (!fields.trim()) {
+      return `    msg!("event:${event}");`;
+    }
+    // Preserve event field data as comments so the developer can add proper serialization
     return `    // Event: ${event}
-    msg!("event:${event}");`;
+    msg!("event:${event}");
+    // Event data: ${fields.replace(/\n/g, " ")}`;
   }
 
   override emitClockGet(localVar: string): string {

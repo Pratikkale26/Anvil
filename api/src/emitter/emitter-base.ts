@@ -67,6 +67,15 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // ── ATA creation ──
+  abstract emitCreateAta(
+    ata: string,
+    payer: string,
+    mint: string,
+    authority: string,
+    signerSeeds?: string,
+  ): string;
+
   // ── PDA signer seeds ──
   abstract emitPdaSignerSeeds(
     account: string,
@@ -1846,6 +1855,18 @@ ${fields}
   ): string {
     const accountName = snakeCase(accountRef.name);
     const payerName = accountRef.initPayer ? snakeCase(accountRef.initPayer) : undefined;
+
+    // ── ATA creation: if the account has associated_token::mint and associated_token::authority,
+    // emit an ATA creation CPI instead of create_program_account ──
+    const ataMintConstraint = accountRef.constraints.find((c) => c.kind === "associated_token::mint" && c.value);
+    const ataAuthorityConstraint = accountRef.constraints.find((c) => c.kind === "associated_token::authority" && c.value);
+    if (ataMintConstraint?.value && ataAuthorityConstraint?.value) {
+      const mint = snakeCase(ataMintConstraint.value);
+      const authority = snakeCase(ataAuthorityConstraint.value);
+      const payer = payerName ?? "payer";
+      return this.emitCreateAta(accountName, payer, mint, authority);
+    }
+
     if (!payerName || !accountRef.initSpace) {
       this.warnings.push(
         `Init account '${accountName}' is missing payer/space metadata; generated output may require manual allocation wiring.`
@@ -2224,6 +2245,8 @@ function hasResidualAnchorPatterns(value: string): boolean {
     /CpiContext::/.test(value) ||
     /anchor_spl::/.test(value) ||
     /\btoken::(?:transfer|mint_to|burn|close_account)\(/.test(value) ||
+    /\btoken_2022::(?:transfer_checked|mint_to|burn|close_account)\(/.test(value) ||
+    /\btoken_interface::(?:transfer_checked|mint_to|burn|close_account)\(/.test(value) ||
     /\bemit!\(/.test(value) ||
     /\brequire!\(/.test(value);
 }
@@ -2268,15 +2291,23 @@ export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
             break;
           case "spl_transfer":
             if (/token::transfer\(/.test(code)) return true;
+            if (/token_2022::transfer(?:_checked)?\(/.test(code)) return true;
+            if (/token_interface::transfer(?:_checked)?\(/.test(code)) return true;
             break;
           case "spl_mint_to":
             if (/token::mint_to\(/.test(code)) return true;
+            if (/token_2022::mint_to\(/.test(code)) return true;
+            if (/token_interface::mint_to\(/.test(code)) return true;
             break;
           case "spl_burn":
             if (/token::burn\(/.test(code)) return true;
+            if (/token_2022::burn\(/.test(code)) return true;
+            if (/token_interface::burn\(/.test(code)) return true;
             break;
           case "spl_close_account":
             if (/token::close_account\(/.test(code)) return true;
+            if (/token_2022::close_account\(/.test(code)) return true;
+            if (/token_interface::close_account\(/.test(code)) return true;
             break;
         }
       }
@@ -2436,5 +2467,41 @@ export function irNeedsUnsignedSplCloseAccountHelper(ir: SolanaIR): boolean {
 export function irNeedsInitAccountHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.accounts.some((account) => account.isInit)
+  );
+}
+
+/**
+ * Returns true if the IR contains any CPI body statements targeting Token-2022
+ * (tokenProgram: "token_2022"). Used by emitters to decide whether to add
+ * Token-2022 imports and helpers.
+ */
+export function irNeedsToken2022Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => {
+      if (
+        stmt.kind === "cpi_spl_transfer" ||
+        stmt.kind === "cpi_spl_mint_to" ||
+        stmt.kind === "cpi_spl_burn" ||
+        stmt.kind === "cpi_spl_close_account"
+      ) {
+        return (stmt as Record<string, unknown>).tokenProgram === "token_2022";
+      }
+      return false;
+    })
+  );
+}
+
+/**
+ * Returns true if any instruction has an init/init_if_needed account with
+ * associated_token::mint and associated_token::authority constraints,
+ * indicating the emitter needs ATA creation logic.
+ */
+export function irNeedsAtaCreationHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.accounts.some((account) =>
+      account.isInit &&
+      account.constraints.some((c) => c.kind === "associated_token::mint" && c.value) &&
+      account.constraints.some((c) => c.kind === "associated_token::authority" && c.value)
+    )
   );
 }
