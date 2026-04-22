@@ -79,6 +79,19 @@ use solana_program::{
     if (irNeedsAtaCreationHelper(_ir)) {
       imports.push(`use spl_associated_token_account::instruction::create_associated_token_account;`);
     }
+
+    // Add Clock import when any instruction uses sysvar_clock or pass_through references Clock::get
+    const needsClock = _ir.instructions.some(i =>
+      i.body.some(s =>
+        s.kind === 'sysvar_clock' ||
+        (s.kind === 'pass_through' && /\bClock::get\(\)/.test(s.code)) ||
+        (s.kind === 'state_field_assign' && /\bClock::get\(\)/.test(s.value))
+      )
+    );
+    if (needsClock) {
+      imports.push(`use solana_program::sysvar::clock::Clock;`);
+    }
+
     imports.push(...this.filteredSourceImports(_ir));
     return imports.join("\n");
   }
@@ -318,6 +331,8 @@ ${arms}
 
     const transformedSeeds = seeds.map(seed => {
       if (seed.startsWith('b"') || seed.startsWith("b'")) return seed;
+      // Don't rewrite key references — they are account key accesses, not state field reads
+      if (/\.key\(\)\.as_ref\(\)$/.test(seed) || /\.key\.as_ref\(\)$/.test(seed)) return seed;
       if (seed.startsWith("&[") && stateVar) {
         return seed.replace(new RegExp(`&\\[${stateVar}\\.`), `&[${dataVar}.`);
       }
@@ -325,6 +340,9 @@ ${arms}
         return seed.replace(new RegExp(`^${stateVar}\\.`), `${dataVar}.`);
       }
       if (!stateVar && seed.startsWith(`${account}.`)) {
+        // Don't rewrite if the rest is just .as_ref(), .key(), etc. — not a state field
+        const rest = seed.slice(account.length + 1);
+        if (/^(?:as_ref\(\)|key|key\(\)|key\(\)\.as_ref\(\)|key\.as_ref\(\))$/.test(rest)) return seed;
         return seed.replace(new RegExp(`^${account}\\.`), `${dataVar}.`);
       }
       return seed;

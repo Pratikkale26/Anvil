@@ -47,8 +47,16 @@ class PinocchioEmitter extends BaseEmitter {
     if (irNeedsHelper(_ir, "transfer_lamports")) {
       imports.push(`use pinocchio_system::instructions::Transfer as SystemTransfer;`);
     }
-    if (irNeedsInitAccountHelper(_ir)) {
+    const needsSeedSigner = irNeedsInitAccountHelper(_ir)
+      || irNeedsSignedLamportsHelper(_ir)
+      || irNeedsSignedSplMintToHelper(_ir)
+      || irNeedsSignedSplBurnHelper(_ir)
+      || irNeedsSignedSplCloseAccountHelper(_ir)
+      || irNeedsHelper(_ir, "spl_transfer");
+    if (needsSeedSigner) {
       imports.push(`use pinocchio::instruction::{Seed, Signer};`);
+    }
+    if (irNeedsInitAccountHelper(_ir)) {
       imports.push(`use pinocchio_system::create_account_with_minimum_balance_signed;`);
     }
     if (irNeedsHelper(_ir, "spl_transfer") || irNeedsHelper(_ir, "spl_mint_to") || irNeedsHelper(_ir, "spl_burn")) {
@@ -68,7 +76,31 @@ class PinocchioEmitter extends BaseEmitter {
       imports.push(`use pinocchio_token::instructions::TransferChecked as Token2022TransferChecked;`);
     }
     if (irNeedsAtaCreationHelper(_ir)) {
-      imports.push(`use pinocchio_associated_token::instructions::Create as CreateAssociatedToken;`);
+      imports.push(`use pinocchio_associated_token_account::instructions::Create as CreateAssociatedToken;`);
+    }
+
+    // Add Clock import when any instruction uses sysvar_clock or pass_through references Clock::get
+    const needsClock = _ir.instructions.some(i =>
+      i.body.some(s =>
+        s.kind === 'sysvar_clock' ||
+        (s.kind === 'pass_through' && /\bClock::get\(\)/.test(s.code)) ||
+        (s.kind === 'state_field_assign' && /\bClock::get\(\)/.test(s.value))
+      )
+    );
+    const needsRent = _ir.instructions.some(i =>
+      i.body.some(s =>
+        s.kind === 'sysvar_rent' ||
+        (s.kind === 'pass_through' && /\bRent::get\(\)/.test(s.code))
+      )
+    );
+    if (needsClock) {
+      imports.push(`use pinocchio::sysvars::clock::Clock;`);
+    }
+    if (needsRent) {
+      imports.push(`use pinocchio::sysvars::rent::Rent;`);
+    }
+    if (needsClock || needsRent) {
+      imports.push(`use pinocchio::sysvars::Sysvar;`);
     }
 
     imports.push(...this.filteredSourceImports(_ir));
@@ -564,18 +596,20 @@ fn spl_token_transfer_signed(
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
+    let seed_group = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+    let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+    for (i, seed) in seed_group.iter().enumerate() {
+        if i >= seeds.len() { return Err(ProgramError::InvalidSeeds); }
+        seeds[i] = Seed::from(*seed);
+    }
+    let signer = Signer::from(&seeds[..seed_group.len()]);
     TokenTransfer {
         from,
         to,
         authority,
         amount,
     }
-    .invoke_signed(&{
-        let sg = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
-        let mut s: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
-        for (i, sd) in sg.iter().enumerate() { if i >= s.len() { return Err(ProgramError::InvalidSeeds); } s[i] = Seed::from(*sd); }
-        [Signer::from(&s[..sg.len()])]
-    })
+    .invoke_signed(&[signer])
 }`);
     }
 
@@ -605,18 +639,20 @@ fn spl_token_transfer_signed(
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
+    let seed_group = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+    let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+    for (i, seed) in seed_group.iter().enumerate() {
+        if i >= seeds.len() { return Err(ProgramError::InvalidSeeds); }
+        seeds[i] = Seed::from(*seed);
+    }
+    let signer = Signer::from(&seeds[..seed_group.len()]);
     TokenMintTo {
         mint,
         account,
         mint_authority,
         amount,
     }
-    .invoke_signed(&{
-        let sg = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
-        let mut s: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
-        for (i, sd) in sg.iter().enumerate() { if i >= s.len() { return Err(ProgramError::InvalidSeeds); } s[i] = Seed::from(*sd); }
-        [Signer::from(&s[..sg.len()])]
-    })
+    .invoke_signed(&[signer])
 }`);
     }
 
@@ -646,18 +682,20 @@ fn spl_token_transfer_signed(
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
+    let seed_group = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+    let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+    for (i, seed) in seed_group.iter().enumerate() {
+        if i >= seeds.len() { return Err(ProgramError::InvalidSeeds); }
+        seeds[i] = Seed::from(*seed);
+    }
+    let signer = Signer::from(&seeds[..seed_group.len()]);
     TokenBurn {
         account,
         mint,
         authority,
         amount,
     }
-    .invoke_signed(&{
-        let sg = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
-        let mut s: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
-        for (i, sd) in sg.iter().enumerate() { if i >= s.len() { return Err(ProgramError::InvalidSeeds); } s[i] = Seed::from(*sd); }
-        [Signer::from(&s[..sg.len()])]
-    })
+    .invoke_signed(&[signer])
 }`);
     }
 
@@ -685,17 +723,19 @@ fn spl_token_transfer_signed(
     authority: &AccountInfo,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
+    let seed_group = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+    let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+    for (i, seed) in seed_group.iter().enumerate() {
+        if i >= seeds.len() { return Err(ProgramError::InvalidSeeds); }
+        seeds[i] = Seed::from(*seed);
+    }
+    let signer = Signer::from(&seeds[..seed_group.len()]);
     TokenCloseAccount {
         account,
         destination,
         authority,
     }
-    .invoke_signed(&{
-        let sg = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
-        let mut s: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
-        for (i, sd) in sg.iter().enumerate() { if i >= s.len() { return Err(ProgramError::InvalidSeeds); } s[i] = Seed::from(*sd); }
-        [Signer::from(&s[..sg.len()])]
-    })
+    .invoke_signed(&[signer])
 }`);
     }
 

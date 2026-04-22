@@ -456,6 +456,26 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
 
     const resolveStateVar = (account: string): string => stateVars.get(account) ?? account;
     const resolveAccountInfoVar = (account: string): string => accountInfoVars.get(account) ?? account;
+    /**
+     * State-aware amount expression resolver.
+     * If X.amount references a program state account (deserialized struct),
+     * use the struct field instead of token_account_amount(). If it's a
+     * token account, delegate to this.transformAmountExpr() which emits
+     * token_account_amount(accountInfoVar)?.
+     */
+    const resolveAmountExpr = (amount: string): string => {
+      const tokenAmountMatch = amount.match(/^(\w+)\.amount$/);
+      if (tokenAmountMatch?.[1]) {
+        const accountName = snakeCase(tokenAmountMatch[1]);
+        // If the account has been deserialized to a state struct, use the struct field
+        if (stateVars.has(accountName)) {
+          return `${stateVars.get(accountName)}.amount`;
+        }
+        // Otherwise, use the AccountInfo variable for token_account_amount
+        return `token_account_amount(${resolveAccountInfoVar(accountName)})?`;
+      }
+      return this.transformAmountExpr(amount);
+    };
     const ensureStateRead = (account: string, mutable = false): string => {
       const normalized = snakeCase(account);
       const existing = stateVars.get(normalized);
@@ -607,7 +627,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         resolveAccountInfoVar(canonicalAccountName(name))
       );
       transformed = transformed.replace(/\b(\w+)\.to_account_info\(\)/g, (_full, name: string) =>
-        `${resolveAccountInfoVar(canonicalAccountName(name))}.clone()`
+        resolveAccountInfoVar(canonicalAccountName(name))
       );
       return transformed;
     };
@@ -777,32 +797,32 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       replaceCpi(
         /(?:anchor_spl::)?token::transfer\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (from, to, authority, signerSeeds, amount) =>
-          `spl_token_transfer_signed(${snakeCase(from)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
+          `spl_token_transfer_signed(${snakeCase(from)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${resolveAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
       replaceCpi(
         /(?:anchor_spl::)?token::transfer\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (from, to, authority, amount) =>
-          `spl_token_transfer(${snakeCase(from)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
+          `spl_token_transfer(${snakeCase(from)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${resolveAmountExpr(cleanInlineExpr(amount))})?;`
       );
       replaceCpi(
         /(?:anchor_spl::)?token::mint_to\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (mint, to, authority, signerSeeds, amount) =>
-          `spl_token_mint_to_signed(${snakeCase(mint)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
+          `spl_token_mint_to_signed(${snakeCase(mint)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${resolveAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
       replaceCpi(
         /(?:anchor_spl::)?token::mint_to\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (mint, to, authority, amount) =>
-          `spl_token_mint_to(${snakeCase(mint)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
+          `spl_token_mint_to(${snakeCase(mint)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${resolveAmountExpr(cleanInlineExpr(amount))})?;`
       );
       replaceCpi(
         /(?:anchor_spl::)?token::burn\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (mint, from, authority, signerSeeds, amount) =>
-          `spl_token_burn_signed(${snakeCase(from)}, ${snakeCase(mint)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
+          `spl_token_burn_signed(${snakeCase(from)}, ${snakeCase(mint)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${resolveAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
       replaceCpi(
         /(?:anchor_spl::)?token::burn\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
         (mint, from, authority, amount) =>
-          `spl_token_burn(${snakeCase(from)}, ${snakeCase(mint)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
+          `spl_token_burn(${snakeCase(from)}, ${snakeCase(mint)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${resolveAmountExpr(cleanInlineExpr(amount))})?;`
       );
       replaceCpi(
         /(?:anchor_spl::)?token::close_account\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*\)\?;/g,
@@ -827,22 +847,22 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       replaceCpi(
         /let\s+cpi_accounts\s*=\s*MintTo\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new_with_signer\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts,\s*([\w\[\]&\s.]+?)\s*,\s*\);\s*mint_to\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
         (mint, to, authority, signerSeeds, amount) =>
-          `spl_token_mint_to_signed(${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(to)}, ${normalizeAccountExpr(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
+          `spl_token_mint_to_signed(${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(to)}, ${normalizeAccountExpr(authority)}, ${resolveAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
       replaceCpi(
         /let\s+cpi_accounts\s*=\s*MintTo\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts\s*\);\s*mint_to\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
         (mint, to, authority, amount) =>
-          `spl_token_mint_to(${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(to)}, ${normalizeAccountExpr(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
+          `spl_token_mint_to(${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(to)}, ${normalizeAccountExpr(authority)}, ${resolveAmountExpr(cleanInlineExpr(amount))})?;`
       );
       replaceCpi(
         /let\s+cpi_accounts\s*=\s*Burn\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*from:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new_with_signer\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts,\s*([\w\[\]&\s.]+?)\s*,\s*\);\s*burn\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
         (mint, from, authority, signerSeeds, amount) =>
-          `spl_token_burn_signed(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
+          `spl_token_burn_signed(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(authority)}, ${resolveAmountExpr(cleanInlineExpr(amount))}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
       replaceCpi(
         /let\s+cpi_accounts\s*=\s*Burn\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*from:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts\s*\);\s*burn\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
         (mint, from, authority, amount) =>
-          `spl_token_burn(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(authority)}, ${this.transformAmountExpr(cleanInlineExpr(amount))})?;`
+          `spl_token_burn(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(mint)}, ${normalizeAccountExpr(authority)}, ${resolveAmountExpr(cleanInlineExpr(amount))})?;`
       );
       replaceCpi(
         /let\s+ix\s*=\s*anchor_lang::solana_program::system_instruction::transfer\(\s*&([\w.]+)\.key\(\),\s*&([\w.]+)\.key\(\),\s*([\s\S]*?)\s*,\s*\);\s*anchor_lang::solana_program::program::invoke_signed\(\s*&ix,\s*&\[[\s\S]*?\],\s*(signer_seeds)\s*,\s*\)\?;/g,
@@ -1229,6 +1249,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             let rhs = transformCtxAccountsReferences(compoundMatch[2]);
             rhs = normalizeKeyValueUsages(transformAccountReferences(rhs));
             rhs = transformHelperCalls(rhs);
+            rhs = rhs
+              .replace(/(?<!:)\bClock::get\(\)\?/g, qualifiedClockGetExpr())
+              .replace(/(?<!:)\bRent::get\(\)\?/g, qualifiedRentGetExpr())
+              .replace(/(?<!:)\bClock::get\(\)/g, qualifiedClockGetValueExpr())
+              .replace(/(?<!:)\bRent::get\(\)/g, qualifiedRentGetValueExpr());
             if (isCheckedArithmeticType(fieldDef.type)) {
               const checkedMethod = op === "+" ? "checked_add" : op === "-" ? "checked_sub" : op === "*" ? "checked_mul" : "checked_div";
               lines.push(`    ${stateVarName}.${fieldName} = ${stateVarName}.${fieldName}.${checkedMethod}(${rhs}).ok_or(ProgramError::ArithmeticOverflow)?;`);
@@ -1262,6 +1287,12 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           // Prevent double-deref on key expressions (e.g., **name.key → *name.key)
           value = value.replace(/\*\*(\w+\.key\b)/g, "*$1");
           value = transformHelperCalls(value);
+          // Replace Clock::get() / Rent::get() with framework-qualified calls
+          value = value
+            .replace(/(?<!:)\bClock::get\(\)\?/g, qualifiedClockGetExpr())
+            .replace(/(?<!:)\bRent::get\(\)\?/g, qualifiedRentGetExpr())
+            .replace(/(?<!:)\bClock::get\(\)/g, qualifiedClockGetValueExpr())
+            .replace(/(?<!:)\bRent::get\(\)/g, qualifiedRentGetValueExpr());
           // Replace ctx.bumps.X with bump derivation call
           if (value.includes("ctx.bumps.")) {
             const bumpAccount = value.match(/ctx\.bumps\.(\w+)/)?.[1] ?? stmt.account;
@@ -1308,7 +1339,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           }
           lines.push(this.emitSystemTransfer(
             snakeCase(stmt.from), snakeCase(stmt.to),
-            this.transformAmountExpr(stmt.amount), stmt.signerSeeds
+            resolveAmountExpr(stmt.amount), stmt.signerSeeds
           ));
           break;
         }
@@ -1328,7 +1359,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           lines.push(this.emitSplTransfer(
             snakeCase(stmt.from), snakeCase(stmt.to),
             authority,
-            this.transformAmountExpr(stmt.amount), stmt.signerSeeds
+            resolveAmountExpr(stmt.amount), stmt.signerSeeds
           ));
           break;
         }
@@ -1347,7 +1378,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           lines.push(this.emitSplMintTo(
             snakeCase(stmt.mint), snakeCase(stmt.to),
             authority,
-            this.transformAmountExpr(stmt.amount), stmt.signerSeeds
+            resolveAmountExpr(stmt.amount), stmt.signerSeeds
           ));
           break;
         }
@@ -1366,7 +1397,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           lines.push(this.emitSplBurn(
             snakeCase(stmt.from), snakeCase(stmt.mint),
             authority,
-            this.transformAmountExpr(stmt.amount), stmt.signerSeeds
+            resolveAmountExpr(stmt.amount), stmt.signerSeeds
           ));
           break;
         }
@@ -1512,7 +1543,9 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
       }
     }
 
-    return lines.join("\n");
+    // Global fix: prevent double-deref on key accesses (e.g., **name.key → *name.key)
+    const result = lines.join("\n");
+    return result.replace(/\*\*(\w+)\.key\(\)/g, '*$1.key()').replace(/\*\*(\w+)\.key\b(?!\()/g, '*$1.key');
   }
 
   // ─── Arg parsing ───────────────────────────────────────────────────────────
@@ -1581,7 +1614,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     }
     let (arg_bytes, rest) = remaining.split_at(32);
     remaining = rest;
-    let ${name} = ${this.emitPubkeyDeserializeSlice("arg_bytes")};`;
+    let ${name}: ${this.rustTypeForFramework("Pubkey")} = ${this.emitPubkeyDeserializeSlice("arg_bytes")};`;
       case "String":
       case "Vec<u8>":
         return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
@@ -1909,9 +1942,35 @@ ${fields}
       )
         .replace(/\blet bump =/g, `let bump_${accountName} =`)
         .replace(/\blet\s+\(expected_key,\s*bump\)\s*=/g, `let (expected_key, bump_${accountName}) =`);
-      signerPrelude = `${bumpLine}
-    let init_${accountName}_seeds = &[
-            ${[...pdaSeeds, `&[bump_${accountName}]`].join(",\n            ")},
+
+      // Lift to_le_bytes() temporaries out of the init seeds array to avoid
+      // E0716 (temporary dropped while borrowed).
+      const initSeedPrelude: string[] = [];
+      let initTempCount = 0;
+      const liftedSeeds = pdaSeeds.map((seed) => {
+        // Match patterns like: seed.to_le_bytes().as_ref()
+        const asRefMatch = seed.match(/^(.+)\.to_le_bytes\(\)\.as_ref\(\)$/);
+        if (asRefMatch?.[1]) {
+          const varName = initTempCount === 0 ? `init_seed_bytes` : `init_seed_bytes_${initTempCount + 1}`;
+          initTempCount++;
+          initSeedPrelude.push(`    let ${varName} = ${asRefMatch[1].trim()}.to_le_bytes();`);
+          return `${varName}.as_ref()`;
+        }
+        // Match patterns like: &seed.to_le_bytes()
+        const refMatch = seed.match(/^&(.+)\.to_le_bytes\(\)$/);
+        if (refMatch?.[1]) {
+          const varName = initTempCount === 0 ? `init_seed_bytes` : `init_seed_bytes_${initTempCount + 1}`;
+          initTempCount++;
+          initSeedPrelude.push(`    let ${varName} = ${refMatch[1].trim()}.to_le_bytes();`);
+          return `&${varName}`;
+        }
+        return seed;
+      });
+
+      const initSeedPreludeStr = initSeedPrelude.length > 0 ? `\n${initSeedPrelude.join("\n")}` : "";
+      signerPrelude = `${bumpLine}${initSeedPreludeStr}
+    let init_${accountName}_seeds: &[&[u8]] = &[
+            ${[...liftedSeeds, `&[bump_${accountName}]`].join(",\n            ")},
         ];
     let init_${accountName}_signer_seeds = &[&init_${accountName}_seeds[..]];`;
       signerSeedsExpr = `init_${accountName}_signer_seeds`;
