@@ -1,3 +1,14 @@
+/**
+ * Solana IR Schema — the typed intermediate representation used by Anvil.
+ *
+ * Defines the full IR shape with Zod schemas (runtime validation) and
+ * TypeScript types (compile-time safety). Every Anchor source parsed by
+ * `parseAnchor()` produces a `SolanaIR` object conforming to this schema,
+ * and every emitter consumes it to generate target-framework Rust.
+ *
+ * @module
+ */
+
 import { z } from "zod";
 
 // ─── Primitive types ────────────────────────────────────────────────────────
@@ -54,6 +65,13 @@ export type Constraint = z.infer<typeof ConstraintSchema>;
 
 // ─── Account reference inside an instruction ────────────────────────────────
 
+/**
+ * A reference to an account within an instruction's Accounts struct.
+ *
+ * Captures signer/mutability/init flags, PDA seeds, constraints, and the
+ * account type name. The emitter uses these to generate account bindings,
+ * security checks, and PDA derivations.
+ */
 export const AccountRefSchema = z.object({
   name: z.string(),
   accountType: z.string(), // maps to an AccountDef name or "SystemProgram" etc.
@@ -82,12 +100,19 @@ export const ArgSchema = z.object({
 export type Arg = z.infer<typeof ArgSchema>;
 
 // ─── Instruction Body Statement ──────────────────────────────────────────────
-//
-// Each statement in an instruction function body is classified as either:
-//   TRANSFORM — framework-specific, must be rewritten per target
-//   PASS-THROUGH — pure Rust, kept unchanged across all targets
-//
-// The emitter walks this list and either transforms or passes through.
+
+/**
+ * A classified statement from an instruction function body.
+ *
+ * Each statement is classified as either:
+ * - **TRANSFORM** -- framework-specific pattern that must be rewritten per target
+ *   (e.g. `state_read`, `cpi_system_transfer`, `require`)
+ * - **PASS-THROUGH** -- pure Rust code kept unchanged across all targets
+ *
+ * The emitter walks the statement list and dispatches to framework-specific
+ * transform methods for TRANSFORM kinds, while emitting PASS-THROUGH code
+ * verbatim.
+ */
 
 export const BodyStatementSchema = z.discriminatedUnion("kind", [
   // ── PASS-THROUGH: pure Rust code, kept unchanged ──
@@ -247,6 +272,14 @@ export type BodyStatement = z.infer<typeof BodyStatementSchema>;
 
 // ─── Instruction ─────────────────────────────────────────────────────────────
 
+/**
+ * A single instruction in the Solana program.
+ *
+ * Contains the instruction name, its account references, typed arguments,
+ * classified body statements, and optional metadata like discriminator and
+ * CU estimates. The emitter generates a complete instruction handler function
+ * from this definition.
+ */
 export const InstructionSchema = z.object({
   name: z.string(),
   /** 8-byte Anchor discriminator (hex string), if known */
@@ -370,6 +403,15 @@ export type EmitterOutput = z.infer<typeof EmitterOutputSchema>;
 
 // ─── Root: Solana IR ─────────────────────────────────────────────────────────
 
+/**
+ * The root Solana IR object -- the complete intermediate representation
+ * of a parsed Anchor program.
+ *
+ * Contains all instructions, account definitions, custom types, constants,
+ * error enums, helper functions, imports, and metadata. This is the single
+ * object that flows from `parseAnchor()` to any emitter (`emitPinocchioFull`,
+ * `emitQuasarFull`, `emitNativeFull`).
+ */
 export const SolanaIRSchema = z.object({
   name: z.string(),
   programId: z.string().optional(), // on-chain address if known

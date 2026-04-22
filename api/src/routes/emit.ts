@@ -7,26 +7,45 @@ import { analyzeCU } from "../emitter/cu-analyzer.js";
 import { validateEmitterOutput } from "../emitter/output-validator.js";
 import { refineOutput } from "../ai/refine.js";
 import { buildDeterministicReviewReport } from "../ai/review-report.js";
+import { AnvilError, ErrorCode } from "../errors.js";
 
 export const emitRoute = Router();
 
 /**
- * POST /emit
- * Body: { ir: SolanaIR, target: "pinocchio" | "quasar" | "native", multiFile?: boolean, strict?: boolean }
- * Query: ?refine=1 — run single AI refine pass if validator finds issues
- * Returns: {
- *   code: string,                  // single-file combined output (backward compat)
- *   files?: EmitterFile[],         // multi-file output (if multiFile=true)
- *   cu: CUEstimate[],
- *   target: string,
- *   programName: string,
- *   warnings: string[],            // any review warnings
- *   transformReport: {...},         // what was transformed vs passed through
- *   validationIssues: [...],        // deterministic validation results
- *   reviewReport: {...},            // deterministic review findings + fix guidance
- *   refined?: boolean,             // true if AI refine was applied
- *   refineResult?: RefineResponse,  // details of AI refinement (if applied)
+ * POST /emit — Emit target-framework Rust from SolanaIR
+ *
+ * Body: `{ ir: SolanaIR, target: "pinocchio" | "quasar" | "native", multiFile?: boolean, strict?: boolean }`
+ * Query: `?refine=1` — run a single AI refine pass if the validator finds issues
+ *
+ * @returns
+ * ```json
+ * {
+ *   "code": "string",
+ *   "files": [{ "path": "lib.rs", "content": "..." }],
+ *   "cu": [{ "instruction": "initialize", "anchor": 5000 }],
+ *   "target": "pinocchio",
+ *   "programName": "my_program",
+ *   "warnings": [],
+ *   "transformReport": { "transformedCount": 4, "passedThroughCount": 1, "details": [] },
+ *   "validationIssues": [],
+ *   "reviewReport": {},
+ *   "refined": false
  * }
+ * ```
+ *
+ * Error codes: 2000-2003
+ *
+ * @example
+ * ```
+ * // Request
+ * POST /emit
+ * Content-Type: application/json
+ *
+ * { "ir": { "name": "counter", ... }, "target": "pinocchio" }
+ *
+ * // Error (400)
+ * { "error": "Missing required field: ir", "code": 2000 }
+ * ```
  */
 emitRoute.post("/", async (req, res) => {
   const { ir: rawIr, target, multiFile } = req.body as {
@@ -39,7 +58,11 @@ emitRoute.post("/", async (req, res) => {
   const refine = req.query.refine === "1";
 
   if (!rawIr || typeof rawIr !== "object") {
-    res.status(400).json({ error: "Missing required field: ir (SolanaIR object)" });
+    const err = new AnvilError(
+      ErrorCode.INVALID_IR,
+      "Missing required field: ir (SolanaIR object)",
+    );
+    res.status(err.statusCode).json(err.toJSON());
     return;
   }
 
@@ -47,19 +70,24 @@ emitRoute.post("/", async (req, res) => {
   type Target = (typeof validTargets)[number];
 
   if (!target || !validTargets.includes(target as Target)) {
-    res.status(400).json({
-      error: `Invalid target. Must be one of: ${validTargets.join(", ")}`,
-    });
+    const err = new AnvilError(
+      ErrorCode.INVALID_TARGET,
+      `Invalid target. Must be one of: ${validTargets.join(", ")}`,
+    );
+    res.status(err.statusCode).json(err.toJSON());
     return;
   }
 
   // Validate the IR with Zod
   const parsed = SolanaIRSchema.safeParse(rawIr);
   if (!parsed.success) {
-    res.status(422).json({
-      error: "Invalid IR schema",
-      details: parsed.error.message,
-    });
+    const err = new AnvilError(
+      ErrorCode.INVALID_IR,
+      "Invalid IR schema",
+      parsed.error.message,
+      422,
+    );
+    res.status(err.statusCode).json(err.toJSON());
     return;
   }
 
@@ -83,11 +111,16 @@ emitRoute.post("/", async (req, res) => {
     let reviewReport = buildDeterministicReviewReport(validationIssues, ir, target as Target);
 
     if (strict && validationErrors.length > 0 && !refine) {
-      res.status(422).json({
-        error: "Emit validation failed in strict mode",
-        details: validationErrors.map((issue) =>
+      const err = new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "Emit validation failed in strict mode",
+        validationErrors.map((issue) =>
           issue.path ? `${issue.path}: ${issue.message}` : issue.message
-        ),
+        ).join("; "),
+        422,
+      );
+      res.status(err.statusCode).json({
+        ...err.toJSON(),
         warnings: validationWarnings,
         reviewReport,
       });
@@ -170,9 +203,12 @@ emitRoute.post("/", async (req, res) => {
 
     res.json(response);
   } catch (e) {
-    res.status(500).json({
-      error: "Emit failed",
-      details: e instanceof Error ? e.message : String(e),
-    });
+    const err = new AnvilError(
+      ErrorCode.EMIT_FAILED,
+      "Emit failed",
+      e instanceof Error ? e.message : String(e),
+      500,
+    );
+    res.status(err.statusCode).json(err.toJSON());
   }
 });

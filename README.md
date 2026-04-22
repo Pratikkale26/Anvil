@@ -270,6 +270,61 @@ For demos, grants, and public posts, the most accurate framing right now is:
 
 That framing is strong and credible without overstating support.
 
+## API Reference
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Health check -- returns `{ status: "ok" }` |
+| `POST` | `/parse` | Parse Anchor source into SolanaIR |
+| `POST` | `/emit` | Emit target-framework Rust from SolanaIR |
+| `GET` | `/demo/:name` | Pre-loaded demo IR (counter, vault, escrow, staking) |
+| `POST` | `/ai/refine` | AI-powered fix for validation issues |
+
+### POST /parse
+
+Accepts one of: `source`, `sourcePath`, `projectPath`, `repoUrl`, or `files` + `entryPath`.
+
+```bash
+curl -s http://localhost:8080/parse \
+  -H 'Content-Type: application/json' \
+  -d '{"source": "use anchor_lang::prelude::*; ..."}'
+```
+
+Returns: `{ ir, sourcePath, candidates, source }`
+
+### POST /emit
+
+Requires `ir` (SolanaIR object) and `target` (`pinocchio`, `quasar`, or `native`).
+
+```bash
+curl -s http://localhost:8080/emit \
+  -H 'Content-Type: application/json' \
+  -d '{"ir": {...}, "target": "pinocchio"}'
+```
+
+Returns: `{ code, cu, target, programName, warnings, validationIssues, reviewReport }`
+
+Optional: `multiFile: true` for split project output, `strict: true` to fail on validation errors, `?refine=1` for AI polish.
+
+### Error Codes
+
+All error responses include a numeric `code` field alongside the `error` message:
+
+| Range | Category | Codes |
+|-------|----------|-------|
+| 1xxx | Parse | `1000` parse failed, `1001` no program module, `1002` no source, `1003` source too large, `1004` invalid Rust, `1005` repo fetch failed, `1006` no entry file |
+| 2xxx | Emit | `2000` invalid IR, `2001` invalid target, `2002` emit failed, `2003` validation failed |
+| 3xxx | AI | `3000` provider error, `3001` refine failed |
+| 4xxx | General | `4000` rate limited, `4999` internal error |
+
+Example error response:
+
+```json
+{ "error": "Missing required input", "code": 1002, "details": "Provide source, sourcePath, ..." }
+```
+
 ## More Docs
 
 - Architecture: [ARCHITECTURE.md](/home/pk/Anvil/ARCHITECTURE.md)

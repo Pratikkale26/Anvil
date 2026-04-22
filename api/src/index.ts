@@ -5,6 +5,7 @@ import { parseRoute } from "./routes/parse.js";
 import { emitRoute } from "./routes/emit.js";
 import { demoRoute } from "./routes/demo.js";
 import { aiRoute } from "./routes/ai.js";
+import { AnvilError, ErrorCode } from "./errors.js";
 
 const app = express();
 
@@ -34,7 +35,8 @@ app.use((req, res, next) => {
   res.setHeader('X-RateLimit-Limit', RATE_LIMIT);
   res.setHeader('X-RateLimit-Remaining', Math.max(0, RATE_LIMIT - entry.count));
   if (entry.count > RATE_LIMIT) {
-    res.status(429).json({ error: 'Too many requests' });
+    const err = new AnvilError(ErrorCode.RATE_LIMITED, "Too many requests", undefined, 429);
+    res.status(err.statusCode).json(err.toJSON());
     return;
   }
   next();
@@ -99,8 +101,12 @@ app.use(
     res: express.Response,
     _next: express.NextFunction
   ) => {
-    console.error(err);
-    res.status(500).json({ error: "Internal server error", details: err.message });
+    if (err instanceof AnvilError) {
+      res.status(err.statusCode).json(err.toJSON());
+    } else {
+      console.error(err);
+      res.status(500).json({ error: "Internal server error", code: ErrorCode.INTERNAL_ERROR });
+    }
   }
 );
 

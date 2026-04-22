@@ -54,7 +54,26 @@ export interface ParseError {
 
 /**
  * Parse an Anchor Rust source file into SolanaIR using tree-sitter.
- * This is async because tree-sitter WASM initialization is async.
+ *
+ * This is the main parser entry point. It takes raw Anchor-style Rust source,
+ * builds a tree-sitter AST, classifies top-level items (program module,
+ * account structs, error enums, etc.), and produces a validated `SolanaIR`.
+ *
+ * Async because tree-sitter WASM initialization is async on first call.
+ *
+ * @param source - Raw Rust source code containing Anchor constructs
+ * @returns `ParseResult` with the IR on success, or `ParseError` with
+ *          a human-readable error message and optional details on failure
+ *
+ * @example
+ * ```ts
+ * const result = await parseAnchor(anchorSource);
+ * if (result.ok) {
+ *   console.log(result.ir.instructions.length, "instructions parsed");
+ * } else {
+ *   console.error(result.error, result.details);
+ * }
+ * ```
  */
 export async function parseAnchor(source: string): Promise<ParseResult | ParseError> {
   try {

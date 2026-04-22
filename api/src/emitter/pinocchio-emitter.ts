@@ -805,10 +805,31 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
 
 const emitter = new PinocchioEmitter();
 
+/**
+ * Emit a single combined Rust file targeting the Pinocchio framework.
+ *
+ * Convenience wrapper around `emitPinocchioFull` that returns only the
+ * single-file string output, discarding multi-file layout, warnings,
+ * and transform reports.
+ *
+ * @param ir - Validated SolanaIR object
+ * @returns Combined single-file Pinocchio Rust source
+ */
 export function emitPinocchio(ir: SolanaIR): string {
   return emitter.emit(ir).singleFile;
 }
 
+/**
+ * Emit a full Pinocchio project from the given SolanaIR.
+ *
+ * Returns multi-file output (lib.rs, state.rs, instructions/, errors.rs),
+ * a combined single-file fallback, warnings, and a transform report
+ * detailing how many body statements were framework-transformed vs
+ * passed through as raw Rust.
+ *
+ * @param ir - Validated SolanaIR object
+ * @returns `EmitterOutput` with files, singleFile, warnings, and transformReport
+ */
 export function emitPinocchioFull(ir: SolanaIR) {
   return emitter.emit(ir);
 }

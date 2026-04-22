@@ -3,9 +3,39 @@ import { parseAnchor } from "../parser/anchor-parser.js";
 import { resolveLocalSource } from "../parser/local-source.js";
 import { buildProjectSource, type ProjectFile } from "../parser/project-source.js";
 import { resolveRepoSource } from "../parser/repo-source.js";
+import { AnvilError, ErrorCode } from "../errors.js";
 
 export const parseRoute = Router();
 
+/**
+ * POST /parse — Parse Anchor source into SolanaIR
+ *
+ * Accepts one of:
+ * - `{ source: string }` — raw Anchor Rust source
+ * - `{ sourcePath: string }` — local file path (server-side)
+ * - `{ projectPath: string }` — local project directory
+ * - `{ repoUrl: string, repoRef?: string, repoSubpath?: string }` — GitHub repo
+ * - `{ files: ProjectFile[], entryPath: string }` — uploaded folder
+ *
+ * @returns `{ ir: SolanaIR, sourcePath?: string, candidates?: string[], source: string }`
+ *
+ * Error codes: 1000-1006
+ *
+ * @example
+ * ```
+ * // Request
+ * POST /parse
+ * Content-Type: application/json
+ *
+ * { "source": "use anchor_lang::prelude::*; ..." }
+ *
+ * // Success (200)
+ * { "ir": { "name": "my_program", "instructions": [...], ... }, "source": "..." }
+ *
+ * // Error (400)
+ * { "error": "Missing required input", "code": 1002, "details": "..." }
+ * ```
+ */
 parseRoute.post("/", async (req, res) => {
   const { source, sourcePath, projectPath, repoUrl, repoRef, repoSubpath, files, entryPath } = req.body as {
     source?: string;
@@ -30,7 +60,10 @@ parseRoute.post("/", async (req, res) => {
         .map((file) => ({ path: file.path, content: file.content }));
 
       if (projectFiles.length === 0) {
-        throw new Error("Uploaded folder did not contain any Rust source files");
+        throw new AnvilError(
+          ErrorCode.NO_ENTRY_FILE,
+          "Uploaded folder did not contain any Rust source files",
+        );
       }
 
       resolvedSource = buildProjectSource(entryPath, projectFiles);
@@ -62,27 +95,44 @@ parseRoute.post("/", async (req, res) => {
       candidates = resolved.candidates;
     }
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    if (error instanceof AnvilError) {
+      res.status(error.statusCode).json(error.toJSON());
+      return;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(400).json(new AnvilError(ErrorCode.PARSE_FAILED, message).toJSON());
     return;
   }
 
   if (!resolvedSource || typeof resolvedSource !== "string") {
-    res.status(400).json({
-      error: "Missing required input: provide source, sourcePath, projectPath, files+entryPath, or repoUrl",
-    });
+    const err = new AnvilError(
+      ErrorCode.NO_SOURCE_PROVIDED,
+      "Missing required input",
+      "Provide source, sourcePath, projectPath, files+entryPath, or repoUrl",
+    );
+    res.status(err.statusCode).json(err.toJSON());
     return;
   }
 
   if (resolvedSource.length > 1_500_000) {
-    res.status(413).json({ error: "Source too large (max 1.5 MB)" });
+    const err = new AnvilError(
+      ErrorCode.SOURCE_TOO_LARGE,
+      "Source exceeds 1.5 MB limit",
+      undefined,
+      413,
+    );
+    res.status(err.statusCode).json(err.toJSON());
     return;
   }
 
   const result = await parseAnchor(resolvedSource);
   if (!result.ok) {
-    res.status(422).json({
-      error: result.error,
-      details: result.details,
+    const code = result.error.includes("No Anchor #[program] module")
+      ? ErrorCode.NO_PROGRAM_MODULE
+      : ErrorCode.PARSE_FAILED;
+    const err = new AnvilError(code, result.error, result.details, 422);
+    res.status(err.statusCode).json({
+      ...err.toJSON(),
       sourcePath: resolvedPath ?? null,
       candidates: candidates ?? null,
     });
