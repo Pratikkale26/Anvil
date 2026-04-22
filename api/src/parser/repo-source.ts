@@ -89,15 +89,46 @@ function pickBestEntry(paths: string[], subpath?: string): string | null {
     const trimmed = subpath.replace(/\/$/, "");
     if (trimmed.endsWith(".rs")) return paths.includes(trimmed) ? trimmed : null;
     const inside = paths.filter((path) => path.startsWith(`${trimmed}/`));
-    const preferred = inside.find((path) => /(^|\/)(src\/lib\.rs|src\/main\.rs|program\/src\/lib\.rs)$/.test(path));
-    return preferred ?? inside.find((path) => path.endsWith(".rs")) ?? null;
+    // Prioritize Anchor program entry points
+    const preferred = inside.find((path) =>
+      /(^|\/)(src\/lib\.rs|src\/main\.rs|program\/src\/lib\.rs)$/.test(path)
+    );
+    if (preferred) return preferred;
+    // Fall back to lib.rs or main.rs anywhere inside the subpath
+    const fallback = inside.find((path) => /\/lib\.rs$/.test(path))
+      ?? inside.find((path) => /\/main\.rs$/.test(path));
+    return fallback ?? inside.find((path) => path.endsWith(".rs")) ?? null;
   }
 
-  return paths.find((path) =>
-    /(^|\/)(programs\/[^/]+\/src\/lib\.rs|program\/src\/lib\.rs|src\/lib\.rs|src\/main\.rs)$/.test(path)
-  ) ?? paths.find((path) => path.endsWith(".rs")) ?? null;
+  // Without subpath, use priority ordering to select the best entry
+  const prioritized = [...paths].sort((a, b) => {
+    const score = entryPriority(a) - entryPriority(b);
+    return score !== 0 ? score : a.localeCompare(b);
+  });
+  return prioritized[0] ?? null;
 }
 
+function entryPriority(path: string): number {
+  const n = path.replace(/\\/g, "/");
+  if (/(^|\/)programs\/[^/]+\/src\/lib\.rs$/.test(n)) return 0;
+  if (/(^|\/)program\/src\/lib\.rs$/.test(n)) return 1;
+  if (/(^|\/)src\/lib\.rs$/.test(n)) return 2;
+  if (/(^|\/)lib\.rs$/.test(n)) return 3;
+  if (/(^|\/)src\/main\.rs$/.test(n)) return 4;
+  if (/(^|\/)main\.rs$/.test(n)) return 5;
+  return 10;
+}
+
+/**
+ * Determine the source root directory for an entry file within a repo tree.
+ *
+ * For `programs/myprogram/src/lib.rs` the result is `programs/myprogram/src`.
+ * For `src/lib.rs`                    the result is `src`.
+ * For `lib.rs`                        the result is `` (empty string / root).
+ *
+ * The source root is the `src/` directory that contains the entry file.
+ * All `.rs` files under this directory are considered part of the same program.
+ */
 function findSourceRoot(entryPath: string): string {
   const normalized = entryPath.replace(/\\/g, "/");
   const parts = normalized.split("/");
@@ -105,7 +136,8 @@ function findSourceRoot(entryPath: string): string {
   if (srcIdx >= 0) {
     return parts.slice(0, srcIdx + 1).join("/");
   }
-  return parts.slice(0, -1).join("/");
+  const dir = parts.slice(0, -1).join("/");
+  return dir;
 }
 
 async function fetchRawFile(owner: string, repo: string, ref: string, path: string): Promise<string> {

@@ -131,14 +131,45 @@ function resolveHandlerWrapper(
   if (!bodyNode) return null;
 
   const bodyText = bodyNode.text.trim();
-  const wrapperMatch = bodyText.match(/^\{\s*([A-Za-z_][A-Za-z0-9_:]*)::handler\s*\([^)]*\)\s*;?\s*\}$/s);
-  if (!wrapperMatch?.[1]) return null;
 
-  const targetPath = wrapperMatch[1].split("::").filter(Boolean);
-  return functionIndex.find((entry) => {
-    const name = entry.node.childForFieldName("name")?.text;
-    return name === "handler" && entry.modulePath.join("::") === targetPath.join("::");
-  }) ?? null;
+  // Pattern 1: Module-qualified handler — `instructions::initialize::handler(ctx, ...)`
+  const qualifiedMatch = bodyText.match(/^\{\s*([A-Za-z_][A-Za-z0-9_:]*)::handler\s*\([^)]*\)\s*;?\s*\}$/s);
+  if (qualifiedMatch?.[1]) {
+    const targetPath = qualifiedMatch[1].split("::").filter(Boolean);
+    const found = functionIndex.find((entry) => {
+      const name = entry.node.childForFieldName("name")?.text;
+      return name === "handler" && entry.modulePath.join("::") === targetPath.join("::");
+    });
+    if (found) return found;
+  }
+
+  // Pattern 2: Direct `handler(ctx, ...)` — handler at top level (flattened multi-file)
+  const directHandlerMatch = bodyText.match(/^\{\s*handler\s*\([^)]*\)\s*;?\s*\}$/s);
+  if (directHandlerMatch) {
+    const found = functionIndex.find((entry) => {
+      const name = entry.node.childForFieldName("name")?.text;
+      return name === "handler" && entry.modulePath.length === 0;
+    });
+    if (found) return found;
+  }
+
+  // Pattern 3: Direct function call — `some_fn(ctx, ...)` delegating to a
+  // top-level or module-level function (common in flattened multi-file
+  // programs where the handler was renamed, e.g. `initialize_handler`).
+  const directFnMatch = bodyText.match(/^\{\s*([a-z_]\w*)\s*\([^)]*\)\s*;?\s*\}$/s);
+  if (directFnMatch?.[1] && directFnMatch[1] !== "handler") {
+    const targetName = directFnMatch[1];
+    const found = functionIndex.find((entry) => {
+      const name = entry.node.childForFieldName("name")?.text;
+      return name === targetName && entry.modulePath.length === 0;
+    }) ?? functionIndex.find((entry) => {
+      const name = entry.node.childForFieldName("name")?.text;
+      return name === targetName;
+    });
+    if (found) return found;
+  }
+
+  return null;
 }
 
 interface AccountsMethodWrapperCall {
