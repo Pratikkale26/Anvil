@@ -332,6 +332,16 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
     return emitRequireGuard(condition, error);
   }
 
+  override emitCreateAccountCpi(
+    from: string,
+    to: string,
+    lamports: string,
+    space: string,
+    _owner: string,
+  ): string {
+    return `// System Program: create_account\n    pinocchio_system::instructions::CreateAccount {\n        from: ${from},\n        to: ${to},\n        lamports: ${lamports},\n        space: ${space} as u64,\n        owner: program_id,\n    }.invoke()?;`;
+  }
+
   override emitMsg(message: string): string {
     const literalMatch = message.match(/^"([^"\\]|\\.)*"/);
     if (literalMatch?.[0]) {

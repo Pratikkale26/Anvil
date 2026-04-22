@@ -102,6 +102,21 @@ export abstract class BaseEmitter {
   abstract emitHelperFunctions(ir: SolanaIR): string;
 
   /**
+   * Emit a system program create_account CPI.
+   * Default implementation emits a generic invoke() call.
+   * Framework-specific emitters can override for native helpers.
+   */
+  emitCreateAccountCpi(
+    from: string,
+    to: string,
+    lamports: string,
+    space: string,
+    owner: string,
+  ): string {
+    return `// System Program: create_account\n    invoke(\n        &system_instruction::create_account(\n            ${from}.key,\n            ${to}.key,\n            ${lamports},\n            ${space} as u64,\n            ${owner},\n        ),\n        &[${from}.clone(), ${to}.clone()],\n    )?;`;
+  }
+
+  /**
    * Transform an amount expression from Anchor-style to target framework.
    * Handles patterns like:
    *   - "vault.amount" → "token_account_amount(vault)?" (Pinocchio)
@@ -129,6 +144,12 @@ export abstract class BaseEmitter {
       .filter((statement) => {
         if (statement.startsWith("use anchor_lang::")) return false;
         if (statement.startsWith("use anchor_spl::")) return false;
+        // Filter out `use { anchor_lang::..., anchor_spl::... }` block imports
+        if (/^use\s*\{[\s\S]*\banchor_lang::/.test(statement)) return false;
+        if (/^use\s*\{[\s\S]*\banchor_spl::/.test(statement)) return false;
+        // Filter out imports from external Anchor crates that leak through
+        if (/\banchor_lang\b/.test(statement)) return false;
+        if (/\banchor_spl\b/.test(statement)) return false;
         if (statement.startsWith("use crate::")) return false;
         if (statement.startsWith("use self::")) return false;
         if (statement.startsWith("use super::")) return false;
@@ -870,6 +891,95 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           `transfer_lamports_signed(${normalizeAccountExpr(from)}, ${normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)}, ${normalizeSignerSeedsExpr(signerSeeds)})?;`
       );
 
+      // ── system create_account via CpiContext ──
+      // Matches: create_account(CpiContext::new(..., CreateAccount { from: X, to: Y }), lamports, space, &owner)
+      replaceCpi(
+        /(?:anchor_lang::system_program::)?create_account\(\s*CpiContext::new\(\s*[\s\S]*?,\s*(?:anchor_lang::system_program::)?CreateAccount\s*\{\s*from:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,\s*to:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,?\s*\}\s*,?\s*\)\s*,\s*([\s\S]*?)\s*,\s*([\s\S]*?)\s*,\s*&?(?:ctx\.accounts\.)?(\w+)(?:\.key\(\))?\s*,?\s*\)\?;/g,
+        (from, to, lamports, space, _owner) => {
+          const fromVar = snakeCase(from.replace(/\.to_account_info\(\)/, ""));
+          const toVar = snakeCase(to.replace(/\.to_account_info\(\)/, ""));
+          return `// System Program: create account\n    invoke(\n        &system_instruction::create_account(\n            ${fromVar}.key,\n            ${toVar}.key,\n            ${cleanInlineExpr(lamports)},\n            ${cleanInlineExpr(space)} as u64,\n            program_id,\n        ),\n        &[${fromVar}.clone(), ${toVar}.clone()],\n    )?;`;
+        }
+      );
+
+      // ── Generic SPL mint_to via CpiContext (covers nft-minter mint_to pattern) ──
+      replaceCpi(
+        /(?:anchor_spl::token::)?mint_to\(\s*CpiContext::new\(\s*(?:ctx\.accounts\.)?\w+(?:\.to_account_info\(\))?(?:\.key\(\))?\s*,\s*(?:anchor_spl::token::)?MintTo\s*\{\s*mint:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,\s*to:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,\s*authority:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,?\s*\}\s*,?\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+        (mint, to, authority, amount) =>
+          `spl_token_mint_to(${snakeCase(mint)}, ${snakeCase(to)}, ${resolveAccountInfoVar(snakeCase(authority))}, ${resolveAmountExpr(cleanInlineExpr(amount))})?;`
+      );
+
+      // ── token_interface::set_authority CPI (escrow pattern) ──
+      // Converts token_interface::set_authority(ctx.accounts.into(), AuthorityType::AccountOwner, Some(X))?;
+      // into a raw invoke call
+      transformed = transformed.replace(
+        /token_interface::set_authority\(\s*(?:ctx\.accounts\.)?into\(\)\s*,\s*AuthorityType::AccountOwner\s*,\s*Some\((\w+)\)\s*,?\s*\)\?;/g,
+        (_full, newAuthority: string) =>
+          `// ⚠️ Anvil: set_authority CPI — manually verify account references\n    invoke(\n        &spl_token::instruction::set_authority(\n            token_program.key,\n            initializer_deposit_token_account.key,\n            Some(&${newAuthority}),\n            spl_token::instruction::AuthorityType::AccountOwner,\n            initializer.key,\n            &[],\n        )?,\n        &[initializer_deposit_token_account.clone(), initializer.clone()],\n    )?;`
+      );
+
+      // ── Generic token_interface::set_authority with_signer ──
+      transformed = transformed.replace(
+        /token_interface::set_authority\(\s*(?:ctx\.accounts\s*\.\s*)?(?:into_set_authority_context\(\)\s*\.with_signer\([\s\S]*?\))\s*,\s*AuthorityType::AccountOwner\s*,\s*Some\(([^)]+)\)\s*,?\s*\)\?;/g,
+        (_full, newAuthority: string) =>
+          `// ⚠️ Anvil: set_authority CPI with signer — manually verify account references\n    invoke_signed(\n        &spl_token::instruction::set_authority(\n            token_program.key,\n            pda_deposit_token_account.key,\n            Some(&${cleanInlineExpr(newAuthority)}),\n            spl_token::instruction::AuthorityType::AccountOwner,\n            pda_account.key,\n            &[],\n        )?,\n        &[pda_deposit_token_account.clone(), pda_account.clone()],\n        &[&seeds[..]],\n    )?;`
+      );
+
+      // ── Generic Metaplex CPI patterns (create_metadata_accounts_v3, create_master_edition_v3) ──
+      // These are complex Anchor-specific CPIs; emit a manual invoke placeholder
+      transformed = transformed.replace(
+        /create_metadata_accounts_v3\(\s*CpiContext::new\(\s*[\s\S]*?\)\s*,\s*DataV2\s*\{([\s\S]*?)\}\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*,?\s*\)\?;/g,
+        (_full, _dataFields: string, isMutable: string, updateAuthIsSigner: string, _collectionDetails: string) =>
+          `// ⚠️ Anvil: Metaplex create_metadata_accounts_v3 CPI\n    // This requires the mpl_token_metadata crate for instruction building.\n    // Rebuild with: mpl_token_metadata::instructions::CreateMetadataAccountV3\n    invoke(\n        &mpl_token_metadata::instruction::create_metadata_accounts_v3(\n            *token_metadata_program.key,\n            *metadata_account.key,\n            *mint_account.key,\n            *payer.key,\n            *payer.key,\n            *payer.key,\n            nft_name.clone(),\n            nft_symbol.clone(),\n            nft_uri.clone(),\n            None, // creators\n            0,    // seller_fee_basis_points\n            true, // update_authority_is_signer=${updateAuthIsSigner}\n            ${isMutable},  // is_mutable\n            None, // collection\n            None, // uses\n            None, // collection_details\n        ),\n        &[\n            metadata_account.clone(),\n            mint_account.clone(),\n            payer.clone(),\n            system_program.clone(),\n            rent.clone(),\n        ],\n    )?;`
+      );
+
+      transformed = transformed.replace(
+        /create_master_edition_v3\(\s*CpiContext::new\(\s*[\s\S]*?\)\s*,\s*(\w+)\s*,?\s*\)\?;/g,
+        (_full, maxSupply: string) =>
+          `// ⚠️ Anvil: Metaplex create_master_edition_v3 CPI\n    invoke(\n        &mpl_token_metadata::instruction::create_master_edition_v3(\n            *token_metadata_program.key,\n            *edition_account.key,\n            *mint_account.key,\n            *payer.key,\n            *payer.key,\n            *metadata_account.key,\n            *payer.key,\n            ${maxSupply}, // max_supply\n        ),\n        &[\n            edition_account.clone(),\n            mint_account.clone(),\n            payer.clone(),\n            metadata_account.clone(),\n            token_program.clone(),\n            system_program.clone(),\n            rent.clone(),\n        ],\n    )?;`
+      );
+
+      // ── Generic CPI fallback: any remaining CpiContext::new(...) ──
+      // For custom program CPIs (puppet-master, cpi-hand), convert to raw invoke
+      transformed = transformed.replace(
+        /let\s+cpi_ctx\s*=\s*CpiContext::new\(\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?(?:\.key\(\))?\s*,\s*(\w+)\s*\{([\s\S]*?)\}\s*,?\s*\);/g,
+        (_full, programVar: string, _structName: string, fields: string) => {
+          const accountVars = fields
+            .split(",")
+            .map(f => f.trim())
+            .filter(f => f.length > 0)
+            .map(f => {
+              const match = f.match(/(\w+):\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?/);
+              return match?.[2] ? snakeCase(match[2]) : null;
+            })
+            .filter(Boolean);
+          const programVarName = snakeCase(programVar);
+          return `// CPI: invoke external program\n    let cpi_accounts = &[${accountVars.map(v => `${v}.clone()`).join(", ")}];\n    let cpi_program = ${programVarName};`;
+        }
+      );
+
+      // Transform the actual CPI call that follows (e.g., puppet::cpi::set_data(cpi_ctx, data))
+      // These are module::cpi::function(cpi_ctx, args) patterns
+      transformed = transformed.replace(
+        /(\w+)::cpi::(\w+)\(cpi_ctx\s*(?:,\s*([\s\S]*?))?\)\s*(?:\?;|;)/g,
+        (_full, _module: string, fnName: string, args: string) => {
+          const instrName = snakeCase(fnName);
+          const argsStr = args ? `, ${args.trim()}` : "";
+          return `// ⚠️ Anvil: CPI to external program — build instruction data manually\n    // Original: ${_module}::cpi::${fnName}(ctx${argsStr})\n    // Use invoke() with the target program's instruction format\n    {\n        let mut cpi_data = Vec::new();\n        // TODO: Build instruction discriminator + args for '${instrName}'\n        invoke(\n            &solana_program::instruction::Instruction {\n                program_id: *cpi_program.key,\n                accounts: cpi_accounts.iter().map(|a| solana_program::instruction::AccountMeta {\n                    pubkey: *a.key,\n                    is_signer: a.is_signer,\n                    is_writable: a.is_writable,\n                }).collect(),\n                data: cpi_data,\n            },\n            cpi_accounts,\n        )?;\n    }`;
+        }
+      );
+
+      // Also handle switch_power(cpi_ctx, name) style (no :: prefix)
+      transformed = transformed.replace(
+        /(\w+)\(cpi_ctx\s*(?:,\s*([\s\S]*?))?\)\s*\?;/g,
+        (_full, fnName: string, args: string) => {
+          if (fnName === "invoke" || fnName === "invoke_signed") return _full;
+          const instrName = snakeCase(fnName);
+          const argsStr = args ? `, ${args.trim()}` : "";
+          return `// ⚠️ Anvil: CPI — build instruction data manually\n    // Original: ${fnName}(ctx${argsStr})\n    {\n        let mut cpi_data = Vec::new();\n        // TODO: Build instruction discriminator + args for '${instrName}'\n        invoke(\n            &solana_program::instruction::Instruction {\n                program_id: *cpi_program.key,\n                accounts: cpi_accounts.iter().map(|a| solana_program::instruction::AccountMeta {\n                    pubkey: *a.key,\n                    is_signer: a.is_signer,\n                    is_writable: a.is_writable,\n                }).collect(),\n                data: cpi_data,\n            },\n            cpi_accounts,\n        )?;\n    }`;
+        }
+      );
+
       // Convert var.set_inner(TypeName { field: value, ... }) into individual field assignments
       transformed = transformed.replace(
         /(\w+)\.set_inner\(\s*(\w+)\s*\{([\s\S]*?)\}\s*\);?/g,
@@ -931,20 +1041,52 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         /(^|[^\w:])msg!\(([\s\S]*?)\);/g,
         (_full, prefix: string, message: string) => `${prefix}${this.emitMsg(cleanInlineExpr(message)).replace(/^    /gm, "")}`
       );
+      // Also handle msg!() in match arms where it ends with , instead of ;
+      transformed = transformed.replace(
+        /(=>\s*)msg!\(([\s\S]*?)\)\s*,/g,
+        (_full, prefix: string, message: string) => `${prefix}${this.emitMsg(cleanInlineExpr(message)).replace(/^    /gm, "").replace(/;$/, "")},`
+      );
 
       // Replace error!(ErrorType::Variant) with ProgramError::from(ErrorType::Variant)
       transformed = transformed.replace(/error!\s*\(\s*([^)]+)\s*\)/g, 'ProgramError::from($1)');
       // Also handle error!ErrorType::Variant (missing parens — defensive)
       transformed = transformed.replace(/error!\s*([A-Z]\w+::\w+)/g, 'ProgramError::from($1)');
 
+      // Strip anchor_lang:: prefixes — replace with framework-agnostic equivalents
+      transformed = transformed.replace(/\banchor_lang::prelude::borsh::/g, 'borsh::');
+      transformed = transformed.replace(/\banchor_lang::solana_program::/g, 'solana_program::');
+      transformed = transformed.replace(/\banchor_lang::prelude::/g, '');
+
+      // Handle system_program::create_account(CpiContext::new(...)) pattern
+      // (with the system_program:: prefix on the function call)
+      transformed = transformed.replace(
+        /system_program::create_account\(\s*CpiContext::new\(/g,
+        'create_account(CpiContext::new('
+      );
+
       return simplifyPassThroughCode(transformed);
     };
     const transformCtxAccountsReferences = (code: string): string => {
       let transformed = code;
+      // Normalize multi-line dot-chains: collapse `x\n            .y` into `x.y`
+      // This handles multi-line ctx.accounts / ctx.program_id chains and
+      // patterns like `ctx\n.accounts\n.X\n.to_account_info()\n.key`
+      transformed = transformed.replace(/(\w|\))\s*\n\s*\./g, "$1.");
+      // Handle remaining multi-line chains that start with *ctx
+      transformed = transformed.replace(/\*\s*\n\s*ctx\./g, "*ctx.");
+      // Transform ctx.accounts.X.to_account_info().key() and .key (field access)
+      transformed = transformed.replace(/ctx\.accounts\.(\w+)\.to_account_info\(\)\.key\(\)/g, (_, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name))));
+      transformed = transformed.replace(/ctx\.accounts\.(\w+)\.to_account_info\(\)\.key\b/g, (_, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name))));
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\(\)/g, (_, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name))));
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\b/g, (_, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name))));
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.lamports\(\)/g, (_, name: string) => this.emitAccountLamportsExpr(resolveAccountInfoVar(snakeCase(name))));
       transformed = transformed.replace(/ctx\.accounts\.(\w+)\.amount\b/g, (_full, name: string) => `token_account_amount(${resolveAccountInfoVar(snakeCase(name))})?`);
+      // Transform ctx.program_id → program_id
+      transformed = transformed.replace(/\bctx\.program_id\b/g, "program_id");
+      // Transform ctx.bumps.X → bump_X (computed at runtime)
+      transformed = transformed.replace(/\bctx\.bumps\.(\w+)\b/g, (_full, name: string) => `bump_${snakeCase(name)}`);
+      // Transform ctx.remaining_accounts → remaining accounts (not directly available, use &accounts[N..])
+      transformed = transformed.replace(/\bctx\.remaining_accounts\b/g, "&accounts[required_accounts_count..]");
       transformed = transformed.replace(/&mut\s*ctx\.accounts\.(\w+)/g, (_full, name: string) => `&mut ${snakeCase(name)}`);
       transformed = transformed.replace(/&\s*ctx\.accounts\.(\w+)/g, (_full, name: string) => `&${snakeCase(name)}`);
       transformed = transformed.replace(/\bctx\.accounts\.(\w+)\b/g, (_full, name: string) => snakeCase(name));
@@ -1145,6 +1287,68 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
             transformedRawCode = transformedRawCode.replace(/\.to_account_info\(\)/g, '');
           }
 
+          // ── Final CPI cleanup: convert remaining CpiContext patterns to invoke() ──
+          // Handles cases where CpiContext::new() uses pre-extracted variables
+          // or was not caught by the specific CPI regex patterns above.
+          if (/CpiContext::/.test(transformedRawCode)) {
+            // Pattern: let cpi_ctx = CpiContext::new(program_var, accounts_var);
+            transformedRawCode = transformedRawCode.replace(
+              /let\s+(\w+)\s*=\s*CpiContext::new\(\s*(\w+)\s*,\s*(\w+)\s*\);?/g,
+              (_full, ctxVar: string, programVar: string, _accountsVar: string) =>
+                `// CPI context prepared — program: ${programVar}\n    let ${ctxVar}_program = ${programVar};`
+            );
+            // Pattern: create_account(CpiContext::new(..., CreateAccount { from: X, to: Y }), lamports, space, &owner)?;
+            // Match create_account CPI and extract args after the CpiContext::new(...) block
+            {
+              const caMatch = transformedRawCode.match(
+                /create_account\(\s*CpiContext::new\(\s*[\s\S]*?,\s*(?:\w+::)*CreateAccount\s*\{([\s\S]*?)\}\s*,?\s*\)\s*,([\s\S]*?)\)\?;/
+              );
+              if (caMatch?.[1] && caMatch[2]) {
+                const fieldsStr = caMatch[1];
+                const fromMatch = fieldsStr.match(/from:\s*(\w+)/);
+                const toMatch = fieldsStr.match(/to:\s*(\w+)/);
+                const fromVar = fromMatch?.[1] ?? "payer";
+                const toVar = toMatch?.[1] ?? "new_account";
+                // Parse remaining args: strip comments and split by commas
+                const rawArgs = caMatch[2].replace(/\/\/[^\n]*/g, "").trim();
+                const argParts = rawArgs.split(",").map(a => a.trim()).filter(a => a.length > 0);
+                const lamports = argParts[0] ?? "0";
+                const space = argParts[1] ?? "0";
+                const owner = argParts[2] ?? "program_id";
+                transformedRawCode = this.emitCreateAccountCpi(fromVar, toVar, lamports, space, owner);
+              }
+            }
+            // Pattern: some_cpi_fn(CpiContext::new(program, StructName { fields }), args)?;
+            // Generic catch-all for any CPI via CpiContext::new
+            transformedRawCode = transformedRawCode.replace(
+              /(\w+(?:::\w+)*)\(\s*CpiContext::new\(\s*([\s\S]*?),\s*(\w+)\s*\{([\s\S]*?)\}\s*,?\s*\)\s*(?:,\s*([\s\S]*?))?\s*\)\?;/g,
+              (_full, fnName: string, _programExpr: string, _structName: string, fieldsStr: string, extraArgs: string) => {
+                const accountVars = fieldsStr
+                  .split(",")
+                  .map(f => f.trim())
+                  .filter(f => f.length > 0)
+                  .map(f => {
+                    const m = f.match(/\w+:\s*(\w+)/);
+                    return m?.[1] ?? null;
+                  })
+                  .filter((v): v is string => v !== null);
+                const argsStr = extraArgs ? `\n    // args: ${cleanInlineExpr(extraArgs)}` : "";
+                return `// ⚠️ Anvil: CPI call to ${fnName} — requires manual invoke() implementation${argsStr}\n    // Accounts: ${accountVars.join(", ")}\n    invoke(\n        &solana_program::instruction::Instruction {\n            program_id: *${accountVars.length > 0 ? accountVars[0] : "program"}.key,\n            accounts: vec![],  // TODO: build AccountMeta list\n            data: vec![],      // TODO: build instruction data\n        },\n        &[${accountVars.map(v => `${v}.clone()`).join(", ")}],\n    )?;`;
+              }
+            );
+          }
+
+          // ── Handle module::cpi::function(cpi_ctx, args) patterns ──
+          if (/\w+::cpi::\w+\(/.test(transformedRawCode)) {
+            transformedRawCode = transformedRawCode.replace(
+              /(\w+)::cpi::(\w+)\(\s*(\w+)\s*(?:,\s*([\s\S]*?))?\s*\)\s*(?:\?;|;)?$/g,
+              (_full, moduleName: string, fnName: string, ctxVar: string, args: string) => {
+                const argsStr = args ? cleanInlineExpr(args) : "";
+                return `// ⚠️ Anvil: CPI to ${moduleName}::${fnName}\n    // Original args: ${argsStr}\n    // Use invoke() with ${ctxVar}_program and build instruction data manually\n    invoke(\n        &solana_program::instruction::Instruction {\n            program_id: *${ctxVar}_program.key,\n            accounts: vec![],  // TODO: build AccountMeta list from cpi_accounts\n            data: vec![],      // TODO: build discriminator + args for '${snakeCase(fnName)}'\n        },\n        &[],  // TODO: pass account infos\n    )?;`;
+              }
+            );
+          }
+
           // Don't add extra semicolons if the code already ends with one, with }, or with )
           let code: string;
           if (transformedRawCode.endsWith(";") || transformedRawCode.endsWith("}") || transformedRawCode.endsWith(");")) {
@@ -1317,7 +1521,8 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // ── TRANSFORM: msg macro ──
         case "msg": {
           this.transformedCount++;
-          lines.push(this.emitMsg(stmt.message));
+          const msgText = normalizeKeyValueUsages(transformAccountReferences(transformCtxAccountsReferences(stmt.message)));
+          lines.push(this.emitMsg(msgText));
           break;
         }
 
@@ -1426,8 +1631,19 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           this.warnings.push(
             `Custom CPI to '${stmt.programAccount}' — passed through as raw code. Verify framework compatibility.`
           );
+          // Apply ctx.bumps and ctx.accounts transforms to the raw CPI code
+          const { prelude: cpiPrelude, code: cpiCode } = replaceBumpRefs(stmt.rawCode);
+          let transformedCpiCode = normalizeKeyValueUsages(
+            transformAccountReferences(transformCtxAccountsReferences(transformNestedAnchorCode(cpiCode)))
+          );
+          if (this.frameworkName !== "Native") {
+            transformedCpiCode = transformedCpiCode.replace(/\.to_account_info\(\)/g, '');
+          }
+          for (const preludeLine of cpiPrelude) {
+            lines.push(preludeLine);
+          }
           lines.push(`    // ⚠️ Anvil: Custom CPI — verify this works with ${this.frameworkName}`);
-          lines.push(`    ${stmt.rawCode}`);
+          lines.push(`    ${transformedCpiCode}`);
           break;
         }
 
