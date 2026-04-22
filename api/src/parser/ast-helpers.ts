@@ -340,7 +340,8 @@ export function containsAnchorPatterns(text: string): boolean {
     /ctx\.accounts\.\w+\.to_account_info\(\)/.test(text) ||
     /CpiContext::/.test(text) ||
     /anchor_spl::/.test(text) ||
-    /anchor_lang::/.test(text);
+    /anchor_lang::/.test(text) ||
+    /\berror!\s*[\(A-Z]/.test(text);
 }
 
 // ─── Scope helpers ──────────────────────────────────────────────────────────

@@ -717,7 +717,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         );
       }
       transformed = transformed.replace(/\*\*(\w+)\.key\(\)/g, "*$1.key()");
-      transformed = transformed.replace(/\*\*(\w+)\.key\b/g, "$1.key");
+      transformed = transformed.replace(/\*\*(\w+)\.key\b/g, "*$1.key");
       return transformed;
     };
     const normalizeKeyValueUsages = (code: string): string => {
@@ -911,6 +911,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         /(^|[^\w:])msg!\(([\s\S]*?)\);/g,
         (_full, prefix: string, message: string) => `${prefix}${this.emitMsg(cleanInlineExpr(message)).replace(/^    /gm, "")}`
       );
+
+      // Replace error!(ErrorType::Variant) with ProgramError::from(ErrorType::Variant)
+      transformed = transformed.replace(/error!\s*\(\s*([^)]+)\s*\)/g, 'ProgramError::from($1)');
+      // Also handle error!ErrorType::Variant (missing parens — defensive)
+      transformed = transformed.replace(/error!\s*([A-Z]\w+::\w+)/g, 'ProgramError::from($1)');
 
       return simplifyPassThroughCode(transformed);
     };
@@ -1240,20 +1245,22 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           if (fieldDef && (fieldDef.type === "Pubkey" || fieldDef.type === "[u8; 32]")) {
             const directCtxKeySource = stmt.value.match(/^ctx\.accounts\.(\w+)\.key\(\)$/)?.[1];
             const trimmedValue = cleanInlineExpr(value);
-            const keySource = directCtxKeySource ?? trimmedValue.match(/^(\w+)\.key(?:\(\))?$/)?.[1];
+            const keySource = directCtxKeySource ?? trimmedValue.match(/^\*?(\w+)\.key(?:\(\))?$/)?.[1];
             if (keySource) {
               value = this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(keySource)));
             } else {
               value = value.replace(
-                /\b(\w+)\.key\(\)/g,
+                /(?<!\*)\b(\w+)\.key\(\)/g,
                 (_full, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name)))
               );
               value = value.replace(
-                /\b(\w+)\.key\b(?!\s*\(|\.as_ref\b)/g,
+                /(?<!\*)\b(\w+)\.key\b(?!\s*\(|\.as_ref\b)/g,
                 (_full, name: string) => this.emitAccountKeyExpr(resolveAccountInfoVar(snakeCase(name)))
               );
             }
           }
+          // Prevent double-deref on key expressions (e.g., **name.key → *name.key)
+          value = value.replace(/\*\*(\w+\.key\b)/g, "*$1");
           value = transformHelperCalls(value);
           // Replace ctx.bumps.X with bump derivation call
           if (value.includes("ctx.bumps.")) {
@@ -1683,7 +1690,14 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
   protected emitCustomTypes(ir: SolanaIR): string {
     return ir.types.map((typeDef) => {
       if (typeDef.rawCode && typeDef.kind === "enum" && /\w+\s*\([^)]*\)/.test(typeDef.rawCode)) {
-        return typeDef.rawCode;
+        // Complex enums with tuple variants need derive macros so they can be
+        // used inside structs that derive BorshSerialize/BorshDeserialize.
+        const rawCode = typeDef.rawCode.trim();
+        const alreadyHasDerive = /^#\[derive\(/.test(rawCode);
+        if (alreadyHasDerive) {
+          return rawCode;
+        }
+        return `#[derive(Clone, Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n${rawCode}`;
       }
       if (typeDef.kind === "enum") {
         const variants = (typeDef.variants ?? []).map((variant, index) => `    ${variant} = ${index},`).join("\n");
@@ -2032,6 +2046,9 @@ ${fields}
       /(^|[^\w:])msg!\(([\s\S]*?)\);/g,
       (_full, prefix: string, message: string) => `${prefix}${this.emitMsg(cleanInlineExpr(message)).replace(/^    /gm, "")}`
     );
+    // Replace error!(ErrorType::Variant) with ProgramError::from(ErrorType::Variant)
+    next = next.replace(/error!\s*\(\s*([^)]+)\s*\)/g, 'ProgramError::from($1)');
+    next = next.replace(/error!\s*([A-Z]\w+::\w+)/g, 'ProgramError::from($1)');
     return next;
   }
 }

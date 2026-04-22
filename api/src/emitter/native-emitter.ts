@@ -34,9 +34,11 @@ class NativeEmitter extends BaseEmitter {
 
   override emitUseStatements(_ir: SolanaIR): string {
     const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
+      || irNeedsHelper(_ir, "spl_transfer")
       || irNeedsUnsignedSplMintToHelper(_ir)
       || irNeedsUnsignedSplBurnHelper(_ir)
-      || irNeedsUnsignedSplCloseAccountHelper(_ir);
+      || irNeedsUnsignedSplCloseAccountHelper(_ir)
+      || irNeedsAtaCreationHelper(_ir);
     const needsInvokeSigned = irNeedsSignedLamportsHelper(_ir)
       || irNeedsSignedSplMintToHelper(_ir)
       || irNeedsSignedSplBurnHelper(_ir)
@@ -482,9 +484,9 @@ impl std::error::Error for ${enumName} {}`;
     const helpers: string[] = [];
 
     if (irNeedsInitAccountHelper(_ir)) {
-      helpers.push(`fn create_program_account(
-    account: &AccountInfo,
-    payer: &AccountInfo,
+      helpers.push(`fn create_program_account<'a>(
+    account: &AccountInfo<'a>,
+    payer: &AccountInfo<'a>,
     space: u64,
     program_id: &Pubkey,
     signer_seeds: &[&[&[u8]]],
@@ -508,9 +510,9 @@ impl std::error::Error for ${enumName} {}`;
     }
 
     if (irNeedsUnsignedLamportsHelper(_ir)) {
-      helpers.push(`fn transfer_lamports(
-    from: &AccountInfo,
-    to: &AccountInfo,
+      helpers.push(`fn transfer_lamports<'a>(
+    from: &AccountInfo<'a>,
+    to: &AccountInfo<'a>,
     amount: u64,
 ) -> ProgramResult {
     let transfer_ix = system_instruction::transfer(from.key, to.key, amount);
@@ -523,9 +525,9 @@ impl std::error::Error for ${enumName} {}`;
     }
 
     if (irNeedsSignedLamportsHelper(_ir)) {
-      helpers.push(`fn transfer_lamports_signed(
-    from: &AccountInfo,
-    to: &AccountInfo,
+      helpers.push(`fn transfer_lamports_signed<'a>(
+    from: &AccountInfo<'a>,
+    to: &AccountInfo<'a>,
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
@@ -540,10 +542,10 @@ impl std::error::Error for ${enumName} {}`;
     }
 
     if (irNeedsHelper(_ir, "spl_transfer")) {
-      helpers.push(`fn spl_token_transfer(
-    from: &AccountInfo,
-    to: &AccountInfo,
-    authority: &AccountInfo,
+      helpers.push(`fn spl_token_transfer<'a>(
+    from: &AccountInfo<'a>,
+    to: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
     amount: u64,
 ) -> ProgramResult {
     let transfer_ix = spl_token::instruction::transfer(
@@ -561,10 +563,10 @@ impl std::error::Error for ${enumName} {}`;
     Ok(())
 }
 
-fn spl_token_transfer_signed(
-    from: &AccountInfo,
-    to: &AccountInfo,
-    authority: &AccountInfo,
+fn spl_token_transfer_signed<'a>(
+    from: &AccountInfo<'a>,
+    to: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
@@ -587,10 +589,10 @@ fn spl_token_transfer_signed(
 
     const needsUnsignedMintTo = irNeedsUnsignedSplMintToHelper(_ir);
     if (needsUnsignedMintTo) {
-      helpers.push(`fn spl_token_mint_to(
-    mint: &AccountInfo,
-    to: &AccountInfo,
-    authority: &AccountInfo,
+      helpers.push(`fn spl_token_mint_to<'a>(
+    mint: &AccountInfo<'a>,
+    to: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
     amount: u64,
 ) -> ProgramResult {
     let mint_ix = spl_token::instruction::mint_to(
@@ -611,10 +613,10 @@ fn spl_token_transfer_signed(
 
     const needsSignedMintTo = irNeedsSignedSplMintToHelper(_ir);
     if (needsSignedMintTo) {
-      helpers.push(`fn spl_token_mint_to_signed(
-    mint: &AccountInfo,
-    to: &AccountInfo,
-    authority: &AccountInfo,
+      helpers.push(`fn spl_token_mint_to_signed<'a>(
+    mint: &AccountInfo<'a>,
+    to: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
@@ -637,10 +639,10 @@ fn spl_token_transfer_signed(
 
     const needsUnsignedBurn = irNeedsUnsignedSplBurnHelper(_ir);
     if (needsUnsignedBurn) {
-      helpers.push(`fn spl_token_burn(
-    from: &AccountInfo,
-    mint: &AccountInfo,
-    authority: &AccountInfo,
+      helpers.push(`fn spl_token_burn<'a>(
+    from: &AccountInfo<'a>,
+    mint: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
     amount: u64,
 ) -> ProgramResult {
     let burn_ix = spl_token::instruction::burn(
@@ -661,10 +663,10 @@ fn spl_token_transfer_signed(
 
     const needsSignedBurn = irNeedsSignedSplBurnHelper(_ir);
     if (needsSignedBurn) {
-      helpers.push(`fn spl_token_burn_signed(
-    from: &AccountInfo,
-    mint: &AccountInfo,
-    authority: &AccountInfo,
+      helpers.push(`fn spl_token_burn_signed<'a>(
+    from: &AccountInfo<'a>,
+    mint: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
@@ -687,10 +689,10 @@ fn spl_token_transfer_signed(
 
     const needsUnsignedClose = irNeedsUnsignedSplCloseAccountHelper(_ir);
     if (needsUnsignedClose) {
-      helpers.push(`fn spl_token_close_account(
-    account: &AccountInfo,
-    destination: &AccountInfo,
-    authority: &AccountInfo,
+      helpers.push(`fn spl_token_close_account<'a>(
+    account: &AccountInfo<'a>,
+    destination: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
 ) -> ProgramResult {
     let close_ix = spl_token::instruction::close_account(
         &spl_token::id(),
@@ -709,10 +711,10 @@ fn spl_token_transfer_signed(
 
     const needsSignedClose = irNeedsSignedSplCloseAccountHelper(_ir);
     if (needsSignedClose) {
-      helpers.push(`fn spl_token_close_account_signed(
-    account: &AccountInfo,
-    destination: &AccountInfo,
-    authority: &AccountInfo,
+      helpers.push(`fn spl_token_close_account_signed<'a>(
+    account: &AccountInfo<'a>,
+    destination: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
     let close_ix = spl_token::instruction::close_account(
@@ -732,9 +734,9 @@ fn spl_token_transfer_signed(
     }
 
     if (irNeedsHelper(_ir, "close_program_account")) {
-      helpers.push(`fn close_program_account(
-    account: &AccountInfo,
-    destination: &AccountInfo,
+      helpers.push(`fn close_program_account<'a>(
+    account: &AccountInfo<'a>,
+    destination: &AccountInfo<'a>,
 ) -> ProgramResult {
     if account.key == destination.key {
         return Err(ProgramError::InvalidAccountData);
@@ -752,7 +754,7 @@ fn spl_token_transfer_signed(
 
     if (irNeedsTokenAmountHelper(_ir)) {
       helpers.push(`/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
-fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
+fn token_account_amount<'a>(account: &AccountInfo<'a>) -> Result<u64, ProgramError> {
     let data = account.data.borrow();
     if data.len() < 72 {
         return Err(ProgramError::InvalidAccountData);

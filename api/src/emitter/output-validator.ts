@@ -64,6 +64,10 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<
     message: "Anchor require!() macro leaked through — should be an if-guard.",
   },
   {
+    pattern: /\berror!\s*[\(A-Z]/,
+    message: "Anchor error!() macro leaked through — should use ProgramError::from() or custom error conversion.",
+  },
+  {
     pattern: /\bemit!\(/,
     message: "Anchor emit!() macro leaked through — should be msg!() or event emit.",
   },

@@ -119,19 +119,19 @@ ${arms}
   }
 
   override emitSignerCheck(name: string): string {
-    return `    if !${name}.is_signer {
+    return `    if !${name}.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
     }`;
   }
 
   override emitOwnerCheck(name: string): string {
-    return `    if ${name}.owner() != program_id {
+    return `    if unsafe { ${name}.owner() } != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }`;
   }
 
   override emitWritableCheck(names: string[]): string {
-    const checks = names.map((n) => `!${n}.is_writable`).join(" || ");
+    const checks = names.map((n) => `!${n}.is_writable()`).join(" || ");
     return `    if ${checks} {
         return Err(ProgramError::InvalidAccountData);
     }`;
@@ -327,11 +327,11 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override emitClockGet(localVar: string): string {
-    return `    let ${localVar} = pinocchio::sysvar::clock::Clock::get()?;`;
+    return `    let ${localVar} = pinocchio::sysvars::clock::Clock::get()?;`;
   }
 
   override emitRentGet(localVar: string): string {
-    return `    let ${localVar} = pinocchio::sysvar::rent::Rent::get()?;`;
+    return `    let ${localVar} = pinocchio::sysvars::rent::Rent::get()?;`;
   }
 
   override rustTypeForFramework(typeName: string): string {
@@ -454,11 +454,19 @@ impl From<${enumName}> for ProgramError {
     seeds: &[&[u8]],
     expected: &Pubkey,
 ) -> Result<u8, ProgramError> {
-    let (derived, bump) = Pubkey::find_program_address(seeds, program_id);
-    if &derived != expected {
-        return Err(ProgramError::InvalidSeeds);
+    for bump in (0..=255u8).rev() {
+        let mut seeds_with_bump: [&[u8]; 16] = [&[]; 16];
+        let len = seeds.len().min(15);
+        seeds_with_bump[..len].copy_from_slice(&seeds[..len]);
+        let bump_slice = &[bump];
+        seeds_with_bump[len] = bump_slice;
+        if let Ok(derived) = pinocchio::pubkey::create_program_address(&seeds_with_bump[..len + 1], program_id) {
+            if &derived == expected {
+                return Ok(bump);
+            }
+        }
     }
-    Ok(bump)
+    Err(ProgramError::InvalidSeeds)
 }`);
 
     if (irNeedsUnsignedLamportsHelper(ir)) {
@@ -483,12 +491,19 @@ impl From<${enumName}> for ProgramError {
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
+    let seed_group = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+    let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+    for (i, seed) in seed_group.iter().enumerate() {
+        if i >= seeds.len() { return Err(ProgramError::InvalidSeeds); }
+        seeds[i] = Seed::from(*seed);
+    }
+    let signer = Signer::from(&seeds[..seed_group.len()]);
     SystemTransfer {
         from,
         to,
         lamports: amount,
     }
-    .invoke_signed(signer_seeds)
+    .invoke_signed(&[signer])
 }`);
     }
 
@@ -505,7 +520,7 @@ impl From<${enumName}> for ProgramError {
     }
 
     let signer_storage = signer_seeds.first().map(|seed_group| {
-        let mut seeds: [Seed<'_>; 8] = [Seed::from(&[][..]); 8];
+        let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
         for (index, seed) in seed_group.iter().enumerate() {
             if index >= seeds.len() {
                 return Err(ProgramError::InvalidSeeds);
@@ -555,7 +570,12 @@ fn spl_token_transfer_signed(
         authority,
         amount,
     }
-    .invoke_signed(signer_seeds)
+    .invoke_signed(&{
+        let sg = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+        let mut s: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+        for (i, sd) in sg.iter().enumerate() { if i >= s.len() { return Err(ProgramError::InvalidSeeds); } s[i] = Seed::from(*sd); }
+        [Signer::from(&s[..sg.len()])]
+    })
 }`);
     }
 
@@ -564,14 +584,14 @@ fn spl_token_transfer_signed(
     if (needsUnsignedMintTo) {
       helpers.push(`fn spl_token_mint_to(
     mint: &AccountInfo,
-    to: &AccountInfo,
-    authority: &AccountInfo,
+    account: &AccountInfo,
+    mint_authority: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
     TokenMintTo {
         mint,
-        to,
-        authority,
+        account,
+        mint_authority,
         amount,
     }
     .invoke()
@@ -580,18 +600,23 @@ fn spl_token_transfer_signed(
     if (needsSignedMintTo) {
       helpers.push(`fn spl_token_mint_to_signed(
     mint: &AccountInfo,
-    to: &AccountInfo,
-    authority: &AccountInfo,
+    account: &AccountInfo,
+    mint_authority: &AccountInfo,
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
     TokenMintTo {
         mint,
-        to,
-        authority,
+        account,
+        mint_authority,
         amount,
     }
-    .invoke_signed(signer_seeds)
+    .invoke_signed(&{
+        let sg = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+        let mut s: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+        for (i, sd) in sg.iter().enumerate() { if i >= s.len() { return Err(ProgramError::InvalidSeeds); } s[i] = Seed::from(*sd); }
+        [Signer::from(&s[..sg.len()])]
+    })
 }`);
     }
 
@@ -599,13 +624,13 @@ fn spl_token_transfer_signed(
     const needsSignedBurn = irNeedsSignedSplBurnHelper(ir);
     if (needsUnsignedBurn) {
       helpers.push(`fn spl_token_burn(
-    from: &AccountInfo,
+    account: &AccountInfo,
     mint: &AccountInfo,
     authority: &AccountInfo,
     amount: u64,
 ) -> ProgramResult {
     TokenBurn {
-        from,
+        account,
         mint,
         authority,
         amount,
@@ -615,19 +640,24 @@ fn spl_token_transfer_signed(
     }
     if (needsSignedBurn) {
       helpers.push(`fn spl_token_burn_signed(
-    from: &AccountInfo,
+    account: &AccountInfo,
     mint: &AccountInfo,
     authority: &AccountInfo,
     amount: u64,
     signer_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
     TokenBurn {
-        from,
+        account,
         mint,
         authority,
         amount,
     }
-    .invoke_signed(signer_seeds)
+    .invoke_signed(&{
+        let sg = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+        let mut s: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+        for (i, sd) in sg.iter().enumerate() { if i >= s.len() { return Err(ProgramError::InvalidSeeds); } s[i] = Seed::from(*sd); }
+        [Signer::from(&s[..sg.len()])]
+    })
 }`);
     }
 
@@ -660,7 +690,12 @@ fn spl_token_transfer_signed(
         destination,
         authority,
     }
-    .invoke_signed(signer_seeds)
+    .invoke_signed(&{
+        let sg = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+        let mut s: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+        for (i, sd) in sg.iter().enumerate() { if i >= s.len() { return Err(ProgramError::InvalidSeeds); } s[i] = Seed::from(*sd); }
+        [Signer::from(&s[..sg.len()])]
+    })
 }`);
     }
 
