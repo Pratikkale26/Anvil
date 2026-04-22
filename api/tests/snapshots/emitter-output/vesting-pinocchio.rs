@@ -144,6 +144,7 @@ fn create_vesting(
         ];
     let init_vesting_signer_seeds = &[&init_vesting_seeds[..]];
     create_program_account(vesting, grantor, (8 + Vesting::LEN) as usize, program_id, init_vesting_signer_seeds)?;
+    let bump_vault = bump_seed(program_id, &[VAULT_SEED, vesting.key().as_ref()], vault.key())?;
 
 
     if !(total_amount > 0) {

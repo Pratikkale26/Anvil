@@ -135,6 +135,8 @@ fn initialize_pool(
         ];
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
     create_program_account(pool, admin, (8 + AmmPool::LEN) as usize, program_id, init_pool_signer_seeds)?;
+    let bump_vault_a = bump_seed(program_id, &[b"vault_a", pool.key().as_ref()], vault_a.key())?;
+    let bump_vault_b = bump_seed(program_id, &[b"vault_b", pool.key().as_ref()], vault_b.key())?;
 
 
     if !(fee_rate <= 10000) {

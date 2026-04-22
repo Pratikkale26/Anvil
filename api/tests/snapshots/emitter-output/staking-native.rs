@@ -140,6 +140,10 @@ fn initialize_pool(
         ];
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
     create_program_account(pool, admin, (8 + StakingPool::LEN) as u64, program_id, init_pool_signer_seeds)?;
+    let (expected_key, bump_reward_vault) = Pubkey::find_program_address(&[b"reward_vault", pool.key.as_ref()], program_id);
+    if expected_key != *reward_vault.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
 
 
     if !(reward_rate > 0) {

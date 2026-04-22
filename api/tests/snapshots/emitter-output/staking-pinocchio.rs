@@ -138,6 +138,7 @@ fn initialize_pool(
         ];
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
     create_program_account(pool, admin, (8 + StakingPool::LEN) as usize, program_id, init_pool_signer_seeds)?;
+    let bump_reward_vault = bump_seed(program_id, &[b"reward_vault", pool.key().as_ref()], reward_vault.key())?;
 
 
     if !(reward_rate > 0) {

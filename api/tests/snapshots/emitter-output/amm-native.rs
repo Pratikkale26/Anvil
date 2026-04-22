@@ -137,6 +137,14 @@ fn initialize_pool(
         ];
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
     create_program_account(pool, admin, (8 + AmmPool::LEN) as u64, program_id, init_pool_signer_seeds)?;
+    let (expected_key, bump_vault_a) = Pubkey::find_program_address(&[b"vault_a", pool.key.as_ref()], program_id);
+    if expected_key != *vault_a.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let (expected_key, bump_vault_b) = Pubkey::find_program_address(&[b"vault_b", pool.key.as_ref()], program_id);
+    if expected_key != *vault_b.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
 
 
     if !(fee_rate <= 10000) {

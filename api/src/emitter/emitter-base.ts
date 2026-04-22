@@ -461,7 +461,7 @@ export abstract class BaseEmitter {
     const argsBlock = this.emitArgParsing(instr.args);
 
     const initPreludes = instr.accounts
-      .filter((a) => a.isInit && isCustomState(a.accountType))
+      .filter((a) => a.isInit && (isCustomState(a.accountType) || (a.isPda && a.pdaSeeds?.length)))
       .map((a) => this.emitInitAccountPrelude(a, instr, ir))
       .filter(Boolean)
       .join("\n");
@@ -893,6 +893,20 @@ ${fields}
     }
 
     if (!payerName || !accountRef.initSpace) {
+      // Even without full payer/space info, PDA init accounts still need bump derivation
+      // so that body code referencing ctx.bumps.X (e.g., pool.vault_bump = bump_vault) compiles.
+      if (accountRef.isPda && accountRef.pdaSeeds?.length) {
+        const pdaSeeds = (accountRef.pdaSeeds).map((seed) =>
+          this.normalizeInitSeedExpr(seed)
+        );
+        const bumpOnly = this.emitBumpSeed("program_id", pdaSeeds, accountName)
+          .replace(/\blet bump =/g, `let bump_${accountName} =`)
+          .replace(/\blet\s+\(expected_key,\s*bump\)\s*=/g, `let (expected_key, bump_${accountName}) =`);
+        this.warnings.push(
+          `Init account '${accountName}' is missing payer/space metadata (token account?); bump derived but allocation must be handled externally.`
+        );
+        return bumpOnly;
+      }
       this.warnings.push(
         `Init account '${accountName}' is missing payer/space metadata; generated output may require manual allocation wiring.`
       );
