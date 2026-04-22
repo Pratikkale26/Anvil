@@ -1,5 +1,5 @@
 import type { EmitterOutput, SolanaIR } from "../ir/schema.js";
-import { snakeCase } from "./emitter-base.js";
+import { snakeCase } from "./emitter-utils.js";
 
 export type ValidationSeverity = "error" | "warning";
 

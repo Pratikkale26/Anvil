@@ -7,13 +7,16 @@
  */
 
 import type { SolanaIR, AccountDef } from "../ir/schema.js";
+import { BaseEmitter } from "./emitter-base.js";
 import {
-  BaseEmitter,
   instrDiscriminator,
   accountDiscriminator,
   snakeCase,
   toPascalCase,
   isProgramAccount,
+  emitRequireGuard,
+} from "./emitter-utils.js";
+import {
   irNeedsHelper,
   irNeedsSignedLamportsHelper,
   irNeedsSignedSplBurnHelper,
@@ -27,8 +30,7 @@ import {
   irNeedsInitAccountHelper,
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
-  emitRequireGuard,
-} from "./emitter-base.js";
+} from "./emitter-helpers.js";
 
 class PinocchioEmitter extends BaseEmitter {
   override readonly frameworkName = "Pinocchio";

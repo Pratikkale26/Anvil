@@ -1,4 +1,4 @@
-# Anvil
+# Anvil v0.3.0
 
 Anvil is a compiler-style Solana transpiler.
 
@@ -46,13 +46,22 @@ Still not production-complete:
 ```text
 api/
   src/
-    demo-programs/      Anchor-like sample inputs
-    emitter/            Target code generators + CU analyzer
-    ir/                 IR schema + fixture JSON
-    parser/             Anchor -> IR parsing pipeline
-    routes/             Express API routes
+    ai/                          AI refine + review-report pipeline
+    demo-programs/               Anchor-like sample inputs
+    emitter/
+      emitter-base.ts            Shared base class for all emitters
+      pinocchio-emitter.ts       Pinocchio target (single-file)
+      quasar-emitter.ts          Quasar target (BaseEmitter overrides + single-file fallback)
+      quasar-project-emitter.ts  Quasar multi-file project generation (lib/state/instructions/Cargo)
+      native-emitter.ts          Native solana_program target (single-file)
+      cu-analyzer.ts             Per-instruction CU estimation
+      output-validator.ts        Deterministic post-emit validation
+    ir/                          IR schema + fixture JSON
+    parser/                      Anchor -> IR parsing pipeline
+    routes/                      Express API routes
+  tests/                         Emitter + parser test suites
 web/
-  app/                  Next.js landing page + live playground
+  app/                           Next.js landing page + live playground
 ```
 
 ## Local Development

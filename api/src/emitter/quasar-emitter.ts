@@ -3,25 +3,12 @@
  *
  * Extends BaseEmitter with Quasar-specific implementations.
  *
- * Multi-file output: Generates proper quasar-lang project structure using
- * macros (#[program], #[derive(Accounts)], #[account], declare_id!).
+ * Multi-file output: Delegates to quasar-project-emitter.ts for proper
+ * quasar-lang project structure using macros (#[program], #[derive(Accounts)],
+ * #[account], declare_id!).
  *
  * Single-file output: Uses manual entrypoint/routing/serialization with
  * pinocchio-compatible types as a fallback (quasar's macros require multi-file).
- *
- * Key quasar-lang patterns:
- *   - `use quasar_lang::prelude::*;`
- *   - `Address` instead of `Pubkey` (32 bytes)
- *   - `Signer`, `Account<T>`, `UncheckedAccount`, `Program<System>`, `Program<Token>`
- *   - `Ctx<AccountsStruct>` for instruction context
- *   - `#[instruction(discriminator = N)]` for routing
- *   - `Seed::from(...)` for PDA seeds
- *   - `accounts.token_program.transfer(from, to, authority, amount).invoke()`
- *   - `accounts.system_program.transfer(from, to, amount).invoke()`
- *   - `accounts.account.close(destination)`
- *   - `accounts.account.set_inner(field1, field2, ...)`
- *   - `log("...")` for logging
- *   - `require!(condition, error)`
  */
 
 import type {
@@ -29,15 +16,15 @@ import type {
   AccountDef,
   Instruction,
   EmitterOutput,
-  EmitterFile,
 } from "../ir/schema.js";
+import { BaseEmitter } from "./emitter-base.js";
 import {
-  BaseEmitter,
   instrDiscriminator,
   accountDiscriminator,
   snakeCase,
-  toPascalCase,
-  isProgramAccount,
+  emitRequireGuard,
+} from "./emitter-utils.js";
+import {
   irNeedsHelper,
   irNeedsSignedLamportsHelper,
   irNeedsSignedSplBurnHelper,
@@ -51,112 +38,11 @@ import {
   irNeedsInitAccountHelper,
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
-  emitRequireGuard,
-} from "./emitter-base.js";
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Does the IR use any SPL token operations? */
-function irNeedsSpl(ir: SolanaIR): boolean {
-  return (
-    irNeedsHelper(ir, "spl_transfer") ||
-    irNeedsHelper(ir, "spl_mint_to") ||
-    irNeedsHelper(ir, "spl_burn") ||
-    irNeedsHelper(ir, "spl_close_account") ||
-    irNeedsUnsignedSplMintToHelper(ir) ||
-    irNeedsSignedSplMintToHelper(ir) ||
-    irNeedsUnsignedSplBurnHelper(ir) ||
-    irNeedsSignedSplBurnHelper(ir) ||
-    irNeedsSignedSplCloseAccountHelper(ir) ||
-    irNeedsUnsignedSplCloseAccountHelper(ir) ||
-    ir.instructions.some((instr) =>
-      instr.accounts.some(
-        (a) =>
-          a.accountType === "TokenAccount" ||
-          a.accountType === "Mint" ||
-          a.constraints.some(
-            (c) =>
-              c.kind.startsWith("token::") ||
-              c.kind.startsWith("associated_token::"),
-          ),
-      ),
-    )
-  );
-}
-
-/** Map IR account type to quasar-lang type for #[derive(Accounts)] struct */
-function quasarAccountType(
-  accountType: string,
-  isMut: boolean,
-  isSigner: boolean,
-  constraints: { kind: string; value?: string }[],
-): { wrapper: string; lifetime: boolean } {
-  // System program
-  if (
-    accountType === "SystemProgram" ||
-    accountType === "System" ||
-    accountType === "system_program"
-  )
-    return { wrapper: "Program<System>", lifetime: true };
-
-  // Token program
-  if (accountType === "TokenProgram" || accountType === "token_program")
-    return { wrapper: "Program<Token>", lifetime: true };
-
-  // Associated token program
-  if (
-    accountType === "AssociatedTokenProgram" ||
-    accountType === "associated_token_program"
-  )
-    return { wrapper: "Program<Token>", lifetime: true };
-
-  // Rent sysvar
-  if (accountType === "Rent" || accountType === "SysvarRent")
-    return { wrapper: "Sysvar<Rent>", lifetime: true };
-
-  // Clock sysvar
-  if (accountType === "Clock" || accountType === "SysvarClock")
-    return { wrapper: "Sysvar<Clock>", lifetime: true };
-
-  // SPL Token Account
-  if (
-    accountType === "TokenAccount" ||
-    constraints.some(
-      (c) =>
-        c.kind.startsWith("token::") ||
-        c.kind.startsWith("associated_token::"),
-    )
-  ) {
-    if (isMut) return { wrapper: "&'info mut Account<Token>", lifetime: false };
-    return { wrapper: "&'info Account<Token>", lifetime: false };
-  }
-
-  // Mint
-  if (accountType === "Mint") {
-    if (isMut) return { wrapper: "&'info mut Account<Mint>", lifetime: false };
-    return { wrapper: "&'info Account<Mint>", lifetime: false };
-  }
-
-  // Signer
-  if (isSigner) {
-    if (isMut) return { wrapper: "&'info mut Signer", lifetime: false };
-    return { wrapper: "&'info Signer", lifetime: false };
-  }
-
-  // Program-owned state account
-  if (!isProgramAccount(accountType) && accountType !== "Unknown") {
-    if (isMut)
-      return {
-        wrapper: `&'info mut Account<${accountType}>`,
-        lifetime: false,
-      };
-    return { wrapper: `&'info Account<${accountType}>`, lifetime: false };
-  }
-
-  // Unchecked / unknown
-  if (isMut) return { wrapper: "&'info mut UncheckedAccount", lifetime: false };
-  return { wrapper: "&'info UncheckedAccount", lifetime: false };
-}
+} from "./emitter-helpers.js";
+import {
+  emitQuasarProjectFiles,
+  type QuasarEmitterBridge,
+} from "./quasar-project-emitter.js";
 
 // ─── Quasar Emitter ──────────────────────────────────────────────────────────
 
@@ -172,45 +58,11 @@ class QuasarEmitter extends BaseEmitter {
     this.passedThroughCount = 0;
     this.details = [];
 
-    const files: EmitterFile[] = [];
+    // Multi-file: delegate to the project emitter
+    const bridge = this.createBridge();
+    const files = emitQuasarProjectFiles(ir, bridge);
 
-    // ── lib.rs (quasar-lang #[program] macro) ──
-    files.push({ path: "lib.rs", content: this.emitQuasarLibFile(ir) });
-
-    // ── state.rs (#[account] macro) ──
-    if (ir.accounts.length > 0) {
-      files.push({ path: "state.rs", content: this.emitQuasarStateFile(ir) });
-    }
-
-    // ── instructions/ (#[derive(Accounts)] + handler fns) ──
-    if (ir.instructions.length > 0) {
-      files.push({
-        path: "instructions/mod.rs",
-        content: this.emitQuasarInstrModFile(ir),
-      });
-      for (const instr of ir.instructions) {
-        files.push({
-          path: `instructions/${snakeCase(instr.name)}.rs`,
-          content: this.emitQuasarInstrFile(instr, ir),
-        });
-      }
-    }
-
-    // ── errors.rs ──
-    if (ir.errors.length > 0) {
-      files.push({
-        path: "errors.rs",
-        content: this.emitQuasarErrorsFile(ir),
-      });
-    }
-
-    // ── Cargo.toml ──
-    files.push({
-      path: "Cargo.toml",
-      content: this.emitQuasarCargoToml(ir),
-    });
-
-    // ── Single-file output: use base emitter's manual entrypoint approach ──
+    // Single-file: use base emitter's manual entrypoint approach
     const singleFile = this.emitSingleFile(ir);
 
     return {
@@ -225,761 +77,35 @@ class QuasarEmitter extends BaseEmitter {
     };
   }
 
-  // ── Quasar multi-file generators ──────────────────────────────────────────
-
-  private emitQuasarLibFile(ir: SolanaIR): string {
-    const sections: string[] = [];
-    const programName = snakeCase(ir.name);
-    const needsSpl = irNeedsSpl(ir);
-    const constants = ir.constants ?? [];
-    const types = ir.types ?? [];
-
-    sections.push(`#![cfg_attr(not(test), no_std)]`);
-    sections.push(`use quasar_lang::prelude::*;`);
-    if (needsSpl) {
-      sections.push(`use quasar_spl::{Mint, Token, TokenCpi};`);
-    }
-
-    // Source imports (filtered)
-    const sourceImports = this.filteredSourceImports(ir);
-    if (sourceImports.length > 0) {
-      sections.push(sourceImports.join("\n"));
-    }
-
-    // Module declarations
-    const mods: string[] = [];
-    if (ir.instructions.length > 0) {
-      mods.push(`mod instructions;`);
-      mods.push(`use instructions::*;`);
-    }
-    if (ir.accounts.length > 0) {
-      mods.push(`mod state;`);
-    }
-    if (ir.errors.length > 0) {
-      mods.push(`mod errors;`);
-    }
-    mods.push(`#[cfg(test)]`);
-    mods.push(`mod tests;`);
-    sections.push(mods.join("\n"));
-
-    // Constants
-    if (constants.length > 0) {
-      sections.push(constants.join("\n\n"));
-    }
-
-    // Custom types
-    if (types.length > 0) {
-      sections.push(this.emitCustomTypes({ ...ir, types }));
-    }
-
-    // declare_id! + #[program] block
-    sections.push(`declare_id!("${ir.programId ?? "11111111111111111111111111111111111111111111"}");`);
-
-    const instrFns = ir.instructions
-      .map((instr, idx) => {
-        const name = snakeCase(instr.name);
-        const accountsStructName = toPascalCase(instr.name);
-
-        // Build argument list
-        const args = instr.args.map(
-          (arg) => `${snakeCase(arg.name)}: ${this.quasarArgType(arg.type)}`,
-        );
-        const allArgs = [`ctx: Ctx<${accountsStructName}>`, ...args].join(
-          ", ",
-        );
-
-        // Build handler call arguments
-        const handlerArgs: string[] = [`&mut ctx.accounts`];
-
-        // Add instruction args (pass by value or reference depending on type)
-        for (const arg of instr.args) {
-          const argName = snakeCase(arg.name);
-          if (arg.type === "String" || arg.type === "Vec<u8>") {
-            handlerArgs.push(argName);
-          } else {
-            handlerArgs.push(argName);
-          }
-        }
-
-        // Check if instruction uses bumps
-        const usesBumps = this.instrUsesBumps(instr);
-        if (usesBumps) {
-          handlerArgs.push(`&ctx.bumps`);
-        }
-
-        return `    #[instruction(discriminator = ${idx})]
-    pub fn ${name}(${allArgs}) -> Result<(), ProgramError> {
-        instructions::handle_${name}(${handlerArgs.join(", ")})
-    }`;
-      })
-      .join("\n\n");
-
-    sections.push(`#[program]
-mod quasar_${programName} {
-    use super::*;
-
-${instrFns}
-}`);
-
-    return sections.join("\n\n");
-  }
-
-  private emitQuasarStateFile(ir: SolanaIR): string {
-    const sections: string[] = [];
-    sections.push(`use quasar_lang::prelude::*;`);
-
-    for (const [idx, acc] of ir.accounts.entries()) {
-      const fields = acc.fields
-        .map(
-          (f) =>
-            `    pub ${snakeCase(f.name)}: ${this.quasarStateFieldType(f.type)},`,
-        )
-        .join("\n");
-
-      // Check if any field uses a dynamic type (String, Vec)
-      const hasDynamicFields = acc.fields.some(
-        (f) => f.type === "String" || f.type.startsWith("Vec<"),
-      );
-      const lifetime = hasDynamicFields ? "<'a>" : "";
-
-      sections.push(`#[account(discriminator = ${idx + 1})]
-pub struct ${acc.name}${lifetime} {
-${fields}
-}`);
-    }
-
-    return sections.join("\n\n");
-  }
-
-  private emitQuasarInstrModFile(ir: SolanaIR): string {
-    const mods = ir.instructions
-      .map((i) => {
-        const name = snakeCase(i.name);
-        return `pub mod ${name};\npub use ${name}::*;`;
-      })
-      .join("\n\n");
-    return `${mods}\n`;
-  }
-
-  private emitQuasarInstrFile(instr: Instruction, ir: SolanaIR): string {
-    const sections: string[] = [];
-    const needsSpl = irNeedsSpl(ir);
-
-    // Imports
-    const imports: string[] = [];
-    // Collect state types used by this instruction
-    const stateTypes = new Set<string>();
-    for (const acc of instr.accounts) {
-      if (ir.accounts.some((a) => a.name === acc.accountType)) {
-        stateTypes.add(acc.accountType);
-      }
-    }
-    if (stateTypes.size > 0) {
-      imports.push(
-        `crate::state::{${[...stateTypes].join(", ")}}`,
-      );
-    }
-    imports.push(`quasar_lang::prelude::*`);
-    if (needsSpl) {
-      // Check if this instruction specifically needs SPL
-      const instrNeedsSpl = instr.accounts.some(
-        (a) =>
-          a.accountType === "TokenAccount" ||
-          a.accountType === "Mint" ||
-          a.accountType === "TokenProgram" ||
-          a.constraints.some(
-            (c) =>
-              c.kind.startsWith("token::") ||
-              c.kind.startsWith("associated_token::"),
-          ),
-      );
-      const instrNeedsTokenCpi = instr.body.some(
-        (s) =>
-          s.kind === "cpi_spl_transfer" ||
-          s.kind === "cpi_spl_mint_to" ||
-          s.kind === "cpi_spl_burn" ||
-          s.kind === "cpi_spl_close_account",
-      );
-      const splImports: string[] = [];
-      if (
-        instrNeedsSpl &&
-        instr.accounts.some((a) => a.accountType === "Mint")
-      )
-        splImports.push("Mint");
-      if (instrNeedsSpl) splImports.push("Token");
-      if (instrNeedsTokenCpi) splImports.push("TokenCpi");
-      if (splImports.length > 0) {
-        imports.push(`quasar_spl::{${[...new Set(splImports)].join(", ")}}`);
-      }
-    }
-    // Error imports
-    if (ir.errors.length > 0) {
-      const enumName = this.sourceErrorEnumName(ir);
-      imports.push(`crate::errors::${enumName}`);
-    }
-
-    if (imports.length === 1) {
-      sections.push(`use ${imports[0]};`);
-    } else {
-      sections.push(`use {\n${imports.map((i) => `    ${i},`).join("\n")}\n};`);
-    }
-
-    // #[derive(Accounts)] struct
-    sections.push(this.emitQuasarAccountsStruct(instr, ir));
-
-    // Handler function
-    sections.push(this.emitQuasarHandler(instr, ir));
-
-    return sections.join("\n\n");
-  }
-
-  private emitQuasarAccountsStruct(instr: Instruction, ir: SolanaIR): string {
-    const structName = toPascalCase(instr.name);
-    const fields = instr.accounts.map((acc) => {
-      const name = snakeCase(acc.name);
-      const attrs: string[] = [];
-
-      // Build #[account(...)] constraints
-      const constraints: string[] = [];
-      if (acc.isMut) constraints.push("mut");
-      if (acc.isInit) constraints.push("init");
-      // init_if_needed for token accounts with token:: constraints
-      const hasTokenConstraints = acc.constraints.some(
-        (c) =>
-          c.kind.startsWith("token::") ||
-          c.kind.startsWith("associated_token::"),
-      );
-      if (!acc.isInit && hasTokenConstraints && acc.isMut) {
-        // If it has token constraints but no init, add init_if_needed
-        constraints.push("init_if_needed");
-      }
-      if (acc.initPayer) constraints.push(`payer = ${snakeCase(acc.initPayer)}`);
-      // Seeds
-      if (acc.isPda && acc.pdaSeeds.length > 0) {
-        const seeds = acc.pdaSeeds.map((s) => this.normalizeQuasarSeed(s));
-        constraints.push(`seeds = [${seeds.join(", ")}]`);
-        constraints.push("bump");
-      }
-      // has_one constraints
-      for (const c of acc.constraints) {
-        if (c.kind === "has_one" && c.value) {
-          constraints.push(`has_one = ${snakeCase(c.value)}`);
-        }
-        if (c.kind === "close" && c.value) {
-          constraints.push(`close = ${snakeCase(c.value)}`);
-        }
-        if (c.kind === "constraint" && c.value) {
-          constraints.push(`constraint = ${c.value}`);
-        }
-        if (c.kind === "token::mint" && c.value) {
-          constraints.push(`token::mint = ${snakeCase(c.value)}`);
-        }
-        if (c.kind === "token::authority" && c.value) {
-          constraints.push(`token::authority = ${snakeCase(c.value)}`);
-        }
-        if (c.kind === "associated_token::mint" && c.value) {
-          constraints.push(`token::mint = ${snakeCase(c.value)}`);
-        }
-        if (c.kind === "associated_token::authority" && c.value) {
-          constraints.push(`token::authority = ${snakeCase(c.value)}`);
-        }
-      }
-      // Bump = field for non-init PDAs
-      if (
-        acc.isPda &&
-        !acc.isInit &&
-        ir.accounts.some((a) => a.name === acc.accountType)
-      ) {
-        const stateAcc = ir.accounts.find((a) => a.name === acc.accountType);
-        if (stateAcc?.fields.some((f) => f.name === "bump")) {
-          constraints.push(`bump = ${snakeCase(acc.name)}.bump`);
-          // Remove the generic "bump" that was already added
-          const bumpIdx = constraints.indexOf("bump");
-          if (bumpIdx !== -1) constraints.splice(bumpIdx, 1);
-        }
-      }
-
-      if (constraints.length > 0) {
-        if (constraints.length <= 3) {
-          attrs.push(`    #[account(${constraints.join(", ")})]`);
-        } else {
-          attrs.push(
-            `    #[account(\n        ${constraints.join(",\n        ")}\n    )]`,
-          );
-        }
-      }
-
-      // Determine quasar type
-      const { wrapper } = quasarAccountType(
-        acc.accountType,
-        acc.isMut,
-        acc.isSigner,
-        acc.constraints,
-      );
-
-      // For types that already include &'info, don't add it again
-      const fullType = wrapper.startsWith("&'info")
-        ? wrapper
-        : `&'info ${wrapper}`;
-
-      const attrStr = attrs.length > 0 ? `${attrs.join("\n")}\n` : "";
-      return `${attrStr}    pub ${name}: ${fullType},`;
-    });
-
-    return `#[derive(Accounts)]
-pub struct ${structName}<'info> {
-${fields.join("\n")}
-}`;
-  }
-
-  private emitQuasarHandler(instr: Instruction, ir: SolanaIR): string {
-    const name = snakeCase(instr.name);
-    const structName = toPascalCase(instr.name);
-    const usesBumps = this.instrUsesBumps(instr);
-
-    // Build function signature
-    const params: string[] = [`accounts: &mut ${structName}`];
-    for (const arg of instr.args) {
-      const argName = snakeCase(arg.name);
-      const argType = this.quasarArgType(arg.type);
-      if (argType === "String") {
-        params.push(`${argName}: &str`);
-      } else {
-        params.push(`${argName}: ${argType}`);
-      }
-    }
-    if (usesBumps) {
-      params.push(`bumps: &${structName}Bumps`);
-    }
-
-    // Emit body
-    const body = this.emitQuasarHandlerBody(instr, ir);
-
-    return `#[inline(always)]
-pub fn handle_${name}(${params.join(", ")}) -> Result<(), ProgramError> {
-${body}
-}`;
-  }
-
-  private emitQuasarHandlerBody(instr: Instruction, ir: SolanaIR): string {
-    const lines: string[] = [];
-
-    for (const stmt of instr.body) {
-      switch (stmt.kind) {
-        case "pass_through": {
-          this.passedThroughCount++;
-          let code = stmt.code.trim();
-          if (code === "Ok(())") {
-            lines.push(`    Ok(())`);
-            break;
-          }
-          // Transform ctx.accounts.X references
-          code = this.transformQuasarPassThrough(code, instr, ir);
-          if (code.endsWith(";") || code.endsWith("}") || code.endsWith(");")) {
-            lines.push(`    ${code}`);
-          } else {
-            lines.push(`    ${code};`);
-          }
-          break;
-        }
-
-        case "state_read": {
-          this.transformedCount++;
-          // In quasar, state is accessed directly via accounts.X — no separate deserialization
-          break;
-        }
-
-        case "bumps_access": {
-          this.transformedCount++;
-          // In quasar, bumps are accessed via ctx.bumps.X — handled in lib.rs
-          break;
-        }
-
-        case "state_field_assign": {
-          this.transformedCount++;
-          const accountName = snakeCase(stmt.account);
-          const fieldName = snakeCase(stmt.field);
-          let value = this.transformQuasarExpr(stmt.value, instr, ir);
-
-          // Handle compound assignments
-          const compoundMatch = value.match(/^__compound_([+\-*\/])=__(.+)$/);
-          if (compoundMatch?.[1] && compoundMatch[2]) {
-            const op = compoundMatch[1];
-            const rhs = this.transformQuasarExpr(
-              compoundMatch[2],
-              instr,
-              ir,
-            );
-            const stateField = `accounts.${accountName}.${fieldName}`;
-            if (op === "+" || op === "-") {
-              const method = op === "+" ? "checked_add" : "checked_sub";
-              lines.push(
-                `    ${stateField} = ${stateField}.${method}(${rhs}).ok_or(ProgramError::ArithmeticOverflow)?;`,
-              );
-            } else {
-              lines.push(`    ${stateField} = ${stateField} ${op} ${rhs};`);
-            }
-            break;
-          }
-
-          // Handle ctx.bumps references
-          if (value.includes("ctx.bumps.")) {
-            value = value.replace(
-              /ctx\.bumps\.(\w+)/g,
-              (_: string, bumpName: string) =>
-                `bumps.${snakeCase(bumpName)}`,
-            );
-          }
-
-          // Handle Pubkey/key references
-          const accountRef = instr.accounts.find(
-            (a) => snakeCase(a.name) === accountName,
-          );
-          const stateAcc = accountRef
-            ? ir.accounts.find((a) => a.name === accountRef.accountType)
-            : undefined;
-          const fieldDef = stateAcc?.fields.find(
-            (f) => snakeCase(f.name) === fieldName,
-          );
-          if (
-            fieldDef &&
-            (fieldDef.type === "Pubkey" || fieldDef.type === "Address")
-          ) {
-            // Convert .key() to .address() for quasar
-            value = value.replace(
-              /\baccounts\.(\w+)\.key\(\)/g,
-              "*accounts.$1.address()",
-            );
-            value = value.replace(
-              /\*(\w+)\.key\b/g,
-              "*accounts.$1.address()",
-            );
-          }
-
-          lines.push(
-            `    accounts.${accountName}.${fieldName} = ${value};`,
-          );
-          break;
-        }
-
-        case "require": {
-          this.transformedCount++;
-          let condition = this.transformQuasarExpr(
-            stmt.condition,
-            instr,
-            ir,
-          );
-          // Prefix account references with accounts.
-          condition = this.prefixAccountRefs(condition, instr);
-          lines.push(`    require!(${condition}, ${stmt.error});`);
-          break;
-        }
-
-        case "msg": {
-          this.transformedCount++;
-          const literalMatch = stmt.message.match(/^"([^"\\]|\\.)*"/);
-          if (literalMatch?.[0]) {
-            const literal = literalMatch[0];
-            if (literal !== stmt.message.trim()) {
-              // Formatted message — collapse to static log
-              lines.push(
-                `    // Anvil: formatted msg!() collapsed to static log`,
-              );
-              lines.push(`    log(${literal});`);
-            } else {
-              lines.push(`    log(${stmt.message});`);
-            }
-          } else {
-            const commaIdx = stmt.message.indexOf(",");
-            if (commaIdx !== -1) {
-              const literal = stmt.message.slice(0, commaIdx).trim();
-              lines.push(
-                `    // Anvil: formatted msg!() collapsed to static log`,
-              );
-              lines.push(`    log(${literal});`);
-            } else {
-              lines.push(`    log(${stmt.message});`);
-            }
-          }
-          break;
-        }
-
-        case "emit": {
-          this.transformedCount++;
-          lines.push(`    log("event:${stmt.event}");`);
-          if (stmt.fields.trim()) {
-            lines.push(`    // Event data: ${stmt.fields.replace(/\n/g, " ")}`);
-          }
-          break;
-        }
-
-        case "cpi_system_transfer": {
-          this.transformedCount++;
-          const amount = this.transformQuasarExpr(stmt.amount, instr, ir);
-          if (stmt.signerSeeds) {
-            const seedsCode = this.emitQuasarSignerSeeds(stmt.from, instr, ir);
-            lines.push(seedsCode);
-            lines.push(
-              `    accounts.system_program.transfer(accounts.${snakeCase(stmt.from)}, accounts.${snakeCase(stmt.to)}, ${amount}).invoke_signed(seeds)?;`,
-            );
-          } else {
-            lines.push(
-              `    accounts.system_program.transfer(accounts.${snakeCase(stmt.from)}, accounts.${snakeCase(stmt.to)}, ${amount}).invoke()?;`,
-            );
-          }
-          break;
-        }
-
-        case "cpi_spl_transfer": {
-          this.transformedCount++;
-          const amount = this.transformQuasarExpr(stmt.amount, instr, ir);
-          const from = snakeCase(stmt.from);
-          const to = snakeCase(stmt.to);
-          const authority = snakeCase(stmt.authority);
-          if (stmt.signerSeeds) {
-            const seedsCode = this.emitQuasarSignerSeeds(
-              stmt.authority,
-              instr,
-              ir,
-            );
-            lines.push(seedsCode);
-            lines.push(
-              `    accounts.token_program.transfer(accounts.${from}, accounts.${to}, accounts.${authority}, ${amount}).invoke_signed(seeds)?;`,
-            );
-          } else {
-            lines.push(
-              `    accounts.token_program.transfer(accounts.${from}, accounts.${to}, accounts.${authority}, ${amount}).invoke()?;`,
-            );
-          }
-          break;
-        }
-
-        case "cpi_spl_mint_to": {
-          this.transformedCount++;
-          const amount = this.transformQuasarExpr(stmt.amount, instr, ir);
-          const mint = snakeCase(stmt.mint);
-          const to = snakeCase(stmt.to);
-          const authority = snakeCase(stmt.authority);
-          if (stmt.signerSeeds) {
-            const seedsCode = this.emitQuasarSignerSeeds(
-              stmt.authority,
-              instr,
-              ir,
-            );
-            lines.push(seedsCode);
-            lines.push(
-              `    accounts.token_program.mint_to(accounts.${mint}, accounts.${to}, accounts.${authority}, ${amount}).invoke_signed(seeds)?;`,
-            );
-          } else {
-            lines.push(
-              `    accounts.token_program.mint_to(accounts.${mint}, accounts.${to}, accounts.${authority}, ${amount}).invoke()?;`,
-            );
-          }
-          break;
-        }
-
-        case "cpi_spl_burn": {
-          this.transformedCount++;
-          const amount = this.transformQuasarExpr(stmt.amount, instr, ir);
-          const from = snakeCase(stmt.from);
-          const mint = snakeCase(stmt.mint);
-          const authority = snakeCase(stmt.authority);
-          if (stmt.signerSeeds) {
-            const seedsCode = this.emitQuasarSignerSeeds(
-              stmt.authority,
-              instr,
-              ir,
-            );
-            lines.push(seedsCode);
-            lines.push(
-              `    accounts.token_program.burn(accounts.${from}, accounts.${mint}, accounts.${authority}, ${amount}).invoke_signed(seeds)?;`,
-            );
-          } else {
-            lines.push(
-              `    accounts.token_program.burn(accounts.${from}, accounts.${mint}, accounts.${authority}, ${amount}).invoke()?;`,
-            );
-          }
-          break;
-        }
-
-        case "cpi_spl_close_account": {
-          this.transformedCount++;
-          const account = snakeCase(stmt.account);
-          const destination = snakeCase(stmt.destination);
-          const authority = snakeCase(stmt.authority);
-          if (stmt.signerSeeds) {
-            const seedsCode = this.emitQuasarSignerSeeds(
-              stmt.authority,
-              instr,
-              ir,
-            );
-            lines.push(seedsCode);
-            lines.push(
-              `    accounts.token_program.close_account(accounts.${account}, accounts.${destination}, accounts.${authority}).invoke_signed(seeds)?;`,
-            );
-          } else {
-            lines.push(
-              `    accounts.token_program.close_account(accounts.${account}, accounts.${destination}, accounts.${authority}).invoke()?;`,
-            );
-          }
-          break;
-        }
-
-        case "cpi_custom": {
-          this.transformedCount++;
-          this.warnings.push(
-            `Custom CPI to '${stmt.programAccount}' -- passed through as raw code. Verify quasar-lang compatibility.`,
-          );
-          lines.push(
-            `    // Anvil: Custom CPI -- verify this works with quasar-lang`,
-          );
-          lines.push(`    ${stmt.rawCode}`);
-          break;
-        }
-
-        case "sysvar_clock": {
-          this.transformedCount++;
-          lines.push(
-            `    let ${stmt.localVar} = quasar_lang::prelude::Clock::get()?;`,
-          );
-          break;
-        }
-
-        case "sysvar_rent": {
-          this.transformedCount++;
-          lines.push(
-            `    let ${stmt.localVar} = quasar_lang::prelude::Rent::get()?;`,
-          );
-          break;
-        }
-
-        case "pda_signer_seeds": {
-          this.transformedCount++;
-          // In quasar multi-file, PDA seeds are emitted inline
-          const seedsCode = this.emitQuasarPdaSeeds(stmt.account, stmt.seeds, instr, ir);
-          lines.push(seedsCode);
-          break;
-        }
-
-        case "return_ok": {
-          // Auto-close accounts with close constraints
-          for (const acc of instr.accounts) {
-            const closeConstraint = acc.constraints.find(
-              (c) => c.kind === "close" && c.value,
-            );
-            if (closeConstraint?.value) {
-              // Quasar handles close via the #[account(close = X)] constraint
-              // automatically, but for token accounts owned by the PDA we need
-              // explicit close
-              for (const dep of instr.accounts) {
-                const tokenAuth = dep.constraints.find(
-                  (c) =>
-                    c.kind === "token::authority" &&
-                    c.value === acc.name,
-                );
-                if (tokenAuth) {
-                  const seedsCode = this.emitQuasarSignerSeeds(
-                    acc.name,
-                    instr,
-                    ir,
-                  );
-                  lines.push(seedsCode);
-                  lines.push(
-                    `    accounts.token_program.close_account(accounts.${snakeCase(dep.name)}, accounts.${snakeCase(closeConstraint.value)}, accounts.${snakeCase(acc.name)}).invoke_signed(seeds)?;`,
-                  );
-                }
-              }
-            }
-          }
-          lines.push(`    Ok(())`);
-          break;
-        }
-
-        case "return_err": {
-          this.transformedCount++;
-          lines.push(`    return Err(${stmt.error});`);
-          break;
-        }
-      }
-    }
-
-    // If body didn't end with Ok(()) or return, add it
-    const lastStmt = instr.body[instr.body.length - 1];
-    const bodyHasReturn =
-      lastStmt?.kind === "return_ok" ||
-      (lastStmt?.kind === "pass_through" && lastStmt.code.trim() === "Ok(())");
-    if (!bodyHasReturn) {
-      lines.push(`    Ok(())`);
-    }
-
-    return lines.join("\n");
-  }
-
-  private emitQuasarErrorsFile(ir: SolanaIR): string {
-    const enumName = this.sourceErrorEnumName(ir);
-    const seen = new Set<string>();
-    const dedupedErrors = ir.errors.filter((e) => {
-      if (seen.has(e.name)) return false;
-      seen.add(e.name);
-      return true;
-    });
-    const variants = dedupedErrors
-      .map((e) => `    /// ${e.msg}\n    ${e.name} = ${e.code},`)
-      .join("\n");
-
-    return `use quasar_lang::prelude::*;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(u32)]
-pub enum ${enumName} {
-${variants}
-}
-
-impl From<${enumName}> for ProgramError {
-    fn from(error: ${enumName}) -> Self {
-        ProgramError::Custom(error as u32)
-    }
-}`;
-  }
-
-  private emitQuasarCargoToml(ir: SolanaIR): string {
-    const name = snakeCase(ir.name).replace(/_/g, "-");
-    const needsSpl = irNeedsSpl(ir);
-
-    let deps = `[dependencies]
-quasar-lang = "0.0"
-solana-instruction = { version = "3.2.0" }`;
-
-    if (needsSpl) {
-      deps += `\nquasar-spl = "0.0"`;
-    }
-
-    return `[package]
-name = "${name}"
-version = "0.1.0"
-edition = "2021"
-
-[workspace]
-
-[lints.rust.unexpected_cfgs]
-level = "warn"
-check-cfg = [
-    'cfg(target_os, values("solana"))',
-]
-
-[lib]
-crate-type = ["cdylib", "lib"]
-
-[features]
-alloc = []
-client = []
-debug = []
-
-${deps}
-
-[dev-dependencies]
-quasar-svm = { version = "0.1" }
-`;
+  // ── Bridge: expose quasar-specific helpers to the project emitter ────────
+
+  private createBridge(): QuasarEmitterBridge {
+    // The bridge proxies counter mutations back to the emitter instance
+    // so transform tracking stays accurate across the split.
+    const self = this;
+    return {
+      quasarArgType: (t) => self.quasarArgType(t),
+      quasarStateFieldType: (t) => self.quasarStateFieldType(t),
+      filteredSourceImports: (ir) => self.filteredSourceImports(ir),
+      emitCustomTypes: (ir) => self.emitCustomTypes(ir),
+      sourceErrorEnumName: (ir) => self.sourceErrorEnumName(ir),
+      instrUsesBumps: (instr) => self.instrUsesBumps(instr),
+      normalizeQuasarSeed: (s) => self.normalizeQuasarSeed(s),
+      transformQuasarPassThrough: (code, instr, ir) =>
+        self.transformQuasarPassThrough(code, instr, ir),
+      transformQuasarExpr: (expr, instr, ir) =>
+        self.transformQuasarExpr(expr, instr, ir),
+      prefixAccountRefs: (code, instr) =>
+        self.prefixAccountRefs(code, instr),
+      emitQuasarSignerSeeds: (name, instr, ir) =>
+        self.emitQuasarSignerSeeds(name, instr, ir),
+      get transformedCount() { return self.transformedCount; },
+      set transformedCount(v) { self.transformedCount = v; },
+      get passedThroughCount() { return self.passedThroughCount; },
+      set passedThroughCount(v) { self.passedThroughCount = v; },
+      get warnings() { return self.warnings; },
+      set warnings(v) { self.warnings = v; },
+    };
   }
 
   // ── Quasar-specific helpers ────────────────────────────────────────────────
@@ -1004,9 +130,7 @@ quasar-svm = { version = "0.1" }
   /** Normalize a PDA seed expression for quasar #[account(seeds = [...])] */
   private normalizeQuasarSeed(seed: string): string {
     let s = seed.trim();
-    // Remove ctx.accounts. prefix
     s = s.replace(/ctx\.accounts\./g, "");
-    // Convert .key().as_ref() or .key.as_ref() to just the account name
     s = s.replace(/(\w+)\.key\(\)\.as_ref\(\)/g, "$1");
     s = s.replace(/(\w+)\.key\.as_ref\(\)/g, "$1");
     return s;
@@ -1021,37 +145,30 @@ quasar-svm = { version = "0.1" }
   /** Map IR type to quasar-lang type for state struct fields */
   private quasarStateFieldType(typeName: string): string {
     if (typeName === "Pubkey") return "Address";
-    // Quasar uses raw numeric types in struct definitions
     return typeName;
   }
 
   /** Transform a pass-through code block for quasar multi-file */
   private transformQuasarPassThrough(
     code: string,
-    instr: Instruction,
-    ir: SolanaIR,
+    _instr: Instruction,
+    _ir: SolanaIR,
   ): string {
     let transformed = code;
 
-    // Transform ctx.accounts.X references
     transformed = transformed.replace(
       /ctx\.accounts\.(\w+)/g,
       (_: string, name: string) => `accounts.${snakeCase(name)}`,
     );
-
-    // Transform ctx.bumps.X references
     transformed = transformed.replace(
       /ctx\.bumps\.(\w+)/g,
       (_: string, name: string) => `bumps.${snakeCase(name)}`,
     );
-
-    // Transform .key() to .address() for quasar
     transformed = transformed.replace(
       /accounts\.(\w+)\.key\(\)/g,
       "accounts.$1.address()",
     );
 
-    // Transform require! macros that leaked through
     const requireMatch = transformed.match(
       /^require!\(([\s\S]+),\s*([\w:]+(?:::\w+)*)\s*\);?$/,
     );
@@ -1059,20 +176,11 @@ quasar-svm = { version = "0.1" }
       return `require!(${requireMatch[1].trim()}, ${requireMatch[2]});`;
     }
 
-    // Transform msg! to log
     transformed = transformed.replace(
       /msg!\(([^)]+)\)/g,
       "log($1)",
     );
-
-    // Transform .to_account_info() — not needed in quasar
     transformed = transformed.replace(/\.to_account_info\(\)/g, "");
-
-    // Transform .to_account_view() for close operations
-    // In quasar, signers need .to_account_view() for close
-    // Leave this as-is since quasar uses it
-
-    // Transform error! macro
     transformed = transformed.replace(
       /error!\s*\(\s*([^)]+)\s*\)/g,
       "ProgramError::from($1)",
@@ -1089,19 +197,14 @@ quasar-svm = { version = "0.1" }
   ): string {
     let transformed = expr;
 
-    // Transform ctx.accounts.X references
     transformed = transformed.replace(
       /ctx\.accounts\.(\w+)/g,
       (_: string, name: string) => `accounts.${snakeCase(name)}`,
     );
-
-    // Transform ctx.bumps.X references
     transformed = transformed.replace(
       /ctx\.bumps\.(\w+)/g,
       (_: string, name: string) => `bumps.${snakeCase(name)}`,
     );
-
-    // Transform .key() to *X.address()
     transformed = transformed.replace(
       /(\w+)\.key\(\)/g,
       (_: string, name: string) => {
@@ -1112,8 +215,6 @@ quasar-svm = { version = "0.1" }
         return `${name}.key()`;
       },
     );
-
-    // Transform .amount references for token accounts
     transformed = transformed.replace(
       /(\w+)\.amount\b/g,
       (_: string, name: string) => {
@@ -1143,7 +244,6 @@ quasar-svm = { version = "0.1" }
     let transformed = code;
     for (const acc of instr.accounts) {
       const name = snakeCase(acc.name);
-      // Only prefix standalone references, not already-prefixed ones
       transformed = transformed.replace(
         new RegExp(`(?<!accounts\\.)\\b${name}\\b(?!\\s*:)`, "g"),
         `accounts.${name}`,
@@ -1172,7 +272,6 @@ quasar-svm = { version = "0.1" }
 
     const lines: string[] = [];
 
-    // Emit any key captures needed by seeds
     for (const seed of accRef.pdaSeeds) {
       const keyMatch = seed.match(
         /(?:ctx\.accounts\.)?(\w+)\.key(?:\(\))?\.as_ref\(\)/,
@@ -1185,7 +284,6 @@ quasar-svm = { version = "0.1" }
       }
     }
 
-    // Get bump value
     if (hasBumpField) {
       lines.push(
         `    let bump = [accounts.${normalized}.bump];`,
@@ -1194,7 +292,6 @@ quasar-svm = { version = "0.1" }
       lines.push(`    let bump = [bumps.${normalized}];`);
     }
 
-    // Build seed expressions
     const seedExprs: string[] = [];
     for (const seed of accRef.pdaSeeds) {
       if (seed.startsWith('b"') || seed.startsWith("b'")) {
@@ -1208,7 +305,6 @@ quasar-svm = { version = "0.1" }
             `Seed::from(${snakeCase(keyMatch[1])}_key.as_ref())`,
           );
         } else {
-          // Generic seed — try to convert
           let normalized_seed = seed
             .replace(/ctx\.accounts\./g, "accounts.")
             .replace(/\.as_ref\(\)/g, "");
@@ -1227,19 +323,7 @@ quasar-svm = { version = "0.1" }
     return lines.join("\n");
   }
 
-  /** Emit quasar-style PDA seeds for pda_signer_seeds body statement */
-  private emitQuasarPdaSeeds(
-    accountName: string,
-    seeds: string[],
-    instr: Instruction,
-    ir: SolanaIR,
-  ): string {
-    // Delegate to the shared signer seeds helper
-    return this.emitQuasarSignerSeeds(accountName, instr, ir);
-  }
-
-  // ── Single-file output methods (for base emitter's emitSingleFile) ────────
-  // These use pinocchio-compatible types for the manual entrypoint approach.
+  // ── Single-file output methods (pinocchio-compatible fallback) ───────────
 
   override emitUseStatements(_ir: SolanaIR): string {
     const imports = [
@@ -1670,7 +754,6 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override rustTypeForFramework(typeName: string): string {
-    // In single-file mode, use pinocchio types (Pubkey = [u8; 32])
     if (typeName === "Pubkey") return "[u8; 32]";
     if (typeName === "String") return "[u8; 64]";
     return typeName;
@@ -1692,7 +775,6 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override emitAccountStruct(acc: AccountDef): string {
-    // Single-file: manual byte-layout serialization (pinocchio-compatible)
     const fields = acc.fields
       .map(
         (f) =>
@@ -1780,7 +862,6 @@ impl From<${enumName}> for ProgramError {
   }
 
   override emitHelperFunctions(ir: SolanaIR): string {
-    // Single-file helpers use pinocchio types
     const helpers: string[] = [];
 
     helpers.push(`fn bump_seed(
@@ -2036,6 +1117,8 @@ fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     return helpers.join("\n\n");
   }
 }
+
+// ─── Public API ──────────────────────────────────────────────────────────────
 
 const emitter = new QuasarEmitter();
 

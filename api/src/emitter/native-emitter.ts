@@ -7,12 +7,15 @@
  */
 
 import type { SolanaIR, AccountDef } from "../ir/schema.js";
+import { BaseEmitter } from "./emitter-base.js";
 import {
-  BaseEmitter,
   instrDiscriminator,
   snakeCase,
   toPascalCase,
   isProgramAccount,
+  emitRequireGuard,
+} from "./emitter-utils.js";
+import {
   irNeedsHelper,
   irNeedsUnsignedLamportsHelper,
   irNeedsSignedLamportsHelper,
@@ -26,8 +29,7 @@ import {
   irNeedsInitAccountHelper,
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
-  emitRequireGuard,
-} from "./emitter-base.js";
+} from "./emitter-helpers.js";
 
 class NativeEmitter extends BaseEmitter {
   override readonly frameworkName = "Native";

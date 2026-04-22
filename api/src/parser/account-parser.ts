@@ -1,0 +1,224 @@
+/**
+ * Account Parser — Account-related AST parsing.
+ *
+ * Parses #[derive(Accounts)] context structs, individual account fields,
+ * #[account] data structs, struct fields, and PDA seed extraction.
+ */
+
+import type {
+  AccountRef,
+  AccountDef,
+} from "../ir/schema.js";
+import type { SyntaxNode } from "./ts-init.js";
+import { extractAccountAttrInner } from "./ast-helpers.js";
+import { parseConstraints, parseInitMetadata } from "./constraint-parser.js";
+import { normalizeSolanaType } from "./utils.js";
+
+// ─── Accounts context struct parsing ────────────────────────────────────────
+
+export function parseAccountsStructFields(
+  structNode: SyntaxNode,
+  _outerAttrs: SyntaxNode[],
+): AccountRef[] {
+  const accounts: AccountRef[] = [];
+  const bodyNode = structNode.childForFieldName("body");
+  if (!bodyNode) return accounts;
+
+  let currentAttrs: SyntaxNode[] = [];
+
+  for (let i = 0; i < bodyNode.namedChildCount; i++) {
+    const child = bodyNode.namedChild(i);
+    if (!child) continue;
+
+    if (child.type === "attribute_item") {
+      currentAttrs.push(child);
+      continue;
+    }
+
+    if (child.type === "field_declaration") {
+      const account = parseAccountField(child, currentAttrs);
+      if (account) accounts.push(account);
+      currentAttrs = [];
+    }
+  }
+
+  return accounts;
+}
+
+function parseAccountField(
+  fieldNode: SyntaxNode,
+  attrs: SyntaxNode[],
+): AccountRef | null {
+  const nameNode = fieldNode.childForFieldName("name");
+  const typeNode = fieldNode.childForFieldName("type");
+  if (!nameNode || !typeNode) return null;
+
+  const fieldName = nameNode.text;
+  const rawType = typeNode.text;
+  const accountType = extractAccountType(rawType);
+
+  // Parse all #[account(...)] attributes for this field (there may be multiple)
+  const accountAttrParts: string[] = [];
+  for (const attr of attrs) {
+    const inner = extractAccountAttrInner([attr]);
+    if (inner) accountAttrParts.push(inner);
+  }
+  const accountAttrInner = accountAttrParts.length > 0 ? accountAttrParts.join(', ') : null;
+
+  let isSigner = rawType.includes("Signer");
+  let isMut = false;
+  let isInit = false;
+  const isOptional = rawType.includes("Option<");
+  let isPda = false;
+  let pdaSeeds: string[] = [];
+  let constraints: ReturnType<typeof parseConstraints> = [];
+  let initPayer: string | undefined;
+  let initSpace: string | undefined;
+
+  if (accountAttrInner) {
+    constraints = parseConstraints(accountAttrInner);
+    const initMetadata = parseInitMetadata(accountAttrInner);
+    initPayer = initMetadata.payer;
+    initSpace = initMetadata.space;
+    isMut = constraints.some(
+      (c) => c.kind === "mut" || c.kind === "init" || c.kind === "init_if_needed",
+    );
+    isInit = constraints.some(
+      (c) => c.kind === "init" || c.kind === "init_if_needed",
+    );
+    isPda = constraints.some((c) => c.kind === "seeds");
+
+    const seedsConstraint = constraints.find((c) => c.kind === "seeds");
+    if (seedsConstraint?.value) {
+      pdaSeeds = parsePdaSeeds(seedsConstraint.value);
+    }
+  }
+
+  return {
+    name: fieldName,
+    accountType,
+    isSigner,
+    isMut,
+    isInit,
+    isOptional,
+    isPda,
+    pdaSeeds,
+    initPayer,
+    initSpace,
+    constraints,
+  };
+}
+
+// ─── Account data struct parsing ────────────────────────────────────────────
+
+export function parseAccountDataStruct(
+  structNode: SyntaxNode,
+  _attrs: SyntaxNode[],
+): AccountDef {
+  const name = extractStructName(structNode) ?? "Unknown";
+  const fields = parseStructFields(structNode);
+  const space = 8 + fields.reduce((acc, f) => acc + fieldSize(f.type), 0);
+
+  return { name, fields, space };
+}
+
+// ─── Struct fields parsing ──────────────────────────────────────────────────
+
+export function parseStructFields(
+  structNode: SyntaxNode,
+): { name: string; type: string }[] {
+  const fields: { name: string; type: string }[] = [];
+  const bodyNode = structNode.childForFieldName("body");
+  if (!bodyNode) return fields;
+
+  for (let i = 0; i < bodyNode.namedChildCount; i++) {
+    const child = bodyNode.namedChild(i);
+    if (!child || child.type !== "field_declaration") continue;
+
+    const nameNode = child.childForFieldName("name");
+    const typeNode = child.childForFieldName("type");
+    if (!nameNode || !typeNode) continue;
+
+    const name = nameNode.text;
+    if (name === "_phantom") continue;
+
+    fields.push({
+      name,
+      type: normalizeSolanaType(typeNode.text),
+    });
+  }
+
+  return fields;
+}
+
+// ─── Account type extraction ────────────────────────────────────────────────
+
+export function extractAccountType(rawType: string): string {
+  const t = rawType.trim();
+  if (t.startsWith("Option<") && t.endsWith(">")) {
+    return extractAccountType(t.slice("Option<".length, -1).trim());
+  }
+  // Unwrap Box<...> before extracting inner type
+  if (t.startsWith("Box<") && t.endsWith(">")) {
+    return extractAccountType(t.slice(4, -1).trim());
+  }
+  const accountMatch = t.match(/^Account\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
+  if (accountMatch?.[1]) return accountMatch[1].split("::").pop() ?? accountMatch[1];
+  // InterfaceAccount is treated the same as Account (covers token_interface types)
+  const interfaceMatch = t.match(/^InterfaceAccount\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
+  if (interfaceMatch?.[1]) return interfaceMatch[1].split("::").pop() ?? interfaceMatch[1];
+  // Token-2022 / token_interface Account types: InterfaceAccount<'info, token_interface::TokenAccount|Mint>
+  // Also matches plain Account<'info, token_interface::TokenAccount>
+  const tokenAccountMatch = t.match(/^(?:Interface)?Account\s*<\s*'info\s*,\s*(?:token_interface::)?(?:TokenAccount|Mint)\s*>/);
+  if (tokenAccountMatch) {
+    const innerMatch = t.match(/(?:token_interface::)?(TokenAccount|Mint)/);
+    if (innerMatch?.[1]) return innerMatch[1];
+  }
+  const programMatch = t.match(/^Program\s*<\s*'info\s*,\s*(\w+)\s*>/);
+  if (programMatch?.[1]) return programMatch[1];
+  // Interface<'info, T> for Token-2022 program references
+  const interfaceProgramMatch = t.match(/^Interface\s*<\s*'info\s*,\s*(\w+)\s*>/);
+  if (interfaceProgramMatch?.[1]) return interfaceProgramMatch[1];
+  if (t.startsWith("Signer")) return "Signer";
+  if (t.startsWith("SystemAccount")) return "SystemAccount";
+  if (t.startsWith("UncheckedAccount")) return "UncheckedAccount";
+  return t;
+}
+
+// ─── PDA seeds parsing ──────────────────────────────────────────────────────
+
+export function parsePdaSeeds(seedsValue: string): string[] {
+  const inner = seedsValue.replace(/^\[/, "").replace(/\]$/, "");
+  const seeds: string[] = [];
+  let current = "";
+  let depth = 0;
+  for (const ch of inner) {
+    if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth--;
+    if (ch === "," && depth === 0) {
+      const trimmed = current.trim();
+      if (trimmed) seeds.push(trimmed);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  const remaining = current.trim();
+  if (remaining) seeds.push(remaining);
+  return seeds;
+}
+
+// ─── Utility functions (used internally) ────────────────────────────────────
+
+function extractStructName(node: SyntaxNode): string | null {
+  return node.childForFieldName("name")?.text ?? null;
+}
+
+function fieldSize(type: string): number {
+  const sizes: Record<string, number> = {
+    u8: 1, u16: 2, u32: 4, u64: 8, u128: 16,
+    i8: 1, i16: 2, i32: 4, i64: 8, i128: 16,
+    bool: 1, Pubkey: 32, String: 36, "Vec<u8>": 4,
+  };
+  return sizes[type] ?? 32;
+}
