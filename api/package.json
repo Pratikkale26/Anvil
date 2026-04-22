@@ -13,7 +13,10 @@
     "test": "bun test tests/",
     "test:parser": "bun test tests/parser-snapshots.test.ts",
     "test:emitter": "bun test tests/emitter-validation.test.ts",
-    "test:api": "bun test tests/api.test.ts"
+    "test:api": "bun test tests/api.test.ts",
+    "test:snapshots": "bun test tests/emitter-snapshots.test.ts",
+    "test:cargo": "bun test tests/cargo-build.test.ts --timeout 600000",
+    "test:all": "bun test tests/"
   },
   "devDependencies": {
     "@types/bun": "latest",
