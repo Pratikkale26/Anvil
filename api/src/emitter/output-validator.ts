@@ -1,5 +1,6 @@
 import type { EmitterOutput, SolanaIR } from "../ir/schema.js";
 import { snakeCase } from "./emitter-utils.js";
+import { validateQuasarOutput } from "./quasar-validator.js";
 
 export type ValidationSeverity = "error" | "warning";
 
@@ -556,6 +557,12 @@ function checkLongFunctions(content: string, path: string): ValidationIssue[] {
  * fixer stage (human, deterministic re-emitter changes, or a single AI pass).
  */
 export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): ValidationIssue[] {
+  // Detect target from output content — route quasar to dedicated validator
+  const allContent = output.files.map(f => f.content).join("\n") || output.singleFile;
+  if (allContent.includes("quasar_lang::") || allContent.includes("quasar_spl::") || detectTarget(allContent) === "quasar") {
+    return validateQuasarOutput(ir, output);
+  }
+
   const issues: ValidationIssue[] = [];
 
   for (const warning of output.warnings) {
@@ -625,7 +632,7 @@ type DetectedTarget = "pinocchio" | "quasar" | "native";
 
 function detectTarget(content: string): DetectedTarget | null {
   if (content.includes("pinocchio::")) return "pinocchio";
-  if (content.includes("quasar::")) return "quasar";
+  if (content.includes("quasar::") || content.includes("quasar_lang::") || content.includes("quasar_spl::")) return "quasar";
   if (content.includes("solana_program::")) return "native";
   return null;
 }
@@ -717,6 +724,8 @@ function checkExternalCrateDependencies(files: EmitterOutput["files"]): Validati
     "pinocchio_system",
     "pinocchio_token",
     "quasar",
+    "quasar_lang",
+    "quasar_spl",
     "quasar_token",
     "u8",
     "u16",
