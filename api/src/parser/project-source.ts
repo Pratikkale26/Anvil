@@ -246,14 +246,64 @@ function computeHandlerRenames(root: FileNode): Map<string, Map<string, string>>
   const fnDefs: { filePath: string; fnName: string; moduleName: string | null; modulePath: string[] }[] = [];
 
   const collectFns = (node: FileNode): void => {
-    for (const match of node.content.matchAll(/^\s*(?:pub\s+)?fn\s+(\w+)\s*[<(]/gm)) {
-      if (match[1]) {
-        fnDefs.push({
-          filePath: node.filePath,
-          fnName: match[1],
-          moduleName: node.moduleName,
-          modulePath: node.modulePath,
-        });
+    // Walk the file skipping bytes that sit inside an `impl ... { }` block:
+    // impl methods are already scoped (impl Type::method) so they never
+    // collide at link time, and renaming them breaks the
+    // ctx.accounts.<method>() inliner which looks them up by their original
+    // name. Tracking impl-depth via a brace counter is enough — no need to
+    // stand up a full parser for this.
+    const src = node.content;
+    let implDepth = 0;      // >0 when we're inside `impl ... {}`
+    let blockDepth = 0;     // nested `{ }` depth relative to the impl opener
+    let inStr = false;
+    let strQuote = "";
+    let escaped = false;
+    const implEntryRe = /\bimpl\b[^{]*\{/g;
+    // Scan forward; on each `fn` or block-delim, decide whether to accept.
+    for (let i = 0; i < src.length; i++) {
+      const ch = src[i]!;
+      // String / char literal tracking so braces/fns inside strings don't count.
+      if (inStr) {
+        if (escaped) { escaped = false; continue; }
+        if (ch === "\\") { escaped = true; continue; }
+        if (ch === strQuote) { inStr = false; strQuote = ""; }
+        continue;
+      }
+      if (ch === '"' || ch === "'") { inStr = true; strQuote = ch; continue; }
+      if (implDepth > 0) {
+        if (ch === "{") blockDepth++;
+        else if (ch === "}") {
+          blockDepth--;
+          if (blockDepth === 0) implDepth--;
+        }
+      } else if (ch === "i") {
+        // Check for `impl ... {` starting here.
+        implEntryRe.lastIndex = i;
+        const m = implEntryRe.exec(src);
+        if (m && m.index === i) {
+          implDepth++;
+          blockDepth = 1;
+          i = m.index + m[0].length - 1;
+          continue;
+        }
+      }
+      // At top-level or module level: match `fn <name> (` or `fn <name> <`.
+      if (implDepth === 0 && ch === "f") {
+        const fnMatch = src.slice(i).match(/^(?:pub\s+)?fn\s+(\w+)\s*[<(]/);
+        if (fnMatch && fnMatch[1]) {
+          // Only count if preceded by whitespace / newline / line start —
+          // otherwise it's a substring like `effn`.
+          const prev = i > 0 ? src[i - 1] : "\n";
+          if (prev === undefined || /\s/.test(prev)) {
+            fnDefs.push({
+              filePath: node.filePath,
+              fnName: fnMatch[1],
+              moduleName: node.moduleName,
+              modulePath: node.modulePath,
+            });
+            i += fnMatch[0].length - 1;
+          }
+        }
       }
     }
     for (const child of node.children) {
