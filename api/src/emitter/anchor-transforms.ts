@@ -38,19 +38,60 @@ export function transformHelperCode(
   code: string,
   emitEmit: (event: string, fields: string) => string,
   emitMsg: (message: string) => string,
+  /**
+   * Names of user-defined state types (from SolanaIR.accounts). When a helper
+   * signature carries `&mut Account<'info, Foo>` and `Foo` is one of these,
+   * we rewrite to `&mut Foo` (the deserialized struct) instead of
+   * `&AccountInfo` — because the body accesses struct fields directly and
+   * the body-emitter already rewrites call sites to pass `&mut <localVar>`.
+   *
+   * Defaults to an empty set for backwards compatibility — callers without
+   * IR context retain the old `&AccountInfo` behavior.
+   */
+  stateTypes: Set<string> = new Set(),
 ): string {
   let next = code;
 
   // ── Strip Anchor type annotations from parameters ──
 
-  // Account<'info, T> as a standalone parameter type (e.g., `account: Account<'info, Vault>`)
-  // → &AccountInfo
-  next = next.replace(/:\s*Account\s*<\s*(?:'?\w+\s*,\s*)?([\w:]+)\s*>/g, ": &AccountInfo");
+  // Helper that picks the right replacement for `Account<'info, T>` based on
+  // whether T is a generated state struct or a token-program type (TokenAccount,
+  // Mint, etc.). State types keep their struct form; everything else becomes
+  // &AccountInfo.
+  const replaceAccountGeneric = (
+    prefix: string, // what was matched before Account<...> (":", "&", "&mut ")
+    typeName: string,
+  ): string => {
+    if (stateTypes.has(typeName)) {
+      // Drop leading ":" so ": &mut Foo" stays valid, keep "&" / "&mut " verbatim.
+      const lead = prefix.trim();
+      if (lead === ":") return `: &mut ${typeName}`; // positional annotation — default to mut since helpers that carry state mutate it
+      return `${prefix}${typeName}`;
+    }
+    return prefix === ":" ? ": &AccountInfo" : "&AccountInfo";
+  };
 
-  // &mut Account<T> → &AccountInfo (helper functions receive AccountInfo refs)
-  next = next.replace(/&mut\s+Account\s*<\s*(?:'?\w+\s*,\s*)?([\w:]+)\s*>/g, "&AccountInfo");
-  // &Account<T> → &AccountInfo
-  next = next.replace(/&\s*Account\s*<\s*(?:'?\w+\s*,\s*)?([\w:]+)\s*>/g, "&AccountInfo");
+  // &mut Account<'info, T>  (matches first so the "&" branch below doesn't pre-eat it)
+  next = next.replace(
+    /(&mut\s+)Account\s*<\s*(?:'?\w+\s*,\s*)?([\w:]+)\s*>/g,
+    (_full, _pre: string, typeName: string) => {
+      if (stateTypes.has(typeName)) return `&mut ${typeName}`;
+      return "&AccountInfo";
+    },
+  );
+  // &Account<'info, T>
+  next = next.replace(
+    /(&\s*)Account\s*<\s*(?:'?\w+\s*,\s*)?([\w:]+)\s*>/g,
+    (_full, _pre: string, typeName: string) => {
+      if (stateTypes.has(typeName)) return `&${typeName}`;
+      return "&AccountInfo";
+    },
+  );
+  // Bare positional form: `: Account<'info, T>` (no `&` prefix, rare)
+  next = next.replace(
+    /:\s*Account\s*<\s*(?:'?\w+\s*,\s*)?([\w:]+)\s*>/g,
+    (_full, typeName: string) => replaceAccountGeneric(":", typeName),
+  );
 
   // Signer<'info> → &AccountInfo
   next = next.replace(/:\s*Signer\s*<\s*'?\w+\s*>/g, ": &AccountInfo");

@@ -383,7 +383,7 @@ export abstract class BaseEmitter {
 
     // Carry over helper functions from source
     for (const helper of ir.helperFns) {
-      sections.push(this.carriedFunctionBlock(helper.rawCode));
+      sections.push(this.carriedFunctionBlock(helper.rawCode, ir));
     }
 
     if (sections.length === 1) return "";
@@ -421,7 +421,7 @@ export abstract class BaseEmitter {
 
     // Carry over helper functions from source
     for (const helper of ir.helperFns) {
-      sections.push(this.carriedFunctionBlock(helper.rawCode));
+      sections.push(this.carriedFunctionBlock(helper.rawCode, ir));
     }
 
     if (ir.errors.length > 0) {
@@ -1073,8 +1073,8 @@ ${fields}
    * to live in the same Anchor file are plain-correct and get only a light
    * comment — no false-positive warning.
    */
-  protected carriedFunctionBlock(rawCode: string): string {
-    const transformed = this.transformHelperCode(rawCode);
+  protected carriedFunctionBlock(rawCode: string, ir?: SolanaIR): string {
+    const transformed = this.transformHelperCode(rawCode, ir);
     // Check the *transformed* code for residual Anchor patterns — the transform
     // may have cleaned up everything that was originally Anchor-specific.
     if (!hasResidualAnchorPatterns(transformed)) {
@@ -1093,11 +1093,13 @@ ${fields}
     ].join("\n");
   }
 
-  protected transformHelperCode(code: string): string {
+  protected transformHelperCode(code: string, ir?: SolanaIR): string {
+    const stateTypes = new Set(ir?.accounts.map((acc) => acc.name) ?? []);
     return transformHelperCodeImpl(
       code,
       (event, fields) => this.emitEmit(event, fields),
       (message) => this.emitMsg(message),
+      stateTypes,
     );
   }
 }
