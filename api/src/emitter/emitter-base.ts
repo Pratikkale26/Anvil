@@ -84,7 +84,7 @@ import {
   emitBodyStatements as emitBodyStatementsImpl,
   type BodyEmitterContext,
   type BodyEmitterCallbacks,
-} from "./body-emitter.js";
+} from "./body-emitter/index.js";
 import { transformHelperCode as transformHelperCodeImpl } from "./anchor-transforms.js";
 
 // ─── Abstract Emitter Interface ──────────────────────────────────────────────
