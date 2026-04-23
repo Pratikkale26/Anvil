@@ -22,6 +22,7 @@ import { emitNativeFull } from "../api/src/emitter/native-emitter.js";
 import { emitQuasarFull } from "../api/src/emitter/quasar-emitter.js";
 import { validateEmitterOutput } from "../api/src/emitter/output-validator.js";
 import { analyzeCU } from "../api/src/emitter/cu-analyzer.js";
+import { buildProjectScaffold } from "../api/src/emitter/project-scaffold.js";
 import { resolveLocalSource } from "../api/src/parser/local-source.js";
 import type { SolanaIR, EmitterOutput, CUEstimate } from "../api/src/ir/schema.js";
 
@@ -318,7 +319,14 @@ function formatCUAnalysis(estimates: CUEstimate[], target: TargetName): string {
 
 // ─── Write Output Files ─────────────────────────────────────────────────────
 
-function writeOutputFiles(output: EmitterOutput, outputDir: string, singleFile: boolean, inputName: string): void {
+function writeOutputFiles(
+  output: EmitterOutput,
+  outputDir: string,
+  singleFile: boolean,
+  inputName: string,
+  ir: SolanaIR,
+  target: TargetName,
+): void {
   mkdirSync(outputDir, { recursive: true });
 
   if (singleFile) {
@@ -330,32 +338,34 @@ function writeOutputFiles(output: EmitterOutput, outputDir: string, singleFile: 
     return;
   }
 
-  if (output.files.length === 0) {
-    // Fallback to single file if no multi-file output
-    const fileName = `${inputName}.rs`;
-    const filePath = join(outputDir, fileName);
-    writeFileSync(filePath, output.singleFile, "utf8");
-    success(`Output written to ${outputDir}/`);
-    console.log(`    ${c.dim}${fileName}${c.reset}`);
-    return;
-  }
+  // Project layout: lay source files under src/ and pair them with the
+  // target-specific scaffold (Cargo.toml, README, .cargo/config.toml,
+  // rust-toolchain.toml, scripts/deploy.sh, anvil-manifest.json) so the
+  // output is a `cargo build`-ready project out of the box.
+  const sourceFiles = output.files.length > 0
+    ? output.files.map((f) => ({ path: join("src", f.path), content: f.content }))
+    : [{ path: join("src", "lib.rs"), content: output.singleFile }];
+  const scaffoldFiles = buildProjectScaffold(ir, target);
+  // De-dup by path; scaffold wins for paths it owns (src/lib.rs is only in
+  // scaffold for some edge cases, but source is authoritative for src/**).
+  const seen = new Set<string>();
+  const allFiles: { path: string; content: string }[] = [];
+  for (const f of sourceFiles) { if (!seen.has(f.path)) { seen.add(f.path); allFiles.push(f); } }
+  for (const f of scaffoldFiles) { if (!seen.has(f.path)) { seen.add(f.path); allFiles.push(f); } }
 
   let totalBytes = 0;
   const writtenPaths: string[] = [];
-
-  for (const file of output.files) {
-    const filePath = join(outputDir, file.path);
-    const fileDir = dirname(filePath);
-    mkdirSync(fileDir, { recursive: true });
-    writeFileSync(filePath, file.content, "utf8");
-    totalBytes += file.content.length;
-    writtenPaths.push(file.path);
+  for (const f of allFiles) {
+    const filePath = join(outputDir, f.path);
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, f.content, "utf8");
+    totalBytes += f.content.length;
+    writtenPaths.push(f.path);
   }
 
-  success(`Generated ${output.files.length} files (${totalBytes.toLocaleString()} bytes)`);
+  success(`Generated ${allFiles.length} files (${totalBytes.toLocaleString()} bytes)`);
   console.log();
   success(`Output written to ${outputDir}/`);
-
   for (const p of writtenPaths) {
     console.log(`    ${c.dim}${p}${c.reset}`);
   }
@@ -467,7 +477,7 @@ async function cmdCompile(args: CliArgs): Promise<void> {
   const outputDir = args.output ?? "./anvil-output";
 
   progress(`Writing to ${outputDir}/...`);
-  writeOutputFiles(output, outputDir, args.singleFile, inputName);
+  writeOutputFiles(output, outputDir, args.singleFile, inputName, ir, target);
   console.log();
 }
 
