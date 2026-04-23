@@ -513,7 +513,56 @@ function buildFlattenedSource(
   let source = sections.join("\n\n") + "\n";
   source = source.replace(/\n{3,}/g, "\n\n");
 
+  // Consolidate multi-statement SPL CPI patterns into the inline form the
+  // CPI detector understands. Anchor codebases commonly write:
+  //   let cpi_accounts = MintTo { mint: ..., to: ..., authority: ... };
+  //   let cpi_program = ctx.accounts.token_program.to_account_info();
+  //   let cpi_context = CpiContext::new(cpi_program, cpi_accounts).with_signer(seeds);
+  //   token_interface::mint_to(cpi_context, amount)?;
+  // The detector only recognizes the inline form, so we fold these four
+  // statements back into one `mint_to(CpiContext::new(...), amount)?;`.
+  source = consolidateMultiStatementCpi(source);
+
   return { source, includedFiles, missingModules };
+}
+
+const SPL_CPI_FUNCS = [
+  { struct: "MintTo",         fn: "mint_to" },
+  { struct: "Transfer",       fn: "transfer" },
+  { struct: "TransferChecked",fn: "transfer_checked" },
+  { struct: "Burn",           fn: "burn" },
+  { struct: "CloseAccount",   fn: "close_account" },
+];
+
+function consolidateMultiStatementCpi(source: string): string {
+  // Allow whitespace and line comments between the consolidated statements.
+  // Anchor source code routinely interleaves explanatory comments inside the
+  // CPI ritual; without this, the regex stops matching the moment a `// ...`
+  // appears between two `let`s.
+  const ws = String.raw`(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*`;
+  let out = source;
+  for (const { struct, fn } of SPL_CPI_FUNCS) {
+    const pattern = new RegExp(
+      // 1. let cpi_accounts = STRUCT { ...fields... };
+      String.raw`let\s+cpi_accounts\s*=\s*` + struct + String.raw`\s*\{([\s\S]*?)\};` + ws +
+      // 2. let cpi_program(?:_id)? = PROGRAM_EXPR;
+      String.raw`let\s+cpi_program(?:_id)?\s*=\s*([^;]+?);` + ws +
+      // 3. let cpi_context = CpiContext::new(cpi_program(?:_id)?, cpi_accounts)(.with_signer(SEEDS))?;
+      String.raw`let\s+cpi_context\s*=\s*CpiContext::new\(\s*cpi_program(?:_id)?\s*,\s*cpi_accounts\s*\)(?:\s*\.with_signer\(([^)]+)\))?\s*;` + ws +
+      // 4. NS::FN(cpi_context, ARGS)?;  (the `?` is optional — Anchor sometimes drops it)
+      String.raw`(\w+(?:::\w+)*)::` + fn + String.raw`\(\s*cpi_context\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
+      "g",
+    );
+    out = out.replace(pattern, (_full, fields: string, programExpr: string, signerSeeds: string | undefined, ns: string, args: string | undefined, q: string | undefined) => {
+      const ctx = signerSeeds
+        ? `CpiContext::new_with_signer(${programExpr.trim()}, ${struct} {${fields}}, ${signerSeeds.trim()})`
+        : `CpiContext::new(${programExpr.trim()}, ${struct} {${fields}})`;
+      const argsPart = args && args.trim() ? `, ${args.trim()}` : "";
+      const tryOp = q ?? "";
+      return `${ns}::${fn}(${ctx}${argsPart})${tryOp};`;
+    });
+  }
+  return out;
 }
 
 
@@ -536,9 +585,9 @@ export function buildProjectSourceGraph(entryPath: string, files: ProjectFile[])
     return buildFlattenedSource(normalizedEntry, fileMap);
   }
 
-  // Single file — return as-is
+  // Single file — apply CPI consolidation but otherwise return as-is.
   return {
-    source: entryFile.content,
+    source: consolidateMultiStatementCpi(entryFile.content),
     includedFiles: [normalizedEntry],
     missingModules: [],
   };

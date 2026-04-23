@@ -250,14 +250,20 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
         case "function_item": {
           const functionName = child.childForFieldName("name")?.text ?? "";
           items.functionIndex.push({ node: child, attrs, modulePath });
-          // Exclude instruction handlers from helper carry-over.
-          // `fn handler` in a submodule is the Anchor convention; project-source.ts
-          // also rewrites those to `fn <module>_handler` to avoid name collisions.
+          // Exclude instruction handlers from helper carry-over. `fn handler` in
+          // a submodule is the Anchor convention; project-source.ts rewrites
+          // those to `fn <module>_handler` to avoid name collisions when
+          // flattening, after which they sit at modulePath=[]. We catch both:
+          // (a) literal `handler` in a submodule, (b) any function whose first
+          // parameter is `ctx: Context<X>` — that's Anchor handler shape and
+          // its body is already absorbed into the program's instruction list.
           const lastModule = modulePath[modulePath.length - 1];
           const isInstructionHandler =
             modulePath.length > 0 &&
             (functionName === "handler" || functionName === `${lastModule}_handler`);
-          if (!inProgramModule && !isInstructionHandler) {
+          const params = child.childForFieldName("parameters")?.text ?? "";
+          const looksLikeAnchorHandler = /\bctx\s*:\s*(?:&\s*mut\s+)?Context\s*</.test(params);
+          if (!inProgramModule && !isInstructionHandler && !looksLikeAnchorHandler) {
             items.helperFns.push({ node: child, attrs, modulePath });
           }
           break;

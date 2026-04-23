@@ -39,6 +39,25 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     return;
   }
 
+  // Transform comparison-flavored Anchor macros: require_eq!, require_neq!,
+  // require_gt!, require_gte!, require_lt!, require_lte!. These take
+  // `(lhs, rhs, error)` and assert the relation. Emit an if-guard via the
+  // framework's emitRequire() (which already handles target-specific Err()).
+  const requireCmpMatch = rawCode.match(
+    /^require_(eq|neq|gt|gte|lt|lte)!\(\s*([\s\S]+?)\s*,\s*([\s\S]+?)\s*,\s*([\w:]+(?:::\w+)*)\s*\);?$/,
+  );
+  if (requireCmpMatch?.[1] && requireCmpMatch[2] && requireCmpMatch[3] && requireCmpMatch[4]) {
+    const cmpOps: Record<string, string> = {
+      eq: "==", neq: "!=", gt: ">", gte: ">=", lt: "<", lte: "<=",
+    };
+    const op = cmpOps[requireCmpMatch[1]] ?? "==";
+    const lhs = w.normalizeKeyValueUsages(w.transformCtxAccountsReferences(requireCmpMatch[2]));
+    const rhs = w.normalizeKeyValueUsages(w.transformCtxAccountsReferences(requireCmpMatch[3]));
+    w.ctx.transformedCount++;
+    w.lines.push(w.emitter.emitRequire(`${lhs} ${op} ${rhs}`, requireCmpMatch[4]));
+    return;
+  }
+
   const { prelude, code: bumpAdjustedRawCode } = w.replaceBumpRefs(rawCode);
   let transformedRawCode = simplifyPassThroughCode(
     w.transformHelperCalls(
@@ -72,7 +91,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // not caught by the specific CPI regex patterns above.
   if (/CpiContext::/.test(transformedRawCode)) {
     transformedRawCode = transformedRawCode.replace(
-      /let\s+(\w+)\s*=\s*CpiContext::new\(\s*(\w+)\s*,\s*(\w+)\s*\);?/g,
+      /let\s+(\w+)\s*=\s*CpiContext::new(?:_with_signer)?\(\s*(\w+)\s*,\s*(\w+)\s*(?:,\s*[^)]+)?\)(?:\s*\.with_signer\([^)]+\))?\s*;?/g,
       (_full, ctxVar: string, programVar: string, _accountsVar: string) =>
         `// CPI context prepared — program: ${programVar}\n    let ${ctxVar}_program = ${programVar};`,
     );
