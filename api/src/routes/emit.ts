@@ -215,24 +215,26 @@ emitRoute.post("/", async (req, res) => {
 
     // Include multi-file output if requested.
     //
-    // When projectScaffold is also set, rewrite emitted .rs paths under src/
-    // and prepend Cargo.toml / README.md / .gitignore / anvil-manifest.json so
-    // the download is a complete, buildable Cargo project. Path rewriting
-    // happens ONLY here — the internal validate/refine pipeline operated on
-    // the original paths, so refine patches still align.
-    // multiFile alone → decomposed files for UI browsing.
-    // multiFile + projectScaffold → a cargo-buildable project: the
-    //   single-file emit (which CI validates) lands at src/lib.rs, with
-    //   Cargo.toml / README / .gitignore / manifest at the project root.
-    //   We deliberately do NOT ship the decomposed multi-file Rust here —
-    //   cross-module helpers are currently emitted as private `fn`, so the
-    //   multi-file set won't compile standalone. Frontend uses this mode
-    //   only for the download action, keeping the UI tree on multi-file.
+    // multiFile alone → decomposed files for UI browsing (paths are bare,
+    //   e.g., `lib.rs`, `state.rs`, `instructions/mod.rs`). Internal validate
+    //   and refine pipelines operate on these paths, so refine patches stay
+    //   aligned with what the UI shows.
+    // multiFile + projectScaffold → a cargo-buildable project: every emitted
+    //   source file is placed under `src/`, paired with the target-specific
+    //   scaffold (Cargo.toml, README.md, .cargo/config.toml, rust-toolchain,
+    //   deploy script, manifest). The decomposed multi-file Rust itself is
+    //   what ships — post the `pub fn` visibility fixes in the emitter, the
+    //   cross-module `use crate::helpers::*;` / `pub use instructions::*;`
+    //   re-exports resolve cleanly, so users get a real modular project
+    //   instead of a fat single lib.rs.
     if (multiFile) {
       if (projectScaffold) {
         const scaffold = buildProjectScaffold(ir, target as Target);
-        const libRs = { path: "src/lib.rs", content: currentSingleFile };
-        response.files = [...scaffold, libRs];
+        const srcFiles = currentFiles.map((f) => ({
+          path: `src/${f.path}`,
+          content: f.content,
+        }));
+        response.files = [...scaffold, ...srcFiles];
         response.projectScaffold = true;
       } else {
         response.files = currentFiles;
