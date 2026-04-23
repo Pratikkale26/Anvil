@@ -84,6 +84,9 @@ export function LintPanel({ state }: { state: AnvilPipelineState }) {
           <span className="text-[11px] text-anvil-text-muted font-mono">
             {lintReport.readinessScore} / 100
           </span>
+          <span className="text-[10px] text-anvil-text-dim font-mono">
+            → {lintReport.target}
+          </span>
           <span className="text-[11px] text-anvil-text-dim ml-auto">
             {lintReport.counts.blocker} blocker · {lintReport.counts.review}{" "}
             review · {lintReport.counts.ready} ready

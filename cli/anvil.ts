@@ -791,7 +791,14 @@ async function cmdValidate(args: CliArgs): Promise<void> {
 
 async function cmdLint(args: CliArgs): Promise<void> {
   if (!args.input) {
-    fatal("Missing input file or directory.\n\n  Usage: anvil lint <input> [--json|--markdown]");
+    fatal("Missing input file or directory.\n\n  Usage: anvil lint <input> [--target native|pinocchio|quasar] [--json|--markdown]");
+  }
+  // Target defaults to pinocchio (strictest). Users explicitly pass --target
+  // native to score against the permissive target when that matches their
+  // actual port goal.
+  const lintTarget = (args.target ?? "pinocchio") as "pinocchio" | "native" | "quasar";
+  if (!["pinocchio", "native", "quasar"].includes(lintTarget)) {
+    fatal(`Invalid --target "${args.target}". Must be pinocchio, native, or quasar.`);
   }
   if (!args.json && !args.markdown) banner();
   const source = resolveSource(args.input);
@@ -804,7 +811,7 @@ async function cmdLint(args: CliArgs): Promise<void> {
     }
     process.exit(1);
   }
-  const report = analyzePortability(parseResult.ir);
+  const report = analyzePortability(parseResult.ir, lintTarget);
 
   if (args.json) {
     console.log(JSON.stringify(report, null, 2));
@@ -818,7 +825,7 @@ async function cmdLint(args: CliArgs): Promise<void> {
   // Human-readable terminal output.
   const verdictColor =
     report.verdict === "ready" ? c.green : report.verdict === "reviewable" ? c.yellow : c.red;
-  console.log(`  ${c.bold}ANVIL LINT${c.reset} — ${report.program}`);
+  console.log(`  ${c.bold}ANVIL LINT${c.reset} — ${report.program}  ${c.dim}target: ${report.target}${c.reset}`);
   console.log(`  ${verdictColor}${c.bold}${report.verdict.toUpperCase()}${c.reset}  readiness score ${c.bold}${report.readinessScore}/100${c.reset}`);
   console.log(`  ${c.dim}${report.counts.blocker} blocker · ${report.counts.review} review · ${report.counts.ready} ready${c.reset}`);
   console.log();

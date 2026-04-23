@@ -26,10 +26,16 @@ export const lintRoute = Router();
  *   }
  */
 lintRoute.post("/", async (req, res) => {
-  const { source, ir: providedIr } = (req.body ?? {}) as {
+  const { source, ir: providedIr, target } = (req.body ?? {}) as {
     source?: string;
     ir?: unknown;
+    target?: string;
   };
+
+  // Target defaults to pinocchio (strictest lens). Web/CLI explicitly pass
+  // the user's actual port target when they want the matching verdict.
+  const normalizedTarget: "pinocchio" | "native" | "quasar" =
+    target === "native" || target === "quasar" ? target : "pinocchio";
 
   try {
     let ir: any;
@@ -55,7 +61,7 @@ lintRoute.post("/", async (req, res) => {
       );
     }
 
-    const report = analyzePortability(ir);
+    const report = analyzePortability(ir, normalizedTarget);
     res.json(report);
   } catch (e) {
     if (e instanceof AnvilError) {

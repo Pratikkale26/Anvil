@@ -43,6 +43,8 @@ export type LintFinding = {
 
 export type LintReport = {
   program: string;
+  /** Target the report was computed against — affects external-crate verdicts. */
+  target: "pinocchio" | "native" | "quasar";
   counts: { ready: number; review: number; blocker: number };
   readinessScore: number;
   verdict: "ready" | "reviewable" | "blocked";

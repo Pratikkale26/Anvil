@@ -12,6 +12,12 @@
 
 import type { SolanaIR, Instruction } from "../ir/schema.js";
 
+/** Target framework the user intends to emit. External crates that block a
+ *  pinocchio port are often fine on native (project-scaffold ships the deps),
+ *  so lint verdicts have to be target-aware — a one-size-fits-all score
+ *  under-sells the native path. */
+export type LintTarget = "pinocchio" | "native" | "quasar";
+
 export type LintLevel = "ready" | "review" | "blocker";
 
 export type LintFinding = {
@@ -25,6 +31,8 @@ export type LintFinding = {
 
 export type LintReport = {
   program: string;
+  /** Target this report was computed against. */
+  target: LintTarget;
   counts: { ready: number; review: number; blocker: number };
   /** 0-100; heuristic: 100 - blockers*25 - reviews*5, clamped. */
   readinessScore: number;
@@ -44,13 +52,13 @@ const EXTERNAL_BLOCKER_CRATES: Array<{ crate: string; reason: string }> = [
   { crate: "solana_keccak_hasher",     reason: "Native-only hash crate; Pinocchio/Quasar don't ship it." },
 ];
 
-export function analyzePortability(ir: SolanaIR): LintReport {
+export function analyzePortability(ir: SolanaIR, target: LintTarget = "pinocchio"): LintReport {
   const findings: LintFinding[] = [];
 
-  analyzeImports(ir, findings);
+  analyzeImports(ir, findings, target);
   analyzeAccounts(ir, findings);
   analyzeInstructions(ir, findings);
-  analyzeHelperFunctions(ir, findings);
+  analyzeHelperFunctions(ir, findings, target);
   analyzeCustomTypes(ir, findings);
 
   const counts = {
@@ -65,22 +73,39 @@ export function analyzePortability(ir: SolanaIR): LintReport {
   const verdict: LintReport["verdict"] =
     counts.blocker > 0 ? "blocked" : counts.review > 0 ? "reviewable" : "ready";
 
-  return { program: ir.name, counts, readinessScore, verdict, findings };
+  return { program: ir.name, target, counts, readinessScore, verdict, findings };
 }
 
-function analyzeImports(ir: SolanaIR, findings: LintFinding[]): void {
+function analyzeImports(ir: SolanaIR, findings: LintFinding[], target: LintTarget): void {
+  // Native's project-scaffold auto-adds deps for the external blocker crates
+  // below (mpl-core, pyth, switchboard, solana-sha256-hasher, solana-keccak-
+  // hasher, sha2-const-stable, num-derive, num-traits), so they're genuinely
+  // fine on native. Pinocchio/Quasar have no equivalent deps, so the same
+  // imports block those targets.
+  const externalCratesBlock = target !== "native";
+
   const seen = new Set<string>();
   for (const imp of ir.imports ?? []) {
     for (const { crate, reason } of EXTERNAL_BLOCKER_CRATES) {
       if (!seen.has(crate) && new RegExp(`\\b${crate}\\b`).test(imp)) {
         seen.add(crate);
-        findings.push({
-          level: "blocker",
-          category: "External crate",
-          title: `Depends on ${crate.replace(/_/g, "-")}`,
-          detail: reason,
-          where: imp.trim(),
-        });
+        if (externalCratesBlock) {
+          findings.push({
+            level: "blocker",
+            category: "External crate",
+            title: `Depends on ${crate.replace(/_/g, "-")}`,
+            detail: reason,
+            where: imp.trim(),
+          });
+        } else {
+          findings.push({
+            level: "ready",
+            category: "External crate",
+            title: `Uses ${crate.replace(/_/g, "-")} (native dep auto-wired)`,
+            detail: "Native project-scaffold adds this dep to Cargo.toml automatically; carried-over code resolves against it.",
+            where: imp.trim(),
+          });
+        }
       }
     }
   }
@@ -211,7 +236,7 @@ function analyzeInstructions(ir: SolanaIR, findings: LintFinding[]): void {
   }
 }
 
-function analyzeHelperFunctions(ir: SolanaIR, findings: LintFinding[]): void {
+function analyzeHelperFunctions(ir: SolanaIR, findings: LintFinding[], target: LintTarget): void {
   for (const helper of ir.helperFns ?? []) {
     const code = helper.rawCode ?? "";
     if (/\bctx\s*:\s*(?:&\s*mut\s+)?Context\s*</.test(code)) {
@@ -221,6 +246,30 @@ function analyzeHelperFunctions(ir: SolanaIR, findings: LintFinding[]): void {
         title: `${helper.name}() detected as an inlined Anchor handler`,
         detail:
           "Anvil recognizes this as an instruction handler (Context<X> signature) and skips it in the carry-over. If you meant for it to be a user helper, rename it.",
+        where: helper.name,
+      });
+      continue;
+    }
+    // A carried helper that references solana_program:: is fine on native
+    // (the dep ships) but needs review on pinocchio/quasar (they don't).
+    const usesSolanaProgram = /\bsolana_program\b/.test(code);
+    if (target === "native" && !usesSolanaProgram) {
+      // Pure helper — no framework-specific calls. Ready on native.
+      findings.push({
+        level: "ready",
+        category: "Helpers",
+        title: `${helper.name}() carries cleanly`,
+        detail: "User helper has no framework-specific types; copies over and builds on native.",
+        where: helper.name,
+      });
+      continue;
+    }
+    if (target === "native" && usesSolanaProgram) {
+      findings.push({
+        level: "ready",
+        category: "Helpers",
+        title: `${helper.name}() uses solana-program`,
+        detail: "Target is native — solana-program is already a direct dep, so the helper compiles as-is.",
         where: helper.name,
       });
       continue;

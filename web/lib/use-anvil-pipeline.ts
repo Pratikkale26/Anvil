@@ -367,10 +367,12 @@ export function useAnvilPipeline() {
       // there's no reason to serialize. Results land before the user has
       // a chance to click the Lint tab in most cases.
       setLintBusy(true);
+      // Pass target so the report matches the user's current port intent —
+      // external crates that block a pinocchio port are fine on native.
       const lintPromise = fetch(`${API_BASE}/lint`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ir: parsed.ir }),
+        body: JSON.stringify({ ir: parsed.ir, target }),
       })
         .then((r) => (r.ok ? (r.json() as Promise<LintReport>) : null))
         .catch(() => null)
