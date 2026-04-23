@@ -30,7 +30,7 @@ export function CuAnalysis({
             style={{ gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", columnGap: "20px" }}
           >
             {["INSTRUCTION", "ANCHOR", "PINOCCHIO", "QUASAR", "NATIVE"].map((h) => (
-              <div key={h} className="text-[11px] font-bold tracking-[0.1em] text-anvil-text-muted">
+              <div key={h} className="text-[11px] font-bold tracking-widest text-anvil-text-muted">
                 {h}
               </div>
             ))}
@@ -86,7 +86,7 @@ function CuRow({ row }: { row: CuRowType }) {
             <div className="flex justify-end mb-1">
               <span className="text-[12px] font-semibold text-anvil-text-sub font-mono">{val} CU</span>
             </div>
-            <div className="overflow-hidden h-1.5 rounded-full bg-white/[0.05]">
+            <div className="overflow-hidden h-1.5 rounded-full bg-white/5">
               <div
                 className="h-full rounded-full transition-[width] duration-500 ease-out"
                 style={{ background: color, width: `${Math.max((val / max) * 100, 5)}%` }}

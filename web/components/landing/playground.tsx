@@ -85,7 +85,7 @@ export function Playground({ state }: { state: LandingPipelineState }) {
                         className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
                           active
                             ? "bg-[rgba(245,166,35,0.15)] text-anvil-amber"
-                            : "bg-white/[0.05] text-anvil-text-sub"
+                            : "bg-white/5 text-anvil-text-sub"
                         }`}
                       >
                         {info.badge}
@@ -134,8 +134,8 @@ export function Playground({ state }: { state: LandingPipelineState }) {
             disabled={isRunning}
             className={`flex items-center justify-center gap-2 p-4 rounded-[14px] border-0 font-bold text-[15px] transition-opacity ${
               isRunning
-                ? "bg-white/[0.05] text-anvil-text-muted cursor-default"
-                : "bg-gradient-to-br from-[#f5a623] to-[#e8820a] text-[#0a0600] cursor-pointer hover:opacity-95"
+                ? "bg-white/5 text-anvil-text-muted cursor-default"
+                : "bg-linear-to-br from-[#f5a623] to-[#e8820a] text-[#0a0600] cursor-pointer hover:opacity-95"
             }`}
           >
             {isRunning ? (
@@ -170,7 +170,7 @@ export function Playground({ state }: { state: LandingPipelineState }) {
                               ? "bg-[rgba(14,168,128,0.12)] border-[rgba(14,168,128,0.35)] text-anvil-teal"
                               : isActive
                                 ? "bg-[rgba(245,166,35,0.12)] border-[rgba(245,166,35,0.35)] text-anvil-amber"
-                                : "bg-white/[0.04] border-anvil-card-border text-anvil-text-muted"
+                                : "bg-white/4 border-anvil-card-border text-anvil-text-muted"
                           }`}
                         >
                           {isDone ? <CheckCircle2 size={14} /> : isActive ? <Loader2 size={13} className="animate-spin" /> : i + 1}
@@ -214,7 +214,7 @@ export function Playground({ state }: { state: LandingPipelineState }) {
                     onClick={() => setActiveTab(tab)}
                     className={`px-4 py-1.5 rounded-lg text-[13px] font-semibold cursor-pointer border-0 transition-colors ${
                       activeTab === tab
-                        ? "bg-white/[0.09] text-anvil-text"
+                        ? "bg-white/9 text-anvil-text"
                         : "bg-transparent text-anvil-text-sub hover:text-anvil-text"
                     }`}
                   >
@@ -225,7 +225,7 @@ export function Playground({ state }: { state: LandingPipelineState }) {
               <button
                 onClick={copy}
                 disabled={!activeTabValue}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-1 rounded-lg text-[12px] font-semibold border border-anvil-card-border bg-white/[0.05] cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 transition-colors ${
+                className={`inline-flex items-center gap-1.5 px-3.5 py-1 rounded-lg text-[12px] font-semibold border border-anvil-card-border bg-white/5 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 transition-colors ${
                   copied ? "text-anvil-teal" : "text-anvil-text-sub hover:text-anvil-text"
                 }`}
               >

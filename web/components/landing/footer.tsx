@@ -6,7 +6,7 @@ export function Footer() {
     <footer className="anvil-container border-t border-anvil-line py-7">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2.5">
-          <span className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-gradient-to-br from-[#f5a623] to-[#e8820a]">
+          <span className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-linear-to-br from-[#f5a623] to-[#e8820a]">
             <Sparkles size={13} className="text-white" />
           </span>
           <span className="font-extrabold text-[14px] text-anvil-text">Anvil</span>

@@ -38,7 +38,7 @@ export function HowItWorks() {
               <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[rgba(245,166,35,0.1)]">
                 <Icon size={17} className="text-anvil-amber" />
               </span>
-              <span className="text-[11px] font-bold tracking-[0.1em] text-anvil-text-dim">{step}</span>
+              <span className="text-[11px] font-bold tracking-widest text-anvil-text-dim">{step}</span>
             </div>
             <div className="font-bold text-[15px] text-anvil-text mb-2">{title}</div>
             <p className="text-body mt-0">{desc}</p>
