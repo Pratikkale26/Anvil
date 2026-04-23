@@ -502,6 +502,18 @@ export abstract class BaseEmitter {
       .filter(Boolean)
       .join("\n");
 
+    // Realloc preludes: Anchor's `realloc = <size-expr>` asks the runtime to
+    // resize the account data buffer at instruction time. Anvil emits the
+    // resize call + a best-effort rent-delta top-up from the signer; if the
+    // rent delta is more complex (split payer, escrow, etc.) the user can
+    // review the generated block. Pinocchio/quasar don't expose realloc
+    // directly — we emit a warning block so at least the requirement is
+    // visible in the generated code.
+    const reallocPreludes = instr.accounts
+      .map((a) => this.emitReallocPrelude(a, instr))
+      .filter(Boolean)
+      .join("\n");
+
     // Body emission — the main event
     const bodyCode = this.emitBodyStatements(instr.body, instr, ir);
 
@@ -529,7 +541,7 @@ export abstract class BaseEmitter {
 ${bindings}
 ${preChecks ? `\n${preChecks}\n` : ""}
 ${argsBlock}
-${initPreludes ? `\n${initPreludes}\n` : ""}
+${initPreludes ? `\n${initPreludes}\n` : ""}${reallocPreludes ? `\n${reallocPreludes}\n` : ""}
 
 ${bodyCode}
 ${needsOkReturn ? "\n    Ok(())" : ""}
@@ -1050,6 +1062,61 @@ ${indented}
     }
 
     return [signerPrelude, createCall].filter(Boolean).join("\n");
+  }
+
+  /**
+   * Emit realloc prelude — resize the account buffer to the expression
+   * given by `#[account(realloc = <expr>)]`. Native emits the real call
+   * (`account.realloc`) plus a rent-delta top-up via a system transfer
+   * from the first signer. Pinocchio / Quasar don't expose realloc at the
+   * account-info level the same way; they get a warning block so the
+   * requirement stays visible in the generated code.
+   */
+  protected emitReallocPrelude(
+    accountRef: Instruction["accounts"][number],
+    instr: Instruction,
+  ): string {
+    const reallocConstraint = accountRef.constraints.find((c) => c.kind === "realloc");
+    if (!reallocConstraint?.value) return "";
+    const accountName = snakeCase(accountRef.name);
+    const sizeExpr = reallocConstraint.value;
+
+    // Native path — real realloc + rent top-up. Pick the first mut Signer
+    // in the instruction as the rent-delta payer; matches Anchor's default
+    // when `realloc::payer` isn't explicitly different.
+    const payerAcc = instr.accounts.find((a) => a.isSigner && a.isMut);
+    const payer = payerAcc ? snakeCase(payerAcc.name) : "payer";
+
+    if (this.frameworkName === "Native") {
+      return `    // realloc — resize ${accountName} to ${sizeExpr}
+    {
+        let __new_size = (${sizeExpr}) as usize;
+        let __rent = solana_program::sysvar::rent::Rent::get()?;
+        let __new_lamports = __rent.minimum_balance(__new_size);
+        let __delta = __new_lamports.saturating_sub(${accountName}.lamports());
+        if __delta > 0 {
+            let __ix = solana_program::system_instruction::transfer(
+                ${payer}.key,
+                ${accountName}.key,
+                __delta,
+            );
+            solana_program::program::invoke(
+                &__ix,
+                &[${payer}.clone(), ${accountName}.clone()],
+            )?;
+        }
+        ${accountName}.realloc(__new_size, false)?;
+    }`;
+    }
+
+    // Pinocchio / Quasar: leave a warning so the user wires realloc manually
+    // using the framework-native API (pinocchio::account_info::realloc is
+    // gated behind a nightly feature as of 0.9).
+    return `    // ⚠️ Anvil: \`realloc = ${sizeExpr}\` on \`${accountName}\`
+    //   Pinocchio/Quasar don't expose AccountInfo::realloc in the stable API.
+    //   After porting, wire the resize manually (e.g., split into
+    //   close-and-recreate, or target the native backend which emits realloc
+    //   + rent top-up automatically).`;
   }
 
   protected normalizeInitSeedExpr(seed: string): string {

@@ -21,7 +21,7 @@ const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
   "token::authority": "token::authority",
   "associated_token::mint":      "associated_token::mint",
   "associated_token::authority":  "associated_token::authority",
-  realloc:                        "constraint",
+  realloc:                        "realloc",
 };
 
 /**
@@ -53,10 +53,11 @@ export function parseConstraints(attrBody: string): Constraint[] {
       value = value.replace(/\s*@\s*[\w:]+(?:::\w+)*/g, "").trim();
     }
 
-    // skip unknown / payer / space — they don't map to IR constraints.
-    // `realloc = expr` is a size expression, not a boolean, so emitting it as
-    // a require-check produces `if !(expr) { ... }` which doesn't type-check.
-    if (key === "payer" || key === "space" || key === "rent_exempt" || key === "discriminator" || key === "realloc" || key === "realloc::payer" || key === "realloc::zero") {
+    // Skip unknown / payer / space — they don't map to IR constraints.
+    // realloc::payer and realloc::zero are variants of the realloc family
+    // that Anchor handles automatically; we let the realloc = <expr>
+    // constraint carry the size and infer the rest.
+    if (key === "payer" || key === "space" || key === "rent_exempt" || key === "discriminator" || key === "realloc::payer" || key === "realloc::zero") {
       continue;
     }
 

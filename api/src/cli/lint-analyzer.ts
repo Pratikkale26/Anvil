@@ -152,6 +152,19 @@ function analyzeAccounts(ir: SolanaIR, findings: LintFinding[]): void {
           where: `${instr.name} / ${accRef.name}`,
         });
       }
+      // realloc — we emit it fully on native (resize + rent delta top-up)
+      // and leave a warning block on pinocchio/quasar (stable realloc isn't
+      // available there). So it's ready on native, review elsewhere.
+      if (accRef.constraints.some((c) => c.kind === "realloc")) {
+        findings.push({
+          level: "ready",
+          category: "Account lifecycle",
+          title: `realloc on \`${accRef.name}\``,
+          detail:
+            "Anvil emits the native realloc call plus a rent-delta top-up from the first signer. Review the payer if `realloc::payer` differs from the default signer.",
+          where: `${instr.name} / ${accRef.name}`,
+        });
+      }
     }
   }
 

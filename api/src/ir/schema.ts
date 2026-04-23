@@ -51,6 +51,7 @@ export const ConstraintKindSchema = z.enum([
   "token::authority",
   "associated_token::mint",
   "associated_token::authority",
+  "realloc",
 ]);
 
 export type ConstraintKind = z.infer<typeof ConstraintKindSchema>;
