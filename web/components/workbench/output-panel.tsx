@@ -1,6 +1,6 @@
 "use client";
 
-import Editor from "@monaco-editor/react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
 import {
   C,
   MONACO_OPTS,
@@ -62,6 +62,40 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
   // both mounted simultaneously causes two stacked Monaco editors (the bug
   // the user hit). Tabs are visually dimmed + click-disabled while open.
   const diffOverlayActive = showCompare && !!activeRefinePatch;
+
+  // Quick line-level delta so the header surfaces "+N / -M" at a glance.
+  // Cheap line-count comparison, not a real LCS — precise diff rendering is
+  // handled by Monaco's DiffEditor below. Trailing empty line from split is
+  // dropped so we don't over-count by 1.
+  const lineDelta = (() => {
+    if (!activeRefinePatch) return { added: 0, removed: 0, changed: 0 };
+    const origLines = compareOriginalContent.replace(/\n$/, "").split("\n");
+    const nextLines = comparePatchedContent.replace(/\n$/, "").split("\n");
+    const origSet = new Set(origLines);
+    const nextSet = new Set(nextLines);
+    const added = nextLines.filter((l) => !origSet.has(l)).length;
+    const removed = origLines.filter((l) => !nextSet.has(l)).length;
+    return {
+      added,
+      removed,
+      changed: Math.min(added, removed),
+    };
+  })();
+
+  const DIFF_MONACO_OPTS = {
+    ...MONACO_OPTS,
+    renderSideBySide: !isMobile,
+    originalEditable: false,
+    readOnly: true,
+    // Make inserted / removed regions strongly coloured so the change stands
+    // out even on small screens.
+    renderOverviewRuler: true,
+    renderIndicators: true,
+    diffWordWrap: "on" as const,
+    // Hide the minimap in diff view — it competes with the ruler for space
+    // and the overview ruler is more useful here.
+    minimap: { enabled: false },
+  };
 
   const tm = TARGET_META[target];
 
@@ -235,11 +269,13 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
         </div>
       ) : diffOverlayActive ? (
         /* AI refine diff overlay — REPLACES the active tab content so we
-           don't end up with two stacked Monaco editors (old bug). Includes
-           an inline close affordance; tabs above are dimmed. */
+           don't end up with two stacked Monaco editors. Uses Monaco's
+           DiffEditor for proper +/- gutter markers, inline change
+           highlighting, and an overview ruler. Falls back to inline (unified)
+           rendering on mobile so the columns don't squeeze. */
         <div>
-          <div className="flex items-center justify-between gap-2 px-3.5 py-2 border-b border-anvil-line bg-white/[0.02]">
-            <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center justify-between gap-2 px-3.5 py-2 border-b border-anvil-line bg-white/[0.02] flex-wrap">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
               <Sparkles size={12} className="text-anvil-indigo shrink-0" />
               <span className="text-xs font-bold text-anvil-text truncate">
                 AI refine diff
@@ -259,58 +295,61 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
               >
                 {activeRefinePatch!.accepted ? "accepted" : "rejected"}
               </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowCompare(false)}
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold text-anvil-text-sub hover:text-anvil-text hover:bg-white/[0.05] transition-colors cursor-pointer border border-anvil-card-border"
-              aria-label="Close diff view"
-            >
-              <X size={12} /> Close
-            </button>
-          </div>
-          <div
-            className={cn(
-              "grid",
-              isMobile ? "grid-cols-1" : "grid-cols-2"
-            )}
-          >
-            <div
-              className={cn(
-                isMobile
-                  ? "border-b border-anvil-line"
-                  : "border-r border-anvil-line"
+              {/* Line-delta chips so user sees scope of change at a glance */}
+              {lineDelta.added > 0 && (
+                <span className="text-[10px] font-mono font-bold text-anvil-teal px-1.5 py-px rounded bg-[rgba(14,168,128,0.1)] border border-[rgba(14,168,128,0.25)] shrink-0">
+                  +{lineDelta.added}
+                </span>
               )}
-            >
-              <div className="px-3.5 py-2 text-[11px] font-bold text-anvil-text-sub border-b border-anvil-line">
-                Original
-              </div>
-              <Editor
-                height={`${editorHeight - 33 - 37}px`}
-                language="rust"
-                value={compareOriginalContent}
-                theme="vs-dark"
-                options={MONACO_OPTS}
-              />
+              {lineDelta.removed > 0 && (
+                <span className="text-[10px] font-mono font-bold text-anvil-red px-1.5 py-px rounded bg-[rgba(224,90,90,0.1)] border border-[rgba(224,90,90,0.25)] shrink-0">
+                  −{lineDelta.removed}
+                </span>
+              )}
+              {lineDelta.added === 0 && lineDelta.removed === 0 && (
+                <span className="text-[10px] font-bold text-anvil-text-muted px-1.5 py-px rounded bg-white/5 border border-anvil-card-border shrink-0">
+                  no line changes
+                </span>
+              )}
             </div>
-            <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-anvil-text-dim hidden sm:inline">
+                {isMobile ? "inline diff" : "side-by-side"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowCompare(false)}
+                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold text-anvil-text-sub hover:text-anvil-text hover:bg-white/[0.05] transition-colors cursor-pointer border border-anvil-card-border"
+                aria-label="Close diff view"
+              >
+                <X size={12} /> Close
+              </button>
+            </div>
+          </div>
+          {/* Column labels — only render in side-by-side mode */}
+          {!isMobile && (
+            <div className="grid grid-cols-2 border-b border-anvil-line">
+              <div className="px-3.5 py-2 text-[11px] font-bold text-anvil-text-sub border-r border-anvil-line">
+                Before · what was wrong
+              </div>
               <div
-                className="px-3.5 py-2 text-[11px] font-bold border-b border-anvil-line"
+                className="px-3.5 py-2 text-[11px] font-bold"
                 style={{
                   color: activeRefinePatch!.accepted ? C.teal : C.red,
                 }}
               >
-                AI Refined
+                After · what AI fixed
               </div>
-              <Editor
-                height={`${editorHeight - 33 - 37}px`}
-                language="rust"
-                value={comparePatchedContent}
-                theme="vs-dark"
-                options={MONACO_OPTS}
-              />
             </div>
-          </div>
+          )}
+          <DiffEditor
+            height={`${editorHeight - 33 - (isMobile ? 0 : 33)}px`}
+            language="rust"
+            original={compareOriginalContent}
+            modified={comparePatchedContent}
+            theme="vs-dark"
+            options={DIFF_MONACO_OPTS}
+          />
         </div>
       ) : (
         <>
