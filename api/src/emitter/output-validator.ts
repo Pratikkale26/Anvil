@@ -547,6 +547,112 @@ function checkLongFunctions(content: string, path: string): ValidationIssue[] {
   return issues;
 }
 
+/**
+ * Bracket-balance check on stripped (no comments, no string literals) content.
+ *
+ * If the parens/brackets/braces don't balance, the file definitively won't
+ * compile. This is the cheapest, highest-signal check we can run — added
+ * primarily to harden the AI refine path: a malformed AI patch fails this
+ * before any cargo build attempt.
+ */
+function checkBracketBalance(content: string, path: string): ValidationIssue[] {
+  // Strip line comments, block comments, and string/char/byte literals so
+  // their contained brackets don't poison the count.
+  const stripped = content
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "")
+    .replace(/"(?:\\.|[^"\\\n])*"/g, '""')
+    .replace(/'(?:\\.|[^'\\])'/g, "''")
+    .replace(/b'(?:\\.|[^'\\])'/g, "b''")
+    .replace(/r#"[\s\S]*?"#/g, '""');
+
+  const counts: Record<string, number> = { "(": 0, ")": 0, "{": 0, "}": 0, "[": 0, "]": 0 };
+  for (const ch of stripped) {
+    if (counts[ch] !== undefined) counts[ch]++;
+  }
+
+  const issues: ValidationIssue[] = [];
+  if (counts["("] !== counts[")"]) {
+    issues.push({
+      severity: "error",
+      message: `Paren imbalance: ${counts["("]} '(' vs ${counts[")"]} ')' — file will not compile.`,
+      path,
+    });
+  }
+  if (counts["{"] !== counts["}"]) {
+    issues.push({
+      severity: "error",
+      message: `Brace imbalance: ${counts["{"]} '{' vs ${counts["}"]} '}' — file will not compile.`,
+      path,
+    });
+  }
+  if (counts["["] !== counts["]"]) {
+    issues.push({
+      severity: "error",
+      message: `Bracket imbalance: ${counts["["]} '[' vs ${counts["]"]} ']' — file will not compile.`,
+      path,
+    });
+  }
+  return issues;
+}
+
+/**
+ * Detect TODO(manual) markers — the refine prompt tells the model to leave
+ * this when it cannot fully fix an issue. Surfacing them lets the user know
+ * a section still needs human review even if validation otherwise passes.
+ */
+function checkManualTodos(content: string, path: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (/TODO\(manual\)|FIXME\(anvil\)/.test(lines[i] ?? "")) {
+      issues.push({
+        severity: "warning",
+        message: "AI refine left a TODO(manual) marker — this section requires human review.",
+        path,
+        line: i + 1,
+      });
+    }
+  }
+  return issues;
+}
+
+/**
+ * Catch Anchor-only generic types (Account<'info, T>, Signer<'info>, etc.) that
+ * AI patches may regress into. The previous regex catches the macros (require!,
+ * emit!) but not the typed account wrappers — they're a common AI hallucination
+ * because Anchor docs are everywhere in the model's training data.
+ */
+function checkAnchorTypedAccounts(content: string, path: string, target: DetectedTarget | null): ValidationIssue[] {
+  if (target === null || target === "native") return [];
+  const issues: ValidationIssue[] = [];
+  const patterns: Array<[RegExp, string]> = [
+    [/\bAccount\s*<\s*'info\s*,/, "Anchor Account<'info, T> wrapper"],
+    [/\bSigner\s*<\s*'info\s*>/, "Anchor Signer<'info>"],
+    [/\bProgram\s*<\s*'info\s*,/, "Anchor Program<'info, T>"],
+    [/\bSystemAccount\s*<\s*'info\s*>/, "Anchor SystemAccount<'info>"],
+    [/\bUncheckedAccount\s*<\s*'info\s*>/, "Anchor UncheckedAccount<'info>"],
+    [/\bInterfaceAccount\s*<\s*'info\s*,/, "Anchor InterfaceAccount<'info, T>"],
+    [/\bBox\s*<\s*Account\s*<\s*'info/, "Anchor Box<Account<'info, T>>"],
+    [/#\[derive\s*\(\s*Accounts\s*\)\]/, "#[derive(Accounts)] (Anchor-only)"],
+    [/#\[account\s*\]/, "#[account] attribute (Anchor-only)"],
+    [/#\[program\s*\]/, "#[program] module attribute (Anchor-only)"],
+  ];
+  const lines = content.split("\n");
+  for (const [pattern, label] of patterns) {
+    const lineIdx = lines.findIndex((line) => pattern.test(line));
+    if (lineIdx >= 0) {
+      issues.push({
+        severity: "error",
+        message: `${label} leaked into ${target} output — must use AccountInfo or framework equivalent.`,
+        path,
+        line: lineIdx + 1,
+      });
+    }
+  }
+  return issues;
+}
+
 // ─── Main validator ──────────────────────────────────────────────────────────
 
 /**
@@ -603,6 +709,9 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     }
 
     // ── Structural checks ──
+    issues.push(...checkBracketBalance(file.content, file.path));
+    issues.push(...checkAnchorTypedAccounts(file.content, file.path, target));
+    issues.push(...checkManualTodos(file.content, file.path));
     issues.push(...checkDuplicateSeedBindings(file.content, file.path));
     issues.push(...checkAccountCountGuards(file.content, ir, file.path));
     issues.push(...checkOwnerChecks(file.content, ir, file.path));
