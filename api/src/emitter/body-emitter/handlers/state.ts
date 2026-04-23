@@ -34,6 +34,16 @@ export function handleStateRead(w: BodyWalker, stmt: StateRead): void {
   const accountName = snakeCase(stmt.account);
   const localVar = snakeCase(stmt.localVar);
   if (w.stateVars.has(accountName)) {
+    // Account already deserialized under a canonical name (typically done by
+    // ensureStateRead before the formal state_read fires). If the IR asks for
+    // a different local alias — e.g. `let pool = &mut ctx.accounts.stake_pool`
+    // producing localVar="pool" against accountName="stake_pool" — record the
+    // alias so transformAccountReferences can rewrite `pool.field` references
+    // to the canonical `stake_pool.field` form.
+    const existing = w.stateVars.get(accountName)!;
+    if (existing !== localVar && !w.localAliases.has(localVar)) {
+      w.localAliases.set(localVar, existing);
+    }
     return;
   }
   const accountRef = w.instr.accounts.find((acc) => snakeCase(acc.name) === accountName);

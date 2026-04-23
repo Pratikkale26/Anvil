@@ -53,6 +53,12 @@ export class BodyWalker {
   readonly lines: string[] = [];
   readonly stateVars = new Map<string, string>();
   readonly accountInfoVars = new Map<string, string>();
+  /** Maps a local-var alias (e.g. "pool") to the canonical state-var name
+   *  (e.g. "stake_pool") when the Anchor source bound `let pool = &mut
+   *  ctx.accounts.stake_pool;`. transformAccountReferences rewrites
+   *  `pool.field` → `stake_pool.field` via this map so aliased names that
+   *  were never declared in the emitted code still resolve. */
+  readonly localAliases = new Map<string, string>();
   readonly accountsWithSignerSeeds = new Set<string>();
   readonly emittedBumps = new Set<string>();
   readonly mutatedAccounts: Set<string>;
@@ -220,6 +226,12 @@ export class BodyWalker {
 
   canonicalAccountName(name: string): string {
     const normalized = snakeCase(name);
+    // Local aliases (e.g. `let pool = &mut ctx.accounts.stake_pool;` → IR
+    // `localVar: "pool"`) win first. Downstream state_field_assigns arrive
+    // keyed by the alias name and must resolve to the canonical state var.
+    if (this.localAliases.has(normalized)) {
+      return this.localAliases.get(normalized)!;
+    }
     for (const [accountName, accountInfoVar] of this.accountInfoVars.entries()) {
       if (accountInfoVar === normalized) return accountName;
     }
@@ -516,6 +528,32 @@ export class BodyWalker {
 
   transformAccountReferences(code: string): string {
     let transformed = code;
+    // First, resolve local-var aliases (e.g. `let pool = &mut ctx.accounts.
+    // stake_pool;` in the Anchor source → `pool.field` must become the
+    // canonical state-var name `stake_pool.field` here, since we never
+    // emitted the `let pool = ...` binding). Also strip the original
+    // `let alias = &mut? ctx.accounts.X;` lines so they don't produce
+    // dangling no-op bindings in the output.
+    for (const [alias, canonical] of this.localAliases.entries()) {
+      // Remove the alias's declaration line if it still exists in the block.
+      transformed = transformed.replace(
+        new RegExp(
+          `^\\s*let\\s+(?:mut\\s+)?${alias}\\s*=\\s*&\\s*(?:mut\\s+)?(?:ctx\\.accounts\\.)?\\w+\\s*;?\\s*$`,
+          "gm",
+        ),
+        "",
+      );
+      // Rewrite `alias.field` / `alias.method()` / `&mut alias` references.
+      transformed = transformed.replace(
+        new RegExp(`(^|[^\\w.])${alias}\\b(?=\\.)`, "g"),
+        (_m, pre: string) => `${pre}${canonical}`,
+      );
+      // Bare `&mut alias,` / `alias,` argument passes (common in helper calls).
+      transformed = transformed.replace(
+        new RegExp(`(^|[^\\w.])(&mut\\s+|&\\s+)?${alias}(?=\\s*[,)])`, "g"),
+        (_m, pre: string, borrow: string | undefined) => `${pre}${borrow ?? ""}${canonical}`,
+      );
+    }
     for (const account of this.instr.accounts) {
       const accountName = snakeCase(account.name);
       const accountInfoVar = this.resolveAccountInfoVar(accountName);
