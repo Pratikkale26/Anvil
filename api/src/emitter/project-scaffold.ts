@@ -147,6 +147,7 @@ borsh = { version = "1.5", features = ["derive"] }
 # — bump after verifying your program still builds.
 solana-program = "2.2"
 spl-token = "7"
+spl-token-2022 = "6"
 spl-associated-token-account = "6"
 thiserror = "2.0"
 ${optionalSection}

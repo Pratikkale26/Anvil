@@ -544,13 +544,16 @@ function consolidateMultiStatementCpi(source: string): string {
   // Accepts any variable names (anchor codebases use both cpi_accounts and
   // transfer_accounts, etc.). Matches any of the known CPI structs.
   const structAlt = SPL_CPI_STRUCTS.join("|");
+  // Optional type annotation on a let binding (e.g., `: anchor_spl::token::Transfer`).
+  // Needs to be non-greedy and exclude `=` so it doesn't swallow the assignment.
+  const optTypeAnn = String.raw`(?:\s*:\s*[^=;]+?)?`;
   const fourStmt = new RegExp(
-    // 1. let <accountsVar> = STRUCT { ...fields... };
-    String.raw`let\s+(\w+)\s*=\s*(` + structAlt + String.raw`)\s*\{([\s\S]*?)\};` + ws +
-    // 2. let <programVar> = PROGRAM_EXPR;
-    String.raw`let\s+(\w+)\s*=\s*([^;]+?);` + ws +
-    // 3. let <ctxVar> = CpiContext::new(<programVar-ref>, <accountsVar-ref>)(.with_signer(SEEDS))?;
-    String.raw`let\s+(\w+)\s*=\s*CpiContext::new\(\s*\4\s*,\s*\1\s*,?\s*\)(?:\s*\.with_signer\(([^)]+)\))?\s*;` + ws +
+    // 1. let <accountsVar>(: TYPE)? = STRUCT { ...fields... };
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*(` + structAlt + String.raw`)\s*\{([\s\S]*?)\};` + ws +
+    // 2. let <programVar>(: TYPE)? = PROGRAM_EXPR;
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*([^;]+?);` + ws +
+    // 3. let <ctxVar>(: TYPE)? = CpiContext::new(<programVar-ref>, <accountsVar-ref>)(.with_signer(SEEDS))?;
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*CpiContext::new\(\s*\4\s*,\s*\1\s*,?\s*\)(?:\s*\.with_signer\(([^)]+)\))?\s*;` + ws +
     // 4. NS::FN(<ctxVar-ref>, ARGS)?;  (NS may be absent for unqualified calls)
     String.raw`((?:\w+::)*)(\w+)\(\s*\6\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
     "g",
@@ -570,14 +573,15 @@ function consolidateMultiStatementCpi(source: string): string {
   //   let cpi_context = CpiContext::new(ctx.accounts.system_program.to_account_info(), transfer_accounts);
   //   transfer(cpi_context, amount)?;
   const threeStmt = new RegExp(
-    String.raw`let\s+(\w+)\s*=\s*(` + structAlt + String.raw`)\s*\{([\s\S]*?)\};` + ws +
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*(` + structAlt + String.raw`)\s*\{([\s\S]*?)\};` + ws +
     // CpiContext::new may have trailing comma after the accounts arg — accept
     // with or without. Program expression is anything up to the first comma
     // at this nesting level.
-    String.raw`let\s+(\w+)\s*=\s*CpiContext::new\(\s*([\s\S]+?)\s*,\s*\1\s*,?\s*\)(?:\s*\.with_signer\(([^)]+)\))?\s*;` + ws +
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*CpiContext::new\(\s*([\s\S]+?)\s*,\s*\1\s*,?\s*\)(?:\s*\.with_signer\(([^)]+)\))?\s*;` + ws +
     String.raw`((?:\w+::)*)(\w+)\(\s*\4\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
     "g",
   );
+
   out = out.replace(threeStmt, (_full, _accVar: string, struct: string, fields: string, _ctxVar: string, programExpr: string, signerSeeds: string | undefined, nsPrefix: string, fnName: string, args: string | undefined, q: string | undefined) => {
     const ctx = signerSeeds
       ? `CpiContext::new_with_signer(${programExpr.trim()}, ${struct} {${fields}}, ${signerSeeds.trim()})`
