@@ -19,6 +19,7 @@ import {
   Loader2,
   Sparkles,
   TerminalSquare,
+  X,
 } from "lucide-react";
 import { PipelineStrip } from "./pipeline-strip";
 import { IconBtn, Panel, PaneTab } from "./panel";
@@ -54,7 +55,13 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     downloadProjectBundle,
     downloadDiagnostics,
     resolvedSource,
+    setShowCompare,
   } = state;
+
+  // When the AI refine diff overlay is active it REPLACES the tab content —
+  // both mounted simultaneously causes two stacked Monaco editors (the bug
+  // the user hit). Tabs are visually dimmed + click-disabled while open.
+  const diffOverlayActive = showCompare && !!activeRefinePatch;
 
   const tm = TARGET_META[target];
 
@@ -142,8 +149,14 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
         <PipelineStrip pipelineStage={pipelineStage} />
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 px-5 pt-2.5 border-b border-anvil-line overflow-x-auto">
+      {/* Tabs (dimmed + inert while the AI-refine diff overlay is up) */}
+      <div
+        className={cn(
+          "flex gap-1 px-5 pt-2.5 border-b border-anvil-line overflow-x-auto transition-opacity",
+          diffOverlayActive && "opacity-40 pointer-events-none"
+        )}
+        aria-hidden={diffOverlayActive}
+      >
         <PaneTab
           active={activePane === "source"}
           onClick={() => setActivePane("source")}
@@ -220,54 +233,87 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
             GitHub repo
           </div>
         </div>
-      ) : (
-        <>
-          {/* Diff compare view */}
-          {showCompare && activeRefinePatch && (
+      ) : diffOverlayActive ? (
+        /* AI refine diff overlay — REPLACES the active tab content so we
+           don't end up with two stacked Monaco editors (old bug). Includes
+           an inline close affordance; tabs above are dimmed. */
+        <div>
+          <div className="flex items-center justify-between gap-2 px-3.5 py-2 border-b border-anvil-line bg-white/[0.02]">
+            <div className="flex items-center gap-2 min-w-0">
+              <Sparkles size={12} className="text-anvil-indigo shrink-0" />
+              <span className="text-xs font-bold text-anvil-text truncate">
+                AI refine diff
+              </span>
+              <span className="text-[11px] text-anvil-text-muted font-mono truncate">
+                {activeRefinePatch!.filePath}
+              </span>
+              <span
+                className="text-[10px] font-bold px-1.5 py-px rounded shrink-0"
+                style={{
+                  color: activeRefinePatch!.accepted ? C.teal : C.red,
+                  background: activeRefinePatch!.accepted
+                    ? "rgba(14,168,128,0.1)"
+                    : "rgba(224,90,90,0.1)",
+                  border: `1px solid ${activeRefinePatch!.accepted ? "rgba(14,168,128,0.25)" : "rgba(224,90,90,0.25)"}`,
+                }}
+              >
+                {activeRefinePatch!.accepted ? "accepted" : "rejected"}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowCompare(false)}
+              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold text-anvil-text-sub hover:text-anvil-text hover:bg-white/[0.05] transition-colors cursor-pointer border border-anvil-card-border"
+              aria-label="Close diff view"
+            >
+              <X size={12} /> Close
+            </button>
+          </div>
+          <div
+            className={cn(
+              "grid",
+              isMobile ? "grid-cols-1" : "grid-cols-2"
+            )}
+          >
             <div
               className={cn(
-                "border-b border-anvil-line grid",
-                isMobile ? "grid-cols-1" : "grid-cols-2"
+                isMobile
+                  ? "border-b border-anvil-line"
+                  : "border-r border-anvil-line"
               )}
             >
-              <div
-                className={cn(
-                  !isMobile && "border-r border-anvil-line"
-                )}
-              >
-                <div className="px-3.5 py-2.5 text-xs font-bold text-anvil-text-sub">
-                  Original
-                </div>
-                <Editor
-                  height={`${Math.max(280, editorHeight / 2)}px`}
-                  language="rust"
-                  value={compareOriginalContent}
-                  theme="vs-dark"
-                  options={MONACO_OPTS}
-                />
+              <div className="px-3.5 py-2 text-[11px] font-bold text-anvil-text-sub border-b border-anvil-line">
+                Original
               </div>
-              <div>
-                <div
-                  className="px-3.5 py-2.5 text-xs font-bold"
-                  style={{
-                    color: activeRefinePatch.accepted
-                      ? C.teal
-                      : C.red,
-                  }}
-                >
-                  AI Refined
-                </div>
-                <Editor
-                  height={`${Math.max(280, editorHeight / 2)}px`}
-                  language="rust"
-                  value={comparePatchedContent}
-                  theme="vs-dark"
-                  options={MONACO_OPTS}
-                />
-              </div>
+              <Editor
+                height={`${editorHeight - 33 - 37}px`}
+                language="rust"
+                value={compareOriginalContent}
+                theme="vs-dark"
+                options={MONACO_OPTS}
+              />
             </div>
-          )}
-
+            <div>
+              <div
+                className="px-3.5 py-2 text-[11px] font-bold border-b border-anvil-line"
+                style={{
+                  color: activeRefinePatch!.accepted ? C.teal : C.red,
+                }}
+              >
+                AI Refined
+              </div>
+              <Editor
+                height={`${editorHeight - 33 - 37}px`}
+                language="rust"
+                value={comparePatchedContent}
+                theme="vs-dark"
+                options={MONACO_OPTS}
+              />
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
           {/* Source tab */}
           {activePane === "source" &&
             (resolvedSource ? (
