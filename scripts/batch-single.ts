@@ -11,6 +11,7 @@ import { emitPinocchioFull } from "../api/src/emitter/pinocchio-emitter.ts";
 import { emitNativeFull } from "../api/src/emitter/native-emitter.ts";
 import { emitQuasarFull } from "../api/src/emitter/quasar-emitter.ts";
 import { resolveLocalSource } from "../api/src/parser/local-source.ts";
+import { buildProjectScaffold } from "../api/src/emitter/project-scaffold.ts";
 
 const REPO = "/home/pk/solana-programs-list";
 const OUT = "/tmp/anvil-batch-single";
@@ -63,10 +64,16 @@ quasar-spl = "0.0"
 `;
 
 const TARGETS = [
-  { name: "pinocchio", emit: emitPinocchioFull, cargo: PINOCCHIO_CARGO },
-  { name: "native", emit: emitNativeFull, cargo: NATIVE_CARGO },
-  { name: "quasar", emit: emitQuasarFull, cargo: QUASAR_CARGO },
-] as const;
+  { name: "pinocchio" as const, emit: emitPinocchioFull, cargo: PINOCCHIO_CARGO },
+  { name: "native" as const, emit: emitNativeFull, cargo: NATIVE_CARGO },
+  { name: "quasar" as const, emit: emitQuasarFull, cargo: QUASAR_CARGO },
+];
+
+function cargoTomlForTarget(ir: any, target: "pinocchio" | "native" | "quasar", fallback: string): string {
+  const scaffoldFiles = buildProjectScaffold(ir, target);
+  const cargoFile = scaffoldFiles.find(f => f.path === "Cargo.toml");
+  return cargoFile?.content ?? fallback;
+}
 
 type Result = { contract: string; target: string; status: string; errors?: string[] };
 
@@ -107,7 +114,7 @@ for (const contract of CONTRACTS) {
       continue;
     }
     writeFileSync(join(dir, "src", "lib.rs"), single);
-    writeFileSync(join(dir, "Cargo.toml"), t.cargo);
+    writeFileSync(join(dir, "Cargo.toml"), cargoTomlForTarget(ir, t.name, t.cargo));
 
     try {
       execSync("cargo build 2>&1", { cwd: dir, timeout: 300_000, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });

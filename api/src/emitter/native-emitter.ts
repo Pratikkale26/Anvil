@@ -93,6 +93,16 @@ use solana_program::{
     if (needsClock) {
       imports.push(`use solana_program::sysvar::clock::Clock;`);
     }
+    const needsRent = _ir.instructions.some(i =>
+      i.body.some(s =>
+        s.kind === 'sysvar_rent' ||
+        (s.kind === 'pass_through' && /\bRent::\w/.test(s.code)) ||
+        (s.kind === 'state_field_assign' && /\bRent::\w/.test(s.value))
+      )
+    );
+    if (needsRent) {
+      imports.push(`use solana_program::sysvar::rent::Rent;`);
+    }
 
     imports.push(...this.filteredSourceImports(_ir));
     return imports.join("\n");

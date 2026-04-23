@@ -47,6 +47,9 @@ export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
         switch (helperName) {
           case "transfer_lamports":
             if (/anchor_lang::system_program::transfer\(/.test(code)) return true;
+            // Unqualified `transfer(CpiContext::…)` — imported via
+            // `use anchor_lang::system_program::{transfer, Transfer};`.
+            if (/(?:^|[\s;{(])transfer\(\s*CpiContext::/.test(code)) return true;
             break;
           case "spl_transfer":
             if (/token::transfer\(/.test(code)) return true;
@@ -96,7 +99,10 @@ export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>
       (stmt.kind === "cpi_system_transfer" && !stmt.signerSeeds) ||
-      (stmt.kind === "pass_through" && /anchor_lang::system_program::transfer\(\s*CpiContext::new\(/.test(stmt.code))
+      (stmt.kind === "pass_through" && (
+        /anchor_lang::system_program::transfer\(\s*CpiContext::new\(/.test(stmt.code) ||
+        /(?:^|[\s;{(])transfer\(\s*CpiContext::new\(/.test(stmt.code)
+      ))
     )
   );
 }
@@ -105,7 +111,10 @@ export function irNeedsSignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>
       (stmt.kind === "cpi_system_transfer" && !!stmt.signerSeeds) ||
-      (stmt.kind === "pass_through" && /anchor_lang::system_program::transfer\(\s*CpiContext::new_with_signer\(/.test(stmt.code))
+      (stmt.kind === "pass_through" && (
+        /anchor_lang::system_program::transfer\(\s*CpiContext::new_with_signer\(/.test(stmt.code) ||
+        /(?:^|[\s;{(])transfer\(\s*CpiContext::new_with_signer\(/.test(stmt.code)
+      ))
     )
   );
 }

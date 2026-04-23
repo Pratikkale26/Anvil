@@ -800,13 +800,15 @@ export class BodyWalker {
     );
     replaceCpi(
       // System program transfer w/ signer — qualified OR unqualified (via `use anchor_lang::system_program::transfer`).
-      /(?:(?:anchor_lang::)?system_program::)?transfer\(\s*CpiContext::new_with_signer\(\s*[\s\S]*?\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+      // Trailing commas are optional throughout; the consolidated inline form
+      // doesn't add them, the hand-written Anchor form often does.
+      /(?:(?:anchor_lang::)?system_program::)?transfer\(\s*CpiContext::new_with_signer\(\s*[\s\S]*?\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),?\s*\}\s*,\s*([\w\[\]&\s.]+?)\s*,?\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
       (from, to, signerSeeds, amount) =>
         `transfer_lamports_signed(${this.normalizeAccountExpr(from)}, ${this.normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`,
     );
     replaceCpi(
       // System program transfer (no signer) — qualified OR unqualified.
-      /(?:(?:anchor_lang::)?system_program::)?transfer\(\s*CpiContext::new\(\s*[\s\S]*?\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*\}\s*,?\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
+      /(?:(?:anchor_lang::)?system_program::)?transfer\(\s*CpiContext::new\(\s*[\s\S]*?\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),?\s*\}\s*,?\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
       (from, to, amount) =>
         `transfer_lamports(${this.normalizeAccountExpr(from)}, ${this.normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)})?;`,
     );

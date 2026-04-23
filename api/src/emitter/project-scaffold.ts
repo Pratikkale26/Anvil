@@ -42,6 +42,50 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/**
+ * Map of crate-name → Cargo.toml dep line, for crates that real-world Anchor
+ * programs commonly depend on. Anvil normally filters these from the emitted
+ * `use` statements (so the transpiled program doesn't break when the dep is
+ * missing). For the native target — which is API-compatible with regular
+ * Solana programs — we instead include the dep when the source imports it,
+ * so the transpiled output can reach the same external functionality.
+ */
+const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
+  mpl_core:                  `mpl-core = "0.10"`,
+  mpl_token_metadata:        `mpl-token-metadata = "5.1"`,
+  pyth_solana_receiver_sdk:  `pyth-solana-receiver-sdk = "0.6"`,
+  switchboard_on_demand:     `switchboard-on-demand = "0.4"`,
+  solana_keccak_hasher:      `solana-keccak-hasher = "2.2"`,
+  solana_sha256_hasher:      `solana-sha256-hasher = "2.2"`,
+  sha2_const_stable:         `sha2-const-stable = "0.1"`,
+  num_derive:                `num-derive = "0.4"`,
+  num_traits:                `num-traits = "0.2"`,
+};
+
+/** Extract crate prefixes from IR imports AND from carried-over source text
+ *  (instruction bodies, helper fns, custom type rawCode). Real Anchor programs
+ *  frequently use qualified calls like `solana_sha256_hasher::hashv(...)`
+ *  without a matching `use` statement, so an imports-only scan misses them. */
+function extractUsedCrates(ir: SolanaIR): Set<string> {
+  const seen = new Set<string>();
+  const scan = (text: string | undefined) => {
+    if (!text) return;
+    for (const m of text.matchAll(/\b([a-zA-Z_][\w]*)::/g)) {
+      if (m[1]) seen.add(m[1]);
+    }
+  };
+  for (const imp of ir.imports ?? []) scan(imp);
+  for (const helper of ir.helperFns ?? []) scan(helper.rawCode);
+  for (const typeDef of ir.types ?? []) scan(typeDef.rawCode);
+  for (const instr of ir.instructions ?? []) {
+    for (const stmt of instr.body ?? []) {
+      if ("code" in stmt) scan(stmt.code);
+      if ("rawCode" in stmt) scan(stmt.rawCode);
+    }
+  }
+  return seen;
+}
+
 // ─── Cargo.toml per target ───────────────────────────────────────────────────
 
 function cargoToml(ir: SolanaIR, target: Target): string {
@@ -88,6 +132,13 @@ pinocchio-associated-token-account = "0.4"
 `;
   }
   if (target === "native") {
+    const used = extractUsedCrates(ir);
+    const optional = Object.entries(NATIVE_OPTIONAL_DEPS)
+      .filter(([crate]) => used.has(crate))
+      .map(([_, dep]) => dep);
+    const optionalSection = optional.length > 0
+      ? `\n# Auto-detected from source imports — required for the carried-over\n# helpers and CPI calls that reference these external programs.\n${optional.join("\n")}\n`
+      : "";
     return `${header}
 [dependencies]
 borsh = { version = "1.5", features = ["derive"] }
@@ -98,7 +149,7 @@ solana-program = "2.2"
 spl-token = "7"
 spl-associated-token-account = "6"
 thiserror = "2.0"
-
+${optionalSection}
 [dev-dependencies]
 # LiteSVM is the 2026 recommendation for native program tests — in-process,
 # fast, no validator process. Uncomment to use.

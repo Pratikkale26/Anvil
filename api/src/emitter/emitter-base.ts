@@ -200,6 +200,13 @@ export abstract class BaseEmitter {
   }
 
   protected filteredSourceImports(ir: SolanaIR): string[] {
+    // Native target ships solana-program + can pull in additional crates via
+    // project-scaffold's NATIVE_OPTIONAL_DEPS. So `mpl_core`, `pyth_*` etc.
+    // are kept; only Anchor-internals (which we replaced with hand-written
+    // emit) and project-internal modules (`crate::`, `self::`, ...) are
+    // stripped. Pinocchio/Quasar still drop external-Solana crates because
+    // their Cargo.toml doesn't ship those deps.
+    const isNative = this.frameworkName === "Native";
     return (ir.imports ?? [])
       .map((statement) => {
         const trimmed = statement.trim().replace(/;$/, "");
@@ -209,13 +216,10 @@ export abstract class BaseEmitter {
       })
       .filter((statement) => {
         if (statement.startsWith("use anchor_lang::")) return false;
-        if (statement.startsWith("use anchor_spl::")) return false;
         // Filter out `use { anchor_lang::..., anchor_spl::... }` block imports
         if (/^use\s*\{[\s\S]*\banchor_lang::/.test(statement)) return false;
-        if (/^use\s*\{[\s\S]*\banchor_spl::/.test(statement)) return false;
         // Filter out imports from external Anchor crates that leak through
         if (/\banchor_lang\b/.test(statement)) return false;
-        if (/\banchor_spl\b/.test(statement)) return false;
         if (statement.startsWith("use crate::")) return false;
         if (statement.startsWith("use self::")) return false;
         if (statement.startsWith("use super::")) return false;
@@ -225,15 +229,26 @@ export abstract class BaseEmitter {
         if (statement.startsWith("use errors::")) return false;
         if (statement.startsWith("use hash::")) return false;
         if (statement.startsWith("pub use ")) return false;
-        // Source-only crates that aren't in the transpiled Cargo.toml.
-        // Carrying these through forces a build failure; the IR-driven emit
-        // doesn't actually need them for the generated handlers/types.
-        if (/\bnum_derive\b/.test(statement)) return false;
-        if (/\bnum_traits\b/.test(statement)) return false;
-        if (/\bmpl_core\b/.test(statement)) return false;
-        if (/\bmpl_token_metadata\b/.test(statement)) return false;
-        if (/\bpyth_solana_receiver_sdk\b/.test(statement)) return false;
-        if (/\bsha2_const_stable\b/.test(statement)) return false;
+        // anchor_spl always filtered: the CPI transformer rewrites the actual
+        // call sites (e.g., `anchor_spl::token::transfer(...)`) into native
+        // SPL helpers, so the import isn't needed in any target.
+        if (statement.startsWith("use anchor_spl::")) return false;
+        if (/^use\s*\{[\s\S]*\banchor_spl::/.test(statement)) return false;
+        if (/\banchor_spl\b/.test(statement)) return false;
+        // External crates: native carries them through (project-scaffold adds
+        // matching deps to Cargo.toml). Pinocchio/Quasar filter them out
+        // because there's no compatible dep in their Cargo.toml.
+        if (!isNative) {
+          if (/\bnum_derive\b/.test(statement)) return false;
+          if (/\bnum_traits\b/.test(statement)) return false;
+          if (/\bmpl_core\b/.test(statement)) return false;
+          if (/\bmpl_token_metadata\b/.test(statement)) return false;
+          if (/\bpyth_solana_receiver_sdk\b/.test(statement)) return false;
+          if (/\bswitchboard_on_demand\b/.test(statement)) return false;
+          if (/\bsolana_keccak_hasher\b/.test(statement)) return false;
+          if (/\bsolana_sha256_hasher\b/.test(statement)) return false;
+          if (/\bsha2_const_stable\b/.test(statement)) return false;
+        }
         return true;
       });
   }
@@ -838,6 +853,14 @@ ${fields}
       return `        let ${fieldName}: i8 = data[offset] as i8;
         offset += 1;`;
     }
+    // Dynamically-sized / borsh-native types — String and Vec<T> don't have
+    // `::from_le_bytes` and must round-trip through borsh like structs do.
+    if (typeName === "String" || /^Vec<.+>$/.test(typeName)) {
+      return `        let mut ${fieldName}_bytes = &data[offset..offset + ${size}];
+        let ${fieldName}: ${typeName} = BorshDeserialize::deserialize(&mut ${fieldName}_bytes)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += ${size};`;
+    }
     return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(
             data[offset..offset + ${size}].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
@@ -872,6 +895,15 @@ ${fields}
     if (typeName === "u8" || typeName === "i8") {
       return `        data[offset] = value.${fieldName} as u8;
         offset += 1;`;
+    }
+    // Dynamically-sized / borsh-native types — mirror the buildReadLine branch.
+    if (typeName === "String" || /^Vec<.+>$/.test(typeName)) {
+      return `        {
+            let mut ${fieldName}_bytes = &mut data[offset..offset + ${size}];
+            BorshSerialize::serialize(&value.${fieldName}, &mut ${fieldName}_bytes)
+                .map_err(|_| ProgramError::InvalidAccountData)?;
+        }
+        offset += ${size};`;
     }
     return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName}.to_le_bytes());
         offset += ${size};`;
