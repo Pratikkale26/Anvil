@@ -46,6 +46,9 @@ export type EmitResponse = {
   refineResult?: RefineResult;
   /** Set when refine was attempted but failed at the provider layer. */
   refineError?: { category: string; message: string };
+  /** True when the response includes a full cargo-buildable scaffold
+   *  (Cargo.toml + README.md + src/). */
+  projectScaffold?: boolean;
 };
 
 export type FolderEntry = { path: string; content: string };

@@ -63,6 +63,20 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
   // the user hit). Tabs are visually dimmed + click-disabled while open.
   const diffOverlayActive = showCompare && !!activeRefinePatch;
 
+  // Map a file path to a Monaco language id so non-.rs scaffold files
+  // (Cargo.toml, README.md, anvil-manifest.json, .gitignore) render with the
+  // right syntax highlighting instead of being treated as Rust.
+  const languageForPath = (path: string): string => {
+    const lower = path.toLowerCase();
+    if (lower.endsWith(".rs")) return "rust";
+    if (lower.endsWith(".toml")) return "toml";
+    if (lower.endsWith(".md")) return "markdown";
+    if (lower.endsWith(".json")) return "json";
+    if (lower.endsWith(".yml") || lower.endsWith(".yaml")) return "yaml";
+    if (lower.endsWith(".gitignore")) return "ignore";
+    return "plaintext";
+  };
+
   // Quick line-level delta so the header surfaces "+N / -M" at a glance.
   // Cheap line-count comparison, not a real LCS — precise diff rendering is
   // handled by Monaco's DiffEditor below. Trailing empty line from split is
@@ -161,7 +175,7 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
               <Download size={14} />
             </IconBtn>
             <IconBtn
-              title="Download .tar"
+              title="Download buildable project (.tar) — includes Cargo.toml + README + src/"
               onClick={downloadProjectBundle}
               disabled={!outputFiles.length}
               primary
@@ -509,7 +523,8 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                 <div style={{ height: editorHeight }}>
                   <Editor
                     height={`${editorHeight}px`}
-                    language="rust"
+                    language={languageForPath(activeFilePath)}
+                    path={activeFilePath}
                     value={selectedFileContent}
                     theme="vs-dark"
                     options={MONACO_OPTS}

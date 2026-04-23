@@ -177,9 +177,45 @@ export function useAnvilPipeline() {
     );
   }
 
-  function downloadProjectBundle() {
-    if (!outputFiles.length) return;
-    downloadBlob(`${programName}-${target}.tar`, makeTar(outputFiles));
+  // Buildable-project download. Makes a dedicated /emit call with
+  // projectScaffold: true so the response includes Cargo.toml + README +
+  // .gitignore + anvil-manifest.json + src/lib.rs (the single-file emit,
+  // which CI proves builds). UI state is not disturbed — this request
+  // exists only to produce the tar.
+  const [bundleBusy, setBundleBusy] = useState(false);
+  const [bundleError, setBundleError] = useState<string | null>(null);
+
+  async function downloadProjectBundle() {
+    if (!outputFiles.length || !irText) return;
+    try {
+      setBundleBusy(true);
+      setBundleError(null);
+      const ir = JSON.parse(irText);
+      const res = await fetch(`${API_BASE}/emit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ir,
+          target,
+          multiFile: true,
+          projectScaffold: true,
+        }),
+      });
+      if (!res.ok) {
+        const p = await res.json().catch(() => ({ error: "Bundle failed" }));
+        throw new Error(p.details ?? p.error ?? "Bundle failed");
+      }
+      const emitted = (await res.json()) as EmitResponse;
+      const files = emitted.files ?? [];
+      if (files.length === 0) {
+        throw new Error("Server returned no files for the project bundle.");
+      }
+      downloadBlob(`${programName}-${target}.tar`, makeTar(files));
+    } catch (err) {
+      setBundleError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBundleBusy(false);
+    }
   }
 
   function downloadDiagnostics() {
@@ -500,6 +536,8 @@ export function useAnvilPipeline() {
     copyActiveContent,
     downloadSingleFile,
     downloadProjectBundle,
+    bundleBusy,
+    bundleError,
     downloadDiagnostics,
   };
 }
