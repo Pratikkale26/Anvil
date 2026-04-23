@@ -8,6 +8,7 @@ import { C } from "@/lib/constants";
 import { InputPanel } from "@/components/workbench/input-panel";
 import { OutputPanel } from "@/components/workbench/output-panel";
 import { ValidationPanel } from "@/components/workbench/validation-panel";
+import { LintPanel } from "@/components/workbench/lint-panel";
 import { cn } from "@/lib/utils";
 
 export default function Workbench() {
@@ -105,6 +106,7 @@ export default function Workbench() {
           <InputPanel state={state} />
           <div className="flex flex-col gap-4">
             <OutputPanel state={state} />
+            <LintPanel state={state} />
             <ValidationPanel state={state} />
           </div>
         </div>

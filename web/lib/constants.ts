@@ -29,6 +29,26 @@ export type ParseResponse = {
 
 export type EmitFile = { path: string; content: string };
 
+// ─── Lint report (mirror of api/src/cli/lint-analyzer.ts) ────────────────────
+
+export type LintLevel = "ready" | "review" | "blocker";
+
+export type LintFinding = {
+  level: LintLevel;
+  category: string;
+  title: string;
+  detail: string;
+  where?: string;
+};
+
+export type LintReport = {
+  program: string;
+  counts: { ready: number; review: number; blocker: number };
+  readinessScore: number;
+  verdict: "ready" | "reviewable" | "blocked";
+  findings: LintFinding[];
+};
+
 export type CUEstimate = {
   instruction: string;
   anchor: number;

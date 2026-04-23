@@ -260,6 +260,13 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
           onClick={() => setActivePane("diff")}
           label="Diff"
         />
+        {cuEstimates && cuEstimates.length > 0 && (
+          <PaneTab
+            active={activePane === "bench"}
+            onClick={() => setActivePane("bench")}
+            label="CU"
+          />
+        )}
       </div>
 
       {/* Content: idle / loading / output */}
@@ -573,6 +580,111 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                 theme="vs-dark"
                 options={MONACO_OPTS}
               />
+            </div>
+          )}
+
+          {/* CU bench tab — ranked per-instruction CU table, target-highlighted. */}
+          {activePane === "bench" && (
+            <div
+              style={{ height: editorHeight, overflowY: "auto" }}
+              className="px-5 py-4"
+            >
+              <div className="mb-3 text-xs text-anvil-text-muted leading-relaxed">
+                Per-instruction compute-unit estimate vs the Anchor baseline.
+                Hotspots sorted by {tm.label} cost (largest first). Same data
+                as <code className="font-mono text-[11px] text-anvil-text-sub">anvil bench</code>.
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs font-mono">
+                  <thead>
+                    <tr className="text-anvil-text-muted border-b border-anvil-line">
+                      <th className="py-2 pr-3 text-left font-semibold">Instruction</th>
+                      <th className="py-2 px-3 text-right font-semibold">Anchor</th>
+                      <th className="py-2 px-3 text-right font-semibold">Pinocchio</th>
+                      <th className="py-2 px-3 text-right font-semibold">Native</th>
+                      <th className="py-2 px-3 text-right font-semibold">Quasar</th>
+                      <th className="py-2 pl-3 text-right font-semibold">Save ({tm.label})</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...cuEstimates]
+                      .sort((a, b) => {
+                        const key = target === "native" ? "native" : target === "quasar" ? "quasar" : "pinocchio";
+                        return b[key] - a[key];
+                      })
+                      .map((r) => {
+                        const targetCu =
+                          target === "native" ? r.native : target === "quasar" ? r.quasar : r.pinocchio;
+                        const savings =
+                          target === "native"
+                            ? `-${Math.round(((r.anchor - r.native) / r.anchor) * 100)}%`
+                            : target === "quasar"
+                              ? r.savingsQuasar.startsWith("-") ? r.savingsQuasar : `-${r.savingsQuasar}`
+                              : r.savingsPinocchio.startsWith("-") ? r.savingsPinocchio : `-${r.savingsPinocchio}`;
+                        return (
+                          <tr key={r.instruction} className="border-b border-anvil-line/40">
+                            <td className="py-2 pr-3 text-anvil-text">{r.instruction}</td>
+                            <td className="py-2 px-3 text-right text-anvil-text-muted">{r.anchor.toLocaleString()}</td>
+                            <td
+                              className="py-2 px-3 text-right"
+                              style={{ color: target === "pinocchio" ? tm.color : C.textSub }}
+                            >
+                              {r.pinocchio.toLocaleString()}
+                            </td>
+                            <td
+                              className="py-2 px-3 text-right"
+                              style={{ color: target === "native" ? tm.color : C.textSub }}
+                            >
+                              {r.native.toLocaleString()}
+                            </td>
+                            <td
+                              className="py-2 px-3 text-right"
+                              style={{ color: target === "quasar" ? tm.color : C.textSub }}
+                            >
+                              {r.quasar.toLocaleString()}
+                            </td>
+                            <td
+                              className="py-2 pl-3 text-right font-bold"
+                              style={{ color: tm.color }}
+                            >
+                              {savings} ({(r.anchor - targetCu).toLocaleString()} CU)
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    <tr className="font-bold">
+                      <td className="py-2.5 pr-3 text-anvil-text">TOTAL</td>
+                      {(() => {
+                        const totals = cuEstimates.reduce(
+                          (a, r) => ({
+                            anchor: a.anchor + r.anchor,
+                            pinocchio: a.pinocchio + r.pinocchio,
+                            native: a.native + r.native,
+                            quasar: a.quasar + r.quasar,
+                          }),
+                          { anchor: 0, pinocchio: 0, native: 0, quasar: 0 },
+                        );
+                        const targetTotal =
+                          target === "native" ? totals.native : target === "quasar" ? totals.quasar : totals.pinocchio;
+                        const savePct = totals.anchor
+                          ? Math.round(((totals.anchor - targetTotal) / totals.anchor) * 100)
+                          : 0;
+                        return (
+                          <>
+                            <td className="py-2.5 px-3 text-right">{totals.anchor.toLocaleString()}</td>
+                            <td className="py-2.5 px-3 text-right" style={{ color: target === "pinocchio" ? tm.color : C.textSub }}>{totals.pinocchio.toLocaleString()}</td>
+                            <td className="py-2.5 px-3 text-right" style={{ color: target === "native" ? tm.color : C.textSub }}>{totals.native.toLocaleString()}</td>
+                            <td className="py-2.5 px-3 text-right" style={{ color: target === "quasar" ? tm.color : C.textSub }}>{totals.quasar.toLocaleString()}</td>
+                            <td className="py-2.5 pl-3 text-right" style={{ color: tm.color }}>
+                              -{savePct}% ({(totals.anchor - targetTotal).toLocaleString()} CU)
+                            </td>
+                          </>
+                        );
+                      })()}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </>

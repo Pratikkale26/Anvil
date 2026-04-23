@@ -8,6 +8,7 @@ import {
   type EmitResponse,
   type FolderEntry,
   type InputMode,
+  type LintReport,
   type ParseResponse,
   type PipelineStage,
   type RefineResult,
@@ -46,7 +47,7 @@ export function useAnvilPipeline() {
   const [outputFiles, setOutputFiles] = useState<EmitFile[]>([]);
   const [programName, setProgramName] = useState("anvil-output");
   const [activePane, setActivePane] = useState<
-    "source" | "single" | "files" | "ir" | "diff"
+    "source" | "single" | "files" | "ir" | "diff" | "bench"
   >("single");
   const [activeFilePath, setActiveFilePath] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -60,6 +61,9 @@ export function useAnvilPipeline() {
   );
   /** CU estimates returned by /emit — per-instruction savings vs Anchor. */
   const [cuEstimates, setCuEstimates] = useState<CUEstimate[]>([]);
+  /** Lint report from /lint — portability scorecard. Fetched in parallel with /emit. */
+  const [lintReport, setLintReport] = useState<LintReport | null>(null);
+  const [lintBusy, setLintBusy] = useState(false);
   const [reviewReport, setReviewReport] = useState<ReviewReport | null>(null);
 
   // ─── Refine state ─────────────────────────────────────────────────────────
@@ -271,6 +275,7 @@ export function useAnvilPipeline() {
     setWarnings([]);
     setValidationIssues([]);
     setCuEstimates([]);
+    setLintReport(null);
     setTransformSummary(null);
     setReviewReport(null);
     setRefineResult(null);
@@ -357,6 +362,20 @@ export function useAnvilPipeline() {
 
       setPipelineStage("emitting");
       await sleep(220);
+
+      // Fire lint in parallel with emit — /lint is a pure IR analysis so
+      // there's no reason to serialize. Results land before the user has
+      // a chance to click the Lint tab in most cases.
+      setLintBusy(true);
+      const lintPromise = fetch(`${API_BASE}/lint`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ir: parsed.ir }),
+      })
+        .then((r) => (r.ok ? (r.json() as Promise<LintReport>) : null))
+        .catch(() => null)
+        .finally(() => setLintBusy(false));
+
       const emitRes = await fetch(`${API_BASE}/emit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -381,6 +400,11 @@ export function useAnvilPipeline() {
       setValidationIssues(emitted.validationIssues ?? []);
       setCuEstimates(emitted.cu ?? []);
       setReviewReport(emitted.reviewReport ?? null);
+      // Resolve the parallel lint fetch. No await earlier so we didn't
+      // block emit on it; now fold the result in.
+      lintPromise.then((report) => {
+        if (report) setLintReport(report);
+      });
       setActivePane("single");
       setApiOk(true);
 
@@ -506,6 +530,8 @@ export function useAnvilPipeline() {
     transformSummary,
     validationIssues,
     cuEstimates,
+    lintReport,
+    lintBusy,
     reviewReport,
     activeContent,
     selectedFileContent,
