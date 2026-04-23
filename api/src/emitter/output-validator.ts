@@ -678,9 +678,14 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     });
   }
 
-  const files = output.files.length > 0
-    ? output.files
-    : [{ path: `${ir.name}.rs`, content: output.singleFile }];
+  // Defensive: validator only reasons about Rust sources. If callers later
+  // include Cargo.toml / README.md in `files` (project scaffold), those are
+  // stripped here so the Rust-specific regex patterns never fire on them.
+  const files = (
+    output.files.length > 0
+      ? output.files
+      : [{ path: `${ir.name}.rs`, content: output.singleFile }]
+  ).filter((f) => f.path.endsWith(".rs"));
   issues.push(...checkUndefinedAssociatedConsts(files));
   issues.push(...checkExternalCrateDependencies(files));
   const aggregateTarget = detectTarget(files.map((file) => file.content).join("\n"));

@@ -8,6 +8,7 @@ import { validateEmitterOutput } from "../emitter/output-validator.js";
 import { refineOutput } from "../ai/refine.js";
 import { buildDeterministicReviewReport } from "../ai/review-report.js";
 import { AIError } from "../ai/errors.js";
+import { buildProjectScaffold } from "../emitter/project-scaffold.js";
 import { AnvilError, ErrorCode } from "../errors.js";
 
 export const emitRoute = Router();
@@ -54,9 +55,14 @@ emitRoute.post("/", async (req, res) => {
     target?: string;
     multiFile?: boolean;
     strict?: boolean;
+    projectScaffold?: boolean;
   };
   const strict = Boolean((req.body as { strict?: boolean }).strict);
   const refine = req.query.refine === "1";
+  // projectScaffold: when true the response includes Cargo.toml + README.md
+  // + .gitignore + anvil-manifest.json, and the emitted .rs files are
+  // rewritten to live under src/ so the whole thing is `cargo build`-able.
+  const projectScaffold = Boolean((req.body as { projectScaffold?: boolean }).projectScaffold);
 
   if (!rawIr || typeof rawIr !== "object") {
     const err = new AnvilError(
@@ -207,9 +213,30 @@ emitRoute.post("/", async (req, res) => {
       refineError,
     };
 
-    // Include multi-file output if requested
+    // Include multi-file output if requested.
+    //
+    // When projectScaffold is also set, rewrite emitted .rs paths under src/
+    // and prepend Cargo.toml / README.md / .gitignore / anvil-manifest.json so
+    // the download is a complete, buildable Cargo project. Path rewriting
+    // happens ONLY here — the internal validate/refine pipeline operated on
+    // the original paths, so refine patches still align.
+    // multiFile alone → decomposed files for UI browsing.
+    // multiFile + projectScaffold → a cargo-buildable project: the
+    //   single-file emit (which CI validates) lands at src/lib.rs, with
+    //   Cargo.toml / README / .gitignore / manifest at the project root.
+    //   We deliberately do NOT ship the decomposed multi-file Rust here —
+    //   cross-module helpers are currently emitted as private `fn`, so the
+    //   multi-file set won't compile standalone. Frontend uses this mode
+    //   only for the download action, keeping the UI tree on multi-file.
     if (multiFile) {
-      response.files = currentFiles;
+      if (projectScaffold) {
+        const scaffold = buildProjectScaffold(ir, target as Target);
+        const libRs = { path: "src/lib.rs", content: currentSingleFile };
+        response.files = [...scaffold, libRs];
+        response.projectScaffold = true;
+      } else {
+        response.files = currentFiles;
+      }
     }
 
     res.json(response);
