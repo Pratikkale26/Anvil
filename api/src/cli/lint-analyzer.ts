@@ -125,11 +125,11 @@ function analyzeAccounts(ir: SolanaIR, findings: LintFinding[]): void {
     for (const accRef of instr.accounts) {
       if (accRef.constraints.some((c) => c.kind === "init_if_needed")) {
         findings.push({
-          level: "review",
+          level: "ready",
           category: "Account lifecycle",
           title: `init_if_needed on \`${accRef.name}\``,
           detail:
-            "The emitter currently treats this as unconditional init. Verify the skip-if-exists path, or gate the instruction from the client when the account exists.",
+            "Emitted as `if <account>.data_is_empty() { create_program_account(...) }` — the create path is skipped when the account is already allocated.",
           where: `${instr.name} / ${accRef.name}`,
         });
       }

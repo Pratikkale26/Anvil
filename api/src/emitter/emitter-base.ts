@@ -1031,6 +1031,24 @@ ${fields}
       accountRef.initSpace,
       signerSeedsExpr,
     );
+
+    // `init_if_needed` means: only allocate if the account doesn't already
+    // exist on-chain. An empty data buffer + zero lamports is the standard
+    // heuristic. Wrap the signer-seed setup AND the create call so we don't
+    // pay to re-derive seeds on the no-op path either.
+    const isIfNeeded = accountRef.constraints.some(
+      (c) => c.kind === "init_if_needed",
+    );
+    if (isIfNeeded) {
+      const body = [signerPrelude, createCall].filter(Boolean).join("\n");
+      // Indent body so the emitted block stays readable.
+      const indented = body.replace(/^/gm, "    ");
+      return `    // init_if_needed: only allocate when the account is empty.
+    if ${accountName}.data_is_empty() {
+${indented}
+    }`;
+    }
+
     return [signerPrelude, createCall].filter(Boolean).join("\n");
   }
 
