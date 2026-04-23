@@ -29,6 +29,16 @@ export type ParseResponse = {
 
 export type EmitFile = { path: string; content: string };
 
+export type CUEstimate = {
+  instruction: string;
+  anchor: number;
+  pinocchio: number;
+  quasar: number;
+  native: number;
+  savingsPinocchio: string;
+  savingsQuasar: string;
+};
+
 export type EmitResponse = {
   code: string;
   files?: EmitFile[];
@@ -36,6 +46,8 @@ export type EmitResponse = {
   programName?: string;
   target: Target;
   transformReport?: { transformedCount: number; passedThroughCount: number };
+  /** Per-instruction CU estimate vs the Anchor baseline. */
+  cu?: CUEstimate[];
   validationIssues?: Array<{
     severity: "error" | "warning";
     message: string;

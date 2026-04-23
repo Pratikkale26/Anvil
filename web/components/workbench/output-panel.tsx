@@ -42,6 +42,7 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     hasOutput,
     strictValidated,
     hasAppliedRefine,
+    cuEstimates,
     refineResult,
     showCompare,
     activeRefinePatch,
@@ -113,6 +114,22 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
 
   const tm = TARGET_META[target];
 
+  // Overall CU savings vs the Anchor baseline for the active target.
+  // Summed across every instruction so the header shows ONE number; the
+  // per-instruction breakdown still lives in the CU analysis section of
+  // the landing page + the Markdown from `anvil bench`.
+  const cuSavings = (() => {
+    if (!cuEstimates || cuEstimates.length === 0) return null;
+    let anchor = 0, after = 0;
+    for (const est of cuEstimates) {
+      anchor += est.anchor;
+      after += target === "pinocchio" ? est.pinocchio : target === "native" ? est.native : est.quasar;
+    }
+    if (anchor <= 0) return null;
+    const pct = Math.round(((anchor - after) / anchor) * 100);
+    return { anchor, after, pct };
+  })();
+
   return (
     <Panel>
       {/* Output header */}
@@ -140,6 +157,19 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                 >
                   {tm.label}
                 </span>
+                {cuSavings && cuSavings.pct > 0 && (
+                  <span
+                    className="text-[10px] font-bold px-1.5 py-px rounded border"
+                    title={`Anchor baseline: ${cuSavings.anchor.toLocaleString()} CU · ${tm.label}: ${cuSavings.after.toLocaleString()} CU`}
+                    style={{
+                      color: tm.color,
+                      background: `${tm.color}14`,
+                      borderColor: `${tm.color}35`,
+                    }}
+                  >
+                    −{cuSavings.pct}% CU
+                  </span>
+                )}
                 {strictValidated && (
                   <span className="text-[10px] font-bold text-anvil-teal px-1.5 py-px rounded bg-[rgba(14,168,128,0.1)] border border-[rgba(14,168,128,0.2)]">
                     valid

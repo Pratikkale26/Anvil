@@ -544,7 +544,7 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
         </Panel>
       )}
 
-      {/* Run button */}
+      {/* Run button — ⌘↵ / Ctrl↵ also triggers (wired in workbench/page.tsx). */}
       <button
         onClick={runPipeline}
         disabled={isRunning}
@@ -565,6 +565,9 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
         ) : (
           <>
             <Play size={16} /> Parse + Emit &rarr; {tm.label}
+            <kbd className="ml-1 text-[10px] font-semibold opacity-60 bg-black/20 px-1.5 py-0.5 rounded-md">
+              ⌘↵
+            </kbd>
           </>
         )}
       </button>

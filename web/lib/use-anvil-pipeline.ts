@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   API_BASE,
+  type CUEstimate,
   type EmitFile,
   type EmitResponse,
   type FolderEntry,
@@ -57,6 +58,8 @@ export function useAnvilPipeline() {
   const [validationIssues, setValidationIssues] = useState<ValidationIssue[]>(
     []
   );
+  /** CU estimates returned by /emit — per-instruction savings vs Anchor. */
+  const [cuEstimates, setCuEstimates] = useState<CUEstimate[]>([]);
   const [reviewReport, setReviewReport] = useState<ReviewReport | null>(null);
 
   // ─── Refine state ─────────────────────────────────────────────────────────
@@ -267,6 +270,7 @@ export function useAnvilPipeline() {
     setProgramName("anvil-output");
     setWarnings([]);
     setValidationIssues([]);
+    setCuEstimates([]);
     setTransformSummary(null);
     setReviewReport(null);
     setRefineResult(null);
@@ -375,6 +379,7 @@ export function useAnvilPipeline() {
       setWarnings(emitted.warnings ?? []);
       setTransformSummary(emitted.transformReport ?? null);
       setValidationIssues(emitted.validationIssues ?? []);
+      setCuEstimates(emitted.cu ?? []);
       setReviewReport(emitted.reviewReport ?? null);
       setActivePane("single");
       setApiOk(true);
@@ -500,6 +505,7 @@ export function useAnvilPipeline() {
     copied,
     transformSummary,
     validationIssues,
+    cuEstimates,
     reviewReport,
     activeContent,
     selectedFileContent,

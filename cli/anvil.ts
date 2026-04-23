@@ -24,6 +24,16 @@ import { validateEmitterOutput } from "../api/src/emitter/output-validator.js";
 import { analyzeCU } from "../api/src/emitter/cu-analyzer.js";
 import { buildProjectScaffold } from "../api/src/emitter/project-scaffold.js";
 import { resolveLocalSource } from "../api/src/parser/local-source.js";
+import { analyzePortability, renderLintMarkdown } from "../api/src/cli/lint-analyzer.js";
+import { runBench, renderBenchMarkdown } from "../api/src/cli/bench-analyzer.js";
+import {
+  SNAPSHOT_FILENAME,
+  loadSnapshot,
+  saveSnapshot,
+  compareToSnapshot,
+  renderSnapshotMarkdown,
+} from "../api/src/cli/snapshot.js";
+import { diffIRs, renderDiffMarkdown } from "../api/src/cli/diff-analyzer.js";
 import type { SolanaIR, EmitterOutput, CUEstimate } from "../api/src/ir/schema.js";
 
 // ─── Version ─────────────────────────────────────────────────────────────────
@@ -83,10 +93,18 @@ function fatal(msg: string): never {
 interface CliArgs {
   command: string | null;
   input: string | null;
+  /** Optional second positional — used by `diff` for the new-version path. */
+  input2: string | null;
   target: string | null;
   output: string | null;
   singleFile: boolean;
   json: boolean;
+  markdown: boolean;
+  save: boolean;
+  check: boolean;
+  thresholdPct: number;
+  thresholdAbs: number;
+  snapshotPath: string | null;
   help: boolean;
 }
 
@@ -94,10 +112,17 @@ function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     command: null,
     input: null,
+    input2: null,
     target: null,
     output: null,
     singleFile: false,
     json: false,
+    markdown: false,
+    save: false,
+    check: false,
+    thresholdPct: 5,
+    thresholdAbs: 10,
+    snapshotPath: null,
     help: false,
   };
 
@@ -142,6 +167,46 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
 
+    if (arg === "--markdown" || arg === "--md") {
+      args.markdown = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--save") {
+      args.save = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--check") {
+      args.check = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--threshold-pct") {
+      const v = parseInt(rest[i + 1] ?? "", 10);
+      if (!Number.isFinite(v)) fatal(`--threshold-pct requires a number`);
+      args.thresholdPct = v;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--threshold-abs") {
+      const v = parseInt(rest[i + 1] ?? "", 10);
+      if (!Number.isFinite(v)) fatal(`--threshold-abs requires a number`);
+      args.thresholdAbs = v;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--snapshot") {
+      args.snapshotPath = rest[i + 1] ?? null;
+      i += 2;
+      continue;
+    }
+
     if (arg.startsWith("-")) {
       fatal(`Unknown option: ${arg}\n\n  Run ${c.cyan}anvil --help${c.reset} for usage.`);
     }
@@ -151,6 +216,8 @@ function parseArgs(argv: string[]): CliArgs {
       args.command = arg;
     } else if (args.input === null) {
       args.input = arg;
+    } else if (args.input2 === null) {
+      args.input2 = arg;
     }
 
     i++;
@@ -175,13 +242,23 @@ function printHelp(): void {
     compile    Parse, emit, validate, and write output files
     parse      Parse only — output IR as JSON
     validate   Parse, emit, validate — show issues
+    lint       Auto-port readiness report (ready / review / blocker findings)
+    bench      Per-instruction CU estimate vs Anchor baseline
+    snapshot   Save / check CU baseline — fails on regression
+    diff       Storage layout diff between two program versions
 
   ${c.bold}OPTIONS${c.reset}
 
     --target, -t <target>   Target framework: pinocchio, native, quasar
     --output, -o <dir>      Output directory (default: ./anvil-output/)
     --single-file           Emit a single .rs file instead of project layout
-    --json                  Output as JSON (IR for parse, issues for validate)
+    --json                  JSON output (IR / issues / reports)
+    --markdown, --md        Markdown output (for lint / bench / snapshot / diff)
+    --save                  Save snapshot baseline (snapshot only)
+    --check                 Check against snapshot baseline (snapshot only)
+    --threshold-pct N       Regression threshold, percent (snapshot; default 5)
+    --threshold-abs N       Regression threshold, absolute CUs (snapshot; default 10)
+    --snapshot <path>       Snapshot file path (default ./anvil.snapshot.json)
     --help, -h              Show this help
     --version, -v           Show version
 
@@ -190,17 +267,18 @@ function printHelp(): void {
     ${c.dim}# Transpile a single file${c.reset}
     anvil compile program.rs --target pinocchio
 
-    ${c.dim}# Transpile a project directory${c.reset}
-    anvil compile ./my-anchor-project --target pinocchio
+    ${c.dim}# Portability report for a program${c.reset}
+    anvil lint ./my-anchor-project
 
-    ${c.dim}# Output to a specific directory${c.reset}
-    anvil compile program.rs --target pinocchio --output ./output/
+    ${c.dim}# CU bench report (ranked hotspots)${c.reset}
+    anvil bench program.rs --markdown > bench.md
 
-    ${c.dim}# Get IR as JSON${c.reset}
-    anvil parse program.rs --json
+    ${c.dim}# CI guardrail — fail if any instruction gets slower${c.reset}
+    anvil snapshot program.rs --save      # first run
+    anvil snapshot program.rs --check     # in CI
 
-    ${c.dim}# Validate transpiled output${c.reset}
-    anvil validate program.rs --target pinocchio
+    ${c.dim}# Storage layout diff between two versions${c.reset}
+    anvil diff ./v1 ./v2 --markdown > upgrade-safety.md
 `);
 }
 
@@ -709,6 +787,283 @@ async function cmdValidate(args: CliArgs): Promise<void> {
   }
 }
 
+// ─── anvil lint ──────────────────────────────────────────────────────────────
+
+async function cmdLint(args: CliArgs): Promise<void> {
+  if (!args.input) {
+    fatal("Missing input file or directory.\n\n  Usage: anvil lint <input> [--json|--markdown]");
+  }
+  if (!args.json && !args.markdown) banner();
+  const source = resolveSource(args.input);
+  const parseResult = await parseAnchor(source);
+  if (!parseResult.ok) {
+    if (args.json) {
+      console.log(JSON.stringify({ ok: false, error: parseResult.error }));
+    } else {
+      error(`Parse failed: ${parseResult.error}`);
+    }
+    process.exit(1);
+  }
+  const report = analyzePortability(parseResult.ir);
+
+  if (args.json) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  if (args.markdown) {
+    console.log(renderLintMarkdown(report));
+    return;
+  }
+
+  // Human-readable terminal output.
+  const verdictColor =
+    report.verdict === "ready" ? c.green : report.verdict === "reviewable" ? c.yellow : c.red;
+  console.log(`  ${c.bold}ANVIL LINT${c.reset} — ${report.program}`);
+  console.log(`  ${verdictColor}${c.bold}${report.verdict.toUpperCase()}${c.reset}  readiness score ${c.bold}${report.readinessScore}/100${c.reset}`);
+  console.log(`  ${c.dim}${report.counts.blocker} blocker · ${report.counts.review} review · ${report.counts.ready} ready${c.reset}`);
+  console.log();
+
+  for (const level of ["blocker", "review", "ready"] as const) {
+    const rows = report.findings.filter((f) => f.level === level);
+    if (rows.length === 0) continue;
+    const sym = level === "blocker" ? `${c.red}✗${c.reset}` : level === "review" ? `${c.yellow}⚠${c.reset}` : `${c.green}✓${c.reset}`;
+    const heading = level === "blocker" ? "Blockers" : level === "review" ? "Review" : "Ready";
+    console.log(`  ${c.bold}${heading}${c.reset}`);
+    for (const f of rows) {
+      console.log(`    ${sym} ${f.title}`);
+      if (f.where) console.log(`      ${c.dim}${f.where}${c.reset}`);
+      console.log(`      ${c.dim}${f.detail}${c.reset}`);
+    }
+    console.log();
+  }
+
+  // Exit non-zero on blockers — lets CI use it as a gate.
+  if (report.counts.blocker > 0) process.exit(1);
+}
+
+// ─── anvil bench ─────────────────────────────────────────────────────────────
+
+async function cmdBench(args: CliArgs): Promise<void> {
+  if (!args.input) {
+    fatal("Missing input file or directory.\n\n  Usage: anvil bench <input> [--json|--markdown]");
+  }
+  if (!args.json && !args.markdown) banner();
+  const source = resolveSource(args.input);
+  const parseResult = await parseAnchor(source);
+  if (!parseResult.ok) {
+    if (args.json) console.log(JSON.stringify({ ok: false, error: parseResult.error }));
+    else error(`Parse failed: ${parseResult.error}`);
+    process.exit(1);
+  }
+  const report = runBench(parseResult.ir);
+
+  if (args.json) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  if (args.markdown) {
+    console.log(renderBenchMarkdown(report));
+    return;
+  }
+
+  console.log(`  ${c.bold}ANVIL BENCH${c.reset} — ${report.program}`);
+  console.log(`  ${c.dim}Per-instruction compute-unit estimate vs Anchor baseline${c.reset}`);
+  console.log();
+  const maxNameLen = Math.max(...report.rows.map((r) => r.instruction.length), 11);
+  const pad = (s: string, n: number) => s.padEnd(n);
+  const rpad = (s: string, n: number) => s.padStart(n);
+  const head = `  ${pad("Instruction", maxNameLen)}  ${rpad("Anchor", 8)}  ${rpad("Pinocchio", 10)}  ${rpad("Native", 7)}  ${rpad("Save (Pino)", 11)}`;
+  console.log(`  ${c.bold}${head}${c.reset}`);
+  console.log(`  ${c.dim}${"─".repeat(head.length - 2)}${c.reset}`);
+  const sorted = [...report.rows].sort((a, b) => b.pinocchio - a.pinocchio);
+  for (const r of sorted) {
+    console.log(
+      `  ${pad(r.instruction, maxNameLen)}  ${rpad(r.anchor.toLocaleString(), 8)}  ${c.green}${rpad(r.pinocchio.toLocaleString(), 10)}${c.reset}  ${rpad(r.native.toLocaleString(), 7)}  ${c.green}${rpad(r.savingsPinocchio, 11)}${c.reset}`,
+    );
+  }
+  console.log(`  ${c.dim}${"─".repeat(head.length - 2)}${c.reset}`);
+  console.log(
+    `  ${c.bold}${pad("TOTAL", maxNameLen)}  ${rpad(report.totals.anchor.toLocaleString(), 8)}  ${rpad(report.totals.pinocchio.toLocaleString(), 10)}  ${rpad(report.totals.native.toLocaleString(), 7)}  ${rpad(report.overallSavings.pinocchio, 11)}${c.reset}`,
+  );
+  console.log();
+  console.log(`  ${c.dim}Pinocchio: ${report.overallSavings.pinocchio} · Native: ${report.overallSavings.native} · Quasar: ${report.overallSavings.quasar}${c.reset}`);
+  console.log();
+}
+
+// ─── anvil snapshot ──────────────────────────────────────────────────────────
+
+async function cmdSnapshot(args: CliArgs): Promise<void> {
+  if (!args.input) {
+    fatal("Missing input file or directory.\n\n  Usage: anvil snapshot <input> [--save|--check]");
+  }
+  const snapPath = args.snapshotPath ?? SNAPSHOT_FILENAME;
+
+  if (!args.json && !args.markdown) banner();
+  const source = resolveSource(args.input);
+  const parseResult = await parseAnchor(source);
+  if (!parseResult.ok) {
+    error(`Parse failed: ${parseResult.error}`);
+    process.exit(1);
+  }
+  const currentReport = runBench(parseResult.ir);
+
+  // --save mode: write baseline + exit.
+  if (args.save) {
+    saveSnapshot(currentReport, snapPath, VERSION);
+    if (!args.json) {
+      success(`Baseline saved to ${snapPath}`);
+      console.log(
+        `  ${c.dim}${currentReport.rows.length} instructions, ${currentReport.totals.pinocchio.toLocaleString()} CU total (Pinocchio)${c.reset}`,
+      );
+    } else {
+      console.log(JSON.stringify({ ok: true, saved: snapPath }));
+    }
+    return;
+  }
+
+  const baseline = loadSnapshot(snapPath);
+  if (!baseline) {
+    // Default when no baseline: save one.
+    saveSnapshot(currentReport, snapPath, VERSION);
+    if (!args.json) {
+      success(`No baseline found. Created ${snapPath}.`);
+      console.log(`  ${c.dim}Run again (or with --check) to compare future runs.${c.reset}`);
+    } else {
+      console.log(JSON.stringify({ ok: true, created: snapPath }));
+    }
+    return;
+  }
+
+  const cmp = compareToSnapshot(currentReport, baseline, args.thresholdPct, args.thresholdAbs);
+
+  if (args.json) {
+    console.log(JSON.stringify({ ok: cmp.regressions.length === 0, comparison: cmp }, null, 2));
+    if (cmp.regressions.length > 0) process.exit(1);
+    return;
+  }
+  if (args.markdown) {
+    console.log(renderSnapshotMarkdown(currentReport, cmp, args.thresholdPct, args.thresholdAbs));
+    if (cmp.regressions.length > 0) process.exit(1);
+    return;
+  }
+
+  // Terminal output.
+  console.log(`  ${c.bold}ANVIL SNAPSHOT${c.reset} — ${currentReport.program}`);
+  console.log(`  ${c.dim}Baseline: ${baseline.savedAt}  ·  Threshold: +${args.thresholdPct}% or +${args.thresholdAbs} CU${c.reset}`);
+  console.log();
+
+  if (cmp.regressions.length > 0) {
+    console.log(`  ${c.red}${c.bold}✗ ${cmp.regressions.length} regression(s)${c.reset}`);
+    for (const r of cmp.regressions) {
+      console.log(
+        `    ${c.red}${r.instruction} (${r.target})${c.reset}  ${r.before} → ${r.after}  ${c.red}+${r.deltaAbs} CU (+${r.deltaPct}%)${c.reset}`,
+      );
+    }
+    console.log();
+  } else {
+    console.log(`  ${c.green}${c.bold}✓ no regressions${c.reset}`);
+  }
+  if (cmp.improvements.length > 0) {
+    console.log(`  ${c.green}${cmp.improvements.length} improvement(s)${c.reset}`);
+    for (const r of cmp.improvements.slice(0, 5)) {
+      console.log(
+        `    ${c.green}${r.instruction} (${r.target})${c.reset}  ${r.before} → ${r.after}  ${c.green}${r.deltaAbs} CU (${r.deltaPct}%)${c.reset}`,
+      );
+    }
+  }
+  if (cmp.added.length > 0) {
+    console.log(`  ${c.dim}+ added: ${cmp.added.join(", ")}${c.reset}`);
+  }
+  if (cmp.removed.length > 0) {
+    console.log(`  ${c.dim}- removed: ${cmp.removed.join(", ")}${c.reset}`);
+  }
+  console.log();
+
+  if (cmp.regressions.length > 0) process.exit(1);
+}
+
+// ─── anvil diff ──────────────────────────────────────────────────────────────
+
+async function cmdDiff(args: CliArgs): Promise<void> {
+  if (!args.input || !args.input2) {
+    fatal("Missing inputs.\n\n  Usage: anvil diff <old-version> <new-version> [--json|--markdown]");
+  }
+  if (!args.json && !args.markdown) banner();
+  const beforeSource = resolveSource(args.input);
+  const afterSource = resolveSource(args.input2);
+  const before = await parseAnchor(beforeSource);
+  const after = await parseAnchor(afterSource);
+  if (!before.ok) {
+    error(`Parse failed (old): ${before.error}`); process.exit(1);
+  }
+  if (!after.ok) {
+    error(`Parse failed (new): ${after.error}`); process.exit(1);
+  }
+
+  const report = diffIRs(before.ir, after.ir);
+
+  if (args.json) {
+    console.log(JSON.stringify(report, null, 2));
+    if (report.overallVerdict === "unsafe") process.exit(1);
+    return;
+  }
+  if (args.markdown) {
+    console.log(renderDiffMarkdown(report));
+    if (report.overallVerdict === "unsafe") process.exit(1);
+    return;
+  }
+
+  const verdictColor =
+    report.overallVerdict === "byte-compat" ? c.green : report.overallVerdict === "safe-extension" ? c.yellow : c.red;
+  console.log(`  ${c.bold}ANVIL DIFF${c.reset} — ${report.programBefore} → ${report.programAfter}`);
+  console.log(`  ${verdictColor}${c.bold}${report.overallVerdict.toUpperCase()}${c.reset}`);
+  console.log();
+
+  if (report.addedAccounts.length > 0) {
+    console.log(`  ${c.bold}New account types${c.reset}`);
+    for (const n of report.addedAccounts) console.log(`    ${c.green}+${c.reset} ${n}  ${c.dim}(fresh init, no migration needed)${c.reset}`);
+    console.log();
+  }
+  if (report.removedAccounts.length > 0) {
+    console.log(`  ${c.bold}Removed account types${c.reset}`);
+    for (const n of report.removedAccounts) console.log(`    ${c.red}-${c.reset} ${n}  ${c.dim}(plan a deactivation + close instruction)${c.reset}`);
+    console.log();
+  }
+
+  for (const d of report.commonAccounts) {
+    const vColor = d.verdict === "byte-compat" ? c.green : d.verdict === "safe-extension" ? c.yellow : c.red;
+    const sym = d.verdict === "byte-compat" ? "✓" : d.verdict === "safe-extension" ? "⚠" : "✗";
+    console.log(`  ${vColor}${sym} ${c.bold}${d.accountName}${c.reset}  ${vColor}${d.verdict}${c.reset}`);
+
+    for (const change of d.changes) {
+      if (change.kind === "added") {
+        console.log(`    ${c.green}+${c.reset} ${change.name}: ${change.type}  ${c.dim}(${change.position}${change.afterVarLen ? ", after var-len" : ""})${c.reset}`);
+      } else if (change.kind === "removed") {
+        console.log(`    ${c.red}-${c.reset} ${change.name}: ${change.type}`);
+      } else if (change.kind === "type-change") {
+        console.log(`    ${c.yellow}~${c.reset} ${change.name}: ${change.from} → ${change.to}`);
+      } else if (change.kind === "renamed") {
+        console.log(`    ${c.yellow}⇢${c.reset} ${change.from} → ${change.to}`);
+      } else if (change.kind === "reordered") {
+        console.log(`    ${c.yellow}↻${c.reset} fields reordered`);
+      }
+    }
+    if (d.refusal) {
+      console.log(`    ${c.red}refused to auto-migrate:${c.reset}`);
+      for (const line of d.refusal.split("\n")) {
+        console.log(`      ${c.dim}${line}${c.reset}`);
+      }
+    }
+    if (d.migration) {
+      console.log(`    ${c.green}migration generated${c.reset}  ${c.dim}${d.migration.description.split("\n")[0]}${c.reset}`);
+      console.log(`    ${c.dim}(run with --markdown to see the code)${c.reset}`);
+    }
+    console.log();
+  }
+
+  if (report.overallVerdict === "unsafe") process.exit(1);
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -733,6 +1088,18 @@ async function main(): Promise<void> {
       break;
     case "validate":
       await cmdValidate(args);
+      break;
+    case "lint":
+      await cmdLint(args);
+      break;
+    case "bench":
+      await cmdBench(args);
+      break;
+    case "snapshot":
+      await cmdSnapshot(args);
+      break;
+    case "diff":
+      await cmdDiff(args);
       break;
     default:
       error(`Unknown command: ${args.command}`);

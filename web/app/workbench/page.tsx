@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
 import { ArrowLeft, Sparkles, Zap } from "lucide-react";
 import { useAnvilPipeline } from "@/lib/use-anvil-pipeline";
 import { C } from "@/lib/constants";
@@ -11,7 +12,21 @@ import { cn } from "@/lib/utils";
 
 export default function Workbench() {
   const state = useAnvilPipeline();
-  const { apiOk, isMobile, isTablet } = state;
+  const { apiOk, isMobile, isTablet, runPipeline, isRunning } = state;
+
+  // Keyboard shortcut: Cmd+Enter / Ctrl+Enter runs the pipeline from
+  // anywhere in the workbench. Avoids the reach for the mouse on every
+  // iteration when pasting + re-running against different targets.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !isRunning) {
+        e.preventDefault();
+        void runPipeline();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isRunning, runPipeline]);
 
   return (
     <main className="min-h-screen bg-anvil-bg text-anvil-text">
