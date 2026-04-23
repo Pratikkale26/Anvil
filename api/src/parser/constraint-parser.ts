@@ -3,7 +3,7 @@ import {
   type Constraint,
   type ConstraintKind,
 } from "../ir/schema.js";
-import { splitConstraintTokens } from "./utils.js";
+import { splitConstraintTokens, stripComments } from "./utils.js";
 
 const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
   init:             "init",
@@ -31,7 +31,7 @@ const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
  * e.g. input: `init, payer = authority, space = 8 + Counter::INIT_SPACE, seeds = [...]`
  */
 export function parseConstraints(attrBody: string): Constraint[] {
-  const tokens = splitConstraintTokens(attrBody);
+  const tokens = splitConstraintTokens(stripComments(attrBody));
   const constraints: Constraint[] = [];
 
   for (const token of tokens) {
@@ -74,7 +74,7 @@ export function parseInitMetadata(attrBody: string): {
   payer?: string;
   space?: string;
 } {
-  const tokens = splitConstraintTokens(attrBody);
+  const tokens = splitConstraintTokens(stripComments(attrBody));
   const metadata: { payer?: string; space?: string } = {};
 
   for (const token of tokens) {

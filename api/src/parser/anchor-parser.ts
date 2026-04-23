@@ -250,7 +250,14 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
         case "function_item": {
           const functionName = child.childForFieldName("name")?.text ?? "";
           items.functionIndex.push({ node: child, attrs, modulePath });
-          if (!inProgramModule && !(functionName === "handler" && modulePath.length > 0)) {
+          // Exclude instruction handlers from helper carry-over.
+          // `fn handler` in a submodule is the Anchor convention; project-source.ts
+          // also rewrites those to `fn <module>_handler` to avoid name collisions.
+          const lastModule = modulePath[modulePath.length - 1];
+          const isInstructionHandler =
+            modulePath.length > 0 &&
+            (functionName === "handler" || functionName === `${lastModule}_handler`);
+          if (!inProgramModule && !isInstructionHandler) {
             items.helperFns.push({ node: child, attrs, modulePath });
           }
           break;

@@ -225,6 +225,15 @@ export abstract class BaseEmitter {
         if (statement.startsWith("use errors::")) return false;
         if (statement.startsWith("use hash::")) return false;
         if (statement.startsWith("pub use ")) return false;
+        // Source-only crates that aren't in the transpiled Cargo.toml.
+        // Carrying these through forces a build failure; the IR-driven emit
+        // doesn't actually need them for the generated handlers/types.
+        if (/\bnum_derive\b/.test(statement)) return false;
+        if (/\bnum_traits\b/.test(statement)) return false;
+        if (/\bmpl_core\b/.test(statement)) return false;
+        if (/\bmpl_token_metadata\b/.test(statement)) return false;
+        if (/\bpyth_solana_receiver_sdk\b/.test(statement)) return false;
+        if (/\bsha2_const_stable\b/.test(statement)) return false;
         return true;
       });
   }
@@ -720,12 +729,13 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         if (alreadyHasDerive) {
           return rawCode;
         }
-        return `#[derive(Clone, Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n${rawCode}`;
+        return `#[derive(Clone, Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = true)]\n${rawCode}`;
       }
       if (typeDef.kind === "enum") {
         const variants = (typeDef.variants ?? []).map((variant, index) => `    ${variant} = ${index},`).join("\n");
         const arms = (typeDef.variants ?? []).map((variant, index) => `            ${index} => Ok(Self::${variant}),`).join("\n");
         return `#[derive(Clone, Copy, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
+#[borsh(use_discriminant = true)]
 #[repr(u8)]
 pub enum ${typeDef.name} {
 ${variants}

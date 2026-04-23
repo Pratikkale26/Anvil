@@ -800,6 +800,7 @@ impl ${acc.name} {
     pub const LEN: usize = ${bodyLen};
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
         if data.len() < Self::TOTAL_LEN {
