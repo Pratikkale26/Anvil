@@ -4,11 +4,29 @@ Anvil is a compiler-style Solana transpiler.
 
 It parses Anchor-style Rust into a typed intermediate representation, then emits lower-level runtime-oriented Rust targets such as Pinocchio, Quasar, and a native Solana target.
 
-The product story is still intentionally honest:
+- **Live:** [anvilsol.xyz](https://anvilsol.xyz) — paste an Anchor program, pick a target, download the full Cargo project
+- **API:** [anvil-api-65aj4.ondigitalocean.app](https://anvil-api-65aj4.ondigitalocean.app)
+- **CLI:** `bun cli/anvil.ts compile <anchor-dir> --target native` — local transpile with no server round-trip
 
-- The frontend demo path is narrow and polished
-- The backend/parser/emitter path is broader and useful for local testing
-- Some advanced contracts still need manual review before deployment
+## Try it in 30 seconds
+
+```bash
+git clone https://github.com/Pratikkale26/Anvil && cd Anvil
+bun install && cd cli && bun install && cd ..
+
+# Transpile a bundled demo and cargo-build it
+bun cli/anvil.ts compile api/src/demo-programs/counter.rs --target native --output /tmp/counter-native
+cd /tmp/counter-native && cargo build
+```
+
+That's a generated Solana program that compiles. The same binary is what the web playground downloads as a `.tar` bundle.
+
+## Status
+
+- 12/14 curated demos cargo-build on every commit (CI gate)
+- 17/48 real-world Anchor contracts from `solana-programs-list` cargo-build across Pinocchio + Native + Quasar targets
+- 100% parser coverage on 27 real-world programs (Anvil parses every Anchor contract we've thrown at it)
+- Some advanced contracts still need manual review before deployment — the generated output always flags those sections with a `⚠️ Anvil: Review` banner
 
 ## What Anvil Does
 
@@ -31,15 +49,16 @@ Working today:
 - IR -> Pinocchio Rust
 - IR -> Quasar Rust
 - IR -> native Solana Rust
-- Demo sources and IR fixtures for `counter`, `vault`, `escrow`, and `staking`
-- Local emitter testing through the API and `api/test-run.ts`
+- Demo sources and IR fixtures for `amm`, `counter`, `escrow`, `marketplace`, `perp-funding`, `staking`, `vault`, `vesting`
+- Local emitter testing through the API, the `anvil` CLI, and `api/test-run.ts`
+- Web playground: paste / file upload / folder upload / GitHub repo ingestion
 
 Still not production-complete:
 
 - Full semantic validation of every Anchor constraint
 - Automatic account close / lifecycle rewrites for every escrow-like flow
 - End-to-end compile verification for every generated backend
-- Frontend repo/local-file ingestion
+- Impl-method inlining for the `ctx.accounts.foo()` pattern used by some escrow-style programs
 
 ## Repo Layout
 

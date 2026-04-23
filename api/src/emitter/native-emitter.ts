@@ -515,7 +515,7 @@ impl std::error::Error for ${enumName} {}`;
     const helpers: string[] = [];
 
     if (irNeedsInitAccountHelper(_ir)) {
-      helpers.push(`fn create_program_account<'a>(
+      helpers.push(`pub fn create_program_account<'a>(
     account: &AccountInfo<'a>,
     payer: &AccountInfo<'a>,
     space: u64,
@@ -541,7 +541,7 @@ impl std::error::Error for ${enumName} {}`;
     }
 
     if (irNeedsUnsignedLamportsHelper(_ir)) {
-      helpers.push(`fn transfer_lamports<'a>(
+      helpers.push(`pub fn transfer_lamports<'a>(
     from: &AccountInfo<'a>,
     to: &AccountInfo<'a>,
     amount: u64,
@@ -556,7 +556,7 @@ impl std::error::Error for ${enumName} {}`;
     }
 
     if (irNeedsSignedLamportsHelper(_ir)) {
-      helpers.push(`fn transfer_lamports_signed<'a>(
+      helpers.push(`pub fn transfer_lamports_signed<'a>(
     from: &AccountInfo<'a>,
     to: &AccountInfo<'a>,
     amount: u64,
@@ -573,7 +573,7 @@ impl std::error::Error for ${enumName} {}`;
     }
 
     if (irNeedsHelper(_ir, "spl_transfer")) {
-      helpers.push(`fn spl_token_transfer<'a>(
+      helpers.push(`pub fn spl_token_transfer<'a>(
     from: &AccountInfo<'a>,
     to: &AccountInfo<'a>,
     authority: &AccountInfo<'a>,
@@ -620,7 +620,7 @@ fn spl_token_transfer_signed<'a>(
 
     const needsUnsignedMintTo = irNeedsUnsignedSplMintToHelper(_ir);
     if (needsUnsignedMintTo) {
-      helpers.push(`fn spl_token_mint_to<'a>(
+      helpers.push(`pub fn spl_token_mint_to<'a>(
     mint: &AccountInfo<'a>,
     to: &AccountInfo<'a>,
     authority: &AccountInfo<'a>,
@@ -644,7 +644,7 @@ fn spl_token_transfer_signed<'a>(
 
     const needsSignedMintTo = irNeedsSignedSplMintToHelper(_ir);
     if (needsSignedMintTo) {
-      helpers.push(`fn spl_token_mint_to_signed<'a>(
+      helpers.push(`pub fn spl_token_mint_to_signed<'a>(
     mint: &AccountInfo<'a>,
     to: &AccountInfo<'a>,
     authority: &AccountInfo<'a>,
@@ -670,7 +670,7 @@ fn spl_token_transfer_signed<'a>(
 
     const needsUnsignedBurn = irNeedsUnsignedSplBurnHelper(_ir);
     if (needsUnsignedBurn) {
-      helpers.push(`fn spl_token_burn<'a>(
+      helpers.push(`pub fn spl_token_burn<'a>(
     from: &AccountInfo<'a>,
     mint: &AccountInfo<'a>,
     authority: &AccountInfo<'a>,
@@ -694,7 +694,7 @@ fn spl_token_transfer_signed<'a>(
 
     const needsSignedBurn = irNeedsSignedSplBurnHelper(_ir);
     if (needsSignedBurn) {
-      helpers.push(`fn spl_token_burn_signed<'a>(
+      helpers.push(`pub fn spl_token_burn_signed<'a>(
     from: &AccountInfo<'a>,
     mint: &AccountInfo<'a>,
     authority: &AccountInfo<'a>,
@@ -720,7 +720,7 @@ fn spl_token_transfer_signed<'a>(
 
     const needsUnsignedClose = irNeedsUnsignedSplCloseAccountHelper(_ir);
     if (needsUnsignedClose) {
-      helpers.push(`fn spl_token_close_account<'a>(
+      helpers.push(`pub fn spl_token_close_account<'a>(
     account: &AccountInfo<'a>,
     destination: &AccountInfo<'a>,
     authority: &AccountInfo<'a>,
@@ -742,7 +742,7 @@ fn spl_token_transfer_signed<'a>(
 
     const needsSignedClose = irNeedsSignedSplCloseAccountHelper(_ir);
     if (needsSignedClose) {
-      helpers.push(`fn spl_token_close_account_signed<'a>(
+      helpers.push(`pub fn spl_token_close_account_signed<'a>(
     account: &AccountInfo<'a>,
     destination: &AccountInfo<'a>,
     authority: &AccountInfo<'a>,
@@ -765,7 +765,7 @@ fn spl_token_transfer_signed<'a>(
     }
 
     if (irNeedsHelper(_ir, "close_program_account")) {
-      helpers.push(`fn close_program_account<'a>(
+      helpers.push(`pub fn close_program_account<'a>(
     account: &AccountInfo<'a>,
     destination: &AccountInfo<'a>,
 ) -> ProgramResult {

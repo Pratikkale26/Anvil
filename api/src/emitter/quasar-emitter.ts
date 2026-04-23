@@ -865,7 +865,7 @@ impl From<${enumName}> for ProgramError {
   override emitHelperFunctions(ir: SolanaIR): string {
     const helpers: string[] = [];
 
-    helpers.push(`fn bump_seed(
+    helpers.push(`pub fn bump_seed(
     program_id: &Pubkey,
     seeds: &[&[u8]],
     expected: &Pubkey,
@@ -878,7 +878,7 @@ impl From<${enumName}> for ProgramError {
 }`);
 
     if (irNeedsInitAccountHelper(ir)) {
-      helpers.push(`fn create_program_account<'a>(
+      helpers.push(`pub fn create_program_account<'a>(
     account: &'a AccountInfo,
     payer: &'a AccountInfo,
     space: u64,
@@ -895,7 +895,7 @@ impl From<${enumName}> for ProgramError {
     }
 
     if (irNeedsUnsignedLamportsHelper(ir)) {
-      helpers.push(`fn transfer_lamports(
+      helpers.push(`pub fn transfer_lamports(
     from: &AccountInfo,
     to: &AccountInfo,
     amount: u64,
@@ -918,7 +918,7 @@ impl From<${enumName}> for ProgramError {
     }
 
     if (irNeedsSignedLamportsHelper(ir)) {
-      helpers.push(`fn transfer_lamports_signed(
+      helpers.push(`pub fn transfer_lamports_signed(
     from: &AccountInfo,
     to: &AccountInfo,
     amount: u64,
@@ -942,7 +942,7 @@ impl From<${enumName}> for ProgramError {
     }
 
     if (irNeedsHelper(ir, "spl_transfer")) {
-      helpers.push(`fn spl_token_transfer(
+      helpers.push(`pub fn spl_token_transfer(
     from: &AccountInfo,
     to: &AccountInfo,
     authority: &AccountInfo,
@@ -977,7 +977,7 @@ fn spl_token_transfer_signed(
     const needsUnsignedMintTo = irNeedsUnsignedSplMintToHelper(ir);
     const needsSignedMintTo = irNeedsSignedSplMintToHelper(ir);
     if (needsUnsignedMintTo) {
-      helpers.push(`fn spl_token_mint_to(
+      helpers.push(`pub fn spl_token_mint_to(
     mint: &AccountInfo,
     to: &AccountInfo,
     authority: &AccountInfo,
@@ -993,7 +993,7 @@ fn spl_token_transfer_signed(
 }`);
     }
     if (needsSignedMintTo) {
-      helpers.push(`fn spl_token_mint_to_signed(
+      helpers.push(`pub fn spl_token_mint_to_signed(
     mint: &AccountInfo,
     to: &AccountInfo,
     authority: &AccountInfo,
@@ -1013,7 +1013,7 @@ fn spl_token_transfer_signed(
     const needsUnsignedBurn = irNeedsUnsignedSplBurnHelper(ir);
     const needsSignedBurn = irNeedsSignedSplBurnHelper(ir);
     if (needsUnsignedBurn) {
-      helpers.push(`fn spl_token_burn(
+      helpers.push(`pub fn spl_token_burn(
     from: &AccountInfo,
     mint: &AccountInfo,
     authority: &AccountInfo,
@@ -1029,7 +1029,7 @@ fn spl_token_transfer_signed(
 }`);
     }
     if (needsSignedBurn) {
-      helpers.push(`fn spl_token_burn_signed(
+      helpers.push(`pub fn spl_token_burn_signed(
     from: &AccountInfo,
     mint: &AccountInfo,
     authority: &AccountInfo,
@@ -1049,7 +1049,7 @@ fn spl_token_transfer_signed(
     const needsUnsignedCloseHelper = irNeedsUnsignedSplCloseAccountHelper(ir);
     const needsSignedCloseHelper = irNeedsSignedSplCloseAccountHelper(ir);
     if (needsUnsignedCloseHelper) {
-      helpers.push(`fn spl_token_close_account(
+      helpers.push(`pub fn spl_token_close_account(
     account: &AccountInfo,
     destination: &AccountInfo,
     authority: &AccountInfo,
@@ -1064,7 +1064,7 @@ fn spl_token_transfer_signed(
     }
 
     if (needsSignedCloseHelper) {
-      helpers.push(`fn spl_token_close_account_signed(
+      helpers.push(`pub fn spl_token_close_account_signed(
     account: &AccountInfo,
     destination: &AccountInfo,
     authority: &AccountInfo,
@@ -1080,7 +1080,7 @@ fn spl_token_transfer_signed(
     }
 
     if (irNeedsHelper(ir, "close_program_account")) {
-      helpers.push(`fn close_program_account(
+      helpers.push(`pub fn close_program_account(
     account: &AccountInfo,
     destination: &AccountInfo,
 ) -> ProgramResult {
