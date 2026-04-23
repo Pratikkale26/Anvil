@@ -380,7 +380,9 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
 
   override rustTypeForFramework(typeName: string): string {
     if (typeName === "Pubkey") return "[u8; 32]";
-    if (typeName === "String") return "[u8; 64]";
+    // String is kept as-is. Pinocchio doesn't add std::String constraints
+    // at the type level; borsh handles (de)serialization via the borsh
+    // feature we already depend on.
     return typeName;
   }
 
