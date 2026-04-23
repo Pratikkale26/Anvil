@@ -72,26 +72,45 @@ app.use((req, res, next) => {
 });
 
 // ─── Health check ────────────────────────────────────────────────────────────
-app.get("/", (_req, res) => {
+// Both `/` and `/health` return the same shape. Platform health-probes
+// (DigitalOcean App Platform, k8s liveness, uptime monitors) default to
+// `/health`; browsers and curl users tend to hit `/`.
+const healthHandler: express.RequestHandler = (_req, res) => {
   res.json({
     service: "Anvil API",
-    version: "0.2.0",
+    version: "0.3.0",
     status: "ok",
     uptime: Math.floor(process.uptime()),
     endpoints: [
       "POST /parse  — Anchor source|file|project → Solana IR",
       "POST /emit   — Solana IR → target framework code (?refine=1 for AI polish)",
       "POST /ai/refine — AI-powered fix for validation issues",
+      "GET  /demo      — list demo names",
       "GET  /demo/:name — pre-loaded demo IR",
+      "GET  /health    — this response",
     ],
   });
-});
+};
+app.get("/", healthHandler);
+app.get("/health", healthHandler);
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 app.use("/parse", parseRoute);
 app.use("/emit", emitRoute);
 app.use("/demo", demoRoute);
 app.use("/ai", aiRoute);
+
+// ─── 404 handler ─────────────────────────────────────────────────────────────
+// Express's default 404 is HTML; API clients expect JSON. Respond with the
+// same error envelope the rest of the API uses so parsers don't need a
+// Content-Type special case.
+app.use((req, res) => {
+  res.status(404).json({
+    error: `Unknown endpoint: ${req.method} ${req.path}`,
+    code: ErrorCode.VALIDATION_FAILED,
+    hint: "GET / for the endpoint list",
+  });
+});
 
 // ─── Global error handler ────────────────────────────────────────────────────
 app.use(
