@@ -7,6 +7,7 @@ import { analyzeCU } from "../emitter/cu-analyzer.js";
 import { validateEmitterOutput } from "../emitter/output-validator.js";
 import { refineOutput } from "../ai/refine.js";
 import { buildDeterministicReviewReport } from "../ai/review-report.js";
+import { AIError } from "../ai/errors.js";
 import { AnvilError, ErrorCode } from "../errors.js";
 
 export const emitRoute = Router();
@@ -137,6 +138,7 @@ emitRoute.post("/", async (req, res) => {
     let currentSingleFile = output.singleFile;
     let refined = false;
     let refineResult = undefined;
+    let refineError: { category: string; message: string } | undefined = undefined;
 
     // ─── AI Refine (optional, single call) ─────────────────────────────────
     if (refine && validationErrors.length > 0) {
@@ -176,8 +178,16 @@ emitRoute.post("/", async (req, res) => {
         console.log(`[emit][refine] ${acceptedPatches.length}/${result.patches.length} patches accepted.`);
       } catch (err) {
         console.error("[emit][refine] AI refine failed:", err instanceof Error ? err.message : String(err));
-        // Non-fatal — return the unrefined output with a warning
-        validationWarnings.push(`AI refine failed: ${err instanceof Error ? err.message : String(err)}`);
+        // Non-fatal — return the unrefined output with a structured warning the
+        // UI can render with the right call-to-action (configure key, retry, etc.).
+        if (err instanceof AIError) {
+          validationWarnings.push(`AI refine unavailable (${err.category}): ${err.message}`);
+          refineError = { category: err.category, message: err.message };
+        } else {
+          const message = err instanceof Error ? err.message : String(err);
+          validationWarnings.push(`AI refine failed: ${message}`);
+          refineError = { category: "unknown", message };
+        }
       }
     }
 
@@ -194,6 +204,7 @@ emitRoute.post("/", async (req, res) => {
       reviewReport,
       refined,
       refineResult: refineResult ?? undefined,
+      refineError,
     };
 
     // Include multi-file output if requested
