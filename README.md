@@ -45,20 +45,21 @@ This lets us keep Anchor ergonomics on the input side while experimenting with l
 
 Working today:
 
-- Anchor-style source -> IR
-- IR -> Pinocchio Rust
-- IR -> Quasar Rust
-- IR -> native Solana Rust
-- Demo sources and IR fixtures for `amm`, `counter`, `escrow`, `marketplace`, `perp-funding`, `staking`, `vault`, `vesting`
-- Local emitter testing through the API, the `anvil` CLI, and `api/test-run.ts`
-- Web playground: paste / file upload / folder upload / GitHub repo ingestion
+- Anchor-style source → typed Solana IR
+- IR → Pinocchio / Native (`solana-program`) / Quasar Rust
+- Multi-file project scaffold: Cargo.toml, README, .cargo/config.toml, rust-toolchain, scripts/deploy.sh, anvil-manifest.json, src/{lib,state,errors,helpers,instructions/*}.rs
+- 8 bundled demo programs (`amm`, `counter`, `escrow`, `marketplace`, `perp-funding`, `staking`, `vault`, `vesting`)
+- Local emission through the API, `anvil` CLI (7 commands), or `api/test-run.ts`
+- Web playground: paste / file / folder / GitHub repo ingestion, live CU analysis, AI refine, project-bundle download
+- `init_if_needed` (conditional create), `realloc = <expr>` (resize + rent-delta on native), SPL CPI transforms, `require_{eq,neq,gt,gte,lt,lte}!` macro expansion, PDA seed preservation, `#[borsh(use_discriminant)]` on tagged enums
+- Target-aware portability lint (external crates are blockers on pinocchio but ready on native since project-scaffold auto-adds the deps)
 
 Still not production-complete:
 
 - Full semantic validation of every Anchor constraint
-- Automatic account close / lifecycle rewrites for every escrow-like flow
-- End-to-end compile verification for every generated backend
-- Impl-method inlining for the `ctx.accounts.foo()` pattern used by some escrow-style programs
+- Impl-method inlining for the `ctx.accounts.foo()` pattern used by some escrow-style programs (partial support — the flattener preserves impl-scoped names, but inlining the method bodies into instruction handlers is held back by an interaction with the CPI-consolidation regex)
+- Zero-copy account layouts (`#[account(zero_copy)]`)
+- Source-level CPI rewrites for external programs (mpl-core, pyth, switchboard) — imports are preserved but structural rewrites aren't
 
 ## Repo Layout
 
@@ -66,21 +67,83 @@ Still not production-complete:
 api/
   src/
     ai/                          AI refine + review-report pipeline
-    demo-programs/               Anchor-like sample inputs
+    demo-programs/               Bundled Anchor sample inputs (8 programs)
     emitter/
       emitter-base.ts            Shared base class for all emitters
-      pinocchio-emitter.ts       Pinocchio target (single-file)
-      quasar-emitter.ts          Quasar target (BaseEmitter overrides + single-file fallback)
-      quasar-project-emitter.ts  Quasar multi-file project generation (lib/state/instructions/Cargo)
-      native-emitter.ts          Native solana_program target (single-file)
+      pinocchio-emitter.ts       Pinocchio target
+      quasar-emitter.ts          Quasar target
+      quasar-project-emitter.ts  Quasar multi-file project layout
+      native-emitter.ts          Native solana_program target
+      project-scaffold.ts        Per-target Cargo.toml + README + scripts
       cu-analyzer.ts             Per-instruction CU estimation
       output-validator.ts        Deterministic post-emit validation
-    ir/                          IR schema + fixture JSON
-    parser/                      Anchor -> IR parsing pipeline
-    routes/                      Express API routes
-  tests/                         Emitter + parser test suites
+      body-emitter/              Per-IR-kind body statement walker + handlers
+    cli/                         Analyzers for the lint / bench / snapshot / diff commands
+    ir/                          IR schema + demo fixture JSON
+    parser/                      Anchor → IR pipeline (tree-sitter + flattener)
+    routes/                      Express routes: /parse /emit /lint /demo /ai /health
+  tests/                         Emitter + parser + cargo-build test suites
+cli/
+  anvil.ts                       7-command CLI entry point
 web/
-  app/                           Next.js landing page + live playground
+  app/                           Next.js landing + /workbench playground
+  components/workbench/          Input / Output / Validation / Lint panels
+  lib/                           Pipeline hook, constants, tar bundler
+scripts/
+  batch-single.ts                Real-world cargo-build sweep driver
+  batch-cargo.sh                 Parallel cargo-build runner
+```
+
+## CLI
+
+Seven commands, all share the same IR — three run the emit pipeline, four are read-only analyses.
+
+```bash
+anvil compile    # parse → emit → validate → write project scaffold
+anvil parse      # IR as pretty summary or --json
+anvil validate   # parse → emit → surface validator issues
+anvil lint       # portability scorecard (ready / review / blocker)
+anvil bench      # per-instruction CU estimate vs Anchor baseline
+anvil snapshot   # CU regression guard for CI (save + check baseline)
+anvil diff       # storage-layout diff between two program versions
+```
+
+### Common flags
+
+| Flag | Applies to | What it does |
+|------|-----------|--------------|
+| `--target, -t <pinocchio\|native\|quasar>` | compile, validate, lint | Target framework |
+| `--output, -o <dir>` | compile | Write output here (default `./anvil-output/`) |
+| `--single-file` | compile | Emit one `.rs` file instead of a multi-file project |
+| `--json` | parse, validate, lint, bench, snapshot, diff | JSON output for tooling |
+| `--markdown, --md` | lint, bench, snapshot, diff | Markdown output (good for CI comments) |
+| `--save` | snapshot | Save baseline to `anvil.snapshot.json` |
+| `--check` | snapshot | Compare against the baseline |
+| `--threshold-pct N` | snapshot | Regression threshold, percent (default 5) |
+| `--threshold-abs N` | snapshot | Regression threshold, absolute CUs (default 10) |
+| `--snapshot <path>` | snapshot | Snapshot file path (default `./anvil.snapshot.json`) |
+
+All analysis commands return non-zero on failure (blockers / regressions / unsafe-diff), so they drop cleanly into CI.
+
+### Examples
+
+```bash
+# Transpile + cargo build (the 30-second quickstart from above)
+bun cli/anvil.ts compile api/src/demo-programs/counter.rs --target native --output /tmp/counter
+cd /tmp/counter && cargo build
+
+# Portability report for a local program
+bun cli/anvil.ts lint ./my-anchor-project --target native --markdown > readiness.md
+
+# CU bench — hotspots ranked by Pinocchio cost
+bun cli/anvil.ts bench api/src/demo-programs/vault.rs
+
+# CI regression guard
+bun cli/anvil.ts snapshot program.rs --save                 # one-time baseline
+bun cli/anvil.ts snapshot program.rs --check --threshold-pct 2  # in CI
+
+# Storage-layout diff between two versions (generates a migration for safe changes, refuses unsafe ones)
+bun cli/anvil.ts diff ./v1-program.rs ./v2-program.rs --markdown > upgrade-safety.md
 ```
 
 ## Local Development
@@ -97,10 +160,14 @@ The API starts on `http://localhost:8080` by default.
 
 Available routes:
 
-- `GET /` health check and capabilities
-- `POST /parse` Anchor source|file|project -> IR
-- `POST /emit` IR -> target output
-- `GET /demo/:name` preloaded demo IR for bundled demo programs
+- `GET /` — capabilities + uptime
+- `GET /health` — same payload as `/`, conventional probe path
+- `POST /parse` — Anchor source | file | project | repo → IR
+- `POST /emit` — IR → target-framework Rust (+ `?refine=1` for AI polish, `multiFile: true` for project layout, `projectScaffold: true` for the cargo-buildable bundle)
+- `POST /lint` — portability scorecard (reuses `api/src/cli/lint-analyzer.ts`)
+- `POST /ai/refine` — AI-powered fix for validation issues
+- `GET /demo` — list demo names
+- `GET /demo/:name` — preloaded demo IR for bundled programs
 
 ### Frontend
 
@@ -280,14 +347,14 @@ For many hosts, the platform will inject `PORT` automatically.
 
 ## Product Positioning
 
-For demos, grants, and public posts, the most accurate framing right now is:
+The accurate framing for demos, grants, and public posts:
 
-- “Anchor -> alternative Solana runtimes through a typed IR”
-- “Counter and vault are the easiest proof paths”
-- “Escrow and staking are strong local validation cases”
-- “Manual review is still required for advanced lifecycle logic”
+- "Anchor → alternative Solana runtimes through a typed IR"
+- "17/48 real-world Anchor programs cargo-build across Pinocchio + Native + Quasar"
+- "Seven CLI commands — transpile, plus portability / CU / snapshot / layout-diff analyses that all reuse the same IR"
+- "Manual review is still flagged in the output for advanced lifecycle logic"
 
-That framing is strong and credible without overstating support.
+That framing is strong without overstating support.
 
 ## API Reference
 
@@ -295,11 +362,14 @@ That framing is strong and credible without overstating support.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/` | Health check -- returns `{ status: "ok" }` |
+| `GET` | `/` | Capabilities + uptime |
+| `GET` | `/health` | Same payload as `/`, conventional probe path |
 | `POST` | `/parse` | Parse Anchor source into SolanaIR |
 | `POST` | `/emit` | Emit target-framework Rust from SolanaIR |
-| `GET` | `/demo/:name` | Pre-loaded demo IR (counter, vault, escrow, staking) |
+| `POST` | `/lint` | Portability scorecard (ready / review / blocker findings) |
 | `POST` | `/ai/refine` | AI-powered fix for validation issues |
+| `GET` | `/demo` | List bundled demo names |
+| `GET` | `/demo/:name` | Pre-loaded demo IR |
 
 ### POST /parse
 
@@ -325,7 +395,30 @@ curl -s http://localhost:8080/emit \
 
 Returns: `{ code, cu, target, programName, warnings, validationIssues, reviewReport }`
 
-Optional: `multiFile: true` for split project output, `strict: true` to fail on validation errors, `?refine=1` for AI polish.
+Optional: `multiFile: true` for split project output, `projectScaffold: true` to receive the full cargo-buildable bundle (Cargo.toml + README + src/), `strict: true` to fail on validation errors, `?refine=1` for AI polish.
+
+### POST /lint
+
+Accepts `source` (raw Anchor Rust) or `ir` (already-parsed IR). Optional `target` (`pinocchio` | `native` | `quasar`, default `pinocchio`).
+
+```bash
+curl -s http://localhost:8080/lint \
+  -H 'Content-Type: application/json' \
+  -d '{"source": "use anchor_lang::prelude::*; ...", "target": "native"}'
+```
+
+Returns:
+
+```json
+{
+  "program": "counter",
+  "target": "native",
+  "counts": { "ready": 5, "review": 0, "blocker": 0 },
+  "readinessScore": 100,
+  "verdict": "ready",
+  "findings": [ { "level": "ready", "category": "...", "title": "...", "detail": "...", "where": "..." } ]
+}
+```
 
 ### Error Codes
 
@@ -346,5 +439,5 @@ Example error response:
 
 ## More Docs
 
-- Architecture: [ARCHITECTURE.md](/home/pk/Anvil/ARCHITECTURE.md)
-- Project summary: [PROJECT_SUMMARY.md](/home/pk/Anvil/PROJECT_SUMMARY.md)
+- Architecture: [ARCHITECTURE.md](./ARCHITECTURE.md) — pipeline internals + IR statement kinds
+- Project summary: [PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md) — current stage, what's done, what's next
