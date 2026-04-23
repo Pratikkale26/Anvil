@@ -1,4 +1,4 @@
-import type { LLMProvider, StructuredGenerationParams } from "../provider.js";
+import type { LLMProvider, ProviderResult, StructuredGenerationParams } from "../provider.js";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -9,7 +9,7 @@ export class GeminiProvider implements LLMProvider {
     private readonly apiKey: string,
   ) {}
 
-  async generateStructured<T>({ schema, prompt, model, onProgress }: StructuredGenerationParams): Promise<T> {
+  async generateStructured<T>({ schema, prompt, model, onProgress }: StructuredGenerationParams): Promise<ProviderResult<T>> {
     const timeoutMs = parseInt(process.env.AI_PROVIDER_TIMEOUT_MS ?? "180000", 10);
     const maxRetries = parseInt(process.env.AI_PROVIDER_RETRIES ?? "0", 10);
     const promptSizeKB = (Buffer.byteLength(prompt, "utf-8") / 1024).toFixed(1);
@@ -67,6 +67,10 @@ export class GeminiProvider implements LLMProvider {
           candidates?: Array<{
             content?: { parts?: Array<{ text?: string }> };
           }>;
+          usageMetadata?: {
+            promptTokenCount?: number;
+            candidatesTokenCount?: number;
+          };
         };
 
         const text = json.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
@@ -77,7 +81,15 @@ export class GeminiProvider implements LLMProvider {
 
         try {
           onProgress?.("provider_parse", "Decoded Gemini JSON response.");
-          return JSON.parse(text) as T;
+          return {
+            value: JSON.parse(text) as T,
+            usage: {
+              inputTokens: json.usageMetadata?.promptTokenCount ?? 0,
+              outputTokens: json.usageMetadata?.candidatesTokenCount ?? 0,
+              cacheCreationTokens: 0,
+              cacheReadTokens: 0,
+            },
+          };
         } catch (parseError) {
           lastError = new Error(`Gemini returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
           continue;

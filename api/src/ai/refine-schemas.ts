@@ -44,6 +44,30 @@ export const RefineModelResponseSchema = z.object({
 export type RefineModelResponse = z.infer<typeof RefineModelResponseSchema>;
 
 /**
+ * Per-call usage breakdown surfaced for cost transparency.
+ * cacheReadTokens > 0 indicates a prompt-cache hit (10× cheaper input tokens).
+ */
+export const ProviderUsageSchema = z.object({
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheCreationTokens: z.number(),
+  cacheReadTokens: z.number(),
+  /** Best-effort USD estimate using current Sonnet 4 pricing. */
+  estimatedCostUsd: z.number().optional(),
+});
+export type ProviderUsage = z.infer<typeof ProviderUsageSchema>;
+
+/**
+ * Before/after error counts so the UI can render a clear delta and decide
+ * whether the refine actually helped.
+ */
+export const ErrorDeltaSchema = z.object({
+  before: z.number(),
+  after: z.number(),
+});
+export type ErrorDelta = z.infer<typeof ErrorDeltaSchema>;
+
+/**
  * Full refine response returned to the client.
  */
 export const RefineResponseSchema = z.object({
@@ -60,5 +84,7 @@ export const RefineResponseSchema = z.object({
   aiCallMade: z.boolean(),
   cacheKey: z.string().optional(),
   cached: z.boolean().optional(),
+  usage: ProviderUsageSchema.optional(),
+  errorDelta: ErrorDeltaSchema.optional(),
 });
 export type RefineResponse = z.infer<typeof RefineResponseSchema>;

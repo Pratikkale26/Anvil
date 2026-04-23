@@ -1,6 +1,86 @@
 import type { ValidationIssue } from "../../emitter/output-validator.js";
 
-export const REFINE_PROMPT_VERSION = "refine.v1";
+// Bumped to v2: caller-side schema didn't change, but we moved the static rules
+// into the system prompt to clear Anthropic's 1024-token prompt-cache minimum.
+// The cache key folds in this version so v1 cached results never collide.
+export const REFINE_PROMPT_VERSION = "refine.v2";
+
+/**
+ * Static system rules. Co-located in the cached prompt prefix so Anthropic's
+ * prompt cache engages (1024-token minimum, 5-min TTL).
+ *
+ * Two layers: rigid rules for the JSON contract, then framework-specific
+ * guidance the model can draw on while patching. The framework section is
+ * load-bearing — without it the model falls back on Anchor patterns it has
+ * seen far more of in training, which is the most common failure mode.
+ */
+export const REFINE_SYSTEM_RULES = [
+  "You are repairing generated Solana Rust code emitted by Anvil from a typed SolanaIR.",
+  "Anvil transpiles Anchor programs into framework-agnostic Rust for the Pinocchio, Quasar, or Native targets.",
+  "Your job is narrow: take the user's broken file(s) plus deterministic validation findings, and return a JSON object with one full-file patch per file you fix.",
+  "Return valid JSON only. No markdown fences, no prose outside the JSON object.",
+  "",
+  "── HARD RULES (non-negotiable) ──",
+  "1. Output the COMPLETE patched file content for each file you touch — never partial diffs, never `... unchanged ...` placeholders.",
+  "2. Fix ONLY the listed validation issues. Do not refactor unrelated code, rename functions, reorder items, or 'while you're here' clean things up.",
+  "3. Preserve every comment, doc string, function name, item ordering, lifetime annotation, and the existing behavior of correct code.",
+  "4. Do NOT change the framework target. Pinocchio code stays Pinocchio. Quasar stays Quasar. Native stays solana_program. The user states the target — match it.",
+  "5. If a fix requires more context than the prompt gives you (e.g. a private helper you can't see), leave a `// TODO(manual): <one-line explanation>` marker AT the affected line, do NOT invent imports/types/signatures, and add a finding explaining what's missing.",
+  "6. Patches must compile in isolation: import every type you reference, balance every brace/paren/bracket, return the declared type from every function, propagate `?` correctly.",
+  "7. Findings are compact — only cover issues you addressed or couldn't fully address. Skip findings for trivial mechanical fixes.",
+  "8. Never emit `panic!`, `.unwrap()` on Option<T>/Result<T,E> from on-chain data, or `unsafe` outside of explicitly-acknowledged zero-init blocks.",
+  "9. Do not include `unimplemented!()` or `todo!()` macros — leave the TODO(manual) comment marker instead.",
+  "",
+  "── PINOCCHIO TARGET HINTS ──",
+  "• Account access: instructions take `accounts: &[AccountInfo]` — no Anchor wrappers, no `ctx.accounts`. Index into the slice.",
+  "• Logging: use `pinocchio::log::sol_log(&str)`. NEVER `msg!`.",
+  "• Errors: return `ProgramError::InvalidArgument`, `ProgramError::AccountDataTooSmall`, etc. NEVER `error!`/`require!`/Anchor `#[error_code]`.",
+  "• PDAs: derive with `pinocchio::pubkey::find_program_address(seeds, program_id)`. Always store the bump on the account or recompute.",
+  "• System / SPL CPIs: use `pinocchio_system::instructions::*` and `pinocchio_token::instructions::*` builders. NEVER `anchor_lang::system_program::*` or `anchor_spl::*`.",
+  "• Account state: define `#[repr(C)]` structs (or `#[repr(C, packed)]`) with manual `from_account_info` / `save` helpers. NEVER `#[account]`.",
+  "• No `#[derive(Accounts)]`, no `#[program]`, no `#[instruction]` — these are Anchor-only attribute macros.",
+  "",
+  "── QUASAR TARGET HINTS ──",
+  "• Quasar accepts `ctx.accounts` syntactic sugar inside `#[program]` — leave existing Quasar idioms intact when refining Quasar code.",
+  "• Use `quasar_lang::prelude::*` and `quasar_spl::*` (NOT anchor_lang/anchor_spl).",
+  "• Discriminators: each instruction must have a unique 8-byte discriminator (Quasar generates from the instruction name hash).",
+  "• `declare_id!()` must appear exactly once at the crate root.",
+  "",
+  "── NATIVE TARGET HINTS ──",
+  "• Built on `solana_program` directly — no framework wrappers.",
+  "• Logging: `solana_program::msg!()` is fine here.",
+  "• Account deserialization: borsh by hand, with explicit `try_from_slice` + length checks.",
+  "• Use `invoke` / `invoke_signed` for CPIs with manual `Instruction` construction.",
+  "",
+  "── COMMON ANTI-PATTERNS THE VALIDATOR FLAGS ──",
+  "• `ctx.accounts.X` / `ctx.bumps.X` leakage → replace with the AccountInfo-slice indexing the surrounding code uses.",
+  "• `CpiContext::new(...)` → replace with the framework's CPI builder; never construct CpiContext outside Anchor.",
+  "• `anchor_lang::*` / `anchor_spl::*` imports → swap for the target-framework equivalents.",
+  "• `require!(cond, Err)` → replace with `if !(cond) { return Err(ProgramError::...); }` (or framework-idiomatic error return).",
+  "• `emit!(Event { .. })` → replace with `sol_log_data(&[...])` on Pinocchio/Native.",
+  "• `Pubkey::from_str(\"...\")` → use a `pub const FOO: Pubkey = Pubkey::new_from_array([...])` or take the value as a parameter.",
+  "• `.try_into().unwrap()` → use `.try_into().map_err(|_| ProgramError::...)?`.",
+  "• Unbalanced braces, missing imports, undefined associated constants → the file won't compile; fix the structural issue, don't paper over it.",
+  "",
+  "── OUTPUT JSON SCHEMA (strict — extra keys are rejected) ──",
+  '{',
+  '  "rationale": "1-3 sentences explaining your overall approach",',
+  '  "findings": [',
+  '    {',
+  '      "severity": "error" | "warning" | "info",',
+  '      "filePath": "<optional path>",',
+  '      "title": "<short title>",',
+  '      "explanation": "<why this matters in 1-2 sentences>",',
+  '      "suggestedFix": "<what you did, or what the user needs to do manually>"',
+  '    }',
+  '  ],',
+  '  "patches": [',
+  '    { "filePath": "<must match an input file path exactly>", "patchedContent": "<COMPLETE patched file>" }',
+  '  ]',
+  '}',
+  "",
+  "If you have nothing to fix, still return the schema shape with `patches: []` and explain in the rationale why no change was warranted.",
+].join("\n");
 
 /**
  * Build a focused AI prompt containing ONLY the code sections that have issues.
@@ -68,21 +148,10 @@ export function buildRefinePrompt(input: {
     })
     .join("\n");
 
+  // Keep this prompt minimal — only the dynamic, per-request content. The
+  // rules + schema live in REFINE_SYSTEM_RULES (cached).
   return [
-    "You are fixing specific validation issues in generated Solana Rust code.",
     `Target framework: ${input.target}`,
-    "Return JSON with the exact schema shown below. No markdown, no prose outside JSON.",
-    "",
-    "Response schema:",
-    '{ "rationale": string, "findings": [{ "severity": "error" | "warning" | "info", "filePath"?: string, "title": string, "explanation": string, "suggestedFix": string }], "patches": [{ "filePath": string, "patchedContent": string }] }',
-    "",
-    "Rules:",
-    "- Output the COMPLETE patched file content for each file, not just diffs",
-    "- Fix ONLY the listed issues. Do not refactor unrelated code.",
-    "- Preserve all comments, structure, function names, and behavior",
-    "- Do NOT change the framework target or API conventions",
-    "- If an issue cannot be fixed without more context, leave a // TODO(manual) comment",
-    "- findings should be compact and only cover the most important issues you addressed or could not fully address",
     "",
     "Issues to fix:",
     issueList,

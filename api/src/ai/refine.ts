@@ -61,7 +61,7 @@ export async function refineOutput(
   }
 
   onProgress?.("ai_call", `Sending to ${repairModel} (${(prompt.length / 1024).toFixed(1)}KB prompt).`);
-  const raw = await provider.generateStructured({
+  const { value: raw, usage } = await provider.generateStructured({
     schema: REFINE_RESPONSE_JSON_SCHEMA,
     prompt,
     model: repairModel,
@@ -70,6 +70,16 @@ export async function refineOutput(
 
   onProgress?.("validate", "Validating AI response.");
   const parsed = RefineModelResponseSchema.parse(raw);
+
+  // Best-effort USD estimate. Sonnet 4 published pricing as of 2026-04:
+  //   $3/M input, $15/M output, cache write 1.25× input, cache read 0.1× input.
+  // Other models will mis-report — surfaced as "estimated" not exact.
+  const estimatedCostUsd =
+    (usage.inputTokens * 3 +
+      usage.outputTokens * 15 +
+      usage.cacheCreationTokens * 3.75 +
+      usage.cacheReadTokens * 0.3) /
+    1_000_000;
 
   // Evaluate each patch
   const patches: RefineResponse["patches"] = [];
@@ -134,16 +144,38 @@ export async function refineOutput(
   const accepted = patches.filter((p) => p.accepted).length;
   const total = patches.length;
 
-  onProgress?.("complete", `Refine completed: ${accepted}/${total} patches accepted.`);
+  // Compute the global error delta — sum across files, since some patches may
+  // have fixed file A while others touched file B. The per-patch loop above
+  // already validated file-by-file, but the user-facing number is the total.
+  const beforeErrors = input.validationIssues.filter((i) => i.severity === "error").length;
+  const acceptedFilesByPath = new Map(
+    patches.filter((p) => p.accepted).map((p) => [p.filePath, p.patchedContent]),
+  );
+  const finalFiles = input.files.map((f) =>
+    acceptedFilesByPath.has(f.path) ? { ...f, content: acceptedFilesByPath.get(f.path)! } : f,
+  );
+  const afterIssues = validateEmitterOutput(input.ir, {
+    files: finalFiles,
+    singleFile: "",
+    warnings: [],
+  });
+  const afterErrors = afterIssues.filter((i) => i.severity === "error").length;
+
+  onProgress?.(
+    "complete",
+    `Refine completed: ${accepted}/${total} patches accepted, errors ${beforeErrors} → ${afterErrors}.`,
+  );
 
   const result: RefineResponse = {
     rationale: parsed.rationale,
     findings: parsed.findings,
     patches,
-    summary: `${accepted}/${total} patches accepted`,
+    summary: `${accepted}/${total} patches accepted · errors ${beforeErrors} → ${afterErrors}`,
     aiCallMade: true,
     cacheKey,
     cached: false,
+    usage: { ...usage, estimatedCostUsd },
+    errorDelta: { before: beforeErrors, after: afterErrors },
   };
 
   await writeAICache(cacheKey, result);
