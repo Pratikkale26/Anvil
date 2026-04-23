@@ -60,7 +60,9 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
     refineBusy,
     refineResult,
     refineError,
+    refineErrorCategory,
     hasAppliedRefine,
+    preRefineErrorCount,
     showCompare,
     setShowCompare,
     transformSummary,
@@ -300,145 +302,247 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
         </div>
       </Panel>
 
-      {/* AI Refine card */}
-      <Panel>
-        <PanelHead icon={Sparkles} title="AI Refine" />
-        <div className="p-3 flex flex-col gap-2.5">
-          <div className="text-xs text-anvil-text-muted leading-relaxed">
-            One-click AI fix for validation errors. Uses a single focused
-            repair-model call with strict acceptance checks.
-          </div>
-
-          {/* Refine + Compare + Diagnostics */}
-          <div
-            className={cn(
-              "grid gap-2",
-              isMobile ? "grid-cols-1" : "grid-cols-2"
-            )}
-          >
-            <button
-              onClick={() => void runRefine()}
-              disabled={refineBusy || !hasOutput || errorCount === 0}
-              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-none font-extrabold text-sm transition-all"
-              style={{
-                cursor: refineBusy ? "default" : "pointer",
-                background: refineBusy
-                  ? "rgba(255,255,255,0.05)"
-                  : "linear-gradient(135deg, rgba(107,123,255,0.9), rgba(14,168,128,0.9))",
-                color: refineBusy ? C.textMuted : "#fff",
-                opacity:
-                  refineBusy || errorCount === 0 ? 0.5 : 1,
-              }}
+      {/* AI Refine card — only rendered when there's something to refine OR
+          a previous refine result to surface. When validation is clean and
+          no result exists, we show a positive "no AI needed" pill instead. */}
+      {hasOutput && errorCount === 0 && !refineResult && !refineError && (
+        <Panel>
+          <PanelHead icon={Sparkles} title="AI Refine" />
+          <div className="p-4 flex items-center gap-3">
+            <div
+              className="flex h-9 w-9 items-center justify-center rounded-[10px] shrink-0"
+              style={{ background: "rgba(14,168,128,0.12)" }}
             >
-              {refineBusy ? (
+              <Sparkles size={16} style={{ color: C.teal }} />
+            </div>
+            <div className="text-xs leading-relaxed">
+              <div className="font-bold text-anvil-text mb-0.5">
+                Validation clean — no AI fix needed.
+              </div>
+              <div className="text-anvil-text-muted">
+                The deterministic emitter produced output the validator can
+                vouch for. AI refine stays off so you don&apos;t pay for calls
+                that wouldn&apos;t change anything.
+              </div>
+            </div>
+          </div>
+        </Panel>
+      )}
+
+      {(errorCount > 0 || refineResult || refineError) && (
+        <Panel>
+          <PanelHead icon={Sparkles} title="AI Refine" />
+          <div className="p-3 flex flex-col gap-2.5">
+            <div className="text-xs text-anvil-text-muted leading-relaxed">
+              {errorCount > 0 && !refineResult ? (
                 <>
-                  <Loader2 size={14} className="animate-spin" /> Refining...
+                  {errorCount} validation error{errorCount === 1 ? "" : "s"} —
+                  one focused repair call, then re-validated. Patches that
+                  introduce new errors are auto-rejected.
                 </>
               ) : (
                 <>
-                  <Sparkles size={14} /> Refine
+                  Single focused repair-model call with strict acceptance
+                  checks.
                 </>
               )}
-            </button>
-            <div className="flex gap-2">
-              <OutBtn
-                icon={Layers3}
-                label={showCompare ? "Hide Diff" : "Diff"}
-                onClick={() => setShowCompare((c: boolean) => !c)}
-                disabled={!refineResult}
-              />
-              <OutBtn
-                icon={Download}
-                label="JSON"
-                onClick={downloadDiagnostics}
-                disabled={!refineResult}
-              />
             </div>
-          </div>
 
-          {/* Error */}
-          {refineError && (
-            <div className="p-3 rounded-xl bg-[rgba(224,90,90,0.1)] border border-[rgba(224,90,90,0.22)] text-[#ffb5b5] text-xs leading-relaxed">
-              {refineError}
-            </div>
-          )}
-
-          {/* Status badges */}
-          <div className="flex gap-2 flex-wrap">
-            <Badge
-              label="Strict Validated"
-              active={strictValidated}
-              color={C.teal}
-            />
-            <Badge
-              label="AI Refined"
-              active={hasAppliedRefine}
-              color={C.indigo}
-            />
-          </div>
-
-          {/* Refine result summary */}
-          {refineResult && (
-            <div className="border-t border-anvil-line pt-2.5">
-              <div
-                className="text-xs font-bold mb-1.5"
+            {/* Refine + Compare + Diagnostics */}
+            <div
+              className={cn(
+                "grid gap-2",
+                isMobile ? "grid-cols-1" : "grid-cols-2"
+              )}
+            >
+              <button
+                onClick={() => void runRefine()}
+                disabled={refineBusy || !hasOutput || errorCount === 0}
+                className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-none font-extrabold text-sm transition-all"
                 style={{
-                  color: refineResult.patches.some((p) => p.accepted)
-                    ? C.teal
-                    : C.red,
+                  cursor: refineBusy ? "default" : "pointer",
+                  background: refineBusy
+                    ? "rgba(255,255,255,0.05)"
+                    : "linear-gradient(135deg, rgba(107,123,255,0.9), rgba(14,168,128,0.9))",
+                  color: refineBusy ? C.textMuted : "#fff",
+                  opacity: refineBusy || errorCount === 0 ? 0.5 : 1,
                 }}
               >
-                {refineResult.summary}
-              </div>
-              <div className="text-[11px] text-anvil-text-dim mb-1.5">
-                {refineResult.cached
-                  ? "Served from local AI cache"
-                  : refineResult.aiCallMade
-                    ? "Fresh AI call made"
-                    : "No new AI call made"}
-              </div>
-              <div className="text-[11px] text-anvil-text-muted leading-relaxed mb-2">
-                {refineResult.rationale}
-              </div>
-              <div className="flex flex-col gap-1.5 max-h-[200px] overflow-y-auto">
-                {refineResult.patches.map((patch) => (
-                  <div
-                    key={patch.filePath}
-                    className="px-2.5 py-2 rounded-[10px] text-xs cursor-pointer"
-                    style={{
-                      border: `1px solid ${patch.accepted ? "rgba(14,168,128,0.3)" : "rgba(224,90,90,0.3)"}`,
-                      background: patch.accepted
-                        ? "rgba(14,168,128,0.06)"
-                        : "rgba(224,90,90,0.06)",
-                    }}
-                    onClick={() => {
-                      setActivePane("files");
-                      setActiveFilePath(patch.filePath);
-                    }}
-                  >
-                    <div className="flex justify-between items-center">
-                      <span className="font-mono text-anvil-text">
-                        {patch.filePath}
-                      </span>
-                      <span
-                        className="text-[11px] font-bold"
-                        style={{
-                          color: patch.accepted ? C.teal : C.red,
-                        }}
-                      >
-                        {patch.accepted ? "accepted" : "rejected"}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-anvil-text-muted mt-1">
-                      {patch.acceptanceReason}
-                    </div>
-                  </div>
-                ))}
+                {refineBusy ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" /> Refining...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={14} />{" "}
+                    {refineResult ? "Refine again" : "Refine"}
+                  </>
+                )}
+              </button>
+              <div className="flex gap-2">
+                <OutBtn
+                  icon={Layers3}
+                  label={showCompare ? "Hide Diff" : "Diff"}
+                  onClick={() => setShowCompare((c: boolean) => !c)}
+                  disabled={!refineResult}
+                />
+                <OutBtn
+                  icon={Download}
+                  label="JSON"
+                  onClick={downloadDiagnostics}
+                  disabled={!refineResult}
+                />
               </div>
             </div>
-          )}
-        </div>
-      </Panel>
+
+            {/* Structured error path */}
+            {refineError && (
+              <div className="p-3 rounded-xl bg-[rgba(224,90,90,0.1)] border border-[rgba(224,90,90,0.22)] text-[#ffb5b5] text-xs leading-relaxed">
+                <div className="font-bold mb-1">
+                  {refineErrorCategory === "missing_key"
+                    ? "API key not configured"
+                    : refineErrorCategory === "invalid_key"
+                      ? "API key rejected"
+                      : refineErrorCategory === "rate_limited"
+                        ? "Anthropic rate limit hit"
+                        : refineErrorCategory === "timeout"
+                          ? "AI provider timed out"
+                          : refineErrorCategory === "malformed_response"
+                            ? "Model returned malformed output"
+                            : "AI refine unavailable"}
+                </div>
+                <div className="opacity-90">{refineError}</div>
+                {refineErrorCategory === "missing_key" && (
+                  <div className="mt-1.5 text-[11px] opacity-80">
+                    Set <code className="font-mono">ANTHROPIC_API_KEY</code> in
+                    the API .env, restart the server, then click Refine again.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Status badges */}
+            <div className="flex gap-2 flex-wrap">
+              <Badge
+                label="Strict Validated"
+                active={strictValidated}
+                color={C.teal}
+              />
+              <Badge
+                label="AI Refined"
+                active={hasAppliedRefine}
+                color={C.indigo}
+              />
+            </div>
+
+            {/* Before / after delta — the headline number */}
+            {refineResult && preRefineErrorCount !== null && (
+              <div
+                className="px-3 py-2.5 rounded-xl border flex items-center gap-3"
+                style={{
+                  borderColor:
+                    refineResult.errorDelta?.after === 0
+                      ? "rgba(14,168,128,0.35)"
+                      : refineResult.errorDelta &&
+                          refineResult.errorDelta.after <
+                            refineResult.errorDelta.before
+                        ? "rgba(245,166,35,0.35)"
+                        : "rgba(224,90,90,0.35)",
+                  background:
+                    refineResult.errorDelta?.after === 0
+                      ? "rgba(14,168,128,0.08)"
+                      : refineResult.errorDelta &&
+                          refineResult.errorDelta.after <
+                            refineResult.errorDelta.before
+                        ? "rgba(245,166,35,0.07)"
+                        : "rgba(224,90,90,0.07)",
+                }}
+              >
+                <div className="font-mono text-base font-extrabold text-anvil-text">
+                  {refineResult.errorDelta?.before ?? preRefineErrorCount}
+                  <span className="mx-2 text-anvil-text-muted">→</span>
+                  {refineResult.errorDelta?.after ?? errorCount}
+                </div>
+                <div className="text-[11px] text-anvil-text-muted leading-tight">
+                  validation errors after refine
+                  {refineResult.usage?.estimatedCostUsd !== undefined && (
+                    <div className="text-[10px] opacity-80 mt-0.5">
+                      {refineResult.cached
+                        ? "Cache hit · $0.00"
+                        : `~$${refineResult.usage.estimatedCostUsd.toFixed(4)} · ` +
+                          `${refineResult.usage.inputTokens.toLocaleString()} in / ${refineResult.usage.outputTokens.toLocaleString()} out` +
+                          (refineResult.usage.cacheReadTokens > 0
+                            ? ` · ${refineResult.usage.cacheReadTokens.toLocaleString()} cached`
+                            : "")}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Refine result summary */}
+            {refineResult && (
+              <div className="border-t border-anvil-line pt-2.5">
+                <div
+                  className="text-xs font-bold mb-1.5"
+                  style={{
+                    color: refineResult.patches.some((p) => p.accepted)
+                      ? C.teal
+                      : C.red,
+                  }}
+                >
+                  {refineResult.summary}
+                </div>
+                <div className="text-[11px] text-anvil-text-dim mb-1.5">
+                  {refineResult.cached
+                    ? "Served from local AI cache"
+                    : refineResult.aiCallMade
+                      ? "Fresh AI call made"
+                      : "No new AI call made"}
+                </div>
+                <div className="text-[11px] text-anvil-text-muted leading-relaxed mb-2">
+                  {refineResult.rationale}
+                </div>
+                <div className="flex flex-col gap-1.5 max-h-[200px] overflow-y-auto">
+                  {refineResult.patches.map((patch) => (
+                    <div
+                      key={patch.filePath}
+                      className="px-2.5 py-2 rounded-[10px] text-xs cursor-pointer"
+                      style={{
+                        border: `1px solid ${patch.accepted ? "rgba(14,168,128,0.3)" : "rgba(224,90,90,0.3)"}`,
+                        background: patch.accepted
+                          ? "rgba(14,168,128,0.06)"
+                          : "rgba(224,90,90,0.06)",
+                      }}
+                      onClick={() => {
+                        setActivePane("files");
+                        setActiveFilePath(patch.filePath);
+                      }}
+                    >
+                      <div className="flex justify-between items-center">
+                        <span className="font-mono text-anvil-text">
+                          {patch.filePath}
+                        </span>
+                        <span
+                          className="text-[11px] font-bold"
+                          style={{
+                            color: patch.accepted ? C.teal : C.red,
+                          }}
+                        >
+                          {patch.accepted ? "accepted" : "rejected"}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-anvil-text-muted mt-1">
+                        {patch.acceptanceReason}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Panel>
+      )}
 
       {/* Run button */}
       <button

@@ -44,6 +44,8 @@ export type EmitResponse = {
   reviewReport?: ReviewReport;
   refined?: boolean;
   refineResult?: RefineResult;
+  /** Set when refine was attempted but failed at the provider layer. */
+  refineError?: { category: string; message: string };
 };
 
 export type FolderEntry = { path: string; content: string };
@@ -70,6 +72,16 @@ export type ReviewReport = {
   recommendedAction: string;
 };
 
+export type ProviderUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  estimatedCostUsd?: number;
+};
+
+export type ErrorDelta = { before: number; after: number };
+
 export type RefineResult = {
   rationale: string;
   findings?: Array<{
@@ -84,6 +96,8 @@ export type RefineResult = {
   aiCallMade: boolean;
   cacheKey?: string;
   cached?: boolean;
+  usage?: ProviderUsage;
+  errorDelta?: ErrorDelta;
 };
 
 export type ValidationIssue = {

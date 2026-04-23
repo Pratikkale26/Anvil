@@ -63,8 +63,12 @@ export function useAnvilPipeline() {
   const [refineResult, setRefineResult] = useState<RefineResult | null>(null);
   const [refineBusy, setRefineBusy] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
+  const [refineErrorCategory, setRefineErrorCategory] = useState<string | null>(null);
   const [hasAppliedRefine, setHasAppliedRefine] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
+  // Captured at the moment refine starts so the UI can render an unambiguous
+  // "errors: N → M" delta even after validationIssues is overwritten.
+  const [preRefineErrorCount, setPreRefineErrorCount] = useState<number | null>(null);
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -363,8 +367,10 @@ export function useAnvilPipeline() {
     try {
       setRefineBusy(true);
       setRefineError(null);
+      setRefineErrorCategory(null);
       setRefineResult(null);
       setHasAppliedRefine(false);
+      setPreRefineErrorCount(errors.length);
 
       const ir = JSON.parse(irText);
       const res = await fetch(`${API_BASE}/emit?refine=1`, {
@@ -380,7 +386,16 @@ export function useAnvilPipeline() {
       }
       const emitted = (await res.json()) as EmitResponse;
 
-      if (emitted.refined && emitted.refineResult) {
+      // Surface the structured refine error path (e.g. missing API key,
+      // upstream timeout) — these come back as a 200 from /emit but with
+      // a refineError field instead of refineResult.
+      if (emitted.refineError) {
+        setRefineError(emitted.refineError.message);
+        setRefineErrorCategory(emitted.refineError.category);
+        return;
+      }
+
+      if (emitted.refineResult) {
         setRefineResult(emitted.refineResult);
         setSingleFileCode(emitted.code);
         setOutputFiles(emitted.files ?? []);
@@ -388,11 +403,14 @@ export function useAnvilPipeline() {
         setWarnings(emitted.warnings ?? []);
         setValidationIssues(emitted.validationIssues ?? []);
         setReviewReport(emitted.reviewReport ?? null);
-        setHasAppliedRefine(true);
+        setHasAppliedRefine(emitted.refined === true);
         setShowCompare(true);
         setActivePane("files");
+        if (!emitted.refined) {
+          setRefineError("AI returned patches but none were accepted by re-validation.");
+        }
       } else {
-        setRefineError("AI refine ran but no patches were accepted.");
+        setRefineError("AI refine ran but produced no patches.");
       }
     } catch (err) {
       setRefineError(err instanceof Error ? err.message : String(err));
@@ -456,7 +474,9 @@ export function useAnvilPipeline() {
     refineResult,
     refineBusy,
     refineError,
+    refineErrorCategory,
     hasAppliedRefine,
+    preRefineErrorCount,
     showCompare,
     setShowCompare,
     activeRefinePatch,
