@@ -1,151 +1,147 @@
-# Project Summary
+# Anvil — Project Summary
 
-## What Anvil Is
+**One line.** Compiler-style transpiler from Anchor-style Rust to Pinocchio, Native (`solana-program`), and Quasar, plus a real CLI for portability / CU / snapshot / layout-diff analysis.
 
-Anvil is a compiler-style transpiler for Solana programs.
+## Live surfaces
 
-It takes Anchor-style Rust as input, parses it into a typed Solana IR, and emits alternative Rust backends such as Pinocchio, Quasar, and a native Solana target.
+- **Web:** [anvilsol.xyz](https://anvilsol.xyz) — paste Anchor, pick a target, download the full cargo-buildable project
+- **API:** `https://anvil-api-65aj4.ondigitalocean.app/` (`/parse`, `/emit`, `/lint`, `/demo`, `/ai/refine`, `/health`)
+- **CLI:** `bun cli/anvil.ts <command> <input>` — seven commands, all operate on the same IR
 
-The goal is to separate:
-
-- source ergonomics
-- normalized contract understanding
-- backend-specific code generation
-
-That separation makes it easier to experiment with leaner runtimes without coupling every emitter to raw Anchor source parsing.
-
-## Current Pipeline
-
-```text
-Anchor-style Rust
-  -> tree-sitter parser
-  -> Solana IR
-  -> target emitter
-  -> generated Rust
-  -> CU analysis metadata
+```
+anvil compile    — parse, emit, validate, write scaffold (Cargo.toml + src/)
+anvil parse      — IR as JSON or pretty summary
+anvil validate   — parse + emit + validator issues
+anvil lint       — portability scorecard (ready / review / blocker findings)
+anvil bench      — per-instruction CU estimate vs Anchor baseline
+anvil snapshot   — CU regression guard for CI (save baseline, diff runs)
+anvil diff       — storage-layout safety between two program versions
 ```
 
-## Main Parts Of The Repo
+## Pipeline
 
-### `api/`
+```
+Anchor Rust source
+  → tree-sitter parser (+ flattener for multi-file projects)
+  → Solana IR  (typed, 17 body statement kinds)
+  → target emitter  (pinocchio | native | quasar)
+  → output validator + CU analyzer
+  → emitted Rust, per-target Cargo.toml scaffold
+```
 
-The backend handles parsing, IR generation, emission, and demo/testing routes.
+The same IR powers the emitters, `lint`, `bench`, `snapshot`, and `diff`. No pass duplicates parsing.
 
-Important areas:
+## Repo layout
 
-- `api/src/parser/`
-- `api/src/ir/`
-- `api/src/emitter/`
-- `api/src/routes/`
-- `api/src/demo-programs/`
+```
+api/
+  src/
+    parser/           Anchor → IR (tree-sitter)
+    ir/               IR schema + demo fixtures
+    emitter/          target emitters + validator + CU analyzer
+    cli/              analyzers used by the CLI and /lint route
+    routes/           Express routes (parse / emit / lint / demo / ai)
+    demo-programs/    8 bundled Anchor demos
+  tests/              cargo-build + emitter snapshot + parser tests
+cli/
+  anvil.ts            CLI entry point — 7 commands
+web/
+  app/, components/   Next.js 16 landing + workbench
+  lib/                pipeline hook, types
+scripts/
+  batch-single.ts     real-world cargo-build sweep driver
+  batch-cargo.sh      parallel cargo-build runner
+```
 
-### `web/`
+## Current status (April 2026)
 
-The frontend is a Next.js app used for product presentation and the live playground.
+### Parser
+- 100% parse success across 27 real-world Anchor programs
+- Multi-file project ingestion (flattener with `<module>_handler` renames, impl-method-name preservation)
+- Captures impl methods, helper functions, custom types, constraints (`init`, `init_if_needed`, `mut`, `has_one`, `close`, `seeds`, `bump`, `realloc`, token constraints, associated-token constraints)
 
-## Current Status
+### Emitters
+- Pinocchio, Native, Quasar all share `BaseEmitter`
+- Multi-file project scaffold: Cargo.toml, README, .cargo/config.toml, rust-toolchain.toml, scripts/deploy.sh, anvil-manifest.json, src/{lib,state,errors,helpers,instructions/*}.rs
+- All generated `fn` are `pub fn` so the multi-file layout's re-exports resolve
+- `init_if_needed` emits the conditional create path
+- `realloc = <expr>` emits size + rent-delta top-up on native; warning block on pinocchio/quasar
+- SPL CPI transforms: transfer / mint_to / burn / close_account / transfer_checked across native + pinocchio; consolidated 3- and 4-statement patterns back into inline form at the source level
+- System-program transfer: qualified and unqualified (`use anchor_lang::system_program::{transfer, Transfer};`) call forms
+- `require_{eq,neq,gt,gte,lt,lte}!` macro expansion
 
-### Strongest paths
+### CLI commands
+- `lint` — target-aware (native keeps external crates as ready since project-scaffold ships them); score 0–100 + verdict
+- `bench` — JSON / Markdown output, ranked per-instruction hotspots
+- `snapshot` — --save / --check / --threshold-pct / --threshold-abs / --snapshot path
+- `diff` — byte-level account-layout diff; generates migration Rust for safe-extension, refuses unsafe cases with per-change reasons
 
-- `counter`
-- `vault`
+### Web workbench
+- Input: demo / paste / file / folder / GitHub repo
+- Output: Source / Single / Files / IR / Diff / CU tabs (Monaco editors)
+- Portability panel with live score-bar
+- CU savings pill in output header
+- ⌘↵ / Ctrl↵ runs the pipeline
+- Project-bundle download (`.tar`) is a real multi-file scaffold
 
-### Useful local validation paths
+### Tests
+- 14 cargo-build demo tests (12 pass, 2 known native linker fails — expected)
+- Parser snapshots + emitter snapshots + API route tests
+- Sweep: 16 real-world Anchor contracts → 17/48 cargo-build on (pinocchio + native + quasar)
 
-- `escrow`
-- `staking`
+### Real-world contract coverage
+4 PR branches pushed to `Pratikkale26/solana-programs-list`:
+`anvil/p-nft`, `anvil/sol-vault`, `anvil/tic-tac-toe`, `anvil/merkle-tree-incremental`
 
-### Important recent generic improvements
+## What's done this phase
 
-- exact PDA seed preservation from Anchor account constraints
-- better handling of deserialized state vs raw `AccountInfo`
-- generic save emission for mutated state accounts
-- better signer-seed handling for PDA-owned CPIs
-- improved Pinocchio helper generation for signed system/token transfers
-- local file and project-directory parser input
+Ordered by landing:
 
-## What Still Needs Manual Review
+1. Fixed the 4→17/48 cargo-build rate through parser + emitter corrections (broader CPI patterns, type-annotated let bindings, SPL-token-2022 dep, external-crate auto-add to native Cargo.toml)
+2. CLI scaffolds a full cargo-buildable project (not just raw source)
+3. Web workbench gets CU tab, lint panel, ⌘↵, `-N% CU` header pill
+4. `/lint` API route; lint/bench/snapshot/diff CLI commands
+5. Target-aware lint (external crates are blocker on pinocchio, ready on native)
+6. `init_if_needed` emits conditional create
+7. Impl-method rename safety in flattener (skip inside `impl { }` blocks)
+8. `realloc = <expr>` emission + rent-delta on native
 
-Anvil is not a promise that every emitted contract is deploy-ready.
+## What's still open
 
-The main places to review on advanced contracts are:
+- **Impl-method inlining into instruction handlers** — attempted, reverted (interacts with the CPI consolidation regex; produces syntactically-wrong output for escrow-style contracts). Would unblock 3 real-world contracts. ~4 hr of careful work to fix the interaction.
+- **Zero-copy accounts** (`#[account(zero_copy)]`) — `#[repr(C)]` layout preservation needed; not realistic before the hackathon.
+- **Pyth / MPL / Switchboard source-level CPI rewrites** — generating correct native SDK calls for these external programs. Out of scope until grant.
+- **Demo video, tech demo, pitch deck** — the hackathon-critical non-code work (Colosseum Frontier, May 11–12 2026).
 
-- constraint semantics like `has_one`, `close`, and `init_if_needed`
-- ATA/account lifecycle behavior
-- escrow completion / cleanup flows
-- emitted backend imports and helper compatibility
-- contract-specific auth semantics that Anchor enforced structurally
+## Local development
 
-## How To Test Locally
-
-Start the API:
-
+### API
 ```bash
-cd api
-bun install
-bun run dev
+cd api && bun install && bun run dev
+# → http://localhost:8080
 ```
 
-In another terminal, emit bundled fixtures:
-
+### Web
 ```bash
-cd api
-bun test-run.ts counter pinocchio
-bun test-run.ts vault pinocchio
-bun test-run.ts escrow pinocchio
-bun test-run.ts staking pinocchio
+cd web && bun install && NEXT_PUBLIC_API_URL=http://localhost:8080 bun run dev
+# → http://localhost:3000
 ```
 
-Try other targets:
-
+### CLI — quick smoke test
 ```bash
-cd api
-bun test-run.ts vault quasar
-bun test-run.ts vault native
+# Transpile a bundled demo and cargo-build it
+bun cli/anvil.ts compile api/src/demo-programs/counter.rs --target native --output /tmp/counter-native
+cd /tmp/counter-native && cargo build
 ```
 
-Parse a source file directly:
-
+### Regression
 ```bash
-curl -s http://localhost:8080/parse \
-  -H 'Content-Type: application/json' \
-  --data-binary @<(jq -Rs '{source: .}' api/src/demo-programs/vault.rs)
+cd api && bun test tests/cargo-build.test.ts
+# expected: 12 pass, 2 fail (known native linker issues)
 ```
 
-Parse one exact local program file:
-
+### Real-world sweep
 ```bash
-curl -s http://localhost:8080/parse \
-  -H 'Content-Type: application/json' \
-  -d '{"sourcePath":"/absolute/path/to/programs/example/src/lib.rs"}'
+# Parse + emit + cargo-build across 16 real-world Anchor contracts
+bun scripts/batch-single.ts
 ```
-
-Parse a local Anchor workspace directory:
-
-```bash
-curl -s http://localhost:8080/parse \
-  -H 'Content-Type: application/json' \
-  -d '{"projectPath":"/absolute/path/to/anchor-workspace"}'
-```
-
-The project-directory parser is a convenience layer, not a full workspace loader. It auto-detects likely entry files, but if a repo contains several programs you should point Anvil at one exact file path.
-
-## Practical Rule Of Thumb
-
-Use Anvil today as:
-
-- a parser and IR workbench
-- a contract-translation prototype
-- a generator you can inspect and iterate on
-
-Do not treat it yet as:
-
-- a fully verified replacement for Anchor
-- a zero-review contract migration tool
-
-## Good Next Steps
-
-1. Add fixture-based regression tests for generated outputs
-2. Add compile checks for emitted backends
-3. Expand constraint validation in the emitter layer
-4. Add local/repo file ingestion for arbitrary contracts
