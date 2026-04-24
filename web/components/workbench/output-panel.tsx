@@ -1,6 +1,7 @@
 "use client";
 
 import Editor, { DiffEditor } from "@monaco-editor/react";
+import { useState } from "react";
 import {
   C,
   MONACO_OPTS,
@@ -17,6 +18,7 @@ import {
   FileArchive,
   FileCode2,
   Loader2,
+  Search,
   Sparkles,
   TerminalSquare,
   X,
@@ -58,6 +60,17 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     resolvedSource,
     setShowCompare,
   } = state;
+
+  // File-tree filter. Shown above the list once the project has enough files
+  // that scrolling is annoying (real-world Anchor programs with 20-50 files).
+  // Simple substring match on the path — case-insensitive.
+  const [fileFilter, setFileFilter] = useState("");
+  const showFileFilter = outputFiles.length > 10;
+  const filteredOutputFiles = showFileFilter && fileFilter
+    ? outputFiles.filter((f) =>
+        f.path.toLowerCase().includes(fileFilter.toLowerCase()),
+      )
+    : outputFiles;
 
   // When the AI refine diff overlay is active it REPLACES the tab content —
   // both mounted simultaneously causes two stacked Monaco editors (the bug
@@ -536,7 +549,42 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                     maxHeight: isMobile ? 180 : editorHeight,
                   }}
                 >
-                  {outputFiles.map((f) => (
+                  {showFileFilter && (
+                    <div className="sticky top-0 z-10 px-2.5 py-2 bg-anvil-card border-b border-anvil-line">
+                      <div className="relative">
+                        <Search
+                          size={11}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 text-anvil-text-dim"
+                        />
+                        <input
+                          value={fileFilter}
+                          onChange={(e) => setFileFilter(e.target.value)}
+                          placeholder={`Filter ${outputFiles.length} files...`}
+                          className="w-full rounded-md border border-anvil-card-border bg-white/[0.03] text-anvil-text pl-7 pr-6 py-1 text-[11px] font-mono outline-none placeholder:text-anvil-text-dim"
+                        />
+                        {fileFilter && (
+                          <button
+                            onClick={() => setFileFilter("")}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-anvil-text-dim hover:text-anvil-text"
+                            aria-label="Clear filter"
+                          >
+                            <X size={11} />
+                          </button>
+                        )}
+                      </div>
+                      {fileFilter && (
+                        <div className="text-[10px] text-anvil-text-dim mt-1">
+                          {filteredOutputFiles.length} of {outputFiles.length} match
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {filteredOutputFiles.length === 0 && (
+                    <div className="p-4 text-center text-[11px] text-anvil-text-dim">
+                      No files match &ldquo;{fileFilter}&rdquo;.
+                    </div>
+                  )}
+                  {filteredOutputFiles.map((f) => (
                     <button
                       key={f.path}
                       onClick={() => setActiveFilePath(f.path)}
