@@ -5,6 +5,7 @@ import { RefineModelResponseSchema, type RejectedAttempt } from "./refine-schema
 import type { RefineResponse } from "./refine-schemas.js";
 import { createAICacheKey, readAICache, writeAICache } from "./cache.js";
 import { getParser } from "../parser/ts-init.js";
+import { AIError } from "./errors.js";
 import {
   buildRefinePrompt,
   REFINE_PROMPT_VERSION,
@@ -79,7 +80,20 @@ export async function refineOutput(
   });
 
   onProgress?.("validate", "Validating AI response.");
-  const parsed = RefineModelResponseSchema.parse(raw);
+  const schemaResult = RefineModelResponseSchema.safeParse(raw);
+  if (!schemaResult.success) {
+    // Distinct from malformed_response (non-JSON / garbage body). Here we got
+    // valid JSON back but it didn't match our expected shape — usually missing
+    // `patches` or wrong field types. Retryable: same prompt with a cache
+    // miss (via retry-with-feedback or prompt-version bump) often succeeds.
+    const issue = schemaResult.error.issues[0];
+    const where = issue ? `${issue.path.join(".") || "root"}: ${issue.message}` : schemaResult.error.message;
+    throw new AIError(
+      `AI response didn't match the expected JSON schema (${where}).`,
+      "zod_parse_failed",
+    );
+  }
+  const parsed = schemaResult.data;
 
   // Best-effort USD estimate. Sonnet 4 published pricing as of 2026-04:
   //   $3/M input, $15/M output, cache write 1.25× input, cache read 0.1× input.

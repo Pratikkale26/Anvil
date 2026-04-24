@@ -452,13 +452,33 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                           ? "AI provider timed out"
                           : refineErrorCategory === "malformed_response"
                             ? "Model returned malformed output"
-                            : "AI refine unavailable"}
+                            : refineErrorCategory === "zod_parse_failed"
+                              ? "Model output didn't match the expected shape"
+                              : "AI refine unavailable"}
                 </div>
                 <div className="opacity-90">{refineError}</div>
                 {refineErrorCategory === "missing_key" && (
                   <div className="mt-1.5 text-[11px] opacity-80">
                     Set <code className="font-mono">ANTHROPIC_API_KEY</code> in
                     the API .env, restart the server, then click Refine again.
+                  </div>
+                )}
+                {refineErrorCategory === "zod_parse_failed" && (
+                  <div className="mt-1.5 text-[11px] opacity-80">
+                    The JSON was valid but missing or wrong-typed fields. Click
+                    Refine again — the retry bypasses the cache and often
+                    lands on a clean response.
+                  </div>
+                )}
+                {refineErrorCategory === "rate_limited" && (
+                  <div className="mt-1.5 text-[11px] opacity-80">
+                    Anthropic is throttling. Wait ~30s and click Refine again.
+                  </div>
+                )}
+                {refineErrorCategory === "timeout" && (
+                  <div className="mt-1.5 text-[11px] opacity-80">
+                    The provider didn&apos;t respond in time. Click Refine again;
+                    the second attempt frequently succeeds.
                   </div>
                 )}
               </div>
