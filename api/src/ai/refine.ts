@@ -88,9 +88,24 @@ export async function refineOutput(
   // through the accept gate.
   const tsParser = await getParser();
 
+  // Sort patches by filePath so accept/reject ordering is deterministic if the
+  // model returns patches in different orders on retry.
+  const sortedPatches = [...parsed.patches].sort((a, b) =>
+    a.filePath.localeCompare(b.filePath),
+  );
+
+  // Running state: starts as the original files, gains each accepted patch.
+  // Subsequent patches are validated against this running state so patch B
+  // sees patch A's fix — and a patch that breaks a *different* file is
+  // rejected even if the file it modifies looks clean on its own.
+  let runningFiles: EmitterFile[] = [...input.files];
+  const issueKey = (issue: ValidationIssue) =>
+    `${issue.severity}:${issue.path ?? ""}:${issue.message}`;
+  const beforeErrors = input.validationIssues.filter((i) => i.severity === "error").length;
+
   // Evaluate each patch
   const patches: RefineResponse["patches"] = [];
-  for (const patch of parsed.patches) {
+  for (const patch of sortedPatches) {
     const originalFile = input.files.find((f) => f.path === patch.filePath);
     if (!originalFile) {
       patches.push({
@@ -118,39 +133,50 @@ export async function refineOutput(
       continue;
     }
 
-    // Apply the patch and re-validate
-    const patchedFiles = input.files.map((f) =>
-      f.path === patch.filePath ? { ...f, content: patch.patchedContent } : f
+    // Validate globally — applying this patch to the running state and checking
+    // the full output, not just this one file. Catches cross-file breakage
+    // (e.g. a patch in instructions/mod.rs that removes a `pub use` lib.rs depends on).
+    const runningIssues = validateEmitterOutput(input.ir, {
+      files: runningFiles,
+      singleFile: "",
+      warnings: [],
+    });
+    const candidateFiles = runningFiles.map((f) =>
+      f.path === patch.filePath ? { ...f, content: patch.patchedContent } : f,
     );
-    const patchedOutput = { files: patchedFiles, singleFile: "", warnings: [] };
-    const patchedIssues = validateEmitterOutput(input.ir, patchedOutput)
-      .filter((i) => i.path === patch.filePath);
+    const candidateIssues = validateEmitterOutput(input.ir, {
+      files: candidateFiles,
+      singleFile: "",
+      warnings: [],
+    });
 
-    const originalIssues = input.validationIssues.filter((i) => i.path === patch.filePath);
-    const originalErrors = originalIssues.filter((i) => i.severity === "error");
-    const patchedErrors = patchedIssues.filter((i) => i.severity === "error");
-
-    // Accept if patch doesn't make things worse
-    const issueKey = (issue: ValidationIssue) => `${issue.severity}:${issue.message}`;
-    const originalKeys = new Set(originalIssues.map(issueKey));
-    const newIssues = patchedIssues.filter((i) => !originalKeys.has(issueKey(i)));
+    const runningKeys = new Set(runningIssues.map(issueKey));
+    const newIssues = candidateIssues.filter((i) => !runningKeys.has(issueKey(i)));
     const newErrors = newIssues.filter((i) => i.severity === "error");
+    const runningErrors = runningIssues.filter((i) => i.severity === "error").length;
+    const candidateErrors = candidateIssues.filter((i) => i.severity === "error").length;
 
     if (newErrors.length > 0) {
+      const offendingPaths = Array.from(new Set(newErrors.map((e) => e.path).filter(Boolean)));
+      const where = offendingPaths.length === 1 && offendingPaths[0] === patch.filePath
+        ? ""
+        : offendingPaths.length > 0
+          ? ` (in ${offendingPaths.join(", ")})`
+          : "";
       patches.push({
         filePath: patch.filePath,
         originalContent: originalFile.content,
         patchedContent: patch.patchedContent,
         accepted: false,
-        acceptanceReason: `Patch introduced ${newErrors.length} new error(s).`,
+        acceptanceReason: `Patch introduced ${newErrors.length} new error(s)${where}.`,
       });
-    } else if (patchedErrors.length > originalErrors.length) {
+    } else if (candidateErrors > runningErrors) {
       patches.push({
         filePath: patch.filePath,
         originalContent: originalFile.content,
         patchedContent: patch.patchedContent,
         accepted: false,
-        acceptanceReason: `Patch increased errors from ${originalErrors.length} to ${patchedErrors.length}.`,
+        acceptanceReason: `Patch increased total errors from ${runningErrors} to ${candidateErrors}.`,
       });
     } else {
       patches.push({
@@ -158,26 +184,20 @@ export async function refineOutput(
         originalContent: originalFile.content,
         patchedContent: patch.patchedContent,
         accepted: true,
-        acceptanceReason: `Patch accepted: ${originalErrors.length - patchedErrors.length} error(s) fixed, no new errors.`,
+        acceptanceReason: `Patch accepted: ${runningErrors - candidateErrors} error(s) fixed, no regressions.`,
       });
+      // Commit to running state so subsequent patches see this fix.
+      runningFiles = candidateFiles;
     }
   }
 
   const accepted = patches.filter((p) => p.accepted).length;
   const total = patches.length;
 
-  // Compute the global error delta — sum across files, since some patches may
-  // have fixed file A while others touched file B. The per-patch loop above
-  // already validated file-by-file, but the user-facing number is the total.
-  const beforeErrors = input.validationIssues.filter((i) => i.severity === "error").length;
-  const acceptedFilesByPath = new Map(
-    patches.filter((p) => p.accepted).map((p) => [p.filePath, p.patchedContent]),
-  );
-  const finalFiles = input.files.map((f) =>
-    acceptedFilesByPath.has(f.path) ? { ...f, content: acceptedFilesByPath.get(f.path)! } : f,
-  );
+  // Final global count — runningFiles already has every accepted patch applied
+  // in order, so this is just one validate on the final state.
   const afterIssues = validateEmitterOutput(input.ir, {
-    files: finalFiles,
+    files: runningFiles,
     singleFile: "",
     warnings: [],
   });
