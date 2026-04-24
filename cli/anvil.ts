@@ -300,7 +300,184 @@ function printCompileHelp(): void {
     --output, -o <dir>      Output directory (default: ./anvil-output/)
     --single-file           Emit a single .rs file instead of project layout
     --json                  Output the IR as JSON instead of writing files
+
+  ${c.bold}EXAMPLES${c.reset}
+
+    anvil compile program.rs --target pinocchio
+    anvil compile ./my-program --target native --output ./dist
 `);
+}
+
+function printParseHelp(): void {
+  console.log(`
+  ${c.bold}anvil parse${c.reset} — Parse an Anchor program and dump the IR.
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil parse <input> [--json]
+
+  ${c.bold}ARGUMENTS${c.reset}
+
+    <input>     Rust source file (.rs) or project directory
+
+  ${c.bold}OPTIONS${c.reset}
+
+    --json      Output the IR as JSON (default: human-readable summary)
+
+  ${c.bold}EXAMPLES${c.reset}
+
+    anvil parse program.rs
+    anvil parse ./my-program --json > ir.json
+`);
+}
+
+function printValidateHelp(): void {
+  console.log(`
+  ${c.bold}anvil validate${c.reset} — Parse + emit + validate and report issues.
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil validate <input> --target <target> [--json]
+
+  ${c.bold}ARGUMENTS${c.reset}
+
+    <input>     Rust source file (.rs) or project directory
+
+  ${c.bold}OPTIONS${c.reset}
+
+    --target, -t <target>   ${c.bold}Required.${c.reset} One of: pinocchio, native, quasar
+    --json                  Output the issue list as JSON
+
+  ${c.bold}EXIT CODES${c.reset}
+
+    0   No error-severity issues (warnings only)
+    1   Invalid input or unexpected failure
+    2   One or more error-severity validation issues found
+
+  ${c.bold}EXAMPLES${c.reset}
+
+    anvil validate program.rs --target pinocchio
+    anvil validate ./my-program --target native --json
+`);
+}
+
+function printLintHelp(): void {
+  console.log(`
+  ${c.bold}anvil lint${c.reset} — Auto-port readiness report (ready / review / blocker).
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil lint <input> [--target <t>] [--json | --markdown]
+
+  ${c.bold}ARGUMENTS${c.reset}
+
+    <input>     Rust source file (.rs) or project directory
+
+  ${c.bold}OPTIONS${c.reset}
+
+    --target, -t <target>   Target to score portability against (default: pinocchio)
+    --json                  JSON lint report (for scripts)
+    --markdown, --md        Markdown report (for PR comments)
+
+  ${c.bold}EXAMPLES${c.reset}
+
+    anvil lint ./my-anchor-project
+    anvil lint program.rs --markdown > lint.md
+`);
+}
+
+function printBenchHelp(): void {
+  console.log(`
+  ${c.bold}anvil bench${c.reset} — Per-instruction CU estimate vs Anchor baseline.
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil bench <input> [--json | --markdown]
+
+  ${c.bold}ARGUMENTS${c.reset}
+
+    <input>     Rust source file (.rs) or project directory
+
+  ${c.bold}OPTIONS${c.reset}
+
+    --json                  JSON CU report
+    --markdown, --md        Markdown CU table ranked by hotspots
+
+  ${c.bold}EXAMPLES${c.reset}
+
+    anvil bench program.rs
+    anvil bench program.rs --markdown > bench.md
+`);
+}
+
+function printSnapshotHelp(): void {
+  console.log(`
+  ${c.bold}anvil snapshot${c.reset} — Save / check CU baseline, fail on regression.
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil snapshot <input> --save          # save baseline (first run)
+    anvil snapshot <input> --check         # compare to baseline (CI guard)
+
+  ${c.bold}OPTIONS${c.reset}
+
+    --save                     Write a new baseline snapshot
+    --check                    Compare to the existing baseline (default)
+    --threshold-pct <N>        Per-instruction regression threshold (%) — default 5
+    --threshold-abs <N>        Per-instruction regression threshold (CU) — default 10
+    --snapshot <path>          Snapshot file path (default ./anvil.snapshot.json)
+    --json                     JSON report
+    --markdown, --md           Markdown report
+
+  ${c.bold}EXIT CODES${c.reset}
+
+    0   No regression beyond thresholds (or --save completed)
+    1   Missing input, or unexpected error
+    2   Regression detected (any instruction exceeds threshold)
+
+  ${c.bold}EXAMPLES${c.reset}
+
+    anvil snapshot program.rs --save
+    anvil snapshot program.rs --check --threshold-pct 3
+`);
+}
+
+function printDiffHelp(): void {
+  console.log(`
+  ${c.bold}anvil diff${c.reset} — Storage-layout diff between two program versions.
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil diff <before> <after> [--json | --markdown]
+
+  ${c.bold}ARGUMENTS${c.reset}
+
+    <before>    Old program (file or directory)
+    <after>     New program (file or directory)
+
+  ${c.bold}OPTIONS${c.reset}
+
+    --json                  JSON diff report
+    --markdown, --md        Markdown upgrade-safety report
+
+  ${c.bold}EXAMPLES${c.reset}
+
+    anvil diff ./v1 ./v2
+    anvil diff old.rs new.rs --markdown > upgrade-safety.md
+`);
+}
+
+function printCommandHelp(command: string): void {
+  switch (command) {
+    case "compile":  printCompileHelp();  return;
+    case "parse":    printParseHelp();    return;
+    case "validate": printValidateHelp(); return;
+    case "lint":     printLintHelp();     return;
+    case "bench":    printBenchHelp();    return;
+    case "snapshot": printSnapshotHelp(); return;
+    case "diff":     printDiffHelp();     return;
+    default:         printHelp();
+  }
 }
 
 // ─── Source Resolution ───────────────────────────────────────────────────────
@@ -1078,6 +1255,12 @@ async function main(): Promise<void> {
 
   if (args.help && !args.command) {
     printHelp();
+    return;
+  }
+
+  // `anvil <command> --help` → show command-specific help instead of running.
+  if (args.help && args.command) {
+    printCommandHelp(args.command);
     return;
   }
 
