@@ -6,10 +6,12 @@ import { emitNative, emitNativeFull } from "../emitter/native-emitter.js";
 import { analyzeCU } from "../emitter/cu-analyzer.js";
 import { validateEmitterOutput } from "../emitter/output-validator.js";
 import { refineOutput } from "../ai/refine.js";
+import { RejectedAttemptSchema, type RejectedAttempt } from "../ai/refine-schemas.js";
 import { buildDeterministicReviewReport } from "../ai/review-report.js";
 import { AIError } from "../ai/errors.js";
 import { buildProjectScaffold } from "../emitter/project-scaffold.js";
 import { AnvilError, ErrorCode } from "../errors.js";
+import { z } from "zod";
 
 export const emitRoute = Router();
 
@@ -63,6 +65,17 @@ emitRoute.post("/", async (req, res) => {
   // + .gitignore + anvil-manifest.json, and the emitted .rs files are
   // rewritten to live under src/ so the whole thing is `cargo build`-able.
   const projectScaffold = Boolean((req.body as { projectScaffold?: boolean }).projectScaffold);
+
+  // Optional retry-with-feedback: when the client is retrying after a prior
+  // refine rejected one or more patches, they can forward those rejected
+  // attempts so the model gets to see what went wrong and picks a different
+  // approach. Bounded and validated — invalid shapes are just dropped.
+  let previousAttempts: RejectedAttempt[] | undefined;
+  const rawAttempts = (req.body as { previousAttempts?: unknown }).previousAttempts;
+  if (Array.isArray(rawAttempts) && rawAttempts.length > 0) {
+    const parsedAttempts = z.array(RejectedAttemptSchema).safeParse(rawAttempts);
+    if (parsedAttempts.success) previousAttempts = parsedAttempts.data;
+  }
 
   if (!rawIr || typeof rawIr !== "object") {
     const err = new AnvilError(
@@ -149,7 +162,8 @@ emitRoute.post("/", async (req, res) => {
     // ─── AI Refine (optional, single call) ─────────────────────────────────
     if (refine && validationErrors.length > 0) {
       try {
-        console.log(`[emit][refine] ${validationErrors.length} validation errors found — running AI refine pass.`);
+        const retryNote = previousAttempts ? ` (retry with ${previousAttempts.length} prior rejection(s))` : "";
+        console.log(`[emit][refine] ${validationErrors.length} validation errors found — running AI refine pass${retryNote}.`);
         const result = await refineOutput({
           target: target as Target,
           ir,
@@ -157,6 +171,7 @@ emitRoute.post("/", async (req, res) => {
             ? output.files
             : [{ path: `${ir.name}.rs`, content: output.singleFile }],
           validationIssues,
+          previousAttempts,
         });
 
         // Apply accepted patches

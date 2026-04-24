@@ -431,6 +431,20 @@ export function useAnvilPipeline() {
       return;
     }
 
+    // If this is a retry after a prior result with rejected patches, forward
+    // the rejection feedback so the next AI call can try a different approach.
+    // Including this in the request body also changes the server-side cache
+    // key, so retries bypass cached same-as-last-time results.
+    const rejectedPatches = refineResult?.patches.filter((p) => !p.accepted) ?? [];
+    const previousAttempts =
+      rejectedPatches.length > 0
+        ? rejectedPatches.slice(-2).map((p) => ({
+            filePath: p.filePath,
+            acceptanceReason: p.acceptanceReason,
+            patchedContentPreview: p.patchedContent.slice(0, 2000),
+          }))
+        : undefined;
+
     try {
       setRefineBusy(true);
       setRefineError(null);
@@ -443,7 +457,12 @@ export function useAnvilPipeline() {
       const res = await fetch(`${API_BASE}/emit?refine=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ir, target, multiFile: true }),
+        body: JSON.stringify({
+          ir,
+          target,
+          multiFile: true,
+          ...(previousAttempts ? { previousAttempts } : {}),
+        }),
       });
       if (!res.ok) {
         const p = await res

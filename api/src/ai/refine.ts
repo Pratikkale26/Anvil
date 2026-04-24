@@ -1,7 +1,7 @@
 import { getAIProvider } from "./config.js";
 import { validateEmitterOutput, type ValidationIssue } from "../emitter/output-validator.js";
 import type { SolanaIR, EmitterFile } from "../ir/schema.js";
-import { RefineModelResponseSchema } from "./refine-schemas.js";
+import { RefineModelResponseSchema, type RejectedAttempt } from "./refine-schemas.js";
 import type { RefineResponse } from "./refine-schemas.js";
 import { createAICacheKey, readAICache, writeAICache } from "./cache.js";
 import { getParser } from "../parser/ts-init.js";
@@ -18,6 +18,13 @@ export type RefineInput = {
   ir: SolanaIR;
   files: EmitterFile[];
   validationIssues: ValidationIssue[];
+  /**
+   * Optional: rejected attempts from a prior refine call on the same IR.
+   * The prompt will mention them so the model doesn't repeat the same mistake.
+   * Changing this also changes the cache key → retry after rejection bypasses
+   * the cache instead of returning the same unhelpful result.
+   */
+  previousAttempts?: RejectedAttempt[];
 };
 
 /**
@@ -39,6 +46,7 @@ export async function refineOutput(
     target: input.target,
     validationIssues: input.validationIssues,
     files: input.files,
+    previousAttempts: input.previousAttempts,
   });
 
   const cacheKey = createAICacheKey({
@@ -48,6 +56,7 @@ export async function refineOutput(
     target: input.target,
     files: input.files,
     validationIssues: input.validationIssues,
+    previousAttempts: input.previousAttempts ?? [],
   });
 
   const cached = await readAICache(cacheKey);

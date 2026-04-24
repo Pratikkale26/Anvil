@@ -1,9 +1,15 @@
 import type { ValidationIssue } from "../../emitter/output-validator.js";
+import type { RejectedAttempt } from "../refine-schemas.js";
 
-// Bumped to v2: caller-side schema didn't change, but we moved the static rules
-// into the system prompt to clear Anthropic's 1024-token prompt-cache minimum.
-// The cache key folds in this version so v1 cached results never collide.
-export const REFINE_PROMPT_VERSION = "refine.v2";
+// Bumped to v3: prompt now carries rejected-attempt feedback when the user
+// retries after a failed refine. Cache key folds in this version so v2 cached
+// results never collide.
+export const REFINE_PROMPT_VERSION = "refine.v3";
+
+/** Max preview length per rejected attempt — keeps retry prompts bounded. */
+const REJECTED_ATTEMPT_PREVIEW_CHARS = 2000;
+/** Max number of rejected attempts to include — newest first. */
+const MAX_REJECTED_ATTEMPTS = 2;
 
 /**
  * Static system rules. Co-located in the cached prompt prefix so Anthropic's
@@ -85,11 +91,16 @@ export const REFINE_SYSTEM_RULES = [
 /**
  * Build a focused AI prompt containing ONLY the code sections that have issues.
  * This is dramatically smaller than the old review-output prompt (~5-10KB vs 30-50KB).
+ *
+ * When `previousAttempts` is supplied (user clicked retry after a failed refine),
+ * the rejected patches + reasons are prepended so the model sees what went wrong
+ * and can pick a different approach.
  */
 export function buildRefinePrompt(input: {
   target: string;
   validationIssues: ValidationIssue[];
   files: Array<{ path: string; content: string }>;
+  previousAttempts?: RejectedAttempt[];
 }): string {
   // Collect unique files that have issues
   const issuePaths = new Set(
@@ -148,11 +159,38 @@ export function buildRefinePrompt(input: {
     })
     .join("\n");
 
+  // Retry feedback — only present when the user clicked retry after a prior
+  // attempt failed validation. Bounded in size (N attempts × M chars each) so
+  // this doesn't explode context on large programs.
+  const retryBlock: string[] = [];
+  if (input.previousAttempts && input.previousAttempts.length > 0) {
+    const recent = input.previousAttempts.slice(-MAX_REJECTED_ATTEMPTS);
+    retryBlock.push(
+      "── PRIOR ATTEMPT REJECTED — DO NOT REPEAT THESE MISTAKES ──",
+      "Your previous attempt on this same input was rejected by the validator.",
+      "Below is what you tried and why it was thrown out. Pick a different approach this time — do not produce the same patch again.",
+      "",
+    );
+    for (const [i, a] of recent.entries()) {
+      const preview = a.patchedContentPreview.length > REJECTED_ATTEMPT_PREVIEW_CHARS
+        ? `${a.patchedContentPreview.slice(0, REJECTED_ATTEMPT_PREVIEW_CHARS)}\n... [truncated]`
+        : a.patchedContentPreview;
+      retryBlock.push(
+        `── Rejected attempt ${i + 1}: ${a.filePath} ──`,
+        `Reason: ${a.acceptanceReason}`,
+        "What you tried (truncated):",
+        preview,
+        "",
+      );
+    }
+  }
+
   // Keep this prompt minimal — only the dynamic, per-request content. The
   // rules + schema live in REFINE_SYSTEM_RULES (cached).
   return [
     `Target framework: ${input.target}`,
     "",
+    ...(retryBlock.length > 0 ? retryBlock : []),
     "Issues to fix:",
     issueList,
     "",

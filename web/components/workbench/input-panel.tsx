@@ -84,6 +84,9 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
   const errorCount = validationIssues.filter(
     (i) => i.severity === "error"
   ).length;
+  const rejectedCount =
+    refineResult?.patches.filter((p) => !p.accepted).length ?? 0;
+  const isRetryWithFeedback = rejectedCount > 0;
 
   return (
     <div
@@ -334,7 +337,14 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
           <PanelHead icon={Sparkles} title="AI Refine" />
           <div className="p-3 flex flex-col gap-2.5">
             <div className="text-xs text-anvil-text-muted leading-relaxed">
-              {errorCount > 0 && !refineResult ? (
+              {isRetryWithFeedback ? (
+                <>
+                  {rejectedCount} rejected patch
+                  {rejectedCount === 1 ? "" : "es"} last run — a retry forwards
+                  the rejection reasons so the model can try a different
+                  approach. Bypasses the cache.
+                </>
+              ) : errorCount > 0 && !refineResult ? (
                 <>
                   {errorCount} validation error{errorCount === 1 ? "" : "s"} —
                   one focused repair call, then re-validated. Patches that
@@ -363,10 +373,17 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                   cursor: refineBusy ? "default" : "pointer",
                   background: refineBusy
                     ? "rgba(255,255,255,0.05)"
-                    : "linear-gradient(135deg, rgba(107,123,255,0.9), rgba(14,168,128,0.9))",
+                    : isRetryWithFeedback
+                      ? "linear-gradient(135deg, rgba(245,166,35,0.9), rgba(232,130,10,0.9))"
+                      : "linear-gradient(135deg, rgba(107,123,255,0.9), rgba(14,168,128,0.9))",
                   color: refineBusy ? C.textMuted : "#fff",
                   opacity: refineBusy || errorCount === 0 ? 0.5 : 1,
                 }}
+                title={
+                  isRetryWithFeedback
+                    ? `Next retry tells the AI what went wrong with ${rejectedCount} rejected patch(es) so it tries a different approach.`
+                    : undefined
+                }
               >
                 {refineBusy ? (
                   <>
@@ -375,7 +392,11 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                 ) : (
                   <>
                     <Sparkles size={14} />{" "}
-                    {refineResult ? "Refine again" : "Refine"}
+                    {isRetryWithFeedback
+                      ? "Retry with feedback"
+                      : refineResult
+                        ? "Refine again"
+                        : "Refine"}
                   </>
                 )}
               </button>

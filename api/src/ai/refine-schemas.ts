@@ -34,6 +34,18 @@ export const RefinePatchSchema = z.object({
 export type RefinePatch = z.infer<typeof RefinePatchSchema>;
 
 /**
+ * A prior rejected patch attempt, fed back into the next refine prompt so the
+ * model can see what went wrong and try a different approach. Content is
+ * deliberately truncated to keep the context + cache footprint bounded.
+ */
+export const RejectedAttemptSchema = z.object({
+  filePath: z.string(),
+  acceptanceReason: z.string(),
+  patchedContentPreview: z.string(),
+});
+export type RejectedAttempt = z.infer<typeof RejectedAttemptSchema>;
+
+/**
  * Raw model response for refine.
  */
 export const RefineModelResponseSchema = z.object({
