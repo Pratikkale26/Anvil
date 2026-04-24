@@ -4,6 +4,7 @@ import type { SolanaIR, EmitterFile } from "../ir/schema.js";
 import { RefineModelResponseSchema } from "./refine-schemas.js";
 import type { RefineResponse } from "./refine-schemas.js";
 import { createAICacheKey, readAICache, writeAICache } from "./cache.js";
+import { getParser } from "../parser/ts-init.js";
 import {
   buildRefinePrompt,
   REFINE_PROMPT_VERSION,
@@ -81,6 +82,12 @@ export async function refineOutput(
       usage.cacheReadTokens * 0.3) /
     1_000_000;
 
+  // Init tree-sitter once for structural pre-checks. Patches whose patchedContent
+  // doesn't parse as valid Rust (unbalanced braces, broken expressions) are
+  // rejected upfront — the regex validator can miss these and let malformed code
+  // through the accept gate.
+  const tsParser = await getParser();
+
   // Evaluate each patch
   const patches: RefineResponse["patches"] = [];
   for (const patch of parsed.patches) {
@@ -92,6 +99,21 @@ export async function refineOutput(
         patchedContent: patch.patchedContent,
         accepted: false,
         acceptanceReason: `File '${patch.filePath}' not found in original output.`,
+      });
+      continue;
+    }
+
+    // Structural pre-check: reject before re-validation if the patched content
+    // doesn't parse as syntactically valid Rust. hasError covers both ERROR
+    // nodes (malformed productions) and MISSING nodes (unclosed delimiters).
+    const tree = tsParser.parse(patch.patchedContent);
+    if (tree && tree.rootNode.hasError) {
+      patches.push({
+        filePath: patch.filePath,
+        originalContent: originalFile.content,
+        patchedContent: patch.patchedContent,
+        accepted: false,
+        acceptanceReason: "Patch contains invalid Rust syntax (unbalanced delimiters or malformed expression).",
       });
       continue;
     }
