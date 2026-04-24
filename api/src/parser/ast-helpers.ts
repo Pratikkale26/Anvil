@@ -326,10 +326,17 @@ export function cleanAccountRef(text: string): string {
 }
 
 /**
- * Clean an amount expression — strip ctx.accounts prefix.
+ * Clean an amount expression — strip Rust comments and ctx.accounts prefix.
+ * Line comments must go before anything else re-emits the expression on one
+ * line, otherwise a trailing `// foo` swallows the rest of the emitted call.
  */
 export function cleanAmountExpr(text: string): string {
-  return text.replace(/ctx\.accounts\./g, "").trim();
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/[^\n]*/g, " ")
+    .replace(/ctx\.accounts\./g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

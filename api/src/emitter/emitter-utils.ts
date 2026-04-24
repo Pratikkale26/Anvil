@@ -145,7 +145,20 @@ export function capitalize(value: string): string {
 // ─── Expression normalization ────────────────────────────────────────────────
 
 export function cleanInlineExpr(value: string): string {
-  return value.replace(/\s+/g, " ").trim().replace(/,$/, "");
+  // Strip Rust comments before collapsing whitespace. A trailing `// foo`
+  // inside a CPI arg list consumes the closing `)?;` when the expression
+  // is re-emitted on one line (real example:
+  //   amount * 10u64.pow(decimals as u32), // Mint tokens
+  // emitted as `spl_token_mint_to(..., ..., // Mint tokens)?;` — the
+  // `// Mint tokens)?;` becomes a single comment, breaking the call).
+  // Block comments also go; lossy vs. string-embedded `//` but those are
+  // rare in amount/account expressions.
+  return value
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/[^\n]*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/,$/, "");
 }
 
 export function stripAnchorConstraintError(value: string): string {
