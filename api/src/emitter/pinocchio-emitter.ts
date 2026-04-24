@@ -345,18 +345,28 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override emitMsg(message: string): string {
+    // `message` is the raw inside of msg!(...). Three shapes to handle:
+    //   1. "literal"            → log the literal as-is
+    //   2. "fmt", arg1, arg2    → collapse to logging just the format string
+    //                             (sol_log has no format support; at least keep
+    //                             the string instead of silently dropping it)
+    //   3. expr / variable      → pass through (advanced users wiring their own)
+    //
+    // The previous naïve `indexOf(",")` treated commas *inside* string literals
+    // as format separators, truncating `"Hello, Solana!"` to `"Hello`. Now we
+    // only trust the full-literal match.
     const literalMatch = message.match(/^"([^"\\]|\\.)*"/);
     if (literalMatch?.[0]) {
       const literal = literalMatch[0];
-      if (literal !== message.trim()) {
-        return `    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio\n    pinocchio::log::sol_log(${literal});`;
+      if (literal === message.trim()) {
+        // Shape 1: pure string literal, no format args.
+        return `    pinocchio::log::sol_log(${literal});`;
       }
-    }
-    const commaIdx = message.indexOf(",");
-    if (commaIdx !== -1) {
-      const literal = message.slice(0, commaIdx).trim();
+      // Shape 2: literal followed by more (format args). Collapse.
       return `    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio\n    pinocchio::log::sol_log(${literal});`;
     }
+    // Shape 3: no leading literal. Pass through and let the compiler /
+    // developer catch anything weird.
     return `    pinocchio::log::sol_log(${message});`;
   }
 

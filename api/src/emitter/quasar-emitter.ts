@@ -721,16 +721,15 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override emitMsg(message: string): string {
+    // See pinocchio-emitter.ts:emitMsg for the three shapes we handle. Same
+    // rule: only trust a full-literal prefix match; never use indexOf(",")
+    // because commas inside string literals would truncate the log.
     const literalMatch = message.match(/^"([^"\\]|\\.)*"/);
     if (literalMatch?.[0]) {
       const literal = literalMatch[0];
-      if (literal !== message.trim()) {
-        return `    // Anvil: formatted msg!() collapsed to static log\n    pinocchio::msg!(${literal});`;
+      if (literal === message.trim()) {
+        return `    pinocchio::msg!(${literal});`;
       }
-    }
-    const commaIdx = message.indexOf(",");
-    if (commaIdx !== -1) {
-      const literal = message.slice(0, commaIdx).trim();
       return `    // Anvil: formatted msg!() collapsed to static log\n    pinocchio::msg!(${literal});`;
     }
     return `    pinocchio::msg!(${message});`;
