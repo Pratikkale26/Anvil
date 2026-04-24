@@ -18,6 +18,7 @@ import {
   Play,
   Rocket,
   Sparkles,
+  Undo2,
   Upload,
 } from "lucide-react";
 import {
@@ -72,6 +73,8 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
     folderInputRef,
     runPipeline,
     runRefine,
+    revertRefine,
+    canRevertRefine,
     handleLocalFileChange,
     handleFolderChange,
     downloadDiagnostics,
@@ -415,6 +418,25 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                 />
               </div>
             </div>
+
+            {/* Revert — only shown after patches have been applied. Rolls back
+                to the deterministic pre-AI output so the user can escape a
+                refine that passed the validator but broke intent. */}
+            {canRevertRefine && (
+              <button
+                onClick={revertRefine}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold transition-colors"
+                style={{
+                  borderColor: "rgba(224,90,90,0.35)",
+                  background: "rgba(224,90,90,0.06)",
+                  color: "#ffb5b5",
+                }}
+                title="Roll back to the deterministic emit output — drops every AI-applied patch from this refine session."
+              >
+                <Undo2 size={13} />
+                Revert to pre-refine output
+              </button>
+            )}
 
             {/* Structured error path */}
             {refineError && (

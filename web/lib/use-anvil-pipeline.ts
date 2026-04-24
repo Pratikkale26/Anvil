@@ -76,6 +76,17 @@ export function useAnvilPipeline() {
   // Captured at the moment refine starts so the UI can render an unambiguous
   // "errors: N → M" delta even after validationIssues is overwritten.
   const [preRefineErrorCount, setPreRefineErrorCount] = useState<number | null>(null);
+  // Full snapshot of deterministic output right before the first refine of a
+  // pipeline run. Powers the Revert button — if the user doesn't like what
+  // the AI produced (even if it passed the validator), they can roll back.
+  // Kept null until the first refine, preserved across retries so retry
+  // doesn't stomp the original pre-AI state.
+  const [preRefineSnapshot, setPreRefineSnapshot] = useState<{
+    singleFileCode: string;
+    outputFiles: EmitFile[];
+    validationIssues: ValidationIssue[];
+    reviewReport: ReviewReport | null;
+  } | null>(null);
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -282,6 +293,7 @@ export function useAnvilPipeline() {
     setRefineError(null);
     setHasAppliedRefine(false);
     setShowCompare(false);
+    setPreRefineSnapshot(null);
 
     try {
       let parsed: ParseResponse;
@@ -445,6 +457,18 @@ export function useAnvilPipeline() {
           }))
         : undefined;
 
+    // Snapshot the pre-refine state *once per pipeline run*. Retries must not
+    // overwrite this — the "before" we're reverting to is the deterministic
+    // emit output, not the most recent AI attempt.
+    if (preRefineSnapshot === null) {
+      setPreRefineSnapshot({
+        singleFileCode,
+        outputFiles,
+        validationIssues,
+        reviewReport,
+      });
+    }
+
     try {
       setRefineBusy(true);
       setRefineError(null);
@@ -503,6 +527,22 @@ export function useAnvilPipeline() {
     } finally {
       setRefineBusy(false);
     }
+  }
+
+  function revertRefine() {
+    if (!preRefineSnapshot) return;
+    setSingleFileCode(preRefineSnapshot.singleFileCode);
+    setOutputFiles(preRefineSnapshot.outputFiles);
+    setValidationIssues(preRefineSnapshot.validationIssues);
+    setReviewReport(preRefineSnapshot.reviewReport);
+    setRefineResult(null);
+    setRefineError(null);
+    setRefineErrorCategory(null);
+    setHasAppliedRefine(false);
+    setShowCompare(false);
+    setActivePane("single");
+    // Keep preRefineErrorCount so the UI can still show "reverted — errors
+    // back to N" if the user runs refine again afterwards.
   }
 
   return {
@@ -584,6 +624,8 @@ export function useAnvilPipeline() {
     // Actions
     runPipeline,
     runRefine,
+    revertRefine,
+    canRevertRefine: preRefineSnapshot !== null && hasAppliedRefine,
     handleLocalFileChange,
     handleFolderChange,
     copyActiveContent,
