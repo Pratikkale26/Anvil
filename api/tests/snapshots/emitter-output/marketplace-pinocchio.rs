@@ -669,7 +669,7 @@ pub fn spl_token_transfer(
     .invoke()
 }
 
-fn spl_token_transfer_signed(
+pub fn spl_token_transfer_signed(
     from: &AccountInfo,
     to: &AccountInfo,
     authority: &AccountInfo,

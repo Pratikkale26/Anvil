@@ -1029,7 +1029,7 @@ pub fn spl_token_transfer<'a>(
     Ok(())
 }
 
-fn spl_token_transfer_signed<'a>(
+pub fn spl_token_transfer_signed<'a>(
     from: &AccountInfo<'a>,
     to: &AccountInfo<'a>,
     authority: &AccountInfo<'a>,
@@ -1097,7 +1097,7 @@ pub fn spl_token_burn<'a>(
 }
 
 // Carried from source (transformed for Native)
-fn integer_sqrt(n: u128) -> u128 {
+pub fn integer_sqrt(n: u128) -> u128 {
     if n == 0 {
         return 0;
     }

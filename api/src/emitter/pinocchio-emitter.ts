@@ -604,7 +604,7 @@ impl From<${enumName}> for ProgramError {
     .invoke()
 }
 
-fn spl_token_transfer_signed(
+pub fn spl_token_transfer_signed(
     from: &AccountInfo,
     to: &AccountInfo,
     authority: &AccountInfo,
@@ -786,7 +786,7 @@ fn spl_token_transfer_signed(
     // Only emit the token account amount reader if SPL token operations are present
     if (irNeedsTokenAmountHelper(ir)) {
       helpers.push(`/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
-fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
+pub fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     let data = unsafe { account.borrow_data_unchecked() };
     if data.len() < 72 {
         return Err(ProgramError::InvalidAccountData);

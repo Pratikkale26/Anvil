@@ -1204,7 +1204,7 @@ ${fields}
    * comment — no false-positive warning.
    */
   protected carriedFunctionBlock(rawCode: string, ir?: SolanaIR): string {
-    const transformed = this.transformHelperCode(rawCode, ir);
+    const transformed = promoteFreeFnVisibility(this.transformHelperCode(rawCode, ir));
     // Check the *transformed* code for residual Anchor patterns — the transform
     // may have cleaned up everything that was originally Anchor-specific.
     if (!hasResidualAnchorPatterns(transformed)) {
@@ -1232,4 +1232,22 @@ ${fields}
       stateTypes,
     );
   }
+}
+
+/**
+ * Promote a leading `fn NAME(...)` to `pub fn NAME(...)` so the carried helper
+ * is visible across the multi-file module graph. In single-file mode `pub`
+ * is a no-op; in multi-file mode `use crate::helpers::*` only re-exports
+ * `pub` items, so a private `fn vested_amount` silently disappears and
+ * `instructions/*.rs` gets `cannot find function` at cargo build.
+ *
+ * Matches only the first top-level free-function signature (optionally with
+ * leading whitespace, comments, or attributes). Impl blocks, trait methods,
+ * and already-`pub`/`pub(crate)` functions pass through unchanged.
+ */
+function promoteFreeFnVisibility(code: string): string {
+  return code.replace(
+    /^((?:\s*(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/|#\[[^\]]*\])\n?)*\s*)fn(\s+[A-Za-z_]\w*\s*[<(])/,
+    "$1pub fn$2",
+  );
 }

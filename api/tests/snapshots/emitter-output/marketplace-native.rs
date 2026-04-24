@@ -735,7 +735,7 @@ pub fn spl_token_transfer<'a>(
     Ok(())
 }
 
-fn spl_token_transfer_signed<'a>(
+pub fn spl_token_transfer_signed<'a>(
     from: &AccountInfo<'a>,
     to: &AccountInfo<'a>,
     authority: &AccountInfo<'a>,

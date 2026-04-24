@@ -909,7 +909,7 @@ pub fn spl_token_transfer(
     .invoke()
 }
 
-fn spl_token_transfer_signed(
+pub fn spl_token_transfer_signed(
     from: &AccountInfo,
     to: &AccountInfo,
     authority: &AccountInfo,
@@ -971,7 +971,7 @@ pub fn spl_token_burn(
 }
 
 // Carried from source (transformed for Pinocchio)
-fn integer_sqrt(n: u128) -> u128 {
+pub fn integer_sqrt(n: u128) -> u128 {
     if n == 0 {
         return 0;
     }

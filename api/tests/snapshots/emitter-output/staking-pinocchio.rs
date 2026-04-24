@@ -808,7 +808,7 @@ pub fn spl_token_transfer(
     .invoke()
 }
 
-fn spl_token_transfer_signed(
+pub fn spl_token_transfer_signed(
     from: &AccountInfo,
     to: &AccountInfo,
     authority: &AccountInfo,
@@ -882,7 +882,7 @@ pub fn close_program_account(
 }
 
 /// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
-fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
+pub fn token_account_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     let data = unsafe { account.borrow_data_unchecked() };
     if data.len() < 72 {
         return Err(ProgramError::InvalidAccountData);
