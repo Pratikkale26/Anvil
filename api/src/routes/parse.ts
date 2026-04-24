@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { parseAnchor } from "../parser/anchor-parser.js";
+import { metrics } from "../metrics.js";
 import { resolveLocalSource } from "../parser/local-source.js";
 import { buildProjectSource, type ProjectFile } from "../parser/project-source.js";
 import { resolveRepoSource } from "../parser/repo-source.js";
@@ -126,6 +127,7 @@ parseRoute.post("/", async (req, res) => {
   }
 
   const result = await parseAnchor(resolvedSource);
+  metrics.recordParse(result.ok);
   if (!result.ok) {
     const code = result.error.includes("No Anchor #[program] module")
       ? ErrorCode.NO_PROGRAM_MODULE

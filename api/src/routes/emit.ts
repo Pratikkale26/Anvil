@@ -11,6 +11,7 @@ import { buildDeterministicReviewReport } from "../ai/review-report.js";
 import { AIError } from "../ai/errors.js";
 import { buildProjectScaffold } from "../emitter/project-scaffold.js";
 import { AnvilError, ErrorCode } from "../errors.js";
+import { metrics } from "../metrics.js";
 import { z } from "zod";
 
 export const emitRoute = Router();
@@ -125,6 +126,7 @@ emitRoute.post("/", async (req, res) => {
     const output = emitter(ir);
     let validationIssues = validateEmitterOutput(ir, output);
     const validationErrors = validationIssues.filter((issue) => issue.severity === "error");
+    metrics.recordEmit(target, validationErrors.length);
     const validationWarnings = validationIssues
       .filter((issue) => issue.severity === "warning")
       .map((issue) => issue.path ? `${issue.path}: ${issue.message}` : issue.message);
@@ -176,6 +178,12 @@ emitRoute.post("/", async (req, res) => {
 
         // Apply accepted patches
         const acceptedPatches = result.patches.filter((p) => p.accepted);
+        const rejectedCount = result.patches.length - acceptedPatches.length;
+        metrics.recordRefineCall({
+          cached: result.cached ?? false,
+          accepted: acceptedPatches.length,
+          rejected: rejectedCount,
+        });
         if (acceptedPatches.length > 0) {
           for (const patch of acceptedPatches) {
             currentFiles = currentFiles.map((f) =>
@@ -204,10 +212,12 @@ emitRoute.post("/", async (req, res) => {
         if (err instanceof AIError) {
           validationWarnings.push(`AI refine unavailable (${err.category}): ${err.message}`);
           refineError = { category: err.category, message: err.message };
+          metrics.recordRefineError(err.category);
         } else {
           const message = err instanceof Error ? err.message : String(err);
           validationWarnings.push(`AI refine failed: ${message}`);
           refineError = { category: "unknown", message };
+          metrics.recordRefineError("unknown");
         }
       }
     }

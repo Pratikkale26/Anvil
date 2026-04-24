@@ -7,6 +7,7 @@ import { demoRoute } from "./routes/demo.js";
 import { aiRoute } from "./routes/ai.js";
 import { lintRoute } from "./routes/lint.js";
 import { AnvilError, ErrorCode } from "./errors.js";
+import { metrics } from "./metrics.js";
 
 const app = express();
 
@@ -90,11 +91,20 @@ const healthHandler: express.RequestHandler = (_req, res) => {
       "GET  /demo      — list demo names",
       "GET  /demo/:name — pre-loaded demo IR",
       "GET  /health    — this response",
+      "GET  /metrics   — in-memory counters (refine cache hit rate, accept/reject, etc.)",
     ],
   });
 };
 app.get("/", healthHandler);
 app.get("/health", healthHandler);
+
+// ─── Metrics snapshot ────────────────────────────────────────────────────────
+// In-memory counters — resets on restart. Snapshot is read-only; callers use
+// it to see refine cache hit rate, accept/reject ratio, and per-target
+// validation error load since the process started.
+app.get("/metrics", (_req, res) => {
+  res.json(metrics.snapshot());
+});
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 app.use("/parse", parseRoute);
