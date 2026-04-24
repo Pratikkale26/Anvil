@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast-tests:
+    name: Fast tests + typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install api deps
+        working-directory: api
+        run: bun install --frozen-lockfile
+
+      - name: Install web deps
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: API typecheck
+        working-directory: api
+        run: bun run typecheck
+
+      - name: Web typecheck
+        working-directory: web
+        run: npx tsc --noEmit
+
+      - name: API fast tests (parser, emitter, validation, api)
+        working-directory: api
+        run: |
+          bun test \
+            tests/parser-snapshots.test.ts \
+            tests/emitter-snapshots.test.ts \
+            tests/emitter-validation.test.ts \
+            tests/api.test.ts
+
+  cargo-build:
+    name: Cargo build (generated Pinocchio + Native)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Slow job — PRs only. Pushes to main rely on the PR that got them there.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: /tmp/anvil-cargo-tests -> target
+          shared-key: anvil-generated
+
+      - name: Install api deps
+        working-directory: api
+        run: bun install --frozen-lockfile
+
+      - name: Cargo build suite
+        working-directory: api
+        run: bun test tests/cargo-build.test.ts --timeout 600000
