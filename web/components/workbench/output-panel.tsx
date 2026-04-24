@@ -78,23 +78,34 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     return "plaintext";
   };
 
-  // Quick line-level delta so the header surfaces "+N / -M" at a glance.
-  // Cheap line-count comparison, not a real LCS — precise diff rendering is
-  // handled by Monaco's DiffEditor below. Trailing empty line from split is
-  // dropped so we don't over-count by 1.
+  // Line-level delta powering the header "+N / -M" glance. Uses a real LCS
+  // on the line array so reordered-but-identical lines aren't counted as
+  // added+removed, and duplicate lines (common in Rust: closing braces,
+  // `Ok(())`) don't collapse via Set-based dedup. Monaco's DiffEditor below
+  // renders the precise diff; this number just gates the pill.
   const lineDelta = (() => {
     if (!activeRefinePatch) return { added: 0, removed: 0, changed: 0 };
     const origLines = compareOriginalContent.replace(/\n$/, "").split("\n");
     const nextLines = comparePatchedContent.replace(/\n$/, "").split("\n");
-    const origSet = new Set(origLines);
-    const nextSet = new Set(nextLines);
-    const added = nextLines.filter((l) => !origSet.has(l)).length;
-    const removed = origLines.filter((l) => !nextSet.has(l)).length;
-    return {
-      added,
-      removed,
-      changed: Math.min(added, removed),
-    };
+    const m = origLines.length;
+    const n = nextLines.length;
+    // Classic DP LCS. Cap pathological inputs so a giant patched file can't
+    // block the UI thread — the pill is purely cosmetic, so a bound is fine.
+    if (m * n > 2_000_000) {
+      return { added: n, removed: m, changed: Math.min(m, n) };
+    }
+    const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        dp[i]![j] = origLines[i - 1] === nextLines[j - 1]
+          ? dp[i - 1]![j - 1]! + 1
+          : Math.max(dp[i - 1]![j]!, dp[i]![j - 1]!);
+      }
+    }
+    const lcs = dp[m]![n]!;
+    const removed = m - lcs;
+    const added = n - lcs;
+    return { added, removed, changed: Math.min(added, removed) };
   })();
 
   const DIFF_MONACO_OPTS = {
