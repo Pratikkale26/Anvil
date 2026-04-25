@@ -26,6 +26,13 @@ export type RefineInput = {
    * the cache instead of returning the same unhelpful result.
    */
   previousAttempts?: RejectedAttempt[];
+  /**
+   * Where the issues came from: Anvil's heuristic validator (default) or
+   * cargo check (rustc). Cargo-sourced issues get a prefix block in the
+   * prompt and a distinct cache key — same files+issues from the two paths
+   * must not share a cached AI response because the prompts differ.
+   */
+  issueSource?: "validator" | "cargo";
 };
 
 /**
@@ -42,12 +49,15 @@ export async function refineOutput(
 ): Promise<RefineResponse> {
   const { provider, repairModel } = getAIProvider();
 
+  const issueSource = input.issueSource ?? "validator";
+
   onProgress?.("build_prompt", "Building focused refine prompt.");
   const prompt = buildRefinePrompt({
     target: input.target,
     validationIssues: input.validationIssues,
     files: input.files,
     previousAttempts: input.previousAttempts,
+    issueSource,
   });
 
   const cacheKey = createAICacheKey({
@@ -58,6 +68,7 @@ export async function refineOutput(
     files: input.files,
     validationIssues: input.validationIssues,
     previousAttempts: input.previousAttempts ?? [],
+    issueSource,
   });
 
   const cached = await readAICache(cacheKey);

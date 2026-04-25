@@ -1,10 +1,10 @@
 import type { ValidationIssue } from "../../emitter/output-validator.js";
 import type { RejectedAttempt } from "../refine-schemas.js";
 
-// Bumped to v3: prompt now carries rejected-attempt feedback when the user
-// retries after a failed refine. Cache key folds in this version so v2 cached
-// results never collide.
-export const REFINE_PROMPT_VERSION = "refine.v3";
+// Bumped to v4: prompt now carries an issue-source hint (validator vs cargo)
+// so the model knows when findings are rustc ground truth. Cache key folds
+// in this version so v3 cached results never collide.
+export const REFINE_PROMPT_VERSION = "refine.v4";
 
 /** Max preview length per rejected attempt — keeps retry prompts bounded. */
 const REJECTED_ATTEMPT_PREVIEW_CHARS = 2000;
@@ -101,6 +101,13 @@ export function buildRefinePrompt(input: {
   validationIssues: ValidationIssue[];
   files: Array<{ path: string; content: string }>;
   previousAttempts?: RejectedAttempt[];
+  /**
+   * Where the validation issues came from. "validator" (default) means
+   * Anvil's regex/structural heuristics fired; "cargo" means rustc itself
+   * complained. Cargo errors get a prefix block telling the model to trust
+   * the file/line/code as ground truth — they're not heuristics.
+   */
+  issueSource?: "validator" | "cargo";
 }): string {
   // Collect unique files that have issues
   const issuePaths = new Set(
@@ -185,9 +192,23 @@ export function buildRefinePrompt(input: {
     }
   }
 
+  // When cargo is the source, prepend a short trust-the-locations block.
+  // The model has seen far more validator-style heuristic errors than rustc
+  // diagnostics during training, so without this hint it sometimes ignores
+  // the line/code and "fixes" something else it thinks is the real bug.
+  const cargoPrefix: string[] = [];
+  if (input.issueSource === "cargo") {
+    cargoPrefix.push(
+      "── ISSUE SOURCE: cargo check (rustc diagnostics) ──",
+      "These issues are exact Rust compiler errors with file:line:column locations and rustc error codes (E0XXX). Trust the file/line/code as ground truth. Each error code has a canonical fix; use the code (not just the message) to decide what to change. Don't second-guess the locations.",
+      "",
+    );
+  }
+
   // Keep this prompt minimal — only the dynamic, per-request content. The
   // rules + schema live in REFINE_SYSTEM_RULES (cached).
   return [
+    ...cargoPrefix,
     `Target framework: ${input.target}`,
     "",
     ...(retryBlock.length > 0 ? retryBlock : []),

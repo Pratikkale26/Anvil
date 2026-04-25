@@ -228,6 +228,10 @@ buildRoute.post("/auto-fix", async (req, res) => {
         ir,
         files: refineFiles,
         validationIssues,
+        // These came from cargo check — flag so the prompt tells the model
+        // to trust the file/line/code as ground truth (vs the heuristic
+        // validator path, which can be noisier and is the prompt default).
+        issueSource: "cargo",
       });
 
       const accepted = refineRes.patches.filter((p) => p.accepted);
