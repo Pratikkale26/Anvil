@@ -654,6 +654,13 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
         .map_err(|_| ProgramError::InvalidInstructionData)?;`;
         }
+        // Vec<T> for any borsh-deserializable T. Borsh format is u32 length
+        // prefix + concatenated borsh-encoded elements; the standard derive
+        // handles it without us reaching for a TODO.
+        if (/^Vec<.+>$/.test(arg.type)) {
+          return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;`;
+        }
         if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(arg.type)) {
           return `    if remaining.len() < ${size} {
         return Err(ProgramError::InvalidInstructionData);
@@ -1160,6 +1167,15 @@ ${indented}
     if (normalized === "Vec<u8>") return "Vec::new()";
     if (typeDef?.kind === "enum" && typeDef.variants?.[0]) {
       return `${normalized}::${typeDef.variants[0]}`;
+    }
+    // Generic types (Vec<T>, Option<T>, HashMap<K,V>, …) require turbofish
+    // when calling associated functions: `Vec<String>::default()` is a
+    // syntax error, `Vec::<String>::default()` is correct. Detecting the
+    // angle bracket and rewriting handles the common cases without listing
+    // every container type.
+    const ltIdx = normalized.indexOf("<");
+    if (ltIdx > 0) {
+      return `${normalized.slice(0, ltIdx)}::${normalized.slice(ltIdx)}::default()`;
     }
     return `${normalized}::default()`;
   }

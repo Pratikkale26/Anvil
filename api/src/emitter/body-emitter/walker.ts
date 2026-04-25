@@ -656,6 +656,24 @@ export class BodyWalker {
 
   transformCtxAccountsReferences(code: string): string {
     let transformed = code;
+    // Normalize alternative context-parameter names so the rest of this
+    // function only needs to handle `ctx`. Some Anchor codebases (e.g.
+    // solana-developers/program-examples/favorites) use `context: Context<T>`
+    // instead of `ctx`. The normalization is safe because `<name>.accounts`,
+    // `<name>.bumps`, etc. are Context<T> field accesses — not generic
+    // identifier patterns that could collide.
+    transformed = transformed
+      .replace(/\bcontext\.accounts\b/g, "ctx.accounts")
+      .replace(/\bcontext\.bumps\b/g, "ctx.bumps")
+      .replace(/\bcontext\.program_id\b/g, "ctx.program_id")
+      .replace(/\bcontext\.remaining_accounts\b/g, "ctx.remaining_accounts");
+    // Anchor's `id()` returns the program's declared pubkey. In compiled
+    // handlers the parameter `program_id: &Pubkey` is in scope and points at
+    // the same thing, so we route both `&id()` and bare `id()` to it. This
+    // means generated handlers compile without needing the emitter to inject
+    // a `declare_id!()` macro it can't actually verify.
+    transformed = transformed.replace(/&\s*id\(\)/g, "program_id");
+    transformed = transformed.replace(/(?<![\w:])id\(\)/g, "(*program_id)");
     // Collapse multi-line dot-chains so subsequent regexes can match in one piece.
     transformed = transformed.replace(/(\w|\))\s*\n\s*\./g, "$1.");
     transformed = transformed.replace(/\*\s*\n\s*ctx\./g, "*ctx.");
@@ -939,6 +957,48 @@ export class BodyWalker {
             return `${localVar}.${f} = ${f};`;
           });
         return assignments.join("\n    ");
+      },
+    );
+
+    // Convert `*account = StructType { … };` into a real Borsh write.
+    //
+    // Anchor wraps state accounts in `Account<'info, T>` so `*ctx.accounts.x = T { … }`
+    // works because Account derefs to T and writes back on Drop. In Pinocchio /
+    // Native we have a bare `&AccountInfo`, so the same pattern would try to
+    // assign a struct to a reference — `E0308 mismatched types` at cargo build.
+    //
+    // We rewrite to the explicit two-step idiom: borrow the data buffer mut
+    // and serialize the struct into it. Only fires when the LHS is a known
+    // state-typed account from this instruction's accounts list — bare local
+    // variables are left alone. Matches both the pre-transform `*ctx.accounts.X`
+    // form and the post-collapse `*X` form so it works regardless of which
+    // transform runs first.
+    //
+    // Crucially we reference `accounts[N]` directly rather than the local
+    // `<name>` binding: when an account has an `init` constraint the walker
+    // emits a `let mut <name> = <Type> { default… }` shadow earlier in the
+    // function, and writing through the shadowed name calls
+    // `try_borrow_mut_data` on the struct (E0599) instead of the AccountInfo.
+    // The accounts slice is always in scope and never shadowed.
+    transformed = transformed.replace(
+      /\*(?:ctx\.accounts\.)?(\w+)\s*=\s*(\w+)\s*\{([\s\S]*?)\}\s*;/g,
+      (full, accountVar: string, structType: string, fields: string) => {
+        const accountIdx = this.instr.accounts.findIndex(
+          (a) => snakeCase(a.name) === snakeCase(accountVar),
+        );
+        if (accountIdx < 0) return full;
+        const accountRef = this.instr.accounts[accountIdx]!;
+        const typeName = accountRef.accountType ?? "";
+        if (!this.isGeneratedStateType(typeName)) return full;
+        // The emitted state struct doesn't derive BorshSerialize — instead it
+        // exposes a generated `<Type>::save(account, &value)` helper that
+        // writes the discriminator + fields with the right padding. Use that
+        // here so `*ctx.accounts.x = T { … }` lands correctly.
+        // Reference accounts[N] directly, not the local `<name>` binding —
+        // when an account has an `init` constraint the walker emits a
+        // `let mut <name> = <Type> { default… }` shadow earlier in the
+        // function, and the local `<name>` is the struct, not AccountInfo.
+        return `${typeName}::save(&accounts[${accountIdx}], &${structType} {${fields}})?;`;
       },
     );
 

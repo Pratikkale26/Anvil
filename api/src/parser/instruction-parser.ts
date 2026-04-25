@@ -73,9 +73,9 @@ function parseInstructionFn(
 
   // ── Extract parameters ──
   const paramsNode = fnNode.childForFieldName("parameters");
-  let { contextType, args } = paramsNode
+  let { contextType, contextName, args } = paramsNode
     ? parseParameters(paramsNode)
-    : { contextType: "", args: [] };
+    : { contextType: "", contextName: "", args: [] };
 
   const wrapperTarget = resolveHandlerWrapper(fnNode, functionIndex);
   if (wrapperTarget) {
@@ -84,6 +84,7 @@ function parseInstructionFn(
     if (wrapperParamsNode) {
       const parsed = parseParameters(wrapperParamsNode);
       contextType = parsed.contextType || contextType;
+      contextName = parsed.contextName || contextName;
       args = parsed.args.length > 0 ? parsed.args : args;
     }
   }
@@ -97,7 +98,21 @@ function parseInstructionFn(
   const expandedWrapper = expandAccountsMethodWrapper(parser, bodyFnNode, contextType, accounts, implMethods);
 
   // ── Classify the function body using AST ──
-  const bodyNode = expandedWrapper?.bodyNode ?? bodyFnNode.childForFieldName("body");
+  // If the handler used a non-`ctx` Context parameter name (e.g. `context`),
+  // rebuild the body AST with the parameter renamed to `ctx` first. Every
+  // downstream component — body classifier, walker transforms — treats `ctx`
+  // as canonical, so this gives us a single normalized body shape and avoids
+  // sprinkling alt-name handling through the whole pipeline.
+  let bodyNode = expandedWrapper?.bodyNode ?? bodyFnNode.childForFieldName("body");
+  if (bodyNode && contextName && contextName !== "ctx") {
+    const renamed = renameContextIdentifier(bodyNode.text, contextName);
+    const synthetic = parser.parse(`fn __anvil_ctx_norm__() ${renamed}`);
+    if (synthetic) {
+      const fn = findDescendant(synthetic.rootNode, "function_item");
+      const synBody = fn?.childForFieldName("body");
+      if (synBody) bodyNode = synBody;
+    }
+  }
   const bodyStatements: BodyStatement[] = bodyNode ? classifyBody(bodyNode) : [];
 
   // ── Enrich state_read with account types from context struct ──
@@ -139,6 +154,25 @@ function resolveHandlerWrapper(
     const found = functionIndex.find((entry) => {
       const name = entry.node.childForFieldName("name")?.text;
       return name === "handler" && entry.modulePath.join("::") === targetPath.join("::");
+    });
+    if (found) return found;
+  }
+
+  // Pattern 1b: Module-qualified non-handler — `create::create_address_info(ctx, ...)`.
+  // solana-developers/program-examples uses this convention: each instruction
+  // lives in its own module and the wrapper at lib.rs delegates by full path.
+  // The function name in the called path matches the wrapper's own name.
+  const qualifiedFnMatch = bodyText.match(/^\{\s*([A-Za-z_][A-Za-z0-9_:]*)::(\w+)\s*\([^)]*\)\s*;?\s*\}$/s);
+  if (qualifiedFnMatch?.[1] && qualifiedFnMatch?.[2] && qualifiedFnMatch[2] !== "handler") {
+    const targetModule = qualifiedFnMatch[1].split("::").filter(Boolean);
+    const targetFn = qualifiedFnMatch[2];
+    const found = functionIndex.find((entry) => {
+      const name = entry.node.childForFieldName("name")?.text;
+      return name === targetFn && entry.modulePath.join("::") === targetModule.join("::");
+    }) ?? functionIndex.find((entry) => {
+      // Fallback: same fn name anywhere in the index (handles flattened
+      // multi-file projects where the module path was lost during flatten).
+      return entry.node.childForFieldName("name")?.text === targetFn;
     });
     if (found) return found;
   }
@@ -248,6 +282,21 @@ function escapeRegExp(text: string): string {
 
 function replaceIdentifier(source: string, name: string, replacement: string): string {
   return source.replace(new RegExp(`(?<!\\.)\\b${escapeRegExp(name)}\\b`, "g"), replacement);
+}
+
+/**
+ * Rename a Context-parameter identifier to `ctx` everywhere it's used as the
+ * Context binding. We only rewrite uses that look like `<name>.accounts`,
+ * `<name>.bumps`, `<name>.program_id`, `<name>.remaining_accounts` — those
+ * are unambiguously the Context wrapper. Generic `<name>` references (e.g.
+ * a local variable that happens to share the parameter name) stay put.
+ */
+function renameContextIdentifier(body: string, name: string): string {
+  const safe = escapeRegExp(name);
+  return body.replace(
+    new RegExp(`(?<!\\.)\\b${safe}\\.(accounts|bumps|program_id|remaining_accounts)\\b`, "g"),
+    "ctx.$1",
+  );
 }
 
 function normalizeArgumentSubstitution(argExpr: string): string {
@@ -407,9 +456,16 @@ function inlineSelfMethodCalls(
 
 export function parseParameters(paramsNode: SyntaxNode): {
   contextType: string;
+  /**
+   * Actual identifier the source used for the Context<T> parameter — usually
+   * "ctx" but real codebases also use "context" or domain-specific names.
+   * Empty string when the handler has no Context parameter.
+   */
+  contextName: string;
   args: Arg[];
 } {
   let contextType = "";
+  let contextName = "";
   const args: Arg[] = [];
 
   for (let i = 0; i < paramsNode.namedChildCount; i++) {
@@ -421,10 +477,14 @@ export function parseParameters(paramsNode: SyntaxNode): {
     // Skip lifetime params
     if (paramText.startsWith("'")) continue;
 
-    // Check for ctx: Context<T>
-    const ctxMatch = paramText.match(/ctx\s*:\s*Context\s*<\s*'?\s*(\w+)\s*>/);
-    if (ctxMatch?.[1]) {
-      contextType = ctxMatch[1];
+    // Match `<name>: Context<T>` — name is whatever the source calls it. We
+    // used to hardcode `ctx` here, but solana-developers/program-examples
+    // (favorites etc.) use `context: Context<T>` and the rest of the
+    // pipeline silently dropped accounts because contextType stayed empty.
+    const ctxMatch = paramText.match(/(\w+)\s*:\s*Context\s*<\s*'?\s*(\w+)\s*>/);
+    if (ctxMatch?.[1] && ctxMatch?.[2]) {
+      contextName = ctxMatch[1];
+      contextType = ctxMatch[2];
       continue;
     }
 
@@ -445,7 +505,7 @@ export function parseParameters(paramsNode: SyntaxNode): {
     });
   }
 
-  return { contextType, args };
+  return { contextType, contextName, args };
 }
 
 // ─── Access control extraction ──────────────────────────────────────────────

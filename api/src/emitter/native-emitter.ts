@@ -473,6 +473,14 @@ ${readLines}
 ${writeLines}
         Ok(())
     }
+
+    /// Borsh-style convenience wrapper: borrow the account's data buffer
+    /// and write the value into it. Mirrors Pinocchio's save() so the same
+    /// emitter call site (\`Type::save(account, &value)\`) works on both.
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = account.try_borrow_mut_data()?;
+        Self::write(&mut data, value)
+    }
 }`;
   }
 

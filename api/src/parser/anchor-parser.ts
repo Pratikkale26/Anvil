@@ -205,6 +205,17 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
         currentAttrs.push(child);
         continue;
       }
+      // Comments between attributes and the item they decorate must not
+      // flush currentAttrs. Real Anchor sources commonly have:
+      //   #[account]
+      //   #[derive(InitSpace)]  // comment
+      //   pub struct Foo { ... }
+      // Without this guard the line_comment sat in the loop body and the
+      // generic `currentAttrs = []` reset below dropped both attrs on the
+      // floor — Foo lost its #[account] and didn't show up in IR.accounts.
+      if (child.type === "line_comment" || child.type === "block_comment") {
+        continue;
+      }
 
       const attrs = [...currentAttrs];
       currentAttrs = [];
