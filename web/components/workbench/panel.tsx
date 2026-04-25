@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -75,11 +75,20 @@ export function CollapsiblePanel({
   tone?: "amber" | "teal" | "red" | "indigo";
 }) {
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
-  // forceOpen only forces OPEN — it must never lock the panel closed when
-  // false. Treat any truthy value as "pin open"; otherwise the user's
-  // toggle state wins. Earlier `forceOpen ?? internalOpen` collapsed the
-  // panel when forceOpen=false even though the user clicked to open it.
-  const open = forceOpen === true ? true : internalOpen;
+  // forceOpen is a one-shot rising-edge auto-expand: when it transitions
+  // from false to true (e.g. a build result just arrived), the panel snaps
+  // open. After that, the user is in control again — clicking the header
+  // closes the panel even if forceOpen is still true. Earlier semantics
+  // pinned the panel open permanently, which is what the user complained
+  // about: "the dropdown doesnt close when it once open".
+  const prevForceRef = useRef(false);
+  useEffect(() => {
+    if (forceOpen === true && !prevForceRef.current) {
+      setInternalOpen(true);
+    }
+    prevForceRef.current = forceOpen === true;
+  }, [forceOpen]);
+  const open = internalOpen;
 
   const toneClass =
     tone === "red"
@@ -94,11 +103,10 @@ export function CollapsiblePanel({
     <Panel>
       <button
         type="button"
-        onClick={() => forceOpen !== true && setInternalOpen((v) => !v)}
+        onClick={() => setInternalOpen((v) => !v)}
         className={cn(
-          "flex items-center gap-2 w-full px-4 py-3 cursor-pointer transition-colors",
-          open ? "border-b border-anvil-line" : "",
-          forceOpen === true ? "cursor-default" : "hover:bg-white/[0.03]"
+          "flex items-center gap-2 w-full px-4 py-3 cursor-pointer transition-colors hover:bg-white/[0.03]",
+          open ? "border-b border-anvil-line" : ""
         )}
         aria-expanded={open}
       >
