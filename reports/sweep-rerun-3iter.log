@@ -1,0 +1,128 @@
+[FAILED_ONLY] re-running 18 target-builds across 12 repos (filter from /home/pk/Anvil/reports/sweep-2026-04-25-rerun-2109.json)
+
+
+═══ close-account (basics) ═══
+  ✓ parse (60ms, 6 files, ir.name=close_account_program)
+  ✗ (ai tried) pinocchio: errs 2→2, refine $0.0539, 14966ms
+      • iter 0: 1/1 patches REVERTED, cargo 2→4 (kept best=2), $0.0203
+      • iter 1: 1/1 patches REVERTED, cargo 2→4 (kept best=2), $0.0157
+      • iter 2: 1/1 patches REVERTED, cargo 2→4 (kept best=2), $0.0178
+  ✗ (ai tried) native: errs 2→2, refine $0.0301, 8974ms
+      • iter 0: 1/1 patches REVERTED, cargo 2→3 (kept best=2), $0.0131
+      • iter 1: 0/1 patches accepted ($0.0170); feeding back to next iter
+      • iter 2: refine error (zod_parse_failed): AI response didn't match the expected JSON schema (patches: Too small: expected array to have >=1 items).
+  totalCost=$0.0840 (calls=5)
+
+═══ create-account (basics) ═══
+  ✓ parse (5ms, 1 files, ir.name=create_system_account)
+  ✗ (ai tried) native: errs 2→1, refine $0.0520, 18037ms
+      • iter 0: 1/1 patches, errors 2→1 ✓, $0.0150
+      • iter 1: 1/1 patches REVERTED, cargo 1→1 (kept best=1), $0.0149
+      • iter 2: 0/1 patches accepted ($0.0221); feeding back to next iter
+  totalCost=$0.1360 (calls=8)
+
+═══ pda-rent-payer (basics) ═══
+  ✓ parse (5ms, 4 files, ir.name=pda_rent_payer)
+  ✗ (ai tried) pinocchio: errs 7→3, refine $0.0837, 18813ms
+      • iter 0: 2/2 patches, errors 7→6 ✓, $0.0288
+      • iter 1: 2/2 patches REVERTED, cargo 6→9 (kept best=6), $0.0247
+      • iter 2: 2/2 patches, errors 7→3 ✓, $0.0302
+  totalCost=$0.2197 (calls=11)
+
+═══ program-derived-addresses (basics) ═══
+  ✓ parse (7ms, 6 files, ir.name=program_derived_addresses_program)
+  ✗ (ai tried) native: errs 4→1, refine $0.0738, 13541ms
+      • iter 0: 2/2 patches REVERTED, cargo 4→5 (kept best=4), $0.0274
+      • iter 1: 2/2 patches, errors 4→1 ✓, $0.0298
+      • iter 2: 0/1 patches accepted ($0.0165); feeding back to next iter
+  totalCost=$0.2935 (calls=14)
+
+═══ rent (basics) ═══
+  ✓ parse (4ms, 1 files, ir.name=rent_example)
+  ✗ (ai tried) pinocchio: errs 1→1, refine $0.0647, 11879ms
+      • iter 0: 1/1 patches REVERTED, cargo 1→2 (kept best=1), $0.0184
+      • iter 1: 1/1 patches REVERTED, cargo 1→1 (kept best=1), $0.0252
+      • iter 2: 1/1 patches REVERTED, cargo 1→1 (kept best=1), $0.0211
+  totalCost=$0.3582 (calls=17)
+
+═══ cpi-hand (cpi) ═══
+  ✓ parse (3ms, 1 files, ir.name=hand)
+  ✗ (ai tried) pinocchio: errs 11→9, refine $0.0809, 19723ms
+      • iter 0: 1/2 patches, errors 11→9 ✓, $0.0263
+      • iter 1: 1/2 patches REVERTED, cargo 9→9 (kept best=9), $0.0247
+      • iter 2: 1/2 patches REVERTED, cargo 9→9 (kept best=9), $0.0298
+  ✗ (ai tried) native: errs 5→4, refine $0.0605, 8140ms
+      • iter 0: 1/2 patches REVERTED, cargo 5→5 (kept best=5), $0.0234
+      • iter 1: 1/2 patches, errors 5→4 ✓, $0.0257
+      • iter 2: 0/1 patches accepted ($0.0114); feeding back to next iter
+  totalCost=$0.4996 (calls=23)
+
+═══ carnival (basics) ═══
+  ✓ parse (11ms, 10 files, ir.name=carnival)
+  ✗ (ai tried) pinocchio: errs 16→3, refine $0.1447, 18311ms
+      • iter 0: 4/4 patches, errors 16→7 ✓, $0.0820
+      • iter 1: 4/5 patches, errors 16→3 ✓, $0.0377
+      • iter 2: 0/1 patches accepted ($0.0250); feeding back to next iter
+  ✗ (ai tried) native: errs 16→1, refine $0.0991, 8849ms
+      • iter 0: 4/4 patches, errors 16→3 ✓, $0.0688
+      • iter 1: 2/3 patches, errors 16→1 ✓, $0.0198
+      • iter 2: 0/1 patches accepted ($0.0105); feeding back to next iter
+  totalCost=$0.7434 (calls=29)
+
+═══ create-token (spl) ═══
+  ✓ parse (5ms, 1 files, ir.name=create_token)
+  ✗ (ai tried) pinocchio: errs 3→3, refine $0.0865, 20265ms
+      • iter 0: 1/1 patches REVERTED, cargo 3→5 (kept best=3), $0.0261
+      • iter 1: 1/1 patches REVERTED, cargo 3→3 (kept best=3), $0.0304
+      • iter 2: 1/1 patches REVERTED, cargo 3→5 (kept best=3), $0.0300
+  totalCost=$0.8300 (calls=32)
+
+═══ transfer-tokens (spl) ═══
+  ✓ parse (10ms, 5 files, ir.name=transfer_tokens)
+  ✗ (ai tried) native: errs 2→2, refine $0.1056, 20112ms
+      • iter 0: 0/2 patches accepted ($0.0315); feeding back to next iter
+      • iter 1: 2/2 patches REVERTED, cargo 2→3 (kept best=2), $0.0362
+      • iter 2: 1/2 patches REVERTED, cargo 2→3 (kept best=2), $0.0378
+  totalCost=$0.9355 (calls=35)
+
+═══ spl-token-minter (spl) ═══
+  ✓ parse (5ms, 4 files, ir.name=spl_token_minter)
+  ✗ (ai tried) pinocchio: errs 4→3, refine $0.1079, 20141ms
+      • iter 0: 2/2 patches REVERTED, cargo 4→6 (kept best=4), $0.0340
+      • iter 1: 2/2 patches REVERTED, cargo 4→6 (kept best=4), $0.0373
+      • iter 2: 2/2 patches, errors 4→3 ✓, $0.0367
+  ✗ (ai tried) native: errs 1→1, refine $0.0624, 15304ms
+      • iter 0: 0/1 patches accepted ($0.0179); feeding back to next iter
+      • iter 1: 0/1 patches accepted ($0.0224); feeding back to next iter
+      • iter 2: 1/1 patches REVERTED, cargo 1→1 (kept best=1), $0.0220
+  totalCost=$1.1058 (calls=41)
+
+═══ pda-mint-authority (spl) ═══
+  ✓ parse (5ms, 4 files, ir.name=token_minter)
+  ✗ (ai tried) pinocchio: errs 6→6, refine $0.1224, 26078ms
+      • iter 0: 2/2 patches REVERTED, cargo 6→8 (kept best=6), $0.0349
+      • iter 1: 2/2 patches REVERTED, cargo 6→7 (kept best=6), $0.0422
+      • iter 2: 2/2 patches REVERTED, cargo 6→6 (kept best=6), $0.0453
+  ✗ (ai tried) native: errs 6→3, refine $0.1073, 20314ms
+      • iter 0: 2/2 patches REVERTED, cargo 6→22 (kept best=6), $0.0385
+      • iter 1: 2/2 patches, errors 6→3 ✓, $0.0372
+      • iter 2: 2/2 patches REVERTED, cargo 3→4 (kept best=3), $0.0315
+  totalCost=$1.3355 (calls=47)
+
+═══ token-2022-basics (token2022) ═══
+  ✓ parse (4ms, 1 files, ir.name=anchor)
+  ✓+ai pinocchio: errs 1→0, refine $0.0423, 31902ms
+      • iter 0: 1/1 patches REVERTED, cargo 1→3 (kept best=1), $0.0125
+      • iter 1: 1/1 patches REVERTED, cargo 1→1 (kept best=1), $0.0144
+      • iter 2: 1/1 patches, errors 1→0 ✓, $0.0155
+  ✗ (ai tried) native: errs 4→3, refine $0.0704, 44855ms
+      • iter 0: 1/2 patches, errors 4→3 ✓, $0.0276
+      • iter 1: 0/1 patches accepted ($0.0208); feeding back to next iter
+      • iter 2: 0/1 patches accepted ($0.0220); feeding back to next iter
+  totalCost=$1.4482 (calls=53)
+
+═══ DONE ═══
+Total cost: $1.4482 across 53 AI calls
+Wall time: 340.3s
+Report: /home/pk/Anvil/reports/sweep-2026-04-25-rerun-2117.md
+JSON:   /home/pk/Anvil/reports/sweep-2026-04-25-rerun-2117.json

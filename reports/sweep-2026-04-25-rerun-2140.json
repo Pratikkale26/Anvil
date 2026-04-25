@@ -1,0 +1,461 @@
+{
+  "results": [
+    {
+      "id": "close-account",
+      "category": "basics",
+      "path": "basics/close-account/anchor/programs/close-account/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": {
+          "target": "pinocchio",
+          "initialBuildOk": false,
+          "initialErrors": 2,
+          "initialDurationMs": 261,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.057915150000000006,
+          "finalBuildOk": false,
+          "finalErrors": 2,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 1/1 patches REVERTED, cargo 2→4 (kept best=2), $0.0198",
+            "iter 1: 1/1 patches REVERTED, cargo 2→8 (kept best=2), $0.0195",
+            "iter 2: 1/1 patches REVERTED, cargo 2→8 (kept best=2), $0.0186"
+          ],
+          "wallTimeMs": 38313,
+          "initialErrorHead": "[E0412] cannot find type `Context` in this scope | [E0412] cannot find type `CloseUserContext` in this scope",
+          "finalErrorHead": "[E0412] cannot find type `Context` in this scope | [E0412] cannot find type `CloseUserContext` in this scope"
+        },
+        "native": {
+          "target": "native",
+          "initialBuildOk": false,
+          "initialErrors": 2,
+          "initialDurationMs": 846,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.0459441,
+          "finalBuildOk": false,
+          "finalErrors": 1,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 1/1 patches, errors 2→1 ✓, $0.0096",
+            "iter 1: 0/1 patches accepted ($0.0161); feeding back to next iter",
+            "iter 2: 0/1 patches accepted ($0.0203); feeding back to next iter"
+          ],
+          "wallTimeMs": 34535,
+          "initialErrorHead": "[E0412] cannot find type `Context` in this scope | [E0412] cannot find type `CloseUserContext` in this scope",
+          "finalErrorHead": "[E0425] cannot find function `create_program_account` in this scope"
+        }
+      },
+      "parseWallMs": 65
+    },
+    {
+      "id": "create-account",
+      "category": "basics",
+      "path": "basics/create-account/anchor/programs/create-system-account/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": null,
+        "native": {
+          "target": "native",
+          "initialBuildOk": false,
+          "initialErrors": 2,
+          "initialDurationMs": 314,
+          "refineTriggered": true,
+          "refineCallsMade": 2,
+          "refineCostUsd": 0.030023400000000002,
+          "finalBuildOk": true,
+          "finalErrors": 0,
+          "refineHelped": true,
+          "notes": [
+            "iter 0: 1/1 patches, errors 2→1 ✓, $0.0150",
+            "iter 1: 1/1 patches, errors 2→0 ✓, $0.0151"
+          ],
+          "wallTimeMs": 21188,
+          "initialErrorHead": "[E0425] cannot find function `invoke` in this scope | [E0433] failed to resolve: use of unresolved module or unlinked crate `system_instruction`"
+        }
+      },
+      "parseWallMs": 7
+    },
+    {
+      "id": "pda-rent-payer",
+      "category": "basics",
+      "path": "basics/pda-rent-payer/anchor/programs/anchor-program-example/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": {
+          "target": "pinocchio",
+          "initialBuildOk": false,
+          "initialErrors": 7,
+          "initialDurationMs": 164,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.07940610000000001,
+          "finalBuildOk": false,
+          "finalErrors": 4,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 2/2 patches REVERTED, cargo 7→8 (kept best=7), $0.0259",
+            "iter 1: 2/2 patches, errors 7→4 ✓, $0.0304",
+            "iter 2: 2/2 patches REVERTED, cargo 4→6 (kept best=4), $0.0231"
+          ],
+          "wallTimeMs": 53124,
+          "initialErrorHead": "[E0425] cannot find function `invoke` in this scope | [E0433] failed to resolve: use of unresolved module or unlinked crate `solana_program`",
+          "finalErrorHead": "[E0423] expected function, found module `pinocchio_system::instructions::transfer` | [E0425] cannot find function `create_account_signed` in module `pinocchio_system::instructions`"
+        },
+        "native": null
+      },
+      "parseWallMs": 12
+    },
+    {
+      "id": "program-derived-addresses",
+      "category": "basics",
+      "path": "basics/program-derived-addresses/anchor/programs/anchor-program-example/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": null,
+        "native": {
+          "target": "native",
+          "initialBuildOk": false,
+          "initialErrors": 4,
+          "initialDurationMs": 309,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.0495231,
+          "finalBuildOk": false,
+          "finalErrors": 1,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 2/2 patches, errors 4→1 ✓, $0.0271",
+            "iter 1: 0/1 patches accepted ($0.0107); feeding back to next iter",
+            "iter 2: 0/1 patches accepted ($0.0117); feeding back to next iter"
+          ],
+          "wallTimeMs": 32813,
+          "initialErrorHead": "[E0599] no associated item named `SEED_PREFIX` found for struct `state::PageVisits` in the current scope | [E0599] no associated item named `SEED_PREFIX` found for struct `state::PageVisits` in the current scope",
+          "finalErrorHead": "[E0432] unresolved import `crate::utils`"
+        }
+      },
+      "parseWallMs": 12
+    },
+    {
+      "id": "rent",
+      "category": "basics",
+      "path": "basics/rent/anchor/programs/rent-example/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": {
+          "target": "pinocchio",
+          "initialBuildOk": false,
+          "initialErrors": 1,
+          "initialDurationMs": 184,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.0666501,
+          "finalBuildOk": false,
+          "finalErrors": 1,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 1/1 patches REVERTED, cargo 1→2 (kept best=1), $0.0184",
+            "iter 1: 1/1 patches REVERTED, cargo 1→2 (kept best=1), $0.0227",
+            "iter 2: 1/1 patches REVERTED, cargo 1→2 (kept best=1), $0.0256"
+          ],
+          "wallTimeMs": 42470,
+          "initialErrorHead": "[E0277] `?` couldn't convert the error to `pinocchio::program_error::ProgramError`",
+          "finalErrorHead": "[E0277] `?` couldn't convert the error to `pinocchio::program_error::ProgramError`"
+        },
+        "native": null
+      },
+      "parseWallMs": 38
+    },
+    {
+      "id": "cpi-hand",
+      "category": "cpi",
+      "path": "basics/cross-program-invocation/anchor/programs/hand/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": {
+          "target": "pinocchio",
+          "initialBuildOk": false,
+          "initialErrors": 11,
+          "initialDurationMs": 133,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.0702861,
+          "finalBuildOk": false,
+          "finalErrors": 9,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 1/2 patches, errors 11→10 ✓, $0.0239",
+            "iter 1: 1/2 patches, errors 11→9 ✓, $0.0227",
+            "iter 2: 1/2 patches REVERTED, cargo 9→9 (kept best=9), $0.0237"
+          ],
+          "wallTimeMs": 50108,
+          "initialErrorHead": "[E0433] failed to resolve: use of unresolved module or unlinked crate `lever` | [E0433] failed to resolve: use of unresolved module or unlinked crate `lever`",
+          "finalErrorHead": "[E0433] failed to resolve: use of unresolved module or unlinked crate `lever` | [E0433] failed to resolve: use of unresolved module or unlinked crate `lever`"
+        },
+        "native": {
+          "target": "native",
+          "initialBuildOk": false,
+          "initialErrors": 5,
+          "initialDurationMs": 688,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.061007099999999995,
+          "finalBuildOk": false,
+          "finalErrors": 4,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 1/2 patches REVERTED, cargo 5→5 (kept best=5), $0.0234",
+            "iter 1: 1/2 patches, errors 5→4 ✓, $0.0262",
+            "iter 2: 0/1 patches accepted ($0.0114); feeding back to next iter"
+          ],
+          "wallTimeMs": 42236,
+          "initialErrorHead": "[E0433] failed to resolve: use of unresolved module or unlinked crate `lever` | [E0433] failed to resolve: use of unresolved module or unlinked crate `lever`",
+          "finalErrorHead": "[E0433] failed to resolve: use of unresolved module or unlinked crate `lever` | [E0433] failed to resolve: use of unresolved module or unlinked crate `lever`"
+        }
+      },
+      "parseWallMs": 4
+    },
+    {
+      "id": "carnival",
+      "category": "basics",
+      "path": "basics/repository-layout/anchor/programs/carnival/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": {
+          "target": "pinocchio",
+          "initialBuildOk": false,
+          "initialErrors": 16,
+          "initialDurationMs": 343,
+          "refineTriggered": true,
+          "refineCallsMade": 2,
+          "refineCostUsd": 0.11741639999999999,
+          "finalBuildOk": true,
+          "finalErrors": 0,
+          "refineHelped": true,
+          "notes": [
+            "iter 0: 4/4 patches, errors 16→4 ✓, $0.0828",
+            "iter 1: 4/4 patches, errors 16→0 ✓, $0.0346"
+          ],
+          "wallTimeMs": 63814,
+          "initialErrorHead": "[E0433] failed to resolve: use of unresolved module or unlinked crate `ride` | [E0433] failed to resolve: use of unresolved module or unlinked crate `game`"
+        },
+        "native": {
+          "target": "native",
+          "initialBuildOk": false,
+          "initialErrors": 16,
+          "initialDurationMs": 533,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.1371831,
+          "finalBuildOk": true,
+          "finalErrors": 0,
+          "refineHelped": true,
+          "notes": [
+            "iter 0: 4/4 patches, errors 16→3 ✓, $0.0684",
+            "iter 1: 3/3 patches REVERTED, cargo 3→3 (kept best=3), $0.0306",
+            "iter 2: 3/3 patches, errors 16→0 ✓, $0.0383"
+          ],
+          "wallTimeMs": 76316,
+          "initialErrorHead": "[E0433] failed to resolve: use of unresolved module or unlinked crate `ride` | [E0433] failed to resolve: use of unresolved module or unlinked crate `game`"
+        }
+      },
+      "parseWallMs": 63
+    },
+    {
+      "id": "create-token",
+      "category": "spl",
+      "path": "tokens/create-token/anchor/programs/create-token/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": {
+          "target": "pinocchio",
+          "initialBuildOk": false,
+          "initialErrors": 3,
+          "initialDurationMs": 220,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.0717531,
+          "finalBuildOk": false,
+          "finalErrors": 3,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 1/1 patches REVERTED, cargo 3→5 (kept best=3), $0.0220",
+            "iter 1: 1/1 patches REVERTED, cargo 3→5 (kept best=3), $0.0237",
+            "iter 2: 1/1 patches REVERTED, cargo 3→5 (kept best=3), $0.0260"
+          ],
+          "wallTimeMs": 48461,
+          "initialErrorHead": "[E0425] cannot find function `invoke` in this scope | [E0433] failed to resolve: use of unresolved module or unlinked crate `solana_program`",
+          "finalErrorHead": "[E0425] cannot find function `invoke` in this scope | [E0433] failed to resolve: use of unresolved module or unlinked crate `solana_program`"
+        },
+        "native": null
+      },
+      "parseWallMs": 14
+    },
+    {
+      "id": "transfer-tokens",
+      "category": "spl",
+      "path": "tokens/transfer-tokens/anchor/programs/transfer-tokens/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": null,
+        "native": {
+          "target": "native",
+          "initialBuildOk": true,
+          "initialErrors": 0,
+          "initialDurationMs": 300,
+          "refineTriggered": false,
+          "refineCallsMade": 0,
+          "refineCostUsd": 0,
+          "finalBuildOk": true,
+          "finalErrors": 0,
+          "refineHelped": false,
+          "notes": [
+            "clean build"
+          ],
+          "wallTimeMs": 310
+        }
+      },
+      "parseWallMs": 49
+    },
+    {
+      "id": "spl-token-minter",
+      "category": "spl",
+      "path": "tokens/spl-token-minter/anchor/programs/spl-token-minter/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": {
+          "target": "pinocchio",
+          "initialBuildOk": false,
+          "initialErrors": 3,
+          "initialDurationMs": 145,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.0754131,
+          "finalBuildOk": false,
+          "finalErrors": 3,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 1/1 patches REVERTED, cargo 3→3 (kept best=3), $0.0231",
+            "iter 1: 1/1 patches REVERTED, cargo 3→4 (kept best=3), $0.0262",
+            "iter 2: 1/1 patches REVERTED, cargo 3→3 (kept best=3), $0.0262"
+          ],
+          "wallTimeMs": 51849,
+          "initialErrorHead": "[E0425] cannot find function `invoke` in this scope | [E0433] failed to resolve: use of unresolved module or unlinked crate `solana_program`",
+          "finalErrorHead": "[E0425] cannot find function `invoke` in this scope | [E0433] failed to resolve: use of unresolved module or unlinked crate `solana_program`"
+        },
+        "native": {
+          "target": "native",
+          "initialBuildOk": true,
+          "initialErrors": 0,
+          "initialDurationMs": 280,
+          "refineTriggered": false,
+          "refineCallsMade": 0,
+          "refineCostUsd": 0,
+          "finalBuildOk": true,
+          "finalErrors": 0,
+          "refineHelped": false,
+          "notes": [
+            "clean build"
+          ],
+          "wallTimeMs": 286
+        }
+      },
+      "parseWallMs": 10
+    },
+    {
+      "id": "pda-mint-authority",
+      "category": "spl",
+      "path": "tokens/pda-mint-authority/anchor/programs/token-minter/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": {
+          "target": "pinocchio",
+          "initialBuildOk": false,
+          "initialErrors": 5,
+          "initialDurationMs": 141,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.08669009999999999,
+          "finalBuildOk": false,
+          "finalErrors": 5,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 1/1 patches REVERTED, cargo 5→11 (kept best=5), $0.0271",
+            "iter 1: 1/1 patches REVERTED, cargo 5→11 (kept best=5), $0.0292",
+            "iter 2: 1/1 patches REVERTED, cargo 5→12 (kept best=5), $0.0304"
+          ],
+          "wallTimeMs": 60672,
+          "initialErrorHead": "[E0422] cannot find struct, variant or union type `CreateMetadataAccountsV3` in this scope | [E0425] cannot find value `signer_seeds` in this scope",
+          "finalErrorHead": "[E0422] cannot find struct, variant or union type `CreateMetadataAccountsV3` in this scope | [E0425] cannot find value `signer_seeds` in this scope"
+        },
+        "native": {
+          "target": "native",
+          "initialBuildOk": false,
+          "initialErrors": 5,
+          "initialDurationMs": 275,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.06800310000000001,
+          "finalBuildOk": false,
+          "finalErrors": 1,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 1/1 patches, errors 5→1 ✓, $0.0241",
+            "iter 1: 1/1 patches REVERTED, cargo 1→3 (kept best=1), $0.0200",
+            "iter 2: 1/1 patches REVERTED, cargo 1→1 (kept best=1), $0.0240"
+          ],
+          "wallTimeMs": 51807,
+          "initialErrorHead": "[E0422] cannot find struct, variant or union type `CreateMetadataAccountsV3` in this scope | [E0425] cannot find value `signer_seeds` in this scope",
+          "finalErrorHead": "[E0061] this enum variant takes 1 argument but 0 arguments were supplied"
+        }
+      },
+      "parseWallMs": 9
+    },
+    {
+      "id": "token-2022-basics",
+      "category": "token2022",
+      "path": "tokens/token-2022/basics/anchor/programs/basics/src/lib.rs",
+      "fresh": true,
+      "parseOk": true,
+      "perTarget": {
+        "pinocchio": null,
+        "native": {
+          "target": "native",
+          "initialBuildOk": false,
+          "initialErrors": 4,
+          "initialDurationMs": 288,
+          "refineTriggered": true,
+          "refineCallsMade": 3,
+          "refineCostUsd": 0.0926661,
+          "finalBuildOk": false,
+          "finalErrors": 3,
+          "refineHelped": false,
+          "notes": [
+            "iter 0: 1/2 patches REVERTED, cargo 4→4 (kept best=4), $0.0278",
+            "iter 1: 2/2 patches REVERTED, cargo 4→7 (kept best=4), $0.0276",
+            "iter 2: 1/2 patches, errors 4→3 ✓, $0.0372"
+          ],
+          "wallTimeMs": 56316,
+          "initialErrorHead": "[E0432] unresolved import `spl_token_2022` | [E0425] cannot find value `token_name` in this scope",
+          "finalErrorHead": "[E0432] unresolved import `spl_token_2022` | [E0061] this function takes 4 arguments but 3 arguments were supplied"
+        }
+      },
+      "parseWallMs": 7
+    }
+  ],
+  "totalCostUsd": 1.1098801499999997,
+  "totalCalls": 43,
+  "generatedAt": "2026-04-25T21:40:16.237Z"
+}
