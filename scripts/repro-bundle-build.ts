@@ -12,6 +12,10 @@ import { execSync } from "child_process";
 import { readFileSync, mkdirSync, writeFileSync, rmSync, existsSync } from "fs";
 import { dirname, join } from "path";
 
+// perp-funding deliberately left out for now — its bundle currently has a
+// pre-existing scoping bug where a bump binding is referenced outside the
+// block it was declared in. Tracked separately; will add once the parser
+// lifts the binding to the outer scope.
 const DEMOS = ["counter", "vault", "escrow", "staking", "amm", "marketplace", "vesting"];
 const TARGETS = [
   { name: "pinocchio", emit: emitPinocchioFull },
