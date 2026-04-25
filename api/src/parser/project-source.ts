@@ -636,6 +636,35 @@ function consolidateMultiStatementCpi(source: string): string {
     return `${nsPrefix}${fnName}(${ctx}${argsPart})${tryOp};`;
   });
 
+  // ── Four-statement form (program-first ordering) ──
+  // anchor-escrow-style impl-method bodies bind the program variable BEFORE
+  // the accounts struct:
+  //   let cpi_program = self.token_program.to_account_info();
+  //   let cpi_accounts = TransferChecked { ... };
+  //   let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+  //   transfer_checked(cpi_ctx, ..., ...)?;
+  // The base 4-stmt regex above expects accounts-first, so this swap-ordering
+  // variant catches the rest.
+  const fourStmtProgFirst = new RegExp(
+    // 1. let <programVar>(: TYPE)? = PROGRAM_EXPR;
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*([^;]+?);` + ws +
+    // 2. let <accountsVar>(: TYPE)? = STRUCT { ...fields... };
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*(` + structAlt + String.raw`)\s*\{([\s\S]*?)\};` + ws +
+    // 3. let <ctxVar>(: TYPE)? = CpiContext::new(<programVar-ref>, <accountsVar-ref>)(.with_signer(SEEDS))?;
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*CpiContext::new\(\s*\1\s*,\s*\3\s*,?\s*\)(?:\s*\.with_signer\(([^)]+)\))?\s*;` + ws +
+    // 4. NS::FN(<ctxVar-ref>, ARGS)?;
+    String.raw`((?:\w+::)*)(\w+)\(\s*\6\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
+    "g",
+  );
+  out = out.replace(fourStmtProgFirst, (_full, _progVar: string, programExpr: string, _accVar: string, struct: string, fields: string, _ctxVar: string, signerSeeds: string | undefined, nsPrefix: string, fnName: string, args: string | undefined, q: string | undefined) => {
+    const ctx = signerSeeds
+      ? `CpiContext::new_with_signer(${programExpr.trim()}, ${struct} {${fields}}, ${signerSeeds.trim()})`
+      : `CpiContext::new(${programExpr.trim()}, ${struct} {${fields}})`;
+    const argsPart = args && args.trim() ? `, ${args.trim()}` : "";
+    const tryOp = q ?? "";
+    return `${nsPrefix}${fnName}(${ctx}${argsPart})${tryOp};`;
+  });
+
   // ── Three-statement form: accounts-struct, cpi-context (with inline prog),
   // call. Matches e.g.:
   //   let transfer_accounts = Transfer { from, to };

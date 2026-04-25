@@ -102,7 +102,8 @@ function parseInstructionFn(
   //       function on the Accounts struct. Same end goal (find the impl
   //       method body, inline it as the instruction body).
   const expandedWrapper =
-    expandAccountsMethodWrapper(parser, bodyFnNode, contextType, accounts, implMethods)
+    expandAccountsMethodCalls(parser, bodyFnNode, contextType, accounts, implMethods)
+    ?? expandAccountsMethodWrapper(parser, bodyFnNode, contextType, accounts, implMethods)
     ?? expandTypeAssociatedCalls(parser, bodyFnNode, implMethods)
     ?? expandTypeAssociatedHandler(parser, bodyFnNode, implMethods);
 
@@ -432,6 +433,76 @@ function expandTypeAssociatedCalls(
 
   const expandedBody = `{\n${inlinedParts.join("\n")}\n}`;
   const synthetic = parser.parse(`fn __anvil_type_assoc__() ${expandedBody}`);
+  if (!synthetic) return null;
+  const syntheticFn = findDescendant(synthetic.rootNode, "function_item");
+  const syntheticBody = syntheticFn?.childForFieldName("body");
+  if (!syntheticBody) return null;
+
+  return { bodyNode: syntheticBody, rawBody: syntheticBody.text };
+}
+
+/**
+ * Multi-statement variant of expandAccountsMethodWrapper. Walks each top-level
+ * statement of `pub fn foo(ctx: Context<Foo>, ...)` and inlines any that match
+ * `ctx.accounts.METHOD(args)` against an impl method on the Accounts struct;
+ * non-matching statements pass through verbatim. Reuses `expandImplMethod`
+ * (not the lighter `inlineImplMethodBody`) so the inlined block also gets the
+ * `self.X` -> `ctx.accounts.X` rewrite — required by the
+ * anchor-escrow / anchor-vault-manager cohort whose impl bodies use `self`.
+ *
+ * Returns null if no statement matched a known impl method, leaving the
+ * original body intact for later resolvers.
+ */
+function expandAccountsMethodCalls(
+  parser: Parser,
+  fnNode: SyntaxNode,
+  contextType: string,
+  accounts: AccountRef[],
+  implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
+): { bodyNode: SyntaxNode; rawBody: string } | null {
+  const bodyNode = fnNode.childForFieldName("body");
+  if (!bodyNode || !contextType) return null;
+
+  const scopedMethods = implMethods.filter((entry) => entry.implName === contextType);
+  if (scopedMethods.length === 0) return null;
+
+  // Pre-flight: skip walk when body has no `ctx.accounts.METHOD(` shape.
+  if (!/ctx\s*\.\s*accounts\s*\.\s*\w+\s*\(/.test(bodyNode.text)) return null;
+
+  const callRe =
+    /^\s*ctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\(([\s\S]*)\)\s*(\??)\s*(;)?\s*$/s;
+
+  const inlinedParts: string[] = [];
+  let didExpand = false;
+
+  for (let i = 0; i < bodyNode.namedChildCount; i++) {
+    const child = bodyNode.namedChild(i);
+    if (!child) continue;
+    const text = child.text;
+
+    const match = text.match(callRe);
+    if (match) {
+      const methodName = match[1]!;
+      const argsRaw = match[2] ?? "";
+      const hasQuestion = !!match[3];
+      const argExprs = splitTopLevelArgs(argsRaw);
+      const expandedBody = expandImplMethod(methodName, argExprs, scopedMethods, accounts, new Set());
+      if (expandedBody) {
+        // Wrap as a statement-form block. The block evaluates to its tail
+        // expression so a `?` on the wrapper still propagates correctly.
+        inlinedParts.push(`${expandedBody}${hasQuestion ? "?" : ""};`);
+        didExpand = true;
+        continue;
+      }
+    }
+
+    inlinedParts.push(text);
+  }
+
+  if (!didExpand) return null;
+
+  const expandedBody = `{\n${inlinedParts.join("\n")}\n}`;
+  const synthetic = parser.parse(`fn __anvil_accounts_calls__() ${expandedBody}`);
   if (!synthetic) return null;
   const syntheticFn = findDescendant(synthetic.rootNode, "function_item");
   const syntheticBody = syntheticFn?.childForFieldName("body");
