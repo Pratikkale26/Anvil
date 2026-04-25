@@ -239,13 +239,14 @@ function printHelp(): void {
 
   ${c.bold}COMMANDS${c.reset}
 
-    compile    Parse, emit, validate, and write output files
-    parse      Parse only — output IR as JSON
-    validate   Parse, emit, validate — show issues
-    lint       Auto-port readiness report (ready / review / blocker findings)
-    bench      Per-instruction CU estimate vs Anchor baseline
-    snapshot   Save / check CU baseline — fails on regression
-    diff       Storage layout diff between two program versions
+    compile      Parse, emit, validate, and write output files
+    parse        Parse only — output IR as JSON
+    validate     Parse, emit, validate — show issues
+    lint         Auto-port readiness report (ready / review / blocker findings)
+    bench        Per-instruction CU estimate vs Anchor baseline
+    snapshot     Save / check CU baseline — fails on regression
+    diff         Storage layout diff between two program versions
+    completion   Print shell completion script (bash | zsh)
 
   ${c.bold}OPTIONS${c.reset}
 
@@ -467,16 +468,42 @@ function printDiffHelp(): void {
 `);
 }
 
+function printCompletionHelp(): void {
+  console.log(`
+  ${c.bold}anvil completion${c.reset} — Print a shell completion script.
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil completion <shell>
+
+  ${c.bold}ARGUMENTS${c.reset}
+
+    <shell>     Target shell. One of: bash, zsh
+
+  ${c.bold}INSTALL${c.reset}
+
+    ${c.dim}# bash${c.reset}
+    anvil completion bash >> ~/.bashrc
+
+    ${c.dim}# zsh${c.reset}
+    anvil completion zsh >> ~/.zshrc
+
+  After appending, restart your shell (or ${c.cyan}source${c.reset} the rc file)
+  to enable tab-completion for ${c.cyan}anvil${c.reset}.
+`);
+}
+
 function printCommandHelp(command: string): void {
   switch (command) {
-    case "compile":  printCompileHelp();  return;
-    case "parse":    printParseHelp();    return;
-    case "validate": printValidateHelp(); return;
-    case "lint":     printLintHelp();     return;
-    case "bench":    printBenchHelp();    return;
-    case "snapshot": printSnapshotHelp(); return;
-    case "diff":     printDiffHelp();     return;
-    default:         printHelp();
+    case "compile":    printCompileHelp();    return;
+    case "parse":      printParseHelp();      return;
+    case "validate":   printValidateHelp();   return;
+    case "lint":       printLintHelp();       return;
+    case "bench":      printBenchHelp();      return;
+    case "snapshot":   printSnapshotHelp();   return;
+    case "diff":       printDiffHelp();       return;
+    case "completion": printCompletionHelp(); return;
+    default:           printHelp();
   }
 }
 
@@ -1248,6 +1275,218 @@ async function cmdDiff(args: CliArgs): Promise<void> {
   if (report.overallVerdict === "unsafe") process.exit(1);
 }
 
+// ─── anvil completion ────────────────────────────────────────────────────────
+
+const COMPLETION_BASH = `# anvil bash completion
+# Install: anvil completion bash >> ~/.bashrc
+_anvil_completions() {
+  local cur prev cmd
+  COMPREPLY=()
+  cur="\${COMP_WORDS[COMP_CWORD]}"
+  prev="\${COMP_WORDS[COMP_CWORD-1]}"
+  cmd="\${COMP_WORDS[1]}"
+
+  local commands="compile parse validate lint bench snapshot diff completion"
+  local global_flags="--help -h --version -v"
+  local target_values="pinocchio native quasar"
+  local shell_values="bash zsh"
+
+  # Top-level command
+  if [ "\$COMP_CWORD" -eq 1 ]; then
+    COMPREPLY=( \$(compgen -W "\$commands \$global_flags" -- "\$cur") )
+    return 0
+  fi
+
+  # --target / -t value completion
+  if [ "\$prev" = "--target" ] || [ "\$prev" = "-t" ]; then
+    COMPREPLY=( \$(compgen -W "\$target_values" -- "\$cur") )
+    return 0
+  fi
+
+  # --output / -o, --snapshot expect a path
+  if [ "\$prev" = "--output" ] || [ "\$prev" = "-o" ] || [ "\$prev" = "--snapshot" ]; then
+    COMPREPLY=( \$(compgen -f -- "\$cur") )
+    return 0
+  fi
+
+  # --threshold-pct / --threshold-abs expect a number; no completion
+  if [ "\$prev" = "--threshold-pct" ] || [ "\$prev" = "--threshold-abs" ]; then
+    return 0
+  fi
+
+  # Per-command flag sets
+  local flags=""
+  case "\$cmd" in
+    compile)
+      flags="--target -t --output -o --single-file --json --help -h"
+      ;;
+    parse)
+      flags="--json --help -h"
+      ;;
+    validate)
+      flags="--target -t --json --help -h"
+      ;;
+    lint)
+      flags="--target -t --json --markdown --md --help -h"
+      ;;
+    bench)
+      flags="--json --markdown --md --help -h"
+      ;;
+    snapshot)
+      flags="--save --check --threshold-pct --threshold-abs --snapshot --json --markdown --md --help -h"
+      ;;
+    diff)
+      flags="--json --markdown --md --help -h"
+      ;;
+    completion)
+      if [ "\$COMP_CWORD" -eq 2 ]; then
+        COMPREPLY=( \$(compgen -W "\$shell_values" -- "\$cur") )
+        return 0
+      fi
+      ;;
+    *)
+      flags="\$global_flags"
+      ;;
+  esac
+
+  if [[ "\$cur" == -* ]]; then
+    COMPREPLY=( \$(compgen -W "\$flags" -- "\$cur") )
+  else
+    # Default: complete file paths for input arguments.
+    COMPREPLY=( \$(compgen -f -- "\$cur") )
+  fi
+  return 0
+}
+complete -F _anvil_completions anvil
+`;
+
+const COMPLETION_ZSH = `# anvil zsh completion
+# Install: anvil completion zsh >> ~/.zshrc
+_anvil() {
+  local -a commands
+  commands=(
+    'compile:Parse, emit, validate, and write output files'
+    'parse:Parse only - output IR as JSON'
+    'validate:Parse, emit, validate - show issues'
+    'lint:Auto-port readiness report'
+    'bench:Per-instruction CU estimate vs Anchor baseline'
+    'snapshot:Save / check CU baseline'
+    'diff:Storage layout diff between two program versions'
+    'completion:Print shell completion script'
+  )
+
+  local -a global_flags
+  global_flags=(
+    '--help[Show help]'
+    '-h[Show help]'
+    '--version[Show version]'
+    '-v[Show version]'
+  )
+
+  local -a target_values
+  target_values=(pinocchio native quasar)
+
+  local -a shell_values
+  shell_values=(bash zsh)
+
+  _arguments -C \\
+    '1: :->command' \\
+    '*:: :->args'
+
+  case "\$state" in
+    command)
+      _describe 'command' commands
+      _values 'flag' "\${global_flags[@]}"
+      ;;
+    args)
+      case "\$line[1]" in
+        compile)
+          _arguments \\
+            '(--target -t)'{--target,-t}'[Target framework]:target:('"\${target_values[*]}"')' \\
+            '(--output -o)'{--output,-o}'[Output directory]:dir:_files -/' \\
+            '--single-file[Emit a single .rs file]' \\
+            '--json[Output IR as JSON]' \\
+            '(--help -h)'{--help,-h}'[Show help]' \\
+            '*:input:_files'
+          ;;
+        parse)
+          _arguments \\
+            '--json[Output IR as JSON]' \\
+            '(--help -h)'{--help,-h}'[Show help]' \\
+            '*:input:_files'
+          ;;
+        validate)
+          _arguments \\
+            '(--target -t)'{--target,-t}'[Target framework]:target:('"\${target_values[*]}"')' \\
+            '--json[Output issues as JSON]' \\
+            '(--help -h)'{--help,-h}'[Show help]' \\
+            '*:input:_files'
+          ;;
+        lint)
+          _arguments \\
+            '(--target -t)'{--target,-t}'[Target framework]:target:('"\${target_values[*]}"')' \\
+            '--json[JSON lint report]' \\
+            '(--markdown --md)'{--markdown,--md}'[Markdown report]' \\
+            '(--help -h)'{--help,-h}'[Show help]' \\
+            '*:input:_files'
+          ;;
+        bench)
+          _arguments \\
+            '--json[JSON CU report]' \\
+            '(--markdown --md)'{--markdown,--md}'[Markdown CU table]' \\
+            '(--help -h)'{--help,-h}'[Show help]' \\
+            '*:input:_files'
+          ;;
+        snapshot)
+          _arguments \\
+            '--save[Write a new baseline snapshot]' \\
+            '--check[Compare to existing baseline]' \\
+            '--threshold-pct[Per-instruction regression threshold (percent)]:n:' \\
+            '--threshold-abs[Per-instruction regression threshold (CU)]:n:' \\
+            '--snapshot[Snapshot file path]:path:_files' \\
+            '--json[JSON report]' \\
+            '(--markdown --md)'{--markdown,--md}'[Markdown report]' \\
+            '(--help -h)'{--help,-h}'[Show help]' \\
+            '*:input:_files'
+          ;;
+        diff)
+          _arguments \\
+            '--json[JSON diff report]' \\
+            '(--markdown --md)'{--markdown,--md}'[Markdown report]' \\
+            '(--help -h)'{--help,-h}'[Show help]' \\
+            '*:input:_files'
+          ;;
+        completion)
+          _values 'shell' "\${shell_values[@]}"
+          ;;
+      esac
+      ;;
+  esac
+}
+compdef _anvil anvil
+`;
+
+function cmdCompletion(args: CliArgs): void {
+  if (args.help) {
+    printCompletionHelp();
+    return;
+  }
+  const shell = args.input;
+  if (!shell) {
+    fatal("Missing shell argument.\n\n  Usage: anvil completion <bash|zsh>");
+  }
+  switch (shell) {
+    case "bash":
+      process.stdout.write(COMPLETION_BASH);
+      return;
+    case "zsh":
+      process.stdout.write(COMPLETION_ZSH);
+      return;
+    default:
+      fatal(`Unsupported shell "${shell}". Supported: bash, zsh`);
+  }
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -1290,6 +1529,9 @@ async function main(): Promise<void> {
       break;
     case "diff":
       await cmdDiff(args);
+      break;
+    case "completion":
+      cmdCompletion(args);
       break;
     default:
       error(`Unknown command: ${args.command}`);
