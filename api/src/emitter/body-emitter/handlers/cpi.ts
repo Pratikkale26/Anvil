@@ -18,7 +18,15 @@ type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
 
 function shouldEmitSignerSeedsPrelude(w: BodyWalker, signerSeeds: string | undefined): boolean {
   if (!signerSeeds) return false;
-  return !(signerSeeds === "signer_seeds" && w.signerSeedsInScope);
+  // The prelude generates a standardized `let seeds = &[…]; let signer_seeds
+  // = &[&seeds[..]];` block tailored to the legacy default var name. When
+  // the IR carries a user-defined name (extracted from
+  // `CpiContext::new_with_signer(_, _, &signers_seeds)`), the user already
+  // has those bindings in scope — emitting our prelude would shadow `seeds`
+  // and produce E0716 lifetime errors on the synthesized seeds list.
+  const isLegacyDefault = signerSeeds === "signer_seeds";
+  if (!isLegacyDefault) return false;
+  return !(isLegacyDefault && w.signerSeedsInScope);
 }
 
 export function handleCpiSystemTransfer(w: BodyWalker, stmt: CpiSystemTransfer): void {

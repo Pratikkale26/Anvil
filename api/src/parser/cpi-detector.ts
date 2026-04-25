@@ -218,7 +218,7 @@ function extractSplTransfer(callNode: SyntaxNode): BodyStatement {
       const maybeMint = extractStructField(transferStruct, "mint");
       if (maybeMint) mint = cleanAccountRef(maybeMint);
     }
-    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+    signerSeeds = firstArg.text.includes("new_with_signer") ? extractSignerSeedsExpr(firstArg.text) : undefined;
   } else if (firstArg) {
     signerSeeds = undefined; // TODO: could trace variable
   }
@@ -270,7 +270,7 @@ function extractSplMintTo(callNode: SyntaxNode): BodyStatement {
       to = extractStructField(mintStruct, "to") ?? "to";
       authority = extractStructField(mintStruct, "authority") ?? "authority";
     }
-    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+    signerSeeds = firstArg.text.includes("new_with_signer") ? extractSignerSeedsExpr(firstArg.text) : undefined;
   }
 
   if (isChecked && args.length >= 3) {
@@ -318,7 +318,7 @@ function extractSplBurn(callNode: SyntaxNode): BodyStatement {
       mint = extractStructField(burnStruct, "mint") ?? "mint";
       authority = extractStructField(burnStruct, "authority") ?? "authority";
     }
-    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+    signerSeeds = firstArg.text.includes("new_with_signer") ? extractSignerSeedsExpr(firstArg.text) : undefined;
   }
 
   if (isChecked && args.length >= 3) {
@@ -360,7 +360,7 @@ function extractSplCloseAccount(callNode: SyntaxNode): BodyStatement {
       destination = extractStructField(closeStruct, "destination") ?? "destination";
       authority = extractStructField(closeStruct, "authority") ?? "authority";
     }
-    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+    signerSeeds = firstArg.text.includes("new_with_signer") ? extractSignerSeedsExpr(firstArg.text) : undefined;
   }
 
   return {
@@ -395,7 +395,7 @@ function extractAtaCreate(callNode: SyntaxNode): BodyStatement {
       mint = extractStructField(createStruct, "mint") ?? mint;
       authority = extractStructField(createStruct, "authority") ?? authority;
     }
-    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+    signerSeeds = firstArg.text.includes("new_with_signer") ? extractSignerSeedsExpr(firstArg.text) : undefined;
   } else {
     // Raw native call: create_associated_token_account(payer, owner, mint, token_program)
     // — positional args, no Create struct to extract from. Bail to pass-through so
@@ -434,7 +434,7 @@ function extractSystemTransfer(callNode: SyntaxNode): BodyStatement {
       from = extractStructField(transferStruct, "from") ?? "from";
       to = extractStructField(transferStruct, "to") ?? "to";
     }
-    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+    signerSeeds = firstArg.text.includes("new_with_signer") ? extractSignerSeedsExpr(firstArg.text) : undefined;
   } else if (args.length >= 2) {
     // system_program::transfer(cpi_ctx, amount) — ctx is first, amount is second
   }
@@ -468,6 +468,39 @@ function extractCustomCpi(callNode: SyntaxNode): BodyStatement {
 }
 
 // ─── Fallback ───────────────────────────────────────────────────────────────
+
+/**
+ * Pull the actual third argument out of an inline
+ * `CpiContext::new_with_signer(prog, accounts, SIGNERS)` expression. The
+ * caller would otherwise hardcode `"signer_seeds"` and the body emitter
+ * would generate its own `let signer_seeds = …` prelude — which is wrong
+ * when the source already has its own `signers_seeds` local in scope (e.g.
+ * the anchor-escrow PDA-signed pattern). When the third arg can't be
+ * isolated cleanly, fall back to the legacy default.
+ */
+function extractSignerSeedsExpr(firstArgText: string): string {
+  const idx = firstArgText.indexOf("new_with_signer(");
+  if (idx === -1) return "signer_seeds";
+  let depth = 0;
+  const start = idx + "new_with_signer(".length;
+  const args: number[] = [start];
+  for (let i = start; i < firstArgText.length; i++) {
+    const ch = firstArgText[i];
+    if (ch === "(" || ch === "[" || ch === "{" || ch === "<") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}" || ch === ">") {
+      if (depth === 0) {
+        args.push(i);
+        break;
+      }
+      depth--;
+    } else if (ch === "," && depth === 0) {
+      args.push(i + 1);
+    }
+  }
+  if (args.length < 4) return "signer_seeds";
+  const expr = firstArgText.slice(args[2]!, args[3]!).trim().replace(/,\s*$/, "");
+  return expr.length > 0 ? expr : "signer_seeds";
+}
 
 function fallbackPassThrough(node: SyntaxNode): BodyStatement {
   return {

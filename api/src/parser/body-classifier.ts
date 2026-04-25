@@ -37,6 +37,18 @@ import { detectCpi } from "./cpi-detector.js";
 export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
   const statements: BodyStatement[] = [];
 
+  // If the body already has a user-defined `let signers_seeds = [&seeds[..]]`
+  // (anchor-escrow / vault-manager impl-method shape), the user is managing
+  // their own seed-prep — skip the auto-consumption pass that would replace
+  // their `let seeds = …` with an empty placeholder and then re-emit a
+  // standardized prelude at the CPI site. With consumption disabled we
+  // preserve the original ordering (seeds → signers_seeds → CPI), which
+  // is what `&signers_seeds` references at the call site.
+  const bodyText = bodyNode.text;
+  const hasUserSeedsManagement =
+    /\blet\s+signers_seeds\s*=\s*\[\s*&\s*seeds\s*\[\s*\.\.\s*\]\s*\]/.test(bodyText) ||
+    /\blet\s+\w*signers_seeds\s*=\s*\[\s*&/.test(bodyText);
+
   // Track seeds definitions for PDA signer seeds grouping
   let pendingSeeds: { seeds: string[]; bumpField?: string; rawCode: string } | null = null;
 
@@ -69,7 +81,7 @@ export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
     // Skip comment nodes
     if (child.type === "line_comment" || child.type === "block_comment") continue;
 
-    const classified = classifyStatement(child, pendingSeeds, cpiContexts);
+    const classified = classifyStatement(child, pendingSeeds, cpiContexts, hasUserSeedsManagement);
 
     // Track seeds for PDA signer seeds grouping
     if (classified._seedsData) {
@@ -133,12 +145,13 @@ function classifyStatement(
   node: SyntaxNode,
   pendingSeeds: { seeds: string[]; bumpField?: string; rawCode: string } | null,
   cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
+  hasUserSeedsManagement = false,
 ): ClassifyResult {
   const text = node.text;
 
   switch (node.type) {
     case "let_declaration":
-      return classifyLetDeclaration(node, pendingSeeds);
+      return classifyLetDeclaration(node, pendingSeeds, hasUserSeedsManagement);
 
     case "expression_statement":
       return classifyExpressionStatement(node, cpiContexts);
@@ -169,6 +182,7 @@ function classifyStatement(
 function classifyLetDeclaration(
   node: SyntaxNode,
   pendingSeeds: { seeds: string[]; bumpField?: string; rawCode: string } | null,
+  hasUserSeedsManagement = false,
 ): ClassifyResult {
   const text = node.text;
   const patternNode = node.childForFieldName("pattern");
@@ -226,9 +240,24 @@ function classifyLetDeclaration(
   }
 
   // ── PDA seeds definition: let seeds / pool_seeds / vault_seeds = &[...] ──
+  // Excluded names — these carry the OUTER signer-seeds wrapper (the
+  // `[&seeds[..]]` form, not the inner seed list) and shouldn't be
+  // consumed as seed lists. After the impl-method inliner flattens an
+  // impl body containing the anchor-escrow pattern
+  // `let signers_seeds = [&seeds[..]]; CpiContext::new_with_signer(_, _,
+  // &signers_seeds)`, the classifier sees both the inner `let seeds = …`
+  // and the outer `let signers_seeds = …` at the wrapper-body level.
+  // Consuming the outer would replace the let with an empty placeholder,
+  // and the subsequent CPI emit would reference an undefined
+  // `signers_seeds`. Pass it through verbatim instead.
+  const isOuterSignerSeedsBinding =
+    localVar.endsWith("_signer_seeds") ||
+    localVar === "signers_seeds" ||
+    localVar.endsWith("_signers_seeds");
   if (
     valueNode &&
-    (localVar === "seeds" || (localVar.endsWith("_seeds") && !localVar.endsWith("_signer_seeds")))
+    !hasUserSeedsManagement &&
+    (localVar === "seeds" || (localVar.endsWith("_seeds") && !isOuterSignerSeedsBinding))
   ) {
     const seedsData = extractPdaSeeds(valueNode);
     if (seedsData) {
