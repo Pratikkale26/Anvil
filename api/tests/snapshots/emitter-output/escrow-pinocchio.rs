@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use core::convert::TryInto;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -64,9 +65,9 @@ pub fn create_escrow(
     let maker_ata_a = &accounts[3];
     let escrow = &accounts[4];
     let vault = &accounts[5];
-    let system_program = &accounts[6];
-    let token_program = &accounts[7];
-    let associated_token_program = &accounts[8];
+    let _system_program = &accounts[6];
+    let _token_program = &accounts[7];
+    let _associated_token_program = &accounts[8];
 
     if !maker.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -158,9 +159,9 @@ pub fn accept_escrow(
     let maker_ata_b = &accounts[6];
     let escrow = &accounts[7];
     let vault = &accounts[8];
-    let system_program = &accounts[9];
-    let token_program = &accounts[10];
-    let associated_token_program = &accounts[11];
+    let _system_program = &accounts[9];
+    let _token_program = &accounts[10];
+    let _associated_token_program = &accounts[11];
 
     if !taker.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -168,7 +169,7 @@ pub fn accept_escrow(
     if !taker.is_writable() || !taker_ata_b.is_writable() || !taker_ata_a.is_writable() || !maker_ata_b.is_writable() || !escrow.is_writable() || !vault.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { escrow.owner() } != program_id {
+    if escrow.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -189,7 +190,7 @@ pub fn accept_escrow(
         return Err(ProgramError::InvalidAccountData);
     }
     let seed_bytes = escrow.seed.to_le_bytes();
-    let bump_escrow = bump_seed(program_id, &[b"escrow", maker.key().as_ref(), seed_bytes.as_ref()], escrow_account.key())?;
+    let _bump_escrow = bump_seed(program_id, &[b"escrow", maker.key().as_ref(), seed_bytes.as_ref()], escrow_account.key())?;
     // PDA signer seeds for 'escrow'
     let seed_bytes = escrow.seed.to_le_bytes();
     let seeds = &[
@@ -226,7 +227,7 @@ pub fn cancel_escrow(
     let maker_ata_a = &accounts[2];
     let escrow = &accounts[3];
     let vault = &accounts[4];
-    let token_program = &accounts[5];
+    let _token_program = &accounts[5];
 
     if !maker.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -234,7 +235,7 @@ pub fn cancel_escrow(
     if !maker.is_writable() || !maker_ata_a.is_writable() || !escrow.is_writable() || !vault.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { escrow.owner() } != program_id {
+    if escrow.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -252,7 +253,7 @@ pub fn cancel_escrow(
         return Err(ProgramError::InvalidAccountData);
     }
     let seed_bytes = escrow.seed.to_le_bytes();
-    let bump_escrow = bump_seed(program_id, &[b"escrow", maker.key().as_ref(), seed_bytes.as_ref()], escrow_account.key())?;
+    let _bump_escrow = bump_seed(program_id, &[b"escrow", maker.key().as_ref(), seed_bytes.as_ref()], escrow_account.key())?;
     // PDA signer seeds for 'escrow'
     let seed_bytes = escrow.seed.to_le_bytes();
     let seeds = &[
@@ -314,7 +315,6 @@ impl Escrow {
         );
         offset += 8;
         let bump: u8 = data[offset];
-        offset += 1;
         Ok(Self { maker, mint_a, mint_b, receive_amount, seed, bump })
     }
 
@@ -335,7 +335,6 @@ impl Escrow {
         data[offset..offset + 8].copy_from_slice(&value.seed.to_le_bytes());
         offset += 8;
         data[offset] = value.bump as u8;
-        offset += 1;
         Ok(())
     }
 
@@ -480,7 +479,9 @@ pub fn close_program_account(
         *account_lamports = 0;
     }
     {
-        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        // data doesn't need 'mut' on the binding — iter_mut() reborrows the
+        // underlying &mut [u8] without needing the binding itself mutable.
+        let data = unsafe { account.borrow_mut_data_unchecked() };
         for byte in data.iter_mut() {
             *byte = 0;
         }

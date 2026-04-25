@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
@@ -62,7 +63,7 @@ pub fn initialize(
     let marketplace = &accounts[0];
     let admin = &accounts[1];
     let treasury = &accounts[2];
-    let system_program = &accounts[3];
+    let _system_program = &accounts[3];
 
     if !admin.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -133,9 +134,9 @@ pub fn list(
     let listing = &accounts[3];
     let marketplace = &accounts[4];
     let vault = &accounts[5];
-    let token_program = &accounts[6];
-    let associated_token_program = &accounts[7];
-    let system_program = &accounts[8];
+    let _token_program = &accounts[6];
+    let _associated_token_program = &accounts[7];
+    let _system_program = &accounts[8];
 
     if !seller.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -184,7 +185,7 @@ pub fn list(
     create_program_account(listing, seller, (8 + Listing::LEN) as u64, program_id, init_listing_signer_seeds)?;
 
 
-    let (expected_key, bump_marketplace) = Pubkey::find_program_address(&[b"marketplace"], program_id);
+    let (expected_key, _bump_marketplace) = Pubkey::find_program_address(&[b"marketplace"], program_id);
     if expected_key != *marketplace.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -242,14 +243,14 @@ pub fn delist(
     }
 
     let seller = &accounts[0];
-    let nft_mint = &accounts[1];
+    let _nft_mint = &accounts[1];
     let seller_ata = &accounts[2];
     let listing = &accounts[3];
     let marketplace = &accounts[4];
     let vault = &accounts[5];
-    let token_program = &accounts[6];
-    let associated_token_program = &accounts[7];
-    let system_program = &accounts[8];
+    let _token_program = &accounts[6];
+    let _associated_token_program = &accounts[7];
+    let _system_program = &accounts[8];
 
     if !seller.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -274,11 +275,11 @@ pub fn delist(
     if listing.marketplace != *marketplace.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    let (expected_key, bump_listing) = Pubkey::find_program_address(&[b"listing", seller.key.as_ref(), &listing.seed.to_le_bytes()], program_id);
+    let (expected_key, _bump_listing) = Pubkey::find_program_address(&[b"listing", seller.key.as_ref(), &listing.seed.to_le_bytes()], program_id);
     if expected_key != *listing_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
-    let (expected_key, bump_marketplace) = Pubkey::find_program_address(&[b"marketplace"], program_id);
+    let (expected_key, _bump_marketplace) = Pubkey::find_program_address(&[b"marketplace"], program_id);
     if expected_key != *marketplace.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -346,15 +347,15 @@ pub fn purchase(
 
     let buyer = &accounts[0];
     let seller = &accounts[1];
-    let nft_mint = &accounts[2];
+    let _nft_mint = &accounts[2];
     let buyer_ata = &accounts[3];
     let listing = &accounts[4];
     let marketplace = &accounts[5];
     let treasury = &accounts[6];
     let vault = &accounts[7];
-    let token_program = &accounts[8];
-    let associated_token_program = &accounts[9];
-    let system_program = &accounts[10];
+    let _token_program = &accounts[8];
+    let _associated_token_program = &accounts[9];
+    let _system_program = &accounts[10];
 
     if !buyer.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -379,11 +380,11 @@ pub fn purchase(
     if listing.marketplace != *marketplace.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    let (expected_key, bump_listing) = Pubkey::find_program_address(&[b"listing", seller.key.as_ref(), &listing.seed.to_le_bytes()], program_id);
+    let (expected_key, _bump_listing) = Pubkey::find_program_address(&[b"listing", seller.key.as_ref(), &listing.seed.to_le_bytes()], program_id);
     if expected_key != *listing_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
-    let (expected_key, bump_marketplace) = Pubkey::find_program_address(&[b"marketplace"], program_id);
+    let (expected_key, _bump_marketplace) = Pubkey::find_program_address(&[b"marketplace"], program_id);
     if expected_key != *marketplace.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -492,7 +493,7 @@ pub fn update_fee(
     }
 
 
-    let (expected_key, bump_marketplace) = Pubkey::find_program_address(&[b"marketplace"], program_id);
+    let (expected_key, _bump_marketplace) = Pubkey::find_program_address(&[b"marketplace"], program_id);
     if expected_key != *marketplace.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -556,7 +557,6 @@ impl Marketplace {
         let listing_count: u64 = u64::from_le_bytes(
             data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
-        offset += 8;
         Ok(Self { admin, fee_bps, treasury, bump, listing_count })
     }
 
@@ -575,7 +575,6 @@ impl Marketplace {
         data[offset] = value.bump as u8;
         offset += 1;
         data[offset..offset + 8].copy_from_slice(&value.listing_count.to_le_bytes());
-        offset += 8;
         Ok(())
     }
 
@@ -655,7 +654,6 @@ impl Listing {
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
         };
-        offset += 1;
         Ok(Self { seller, mint, price, seed, bump, marketplace, vault, is_active })
     }
 
@@ -680,7 +678,6 @@ impl Listing {
         data[offset..offset + 32].copy_from_slice(&value.vault.as_ref());
         offset += 32;
         data[offset] = if value.is_active { 1 } else { 0 };
-        offset += 1;
         Ok(())
     }
 

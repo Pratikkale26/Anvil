@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use core::convert::TryInto;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -64,7 +65,7 @@ pub fn initialize(
     let marketplace = &accounts[0];
     let admin = &accounts[1];
     let treasury = &accounts[2];
-    let system_program = &accounts[3];
+    let _system_program = &accounts[3];
 
     if !admin.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -132,9 +133,9 @@ pub fn list(
     let listing = &accounts[3];
     let marketplace = &accounts[4];
     let vault = &accounts[5];
-    let token_program = &accounts[6];
-    let associated_token_program = &accounts[7];
-    let system_program = &accounts[8];
+    let _token_program = &accounts[6];
+    let _associated_token_program = &accounts[7];
+    let _system_program = &accounts[8];
 
     if !seller.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -142,7 +143,7 @@ pub fn list(
     if !seller.is_writable() || !seller_ata.is_writable() || !listing.is_writable() || !marketplace.is_writable() || !vault.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { marketplace.owner() } != program_id {
+    if marketplace.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -181,7 +182,7 @@ pub fn list(
     create_program_account(listing, seller, (8 + Listing::LEN) as usize, program_id, init_listing_signer_seeds)?;
 
 
-    let bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
+    let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
     if !(price > 0) {
         return Err(MarketplaceError::InvalidPrice.into());
     }
@@ -225,14 +226,14 @@ pub fn delist(
     }
 
     let seller = &accounts[0];
-    let nft_mint = &accounts[1];
+    let _nft_mint = &accounts[1];
     let seller_ata = &accounts[2];
     let listing = &accounts[3];
     let marketplace = &accounts[4];
     let vault = &accounts[5];
-    let token_program = &accounts[6];
-    let associated_token_program = &accounts[7];
-    let system_program = &accounts[8];
+    let _token_program = &accounts[6];
+    let _associated_token_program = &accounts[7];
+    let _system_program = &accounts[8];
 
     if !seller.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -240,10 +241,10 @@ pub fn delist(
     if !seller.is_writable() || !seller_ata.is_writable() || !listing.is_writable() || !marketplace.is_writable() || !vault.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { listing.owner() } != program_id {
+    if listing.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
-    if unsafe { marketplace.owner() } != program_id {
+    if marketplace.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -258,8 +259,8 @@ pub fn delist(
         return Err(ProgramError::InvalidAccountData);
     }
     let seed_bytes = listing.seed.to_le_bytes();
-    let bump_listing = bump_seed(program_id, &[b"listing", seller.key().as_ref(), &seed_bytes], listing_account.key())?;
-    let bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
+    let _bump_listing = bump_seed(program_id, &[b"listing", seller.key().as_ref(), &seed_bytes], listing_account.key())?;
+    let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
     if !(*vault.key() == listing.vault) {
         return Err(ProgramError::InvalidAccountData.into());
     }
@@ -302,15 +303,15 @@ pub fn purchase(
 
     let buyer = &accounts[0];
     let seller = &accounts[1];
-    let nft_mint = &accounts[2];
+    let _nft_mint = &accounts[2];
     let buyer_ata = &accounts[3];
     let listing = &accounts[4];
     let marketplace = &accounts[5];
     let treasury = &accounts[6];
     let vault = &accounts[7];
-    let token_program = &accounts[8];
-    let associated_token_program = &accounts[9];
-    let system_program = &accounts[10];
+    let _token_program = &accounts[8];
+    let _associated_token_program = &accounts[9];
+    let _system_program = &accounts[10];
 
     if !buyer.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -318,10 +319,10 @@ pub fn purchase(
     if !buyer.is_writable() || !seller.is_writable() || !buyer_ata.is_writable() || !listing.is_writable() || !marketplace.is_writable() || !treasury.is_writable() || !vault.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { listing.owner() } != program_id {
+    if listing.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
-    if unsafe { marketplace.owner() } != program_id {
+    if marketplace.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -336,8 +337,8 @@ pub fn purchase(
         return Err(ProgramError::InvalidAccountData);
     }
     let seed_bytes = listing.seed.to_le_bytes();
-    let bump_listing = bump_seed(program_id, &[b"listing", seller.key().as_ref(), &seed_bytes], listing_account.key())?;
-    let bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
+    let _bump_listing = bump_seed(program_id, &[b"listing", seller.key().as_ref(), &seed_bytes], listing_account.key())?;
+    let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
     let marketplace_account = marketplace;
     let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
     if !(*treasury.key() == marketplace.treasury) {
@@ -392,7 +393,7 @@ pub fn update_fee(
     if !marketplace.is_writable() || !admin.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { marketplace.owner() } != program_id {
+    if marketplace.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -411,7 +412,7 @@ pub fn update_fee(
     }
 
 
-    let bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
+    let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
     let marketplace_account = marketplace;
     let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
     if !(new_fee_bps <= 10000) {
@@ -464,7 +465,6 @@ impl Marketplace {
         let listing_count: u64 = u64::from_le_bytes(
             data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
-        offset += 8;
         Ok(Self { admin, fee_bps, treasury, bump, listing_count })
     }
 
@@ -483,7 +483,6 @@ impl Marketplace {
         data[offset] = value.bump as u8;
         offset += 1;
         data[offset..offset + 8].copy_from_slice(&value.listing_count.to_le_bytes());
-        offset += 8;
         Ok(())
     }
 
@@ -549,7 +548,6 @@ impl Listing {
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
         };
-        offset += 1;
         Ok(Self { seller, mint, price, seed, bump, marketplace, vault, is_active })
     }
 
@@ -574,7 +572,6 @@ impl Listing {
         data[offset..offset + 32].copy_from_slice(&value.vault);
         offset += 32;
         data[offset] = if value.is_active { 1 } else { 0 };
-        offset += 1;
         Ok(())
     }
 
@@ -732,7 +729,9 @@ pub fn close_program_account(
         *account_lamports = 0;
     }
     {
-        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        // data doesn't need 'mut' on the binding — iter_mut() reborrows the
+        // underlying &mut [u8] without needing the binding itself mutable.
+        let data = unsafe { account.borrow_mut_data_unchecked() };
         for byte in data.iter_mut() {
             *byte = 0;
         }

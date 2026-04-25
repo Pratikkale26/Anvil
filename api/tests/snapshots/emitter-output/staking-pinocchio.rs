@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use core::convert::TryInto;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -90,8 +91,8 @@ pub fn initialize_pool(
     let stake_mint = &accounts[2];
     let reward_mint = &accounts[3];
     let admin = &accounts[4];
-    let token_program = &accounts[5];
-    let system_program = &accounts[6];
+    let _token_program = &accounts[5];
+    let _system_program = &accounts[6];
 
     if !admin.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -192,8 +193,8 @@ pub fn stake(
     let pool = &accounts[2];
     let user_stake_ata = &accounts[3];
     let stake_vault = &accounts[4];
-    let token_program = &accounts[5];
-    let system_program = &accounts[6];
+    let _token_program = &accounts[5];
+    let _system_program = &accounts[6];
 
     if !user.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -201,7 +202,7 @@ pub fn stake(
     if !user.is_writable() || !user_stake.is_writable() || !pool.is_writable() || !user_stake_ata.is_writable() || !stake_vault.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -232,7 +233,7 @@ pub fn stake(
 
     let pool_account = pool;
     let mut pool = StakingPool::from_account_info(pool_account)?;
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
     if pool.is_paused {
         return Err(StakingError::PoolPaused.into());
     }
@@ -285,7 +286,7 @@ pub fn claim_rewards(
     let pool = &accounts[2];
     let reward_mint = &accounts[3];
     let user_reward_ata = &accounts[4];
-    let token_program = &accounts[5];
+    let _token_program = &accounts[5];
 
     if !user.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -293,10 +294,10 @@ pub fn claim_rewards(
     if !user_stake.is_writable() || !pool.is_writable() || !reward_mint.is_writable() || !user_reward_ata.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { user_stake.owner() } != program_id {
+    if user_stake.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -305,10 +306,10 @@ pub fn claim_rewards(
     }
 
 
-    let bump_user_stake = bump_seed(program_id, &[b"user_stake", user.key().as_ref(), pool.key().as_ref()], user_stake.key())?;
+    let _bump_user_stake = bump_seed(program_id, &[b"user_stake", user.key().as_ref(), pool.key().as_ref()], user_stake.key())?;
     let pool_account = pool;
     let pool = StakingPool::from_account_info(pool_account)?;
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
     let user_stake_account = user_stake;
     let mut user_stake = UserStake::from_account_info(user_stake_account)?;
     if !(user_stake.owner == *user.key()) {
@@ -361,8 +362,8 @@ pub fn unstake(
     let user_stake_ata = &accounts[4];
     let stake_vault = &accounts[5];
     let user_reward_ata = &accounts[6];
-    let token_program = &accounts[7];
-    let system_program = &accounts[8];
+    let _token_program = &accounts[7];
+    let _system_program = &accounts[8];
 
     if !user.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -370,10 +371,10 @@ pub fn unstake(
     if !user.is_writable() || !user_stake.is_writable() || !pool.is_writable() || !reward_mint.is_writable() || !user_stake_ata.is_writable() || !stake_vault.is_writable() || !user_reward_ata.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { user_stake.owner() } != program_id {
+    if user_stake.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -382,10 +383,10 @@ pub fn unstake(
     }
 
 
-    let bump_user_stake = bump_seed(program_id, &[b"user_stake", user.key().as_ref(), pool.key().as_ref()], user_stake.key())?;
+    let _bump_user_stake = bump_seed(program_id, &[b"user_stake", user.key().as_ref(), pool.key().as_ref()], user_stake.key())?;
     let pool_account = pool;
     let mut pool = StakingPool::from_account_info(pool_account)?;
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
     let user_stake_account = user_stake;
     let user_stake = UserStake::from_account_info(user_stake_account)?;
     if !(user_stake.owner == *user.key()) {
@@ -445,7 +446,7 @@ pub fn pause_pool(
     if !pool.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -459,7 +460,7 @@ pub fn pause_pool(
     if pool.admin != *admin.key() {
         return Err(ProgramError::InvalidAccountData);
     }
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
     pool.is_paused = true;
     StakingPool::save(pool_account, &pool)?;
     Ok(())
@@ -484,7 +485,7 @@ pub fn resume_pool(
     if !pool.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -498,7 +499,7 @@ pub fn resume_pool(
     if pool.admin != *admin.key() {
         return Err(ProgramError::InvalidAccountData);
     }
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
     pool.is_paused = false;
     StakingPool::save(pool_account, &pool)?;
     Ok(())
@@ -523,7 +524,7 @@ pub fn update_reward_rate(
     if !pool.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -547,7 +548,7 @@ pub fn update_reward_rate(
     if pool.admin != *admin.key() {
         return Err(ProgramError::InvalidAccountData);
     }
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
     if !(new_rate > 0) {
         return Err(StakingError::InvalidRewardRate.into());
     }
@@ -618,7 +619,6 @@ impl StakingPool {
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
         };
-        offset += 1;
         Ok(Self { admin, stake_mint, reward_mint, reward_rate, lock_duration, max_stake, total_staked, bump, reward_vault_bump, is_paused })
     }
 
@@ -647,7 +647,6 @@ impl StakingPool {
         data[offset] = value.reward_vault_bump as u8;
         offset += 1;
         data[offset] = if value.is_paused { 1 } else { 0 };
-        offset += 1;
         Ok(())
     }
 
@@ -705,7 +704,6 @@ impl UserStake {
         );
         offset += 8;
         let bump: u8 = data[offset];
-        offset += 1;
         Ok(Self { owner, pool, amount, staked_at, last_claim, bump })
     }
 
@@ -726,7 +724,6 @@ impl UserStake {
         data[offset..offset + 8].copy_from_slice(&value.last_claim.to_le_bytes());
         offset += 8;
         data[offset] = value.bump as u8;
-        offset += 1;
         Ok(())
     }
 
@@ -873,7 +870,9 @@ pub fn close_program_account(
         *account_lamports = 0;
     }
     {
-        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        // data doesn't need 'mut' on the binding — iter_mut() reborrows the
+        // underlying &mut [u8] without needing the binding itself mutable.
+        let data = unsafe { account.borrow_mut_data_unchecked() };
         for byte in data.iter_mut() {
             *byte = 0;
         }

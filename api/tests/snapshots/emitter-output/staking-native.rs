@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
@@ -89,8 +90,8 @@ pub fn initialize_pool(
     let stake_mint = &accounts[2];
     let reward_mint = &accounts[3];
     let admin = &accounts[4];
-    let token_program = &accounts[5];
-    let system_program = &accounts[6];
+    let _token_program = &accounts[5];
+    let _system_program = &accounts[6];
 
     if !admin.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -197,8 +198,8 @@ pub fn stake(
     let pool = &accounts[2];
     let user_stake_ata = &accounts[3];
     let stake_vault = &accounts[4];
-    let token_program = &accounts[5];
-    let system_program = &accounts[6];
+    let _token_program = &accounts[5];
+    let _system_program = &accounts[6];
 
     if !user.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -240,7 +241,7 @@ pub fn stake(
 
     let pool_account = pool;
     let mut pool = StakingPool::read(&pool_account.data.borrow())?;
-    let (expected_key, bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
+    let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
     if expected_key != *pool_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -307,7 +308,7 @@ pub fn claim_rewards(
     let pool = &accounts[2];
     let reward_mint = &accounts[3];
     let user_reward_ata = &accounts[4];
-    let token_program = &accounts[5];
+    let _token_program = &accounts[5];
 
     if !user.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -327,13 +328,13 @@ pub fn claim_rewards(
     }
 
 
-    let (expected_key, bump_user_stake) = Pubkey::find_program_address(&[b"user_stake", user.key.as_ref(), pool.key.as_ref()], program_id);
+    let (expected_key, _bump_user_stake) = Pubkey::find_program_address(&[b"user_stake", user.key.as_ref(), pool.key.as_ref()], program_id);
     if expected_key != *user_stake.key {
         return Err(ProgramError::InvalidSeeds);
     }
     let pool_account = pool;
     let pool = StakingPool::read(&pool_account.data.borrow())?;
-    let (expected_key, bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
+    let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
     if expected_key != *pool_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -401,8 +402,8 @@ pub fn unstake(
     let user_stake_ata = &accounts[4];
     let stake_vault = &accounts[5];
     let user_reward_ata = &accounts[6];
-    let token_program = &accounts[7];
-    let system_program = &accounts[8];
+    let _token_program = &accounts[7];
+    let _system_program = &accounts[8];
 
     if !user.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -422,13 +423,13 @@ pub fn unstake(
     }
 
 
-    let (expected_key, bump_user_stake) = Pubkey::find_program_address(&[b"user_stake", user.key.as_ref(), pool.key.as_ref()], program_id);
+    let (expected_key, _bump_user_stake) = Pubkey::find_program_address(&[b"user_stake", user.key.as_ref(), pool.key.as_ref()], program_id);
     if expected_key != *user_stake.key {
         return Err(ProgramError::InvalidSeeds);
     }
     let pool_account = pool;
     let mut pool = StakingPool::read(&pool_account.data.borrow())?;
-    let (expected_key, bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
+    let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
     if expected_key != *pool_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -517,7 +518,7 @@ pub fn pause_pool(
     if pool.admin != *admin.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    let (expected_key, bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
+    let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
     if expected_key != *pool_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -559,7 +560,7 @@ pub fn resume_pool(
     if pool.admin != *admin.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    let (expected_key, bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
+    let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
     if expected_key != *pool_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -611,7 +612,7 @@ pub fn update_reward_rate(
     if pool.admin != *admin.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    let (expected_key, bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
+    let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
     if expected_key != *pool_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -697,7 +698,6 @@ impl StakingPool {
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
         };
-        offset += 1;
         Ok(Self { admin, stake_mint, reward_mint, reward_rate, lock_duration, max_stake, total_staked, bump, reward_vault_bump, is_paused })
     }
 
@@ -726,7 +726,6 @@ impl StakingPool {
         data[offset] = value.reward_vault_bump as u8;
         offset += 1;
         data[offset] = if value.is_paused { 1 } else { 0 };
-        offset += 1;
         Ok(())
     }
 
@@ -790,7 +789,6 @@ impl UserStake {
         );
         offset += 8;
         let bump: u8 = data[offset];
-        offset += 1;
         Ok(Self { owner, pool, amount, staked_at, last_claim, bump })
     }
 
@@ -811,7 +809,6 @@ impl UserStake {
         data[offset..offset + 8].copy_from_slice(&value.last_claim.to_le_bytes());
         offset += 8;
         data[offset] = value.bump as u8;
-        offset += 1;
         Ok(())
     }
 

@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use core::convert::TryInto;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -58,7 +59,7 @@ pub fn initialize(
 
     let counter = &accounts[0];
     let authority = &accounts[1];
-    let system_program = &accounts[2];
+    let _system_program = &accounts[2];
 
     if !authority.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -123,7 +124,7 @@ pub fn increment(
     if !counter.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { counter.owner() } != program_id {
+    if counter.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -142,7 +143,7 @@ pub fn increment(
     }
 
 
-    let bump_counter = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
+    let _bump_counter = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
     let counter_account = counter;
     let mut counter = CounterAccount::from_account_info(counter_account)?;
     if counter.authority != *authority.key() {
@@ -172,7 +173,7 @@ pub fn decrement(
     if !counter.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { counter.owner() } != program_id {
+    if counter.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -191,7 +192,7 @@ pub fn decrement(
     }
 
 
-    let bump_counter = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
+    let _bump_counter = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
     let counter_account = counter;
     let mut counter = CounterAccount::from_account_info(counter_account)?;
     if counter.authority != *authority.key() {
@@ -221,7 +222,7 @@ pub fn reset(
     if !counter.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { counter.owner() } != program_id {
+    if counter.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -230,7 +231,7 @@ pub fn reset(
     }
 
 
-    let bump_counter = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
+    let _bump_counter = bump_seed(program_id, &[b"counter", authority.key().as_ref()], counter.key())?;
     let counter_account = counter;
     let mut counter = CounterAccount::from_account_info(counter_account)?;
     if counter.authority != *authority.key() {
@@ -272,7 +273,6 @@ impl CounterAccount {
         );
         offset += 8;
         let bump: u8 = data[offset];
-        offset += 1;
         Ok(Self { authority, count, bump })
     }
 
@@ -287,7 +287,6 @@ impl CounterAccount {
         data[offset..offset + 8].copy_from_slice(&value.count.to_le_bytes());
         offset += 8;
         data[offset] = value.bump as u8;
-        offset += 1;
         Ok(())
     }
 

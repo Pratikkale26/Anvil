@@ -159,7 +159,10 @@ ${arms}
   }
 
   override emitOwnerCheck(name: string): string {
-    return `    if unsafe { ${name}.owner() } != program_id {
+    // pinocchio 0.9 made AccountInfo::owner() a safe fn (returns &Pubkey
+    // borrowed from the account header). Wrapping the call in `unsafe { }`
+    // produces a noisy "unnecessary unsafe block" warning per instruction.
+    return `    if ${name}.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }`;
   }
@@ -784,7 +787,9 @@ pub fn spl_token_transfer_signed(
         *account_lamports = 0;
     }
     {
-        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        // data doesn't need 'mut' on the binding — iter_mut() reborrows the
+        // underlying &mut [u8] without needing the binding itself mutable.
+        let data = unsafe { account.borrow_mut_data_unchecked() };
         for byte in data.iter_mut() {
             *byte = 0;
         }

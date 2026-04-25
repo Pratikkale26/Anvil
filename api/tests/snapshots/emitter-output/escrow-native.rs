@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
@@ -63,9 +64,9 @@ pub fn create_escrow(
     let maker_ata_a = &accounts[3];
     let escrow = &accounts[4];
     let vault = &accounts[5];
-    let system_program = &accounts[6];
-    let token_program = &accounts[7];
-    let associated_token_program = &accounts[8];
+    let _system_program = &accounts[6];
+    let _token_program = &accounts[7];
+    let _associated_token_program = &accounts[8];
 
     if !maker.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -170,9 +171,9 @@ pub fn accept_escrow(
     let maker_ata_b = &accounts[6];
     let escrow = &accounts[7];
     let vault = &accounts[8];
-    let system_program = &accounts[9];
-    let token_program = &accounts[10];
-    let associated_token_program = &accounts[11];
+    let _system_program = &accounts[9];
+    let _token_program = &accounts[10];
+    let _associated_token_program = &accounts[11];
 
     if !taker.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -200,7 +201,7 @@ pub fn accept_escrow(
     if escrow.mint_b != *mint_b.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    let (expected_key, bump_escrow) = Pubkey::find_program_address(&[b"escrow", maker.key.as_ref(), escrow.seed.to_le_bytes().as_ref()], program_id);
+    let (expected_key, _bump_escrow) = Pubkey::find_program_address(&[b"escrow", maker.key.as_ref(), escrow.seed.to_le_bytes().as_ref()], program_id);
     if expected_key != *escrow_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -284,7 +285,7 @@ pub fn cancel_escrow(
     let maker_ata_a = &accounts[2];
     let escrow = &accounts[3];
     let vault = &accounts[4];
-    let token_program = &accounts[5];
+    let _token_program = &accounts[5];
 
     if !maker.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -309,7 +310,7 @@ pub fn cancel_escrow(
     if escrow.mint_a != *mint_a.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    let (expected_key, bump_escrow) = Pubkey::find_program_address(&[b"escrow", maker.key.as_ref(), escrow.seed.to_le_bytes().as_ref()], program_id);
+    let (expected_key, _bump_escrow) = Pubkey::find_program_address(&[b"escrow", maker.key.as_ref(), escrow.seed.to_le_bytes().as_ref()], program_id);
     if expected_key != *escrow_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -419,7 +420,6 @@ impl Escrow {
         );
         offset += 8;
         let bump: u8 = data[offset];
-        offset += 1;
         Ok(Self { maker, mint_a, mint_b, receive_amount, seed, bump })
     }
 
@@ -440,7 +440,6 @@ impl Escrow {
         data[offset..offset + 8].copy_from_slice(&value.seed.to_le_bytes());
         offset += 8;
         data[offset] = value.bump as u8;
-        offset += 1;
         Ok(())
     }
 

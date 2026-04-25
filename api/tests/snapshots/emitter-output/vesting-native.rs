@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
@@ -70,9 +71,9 @@ pub fn create_vesting(
     let vault = &accounts[2];
     let grantor_token_account = &accounts[3];
     let mint = &accounts[4];
-    let token_program = &accounts[5];
-    let system_program = &accounts[6];
-    let rent = &accounts[7];
+    let _token_program = &accounts[5];
+    let _system_program = &accounts[6];
+    let _rent = &accounts[7];
 
     if !grantor.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -232,7 +233,7 @@ pub fn release(
     let vesting = &accounts[1];
     let vault = &accounts[2];
     let beneficiary_token_account = &accounts[3];
-    let token_program = &accounts[4];
+    let _token_program = &accounts[4];
 
     if !beneficiary.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -254,11 +255,11 @@ pub fn release(
     if vesting.beneficiary != *beneficiary.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    let (expected_key, bump_vesting) = Pubkey::find_program_address(&[VESTING_SEED, vesting.grantor.as_ref(), beneficiary.key.as_ref()], program_id);
+    let (expected_key, _bump_vesting) = Pubkey::find_program_address(&[VESTING_SEED, vesting.grantor.as_ref(), beneficiary.key.as_ref()], program_id);
     if expected_key != *vesting_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
-    let (expected_key, bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting_account.key.as_ref()], program_id);
+    let (expected_key, _bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting_account.key.as_ref()], program_id);
     if expected_key != *vault.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -324,7 +325,7 @@ pub fn revoke(
     let vesting = &accounts[1];
     let vault = &accounts[2];
     let grantor_token_account = &accounts[3];
-    let token_program = &accounts[4];
+    let _token_program = &accounts[4];
 
     if !grantor.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -346,11 +347,11 @@ pub fn revoke(
     if vesting.grantor != *grantor.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    let (expected_key, bump_vesting) = Pubkey::find_program_address(&[VESTING_SEED, grantor.key.as_ref(), vesting.beneficiary.as_ref()], program_id);
+    let (expected_key, _bump_vesting) = Pubkey::find_program_address(&[VESTING_SEED, grantor.key.as_ref(), vesting.beneficiary.as_ref()], program_id);
     if expected_key != *vesting_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
-    let (expected_key, bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting_account.key.as_ref()], program_id);
+    let (expected_key, _bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting_account.key.as_ref()], program_id);
     if expected_key != *vault.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -397,7 +398,7 @@ pub fn close(
     let vesting = &accounts[1];
     let vault = &accounts[2];
     let grantor_token_account = &accounts[3];
-    let token_program = &accounts[4];
+    let _token_program = &accounts[4];
 
     if !grantor.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -419,11 +420,11 @@ pub fn close(
     if vesting.grantor != *grantor.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    let (expected_key, bump_vesting) = Pubkey::find_program_address(&[VESTING_SEED, grantor.key.as_ref(), vesting.beneficiary.as_ref()], program_id);
+    let (expected_key, _bump_vesting) = Pubkey::find_program_address(&[VESTING_SEED, grantor.key.as_ref(), vesting.beneficiary.as_ref()], program_id);
     if expected_key != *vesting_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
-    let (expected_key, bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting_account.key.as_ref()], program_id);
+    let (expected_key, _bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting_account.key.as_ref()], program_id);
     if expected_key != *vault.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -541,7 +542,6 @@ impl Vesting {
         let bump: u8 = data[offset];
         offset += 1;
         let vault_bump: u8 = data[offset];
-        offset += 1;
         Ok(Self { grantor, beneficiary, mint, vault, total_amount, released_amount, start_ts, cliff_ts, end_ts, revocable, revoked, created_at, bump, vault_bump })
     }
 
@@ -578,7 +578,6 @@ impl Vesting {
         data[offset] = value.bump as u8;
         offset += 1;
         data[offset] = value.vault_bump as u8;
-        offset += 1;
         Ok(())
     }
 

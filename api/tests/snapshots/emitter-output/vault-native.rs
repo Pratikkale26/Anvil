@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
@@ -59,7 +60,7 @@ pub fn initialize(
     let vault_state = &accounts[0];
     let vault = &accounts[1];
     let authority = &accounts[2];
-    let system_program = &accounts[3];
+    let _system_program = &accounts[3];
 
     if !authority.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -117,7 +118,7 @@ pub fn deposit(
     let vault_state = &accounts[0];
     let vault = &accounts[1];
     let authority = &accounts[2];
-    let system_program = &accounts[3];
+    let _system_program = &accounts[3];
 
     if !authority.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -144,11 +145,11 @@ pub fn deposit(
     }
 
 
-    let (expected_key, bump_vault_state) = Pubkey::find_program_address(&[b"vault_state", authority.key.as_ref()], program_id);
+    let (expected_key, _bump_vault_state) = Pubkey::find_program_address(&[b"vault_state", authority.key.as_ref()], program_id);
     if expected_key != *vault_state.key {
         return Err(ProgramError::InvalidSeeds);
     }
-    let (expected_key, bump_vault) = Pubkey::find_program_address(&[b"vault", authority.key.as_ref()], program_id);
+    let (expected_key, _bump_vault) = Pubkey::find_program_address(&[b"vault", authority.key.as_ref()], program_id);
     if expected_key != *vault.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -184,7 +185,7 @@ pub fn withdraw(
     let vault_state = &accounts[0];
     let vault = &accounts[1];
     let authority = &accounts[2];
-    let system_program = &accounts[3];
+    let _system_program = &accounts[3];
 
     if !authority.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -211,11 +212,11 @@ pub fn withdraw(
     }
 
 
-    let (expected_key, bump_vault_state) = Pubkey::find_program_address(&[b"vault_state", authority.key.as_ref()], program_id);
+    let (expected_key, _bump_vault_state) = Pubkey::find_program_address(&[b"vault_state", authority.key.as_ref()], program_id);
     if expected_key != *vault_state.key {
         return Err(ProgramError::InvalidSeeds);
     }
-    let (expected_key, bump_vault) = Pubkey::find_program_address(&[b"vault", authority.key.as_ref()], program_id);
+    let (expected_key, _bump_vault) = Pubkey::find_program_address(&[b"vault", authority.key.as_ref()], program_id);
     if expected_key != *vault.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -287,7 +288,6 @@ impl VaultState {
         let bump: u8 = data[offset];
         offset += 1;
         let vault_bump: u8 = data[offset];
-        offset += 1;
         Ok(Self { authority, total_deposited, bump, vault_bump })
     }
 
@@ -304,7 +304,6 @@ impl VaultState {
         data[offset] = value.bump as u8;
         offset += 1;
         data[offset] = value.vault_bump as u8;
-        offset += 1;
         Ok(())
     }
 

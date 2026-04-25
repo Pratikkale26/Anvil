@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use core::convert::TryInto;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -59,7 +60,7 @@ pub fn initialize(
     let vault_state = &accounts[0];
     let vault = &accounts[1];
     let authority = &accounts[2];
-    let system_program = &accounts[3];
+    let _system_program = &accounts[3];
 
     if !authority.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -111,7 +112,7 @@ pub fn deposit(
     let vault_state = &accounts[0];
     let vault = &accounts[1];
     let authority = &accounts[2];
-    let system_program = &accounts[3];
+    let _system_program = &accounts[3];
 
     if !authority.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -119,7 +120,7 @@ pub fn deposit(
     if !vault_state.is_writable() || !vault.is_writable() || !authority.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { vault_state.owner() } != program_id {
+    if vault_state.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -138,8 +139,8 @@ pub fn deposit(
     }
 
 
-    let bump_vault_state = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
-    let bump_vault = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
+    let _bump_vault_state = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
+    let _bump_vault = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
     if !(amount > 0) {
         return Err(VaultError::InvalidAmount.into());
     }
@@ -167,7 +168,7 @@ pub fn withdraw(
     let vault_state = &accounts[0];
     let vault = &accounts[1];
     let authority = &accounts[2];
-    let system_program = &accounts[3];
+    let _system_program = &accounts[3];
 
     if !authority.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -175,7 +176,7 @@ pub fn withdraw(
     if !vault_state.is_writable() || !vault.is_writable() || !authority.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { vault_state.owner() } != program_id {
+    if vault_state.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -194,8 +195,8 @@ pub fn withdraw(
     }
 
 
-    let bump_vault_state = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
-    let bump_vault = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
+    let _bump_vault_state = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
+    let _bump_vault = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
     if !(amount > 0) {
         return Err(VaultError::InvalidAmount.into());
     }
@@ -255,7 +256,6 @@ impl VaultState {
         let bump: u8 = data[offset];
         offset += 1;
         let vault_bump: u8 = data[offset];
-        offset += 1;
         Ok(Self { authority, total_deposited, bump, vault_bump })
     }
 
@@ -272,7 +272,6 @@ impl VaultState {
         data[offset] = value.bump as u8;
         offset += 1;
         data[offset] = value.vault_bump as u8;
-        offset += 1;
         Ok(())
     }
 

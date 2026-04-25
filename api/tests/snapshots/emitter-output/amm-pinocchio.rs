@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use core::convert::TryInto;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -94,8 +95,8 @@ pub fn initialize_pool(
     let token_mint_a = &accounts[4];
     let token_mint_b = &accounts[5];
     let admin = &accounts[6];
-    let token_program = &accounts[7];
-    let system_program = &accounts[8];
+    let _token_program = &accounts[7];
+    let _system_program = &accounts[8];
 
     if !admin.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -202,8 +203,8 @@ pub fn add_liquidity(
     let vault_b = &accounts[5];
     let lp_mint = &accounts[6];
     let user_lp_token = &accounts[7];
-    let token_program = &accounts[8];
-    let system_program = &accounts[9];
+    let _token_program = &accounts[8];
+    let _system_program = &accounts[9];
 
     if !user.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -211,7 +212,7 @@ pub fn add_liquidity(
     if !user.is_writable() || !pool.is_writable() || !user_token_a.is_writable() || !user_token_b.is_writable() || !vault_a.is_writable() || !vault_b.is_writable() || !lp_mint.is_writable() || !user_lp_token.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -256,9 +257,9 @@ pub fn add_liquidity(
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
-    let bump_vault_a = bump_seed(program_id, &[b"vault_a", pool_account.key().as_ref()], vault_a.key())?;
-    let bump_vault_b = bump_seed(program_id, &[b"vault_b", pool_account.key().as_ref()], vault_b.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
+    let _bump_vault_a = bump_seed(program_id, &[b"vault_a", pool_account.key().as_ref()], vault_a.key())?;
+    let _bump_vault_b = bump_seed(program_id, &[b"vault_b", pool_account.key().as_ref()], vault_b.key())?;
     if !(*lp_mint.key() == pool.lp_mint) {
         return Err(ProgramError::InvalidAccountData.into());
     }
@@ -346,7 +347,7 @@ pub fn remove_liquidity(
     let vault_b = &accounts[5];
     let lp_mint = &accounts[6];
     let user_lp_token = &accounts[7];
-    let token_program = &accounts[8];
+    let _token_program = &accounts[8];
 
     if !user.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -354,7 +355,7 @@ pub fn remove_liquidity(
     if !user.is_writable() || !pool.is_writable() || !user_token_a.is_writable() || !user_token_b.is_writable() || !vault_a.is_writable() || !vault_b.is_writable() || !lp_mint.is_writable() || !user_lp_token.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -391,9 +392,9 @@ pub fn remove_liquidity(
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
-    let bump_vault_a = bump_seed(program_id, &[b"vault_a", pool_account.key().as_ref()], vault_a.key())?;
-    let bump_vault_b = bump_seed(program_id, &[b"vault_b", pool_account.key().as_ref()], vault_b.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
+    let _bump_vault_a = bump_seed(program_id, &[b"vault_a", pool_account.key().as_ref()], vault_a.key())?;
+    let _bump_vault_b = bump_seed(program_id, &[b"vault_b", pool_account.key().as_ref()], vault_b.key())?;
     if !(*lp_mint.key() == pool.lp_mint) {
         return Err(ProgramError::InvalidAccountData.into());
     }
@@ -453,7 +454,7 @@ pub fn swap(
     let user_token_out = &accounts[3];
     let vault_a = &accounts[4];
     let vault_b = &accounts[5];
-    let token_program = &accounts[6];
+    let _token_program = &accounts[6];
 
     if !user.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -461,7 +462,7 @@ pub fn swap(
     if !user.is_writable() || !pool.is_writable() || !user_token_in.is_writable() || !user_token_out.is_writable() || !vault_a.is_writable() || !vault_b.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -500,9 +501,9 @@ pub fn swap(
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
-    let bump_vault_a = bump_seed(program_id, &[b"vault_a", pool_account.key().as_ref()], vault_a.key())?;
-    let bump_vault_b = bump_seed(program_id, &[b"vault_b", pool_account.key().as_ref()], vault_b.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
+    let _bump_vault_a = bump_seed(program_id, &[b"vault_a", pool_account.key().as_ref()], vault_a.key())?;
+    let _bump_vault_b = bump_seed(program_id, &[b"vault_b", pool_account.key().as_ref()], vault_b.key())?;
     if pool.is_frozen {
         return Err(AmmError::PoolFrozen.into());
     }
@@ -587,7 +588,7 @@ pub fn freeze_pool(
     if !pool.is_writable() || !admin.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -598,7 +599,7 @@ pub fn freeze_pool(
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
     if !(pool.admin == *admin.key()) {
         return Err(AmmError::Unauthorized.into());
     }
@@ -626,7 +627,7 @@ pub fn unfreeze_pool(
     if !pool.is_writable() || !admin.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -637,7 +638,7 @@ pub fn unfreeze_pool(
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
     if !(pool.admin == *admin.key()) {
         return Err(AmmError::Unauthorized.into());
     }
@@ -665,7 +666,7 @@ pub fn update_fee_rate(
     if !pool.is_writable() || !admin.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { pool.owner() } != program_id {
+    if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -686,7 +687,7 @@ pub fn update_fee_rate(
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
-    let bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
     if !(pool.admin == *admin.key()) {
         return Err(AmmError::Unauthorized.into());
     }
@@ -786,7 +787,6 @@ impl AmmPool {
         let protocol_fee_rate: u64 = u64::from_le_bytes(
             data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
-        offset += 8;
         Ok(Self { admin, token_mint_a, token_mint_b, lp_mint, fee_rate, initial_price, reserve_a, reserve_b, lp_supply, total_fees_a, total_fees_b, bump, vault_a_bump, vault_b_bump, is_frozen, protocol_fee_rate })
     }
 
@@ -827,7 +827,6 @@ impl AmmPool {
         data[offset] = if value.is_frozen { 1 } else { 0 };
         offset += 1;
         data[offset..offset + 8].copy_from_slice(&value.protocol_fee_rate.to_le_bytes());
-        offset += 8;
         Ok(())
     }
 

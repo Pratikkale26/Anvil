@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use core::convert::TryInto;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -70,9 +71,9 @@ pub fn create_vesting(
     let vault = &accounts[2];
     let grantor_token_account = &accounts[3];
     let mint = &accounts[4];
-    let token_program = &accounts[5];
-    let system_program = &accounts[6];
-    let rent = &accounts[7];
+    let _token_program = &accounts[5];
+    let _system_program = &accounts[6];
+    let _rent = &accounts[7];
 
     if !grantor.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -216,7 +217,7 @@ pub fn release(
     let vesting = &accounts[1];
     let vault = &accounts[2];
     let beneficiary_token_account = &accounts[3];
-    let token_program = &accounts[4];
+    let _token_program = &accounts[4];
 
     if !beneficiary.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -224,7 +225,7 @@ pub fn release(
     if !vesting.is_writable() || !vault.is_writable() || !beneficiary_token_account.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { vesting.owner() } != program_id {
+    if vesting.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -238,8 +239,8 @@ pub fn release(
     if vesting.beneficiary != *beneficiary.key() {
         return Err(ProgramError::InvalidAccountData);
     }
-    let bump_vesting = bump_seed(program_id, &[VESTING_SEED, vesting.grantor.as_ref(), beneficiary.key().as_ref()], vesting_account.key())?;
-    let bump_vault = bump_seed(program_id, &[VAULT_SEED, vesting_account.key().as_ref()], vault.key())?;
+    let _bump_vesting = bump_seed(program_id, &[VESTING_SEED, vesting.grantor.as_ref(), beneficiary.key().as_ref()], vesting_account.key())?;
+    let _bump_vault = bump_seed(program_id, &[VAULT_SEED, vesting_account.key().as_ref()], vault.key())?;
     let clock = pinocchio::sysvars::clock::Clock::get()?;
     let now = clock.unix_timestamp;
     if vesting.revoked {
@@ -291,7 +292,7 @@ pub fn revoke(
     let vesting = &accounts[1];
     let vault = &accounts[2];
     let grantor_token_account = &accounts[3];
-    let token_program = &accounts[4];
+    let _token_program = &accounts[4];
 
     if !grantor.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -299,7 +300,7 @@ pub fn revoke(
     if !vesting.is_writable() || !vault.is_writable() || !grantor_token_account.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { vesting.owner() } != program_id {
+    if vesting.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -313,8 +314,8 @@ pub fn revoke(
     if vesting.grantor != *grantor.key() {
         return Err(ProgramError::InvalidAccountData);
     }
-    let bump_vesting = bump_seed(program_id, &[VESTING_SEED, grantor.key().as_ref(), vesting.beneficiary.as_ref()], vesting_account.key())?;
-    let bump_vault = bump_seed(program_id, &[VAULT_SEED, vesting_account.key().as_ref()], vault.key())?;
+    let _bump_vesting = bump_seed(program_id, &[VESTING_SEED, grantor.key().as_ref(), vesting.beneficiary.as_ref()], vesting_account.key())?;
+    let _bump_vault = bump_seed(program_id, &[VAULT_SEED, vesting_account.key().as_ref()], vault.key())?;
     if !vesting.revocable {
         return Err(VestingError::NotRevocable.into());
     }
@@ -359,7 +360,7 @@ pub fn close(
     let vesting = &accounts[1];
     let vault = &accounts[2];
     let grantor_token_account = &accounts[3];
-    let token_program = &accounts[4];
+    let _token_program = &accounts[4];
 
     if !grantor.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -367,7 +368,7 @@ pub fn close(
     if !grantor.is_writable() || !vesting.is_writable() || !vault.is_writable() || !grantor_token_account.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
-    if unsafe { vesting.owner() } != program_id {
+    if vesting.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -381,8 +382,8 @@ pub fn close(
     if vesting.grantor != *grantor.key() {
         return Err(ProgramError::InvalidAccountData);
     }
-    let bump_vesting = bump_seed(program_id, &[VESTING_SEED, grantor.key().as_ref(), vesting.beneficiary.as_ref()], vesting_account.key())?;
-    let bump_vault = bump_seed(program_id, &[VAULT_SEED, vesting_account.key().as_ref()], vault.key())?;
+    let _bump_vesting = bump_seed(program_id, &[VESTING_SEED, grantor.key().as_ref(), vesting.beneficiary.as_ref()], vesting_account.key())?;
+    let _bump_vault = bump_seed(program_id, &[VAULT_SEED, vesting_account.key().as_ref()], vault.key())?;
     if !(vesting.revoked || vesting.released_amount == vesting.total_amount) {
         return Err(VestingError::NotCloseable.into());
     }
@@ -481,7 +482,6 @@ impl Vesting {
         let bump: u8 = data[offset];
         offset += 1;
         let vault_bump: u8 = data[offset];
-        offset += 1;
         Ok(Self { grantor, beneficiary, mint, vault, total_amount, released_amount, start_ts, cliff_ts, end_ts, revocable, revoked, created_at, bump, vault_bump })
     }
 
@@ -518,7 +518,6 @@ impl Vesting {
         data[offset] = value.bump as u8;
         offset += 1;
         data[offset] = value.vault_bump as u8;
-        offset += 1;
         Ok(())
     }
 
@@ -642,7 +641,9 @@ pub fn close_program_account(
         *account_lamports = 0;
     }
     {
-        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        // data doesn't need 'mut' on the binding — iter_mut() reborrows the
+        // underlying &mut [u8] without needing the binding itself mutable.
+        let data = unsafe { account.borrow_mut_data_unchecked() };
         for byte in data.iter_mut() {
             *byte = 0;
         }

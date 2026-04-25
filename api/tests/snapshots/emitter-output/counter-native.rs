@@ -4,6 +4,7 @@
 //! This code was automatically generated. Sections marked with
 //! "⚠️ Anvil: Review" should be verified before deployment.
 #![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use solana_program::{
@@ -58,7 +59,7 @@ pub fn initialize(
 
     let counter = &accounts[0];
     let authority = &accounts[1];
-    let system_program = &accounts[2];
+    let _system_program = &accounts[2];
 
     if !authority.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -145,7 +146,7 @@ pub fn increment(
     }
 
 
-    let (expected_key, bump_counter) = Pubkey::find_program_address(&[b"counter", authority.key.as_ref()], program_id);
+    let (expected_key, _bump_counter) = Pubkey::find_program_address(&[b"counter", authority.key.as_ref()], program_id);
     if expected_key != *counter.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -197,7 +198,7 @@ pub fn decrement(
     }
 
 
-    let (expected_key, bump_counter) = Pubkey::find_program_address(&[b"counter", authority.key.as_ref()], program_id);
+    let (expected_key, _bump_counter) = Pubkey::find_program_address(&[b"counter", authority.key.as_ref()], program_id);
     if expected_key != *counter.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -239,7 +240,7 @@ pub fn reset(
     }
 
 
-    let (expected_key, bump_counter) = Pubkey::find_program_address(&[b"counter", authority.key.as_ref()], program_id);
+    let (expected_key, _bump_counter) = Pubkey::find_program_address(&[b"counter", authority.key.as_ref()], program_id);
     if expected_key != *counter.key {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -288,7 +289,6 @@ impl CounterAccount {
         );
         offset += 8;
         let bump: u8 = data[offset];
-        offset += 1;
         Ok(Self { authority, count, bump })
     }
 
@@ -303,7 +303,6 @@ impl CounterAccount {
         data[offset..offset + 8].copy_from_slice(&value.count.to_le_bytes());
         offset += 8;
         data[offset] = value.bump as u8;
-        offset += 1;
         Ok(())
     }
 
