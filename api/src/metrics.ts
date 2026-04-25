@@ -29,6 +29,13 @@ export interface MetricsSnapshot {
     total: number;
     failures: number;
   };
+  build: {
+    total: number;
+    success: number;
+    failure: number;
+    p50DurationMs: number;
+    byTarget: Counter;
+  };
 }
 
 const startedAt = Date.now();
@@ -37,6 +44,27 @@ const refineCalls = { total: 0, cached: 0, aiCallsMade: 0, patchesAccepted: 0, p
 const refineErrorsByCategory: Counter = {};
 const emitCounters = { total: 0, validationErrorsByTarget: {} as Counter };
 const parseCounters = { total: 0, failures: 0 };
+// Bounded ring buffer of recent build durations for p50. Keeping a windowed
+// sample (rather than the entire history) means p50 reflects the recent
+// state of the cargo cache — first cold call won't permanently skew the median.
+const BUILD_DURATION_WINDOW = 50;
+const buildCounters = { total: 0, success: 0, failure: 0, byTarget: {} as Counter };
+const buildDurations: number[] = [];
+
+function pushDuration(ms: number): void {
+  buildDurations.push(ms);
+  if (buildDurations.length > BUILD_DURATION_WINDOW) {
+    buildDurations.shift();
+  }
+}
+
+function p50(samples: number[]): number {
+  if (samples.length === 0) return 0;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid] ?? 0;
+  return Math.round(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2);
+}
 
 export const metrics = {
   recordRefineCall(opts: { cached: boolean; accepted: number; rejected: number }): void {
@@ -60,6 +88,14 @@ export const metrics = {
   recordParse(ok: boolean): void {
     parseCounters.total++;
     if (!ok) parseCounters.failures++;
+  },
+
+  recordBuild(opts: { target: string; ok: boolean; durationMs: number }): void {
+    buildCounters.total++;
+    if (opts.ok) buildCounters.success++;
+    else buildCounters.failure++;
+    buildCounters.byTarget[opts.target] = (buildCounters.byTarget[opts.target] ?? 0) + 1;
+    if (opts.durationMs > 0) pushDuration(opts.durationMs);
   },
 
   snapshot(): MetricsSnapshot {
@@ -87,6 +123,13 @@ export const metrics = {
       parse: {
         total: parseCounters.total,
         failures: parseCounters.failures,
+      },
+      build: {
+        total: buildCounters.total,
+        success: buildCounters.success,
+        failure: buildCounters.failure,
+        p50DurationMs: p50(buildDurations),
+        byTarget: { ...buildCounters.byTarget },
       },
     };
   },

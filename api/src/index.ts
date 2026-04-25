@@ -6,6 +6,7 @@ import { emitRoute } from "./routes/emit.js";
 import { demoRoute } from "./routes/demo.js";
 import { aiRoute } from "./routes/ai.js";
 import { lintRoute } from "./routes/lint.js";
+import { buildRoute } from "./routes/build.js";
 import { AnvilError, ErrorCode } from "./errors.js";
 import { metrics } from "./metrics.js";
 
@@ -87,6 +88,7 @@ const healthHandler: express.RequestHandler = (_req, res) => {
       "POST /parse  — Anchor source|file|project → Solana IR",
       "POST /emit   — Solana IR → target framework code (?refine=1 for AI polish)",
       "POST /lint   — portability scorecard (ready/review/blocker findings)",
+      "POST /build  — cargo check on emitted Rust → structured rustc diagnostics",
       "POST /ai/refine — AI-powered fix for validation issues",
       "GET  /demo      — list demo names",
       "GET  /demo/:name — pre-loaded demo IR",
@@ -110,6 +112,7 @@ app.get("/metrics", (_req, res) => {
 app.use("/parse", parseRoute);
 app.use("/emit", emitRoute);
 app.use("/lint", lintRoute);
+app.use("/build", buildRoute);
 app.use("/demo", demoRoute);
 app.use("/ai", aiRoute);
 
