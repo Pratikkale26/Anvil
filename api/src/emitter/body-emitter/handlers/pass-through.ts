@@ -40,15 +40,18 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   }
 
   // Transform comparison-flavored Anchor macros: require_eq!, require_neq!,
-  // require_gt!, require_gte!, require_lt!, require_lte!. These take
-  // `(lhs, rhs, error)` and assert the relation. Emit an if-guard via the
-  // framework's emitRequire() (which already handles target-specific Err()).
+  // require_gt!, require_gte!, require_lt!, require_lte!,
+  // require_keys_eq!, require_keys_neq!. All take `(lhs, rhs, error)` and
+  // assert the relation. The keys_* variants compare Pubkey values, which
+  // are `[u8; 32]` on Pinocchio and `Pubkey` on Native — both have Eq, so
+  // the same `==` / `!=` operator works without target-specific casing.
   const requireCmpMatch = rawCode.match(
-    /^require_(eq|neq|gt|gte|lt|lte)!\(\s*([\s\S]+?)\s*,\s*([\s\S]+?)\s*,\s*([\w:]+(?:::\w+)*)\s*\);?$/,
+    /^require_(eq|neq|gt|gte|lt|lte|keys_eq|keys_neq)!\(\s*([\s\S]+?)\s*,\s*([\s\S]+?)\s*,\s*([\w:]+(?:::\w+)*)\s*\);?$/,
   );
   if (requireCmpMatch?.[1] && requireCmpMatch[2] && requireCmpMatch[3] && requireCmpMatch[4]) {
     const cmpOps: Record<string, string> = {
       eq: "==", neq: "!=", gt: ">", gte: ">=", lt: "<", lte: "<=",
+      keys_eq: "==", keys_neq: "!=",
     };
     const op = cmpOps[requireCmpMatch[1]] ?? "==";
     const lhs = w.normalizeKeyValueUsages(w.transformCtxAccountsReferences(requireCmpMatch[2]));
