@@ -6,7 +6,7 @@
  * Complete business logic generation via the BaseEmitter body walker.
  */
 
-import type { SolanaIR, AccountDef } from "../ir/schema.js";
+import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter } from "./emitter-base.js";
 import {
@@ -43,7 +43,9 @@ import {
  * other expression), pass through unchanged.
  */
 function resolveT22Decimals(mint: string, decimals: string | undefined): { decimalsExpr: string; prelude: string } {
-  const fallback = decimals ?? "/* TODO: decimals */";
+  // Fallback must be syntactically valid Rust — `/* TODO */` alone collapses to
+  // nothing after lexing and leaves a stray comma in the args list.
+  const fallback = decimals ?? "0u8 /* TODO: decimals — could not infer from source; verify against the mint */";
   if (!decimals) return { decimalsExpr: fallback, prelude: "" };
   const accessRe = new RegExp(`^${mint}\\.decimals$`);
   if (!accessRe.test(decimals.trim())) return { decimalsExpr: fallback, prelude: "" };
@@ -58,6 +60,55 @@ function resolveT22Decimals(mint: string, decimals: string | undefined): { decim
 
 class NativeEmitter extends BaseEmitter {
   override readonly frameworkName = "Native";
+
+  /**
+   * Inject `Mint::unpack` preludes for any bare `<account>.decimals` reference
+   * that survives from the Anchor source. Anchor's `Account<'info, Mint>`
+   * exposes `.decimals` directly; native's `&AccountInfo` does not, so the
+   * default pass-through emit produces E0609 on every program that reads
+   * decimals to scale token amounts (transfer-tokens, spl-token-minter, etc.).
+   *
+   * Strategy: regex-scan the assembled body for `<accountName>.decimals` where
+   * accountName is one of the instruction's accounts. For each unique mint hit,
+   * prepend a one-shot prelude reading byte 44 of the SPL Mint layout (works
+   * for both SPL Token and Token-2022 — base layout is identical). Substitute
+   * `<mint>.decimals` → `<mint>_decimals` in the body.
+   */
+  protected override postProcessInstructionBody(
+    bodyCode: string,
+    instr: Instruction,
+    _ir: SolanaIR,
+  ): string {
+    const accountNames = instr.accounts.map((a) => snakeCase(a.name));
+    const mintsHit: string[] = [];
+    for (const name of accountNames) {
+      // \b name . decimals \b, with negative lookbehind for identifier chars.
+      const re = new RegExp(`(?<![A-Za-z0-9_])${name}\\.decimals\\b`);
+      if (re.test(bodyCode)) mintsHit.push(name);
+    }
+    if (mintsHit.length === 0) return bodyCode;
+
+    const preludes = mintsHit
+      .map(
+        (name) => `    let ${name}_decimals = {
+        let __mint_data = ${name}.data.borrow();
+        if __mint_data.len() < 45 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        __mint_data[44]
+    };`,
+      )
+      .join("\n");
+
+    let body = bodyCode;
+    for (const name of mintsHit) {
+      body = body.replace(
+        new RegExp(`(?<![A-Za-z0-9_])${name}\\.decimals\\b`, "g"),
+        `${name}_decimals`,
+      );
+    }
+    return `${preludes}\n${body}`;
+  }
 
   override emitUseStatements(_ir: SolanaIR): string {
     // Token-2022 typed CPIs are inlined directly in the instruction body —

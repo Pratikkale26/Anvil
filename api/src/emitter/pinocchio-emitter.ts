@@ -6,7 +6,7 @@
  * Business logic is now driven entirely by IR body statements.
  */
 
-import type { SolanaIR, AccountDef } from "../ir/schema.js";
+import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter } from "./emitter-base.js";
 import {
@@ -46,7 +46,9 @@ function resolveT22DecimalsPinocchio(
   mint: string,
   decimals: string | undefined,
 ): { decimalsExpr: string; prelude: string } {
-  const fallback = decimals ?? "/* TODO: decimals */";
+  // Fallback must be syntactically valid Rust — `/* TODO */` alone collapses to
+  // nothing after lexing and leaves a stray comma in the data array.
+  const fallback = decimals ?? "0u8 /* TODO: decimals — could not infer from source; verify against the mint */";
   if (!decimals) return { decimalsExpr: fallback, prelude: "" };
   const accessRe = new RegExp(`^${mint}\\.decimals$`);
   if (!accessRe.test(decimals.trim())) return { decimalsExpr: fallback, prelude: "" };
@@ -101,6 +103,48 @@ function emitT22Invoke(accountsList: string, signerSeeds: string | undefined): s
 
 class PinocchioEmitter extends BaseEmitter {
   override readonly frameworkName = "Pinocchio";
+
+  /**
+   * Same purpose as the native override — inject Mint decimals preludes for
+   * bare `<account>.decimals` references that survive from Anchor source.
+   * Pinocchio's `AccountInfo` has no `.decimals` field either; reading byte 44
+   * of the SPL Mint layout via `borrow_data_unchecked` matches what
+   * resolveT22DecimalsPinocchio already does for the `_checked` decimals slot.
+   */
+  protected override postProcessInstructionBody(
+    bodyCode: string,
+    instr: Instruction,
+    _ir: SolanaIR,
+  ): string {
+    const accountNames = instr.accounts.map((a) => snakeCase(a.name));
+    const mintsHit: string[] = [];
+    for (const name of accountNames) {
+      const re = new RegExp(`(?<![A-Za-z0-9_])${name}\\.decimals\\b`);
+      if (re.test(bodyCode)) mintsHit.push(name);
+    }
+    if (mintsHit.length === 0) return bodyCode;
+
+    const preludes = mintsHit
+      .map(
+        (name) => `    let ${name}_decimals = {
+        let __mint_data = unsafe { ${name}.borrow_data_unchecked() };
+        if __mint_data.len() < 45 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        __mint_data[44]
+    };`,
+      )
+      .join("\n");
+
+    let body = bodyCode;
+    for (const name of mintsHit) {
+      body = body.replace(
+        new RegExp(`(?<![A-Za-z0-9_])${name}\\.decimals\\b`, "g"),
+        `${name}_decimals`,
+      );
+    }
+    return `${preludes}\n${body}`;
+  }
 
   override emitUseStatements(_ir: SolanaIR): string {
     const imports = [`use core::convert::TryInto;`,

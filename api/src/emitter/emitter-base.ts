@@ -172,6 +172,23 @@ export abstract class BaseEmitter {
   abstract emitHelperFunctions(ir: SolanaIR): string;
 
   /**
+   * Hook for target-specific post-processing of an instruction's assembled body.
+   *
+   * Default: identity. Native + pinocchio override to inject a `Mint::unpack`-style
+   * prelude when bare `<account>.decimals` references survive from the Anchor
+   * source — neither target's `AccountInfo` exposes a `.decimals` field, so the
+   * pass-through emit produces E0609 without intervention. Quasar leaves it
+   * unchanged because Quasar's `Account<Mint>` wrapper still has the field.
+   */
+  protected postProcessInstructionBody(
+    bodyCode: string,
+    _instr: Instruction,
+    _ir: SolanaIR,
+  ): string {
+    return bodyCode;
+  }
+
+  /**
    * Emit a system program create_account CPI.
    * Default implementation emits a generic invoke() call.
    * Framework-specific emitters can override for native helpers.
@@ -537,7 +554,12 @@ export abstract class BaseEmitter {
       .join("\n");
 
     // Body emission — the main event
-    const bodyCode = this.emitBodyStatements(instr.body, instr, ir, preEmittedBumps);
+    const rawBodyCode = this.emitBodyStatements(instr.body, instr, ir, preEmittedBumps);
+    // Hook: lets target emitters post-process the assembled body (e.g. inject
+    // `Mint::unpack` preludes when bare `<account>.decimals` survives from
+    // Anchor source code, since neither native AccountInfo nor pinocchio
+    // AccountInfo expose a `.decimals` field).
+    const bodyCode = this.postProcessInstructionBody(rawBodyCode, instr, ir);
 
     // Check if body already ends with Ok(()) — no `return_ok` in body means we add one
     const bodyHasReturnOk = instr.body.some(s => s.kind === "return_ok");
