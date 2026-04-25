@@ -17,6 +17,7 @@ import type {
   Instruction,
   EmitterOutput,
 } from "../ir/schema.js";
+import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter } from "./emitter-base.js";
 import {
   instrDiscriminator,
@@ -548,6 +549,7 @@ ${arms}
     authority: string,
     amount: string,
     signerSeeds?: string,
+    _opts?: Token2022Opts,
   ): string {
     if (signerSeeds) {
       return `    // SPL Token transfer (PDA signed)
@@ -563,6 +565,7 @@ ${arms}
     authority: string,
     amount: string,
     signerSeeds?: string,
+    _opts?: Token2022Opts,
   ): string {
     const signed = signerSeeds ? "_signed" : "";
     return `    // SPL Token mint_to
@@ -575,6 +578,7 @@ ${arms}
     authority: string,
     amount: string,
     signerSeeds?: string,
+    _opts?: Token2022Opts,
   ): string {
     const signed = signerSeeds ? "_signed" : "";
     return `    // SPL Token burn
@@ -586,6 +590,7 @@ ${arms}
     destination: string,
     authority: string,
     signerSeeds?: string,
+    _opts?: Token2022Opts,
   ): string {
     const signed = signerSeeds ? "_signed" : "";
     return `    // SPL Token close account

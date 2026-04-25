@@ -7,6 +7,7 @@
  */
 
 import type { SolanaIR, AccountDef } from "../ir/schema.js";
+import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter } from "./emitter-base.js";
 import {
   instrDiscriminator,
@@ -32,22 +33,62 @@ import {
   irNeedsMemoHelper,
 } from "./emitter-helpers.js";
 
+/**
+ * Token-2022 checked variants need the mint's `.decimals`. In Anchor source
+ * code that's read via `ctx.accounts.<mint>.decimals` because Anchor parses
+ * the mint account into a typed view; in native code we get a bare
+ * `&AccountInfo` and have to unpack it ourselves. When the detector hands us
+ * a decimals expression of the form `<mint>.decimals`, generate the unpack
+ * prelude and substitute a local var. Otherwise (e.g. a literal `9` or some
+ * other expression), pass through unchanged.
+ */
+function resolveT22Decimals(mint: string, decimals: string | undefined): { decimalsExpr: string; prelude: string } {
+  const fallback = decimals ?? "/* TODO: decimals */";
+  if (!decimals) return { decimalsExpr: fallback, prelude: "" };
+  const accessRe = new RegExp(`^${mint}\\.decimals$`);
+  if (!accessRe.test(decimals.trim())) return { decimalsExpr: fallback, prelude: "" };
+  const localVar = `${mint}_decimals`;
+  const prelude = `    let ${localVar} = {
+        use solana_program::program_pack::Pack;
+        spl_token_2022::state::Mint::unpack(&${mint}.data.borrow())?.decimals
+    };
+`;
+  return { decimalsExpr: localVar, prelude };
+}
+
 class NativeEmitter extends BaseEmitter {
   override readonly frameworkName = "Native";
 
   override emitUseStatements(_ir: SolanaIR): string {
+    // Token-2022 typed CPIs are inlined directly in the instruction body —
+    // they don't go through the spl_token_*  helper functions, so the
+    // helper-based triggers below miss them. Track them explicitly.
+    const t22Cpis = _ir.instructions.flatMap((i) =>
+      (i.body ?? []).filter((s) =>
+        (s.kind === "cpi_spl_transfer" ||
+          s.kind === "cpi_spl_mint_to" ||
+          s.kind === "cpi_spl_burn" ||
+          s.kind === "cpi_spl_close_account") &&
+        s.tokenProgram === "token_2022"
+      )
+    );
+    const t22NeedsInvoke = t22Cpis.some((s) => !(s as { signerSeeds?: string }).signerSeeds);
+    const t22NeedsInvokeSigned = t22Cpis.some((s) => !!(s as { signerSeeds?: string }).signerSeeds);
+
     const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsHelper(_ir, "spl_transfer")
       || irNeedsUnsignedSplMintToHelper(_ir)
       || irNeedsUnsignedSplBurnHelper(_ir)
       || irNeedsUnsignedSplCloseAccountHelper(_ir)
       || irNeedsAtaCreationHelper(_ir)
-      || irNeedsMemoHelper(_ir);
+      || irNeedsMemoHelper(_ir)
+      || t22NeedsInvoke;
     const needsInvokeSigned = irNeedsSignedLamportsHelper(_ir)
       || irNeedsSignedSplMintToHelper(_ir)
       || irNeedsSignedSplBurnHelper(_ir)
       || irNeedsSignedSplCloseAccountHelper(_ir)
-      || irNeedsInitAccountHelper(_ir);
+      || irNeedsInitAccountHelper(_ir)
+      || t22NeedsInvokeSigned;
     const needsSystemInstruction = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsSignedLamportsHelper(_ir)
       || irNeedsInitAccountHelper(_ir);
@@ -228,7 +269,33 @@ ${arms}
     )?;`;
   }
 
-  override emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string): string {
+  override emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
+    const t22 = opts?.tokenProgram === "token_2022";
+    const crate = t22 ? "spl_token_2022" : "spl_token";
+    if (t22) {
+      // Token-2022 deprecates `transfer`; must use `transfer_checked` with
+      // mint + decimals. Detector backfills these from the TransferChecked
+      // accounts struct + trailing decimals arg.
+      const mint = opts?.mint ?? "/* TODO: mint */";
+      const { decimalsExpr, prelude } = resolveT22Decimals(mint, opts?.decimals);
+      const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+      const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+      return `    // Token-2022 transfer_checked — ${from} → ${to}
+${prelude}    let transfer_ix = ${crate}::instruction::transfer_checked(
+        &${crate}::id(),
+        ${from}.key,
+        ${mint}.key,
+        ${to}.key,
+        ${authority}.key,
+        &[],
+        ${amount},
+        ${decimalsExpr},
+    )?;
+    ${invokeType}(
+        &transfer_ix,
+        &[${from}.clone(), ${mint}.clone(), ${to}.clone(), ${authority}.clone()],${signerArg}
+    )?;`;
+    }
     if (signerSeeds) {
       return `    // SPL Token transfer (PDA signed) — ${from} → ${to}
     let transfer_ix = spl_token::instruction::transfer(
@@ -260,9 +327,28 @@ ${arms}
     )?;`;
   }
 
-  override emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string): string {
+  override emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
+    const t22 = opts?.tokenProgram === "token_2022";
+    const crate = t22 ? "spl_token_2022" : "spl_token";
     const invokeType = signerSeeds ? "invoke_signed" : "invoke";
     const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    if (t22) {
+      const { decimalsExpr, prelude } = resolveT22Decimals(mint, opts?.decimals);
+      return `    // Token-2022 mint_to_checked — ${mint} → ${to}
+${prelude}    let mint_ix = ${crate}::instruction::mint_to_checked(
+        &${crate}::id(),
+        ${mint}.key,
+        ${to}.key,
+        ${authority}.key,
+        &[],
+        ${amount},
+        ${decimalsExpr},
+    )?;
+    ${invokeType}(
+        &mint_ix,
+        &[${mint}.clone(), ${to}.clone(), ${authority}.clone()],${signerArg}
+    )?;`;
+    }
     return `    // SPL Token mint_to — ${mint} → ${to}
     let mint_ix = spl_token::instruction::mint_to(
         &spl_token::id(),
@@ -278,9 +364,28 @@ ${arms}
     )?;`;
   }
 
-  override emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string): string {
+  override emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
+    const t22 = opts?.tokenProgram === "token_2022";
+    const crate = t22 ? "spl_token_2022" : "spl_token";
     const invokeType = signerSeeds ? "invoke_signed" : "invoke";
     const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    if (t22) {
+      const { decimalsExpr, prelude } = resolveT22Decimals(mint, opts?.decimals);
+      return `    // Token-2022 burn_checked — ${from}
+${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
+        &${crate}::id(),
+        ${from}.key,
+        ${mint}.key,
+        ${authority}.key,
+        &[],
+        ${amount},
+        ${decimalsExpr},
+    )?;
+    ${invokeType}(
+        &burn_ix,
+        &[${from}.clone(), ${mint}.clone(), ${authority}.clone()],${signerArg}
+    )?;`;
+    }
     return `    // SPL Token burn — ${from}
     let burn_ix = spl_token::instruction::burn(
         &spl_token::id(),
@@ -296,12 +401,13 @@ ${arms}
     )?;`;
   }
 
-  override emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string): string {
+  override emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string, opts?: Token2022Opts): string {
+    const crate = opts?.tokenProgram === "token_2022" ? "spl_token_2022" : "spl_token";
     const invokeType = signerSeeds ? "invoke_signed" : "invoke";
     const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
-    return `    // SPL Token close account — ${account}
-    let close_ix = spl_token::instruction::close_account(
-        &spl_token::id(),
+    return `    // ${crate === "spl_token_2022" ? "Token-2022" : "SPL Token"} close account — ${account}
+    let close_ix = ${crate}::instruction::close_account(
+        &${crate}::id(),
         ${account}.key,
         ${destination}.key,
         ${authority}.key,

@@ -7,6 +7,7 @@
  */
 
 import type { SolanaIR, AccountDef } from "../ir/schema.js";
+import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter } from "./emitter-base.js";
 import {
   instrDiscriminator,
@@ -226,7 +227,7 @@ ${arms}
     return `    transfer_lamports(${from}, ${to}, ${amount})?;`;
   }
 
-  override emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string): string {
+  override emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string, _opts?: Token2022Opts): string {
     if (signerSeeds) {
       return `    // SPL Token transfer (PDA signed) — ${from} → ${to}
     spl_token_transfer_signed(${from}, ${to}, ${authority}, ${amount}, ${signerSeeds})?;`;
@@ -235,19 +236,19 @@ ${arms}
     spl_token_transfer(${from}, ${to}, ${authority}, ${amount})?;`;
   }
 
-  override emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string): string {
+  override emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string, _opts?: Token2022Opts): string {
     const signed = signerSeeds ? "_signed" : "";
     return `    // SPL Token mint_to — ${mint} → ${to}
     spl_token_mint_to${signed}(${mint}, ${to}, ${authority}, ${amount}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
   }
 
-  override emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string): string {
+  override emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string, _opts?: Token2022Opts): string {
     const signed = signerSeeds ? "_signed" : "";
     return `    // SPL Token burn — ${from}
     spl_token_burn${signed}(${from}, ${mint}, ${authority}, ${amount}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
   }
 
-  override emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string): string {
+  override emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string, _opts?: Token2022Opts): string {
     const signed = signerSeeds ? "_signed" : "";
     return `    // SPL Token close account — ${account}
     spl_token_close_account${signed}(${account}, ${destination}, ${authority}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;

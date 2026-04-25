@@ -190,6 +190,10 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
     /** Which token program to invoke: "token" (default) or "token_2022" */
     tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
+    /** Mint account — required when tokenProgram is "token_2022" (transfer_checked). */
+    mint: z.string().optional(),
+    /** Mint decimals expression — required when tokenProgram is "token_2022". */
+    decimals: z.string().optional(),
   }),
 
   // SPL Token mint_to CPI
@@ -202,6 +206,8 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
     /** Which token program to invoke: "token" (default) or "token_2022" */
     tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
+    /** Mint decimals expression — required when tokenProgram is "token_2022" (mint_to_checked). */
+    decimals: z.string().optional(),
   }),
 
   // SPL Token burn CPI
@@ -214,6 +220,8 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
     /** Which token program to invoke: "token" (default) or "token_2022" */
     tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
+    /** Mint decimals expression — required when tokenProgram is "token_2022" (burn_checked). */
+    decimals: z.string().optional(),
   }),
 
   // SPL Token close_account CPI

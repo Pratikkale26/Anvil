@@ -73,21 +73,30 @@ export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
             break;
         }
       }
+      // Token-2022 typed CPIs are inlined as `spl_token_2022::instruction::*_checked`
+      // calls — they don't reuse the `spl_token_*` helper functions, so don't
+      // trigger their inclusion here.
+      const isT22 =
+        (stmt.kind === "cpi_spl_transfer" ||
+          stmt.kind === "cpi_spl_mint_to" ||
+          stmt.kind === "cpi_spl_burn" ||
+          stmt.kind === "cpi_spl_close_account") &&
+        stmt.tokenProgram === "token_2022";
       switch (helperName) {
         case "transfer_lamports":
           if (stmt.kind === "cpi_system_transfer") return true;
           break;
         case "spl_transfer":
-          if (stmt.kind === "cpi_spl_transfer") return true;
+          if (stmt.kind === "cpi_spl_transfer" && !isT22) return true;
           break;
         case "spl_mint_to":
-          if (stmt.kind === "cpi_spl_mint_to") return true;
+          if (stmt.kind === "cpi_spl_mint_to" && !isT22) return true;
           break;
         case "spl_burn":
-          if (stmt.kind === "cpi_spl_burn") return true;
+          if (stmt.kind === "cpi_spl_burn" && !isT22) return true;
           break;
         case "spl_close_account":
-          if (stmt.kind === "cpi_spl_close_account") return true;
+          if (stmt.kind === "cpi_spl_close_account" && !isT22) return true;
           break;
       }
     }
@@ -147,7 +156,7 @@ export function irNeedsTokenAmountHelper(ir: SolanaIR): boolean {
 export function irNeedsUnsignedSplMintToHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>
-      (stmt.kind === "cpi_spl_mint_to" && !stmt.signerSeeds) ||
+      (stmt.kind === "cpi_spl_mint_to" && !stmt.signerSeeds && stmt.tokenProgram !== "token_2022") ||
       (stmt.kind === "pass_through" && /token::mint_to\(\s*CpiContext::new\(/.test(stmt.code))
     )
   );
@@ -156,7 +165,7 @@ export function irNeedsUnsignedSplMintToHelper(ir: SolanaIR): boolean {
 export function irNeedsSignedSplMintToHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>
-      (stmt.kind === "cpi_spl_mint_to" && !!stmt.signerSeeds) ||
+      (stmt.kind === "cpi_spl_mint_to" && !!stmt.signerSeeds && stmt.tokenProgram !== "token_2022") ||
       (stmt.kind === "pass_through" && /token::mint_to\(\s*CpiContext::new_with_signer\(/.test(stmt.code))
     )
   );
@@ -165,7 +174,7 @@ export function irNeedsSignedSplMintToHelper(ir: SolanaIR): boolean {
 export function irNeedsUnsignedSplBurnHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>
-      (stmt.kind === "cpi_spl_burn" && !stmt.signerSeeds) ||
+      (stmt.kind === "cpi_spl_burn" && !stmt.signerSeeds && stmt.tokenProgram !== "token_2022") ||
       (stmt.kind === "pass_through" && /token::burn\(\s*CpiContext::new\(/.test(stmt.code))
     )
   );
@@ -174,7 +183,7 @@ export function irNeedsUnsignedSplBurnHelper(ir: SolanaIR): boolean {
 export function irNeedsSignedSplBurnHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>
-      (stmt.kind === "cpi_spl_burn" && !!stmt.signerSeeds) ||
+      (stmt.kind === "cpi_spl_burn" && !!stmt.signerSeeds && stmt.tokenProgram !== "token_2022") ||
       (stmt.kind === "pass_through" && /token::burn\(\s*CpiContext::new_with_signer\(/.test(stmt.code))
     )
   );
@@ -183,7 +192,7 @@ export function irNeedsSignedSplBurnHelper(ir: SolanaIR): boolean {
 export function irNeedsSignedSplCloseAccountHelper(ir: SolanaIR): boolean {
   for (const instr of ir.instructions) {
     for (const stmt of instr.body) {
-      if (stmt.kind === "cpi_spl_close_account" && stmt.signerSeeds) {
+      if (stmt.kind === "cpi_spl_close_account" && stmt.signerSeeds && stmt.tokenProgram !== "token_2022") {
         return true;
       }
     }
@@ -209,7 +218,7 @@ export function irNeedsSignedSplCloseAccountHelper(ir: SolanaIR): boolean {
 export function irNeedsUnsignedSplCloseAccountHelper(ir: SolanaIR): boolean {
   for (const instr of ir.instructions) {
     for (const stmt of instr.body) {
-      if (stmt.kind === "cpi_spl_close_account" && !stmt.signerSeeds) {
+      if (stmt.kind === "cpi_spl_close_account" && !stmt.signerSeeds && stmt.tokenProgram !== "token_2022") {
         return true;
       }
     }

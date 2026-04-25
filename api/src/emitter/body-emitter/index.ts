@@ -8,7 +8,7 @@ import type { SolanaIR, Instruction, BodyStatement } from "../../ir/schema.js";
 import { BodyWalker } from "./walker.js";
 import type { BodyEmitterCallbacks, BodyEmitterContext } from "./types.js";
 
-export type { BodyEmitterCallbacks, BodyEmitterContext } from "./types.js";
+export type { BodyEmitterCallbacks, BodyEmitterContext, Token2022Opts } from "./types.js";
 
 export function emitBodyStatements(
   emitter: BodyEmitterCallbacks,

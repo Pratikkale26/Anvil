@@ -57,6 +57,11 @@ export function handleCpiSplTransfer(w: BodyWalker, stmt: CpiSplTransfer): void 
       authority,
       w.resolveAmountExpr(stmt.amount),
       stmt.signerSeeds,
+      {
+        tokenProgram: stmt.tokenProgram,
+        ...(stmt.mint ? { mint: snakeCase(stmt.mint) } : {}),
+        ...(stmt.decimals ? { decimals: stmt.decimals } : {}),
+      },
     ),
   );
 }
@@ -78,6 +83,10 @@ export function handleCpiSplMintTo(w: BodyWalker, stmt: CpiSplMintTo): void {
       authority,
       w.resolveAmountExpr(stmt.amount),
       stmt.signerSeeds,
+      {
+        tokenProgram: stmt.tokenProgram,
+        ...(stmt.decimals ? { decimals: stmt.decimals } : {}),
+      },
     ),
   );
 }
@@ -99,6 +108,10 @@ export function handleCpiSplBurn(w: BodyWalker, stmt: CpiSplBurn): void {
       authority,
       w.resolveAmountExpr(stmt.amount),
       stmt.signerSeeds,
+      {
+        tokenProgram: stmt.tokenProgram,
+        ...(stmt.decimals ? { decimals: stmt.decimals } : {}),
+      },
     ),
   );
 }
@@ -119,6 +132,7 @@ export function handleCpiSplCloseAccount(w: BodyWalker, stmt: CpiSplCloseAccount
       snakeCase(stmt.destination),
       authority,
       stmt.signerSeeds,
+      { tokenProgram: stmt.tokenProgram },
     ),
   );
 }

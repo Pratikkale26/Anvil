@@ -11,6 +11,20 @@ export interface BodyEmitterContext {
   warnings: string[];
 }
 
+/**
+ * Per-call options for SPL token CPIs that vary based on the token program in
+ * use. Token-2022 deprecates the unchecked variants, so the emitter routes to
+ * `transfer_checked` / `mint_to_checked` / `burn_checked` and needs the mint
+ * + decimals to build the instruction. Plain SPL Token leaves these unset.
+ */
+export interface Token2022Opts {
+  tokenProgram?: "token" | "token_2022";
+  /** Mint account snake_case name — only meaningful when tokenProgram === "token_2022". */
+  mint?: string;
+  /** Mint decimals expression — only meaningful when tokenProgram === "token_2022". */
+  decimals?: string;
+}
+
 export interface BodyEmitterCallbacks {
   readonly frameworkName: string;
   emitAccountKeyExpr(accountName: string): string;
@@ -34,10 +48,10 @@ export interface BodyEmitterCallbacks {
   emitClockGet(localVar: string): string;
   emitRentGet(localVar: string): string;
   emitSystemTransfer(from: string, to: string, amount: string, signerSeeds?: string): string;
-  emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string): string;
-  emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string): string;
-  emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string): string;
-  emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string): string;
+  emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string;
+  emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string;
+  emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string;
+  emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string, opts?: Token2022Opts): string;
   emitCreateAta(ata: string, payer: string, mint: string, authority: string, signerSeeds?: string): string;
   emitMemo(data: string, signerSeeds?: string): string;
   emitProgramAccountClose(account: string, destination: string): string;

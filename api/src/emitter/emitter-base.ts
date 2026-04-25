@@ -84,6 +84,7 @@ import {
   emitBodyStatements as emitBodyStatementsImpl,
   type BodyEmitterContext,
   type BodyEmitterCallbacks,
+  type Token2022Opts,
 } from "./body-emitter/index.js";
 import { transformHelperCode as transformHelperCodeImpl } from "./anchor-transforms.js";
 
@@ -121,10 +122,10 @@ export abstract class BaseEmitter {
 
   // ── CPI transforms ──
   abstract emitSystemTransfer(from: string, to: string, amount: string, signerSeeds?: string): string;
-  abstract emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string): string;
-  abstract emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string): string;
-  abstract emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string): string;
-  abstract emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string): string;
+  abstract emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string;
+  abstract emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string;
+  abstract emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string;
+  abstract emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string, opts?: Token2022Opts): string;
   abstract emitProgramAccountClose(account: string, destination: string): string;
   abstract emitCreateProgramAccount(
     account: string,
