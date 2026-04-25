@@ -232,9 +232,9 @@ const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
     title: "anchor_spl::token_interface imports (Token-2022)",
     detail: (t) =>
       t === "native"
-        ? "Native scaffold ships spl-token-2022 — basic flows compile cleanly. Verify any extension hooks (transfer hooks, fee config) you depend on, since Anvil doesn't rewrite those structurally."
+        ? "Native scaffold ships spl-token-2022, but Anvil's body emitter currently routes all SPL token CPIs to `spl_token::instruction::*` regardless of source. For Token-2022 mints you'll hit a runtime program-id mismatch — rewrite the offending CPIs by hand to `spl_token_2022::instruction::transfer_checked / mint_to_checked / burn_checked` after emit, or wait for the IR-level Token-2022 routing pass."
         : "Basic checked variants are supported via pinocchio_token, but extension hooks (transfer hooks, fee config, confidential transfers) aren't transformed. Suggested fix: keep extension paths verbatim and verify the post-emit code by hand.",
-    verdict: (t) => (t === "native" ? "ready" : "review"),
+    verdict: () => "review",
   },
   // ── Instructions sysvar introspection ──────────────────────────────────
   {
