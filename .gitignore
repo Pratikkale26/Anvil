@@ -45,6 +45,7 @@ bun.lock*
 docs/
 api/generated-outputs
 api/.anvil-data
+.anvil-data/
 codex-session.jsonl
 .claude/
 api/scratch-*.ts
