@@ -227,6 +227,20 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
   }),
 
+  // Associated Token Account creation CPI
+  // Anchor: anchor_spl::associated_token::create(...)
+  // Native: spl_associated_token_account::instruction::create_associated_token_account(...)
+  z.object({
+    kind: z.literal("cpi_ata_create"),
+    ata: z.string(),
+    payer: z.string(),
+    mint: z.string(),
+    authority: z.string(),
+    signerSeeds: z.string().optional(),
+    /** Which token program the ATA belongs to: "token" (default) or "token_2022" */
+    tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
+  }),
+
   // Generic / custom CPI (invoke or invoke_signed)
   z.object({
     kind: z.literal("cpi_custom"),

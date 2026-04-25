@@ -37,6 +37,7 @@ import {
   handleCpiSplMintTo,
   handleCpiSplBurn,
   handleCpiSplCloseAccount,
+  handleCpiAtaCreate,
   handleCpiCustom,
 } from "./handlers/cpi.js";
 import { handleSysvarClock, handleSysvarRent } from "./handlers/sysvar.js";
@@ -189,6 +190,7 @@ export class BodyWalker {
         case "cpi_spl_mint_to": handleCpiSplMintTo(this, stmt); break;
         case "cpi_spl_burn": handleCpiSplBurn(this, stmt); break;
         case "cpi_spl_close_account": handleCpiSplCloseAccount(this, stmt); break;
+        case "cpi_ata_create": handleCpiAtaCreate(this, stmt); break;
         case "cpi_custom": handleCpiCustom(this, stmt); break;
         case "sysvar_clock": handleSysvarClock(this, stmt); break;
         case "sysvar_rent": handleSysvarRent(this, stmt); break;

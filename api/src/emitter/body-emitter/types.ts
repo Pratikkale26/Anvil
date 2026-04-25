@@ -38,6 +38,7 @@ export interface BodyEmitterCallbacks {
   emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string): string;
   emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string): string;
   emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string): string;
+  emitCreateAta(ata: string, payer: string, mint: string, authority: string, signerSeeds?: string): string;
   emitProgramAccountClose(account: string, destination: string): string;
   emitCreateAccountCpi(from: string, to: string, lamports: string, space: string, owner: string): string;
   transformAmountExpr(amount: string): string;

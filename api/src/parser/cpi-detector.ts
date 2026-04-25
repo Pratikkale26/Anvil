@@ -98,6 +98,18 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
     return extractSplCloseAccount(callNode);
   }
 
+  // ── Associated Token Account create ──
+  // anchor_spl: associated_token::create(...)
+  // struct path: AssociatedToken::create(...)
+  // raw native: spl_associated_token_account::instruction::create_associated_token_account(...)
+  if (
+    funcText.includes("associated_token::create") ||
+    funcText.includes("AssociatedToken::create") ||
+    funcText.includes("create_associated_token_account")
+  ) {
+    return extractAtaCreate(callNode);
+  }
+
   // ── System program transfer ──
   if (funcText.includes("system_program::transfer") || funcText.includes("system_instruction::transfer")) {
     return extractSystemTransfer(callNode);
@@ -265,6 +277,47 @@ function extractSplCloseAccount(callNode: SyntaxNode): BodyStatement {
     kind: "cpi_spl_close_account",
     account: cleanAccountRef(account),
     destination: cleanAccountRef(destination),
+    authority: cleanAccountRef(authority),
+    signerSeeds,
+  };
+}
+
+// ─── Associated Token Account Create ────────────────────────────────────────
+
+function extractAtaCreate(callNode: SyntaxNode): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return fallbackPassThrough(callNode);
+
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+
+  let ata = "associated_token";
+  let payer = "payer";
+  let mint = "mint";
+  let authority = "authority";
+  let signerSeeds: string | undefined;
+
+  if (firstArg && firstArg.text.includes("CpiContext::")) {
+    const createStruct = findDescendant(firstArg, "struct_expression");
+    if (createStruct) {
+      ata = extractStructField(createStruct, "associated_token") ?? ata;
+      payer = extractStructField(createStruct, "payer") ?? payer;
+      mint = extractStructField(createStruct, "mint") ?? mint;
+      authority = extractStructField(createStruct, "authority") ?? authority;
+    }
+    signerSeeds = firstArg.text.includes("new_with_signer") ? "signer_seeds" : undefined;
+  } else {
+    // Raw native call: create_associated_token_account(payer, owner, mint, token_program)
+    // — positional args, no Create struct to extract from. Bail to pass-through so
+    // the user sees the original call rather than a broken stub.
+    return fallbackPassThrough(callNode);
+  }
+
+  return {
+    kind: "cpi_ata_create",
+    ata: cleanAccountRef(ata),
+    payer: cleanAccountRef(payer),
+    mint: cleanAccountRef(mint),
     authority: cleanAccountRef(authority),
     signerSeeds,
   };

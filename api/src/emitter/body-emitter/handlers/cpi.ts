@@ -12,6 +12,7 @@ type CpiSplTransfer = Extract<BodyStatement, { kind: "cpi_spl_transfer" }>;
 type CpiSplMintTo = Extract<BodyStatement, { kind: "cpi_spl_mint_to" }>;
 type CpiSplBurn = Extract<BodyStatement, { kind: "cpi_spl_burn" }>;
 type CpiSplCloseAccount = Extract<BodyStatement, { kind: "cpi_spl_close_account" }>;
+type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
 
 function shouldEmitSignerSeedsPrelude(w: BodyWalker, signerSeeds: string | undefined): boolean {
@@ -116,6 +117,25 @@ export function handleCpiSplCloseAccount(w: BodyWalker, stmt: CpiSplCloseAccount
       snakeCase(stmt.account),
       snakeCase(stmt.destination),
       authority,
+      stmt.signerSeeds,
+    ),
+  );
+}
+
+export function handleCpiAtaCreate(w: BodyWalker, stmt: CpiAtaCreate): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: associated_token::create(${stmt.ata})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.payer)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitCreateAta(
+      snakeCase(stmt.ata),
+      snakeCase(stmt.payer),
+      snakeCase(stmt.mint),
+      snakeCase(stmt.authority),
       stmt.signerSeeds,
     ),
   );
