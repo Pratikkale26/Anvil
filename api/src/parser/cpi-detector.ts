@@ -498,7 +498,19 @@ function extractSignerSeedsExpr(firstArgText: string): string {
     }
   }
   if (args.length < 4) return "signer_seeds";
-  const expr = firstArgText.slice(args[2]!, args[3]!).trim().replace(/,\s*$/, "");
+  let expr = firstArgText.slice(args[2]!, args[3]!).trim().replace(/,\s*$/, "");
+  // Special case: source binds the default name `signer_seeds` itself —
+  // typically as `let signer_seeds: [&[&[u8]]; N] = [...];` followed by
+  // `CpiContext::new_with_signer(_, _, &signer_seeds)`. The body classifier
+  // will consume that let-binding and the body emitter's PDA-seeds prelude
+  // will rebind `signer_seeds` to `&[&seeds[..]]` — already a reference.
+  // Passing `&signer_seeds` here would double-wrap and trip E0308. Drop
+  // the leading `&` only for this exact identifier; user-named bindings
+  // (e.g. `signers_seeds`, plural-s) are passed through verbatim because
+  // their value type is the original array and the `&` is required.
+  if (/^&\s*signer_seeds\s*$/.test(expr)) {
+    expr = "signer_seeds";
+  }
   return expr.length > 0 ? expr : "signer_seeds";
 }
 
