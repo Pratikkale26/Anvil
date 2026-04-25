@@ -50,16 +50,76 @@ function capitalize(s: string): string {
  * Solana programs — we instead include the dep when the source imports it,
  * so the transpiled output can reach the same external functionality.
  */
+/**
+ * Crates we add to Cargo.toml when their identifier appears in the source
+ * (parsed from imports + helper bodies + instruction bodies + custom types).
+ * Adding a crate here only takes effect on `--target native` since pinocchio
+ * has its own list. Versions are pinned to what Anvil validates; users can
+ * bump in the README's "Optional upgrades" section.
+ *
+ * Three categories:
+ *   1. SPL ecosystem additions (memo, governance, account-compression, etc.)
+ *   2. Common third-party deps Anchor programs reach for (bytemuck, arrayref,
+ *      bs58, hex, chrono — the "stdlib for Solana programs")
+ *   3. External program SDKs that are lint-flagged but kept compilable
+ *      (mpl-core, mpl-token-metadata, pyth, switchboard)
+ */
 const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
+  // External program SDKs
   mpl_core:                  `mpl-core = "0.10"`,
   mpl_token_metadata:        `mpl-token-metadata = "5.1"`,
   pyth_solana_receiver_sdk:  `pyth-solana-receiver-sdk = "0.6"`,
+  pyth_sdk_solana:           `pyth-sdk-solana = "0.10"`,
   switchboard_on_demand:     `switchboard-on-demand = "0.4"`,
+  switchboard_v2:            `switchboard-v2 = "0.4"`,
+  // SPL extensions (beyond core token + ATA + memo + token-2022)
+  spl_account_compression:   `spl-account-compression = "0.4"`,
+  spl_governance:            `spl-governance = "4.0"`,
+  spl_concurrent_merkle_tree: `spl-concurrent-merkle-tree = "0.4"`,
+  spl_noop:                  `spl-noop = "0.2"`,
+  // Solana hash helpers used in custom logic
   solana_keccak_hasher:      `solana-keccak-hasher = "2.2"`,
   solana_sha256_hasher:      `solana-sha256-hasher = "2.2"`,
-  sha2_const_stable:         `sha2-const-stable = "0.1"`,
+  solana_zk_sdk:             `solana-zk-sdk = "2.2"`,
+  // Common third-party crates Anchor programs use directly
+  bytemuck:                  `bytemuck = { version = "1", features = ["derive"] }`,
+  arrayref:                  `arrayref = "0.3"`,
+  bs58:                      `bs58 = "0.5"`,
+  hex:                       `hex = "0.4"`,
+  chrono:                    `chrono = { version = "0.4", default-features = false }`,
+  sha2:                      `sha2 = "0.10"`,
+  sha3:                      `sha3 = "0.10"`,
+  blake3:                    `blake3 = "1.5"`,
+  base64:                    `base64 = "0.22"`,
   num_derive:                `num-derive = "0.4"`,
   num_traits:                `num-traits = "0.2"`,
+  num_enum:                  `num_enum = "0.7"`,
+  sha2_const_stable:         `sha2-const-stable = "0.1"`,
+  ark_bn254:                 `ark-bn254 = "0.4"`,
+  ark_ff:                    `ark-ff = "0.4"`,
+  ark_serialize:             `ark-serialize = "0.4"`,
+};
+
+/**
+ * Same intent as NATIVE_OPTIONAL_DEPS but for pinocchio. The base
+ * pinocchio scaffold only ships pinocchio + pinocchio-system + pinocchio-token
+ * + pinocchio-associated-token-account; everything else is on-demand.
+ */
+const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
+  // External program SDKs (these typically don't depend on solana-program,
+  // so they tend to compile on pinocchio with `default-features = false`)
+  mpl_core:                  `mpl-core = { version = "0.10", default-features = false }`,
+  mpl_token_metadata:        `mpl-token-metadata = { version = "5.1", default-features = false }`,
+  // Common third-party crates
+  bytemuck:                  `bytemuck = { version = "1", features = ["derive"] }`,
+  arrayref:                  `arrayref = "0.3"`,
+  bs58:                      `bs58 = { version = "0.5", default-features = false, features = ["alloc"] }`,
+  hex:                       `hex = { version = "0.4", default-features = false }`,
+  sha2:                      `sha2 = { version = "0.10", default-features = false }`,
+  sha3:                      `sha3 = { version = "0.10", default-features = false }`,
+  blake3:                    `blake3 = { version = "1.5", default-features = false }`,
+  num_derive:                `num-derive = "0.4"`,
+  num_traits:                `num-traits = { version = "0.2", default-features = false }`,
 };
 
 /** Extract crate prefixes from IR imports AND from carried-over source text
@@ -114,6 +174,13 @@ opt-level = 3
 `;
 
   if (target === "pinocchio") {
+    const used = extractUsedCrates(ir);
+    const optional = Object.entries(PINOCCHIO_OPTIONAL_DEPS)
+      .filter(([crate]) => used.has(crate))
+      .map(([_, dep]) => dep);
+    const optionalSection = optional.length > 0
+      ? `\n# Auto-detected from source imports — required for the carried-over\n# helpers and CPI calls that reference these external programs.\n${optional.join("\n")}\n`
+      : "";
     return `${header}
 [dependencies]
 borsh = { version = "1.5", features = ["derive"] }
@@ -124,7 +191,7 @@ pinocchio = "0.9"
 pinocchio-system = "0.4"
 pinocchio-token = "0.4"
 pinocchio-associated-token-account = "0.4"
-
+${optionalSection}
 [dev-dependencies]
 # Preferred Pinocchio test harness — in-process SVM, ~10× faster than
 # solana-program-test. Uncomment and run \`cargo test-sbf\` to use it.
