@@ -60,7 +60,7 @@ Working today:
 - 8 bundled demo programs (`amm`, `counter`, `escrow`, `marketplace`, `perp-funding`, `staking`, `vault`, `vesting`)
 - Local emission through the API, `anvil` CLI (7 commands), or `api/test-run.ts`
 - Web playground: paste / file / folder / GitHub repo ingestion, live CU analysis, AI refine, project-bundle download
-- `init_if_needed` (conditional create), `realloc = <expr>` (resize + rent-delta on native), SPL CPI transforms (system transfer, SPL token transfer/mint_to/burn/close_account, ATA create, SPL Memo), `require_{eq,neq,gt,gte,lt,lte}!` macro expansion, PDA seed preservation, `#[borsh(use_discriminant)]` on tagged enums
+- `init_if_needed` (conditional create), `realloc = <expr>` (resize + rent-delta on native), SPL CPI transforms (system transfer, SPL token transfer/mint_to/burn/close_account, ATA create, SPL Memo, Token-2022 checked variants on native), `require_{eq,neq,gt,gte,lt,lte}!` macro expansion, PDA seed preservation, `#[borsh(use_discriminant)]` on tagged enums
 - Multi-statement wrapper inlining — `pub fn foo` bodies that end in a `TypeName::handler(ctx, ...)` delegate (verify-then-handle splits, e.g. dice's `ResolveBet::verify_sig(...)?; ResolveBet::handler(ctx, sig)`) inline correctly
 - Target-aware portability lint (external crates are blockers on pinocchio but ready on native since project-scaffold auto-adds the deps)
 
@@ -68,7 +68,6 @@ Still not production-complete:
 
 - Full semantic validation of every Anchor constraint
 - Impl-method inlining for the `ctx.accounts.foo()` pattern used by some escrow-style programs (partial support — the flattener preserves impl-scoped names, but inlining the method bodies into instruction handlers is held back by an interaction with the CPI-consolidation regex)
-- Token-2022 routing — emitter still sends every SPL token CPI through `spl_token::instruction::*` regardless of source `tokenProgram`; native scaffold ships `spl-token-2022` so the code compiles, but a Token-2022 mint hits a runtime program-id mismatch (lint surfaces this with a "review" verdict and a manual-rewrite suggestion)
 - Zero-copy account layouts (`#[account(zero_copy)]`)
 - Source-level CPI rewrites for external programs (mpl-core, pyth, switchboard) — imports are preserved but structural rewrites aren't
 
