@@ -112,7 +112,10 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
         // scroll internally — bounded height + overflow-y-auto means the
         // Run button can stay `sticky bottom-2` and never sink below the
         // fold no matter how many cards expand.
-        !isTablet && "sticky top-[70px] max-h-[calc(100vh-90px)] overflow-y-auto pr-1"
+        // pb-24 leaves ~6rem of clearance below the last card so the
+        // sticky Run button (sits at bottom-2 with shadow) doesn't visually
+        // overlap card content as the user scrolls down to the end.
+        !isTablet && "sticky top-[70px] max-h-[calc(100vh-90px)] overflow-y-auto pr-1 pb-24"
       )}
     >
       {/* Input source card */}
