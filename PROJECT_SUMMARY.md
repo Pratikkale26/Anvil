@@ -143,9 +143,12 @@ Real-world repo pass rate: 6/6 (unchanged, still locked).
 
 ## What's still open
 
-- **Pinocchio body-CPI ATA Create** — blocked on upstream `pinocchio_associated_token_account` 0.4 using `&AccountView` instead of `&AccountInfo`. Mitigations: (a) hand-roll a `pinocchio::cpi::invoke` against the SPL ATA program ID, (b) wait for the crate to align with pinocchio 0.9's account types. Native target works fine today.
-- **Memo / Token-2022 extensions / Metaplex Core CPI catalog** — Round 2. Memo and Token-2022 basic checked are buildable on native (need crate addition); Metaplex Core is native-only practically. Still speculative without the failing-real-world-contract data run.
-- **Multi-statement wrapper inlining** — the case where a `pub fn foo` body has 2+ statements ending in a delegate call (e.g. dice's `ResolveBet::verify_sig(...)?; ResolveBet::handler(ctx, sig)`). Half-day work.
+- **Pinocchio body-CPI ATA Create** — blocked on upstream `pinocchio_associated_token_account` 0.4 using `&AccountView` instead of `&AccountInfo`. Mitigations: (a) hand-roll a `pinocchio::cpi::invoke` against the SPL ATA program ID (now done — see CPI catalog below), (b) wait for the crate to align with pinocchio 0.9's account types.
+- **CPI catalog status** — body-level CPIs Anvil rewrites structurally:
+  - System transfer, SPL token transfer/mint_to/burn/close_account, ATA create, **SPL Memo** (new in R2): ✅ native + ✅ pinocchio.
+  - **Token-2022 routing**: emitter currently sends every SPL token CPI through `spl_token::instruction::*` regardless of source `tokenProgram`. Native scaffold ships `spl-token-2022 = "6"` so the code compiles, but a Token-2022 mint will hit a runtime program-id mismatch — surfaced in the lint panel with a "review" verdict and a manual-rewrite suggestion. Proper IR-level routing needs `mint` + `decimals` carried on `cpi_spl_*` (Token-2022 deprecates the unchecked variants); deferred to its own pass.
+  - Metaplex Core / Pyth / Switchboard / MPL: out of scope; emit carries the imports verbatim and lint flags them.
+- **Multi-statement wrapper inlining** — done in R2. `pub fn foo` bodies with 2+ statements ending in a `Type::method(ctx, ...)` delegate (e.g. dice's `ResolveBet::verify_sig(...)?; ResolveBet::handler(ctx, sig)`) now inline correctly.
 - **Macro support** — `require_keys_eq!`, `require_eq!`, custom user macros. Biggest single deterministic-coverage unlock for production Anchor programs (voting/multisig/dice all hit this). ~1 day.
 - **Auth / per-key quotas on `/emit?refine=1` and `/build/auto-fix`** — public endpoints with AI cost. Rate-limited per IP but not AI-cost-bounded per caller.
 - **Zero-copy accounts** (`#[account(zero_copy)]`) — `#[repr(C)]` layout preservation needed.
