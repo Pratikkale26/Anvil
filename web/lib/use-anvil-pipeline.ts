@@ -650,12 +650,9 @@ export function useAnvilPipeline() {
       }
 
       const ir = JSON.parse(irText);
-      // Build endpoint expects `src/`-prefixed paths so the scratch project
-      // layout works. Existing outputFiles use bare paths (`lib.rs`, `state.rs`).
-      const filesForBuild = outputFiles.map((f) => ({
-        path: f.path.startsWith("src/") ? f.path : `src/${f.path}`,
-        content: f.content,
-      }));
+      // /build (and /build/auto-fix) take bare paths — the runner places
+      // them under `src/` internally. The earlier double-prefix attempt
+      // ended up at scratch/src/src/lib.rs and broke the lib.rs sanity check.
 
       const res = await fetch(`${API_BASE}/build/auto-fix`, {
         method: "POST",
@@ -663,7 +660,7 @@ export function useAnvilPipeline() {
         body: JSON.stringify({
           target,
           ir,
-          files: filesForBuild,
+          files: outputFiles,
           programName,
           maxIterations: 3,
           maxCostUsd: 0.5,
