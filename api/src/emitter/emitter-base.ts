@@ -21,6 +21,7 @@ import type {
   BodyStatement,
   EmitterOutput,
   EmitterFile,
+  TypeDef,
 } from "../ir/schema.js";
 
 // ─── Re-export utilities for backward compatibility ──────────────────────────
@@ -840,11 +841,20 @@ ${arms}
       const fields = (typeDef.fields ?? [])
         .map((field) => `    pub ${snakeCase(field.name)}: ${this.rustTypeForCustomType(field.type)},`)
         .join("\n");
+      const implBlock = this.emitTypeInherentImpl(typeDef);
       return `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
 pub struct ${typeDef.name} {
 ${fields}
-}`;
+}${implBlock}`;
     }).join("\n\n");
+  }
+
+  /** Append `impl <ThisType> { ...rawItems }` for user-authored helpers like
+   * `Ride::new(...)` constructors. Mirrors the AccountDef-side
+   * emitInherentImplItems hook in the target emitters. */
+  protected emitTypeInherentImpl(typeDef: TypeDef): string {
+    if (!typeDef.implItems || typeDef.implItems.length === 0) return "";
+    return `\n\nimpl ${typeDef.name} {\n${typeDef.implItems.map((s) => `    ${s}`).join("\n\n")}\n}`;
   }
 
   // ─── File header ───────────────────────────────────────────────────────────
@@ -1299,7 +1309,22 @@ ${fields}
    * comment — no false-positive warning.
    */
   protected carriedFunctionBlock(rawCode: string, ir?: SolanaIR): string {
-    const transformed = promoteFreeFnVisibility(this.transformHelperCode(rawCode, ir));
+    let transformed = promoteFreeFnVisibility(this.transformHelperCode(rawCode, ir));
+    // Same module-collapse rewrite as walker.ts.transformNestedAnchorCode —
+    // helpers.rs carries source-side `<modname>::<helper>(...)` calls, but
+    // Anvil flattens helpers into a single module, so collapse those calls
+    // to the bare `<helper>(...)` form. Without this, multi-module fixtures
+    // like carnival hit E0433 unresolved-module on every cross-mod call.
+    if (ir) {
+      const helperNames = new Set((ir.helperFns ?? []).map((h) => h.name));
+      if (helperNames.size > 0) {
+        transformed = transformed.replace(
+          /\b(\w+)::(\w+)\s*\(/g,
+          (full, _modName: string, fnName: string) =>
+            helperNames.has(fnName) ? `${fnName}(` : full,
+        );
+      }
+    }
     // Check the *transformed* code for residual Anchor patterns — the transform
     // may have cleaned up everything that was originally Anchor-specific.
     if (!hasResidualAnchorPatterns(transformed)) {

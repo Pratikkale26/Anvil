@@ -135,7 +135,17 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
     const helperFns = topLevel.helperFns.map((h) => parseHelperFn(h.node));
 
     // ── Parse custom types ──
-    const types = topLevel.customTypes.map((t) => parseCustomType(t.node, t.kind));
+    const types = topLevel.customTypes.map((t) => {
+      const def = parseCustomType(t.node, t.kind);
+      // Same impl-items attachment as accounts above. Plain Rust types like
+      // carnival's `Ride`/`Game` carry `impl X { fn new(...) }` constructors
+      // that the helpers/instructions reference.
+      const matching = topLevel.implItems
+        .filter((it) => it.implName === def.name)
+        .map((it) => it.rawText);
+      if (matching.length > 0) def.implItems = matching;
+      return def;
+    });
     const constants = topLevel.constants.map((node) => node.text);
 
     const irRaw: SolanaIR = {

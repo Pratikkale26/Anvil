@@ -808,6 +808,45 @@ export class BodyWalker {
     // a comment. Block comments are kept (rare and usually intentional).
     let transformed = code.replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 
+    // Collapse `<module>::<helper>(...)` to `<helper>(...)` when <helper>
+    // matches a known helper function in the IR. Anvil flattens helpers into
+    // a single helpers.rs module, but Anchor source organizes them across
+    // submodules (e.g. carnival's `ride::get_rides()`, `game::get_games()`).
+    // Without this rewrite the call sites reference modules that no longer
+    // exist in the emit. Only collapses simple module prefixes (single ident),
+    // not nested paths like `crate::state::ride::get_rides`.
+    const helperNames = new Set((this.ir.helperFns ?? []).map((h) => h.name));
+    if (helperNames.size > 0) {
+      transformed = transformed.replace(
+        /\b(\w+)::(\w+)\s*\(/g,
+        (full, _modName: string, fnName: string) =>
+          helperNames.has(fnName) ? `${fnName}(` : full,
+      );
+    }
+
+    // Drop redundant `.into()` on `Err(<TypeOrVariant>::Foo.into())` — Anchor
+    // wraps return errors with `.into()` for its custom Error type, but
+    // native/pinocchio targets just return ProgramError directly so the
+    // identity conversion is ambiguous (E0283 type annotations needed).
+    // Conservative match: only the trailing `.into()` immediately after a
+    // `::Variant` ident, inside an Err(...) wrapper.
+    transformed = transformed.replace(
+      /\bErr\(\s*(\w+(?:::\w+)+)\.into\(\)\s*\)/g,
+      "Err($1)",
+    );
+
+    // `Err(<Type>::Variant)` as a whole-statement pass-through (or the last
+    // expression in a body) leaves the Err's generic Ok-type unbound — rustc
+    // can't infer it (E0282 type annotations needed). Convert bare
+    // `Err(...)` (with or without trailing `;`) to `return Err(...);` so the
+    // function return type binds the generic. Operates on whole-statement
+    // pass_through bodies (anchored at start/end with optional whitespace
+    // or trailing semicolon) so we don't grab match arms / Ok|Err patterns.
+    transformed = transformed.replace(
+      /^\s*Err\(\s*(\w+(?:::\w+)+)\s*\)\s*;?\s*$/,
+      (_full) => `return Err(${_full.match(/Err\(\s*([\w:]+)\s*\)/)?.[1]});`,
+    );
+
     const replaceCpi = (
       pattern: RegExp,
       build: (...groups: string[]) => string,

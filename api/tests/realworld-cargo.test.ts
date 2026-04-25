@@ -113,6 +113,19 @@ const MUST_PASS: Case[] = [
   // Signer<&[Seed]> without runtime allocation; needs a separate const-aware
   // emit pass.
   { id: "pda-rent-payer", target: "native", path: "basics/pda-rent-payer/anchor/programs/anchor-program-example/src/lib.rs" },
+
+  // carnival: multi-module within one program (state/{ride,game,food}.rs +
+  // instructions/{get_on_ride,play_game,eat_food}.rs). Three correlated
+  // emitter improvements unblock it: (a) collapse `<modname>::<helper>(...)`
+  // → `<helper>(...)` in both walker pass-through AND helpers.rs emit when
+  // helper is in IR.helperFns; (b) extend implItems collection to TypeDef
+  // (was AccountDef-only) so carnival's `Ride::new(...)`/`Game::new(...)`/
+  // `FoodStand::new(...)` constructors land; (c) drop redundant `.into()` on
+  // `Err(<Type>::Variant.into())` and convert standalone `Err(...);` to
+  // `return Err(...);` so rustc can bind the Err's generic Ok-type via the
+  // function signature.
+  { id: "carnival", target: "pinocchio", path: "basics/repository-layout/anchor/programs/carnival/src/lib.rs" },
+  { id: "carnival", target: "native",    path: "basics/repository-layout/anchor/programs/carnival/src/lib.rs" },
 ];
 
 if (existsSync(PROG_EX)) {

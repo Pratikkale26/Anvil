@@ -367,6 +367,11 @@ export const TypeDefSchema = z.object({
   fields: z.array(AccountFieldSchema).optional(),
   variants: z.array(z.string()).optional(),
   rawCode: z.string().optional(),
+  /** Same as AccountDef.implItems — raw text of `impl <ThisType> { ... }` items
+   * (associated fns + consts) carried over verbatim by the emitter so call
+   * sites like `Ride::new(...)` resolve. Most relevant for plain Rust state
+   * (carnival's `Ride`/`Game`/`FoodStand`) and instruction-data wrappers. */
+  implItems: z.array(z.string()).optional(),
 });
 
 export type TypeDef = z.infer<typeof TypeDefSchema>;
