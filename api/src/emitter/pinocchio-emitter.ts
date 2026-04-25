@@ -262,19 +262,36 @@ ${arms}
   }
 
   override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string): string {
-    // ATA creation on Pinocchio currently has an upstream version mismatch:
-    // pinocchio_associated_token_account 0.4 takes `&solana_account_view::AccountView`,
-    // while pinocchio 0.9's `&accounts[N]` returns `&pinocchio::account_info::AccountInfo`.
-    // No automatic conversion exists. Until the crate aligns, emit a flagged
-    // TODO so the validator surfaces it as a blocker and the user can either
-    //   (a) target Native instead (full ATA support there), or
-    //   (b) hand-roll a raw `pinocchio::cpi::invoke(...)` against the SPL
-    //       ATA program ID — concrete pubkey: ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL
-    return `    // ⚠️ Anvil: Review — ATA Create on Pinocchio (manual rewrite required)
-    // pinocchio_associated_token_account 0.4 expects &AccountView; we have &AccountInfo.
-    // TODO(manual): rewrite as pinocchio::cpi::invoke(...) with SPL ATA program ID,
-    // or run with --target native for first-class ATA support.
-    // Inputs: ata=${ata} payer=${payer} mint=${mint} authority=${authority}`;
+    // pinocchio_associated_token_account 0.4 takes &AccountView, but pinocchio
+    // 0.9's account slice gives us &AccountInfo. Different types, no automatic
+    // conversion. So we hand-roll the CPI against the SPL ATA program ID
+    // (ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL) — pubkey bytes are a
+    // const, instruction data is empty, accounts list matches the Anchor ATA
+    // create order: payer, ata, owner, mint, system_program, token_program.
+    return `    // Create Associated Token Account: ${ata}
+    {
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131,
+            11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
+        ];
+        let __ata_metas = [
+            pinocchio::instruction::AccountMeta::new(${payer}.key(), true, true),
+            pinocchio::instruction::AccountMeta::new(${ata}.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(${authority}.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(${mint}.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
+        ];
+        let __ata_ix = pinocchio::instruction::Instruction {
+            program_id: &ATA_PROGRAM_ID,
+            accounts: &__ata_metas,
+            data: &[],
+        };
+        pinocchio::cpi::invoke(
+            &__ata_ix,
+            &[${payer}, ${ata}, ${authority}, ${mint}, system_program, token_program],
+        )?;
+    }`;
   }
 
   override emitPdaSignerSeeds(
