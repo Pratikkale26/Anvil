@@ -531,6 +531,20 @@ ${invokeCall}
         if (name.endsWith("_account")) return `${name}.key().as_ref()`;
         if (name === account) return `${accountInfoVar}.key().as_ref()`;
         if (stateVar && name === stateVar) return `${accountInfoVar}.key().as_ref()`;
+        // Anchor non-state accounts (Signer, Account<Mint>, AccountInfo, …)
+        // are bound by their bare name in the generated handler — `let maker
+        // = &accounts[N];` — never `<name>_account`. Only state-typed
+        // accounts (entries that match a generated state account in
+        // currentIr.accounts) get the `_account` raw-info pseudo-var while
+        // the typed struct lives under the bare name. Falling through to
+        // `<name>_account` for non-state accounts produces an
+        // unresolved-identifier error during cargo check.
+        const isStateAccount = this.currentIr?.accounts.some(
+          (acc) => snakeCase(acc.name) === snakeCase(name),
+        );
+        if (!isStateAccount) {
+          return `${name}.key().as_ref()`;
+        }
         return `${name}_account.key().as_ref()`;
       }
       // &[account.bump] → &[data_var.bump]
