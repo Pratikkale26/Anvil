@@ -93,6 +93,36 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
     return extractSplBurn(callNode);
   }
 
+  // ── Unqualified legacy SPL Token CPI calls (post-consolidation) ──
+  // After CpiContext consolidation collapses the user's let-bound accounts
+  // struct into the call expression, the function name appears unqualified
+  // (`transfer(CpiContext::new_with_signer(...))?`) when the user wrote
+  // `use anchor_spl::token::{Transfer, transfer};`. Distinguish from the
+  // anchor_lang::system_program::transfer form by inspecting the inline
+  // struct: SPL `Transfer` has an `authority:` field while system's doesn't.
+  if (funcText === "transfer") {
+    const argsNode = callNode.childForFieldName("arguments");
+    const args = argsNode ? getArguments(argsNode) : [];
+    const firstArg = args[0];
+    const isSplShape =
+      !!firstArg &&
+      firstArg.text.includes("Transfer") &&
+      /\bauthority\s*:/.test(firstArg.text);
+    if (isSplShape) return extractSplTransfer(callNode);
+    // Fall through — likely system_program::transfer; the system branch
+    // below handles namespaced forms.
+  }
+  if (funcText === "mint_to" || funcText === "burn" || funcText === "close_account") {
+    const argsNode = callNode.childForFieldName("arguments");
+    const args = argsNode ? getArguments(argsNode) : [];
+    const firstArg = args[0];
+    if (firstArg && firstArg.text.includes("CpiContext::")) {
+      if (funcText === "mint_to") return extractSplMintTo(callNode);
+      if (funcText === "burn") return extractSplBurn(callNode);
+      if (funcText === "close_account") return extractSplCloseAccount(callNode);
+    }
+  }
+
   // ── Unqualified _checked variants (post-consolidation) ──
   // After CpiContext consolidation collapses
   // `let cpi_ctx = CpiContext::new(prog, TransferChecked { ... });

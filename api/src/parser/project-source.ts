@@ -719,6 +719,43 @@ function consolidateMultiStatementCpi(source: string): string {
     return `${intermediate}${nsPrefix}${fnName}(${ctx}${argsPart})${tryOp};`;
   });
 
+  // ── Inline-CpiContext form (anchor-vault-manager cohort) ──
+  // The CpiContext::new_with_signer is constructed INSIDE the call expression
+  // rather than via a separate `let cpi_ctx = …` binding:
+  //   let tx_instruct = Transfer { from, to, authority };
+  //   let cpi_program = ctx.accounts.token_program.to_account_info();
+  //   transfer(CpiContext::new_with_signer(cpi_program, tx_instruct, signer_seeds), amount)?;
+  // The existing detector handles inline CpiContext::new_with_signer when the
+  // accounts arg is itself an inline struct, but here it's a variable ref
+  // (`tx_instruct`). Inline the struct in place of the var so the detector
+  // can extract fields.
+  const inlineCpiStmt = new RegExp(
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*(` + structAlt + String.raw`)\s*\{([\s\S]*?)\};` + ws +
+    String.raw`((?:let\s+\w+(?:\s*:\s*[^=;]+?)?\s*=\s*(?!CpiContext::)[^;]+;\s*)*)` +
+    String.raw`((?:\w+::)*)(\w+)\(\s*CpiContext::new_with_signer\(\s*([\s\S]+?)\s*,\s*\1\s*,\s*([\s\S]+?)\s*,?\s*\)\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
+    "g",
+  );
+  out = out.replace(inlineCpiStmt, (_full, _accVar: string, struct: string, fields: string, intermediate: string, nsPrefix: string, fnName: string, programExpr: string, signerSeeds: string, args: string | undefined, q: string | undefined) => {
+    const ctx = `CpiContext::new_with_signer(${programExpr.trim()}, ${struct} {${fields}}, ${signerSeeds.trim()})`;
+    const argsPart = args && args.trim() ? `, ${args.trim()}` : "";
+    const tryOp = q ?? "";
+    return `${intermediate}${nsPrefix}${fnName}(${ctx}${argsPart})${tryOp};`;
+  });
+
+  // Same shape but for unsigned `CpiContext::new(prog, accVar)` inside the call.
+  const inlineCpiUnsignedStmt = new RegExp(
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*(` + structAlt + String.raw`)\s*\{([\s\S]*?)\};` + ws +
+    String.raw`((?:let\s+\w+(?:\s*:\s*[^=;]+?)?\s*=\s*(?!CpiContext::)[^;]+;\s*)*)` +
+    String.raw`((?:\w+::)*)(\w+)\(\s*CpiContext::new\(\s*([\s\S]+?)\s*,\s*\1\s*,?\s*\)\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
+    "g",
+  );
+  out = out.replace(inlineCpiUnsignedStmt, (_full, _accVar: string, struct: string, fields: string, intermediate: string, nsPrefix: string, fnName: string, programExpr: string, args: string | undefined, q: string | undefined) => {
+    const ctx = `CpiContext::new(${programExpr.trim()}, ${struct} {${fields}})`;
+    const argsPart = args && args.trim() ? `, ${args.trim()}` : "";
+    const tryOp = q ?? "";
+    return `${intermediate}${nsPrefix}${fnName}(${ctx}${argsPart})${tryOp};`;
+  });
+
   // ── Memo two-statement form: inline-struct CpiContext + build_memo call ──
   // `BuildMemo` is a fieldless marker struct, so Anchor code constructs it
   // inline inside `CpiContext::new(prog, memo::BuildMemo {})` rather than via
