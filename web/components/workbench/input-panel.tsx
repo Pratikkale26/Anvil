@@ -11,8 +11,10 @@ import {
 import type { AnvilPipelineState } from "@/lib/use-anvil-pipeline";
 import { cn } from "@/lib/utils";
 import {
+  CheckCircle2,
   Download,
   FolderOpen,
+  Hammer,
   Layers3,
   Loader2,
   Play,
@@ -20,6 +22,7 @@ import {
   Sparkles,
   Undo2,
   Upload,
+  XCircle,
 } from "lucide-react";
 import {
   ActionButton,
@@ -75,6 +78,10 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
     runRefine,
     revertRefine,
     canRevertRefine,
+    runBuild,
+    buildBusy,
+    buildResult,
+    buildError,
     handleLocalFileChange,
     handleFolderChange,
     downloadDiagnostics,
@@ -601,6 +608,132 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+          </div>
+        </Panel>
+      )}
+
+      {/* Verify build — runs cargo check on the emitted output and surfaces
+          rustc diagnostics. Ground-truth correctness signal: green here means
+          the generated code actually compiles. */}
+      {hasOutput && (
+        <Panel>
+          <PanelHead icon={Hammer} title="Verify build" />
+          <div className="p-3 flex flex-col gap-2.5">
+            <div className="text-xs text-anvil-text-muted leading-relaxed">
+              {buildResult
+                ? buildResult.ok
+                  ? "Generated code compiles cleanly with cargo check."
+                  : `${buildResult.errors.length} compile error${buildResult.errors.length === 1 ? "" : "s"} reported by rustc.`
+                : "Run cargo check on the emitted output. Real compile errors, not heuristics."}
+            </div>
+
+            <button
+              onClick={() => void runBuild()}
+              disabled={buildBusy || !hasOutput}
+              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-none font-extrabold text-sm transition-all"
+              style={{
+                cursor: buildBusy ? "default" : "pointer",
+                background: buildBusy
+                  ? "rgba(255,255,255,0.05)"
+                  : buildResult?.ok
+                    ? "linear-gradient(135deg, rgba(14,168,128,0.9), rgba(11,140,107,0.9))"
+                    : "linear-gradient(135deg, rgba(245,166,35,0.85), rgba(232,130,10,0.85))",
+                color: buildBusy ? C.textMuted : "#0a0600",
+              }}
+            >
+              {buildBusy ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" /> Running cargo
+                  check...
+                </>
+              ) : buildResult?.ok ? (
+                <>
+                  <CheckCircle2 size={14} /> Build verified — {buildResult.durationMs}ms
+                </>
+              ) : (
+                <>
+                  <Hammer size={14} />{" "}
+                  {buildResult ? "Re-run cargo check" : "Verify build"}
+                </>
+              )}
+            </button>
+
+            {buildError && (
+              <div className="p-3 rounded-xl bg-[rgba(224,90,90,0.1)] border border-[rgba(224,90,90,0.22)] text-[#ffb5b5] text-xs leading-relaxed">
+                <div className="font-bold mb-1">Build endpoint unreachable</div>
+                <div className="opacity-90">{buildError}</div>
+              </div>
+            )}
+
+            {buildResult && (
+              <div
+                className="px-3 py-2.5 rounded-xl border flex items-center gap-3"
+                style={{
+                  borderColor: buildResult.ok
+                    ? "rgba(14,168,128,0.35)"
+                    : "rgba(224,90,90,0.35)",
+                  background: buildResult.ok
+                    ? "rgba(14,168,128,0.08)"
+                    : "rgba(224,90,90,0.07)",
+                }}
+              >
+                {buildResult.ok ? (
+                  <CheckCircle2 size={16} style={{ color: C.teal }} />
+                ) : (
+                  <XCircle size={16} style={{ color: C.red }} />
+                )}
+                <div className="text-[11px] text-anvil-text-muted leading-tight">
+                  <div className="font-mono text-[12px] font-extrabold text-anvil-text">
+                    {buildResult.errors.length} error
+                    {buildResult.errors.length === 1 ? "" : "s"} ·{" "}
+                    {buildResult.warnings.length} warning
+                    {buildResult.warnings.length === 1 ? "" : "s"} ·{" "}
+                    {buildResult.durationMs}ms
+                  </div>
+                  {buildResult.ok
+                    ? "Generated bundle is ready to ship."
+                    : "Click AI Refine above to feed these into the repair model."}
+                </div>
+              </div>
+            )}
+
+            {/* First-3 error preview so the user can see what to fix without
+                opening another tab. Full list lands in /build's response and
+                in the future Verify pane (TODO). */}
+            {buildResult && buildResult.errors.length > 0 && (
+              <div className="flex flex-col gap-1.5 max-h-[160px] overflow-y-auto">
+                {buildResult.errors.slice(0, 5).map((e, i) => (
+                  <div
+                    key={`${e.filePath}:${e.line ?? 0}:${i}`}
+                    className="px-2.5 py-2 rounded-[10px] text-xs"
+                    style={{
+                      border: "1px solid rgba(224,90,90,0.3)",
+                      background: "rgba(224,90,90,0.06)",
+                    }}
+                  >
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="font-mono text-[11px] text-anvil-text">
+                        {e.filePath}
+                        {e.line ? `:${e.line}` : ""}
+                      </span>
+                      {e.code && (
+                        <span className="text-[10px] font-bold text-[#ffb5b5]">
+                          {e.code}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-anvil-text-muted mt-1">
+                      {e.message}
+                    </div>
+                  </div>
+                ))}
+                {buildResult.errors.length > 5 && (
+                  <div className="text-[10px] text-anvil-text-dim text-center">
+                    + {buildResult.errors.length - 5} more
+                  </div>
+                )}
               </div>
             )}
           </div>

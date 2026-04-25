@@ -13,6 +13,7 @@ import type { AnvilPipelineState } from "@/lib/use-anvil-pipeline";
 import { cn } from "@/lib/utils";
 import {
   CheckCircle2,
+  Columns2,
   Copy,
   Download,
   FileArchive,
@@ -59,6 +60,12 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     downloadDiagnostics,
     resolvedSource,
     setShowCompare,
+    runCompareTargets,
+    closeCompareTargets,
+    compareTarget,
+    compareTargetCode,
+    compareTargetBusy,
+    compareTargetError,
   } = state;
 
   // File-tree filter. Shown above the list once the project has enough files
@@ -242,6 +249,29 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                 onClick={downloadDiagnostics}
               >
                 <Sparkles size={14} />
+              </IconBtn>
+            )}
+            {hasOutput && (
+              <IconBtn
+                title={compareTarget
+                  ? `Hide compare — currently showing ${compareTarget}`
+                  : `Compare with ${target === "pinocchio" ? "native" : "pinocchio"} side-by-side`}
+                onClick={() => {
+                  if (compareTarget) {
+                    closeCompareTargets();
+                  } else {
+                    const other: "pinocchio" | "native" =
+                      target === "pinocchio" ? "native" : "pinocchio";
+                    void runCompareTargets(other);
+                  }
+                }}
+                disabled={compareTargetBusy}
+              >
+                {compareTargetBusy ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Columns2 size={14} />
+                )}
               </IconBtn>
             )}
           </div>
@@ -511,18 +541,61 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
               </div>
             ))}
 
-          {/* Single file tab */}
-          {activePane === "single" && (
-            <div style={{ height: editorHeight }}>
-              <Editor
-                height={`${editorHeight}px`}
-                language="rust"
-                value={singleFileCode}
-                theme="vs-dark"
-                options={MONACO_OPTS}
-              />
-            </div>
-          )}
+          {/* Single file tab — split into a compare-targets layout when the
+              user has clicked the columns icon to view another target side
+              by side. The compare side is read-only and never affects the
+              primary `singleFileCode`. */}
+          {activePane === "single" &&
+            (compareTarget ? (
+              <div
+                className={cn(
+                  "grid",
+                  isMobile ? "grid-cols-1" : "grid-cols-2"
+                )}
+                style={{ height: editorHeight }}
+              >
+                <div className="border-r border-anvil-line">
+                  <div className="px-3 py-1.5 bg-anvil-card border-b border-anvil-line text-[11px] font-bold text-anvil-text-muted">
+                    {target.toUpperCase()} (current)
+                  </div>
+                  <Editor
+                    height={`${editorHeight - 28}px`}
+                    language="rust"
+                    value={singleFileCode}
+                    theme="vs-dark"
+                    options={MONACO_OPTS}
+                  />
+                </div>
+                <div>
+                  <div className="px-3 py-1.5 bg-anvil-card border-b border-anvil-line text-[11px] font-bold text-anvil-text-muted">
+                    {compareTarget.toUpperCase()} (compare)
+                  </div>
+                  {compareTargetError ? (
+                    <div className="p-4 text-center text-[#ffaaaa] text-[13px]">
+                      Compare failed: {compareTargetError}
+                    </div>
+                  ) : (
+                    <Editor
+                      height={`${editorHeight - 28}px`}
+                      language="rust"
+                      value={compareTargetCode}
+                      theme="vs-dark"
+                      options={{ ...MONACO_OPTS, readOnly: true }}
+                    />
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div style={{ height: editorHeight }}>
+                <Editor
+                  height={`${editorHeight}px`}
+                  language="rust"
+                  value={singleFileCode}
+                  theme="vs-dark"
+                  options={MONACO_OPTS}
+                />
+              </div>
+            ))}
 
           {/* File tree tab */}
           {activePane === "files" &&

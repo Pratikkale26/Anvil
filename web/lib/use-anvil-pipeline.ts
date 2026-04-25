@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   API_BASE,
+  type BuildResult,
   type CUEstimate,
   type EmitFile,
   type EmitResponse,
@@ -65,6 +66,24 @@ export function useAnvilPipeline() {
   const [lintReport, setLintReport] = useState<LintReport | null>(null);
   const [lintBusy, setLintBusy] = useState(false);
   const [reviewReport, setReviewReport] = useState<ReviewReport | null>(null);
+
+  // ─── Compare-targets state ────────────────────────────────────────────────
+  // Lets the user see pinocchio + native side-by-side without re-parsing.
+  // Emits the same IR for the other target on demand and renders into a
+  // split editor pane.
+  const [compareTarget, setCompareTarget] = useState<Target | null>(null);
+  const [compareTargetCode, setCompareTargetCode] = useState<string>("");
+  const [compareTargetBusy, setCompareTargetBusy] = useState(false);
+  const [compareTargetError, setCompareTargetError] = useState<string | null>(null);
+
+  // ─── Verify-build state ───────────────────────────────────────────────────
+  // /build runs cargo check on the emitted output. Result is the full set of
+  // rustc diagnostics — used both as a UI display and as the input to the
+  // optional auto-fix loop (call refine with the cargo errors as ground-truth
+  // validation issues, instead of the regex validator's heuristic findings).
+  const [buildResult, setBuildResult] = useState<BuildResult | null>(null);
+  const [buildBusy, setBuildBusy] = useState(false);
+  const [buildError, setBuildError] = useState<string | null>(null);
 
   // ─── Refine state ─────────────────────────────────────────────────────────
   const [refineResult, setRefineResult] = useState<RefineResult | null>(null);
@@ -294,6 +313,11 @@ export function useAnvilPipeline() {
     setHasAppliedRefine(false);
     setShowCompare(false);
     setPreRefineSnapshot(null);
+    setBuildResult(null);
+    setBuildError(null);
+    setCompareTarget(null);
+    setCompareTargetCode("");
+    setCompareTargetError(null);
 
     try {
       let parsed: ParseResponse;
@@ -545,6 +569,90 @@ export function useAnvilPipeline() {
     // back to N" if the user runs refine again afterwards.
   }
 
+  /**
+   * Re-emit the parsed IR for a different target (pinocchio ↔ native) so the
+   * user can see both side-by-side without going back through parse. Pure
+   * frontend re-fetch — does not touch the primary `singleFileCode` /
+   * `outputFiles` state, so the active workbench view is preserved.
+   */
+  async function runCompareTargets(other: Target) {
+    if (!irText) {
+      setCompareTargetError("Run the deterministic pipeline first.");
+      return;
+    }
+    if (other === target) {
+      setCompareTargetError("Pick the other target — current target matches.");
+      return;
+    }
+    try {
+      setCompareTargetBusy(true);
+      setCompareTargetError(null);
+      setCompareTarget(other);
+
+      const ir = JSON.parse(irText);
+      const res = await fetch(`${API_BASE}/emit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ir, target: other, multiFile: false }),
+      });
+      if (!res.ok) {
+        const p = await res.json().catch(() => ({ error: "Compare emit failed" }));
+        throw new Error(p.details ?? p.error ?? "Compare emit failed");
+      }
+      const emitted = (await res.json()) as EmitResponse;
+      setCompareTargetCode(emitted.code ?? "");
+    } catch (err) {
+      setCompareTargetError(err instanceof Error ? err.message : String(err));
+      setCompareTarget(null);
+    } finally {
+      setCompareTargetBusy(false);
+    }
+  }
+
+  function closeCompareTargets() {
+    setCompareTarget(null);
+    setCompareTargetCode("");
+    setCompareTargetError(null);
+  }
+
+  /**
+   * Verify build — POST the current emitted files to /build, which runs
+   * `cargo check` on a warm scratch project and returns rustc diagnostics.
+   * This is the ground-truth correctness signal: a green build means the
+   * generated code actually compiles, no heuristics involved.
+   */
+  async function runBuild() {
+    if (!outputFiles.length || !programName) {
+      setBuildError("Run the deterministic pipeline first.");
+      return;
+    }
+    try {
+      setBuildBusy(true);
+      setBuildError(null);
+      setBuildResult(null);
+
+      const res = await fetch(`${API_BASE}/build`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target,
+          files: outputFiles,
+          programName,
+        }),
+      });
+      if (!res.ok) {
+        const p = await res.json().catch(() => ({ error: "Build failed" }));
+        throw new Error(p.details ?? p.error ?? "Build failed");
+      }
+      const result = (await res.json()) as BuildResult;
+      setBuildResult(result);
+    } catch (err) {
+      setBuildError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBuildBusy(false);
+    }
+  }
+
   return {
     // Core
     mode,
@@ -626,6 +734,16 @@ export function useAnvilPipeline() {
     runRefine,
     revertRefine,
     canRevertRefine: preRefineSnapshot !== null && hasAppliedRefine,
+    runBuild,
+    buildBusy,
+    buildResult,
+    buildError,
+    runCompareTargets,
+    closeCompareTargets,
+    compareTarget,
+    compareTargetCode,
+    compareTargetBusy,
+    compareTargetError,
     handleLocalFileChange,
     handleFolderChange,
     copyActiveContent,

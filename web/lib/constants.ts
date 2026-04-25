@@ -117,6 +117,28 @@ export type ProviderUsage = {
   estimatedCostUsd?: number;
 };
 
+/**
+ * Structured rustc diagnostic returned by /build. One per error or warning
+ * cargo check produced. Mirrors the shape the build endpoint returns.
+ */
+export type BuildError = {
+  filePath: string;
+  line?: number;
+  column?: number;
+  code?: string;
+  message: string;
+  spanText?: string;
+  severity: "error" | "warning";
+};
+
+export type BuildResult = {
+  ok: boolean;
+  durationMs: number;
+  errors: BuildError[];
+  warnings: BuildError[];
+  stderrTail?: string;
+};
+
 export type ErrorDelta = { before: number; after: number };
 
 export type RefineResult = {
