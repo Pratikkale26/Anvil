@@ -257,6 +257,15 @@ export abstract class BaseEmitter {
         if (statement.startsWith("use anchor_spl::")) return false;
         if (/^use\s*\{[\s\S]*\banchor_spl::/.test(statement)) return false;
         if (/\banchor_spl\b/.test(statement)) return false;
+        // Sibling Anchor program imports — `use <crate>::cpi::*`,
+        // `<crate>::accounts::*`, `<crate>::program::*` are Anchor's
+        // auto-generated cross-program-invocation surface for a sibling
+        // program in the same workspace. The standalone Anvil emit doesn't
+        // ship those crates, and the corresponding CPI call sites in the
+        // body are emitted as TODO stubs (see pass-through.ts handler).
+        // Drop the imports so the file compiles. Affects fixtures like
+        // cpi-hand → cpi-lever.
+        if (/^use\s+\w+::(?:cpi|accounts|program)(?:::|;)/.test(statement)) return false;
         // External crates: native carries them through (project-scaffold adds
         // matching deps to Cargo.toml). Pinocchio/Quasar filter them out
         // because there's no compatible dep in their Cargo.toml.

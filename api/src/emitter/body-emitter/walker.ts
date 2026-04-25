@@ -1027,23 +1027,30 @@ export class BodyWalker {
     );
 
     // Transform module::cpi::function(cpi_ctx, args) patterns
+    // Generic external-program CPI stub. Same rationale as the Metaplex /
+    // pass-through stubs: the reference skeleton uses solana_program types
+    // not in scope on pinocchio, and even on native the cpi_data is empty
+    // so the CPI would fail anyway. Comment it out so the file compiles
+    // and leave a clear TODO(manual) for the user. Affects fixtures like
+    // cpi-hand → cpi-lever.
     transformed = transformed.replace(
       /(\w+)::cpi::(\w+)\(cpi_ctx\s*(?:,\s*([\s\S]*?))?\)\s*(?:\?;|;)/g,
       (_full, _module: string, fnName: string, args: string) => {
         const instrName = snakeCase(fnName);
         const argsStr = args ? `, ${args.trim()}` : "";
-        return `// ⚠️ Anvil: CPI to external program — build instruction data manually\n    // Original: ${_module}::cpi::${fnName}(ctx${argsStr})\n    // Use invoke() with the target program's instruction format\n    {\n        let mut cpi_data = Vec::new();\n        // TODO: Build instruction discriminator + args for '${instrName}'\n        invoke(\n            &solana_program::instruction::Instruction {\n                program_id: *cpi_program.key,\n                accounts: cpi_accounts.iter().map(|a| solana_program::instruction::AccountMeta {\n                    pubkey: *a.key,\n                    is_signer: a.is_signer,\n                    is_writable: a.is_writable,\n                }).collect(),\n                data: cpi_data,\n            },\n            cpi_accounts,\n        )?;\n    }`;
+        return `// ⚠️ Anvil: CPI to external program ${_module}::cpi::${fnName} — manual rebuild required\n    // Original: ${_module}::cpi::${fnName}(ctx${argsStr})\n    // TODO(manual): build instruction data for '${instrName}' against the\n    // target program's discriminator + arg layout. Reference skeleton below\n    // is commented out (does not compile out of the box):\n    //\n    // {\n    //     let mut cpi_data = Vec::new();\n    //     // TODO: Build instruction discriminator + args for '${instrName}'\n    //     invoke(\n    //         &solana_program::instruction::Instruction {\n    //             program_id: *cpi_program.key,\n    //             accounts: cpi_accounts.iter().map(|a| solana_program::instruction::AccountMeta {\n    //                 pubkey: *a.key,\n    //                 is_signer: a.is_signer,\n    //                 is_writable: a.is_writable,\n    //             }).collect(),\n    //             data: cpi_data,\n    //         },\n    //         cpi_accounts,\n    //     )?;\n    // }`;
       },
     );
 
-    // Also handle switch_power(cpi_ctx, name) style (no :: prefix)
+    // Also handle switch_power(cpi_ctx, name) style (no :: prefix). Same
+    // comment-out treatment.
     transformed = transformed.replace(
       /(\w+)\(cpi_ctx\s*(?:,\s*([\s\S]*?))?\)\s*\?;/g,
       (_full, fnName: string, args: string) => {
         if (fnName === "invoke" || fnName === "invoke_signed") return _full;
         const instrName = snakeCase(fnName);
         const argsStr = args ? `, ${args.trim()}` : "";
-        return `// ⚠️ Anvil: CPI — build instruction data manually\n    // Original: ${fnName}(ctx${argsStr})\n    {\n        let mut cpi_data = Vec::new();\n        // TODO: Build instruction discriminator + args for '${instrName}'\n        invoke(\n            &solana_program::instruction::Instruction {\n                program_id: *cpi_program.key,\n                accounts: cpi_accounts.iter().map(|a| solana_program::instruction::AccountMeta {\n                    pubkey: *a.key,\n                    is_signer: a.is_signer,\n                    is_writable: a.is_writable,\n                }).collect(),\n                data: cpi_data,\n            },\n            cpi_accounts,\n        )?;\n    }`;
+        return `// ⚠️ Anvil: CPI to external program ${fnName} — manual rebuild required\n    // Original: ${fnName}(ctx${argsStr})\n    // TODO(manual): build instruction data for '${instrName}'. See sibling\n    // walker stub above for skeleton.`;
       },
     );
 
