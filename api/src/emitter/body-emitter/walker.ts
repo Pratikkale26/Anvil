@@ -348,6 +348,24 @@ export class BodyWalker {
 
   normalizeSeedExpr(seed: string): string {
     let normalized = seed;
+    // Strip `.to_account_info()` calls on AccountInfo references. The impl-
+    // method inliner can produce seeds like `ctx.accounts.maker.to_account_info()
+    // .key.as_ref()` after substituting a wrapper body that used `self.maker
+    // .to_account_info().key.as_ref()`. Both Pinocchio and native targets
+    // already give us a `&AccountInfo`, so the conversion is a noop and
+    // leaving it in trips up cargo check (no method `to_account_info` on
+    // `&AccountInfo`).
+    normalized = normalized.replace(/\.to_account_info\(\)/g, "");
+    // Handle `ctx.accounts.X.key.as_ref()` / `ctx.accounts.X.key().as_ref()`
+    // BEFORE the inner ctx.accounts.X.Y regex below — the inner regex matches
+    // greedily on `ctx.accounts.X.key`, returning the AccountInfo var alone
+    // and leaving a stray `.as_ref()` that emits `<var>.as_ref()` (which
+    // does not exist on &AccountInfo).
+    normalized = normalized.replace(
+      /ctx\.accounts\.(\w+)\.key(?:\(\))?\.as_ref\(\)/g,
+      (_full, name: string) =>
+        this.emitter.emitAccountKeyAsRefExpr(this.resolveAccountInfoVar(snakeCase(name))),
+    );
     normalized = normalized.replace(
       /ctx\.accounts\.(\w+)\.(\w+)/g,
       (_full, name: string, field: string) => {

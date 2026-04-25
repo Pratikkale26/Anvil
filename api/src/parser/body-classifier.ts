@@ -546,9 +546,27 @@ function extractPdaSeeds(
   valueNode: SyntaxNode,
 ): { seeds: string[]; bumpField?: string } | null {
   // The value should be a reference to an array: &[seed1, seed2, ...]
-  const arrayNode =
+  let arrayNode =
     findDescendant(valueNode, "array_expression");
   if (!arrayNode) return null;
+
+  // Anchor's pre-canonicalized form is `&[seed1, seed2, ...]` (a single-level
+  // flat array). The impl-method inliner can pull through a doubly-wrapped
+  // shape used by signer_seeds: `[&[seed1, seed2, ...]]` — an outer 1-element
+  // array around a `&[...]` reference around the actual seed list. In that
+  // case findDescendant lands on the OUTER array and the seed enumeration
+  // collapses the entire inner list into a single string element, which the
+  // emitter then treats as one opaque seed and double-wraps. Detect the
+  // wrapped form and descend into the inner array so seeds stay flat.
+  if (arrayNode.namedChildCount === 1) {
+    const onlyChild = arrayNode.namedChild(0);
+    if (onlyChild && onlyChild.text.trim().startsWith("&[")) {
+      const innerArray = findDescendant(onlyChild, "array_expression");
+      if (innerArray) {
+        arrayNode = innerArray;
+      }
+    }
+  }
 
   const seeds: string[] = [];
   let bumpField: string | undefined;
