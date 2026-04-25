@@ -88,23 +88,13 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
   ).length;
 
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-3",
-        // Outer column pinned to the viewport. Inner scroll area carries the
-        // cards; Run button lives OUTSIDE the scroll so it can never overlap
-        // expanded card content (Verify build's iteration list especially).
-        !isTablet && "sticky top-[70px] max-h-[calc(100vh-90px)]"
-      )}
-    >
-      <div
-        className={cn(
-          "flex flex-col gap-3",
-          // Inner scroll area — holds every card. Padding-right gives the
-          // scrollbar breathing room.
-          !isTablet && "flex-1 overflow-y-auto pr-1 min-h-0"
-        )}
-      >
+    <div className="flex flex-col gap-3">
+      {/* Cards flow naturally with the page — no inner-scroll trick. The
+          page's normal scrollbar handles overflow, so cards above (Input
+          source, Target framework) never overlap with Verify build when
+          its dropdown is expanded. The Run button at the bottom is reached
+          by scrolling the page, same as the cards. */}
+      <div className="flex flex-col gap-3">
       {/* Input source card */}
       <Panel>
         <PanelHead icon={Layers3} title="Input source" />
@@ -622,14 +612,14 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
         </CollapsiblePanel>
       )}
 
-      </div> {/* end inner scroll area — Run button below sits OUTSIDE so it's always visible. Error + transform summary moved below the button so they're outside scroll too. */}
+      </div>
 
-      {/* Run button — pinned at the bottom of the column, outside the
-          scroll area. Always visible, never overlaps card content. */}
+      {/* Run button — sits below the cards in the natural page flow.
+          ⌘↵ / Ctrl↵ also triggers (wired in workbench/page.tsx). */}
       <button
         onClick={runPipeline}
         disabled={isRunning}
-        className="flex items-center justify-center gap-2.5 py-[15px] px-5 rounded-[14px] border-none font-extrabold text-[15px] transition-opacity shadow-lg shrink-0"
+        className="flex items-center justify-center gap-2.5 py-[15px] px-5 rounded-[14px] border-none font-extrabold text-[15px] transition-opacity shadow-lg"
         style={{
           cursor: isRunning ? "default" : "pointer",
           background: isRunning
