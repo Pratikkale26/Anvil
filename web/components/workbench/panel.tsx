@@ -75,7 +75,12 @@ export function CollapsiblePanel({
   tone?: "amber" | "teal" | "red" | "indigo";
 }) {
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
-  const open = forceOpen ?? internalOpen;
+  // forceOpen only forces OPEN — it must never lock the panel closed when
+  // false. Treat any truthy value as "pin open"; otherwise the user's
+  // toggle state wins. Earlier `forceOpen ?? internalOpen` collapsed the
+  // panel when forceOpen=false even though the user clicked to open it.
+  const open = forceOpen === true ? true : internalOpen;
+
   const toneClass =
     tone === "red"
       ? "text-[#ffb5b5]"
@@ -89,11 +94,11 @@ export function CollapsiblePanel({
     <Panel>
       <button
         type="button"
-        onClick={() => !forceOpen && setInternalOpen((v) => !v)}
+        onClick={() => forceOpen !== true && setInternalOpen((v) => !v)}
         className={cn(
           "flex items-center gap-2 w-full px-4 py-3 cursor-pointer transition-colors",
           open ? "border-b border-anvil-line" : "",
-          forceOpen ? "cursor-default" : "hover:bg-white/[0.03]"
+          forceOpen === true ? "cursor-default" : "hover:bg-white/[0.03]"
         )}
         aria-expanded={open}
       >
