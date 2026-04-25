@@ -861,6 +861,13 @@ ${writeLines}
    * 2. `borsh::to_vec(&X)?` — pinocchio's `ProgramError` has no
    *    `From<borsh::io::Error>` impl, so the bare `?` fails with E0277.
    *    Add `.map_err(...)` so the conversion is explicit.
+   * 3. The walker emits `invoke(&system_instruction::create_account(&from.key,
+   *    &to.key, lamports, space, program_id), &[from.clone(), to.clone()])?;`
+   *    which uses solana_program types not in scope on pinocchio. Translate
+   *    to `pinocchio_system::instructions::CreateAccount { ... }.invoke()?;`.
+   *    Same for invoke_signed → CreateAccount{...}.invoke_signed_with_bump(...)
+   *    is awkward; simpler: emit `Signer::from(seeds)` wrapper. The walker's
+   *    output is the canonical form; we rewrite it here.
    */
   private postProcessPinocchioRewrites(body: string): string {
     let out = body;
@@ -871,6 +878,27 @@ ${writeLines}
     out = out.replace(
       /borsh::to_vec\(([^)]+)\)\?/g,
       "borsh::to_vec($1).map_err(|_| ProgramError::InvalidInstructionData)?",
+    );
+    // System instruction create_account → pinocchio_system::instructions::CreateAccount
+    // The walker emits a multiline `invoke(&system_instruction::create_account(
+    //     &*from.key(), &*to.key(), lamports, space, program_id), ...)?;`
+    // structure (key access varies — native is `&from.key`, pinocchio's
+    // emitAccountKeyExpr returns `*from.key()` so we get `&*from.key()`).
+    // Match both. Owner is always `program_id` (the regex doesn't try to
+    // capture user-provided owners — we'd need walker-level support for that).
+    const KEY_RE = "&(?:\\*)?(\\w+)\\.key(?:\\(\\))?";
+    const CREATE_ACCT_BODY = `&system_instruction::create_account\\(\\s*${KEY_RE},\\s*${KEY_RE},\\s*([\\s\\S]+?),\\s*([\\s\\S]+?),\\s*program_id,?\\s*\\)`;
+    // Unsigned form
+    out = out.replace(
+      new RegExp(`invoke\\(\\s*${CREATE_ACCT_BODY},\\s*&\\[[^\\]]*\\],?\\s*\\)\\?;`, "g"),
+      (_full, from, to, lamports, space) =>
+        `pinocchio_system::instructions::CreateAccount { from: ${from}, to: ${to}, lamports: ${lamports.trim()}, space: (${space.trim()}) as u64, owner: program_id }.invoke()?;`,
+    );
+    // Signed form: invoke_signed(...) with trailing `seeds_var,` after the accounts array.
+    out = out.replace(
+      new RegExp(`invoke_signed\\(\\s*${CREATE_ACCT_BODY},\\s*&\\[[^\\]]*\\],\\s*(\\w+),?\\s*\\)\\?;`, "g"),
+      (_full, from, to, lamports, space, seedsVar) =>
+        `// PDA-signed create_account via pinocchio_system\n    {\n        let __seed_refs = ${seedsVar}[0];\n        let __signer = pinocchio::instruction::Signer::from(__seed_refs);\n        pinocchio_system::instructions::CreateAccount { from: ${from}, to: ${to}, lamports: ${lamports.trim()}, space: (${space.trim()}) as u64, owner: program_id }.invoke_signed(&[__signer])?;\n    }`,
     );
     return out;
   }

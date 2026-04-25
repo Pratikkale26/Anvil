@@ -152,15 +152,22 @@ class NativeEmitter extends BaseEmitter {
       );
     // System program CPI shapes that walker.ts rewrites to invoke()+system_instruction
     const SYSPROG_CPI_RE = /\b(?:transfer|create_account|allocate|assign|create_account_with_seed)\s*\(\s*CpiContext::new\s*\(/;
+    // Two signed forms: legacy `CpiContext::new_with_signer(prog, struct, seeds)`
+    // and the fluent `CpiContext::new(prog, struct).with_signer(seeds)` used in
+    // pda-rent-payer. Both rewrite to invoke_signed by walker.ts.
     const SYSPROG_CPI_SIGNED_RE = /\b(?:transfer|create_account|allocate|assign|create_account_with_seed)\s*\(\s*CpiContext::new_with_signer\s*\(/;
+    const SYSPROG_CPI_FLUENT_SIGNED_RE = /\b(?:transfer|create_account|allocate|assign|create_account_with_seed)\s*\(\s*CpiContext::new\s*\([\s\S]*?\)\s*\.\s*with_signer\s*\(/;
     const passThroughNeedsInvoke =
       passThroughHas(/(?<![\w:])invoke\(/) || passThroughHas(SYSPROG_CPI_RE);
     const passThroughNeedsInvokeSigned =
-      passThroughHas(/(?<![\w:])invoke_signed\(/) || passThroughHas(SYSPROG_CPI_SIGNED_RE);
+      passThroughHas(/(?<![\w:])invoke_signed\(/) ||
+      passThroughHas(SYSPROG_CPI_SIGNED_RE) ||
+      passThroughHas(SYSPROG_CPI_FLUENT_SIGNED_RE);
     const passThroughNeedsSystemInstruction =
       passThroughHas(/\bsystem_instruction::/) ||
       passThroughHas(SYSPROG_CPI_RE) ||
-      passThroughHas(SYSPROG_CPI_SIGNED_RE);
+      passThroughHas(SYSPROG_CPI_SIGNED_RE) ||
+      passThroughHas(SYSPROG_CPI_FLUENT_SIGNED_RE);
 
     const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsHelper(_ir, "spl_transfer")

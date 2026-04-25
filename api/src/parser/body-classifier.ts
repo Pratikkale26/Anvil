@@ -251,6 +251,7 @@ function classifyLetDeclaration(
   // and the subsequent CPI emit would reference an undefined
   // `signers_seeds`. Pass it through verbatim instead.
   const isOuterSignerSeedsBinding =
+    localVar === "signer_seeds" ||
     localVar.endsWith("_signer_seeds") ||
     localVar === "signers_seeds" ||
     localVar.endsWith("_signers_seeds");
@@ -300,7 +301,17 @@ function classifyLetDeclaration(
   }
 
   // ── ctx.bumps.X access ──
-  if (valueNode) {
+  // Only fires when the whole RHS is just `ctx.bumps.X` (or a simple wrapper
+  // like `&ctx.bumps.X`). Skip when localVar is a signer_seeds-style binding
+  // — those embed the bump inside a `&[&[...seeds..., &[ctx.bumps.X]]]`
+  // expression and need to pass through verbatim, not be reduced to a
+  // single bumps_access IR node that drops the surrounding seed literals.
+  const isSignerSeedsLocal =
+    localVar === "signer_seeds" ||
+    localVar.endsWith("_signer_seeds") ||
+    localVar === "signers_seeds" ||
+    localVar.endsWith("_signers_seeds");
+  if (valueNode && !isSignerSeedsLocal) {
     const bumpName = findCtxBumpsAccess(valueNode);
     if (bumpName) {
       return {

@@ -105,6 +105,14 @@ const MUST_PASS: Case[] = [
   // `.map_err(...)?` rewrite; native unlocked by pass-through-aware import scan.
   { id: "rent", target: "pinocchio", path: "basics/rent/anchor/programs/rent-example/src/lib.rs" },
   { id: "rent", target: "native",    path: "basics/rent/anchor/programs/rent-example/src/lib.rs" },
+
+  // pda-rent-payer/native: walker.ts now matches the fluent `.with_signer(...)`
+  // builder form for create_account; comment-strip in transformNestedAnchorCode
+  // lets the regex span struct-field comments. Pinocchio gap remains: Anchor's
+  // &[&[&[u8]]] signer_seeds doesn't trivially convert to pinocchio's
+  // Signer<&[Seed]> without runtime allocation; needs a separate const-aware
+  // emit pass.
+  { id: "pda-rent-payer", target: "native", path: "basics/pda-rent-payer/anchor/programs/anchor-program-example/src/lib.rs" },
 ];
 
 if (existsSync(PROG_EX)) {

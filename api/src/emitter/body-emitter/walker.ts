@@ -801,7 +801,12 @@ export class BodyWalker {
    * besides recursive calls into other transforms (which may push to lines).
    */
   transformNestedAnchorCode(code: string): string {
-    let transformed = code;
+    // Strip `//` line comments before regex matching — Anchor source code
+    // commonly has trailing comments inside CpiContext::new struct literals
+    // (`from: ctx.accounts.foo.to_account_info(), // From pubkey`) and the
+    // CPI-rewriting regexes use `\s*,\s*` to bridge fields, which can't span
+    // a comment. Block comments are kept (rare and usually intentional).
+    let transformed = code.replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 
     const replaceCpi = (
       pattern: RegExp,
@@ -893,13 +898,33 @@ export class BodyWalker {
         `transfer_lamports_signed(${this.normalizeAccountExpr(from)}, ${this.normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`,
     );
 
-    // ── system create_account via CpiContext ──
+    // ── system create_account via CpiContext, PDA-signed (.with_signer) ──
+    // Anchor's fluent builder form: `CpiContext::new(prog, CreateAccount{...})
+    // .with_signer(signer_seeds_var)`. Must come BEFORE the unsigned regex
+    // because the unsigned form's pattern would also greedily match through
+    // the `.with_signer(...)` call. Captures the signer-seeds variable name
+    // and emits invoke_signed.
+    //
+    // Note: `&${fromVar}.key` deliberately. The downstream key-normalization
+    // pass (line ~597) replaces `X.key` → `*X.key` (Pubkey value); we need
+    // `&Pubkey` for system_instruction::create_account, so prefixing `&`
+    // gives `&*X.key` after normalization, which is `&Pubkey`.
+    replaceCpi(
+      /(?:anchor_lang::system_program::)?create_account\(\s*CpiContext::new\(\s*[\s\S]*?,\s*(?:anchor_lang::system_program::)?CreateAccount\s*\{\s*from:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,\s*to:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,?\s*\}\s*,?\s*\)\s*\.\s*with_signer\(\s*(\w+)\s*\)\s*,\s*([\s\S]*?)\s*,\s*([\s\S]*?)\s*,\s*&?(?:ctx\.accounts\.)?(\w+)(?:\.key\(\))?\s*,?\s*\)\?;/g,
+      (from, to, signerVar, lamports, space, _owner) => {
+        const fromVar = snakeCase(from.replace(/\.to_account_info\(\)/, ""));
+        const toVar = snakeCase(to.replace(/\.to_account_info\(\)/, ""));
+        return `// System Program: create account (PDA signed)\n    invoke_signed(\n        &system_instruction::create_account(\n            &${fromVar}.key,\n            &${toVar}.key,\n            ${cleanInlineExpr(lamports)},\n            ${cleanInlineExpr(space)} as u64,\n            program_id,\n        ),\n        &[${fromVar}.clone(), ${toVar}.clone()],\n        ${signerVar},\n    )?;`;
+      },
+    );
+
+    // ── system create_account via CpiContext, unsigned ──
     replaceCpi(
       /(?:anchor_lang::system_program::)?create_account\(\s*CpiContext::new\(\s*[\s\S]*?,\s*(?:anchor_lang::system_program::)?CreateAccount\s*\{\s*from:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,\s*to:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,?\s*\}\s*,?\s*\)\s*,\s*([\s\S]*?)\s*,\s*([\s\S]*?)\s*,\s*&?(?:ctx\.accounts\.)?(\w+)(?:\.key\(\))?\s*,?\s*\)\?;/g,
       (from, to, lamports, space, _owner) => {
         const fromVar = snakeCase(from.replace(/\.to_account_info\(\)/, ""));
         const toVar = snakeCase(to.replace(/\.to_account_info\(\)/, ""));
-        return `// System Program: create account\n    invoke(\n        &system_instruction::create_account(\n            ${fromVar}.key,\n            ${toVar}.key,\n            ${cleanInlineExpr(lamports)},\n            ${cleanInlineExpr(space)} as u64,\n            program_id,\n        ),\n        &[${fromVar}.clone(), ${toVar}.clone()],\n    )?;`;
+        return `// System Program: create account\n    invoke(\n        &system_instruction::create_account(\n            &${fromVar}.key,\n            &${toVar}.key,\n            ${cleanInlineExpr(lamports)},\n            ${cleanInlineExpr(space)} as u64,\n            program_id,\n        ),\n        &[${fromVar}.clone(), ${toVar}.clone()],\n    )?;`;
       },
     );
 
