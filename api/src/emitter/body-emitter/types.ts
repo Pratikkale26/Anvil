@@ -9,6 +9,13 @@ export interface BodyEmitterContext {
   passedThroughCount: number;
   details: string[];
   warnings: string[];
+  /**
+   * Account names whose bump derivation was already emitted in the
+   * instruction-function preamble (init constraint preludes). The body
+   * walker uses this to skip re-emitting the bump check when the body
+   * later references `ctx.bumps.<X>`.
+   */
+  preEmittedBumps?: string[];
 }
 
 /**

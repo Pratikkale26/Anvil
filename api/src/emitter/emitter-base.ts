@@ -510,11 +510,19 @@ export abstract class BaseEmitter {
     // Arg parsing
     const argsBlock = this.emitArgParsing(instr.args);
 
+    const initAccountsWithBumps = instr.accounts
+      .filter((a) => a.isInit && a.isPda && a.pdaSeeds?.length && (isCustomState(a.accountType) || (a.isPda && a.pdaSeeds?.length)));
     const initPreludes = instr.accounts
       .filter((a) => a.isInit && (isCustomState(a.accountType) || (a.isPda && a.pdaSeeds?.length)))
       .map((a) => this.emitInitAccountPrelude(a, instr, ir))
       .filter(Boolean)
       .join("\n");
+    // Names of accounts whose bump was already derived in the preamble.
+    // The body walker checks this before re-emitting on a `ctx.bumps.X`
+    // reference, avoiding duplicate `let (expected_key, bump_X) = ...`
+    // pairs in the emit (which compile but produce broken `*X.key` reads
+    // when X is later state-shadowed by `let mut X = StateType { … }`).
+    const preEmittedBumps = initAccountsWithBumps.map((a) => snakeCase(a.name));
 
     // Realloc preludes: Anchor's `realloc = <size-expr>` asks the runtime to
     // resize the account data buffer at instruction time. Anvil emits the
@@ -529,7 +537,7 @@ export abstract class BaseEmitter {
       .join("\n");
 
     // Body emission — the main event
-    const bodyCode = this.emitBodyStatements(instr.body, instr, ir);
+    const bodyCode = this.emitBodyStatements(instr.body, instr, ir, preEmittedBumps);
 
     // Check if body already ends with Ok(()) — no `return_ok` in body means we add one
     const bodyHasReturnOk = instr.body.some(s => s.kind === "return_ok");
@@ -568,13 +576,15 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
   protected emitBodyStatements(
     statements: BodyStatement[],
     instr: Instruction,
-    ir: SolanaIR
+    ir: SolanaIR,
+    preEmittedBumps?: string[],
   ): string {
     const ctx: BodyEmitterContext = {
       transformedCount: this.transformedCount,
       passedThroughCount: this.passedThroughCount,
       details: this.details,
       warnings: this.warnings,
+      preEmittedBumps,
     };
 
     const result = emitBodyStatementsImpl(

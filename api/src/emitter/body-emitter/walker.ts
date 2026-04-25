@@ -62,7 +62,7 @@ export class BodyWalker {
    *  were never declared in the emitted code still resolve. */
   readonly localAliases = new Map<string, string>();
   readonly accountsWithSignerSeeds = new Set<string>();
-  readonly emittedBumps = new Set<string>();
+  readonly emittedBumps: Set<string>;
   readonly mutatedAccounts: Set<string>;
   readonly mutableStateAccounts: Set<string>;
   readonly stateAccountNames: string[];
@@ -77,6 +77,11 @@ export class BodyWalker {
     readonly instr: Instruction,
     readonly ir: SolanaIR,
   ) {
+    // Seed bumps that were emitted in the instruction preamble (init
+    // constraint preludes) so we don't redundantly re-emit the
+    // find_program_address check when the body references `ctx.bumps.<X>`.
+    this.emittedBumps = new Set((ctx.preEmittedBumps ?? []).map((n) => snakeCase(n)));
+
     this.stateAccountNames = instr.accounts
       .filter((account) => this.isGeneratedStateType(account.accountType))
       .map((account) => snakeCase(account.name));
