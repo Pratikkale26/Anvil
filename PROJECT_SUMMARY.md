@@ -124,15 +124,33 @@ Ordered by landing:
 7. Impl-method rename safety in flattener (skip inside `impl { }` blocks)
 8. `realloc = <expr>` emission + rent-delta on native
 
+## What landed since last summary (Apr 25 sprint)
+
+- **`POST /build`** — cargo check on emitted output, structured rustc diagnostics
+- **`POST /build/auto-fix`** — verify-build loop with AI repair; bounded by max_iterations + max_cost_usd
+- **Verify Build + Verify+Auto-fix workbench buttons** — closes the loop UI-side
+- **Compare-targets** workbench feature — pinocchio + native side-by-side without re-parsing
+- **Compatibility lint warnings** — per-target verdicts for `mpl_core`/`pyth`/`switchboard`/`drift`/`jupiter`/`clockwork`/zero-copy/`token_interface` extensions
+- **`cpi_ata_create`** typed CPI — native target produces clean `create_associated_token_account` + `invoke`; pinocchio + quasar emit a flagged TODO due to upstream `pinocchio_associated_token_account` 0.4 expecting `&AccountView` while pinocchio 0.9 uses `&AccountInfo`
+- **Static-impl handler resolver** — `TypeName::method(ctx, args)` wrappers now inline (ChiefWoods-style Anchor 0.31 programs)
+- **Lifetime-annotation parser fix** — `<'_>` no longer confused for char literal opener
+- **perp-funding bump-binding scope lift** — bump derivations lifted to function scope; perp-funding builds clean on both targets
+- **Cargo warnings 65+ → 0** across the whole bundle suite
+- **/metrics observability** — refine cache hit rate, accept/reject ratio, build success/failure ratios
+
+Bundle pass rate: 12/14 → **14/16** (perp-funding now in the suite).
+Real-world repo pass rate: 6/6 (unchanged, still locked).
+
 ## What's still open
 
-- **Impl-method inlining into instruction handlers** — investigation showed the prior "reverted attempt" never committed; this is fresh work. Realistic scope: 6–10 hr because it needs (a) generalized inlining of `ctx.accounts.method()` calls anywhere in handler bodies, (b) hardening of the CPI-consolidation regex against the inlined text, (c) adding `anchor-escrow` / `anchor-escrow-blueshift` / `anchor-vault-manager` to the test suite as regression gates first. Would unblock 3 escrow-style real-world contracts. Would also kill the residual `,;` bug in `escrow initialize.rs:99` from the real-world sweep (same root cause family).
-- **CPI catalog for additional programs** (ATA-body-CPI, Memo, Metaplex Core) — needs a 30-min batch-script run over the 31 currently-failing real-world contracts to know which CPIs are actually blocking, then per-target emit support. Speculative without the data.
-- **Compare-targets workbench panel** — chosen as option C earlier (keep single-target view, add side panel). Deferred for a fuller treatment so it doesn't ship half-baked.
-- **Auth / per-key quotas on `/emit?refine=1`** — public endpoint, anyone can drain the Anthropic credit; the existing rate limit caps requests per IP but not AI cost.
-- **Zero-copy accounts** (`#[account(zero_copy)]`) — `#[repr(C)]` layout preservation needed; not realistic before the hackathon.
-- **Pyth / MPL / Switchboard source-level CPI rewrites** — generating correct native SDK calls for these external programs. Out of scope until grant.
-- **Demo video, tech demo, pitch deck** — the hackathon-critical non-code work (Colosseum Frontier, May 11–12 2026).
+- **Pinocchio body-CPI ATA Create** — blocked on upstream `pinocchio_associated_token_account` 0.4 using `&AccountView` instead of `&AccountInfo`. Mitigations: (a) hand-roll a `pinocchio::cpi::invoke` against the SPL ATA program ID, (b) wait for the crate to align with pinocchio 0.9's account types. Native target works fine today.
+- **Memo / Token-2022 extensions / Metaplex Core CPI catalog** — Round 2. Memo and Token-2022 basic checked are buildable on native (need crate addition); Metaplex Core is native-only practically. Still speculative without the failing-real-world-contract data run.
+- **Multi-statement wrapper inlining** — the case where a `pub fn foo` body has 2+ statements ending in a delegate call (e.g. dice's `ResolveBet::verify_sig(...)?; ResolveBet::handler(ctx, sig)`). Half-day work.
+- **Macro support** — `require_keys_eq!`, `require_eq!`, custom user macros. Biggest single deterministic-coverage unlock for production Anchor programs (voting/multisig/dice all hit this). ~1 day.
+- **Auth / per-key quotas on `/emit?refine=1` and `/build/auto-fix`** — public endpoints with AI cost. Rate-limited per IP but not AI-cost-bounded per caller.
+- **Zero-copy accounts** (`#[account(zero_copy)]`) — `#[repr(C)]` layout preservation needed.
+- **Pyth / MPL / Switchboard source-level CPI rewrites** — out of scope until grant.
+- **Demo video, tech demo, pitch deck** — Colosseum Frontier deadline May 11–12 2026.
 
 ## Local development
 

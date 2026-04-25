@@ -23,13 +23,17 @@ That's a generated Solana program that compiles. The same binary is what the web
 
 ## Status
 
-- **12/14 curated demos cargo-build** on every commit, both as single-file emit and as the downloadable project-scaffold bundle. The 2 misses are linker-only on the native target (cc returns 1) — not emitter bugs. Locked in via `scripts/repro-bundle-build.ts` so the download path can't silently regress.
+- **14/16 curated demos cargo-build** as the downloadable project-scaffold bundle. The 2 misses are linker-only on the native target (cc returns 1) — not emitter bugs. Locked in via `scripts/repro-bundle-build.ts` so the download path can't silently regress.
 - **6/6 small real-world Anchor repos cargo-build** on both Pinocchio and Native — `pe-account-data`, `pe-hello-solana`, `pe-favorites` from `solana-developers/program-examples` plus the classic counter. Locked in via `scripts/test-realworld-fixes.ts`.
 - 17/48 mid-size real-world Anchor contracts from `solana-programs-list` cargo-build across Pinocchio + Native + Quasar.
 - 100% parser coverage on 27 real-world programs.
-- AI Refine: structural pre-check + cross-file validation gate + retry-with-feedback + revert button — refines that pass-through can't ship malformed Rust.
-- CI: GitHub Actions (`fast` on every change, `cargo-build` on PRs).
-- Observability: `GET /metrics` exposes refine cache hit rate, accept/reject ratio, per-target validation error counts.
+- 0 cargo warnings across the entire 14-bundle demo suite (was 65+ before targeted emitter fixes).
+- **Verify Build** in the workbench — `POST /build` runs `cargo check --message-format=json` on emitted output and returns structured rustc diagnostics. Warm cargo check ~250-500ms on the demo suite.
+- **Verify + Auto-fix loop** — `POST /build/auto-fix` orchestrates: cargo check → feed errors as ValidationIssues → AI refine → apply patches → re-check → repeat (up to 3 iterations or $0.50 cost cap). Closes the loop on transpiler correctness.
+- **Compare targets** in the workbench — emit the same IR for Pinocchio + Native side-by-side without re-parsing.
+- **Compatibility lint warnings** for unsupported imports — `mpl_core`, `pyth_*`, `switchboard_*`, `drift`, `jupiter`, `clockwork`, zero-copy accounts, `token_interface` extensions. Per-target verdicts (some are blockers on Pinocchio but ready on Native).
+- **AI Refine**: tree-sitter structural pre-check + cross-file validation gate + retry-with-feedback + revert button. Refines that fall through can't ship malformed Rust.
+- Observability: `GET /metrics` exposes refine cache hit rate, accept/reject ratio, per-target validation error counts, build success/failure ratios.
 
 Advanced contracts still flag sections with `⚠️ Anvil: Review` for manual verification before deployment.
 
@@ -167,10 +171,12 @@ Available routes:
 
 - `GET /` — capabilities + uptime
 - `GET /health` — same payload as `/`, conventional probe path
-- `GET /metrics` — in-memory counters (refine cache hit rate, accept/reject ratio, per-target validation error counts, parse + emit totals)
+- `GET /metrics` — in-memory counters (refine cache hit rate, accept/reject ratio, per-target validation error counts, parse/emit/build totals)
 - `POST /parse` — Anchor source | file | project | repo → IR
 - `POST /emit` — IR → target-framework Rust (+ `?refine=1` for AI polish, `multiFile: true` for project layout, `projectScaffold: true` for the cargo-buildable bundle, `previousAttempts: [...]` for retry-with-feedback after a failed refine)
-- `POST /lint` — portability scorecard (reuses `api/src/cli/lint-analyzer.ts`)
+- `POST /build` — runs `cargo check --message-format=json` on emitted files in a warm scratch project. Returns structured `BuildError[]` with file/line/col/code/message + duration + stderr tail. Ground-truth correctness signal.
+- `POST /build/auto-fix` — verify-build with AI repair loop. Body `{ ir, target, files, programName, maxIterations?, maxCostUsd? }`. Each iteration: cargo check → if errors, refineOutput with cargo errors as ValidationIssues → apply accepted patches → re-check. Returns `iterations[]` with per-step build + refine breakdown, finalFiles, finalOk, totalCostUsd. Stops on green build, max iterations, cost cap, no progress, or refine error.
+- `POST /lint` — portability scorecard with per-target compatibility warnings for unsupported imports
 - `POST /ai/refine` — AI-powered fix for validation issues
 - `GET /demo` — list demo names
 - `GET /demo/:name` — preloaded demo IR for bundled programs
