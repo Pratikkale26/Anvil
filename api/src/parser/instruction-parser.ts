@@ -669,6 +669,12 @@ function expandImplMethod(
     );
   }
 
+  // Strip the trailing `Ok(())` tail expression. Anchor impl methods end with
+  // it as the block-tail Result; once the body is spliced into a wrapper that
+  // already ends with its own `Ok(())`, the inner one becomes a stray
+  // expression statement (no semicolon, can't be followed by another `let`).
+  inner = inner.replace(/\s*Ok\s*\(\s*\(\s*\)\s*\)\s*;?\s*$/, "");
+
   return `{\n${inner}\n}`;
 }
 

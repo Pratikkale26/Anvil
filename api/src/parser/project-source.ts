@@ -689,6 +689,36 @@ function consolidateMultiStatementCpi(source: string): string {
     return `${nsPrefix}${fnName}(${ctx}${argsPart})${tryOp};`;
   });
 
+  // ── PDA-signed form with interleaved seed-prep (anchor-escrow cohort) ──
+  // Anchor impl methods that PDA-sign typically bind the accounts struct first,
+  // then prep `seed_bytes` / `seeds` / `signers_seeds`, then construct the
+  // CpiContext::new_with_signer, then call. The 4-stmt regexes above expect
+  // accounts/program/ctx/call to be CONSECUTIVE — they don't match this shape.
+  // This pass is more targeted: collapses the (accounts let, ctx let, call)
+  // pair, while leaving seed-prep lets in place. Output keeps the function
+  // call's first arg as inline `CpiContext::new_with_signer(prog, STRUCT{...},
+  // signers)` so the existing detector (which already handles
+  // signerSeeds inference from `new_with_signer`) can extract struct fields.
+  const newWithSignerStmt = new RegExp(
+    // 1. let <accountsVar>(: TYPE)? = STRUCT { ... };
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*(` + structAlt + String.raw`)\s*\{([\s\S]*?)\};` + ws +
+    // (intermediate non-CpiContext lets — captured but discarded)
+    String.raw`((?:let\s+\w+(?:\s*:\s*[^=;]+?)?\s*=\s*(?!CpiContext::)[^;]+;\s*)*)` +
+    // 2. let <ctxVar>(: TYPE)? = CpiContext::new_with_signer(prog, <accountsVar-ref>, signers);
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*CpiContext::new_with_signer\(\s*([\s\S]+?)\s*,\s*\1\s*,\s*([\s\S]+?)\s*,?\s*\)\s*;` + ws +
+    // 3. NS::FN(<ctxVar-ref>, ARGS)?;
+    String.raw`((?:\w+::)*)(\w+)\(\s*\5\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
+    "g",
+  );
+  out = out.replace(newWithSignerStmt, (_full, _accVar: string, struct: string, fields: string, intermediate: string, _ctxVar: string, programExpr: string, signerSeeds: string, nsPrefix: string, fnName: string, args: string | undefined, q: string | undefined) => {
+    const ctx = `CpiContext::new_with_signer(${programExpr.trim()}, ${struct} {${fields}}, ${signerSeeds.trim()})`;
+    const argsPart = args && args.trim() ? `, ${args.trim()}` : "";
+    const tryOp = q ?? "";
+    // Re-emit the intermediate seed-prep lets verbatim so callers can still
+    // bind whatever they need (the signers expression often references them).
+    return `${intermediate}${nsPrefix}${fnName}(${ctx}${argsPart})${tryOp};`;
+  });
+
   // ── Memo two-statement form: inline-struct CpiContext + build_memo call ──
   // `BuildMemo` is a fieldless marker struct, so Anchor code constructs it
   // inline inside `CpiContext::new(prog, memo::BuildMemo {})` rather than via

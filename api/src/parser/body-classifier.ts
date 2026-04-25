@@ -43,8 +43,27 @@ export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
   // Track CPI context variables: varName → {from, to, authority, signerSeeds}
   const cpiContexts = new Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>();
 
+  // Flatten one level of synthetic wrapper blocks the impl-method inliner
+  // produces: `{<inlined body>}?;` becomes an expression_statement wrapping
+  // a try_expression wrapping a block_expression. Without flattening, the
+  // entire block falls through to pass_through and the typed CPIs inside
+  // never reach the per-stmt classifier.
+  const flatChildren: SyntaxNode[] = [];
   for (let i = 0; i < bodyNode.namedChildCount; i++) {
-    const child = bodyNode.namedChild(i);
+    const top = bodyNode.namedChild(i);
+    if (!top) continue;
+    const inner = unwrapInlinerBlock(top);
+    if (inner) {
+      for (let j = 0; j < inner.namedChildCount; j++) {
+        const c = inner.namedChild(j);
+        if (c) flatChildren.push(c);
+      }
+    } else {
+      flatChildren.push(top);
+    }
+  }
+
+  for (const child of flatChildren) {
     if (!child) continue;
 
     // Skip comment nodes
@@ -648,4 +667,24 @@ function resolveCpiFields(
     }
   }
   return stmt;
+}
+
+/**
+ * Detect the synthetic `{<inlined body>}?;` shape the impl-method inliner
+ * emits. Returns the inner block_expression node when matched (so the caller
+ * can splice its statements into the surrounding scope), otherwise null —
+ * non-synthetic blocks (`if`/`for`/etc.) and bare expressions return null
+ * and stay opaque to the classifier.
+ */
+function unwrapInlinerBlock(node: SyntaxNode): SyntaxNode | null {
+  if (node.type !== "expression_statement") return null;
+  const expr = node.namedChild(0);
+  if (!expr) return null;
+  if (expr.type === "block") return expr;
+  if (expr.type === "block_expression") return expr;
+  if (expr.type === "try_expression") {
+    const inner = expr.namedChild(0);
+    if (inner && (inner.type === "block" || inner.type === "block_expression")) return inner;
+  }
+  return null;
 }
