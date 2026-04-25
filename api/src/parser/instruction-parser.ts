@@ -95,7 +95,15 @@ function parseInstructionFn(
     ? parseAccountsStructFields(accountsStruct.node, accountsStruct.attrs)
     : [];
 
-  const expandedWrapper = expandAccountsMethodWrapper(parser, bodyFnNode, contextType, accounts, implMethods);
+  // Two static-impl handler conventions to inline:
+  //   (a) ctx.accounts.X(args) — Anchor "thin handler on Accounts struct"
+  //       used by anchor-escrow / blueshift cohort.
+  //   (b) TypeName::method(ctx, args) — ChiefWoods-style typed associated
+  //       function on the Accounts struct. Same end goal (find the impl
+  //       method body, inline it as the instruction body).
+  const expandedWrapper =
+    expandAccountsMethodWrapper(parser, bodyFnNode, contextType, accounts, implMethods)
+    ?? expandTypeAssociatedHandler(parser, bodyFnNode, implMethods);
 
   // ── Classify the function body using AST ──
   // If the handler used a non-`ctx` Context parameter name (e.g. `context`),
@@ -310,6 +318,73 @@ function stripOuterBraces(blockText: string): string {
     return trimmed.slice(1, -1).trim();
   }
   return trimmed;
+}
+
+/**
+ * Expand a wrapper of the form `{ TypeName::method(args) }` by inlining the
+ * impl method body. Used for the static-impl handler convention seen in
+ * ChiefWoods-style Anchor 0.31 programs:
+ *
+ *   pub fn initialize(ctx: Context<Initialize>, amount: u64) -> Result<()> {
+ *     Initialize::handler(ctx, amount)
+ *   }
+ *
+ *   impl Initialize<'_> {
+ *     pub fn handler(ctx: Context<Initialize>, amount: u64) -> Result<()> { ... }
+ *   }
+ *
+ * The impl method body already uses `ctx.accounts.X` directly so once it's
+ * inlined the existing classifier + walker handle the rest. Non-ctx
+ * parameters get substituted with the wrapper's call-site argument
+ * expressions; the `ctx` parameter is identical on both sides so we leave
+ * it alone.
+ */
+function expandTypeAssociatedHandler(
+  parser: Parser,
+  fnNode: SyntaxNode,
+  implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
+): { bodyNode: SyntaxNode; rawBody: string } | null {
+  const bodyNode = fnNode.childForFieldName("body");
+  if (!bodyNode) return null;
+
+  // Body must be exactly one statement of shape `Type::method(args)` or
+  // `Type::method(args)?`. Multi-statement bodies (e.g. dice's
+  // `ResolveBet::verify_sig(...)?; ResolveBet::handler(ctx, sig)`) need
+  // separate handling and are deliberately skipped here.
+  const match = bodyNode.text.trim().match(/^\{\s*([A-Z][A-Za-z0-9_]*)::(\w+)\s*\(([\s\S]*?)\)\s*\??\s*;?\s*\}$/s);
+  if (!match?.[1] || !match?.[2]) return null;
+
+  const typeName = match[1];
+  const methodName = match[2];
+  const argExprs = splitTopLevelArgs(match[3] ?? "");
+
+  const target = implMethods.find(
+    (m) => m.implName === typeName && m.name === methodName,
+  );
+  if (!target) return null;
+
+  const paramsNode = target.node.childForFieldName("parameters");
+  const paramNames = paramsNode ? parseMethodParameterNames(paramsNode) : [];
+  let inner = stripOuterBraces(target.node.childForFieldName("body")?.text ?? "{}");
+
+  for (let i = 0; i < paramNames.length; i++) {
+    const paramName = paramNames[i];
+    const argExpr = argExprs[i];
+    // The `ctx` param is shared between wrapper and impl method — same name
+    // on both sides, no substitution needed. Other params take the wrapper's
+    // call-site expression.
+    if (!paramName || paramName === "ctx" || !argExpr) continue;
+    inner = replaceIdentifier(inner, paramName, normalizeArgumentSubstitution(argExpr));
+  }
+
+  const expandedBody = `{\n${inner}\n}`;
+  const synthetic = parser.parse(`fn __anvil_type_assoc__() ${expandedBody}`);
+  if (!synthetic) return null;
+  const syntheticFn = findDescendant(synthetic.rootNode, "function_item");
+  const syntheticBody = syntheticFn?.childForFieldName("body");
+  if (!syntheticBody) return null;
+
+  return { bodyNode: syntheticBody, rawBody: syntheticBody.text };
 }
 
 function expandAccountsMethodWrapper(

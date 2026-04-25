@@ -269,7 +269,26 @@ function computeHandlerRenames(root: FileNode): Map<string, Map<string, string>>
         if (ch === strQuote) { inStr = false; strQuote = ""; }
         continue;
       }
-      if (ch === '"' || ch === "'") { inStr = true; strQuote = ch; continue; }
+      if (ch === '"') { inStr = true; strQuote = ch; continue; }
+      // Rust uses `'` for both char literals (`'a'`) and lifetime
+      // annotations (`'a`, `'_`, `'static`). The latter has no closing
+      // quote, so naively entering string mode swallows everything up to
+      // the next `'` — including impl-block closing braces, which is the
+      // bug that lets impl methods leak into the free-function rename
+      // pool. Distinguish: a real char literal has `'` followed by either
+      // an escape (`'\`) or a single character then `'` (`'X'`). Anything
+      // else is a lifetime annotation; skip without entering string mode.
+      if (ch === "'") {
+        const next1 = src[i + 1];
+        const next2 = src[i + 2];
+        const isEscape = next1 === "\\";
+        const isSingleChar = next2 === "'";
+        if (isEscape || isSingleChar) {
+          inStr = true;
+          strQuote = ch;
+        }
+        continue;
+      }
       if (implDepth > 0) {
         if (ch === "{") blockDepth++;
         else if (ch === "}") {
