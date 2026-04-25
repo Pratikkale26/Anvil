@@ -7,6 +7,7 @@ import { demoRoute } from "./routes/demo.js";
 import { aiRoute } from "./routes/ai.js";
 import { lintRoute } from "./routes/lint.js";
 import { buildRoute } from "./routes/build.js";
+import { metricsDashboardHandler } from "./routes/metrics-dashboard.js";
 import { AnvilError, ErrorCode } from "./errors.js";
 import { metrics } from "./metrics.js";
 
@@ -94,6 +95,7 @@ const healthHandler: express.RequestHandler = (_req, res) => {
       "GET  /demo/:name — pre-loaded demo IR",
       "GET  /health    — this response",
       "GET  /metrics   — in-memory counters (refine cache hit rate, accept/reject, etc.)",
+      "GET  /metrics/dashboard — public HTML view of the same counters",
     ],
   });
 };
@@ -107,6 +109,11 @@ app.get("/health", healthHandler);
 app.get("/metrics", (_req, res) => {
   res.json(metrics.snapshot());
 });
+
+// HTML dashboard rendering the same counters. Mounted at the root level so it
+// sits beside `/metrics` rather than under it (Express would otherwise route
+// `/metrics/dashboard` to the JSON handler if both were mounted on the prefix).
+app.get("/metrics/dashboard", metricsDashboardHandler);
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 app.use("/parse", parseRoute);
