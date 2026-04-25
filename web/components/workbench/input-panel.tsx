@@ -91,16 +91,20 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
     <div
       className={cn(
         "flex flex-col gap-3",
-        // Pin the column to the top of the viewport on desktop and let it
-        // scroll internally — bounded height + overflow-y-auto means the
-        // Run button can stay `sticky bottom-2` and never sink below the
-        // fold no matter how many cards expand.
-        // pb-24 leaves ~6rem of clearance below the last card so the
-        // sticky Run button (sits at bottom-2 with shadow) doesn't visually
-        // overlap card content as the user scrolls down to the end.
-        !isTablet && "sticky top-[70px] max-h-[calc(100vh-90px)] overflow-y-auto pr-1 pb-24"
+        // Outer column pinned to the viewport. Inner scroll area carries the
+        // cards; Run button lives OUTSIDE the scroll so it can never overlap
+        // expanded card content (Verify build's iteration list especially).
+        !isTablet && "sticky top-[70px] max-h-[calc(100vh-90px)]"
       )}
     >
+      <div
+        className={cn(
+          "flex flex-col gap-3",
+          // Inner scroll area — holds every card. Padding-right gives the
+          // scrollbar breathing room.
+          !isTablet && "flex-1 overflow-y-auto pr-1 min-h-0"
+        )}
+      >
       {/* Input source card */}
       <Panel>
         <PanelHead icon={Layers3} title="Input source" />
@@ -618,12 +622,14 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
         </CollapsiblePanel>
       )}
 
-      {/* Run button — sticky to the bottom of the input column so it never
-          sinks below the fold once cards expand. ⌘↵ / Ctrl↵ also triggers. */}
+      </div> {/* end inner scroll area — Run button below sits OUTSIDE so it's always visible. Error + transform summary moved below the button so they're outside scroll too. */}
+
+      {/* Run button — pinned at the bottom of the column, outside the
+          scroll area. Always visible, never overlaps card content. */}
       <button
         onClick={runPipeline}
         disabled={isRunning}
-        className="sticky bottom-2 z-20 flex items-center justify-center gap-2.5 py-[15px] px-5 rounded-[14px] border-none font-extrabold text-[15px] transition-opacity shadow-lg"
+        className="flex items-center justify-center gap-2.5 py-[15px] px-5 rounded-[14px] border-none font-extrabold text-[15px] transition-opacity shadow-lg shrink-0"
         style={{
           cursor: isRunning ? "default" : "pointer",
           background: isRunning
