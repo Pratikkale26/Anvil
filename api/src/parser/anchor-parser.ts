@@ -273,7 +273,10 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
             modulePath.length > 0 &&
             (functionName === "handler" || functionName === `${lastModule}_handler`);
           const params = child.childForFieldName("parameters")?.text ?? "";
-          const looksLikeAnchorHandler = /\bctx\s*:\s*(?:&\s*mut\s+)?Context\s*</.test(params);
+          // Match `ctx: Context<…>` AND `_ctx: Context<…>` (Anchor's "unused
+          // arg" convention). `\bctx` alone fails on `_ctx` because `\b` is
+          // not a boundary between two word chars (`_` and `c`).
+          const looksLikeAnchorHandler = /(?:^|[\s(,])_?ctx\s*:\s*(?:&\s*mut\s+)?Context\s*</.test(params);
           if (!inProgramModule && !isInstructionHandler && !looksLikeAnchorHandler) {
             items.helperFns.push({ node: child, attrs, modulePath });
           }

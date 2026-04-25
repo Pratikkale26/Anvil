@@ -131,7 +131,13 @@ export function resolveConstExprValue(expr: string, constants: string[], seen = 
 // ─── String case conversion ──────────────────────────────────────────────────
 
 export function snakeCase(value: string): string {
-  return value.replace(/([A-Z])/g, "_$1").toLowerCase().replace(/^_/, "");
+  // Preserve a pre-existing leading underscore (Anchor's "unused arg" convention,
+  // e.g. `_token_name`). The trailing strip below only removes the underscore
+  // that the camel-case regex inserted before a leading capital (e.g. `FooBar`
+  // → `_foo_bar`); we don't want to also strip user-authored leading `_`.
+  const leadingUnderscore = value.startsWith("_") ? "_" : "";
+  const body = leadingUnderscore ? value.slice(1) : value;
+  return leadingUnderscore + body.replace(/([A-Z])/g, "_$1").toLowerCase().replace(/^_/, "");
 }
 
 export function toPascalCase(value: string): string {

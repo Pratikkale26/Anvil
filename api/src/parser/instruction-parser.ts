@@ -778,8 +778,12 @@ export function parseParameters(paramsNode: SyntaxNode): {
       continue;
     }
 
-    // Skip _ctx patterns
-    if (paramText.startsWith("_")) continue;
+    // Note: do NOT skip on `_` prefix here. The Context<T> case is already
+    // caught by ctxMatch above. An `_token_name: String` arg with underscore
+    // prefix is the Anchor "unused in body" convention — the data is still
+    // serialized into IX data and the `#[instruction(token_name)]` attr
+    // references the unprefixed name as a PDA seed. Dropping these args
+    // breaks any program that reads an instruction arg into a PDA seed.
 
     // Parse name: type
     const nameNode = param.childForFieldName("pattern");
