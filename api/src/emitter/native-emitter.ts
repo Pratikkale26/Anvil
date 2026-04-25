@@ -212,7 +212,12 @@ use solana_program::{
       imports.push(`use spl_token_2022;`);
     }
     if (irNeedsAtaCreationHelper(_ir)) {
-      imports.push(`use spl_associated_token_account::instruction::create_associated_token_account;`);
+      // Aliased: a user program may have an instruction handler named
+      // `create_associated_token_account` (e.g. token-2022-basics fixture).
+      // The unaliased import collides with the re-exported handler from
+      // `instructions::*` and produces E0061 in the dispatch match arm
+      // because the SPL function takes 4 args while our handler takes 3.
+      imports.push(`use spl_associated_token_account::instruction::create_associated_token_account as spl_create_ata_ix;`);
     }
     if (irNeedsMemoHelper(_ir)) {
       imports.push(`use spl_memo;`);
@@ -569,7 +574,7 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
 
   override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string): string {
     return `    // Create Associated Token Account: ${ata}
-    let create_ata_ix = create_associated_token_account(
+    let create_ata_ix = spl_create_ata_ix(
         ${payer}.key,
         ${authority}.key,
         ${mint}.key,

@@ -75,8 +75,9 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 borsh = { version = "1.5", features = ["derive"] }
 solana-program = "2.2"
-spl-token = "7"
-spl-associated-token-account = "6"
+spl-token = { version = "7", features = ["no-entrypoint"] }
+spl-token-2022 = { version = "6", features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "6", features = ["no-entrypoint"] }
 `;
 
 // TODO: quasar deps when stable. quasar-lang 0.0 / quasar-spl 0.0 are too

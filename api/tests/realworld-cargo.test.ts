@@ -85,6 +85,10 @@ const MUST_PASS: Case[] = [
 
   // token-2022-basics/pinocchio: locked in by #54 + #55 + #56 + #58 stack.
   { id: "token-2022-basics", target: "pinocchio", path: "tokens/token-2022/basics/anchor/programs/basics/src/lib.rs" },
+  // token-2022-basics/native: locked in by spl-token-2022 scaffold dep +
+  // ATA-import alias (avoids name collision with same-named user
+  // instruction handler).
+  { id: "token-2022-basics", target: "native", path: "tokens/token-2022/basics/anchor/programs/basics/src/lib.rs" },
 
   // create-account/native: locked in by pass-through-aware import scan
   // (`(transfer|create_account|...)\\(\\s*CpiContext::new` triggers the
