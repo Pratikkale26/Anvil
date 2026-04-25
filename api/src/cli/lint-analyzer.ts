@@ -527,6 +527,27 @@ function analyzeHelperFunctions(ir: SolanaIR, findings: LintFinding[], target: L
       });
       continue;
     }
+    // pinocchio / quasar: the helper carries a solana-program reference, so
+    // flag for manual review. If it doesn't (pure math helper), it'll compile
+    // fine — pinocchio's prelude is enough.
+    const usesAccountInfo = /\bAccountInfo\b/.test(code);
+    const usesPubkey = /\bPubkey\b/.test(code);
+    const usesProgramResult = /\bProgramResult\b/.test(code);
+    const usesProgramError = /\bProgramError\b/.test(code);
+    const usesAnchorTypes = /\b(?:Account|InterfaceAccount|Signer|Program|Sysvar|Context)\s*</.test(code);
+    const referencesFramework =
+      usesSolanaProgram || usesAccountInfo || usesPubkey || usesProgramResult ||
+      usesProgramError || usesAnchorTypes;
+    if (!referencesFramework) {
+      findings.push({
+        level: "ready",
+        category: "Helpers",
+        title: `${helper.name}() pure math/util`,
+        detail: "Helper has no framework type references — pure Rust, copies over cleanly on every target.",
+        where: helper.name,
+      });
+      continue;
+    }
     findings.push({
       level: "review",
       category: "Helpers",
