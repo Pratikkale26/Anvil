@@ -51,7 +51,9 @@ export type RejectedAttempt = z.infer<typeof RejectedAttemptSchema>;
 export const RefineModelResponseSchema = z.object({
   rationale: z.string(),
   findings: z.array(AIFindingSchema).default([]),
-  patches: z.array(RefinePatchSchema).min(1),
+  // Empty patches is a valid response — the prompt allows the model to return
+  // `patches: []` when it can't fix without fabricating symbols. Don't reject.
+  patches: z.array(RefinePatchSchema),
 });
 export type RefineModelResponse = z.infer<typeof RefineModelResponseSchema>;
 

@@ -1,10 +1,10 @@
 import type { ValidationIssue } from "../../emitter/output-validator.js";
 import type { RejectedAttempt } from "../refine-schemas.js";
 
-// Bumped to v4: prompt now carries an issue-source hint (validator vs cargo)
-// so the model knows when findings are rustc ground truth. Cache key folds
-// in this version so v3 cached results never collide.
-export const REFINE_PROMPT_VERSION = "refine.v4";
+// Bumped to v5: added pinocchio is_signer/is_writable method-call hint and
+// hard "do not fabricate symbols" rule. Cache key folds in this version so
+// v4 cached results never collide.
+export const REFINE_PROMPT_VERSION = "refine.v5";
 
 /** Max preview length per rejected attempt — keeps retry prompts bounded. */
 const REJECTED_ATTEMPT_PREVIEW_CHARS = 2000;
@@ -36,13 +36,15 @@ export const REFINE_SYSTEM_RULES = [
   "7. Findings are compact — only cover issues you addressed or couldn't fully address. Skip findings for trivial mechanical fixes.",
   "8. Never emit `panic!`, `.unwrap()` on Option<T>/Result<T,E> from on-chain data, or `unsafe` outside of explicitly-acknowledged zero-init blocks.",
   "9. Do not include `unimplemented!()` or `todo!()` macros — leave the TODO(manual) comment marker instead.",
+  "10. NEVER fabricate symbols. If your fix references a function (e.g. `bump_seed(...)`, `create_program_account(...)`), constant (e.g. `SEED_PREFIX`), method (e.g. `Foo::required_space()`), or type that you cannot see defined in the input files OR import from a real crate already in scope, you are guessing — that's a regression, not a fix. Either define the missing item inline (if the fix obviously requires it and the body is one-liner) or leave a `// TODO(manual): <what's missing>` and explain in `findings`. Do NOT replace one E0425/E0599 with another.",
   "",
   "── PINOCCHIO TARGET HINTS ──",
   "• Account access: instructions take `accounts: &[AccountInfo]` — no Anchor wrappers, no `ctx.accounts`. Index into the slice.",
+  "• `AccountInfo` flag accessors (`is_signer`, `is_writable`, `is_executable`) are METHODS in pinocchio — call with parens: `acc.is_signer()`, NOT `acc.is_signer`. Treating them as fields produces E0615 (`attempted to take value of method`). Same for `key()`, `lamports()`, `data_len()`, `owner()`.",
   "• Logging: use `pinocchio::log::sol_log(&str)`. NEVER `msg!`.",
   "• Errors: return `ProgramError::InvalidArgument`, `ProgramError::AccountDataTooSmall`, etc. NEVER `error!`/`require!`/Anchor `#[error_code]`.",
   "• PDAs: derive with `pinocchio::pubkey::find_program_address(seeds, program_id)`. Always store the bump on the account or recompute.",
-  "• System / SPL CPIs: use `pinocchio_system::instructions::*` and `pinocchio_token::instructions::*` builders. NEVER `anchor_lang::system_program::*` or `anchor_spl::*`.",
+  "• System / SPL CPIs: use `pinocchio_system::instructions::*` and `pinocchio_token::instructions::*` builders. NEVER `anchor_lang::system_program::*`, NEVER `anchor_spl::*`, NEVER `solana_program::program::invoke` — pinocchio_* builders already wrap the invoke call.",
   "• Account state: define `#[repr(C)]` structs (or `#[repr(C, packed)]`) with manual `from_account_info` / `save` helpers. NEVER `#[account]`.",
   "• No `#[derive(Accounts)]`, no `#[program]`, no `#[instruction]` — these are Anchor-only attribute macros.",
   "",
@@ -57,6 +59,16 @@ export const REFINE_SYSTEM_RULES = [
   "• Logging: `solana_program::msg!()` is fine here.",
   "• Account deserialization: borsh by hand, with explicit `try_from_slice` + length checks.",
   "• Use `invoke` / `invoke_signed` for CPIs with manual `Instruction` construction.",
+  "",
+  "── RUSTC ERROR CODE → FIX SHAPE (when issue source is cargo) ──",
+  "• E0425 `cannot find function/value X` → fix the IMPORT or remove the call. Do NOT re-spell X as Y you also can't see.",
+  "• E0432 `unresolved import` → check Cargo.toml dep is in scope; fix the import path; if the module doesn't exist in this target, drop it and inline the logic.",
+  "• E0433 `failed to resolve: use of unresolved module/crate` → either add the right import or replace the call with the target-framework equivalent. NEVER paper over with `solana_program::*` from a pinocchio file.",
+  "• E0599 `no associated item/function named X found for struct Y` → Y::X doesn't exist. Either it should be a free function call, or X belongs to a trait you didn't import, or the impl block was never emitted. Don't fabricate the impl unless the body is trivially one-line and obviously correct.",
+  "• E0615 `attempted to take value of method` → missing parentheses on a method call (most often pinocchio `acc.is_signer` → `acc.is_signer()`).",
+  "• E0609 `no field X on type Y` → Y is opaque (e.g. raw AccountInfo). Unpack first (`Mint::unpack(...)?.X`) or pass X in as a separate argument.",
+  "• E0277 `?` couldn't convert error → add a `.map_err(|e| Into::into(e))?` or change the function's return type to one that has `From<E>`.",
+  "• E0061 `takes N arguments but M were supplied` → look at the constructor/variant signature and pass the correct count. Don't omit required fields.",
   "",
   "── COMMON ANTI-PATTERNS THE VALIDATOR FLAGS ──",
   "• `ctx.accounts.X` / `ctx.bumps.X` leakage → replace with the AccountInfo-slice indexing the surrounding code uses.",
