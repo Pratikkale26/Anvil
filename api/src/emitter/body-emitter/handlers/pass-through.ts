@@ -129,7 +129,13 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
           })
           .filter((v): v is string => v !== null);
         const argsStr = extraArgs ? `\n    // args: ${cleanInlineExpr(extraArgs)}` : "";
-        return `// ⚠️ Anvil: CPI call to ${fnName} — requires manual invoke() implementation${argsStr}\n    // Accounts: ${accountVars.join(", ")}\n    invoke(\n        &solana_program::instruction::Instruction {\n            program_id: *${accountVars.length > 0 ? accountVars[0] : "program"}.key,\n            accounts: vec![],  // TODO: build AccountMeta list\n            data: vec![],      // TODO: build instruction data\n        },\n        &[${accountVars.map((v) => `${v}.clone()`).join(", ")}],\n    )?;`;
+        // The actual `invoke(...)` call is left commented-out: it referenced
+        // `solana_program::instruction::Instruction` which isn't in scope on
+        // pinocchio, and even on native the data/accounts vecs are empty —
+        // the runtime call would always fail. Compiling-but-no-op is better
+        // than a 5-error pile that hides the rest of the program's issues.
+        // The TODO above tells the user what to fill in.
+        return `// ⚠️ Anvil: CPI call to ${fnName} — requires manual implementation${argsStr}\n    // Accounts: ${accountVars.join(", ")}\n    // TODO(manual): rebuild this CPI for the target framework. Source signature\n    // and account list above. Reference (commented out — does not compile on\n    // pinocchio because solana_program is not in scope, and accounts/data are\n    // empty placeholders even on native):\n    //\n    // invoke(\n    //     &solana_program::instruction::Instruction {\n    //         program_id: *${accountVars.length > 0 ? accountVars[0] : "program"}.key,\n    //         accounts: vec![],\n    //         data: vec![],\n    //     },\n    //     &[${accountVars.map((v) => `${v}.clone()`).join(", ")}],\n    // )?;`;
       },
     );
   }
@@ -140,7 +146,9 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
       /(\w+)::cpi::(\w+)\(\s*(\w+)\s*(?:,\s*([\s\S]*?))?\s*\)\s*(?:\?;|;)?$/g,
       (_full, moduleName: string, fnName: string, ctxVar: string, args: string) => {
         const argsStr = args ? cleanInlineExpr(args) : "";
-        return `// ⚠️ Anvil: CPI to ${moduleName}::${fnName}\n    // Original args: ${argsStr}\n    // Use invoke() with ${ctxVar}_program and build instruction data manually\n    invoke(\n        &solana_program::instruction::Instruction {\n            program_id: *${ctxVar}_program.key,\n            accounts: vec![],  // TODO: build AccountMeta list from cpi_accounts\n            data: vec![],      // TODO: build discriminator + args for '${snakeCase(fnName)}'\n        },\n        &[],  // TODO: pass account infos\n    )?;`;
+        // Same rationale as the CpiContext stub above — comment out the
+        // broken invoke skeleton so the rest of the file still compiles.
+        return `// ⚠️ Anvil: CPI to ${moduleName}::${fnName}\n    // Original args: ${argsStr}\n    // TODO(manual): rebuild for target framework. Reference skeleton (does\n    // not compile — placeholder only):\n    //\n    // invoke(\n    //     &solana_program::instruction::Instruction {\n    //         program_id: *${ctxVar}_program.key,\n    //         accounts: vec![],\n    //         data: vec![], // discriminator + args for '${snakeCase(fnName)}'\n    //     },\n    //     &[],\n    // )?;`;
       },
     );
   }

@@ -924,17 +924,24 @@ export class BodyWalker {
         `// ⚠️ Anvil: set_authority CPI with signer — manually verify account references\n    invoke_signed(\n        &spl_token::instruction::set_authority(\n            token_program.key,\n            pda_deposit_token_account.key,\n            Some(&${cleanInlineExpr(newAuthority)}),\n            spl_token::instruction::AuthorityType::AccountOwner,\n            pda_account.key,\n            &[],\n        )?,\n        &[pda_deposit_token_account.clone(), pda_account.clone()],\n        &[&seeds[..]],\n    )?;`,
     );
 
-    // ── Metaplex CPI patterns — emit manual invoke placeholder ──
+    // ── Metaplex CPI patterns — emit a TODO marker, NOT a runnable stub ──
+    // Anvil doesn't carry the mpl_token_metadata crate by default, and even
+    // when it's present the call sites below were placeholders (commented-
+    // out signatures). Emitting them as live invoke() calls produced 5+
+    // cargo errors per program (E0433 unresolved crate, E0425 unresolved
+    // function, etc.) which cascaded and blocked everything else. Pinocchio
+    // also has no mpl_token_metadata at all. Comment the skeleton out so
+    // the file compiles; the user sees what's needed and can wire it manually.
     transformed = transformed.replace(
       /create_metadata_accounts_v3\(\s*CpiContext::new\(\s*[\s\S]*?\)\s*,\s*DataV2\s*\{([\s\S]*?)\}\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*,?\s*\)\?;/g,
       (_full, _dataFields: string, isMutable: string, updateAuthIsSigner: string, _collectionDetails: string) =>
-        `// ⚠️ Anvil: Metaplex create_metadata_accounts_v3 CPI\n    // This requires the mpl_token_metadata crate for instruction building.\n    // Rebuild with: mpl_token_metadata::instructions::CreateMetadataAccountV3\n    invoke(\n        &mpl_token_metadata::instruction::create_metadata_accounts_v3(\n            *token_metadata_program.key,\n            *metadata_account.key,\n            *mint_account.key,\n            *payer.key,\n            *payer.key,\n            *payer.key,\n            nft_name.clone(),\n            nft_symbol.clone(),\n            nft_uri.clone(),\n            None, // creators\n            0,    // seller_fee_basis_points\n            true, // update_authority_is_signer=${updateAuthIsSigner}\n            ${isMutable},  // is_mutable\n            None, // collection\n            None, // uses\n            None, // collection_details\n        ),\n        &[\n            metadata_account.clone(),\n            mint_account.clone(),\n            payer.clone(),\n            system_program.clone(),\n            rent.clone(),\n        ],\n    )?;`,
+        `// ⚠️ Anvil: Metaplex create_metadata_accounts_v3 CPI — manual rebuild required\n    // Native: add \`mpl-token-metadata\` to Cargo.toml + rewrite as\n    //   mpl_token_metadata::instructions::CreateMetadataAccountV3 (cpi)\n    // Pinocchio: hand-roll the CPI against the Metaplex program ID\n    //   (no pinocchio metaplex crate exists today).\n    // Reference skeleton (commented out — does not compile out of the box):\n    //\n    // invoke(\n    //     &mpl_token_metadata::instruction::create_metadata_accounts_v3(\n    //         *token_metadata_program.key,\n    //         *metadata_account.key,\n    //         *mint_account.key,\n    //         *payer.key, *payer.key, *payer.key,\n    //         nft_name.clone(), nft_symbol.clone(), nft_uri.clone(),\n    //         None, 0,\n    //         true, // update_authority_is_signer=${updateAuthIsSigner}\n    //         ${isMutable},  // is_mutable\n    //         None, None, None,\n    //     ),\n    //     &[\n    //         metadata_account.clone(), mint_account.clone(), payer.clone(),\n    //         system_program.clone(), rent.clone(),\n    //     ],\n    // )?;`,
     );
 
     transformed = transformed.replace(
       /create_master_edition_v3\(\s*CpiContext::new\(\s*[\s\S]*?\)\s*,\s*(\w+)\s*,?\s*\)\?;/g,
       (_full, maxSupply: string) =>
-        `// ⚠️ Anvil: Metaplex create_master_edition_v3 CPI\n    invoke(\n        &mpl_token_metadata::instruction::create_master_edition_v3(\n            *token_metadata_program.key,\n            *edition_account.key,\n            *mint_account.key,\n            *payer.key,\n            *payer.key,\n            *metadata_account.key,\n            *payer.key,\n            ${maxSupply}, // max_supply\n        ),\n        &[\n            edition_account.clone(),\n            mint_account.clone(),\n            payer.clone(),\n            metadata_account.clone(),\n            token_program.clone(),\n            system_program.clone(),\n            rent.clone(),\n        ],\n    )?;`,
+        `// ⚠️ Anvil: Metaplex create_master_edition_v3 CPI — manual rebuild required\n    // Reference skeleton (commented out — does not compile out of the box):\n    //\n    // invoke(\n    //     &mpl_token_metadata::instruction::create_master_edition_v3(\n    //         *token_metadata_program.key,\n    //         *edition_account.key, *mint_account.key,\n    //         *payer.key, *payer.key, *metadata_account.key, *payer.key,\n    //         ${maxSupply}, // max_supply\n    //     ),\n    //     &[\n    //         edition_account.clone(), mint_account.clone(), payer.clone(),\n    //         metadata_account.clone(), token_program.clone(),\n    //         system_program.clone(), rent.clone(),\n    //     ],\n    // )?;`,
     );
 
     // ── Generic CPI fallback: any remaining CpiContext::new(...) ──

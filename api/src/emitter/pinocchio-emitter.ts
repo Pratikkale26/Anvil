@@ -131,7 +131,10 @@ class PinocchioEmitter extends BaseEmitter {
       const re = new RegExp(`(?<![A-Za-z0-9_])${name}\\.decimals\\b`);
       if (re.test(bodyCode)) mintsHit.push(name);
     }
-    if (mintsHit.length === 0) return bodyCode;
+
+    let body = this.postProcessPinocchioRewrites(bodyCode);
+
+    if (mintsHit.length === 0) return body;
 
     const preludes = mintsHit
       .map(
@@ -145,7 +148,6 @@ class PinocchioEmitter extends BaseEmitter {
       )
       .join("\n");
 
-    let body = bodyCode;
     for (const name of mintsHit) {
       body = body.replace(
         new RegExp(`(?<![A-Za-z0-9_])${name}\\.decimals\\b`, "g"),
@@ -846,6 +848,31 @@ ${writeLines}
         Self::write(&mut data, value)
     }
 }${this.emitInherentImplItems(acc)}`;
+  }
+
+  /**
+   * Pinocchio post-process: target-specific rewrites that the shared body
+   * walker can't do because it doesn't know the target framework.
+   *
+   * 1. `**X.try_borrow_mut_lamports()?` — native's AccountInfo returns
+   *    `RefMut<&mut u64>` (two layers of indirection); pinocchio returns
+   *    `RefMut<u64>` (one). Double-deref is correct on native but causes
+   *    E0614 "type u64 cannot be dereferenced" on pinocchio. Drop one `*`.
+   * 2. `borsh::to_vec(&X)?` — pinocchio's `ProgramError` has no
+   *    `From<borsh::io::Error>` impl, so the bare `?` fails with E0277.
+   *    Add `.map_err(...)` so the conversion is explicit.
+   */
+  private postProcessPinocchioRewrites(body: string): string {
+    let out = body;
+    out = out.replace(
+      /\*\*(\w+)\.try_borrow_mut_lamports\(\)\?/g,
+      "*$1.try_borrow_mut_lamports()?",
+    );
+    out = out.replace(
+      /borsh::to_vec\(([^)]+)\)\?/g,
+      "borsh::to_vec($1).map_err(|_| ProgramError::InvalidInstructionData)?",
+    );
+    return out;
   }
 
   /** See native-emitter.ts:emitInherentImplItems for rationale. */

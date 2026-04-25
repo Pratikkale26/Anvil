@@ -138,6 +138,30 @@ class NativeEmitter extends BaseEmitter {
     const t22NeedsInvoke = t22Cpis.some((s) => !(s as { signerSeeds?: string }).signerSeeds);
     const t22NeedsInvokeSigned = t22Cpis.some((s) => !!(s as { signerSeeds?: string }).signerSeeds);
 
+    // Pass-through bodies are user Anchor source carried into the emit
+    // verbatim. Walker.ts regexes rewrite shapes like
+    // `transfer(CpiContext::new(prog, Transfer{...}), amount)` into
+    // `invoke(&system_instruction::transfer(...))`. The IR-level helper
+    // predicates below only catch typed CPIs (cpi_system_transfer, etc.),
+    // not these pass_through-carried forms — so we have to scan for the
+    // SOURCE pattern (CpiContext::new) AND already-rewritten output
+    // (`invoke(`, `system_instruction::`) to be safe across both paths.
+    const passThroughHas = (re: RegExp) =>
+      _ir.instructions.some((instr) =>
+        (instr.body ?? []).some((s) => s.kind === "pass_through" && re.test(s.code)),
+      );
+    // System program CPI shapes that walker.ts rewrites to invoke()+system_instruction
+    const SYSPROG_CPI_RE = /\b(?:transfer|create_account|allocate|assign|create_account_with_seed)\s*\(\s*CpiContext::new\s*\(/;
+    const SYSPROG_CPI_SIGNED_RE = /\b(?:transfer|create_account|allocate|assign|create_account_with_seed)\s*\(\s*CpiContext::new_with_signer\s*\(/;
+    const passThroughNeedsInvoke =
+      passThroughHas(/(?<![\w:])invoke\(/) || passThroughHas(SYSPROG_CPI_RE);
+    const passThroughNeedsInvokeSigned =
+      passThroughHas(/(?<![\w:])invoke_signed\(/) || passThroughHas(SYSPROG_CPI_SIGNED_RE);
+    const passThroughNeedsSystemInstruction =
+      passThroughHas(/\bsystem_instruction::/) ||
+      passThroughHas(SYSPROG_CPI_RE) ||
+      passThroughHas(SYSPROG_CPI_SIGNED_RE);
+
     const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsHelper(_ir, "spl_transfer")
       || irNeedsUnsignedSplMintToHelper(_ir)
@@ -145,16 +169,19 @@ class NativeEmitter extends BaseEmitter {
       || irNeedsUnsignedSplCloseAccountHelper(_ir)
       || irNeedsAtaCreationHelper(_ir)
       || irNeedsMemoHelper(_ir)
-      || t22NeedsInvoke;
+      || t22NeedsInvoke
+      || passThroughNeedsInvoke;
     const needsInvokeSigned = irNeedsSignedLamportsHelper(_ir)
       || irNeedsSignedSplMintToHelper(_ir)
       || irNeedsSignedSplBurnHelper(_ir)
       || irNeedsSignedSplCloseAccountHelper(_ir)
       || irNeedsInitAccountHelper(_ir)
-      || t22NeedsInvokeSigned;
+      || t22NeedsInvokeSigned
+      || passThroughNeedsInvokeSigned;
     const needsSystemInstruction = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsSignedLamportsHelper(_ir)
-      || irNeedsInitAccountHelper(_ir);
+      || irNeedsInitAccountHelper(_ir)
+      || passThroughNeedsSystemInstruction;
     const needsMsg = _ir.instructions.some((instr) =>
       instr.body.some((stmt) =>
         stmt.kind === "msg" ||
