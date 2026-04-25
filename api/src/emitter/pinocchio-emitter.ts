@@ -33,6 +33,72 @@ import {
   irNeedsAtaCreationHelper,
 } from "./emitter-helpers.js";
 
+/**
+ * Token-2022 checked variants need the mint's `.decimals`. Anchor source
+ * accesses it via `ctx.accounts.<mint>.decimals` (Anchor parses the mint
+ * into a typed view). In Pinocchio we have a bare `&AccountInfo` and
+ * `pinocchio_token::state::Mint::from_account_info` enforces an owner
+ * check against the SPL Token program ID — Token-2022 mints fail that
+ * check. Read decimals raw from offset 44 in the SPL Mint layout
+ * (mint_authority_flag=4 + mint_authority=32 + supply=8 = 44).
+ */
+function resolveT22DecimalsPinocchio(
+  mint: string,
+  decimals: string | undefined,
+): { decimalsExpr: string; prelude: string } {
+  const fallback = decimals ?? "/* TODO: decimals */";
+  if (!decimals) return { decimalsExpr: fallback, prelude: "" };
+  const accessRe = new RegExp(`^${mint}\\.decimals$`);
+  if (!accessRe.test(decimals.trim())) return { decimalsExpr: fallback, prelude: "" };
+  const localVar = `${mint}_decimals`;
+  // Pinocchio's borrow_data_unchecked is unsafe; SPL Mint layout puts
+  // `decimals` at byte offset 44.
+  const prelude = `    let ${localVar} = {
+        let __mint_data = unsafe { ${mint}.borrow_data_unchecked() };
+        if __mint_data.len() < 45 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        __mint_data[44]
+    };
+`;
+  return { decimalsExpr: localVar, prelude };
+}
+
+/**
+ * Token-2022 program ID literal as a `pinocchio::pubkey::Pubkey` ([u8; 32]).
+ * Decoded from base58 "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb".
+ */
+const TOKEN_2022_PROGRAM_ID_CONST = `        const TOKEN_2022_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            6, 221, 246, 225, 238, 117, 143, 222, 24, 66, 93, 188, 228, 108, 205, 218,
+            182, 26, 252, 77, 131, 185, 13, 39, 254, 189, 249, 40, 216, 161, 139, 252,
+        ];`;
+
+/**
+ * Build the Token-2022 invoke line. The IR-level `signerSeeds` string is a
+ * variable name in scope holding `[&[&[u8]]; N]` (set up by the seeds
+ * prelude). `pinocchio::cpi::invoke_signed` wants `&[Signer]`, so when seeds
+ * are present we synthesize a `Signer` from the first seed group and pass
+ * `&[__t22_signer]`. When no seeds, fall through to plain invoke.
+ *
+ * The accounts slice arity matters for const-generic inference on
+ * `pinocchio::cpi::invoke{,_signed}` — we pass `&[acc1, acc2, …]` directly
+ * so the compiler infers `ACCOUNTS = N`.
+ */
+function emitT22Invoke(accountsList: string, signerSeeds: string | undefined): string {
+  if (!signerSeeds) {
+    return `        pinocchio::cpi::invoke(&__t22_ix, &[${accountsList}])?;`;
+  }
+  return `        let __t22_seed_group = ${signerSeeds}.first().ok_or(ProgramError::InvalidSeeds)?;
+        let mut __t22_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__i, __seed) in __t22_seed_group.iter().enumerate() {
+            if __i >= __t22_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __t22_seeds[__i] = pinocchio::instruction::Seed::from(*__seed);
+        }
+        let __t22_signer = pinocchio::instruction::Signer::from(&__t22_seeds[..__t22_seed_group.len()]);
+        pinocchio::cpi::invoke_signed(&__t22_ix, &[${accountsList}], &[__t22_signer])?;`;
+}
+
 class PinocchioEmitter extends BaseEmitter {
   override readonly frameworkName = "Pinocchio";
 
@@ -75,8 +141,11 @@ class PinocchioEmitter extends BaseEmitter {
       imports.push(`use pinocchio_token::instructions::CloseAccount as TokenCloseAccount;`);
     }
     if (irNeedsToken2022Helper(_ir)) {
-      imports.push(`// Token-2022: same instruction structs, routed to token_2022 program at runtime`);
-      imports.push(`use pinocchio_token::instructions::TransferChecked as Token2022TransferChecked;`);
+      // Token-2022 CPIs are hand-rolled inline against the spl_token_2022
+      // program ID — pinocchio_token hardcodes the SPL Token ID so its
+      // instruction structs can't be retargeted. No extra imports needed
+      // beyond pinocchio::instruction + pinocchio::cpi (already pulled in
+      // for ATA/memo paths and resolved by full path here).
     }
     if (irNeedsAtaCreationHelper(_ir)) {
       imports.push(`use pinocchio_associated_token_account::instructions::Create as CreateAssociatedToken;`);
@@ -227,7 +296,39 @@ ${arms}
     return `    transfer_lamports(${from}, ${to}, ${amount})?;`;
   }
 
-  override emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string, _opts?: Token2022Opts): string {
+  override emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
+    if (opts?.tokenProgram === "token_2022") {
+      // pinocchio_token::TransferChecked hardcodes the SPL Token program ID,
+      // so we hand-roll the CPI against the Token-2022 program. Discriminator
+      // 12, accounts [from, mint, to, authority], data layout
+      // [12, amount_u64_le (8 bytes), decimals_u8].
+      const mint = opts?.mint ?? "/* TODO: mint */";
+      const { decimalsExpr, prelude } = resolveT22DecimalsPinocchio(mint, opts?.decimals);
+      const invokeCall = emitT22Invoke(`${from}, ${mint}, ${to}, ${authority}`, signerSeeds);
+      return `    // Token-2022 transfer_checked — ${from} → ${to}
+${prelude}    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __t22_amount = (${amount}).to_le_bytes();
+        let __t22_data: [u8; 10] = [
+            12,
+            __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
+            __t22_amount[4], __t22_amount[5], __t22_amount[6], __t22_amount[7],
+            ${decimalsExpr},
+        ];
+        let __t22_metas = [
+            pinocchio::instruction::AccountMeta::writable(${from}.key()),
+            pinocchio::instruction::AccountMeta::readonly(${mint}.key()),
+            pinocchio::instruction::AccountMeta::writable(${to}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __t22_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__t22_metas,
+            data: &__t22_data,
+        };
+${invokeCall}
+    }`;
+    }
     if (signerSeeds) {
       return `    // SPL Token transfer (PDA signed) — ${from} → ${to}
     spl_token_transfer_signed(${from}, ${to}, ${authority}, ${amount}, ${signerSeeds})?;`;
@@ -236,19 +337,95 @@ ${arms}
     spl_token_transfer(${from}, ${to}, ${authority}, ${amount})?;`;
   }
 
-  override emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string, _opts?: Token2022Opts): string {
+  override emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
+    if (opts?.tokenProgram === "token_2022") {
+      // Token-2022 mint_to_checked — discriminator 14,
+      // accounts [mint, to, authority], data [14, amount_u64_le, decimals_u8].
+      const { decimalsExpr, prelude } = resolveT22DecimalsPinocchio(mint, opts?.decimals);
+      const invokeCall = emitT22Invoke(`${mint}, ${to}, ${authority}`, signerSeeds);
+      return `    // Token-2022 mint_to_checked — ${mint} → ${to}
+${prelude}    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __t22_amount = (${amount}).to_le_bytes();
+        let __t22_data: [u8; 10] = [
+            14,
+            __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
+            __t22_amount[4], __t22_amount[5], __t22_amount[6], __t22_amount[7],
+            ${decimalsExpr},
+        ];
+        let __t22_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+            pinocchio::instruction::AccountMeta::writable(${to}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __t22_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__t22_metas,
+            data: &__t22_data,
+        };
+${invokeCall}
+    }`;
+    }
     const signed = signerSeeds ? "_signed" : "";
     return `    // SPL Token mint_to — ${mint} → ${to}
     spl_token_mint_to${signed}(${mint}, ${to}, ${authority}, ${amount}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
   }
 
-  override emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string, _opts?: Token2022Opts): string {
+  override emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
+    if (opts?.tokenProgram === "token_2022") {
+      // Token-2022 burn_checked — discriminator 15,
+      // accounts [from, mint, authority], data [15, amount_u64_le, decimals_u8].
+      const { decimalsExpr, prelude } = resolveT22DecimalsPinocchio(mint, opts?.decimals);
+      const invokeCall = emitT22Invoke(`${from}, ${mint}, ${authority}`, signerSeeds);
+      return `    // Token-2022 burn_checked — ${from}
+${prelude}    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __t22_amount = (${amount}).to_le_bytes();
+        let __t22_data: [u8; 10] = [
+            15,
+            __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
+            __t22_amount[4], __t22_amount[5], __t22_amount[6], __t22_amount[7],
+            ${decimalsExpr},
+        ];
+        let __t22_metas = [
+            pinocchio::instruction::AccountMeta::writable(${from}.key()),
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __t22_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__t22_metas,
+            data: &__t22_data,
+        };
+${invokeCall}
+    }`;
+    }
     const signed = signerSeeds ? "_signed" : "";
     return `    // SPL Token burn — ${from}
     spl_token_burn${signed}(${from}, ${mint}, ${authority}, ${amount}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
   }
 
-  override emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string, _opts?: Token2022Opts): string {
+  override emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string, opts?: Token2022Opts): string {
+    if (opts?.tokenProgram === "token_2022") {
+      // Token-2022 close_account — discriminator 9, no `_checked` variant
+      // exists. Accounts [account, destination, authority], data [9].
+      const invokeCall = emitT22Invoke(`${account}, ${destination}, ${authority}`, signerSeeds);
+      return `    // Token-2022 close account — ${account}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __t22_metas = [
+            pinocchio::instruction::AccountMeta::writable(${account}.key()),
+            pinocchio::instruction::AccountMeta::writable(${destination}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __t22_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__t22_metas,
+            data: &[9],
+        };
+${invokeCall}
+    }`;
+    }
     const signed = signerSeeds ? "_signed" : "";
     return `    // SPL Token close account — ${account}
     spl_token_close_account${signed}(${account}, ${destination}, ${authority}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
