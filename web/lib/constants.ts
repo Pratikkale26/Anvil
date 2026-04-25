@@ -139,6 +139,44 @@ export type BuildResult = {
   stderrTail?: string;
 };
 
+/**
+ * Auto-fix loop response. One iteration per cargo-check + (optional) refine
+ * pair. The loop stops on the first green build, exhausted budget, or AI
+ * giving up (no patches accepted).
+ */
+export type AutoFixIteration = {
+  iteration: number;
+  buildResult: {
+    ok: boolean;
+    durationMs: number;
+    errors: BuildError[];
+    warnings: BuildError[];
+  };
+  refine?: {
+    acceptedPatches: number;
+    rejectedPatches: number;
+    rationale: string;
+    estimatedCostUsd: number;
+  };
+  refineError?: { category: string; message: string };
+};
+
+export type AutoFixResponse = {
+  ok: boolean;
+  stoppedReason:
+    | "green"
+    | "max_iterations"
+    | "cost_cap"
+    | "no_progress"
+    | "refine_error"
+    | "unsupported_target";
+  iterations: AutoFixIteration[];
+  finalFiles: { path: string; content: string }[];
+  finalOk: boolean;
+  totalDurationMs: number;
+  totalCostUsd: number;
+};
+
 export type ErrorDelta = { before: number; after: number };
 
 export type RefineResult = {

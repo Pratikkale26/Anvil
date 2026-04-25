@@ -82,6 +82,10 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
     buildBusy,
     buildResult,
     buildError,
+    runVerifyAndFix,
+    autoFixBusy,
+    autoFixResult,
+    autoFixError,
     handleLocalFileChange,
     handleFolderChange,
     downloadDiagnostics,
@@ -631,7 +635,7 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
 
             <button
               onClick={() => void runBuild()}
-              disabled={buildBusy || !hasOutput}
+              disabled={buildBusy || autoFixBusy || !hasOutput}
               className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-none font-extrabold text-sm transition-all"
               style={{
                 cursor: buildBusy ? "default" : "pointer",
@@ -659,6 +663,105 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                 </>
               )}
             </button>
+
+            {/* Auto-fix loop — runs cargo check + AI refine in a loop until
+                green or budget hits. Bigger button than the manual verify
+                because this is the headline workflow once it works. */}
+            <button
+              onClick={() => void runVerifyAndFix()}
+              disabled={autoFixBusy || buildBusy || !hasOutput}
+              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-none font-extrabold text-sm transition-all"
+              style={{
+                cursor: autoFixBusy ? "default" : "pointer",
+                background: autoFixBusy
+                  ? "rgba(255,255,255,0.05)"
+                  : "linear-gradient(135deg, rgba(107,123,255,0.95), rgba(14,168,128,0.95))",
+                color: autoFixBusy ? C.textMuted : "#fff",
+              }}
+              title="Run cargo check, feed errors to AI, apply patches, re-run. Up to 3 iterations or $0.50 cost cap."
+            >
+              {autoFixBusy ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" /> Auto-fixing...
+                </>
+              ) : (
+                <>
+                  <Sparkles size={14} /> Verify + Auto-fix with AI
+                </>
+              )}
+            </button>
+
+            {autoFixError && (
+              <div className="p-3 rounded-xl bg-[rgba(224,90,90,0.1)] border border-[rgba(224,90,90,0.22)] text-[#ffb5b5] text-xs leading-relaxed">
+                <div className="font-bold mb-1">Auto-fix loop failed</div>
+                <div className="opacity-90">{autoFixError}</div>
+              </div>
+            )}
+
+            {autoFixResult && (
+              <div
+                className="px-3 py-2.5 rounded-xl border"
+                style={{
+                  borderColor:
+                    autoFixResult.stoppedReason === "green"
+                      ? "rgba(14,168,128,0.35)"
+                      : "rgba(245,166,35,0.35)",
+                  background:
+                    autoFixResult.stoppedReason === "green"
+                      ? "rgba(14,168,128,0.08)"
+                      : "rgba(245,166,35,0.07)",
+                }}
+              >
+                <div className="font-mono text-[12px] font-extrabold text-anvil-text mb-1">
+                  {autoFixResult.iterations.length} iteration
+                  {autoFixResult.iterations.length === 1 ? "" : "s"} ·{" "}
+                  {autoFixResult.totalDurationMs}ms · ~$
+                  {autoFixResult.totalCostUsd.toFixed(4)}
+                </div>
+                <div className="text-[11px] text-anvil-text-muted leading-relaxed mb-2">
+                  Stopped: <span className="font-mono">{autoFixResult.stoppedReason}</span>
+                  {autoFixResult.stoppedReason === "green" && " — generated code now compiles."}
+                  {autoFixResult.stoppedReason === "max_iterations" &&
+                    " — hit iteration limit; re-run or fix remaining errors manually."}
+                  {autoFixResult.stoppedReason === "cost_cap" &&
+                    " — hit AI cost cap; raise maxCostUsd or fix manually."}
+                  {autoFixResult.stoppedReason === "no_progress" &&
+                    " — AI accepted no patches this iteration; remaining errors need manual fix."}
+                  {autoFixResult.stoppedReason === "refine_error" &&
+                    " — AI provider error during loop. See JSON download for details."}
+                </div>
+                <div className="flex flex-col gap-1 max-h-[160px] overflow-y-auto">
+                  {autoFixResult.iterations.map((it, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 text-[11px] font-mono px-2 py-1 rounded-md"
+                      style={{
+                        background: it.buildResult.ok
+                          ? "rgba(14,168,128,0.1)"
+                          : "rgba(255,255,255,0.04)",
+                      }}
+                    >
+                      <span className="text-anvil-text-dim">#{it.iteration}</span>
+                      <span className={it.buildResult.ok ? "text-anvil-text" : "text-[#ffb5b5]"}>
+                        {it.buildResult.errors.length} err
+                      </span>
+                      {it.refine && (
+                        <span className="text-anvil-text-muted">
+                          → AI {it.refine.acceptedPatches}/
+                          {it.refine.acceptedPatches + it.refine.rejectedPatches}
+                          {it.refine.estimatedCostUsd > 0
+                            ? ` ($${it.refine.estimatedCostUsd.toFixed(4)})`
+                            : ""}
+                        </span>
+                      )}
+                      <span className="text-anvil-text-dim ml-auto">
+                        {it.buildResult.durationMs}ms
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {buildError && (
               <div className="p-3 rounded-xl bg-[rgba(224,90,90,0.1)] border border-[rgba(224,90,90,0.22)] text-[#ffb5b5] text-xs leading-relaxed">

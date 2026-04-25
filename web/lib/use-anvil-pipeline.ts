@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   API_BASE,
+  type AutoFixResponse,
   type BuildResult,
   type CUEstimate,
   type EmitFile,
@@ -84,6 +85,11 @@ export function useAnvilPipeline() {
   const [buildResult, setBuildResult] = useState<BuildResult | null>(null);
   const [buildBusy, setBuildBusy] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
+  // Auto-fix loop state. Different from buildResult because it carries the
+  // full per-iteration history + cost accounting + stopReason.
+  const [autoFixResult, setAutoFixResult] = useState<AutoFixResponse | null>(null);
+  const [autoFixBusy, setAutoFixBusy] = useState(false);
+  const [autoFixError, setAutoFixError] = useState<string | null>(null);
 
   // ─── Refine state ─────────────────────────────────────────────────────────
   const [refineResult, setRefineResult] = useState<RefineResult | null>(null);
@@ -315,6 +321,8 @@ export function useAnvilPipeline() {
     setPreRefineSnapshot(null);
     setBuildResult(null);
     setBuildError(null);
+    setAutoFixResult(null);
+    setAutoFixError(null);
     setCompareTarget(null);
     setCompareTargetCode("");
     setCompareTargetError(null);
@@ -616,6 +624,93 @@ export function useAnvilPipeline() {
   }
 
   /**
+   * Verify build + auto-fix loop. Calls /build/auto-fix which runs cargo check,
+   * feeds errors as ValidationIssues into refineOutput, applies patches,
+   * re-runs cargo, repeats up to N iterations or until the budget is hit.
+   * Final accepted output replaces the active emit state on success.
+   */
+  async function runVerifyAndFix() {
+    if (!outputFiles.length || !programName || !irText) {
+      setAutoFixError("Run the deterministic pipeline first.");
+      return;
+    }
+    try {
+      setAutoFixBusy(true);
+      setAutoFixError(null);
+      setAutoFixResult(null);
+      // Stash a pre-fix snapshot via the existing refine snapshot — the user
+      // can hit Revert if the auto-fix landed somewhere they didn't want.
+      if (preRefineSnapshot === null) {
+        setPreRefineSnapshot({
+          singleFileCode,
+          outputFiles,
+          validationIssues,
+          reviewReport,
+        });
+      }
+
+      const ir = JSON.parse(irText);
+      // Build endpoint expects `src/`-prefixed paths so the scratch project
+      // layout works. Existing outputFiles use bare paths (`lib.rs`, `state.rs`).
+      const filesForBuild = outputFiles.map((f) => ({
+        path: f.path.startsWith("src/") ? f.path : `src/${f.path}`,
+        content: f.content,
+      }));
+
+      const res = await fetch(`${API_BASE}/build/auto-fix`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target,
+          ir,
+          files: filesForBuild,
+          programName,
+          maxIterations: 3,
+          maxCostUsd: 0.5,
+        }),
+      });
+      if (!res.ok) {
+        const p = await res.json().catch(() => ({ error: "Auto-fix failed" }));
+        throw new Error(p.details ?? p.error ?? p.message ?? "Auto-fix failed");
+      }
+      const result = (await res.json()) as AutoFixResponse;
+      setAutoFixResult(result);
+
+      // If at least one iteration accepted patches, swap the live output to
+      // the loop's final state so subsequent actions see the fixed code.
+      const acceptedAny = result.iterations.some((i) => (i.refine?.acceptedPatches ?? 0) > 0);
+      if (acceptedAny) {
+        // finalFiles comes back with `src/` prefixes; strip them on the
+        // way into the workbench-side state.
+        const newFiles: EmitFile[] = result.finalFiles.map((f) => ({
+          path: f.path.startsWith("src/") ? f.path.slice(4) : f.path,
+          content: f.content,
+        }));
+        setOutputFiles(newFiles);
+        // Update single-file view with the new lib.rs if it changed.
+        const lib = newFiles.find((f) => f.path === "lib.rs" || f.path.endsWith("/lib.rs"));
+        if (lib) setSingleFileCode(lib.content);
+        // Reflect the final build state in the simpler buildResult slot too,
+        // so the existing Verify card shows the final outcome.
+        const last = result.iterations[result.iterations.length - 1];
+        if (last) {
+          setBuildResult({
+            ok: last.buildResult.ok,
+            durationMs: last.buildResult.durationMs,
+            errors: last.buildResult.errors,
+            warnings: last.buildResult.warnings,
+          });
+        }
+        setHasAppliedRefine(true);
+      }
+    } catch (err) {
+      setAutoFixError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAutoFixBusy(false);
+    }
+  }
+
+  /**
    * Verify build — POST the current emitted files to /build, which runs
    * `cargo check` on a warm scratch project and returns rustc diagnostics.
    * This is the ground-truth correctness signal: a green build means the
@@ -738,6 +833,10 @@ export function useAnvilPipeline() {
     buildBusy,
     buildResult,
     buildError,
+    runVerifyAndFix,
+    autoFixBusy,
+    autoFixResult,
+    autoFixError,
     runCompareTargets,
     closeCompareTargets,
     compareTarget,
