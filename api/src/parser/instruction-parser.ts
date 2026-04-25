@@ -103,6 +103,7 @@ function parseInstructionFn(
   //       method body, inline it as the instruction body).
   const expandedWrapper =
     expandAccountsMethodWrapper(parser, bodyFnNode, contextType, accounts, implMethods)
+    ?? expandTypeAssociatedCalls(parser, bodyFnNode, implMethods)
     ?? expandTypeAssociatedHandler(parser, bodyFnNode, implMethods);
 
   // ── Classify the function body using AST ──
@@ -321,23 +322,130 @@ function stripOuterBraces(blockText: string): string {
 }
 
 /**
- * Expand a wrapper of the form `{ TypeName::method(args) }` by inlining the
- * impl method body. Used for the static-impl handler convention seen in
- * ChiefWoods-style Anchor 0.31 programs:
+ * Expand the body of a single impl method, substituting parameter names with
+ * the wrapper's call-site argument expressions. Returns the parameter-
+ * substituted inner text (no outer braces). The `ctx` param is left alone
+ * because both wrapper and impl method use the same name.
+ */
+function inlineImplMethodBody(
+  target: { node: SyntaxNode },
+  argExprs: string[],
+): string {
+  const paramsNode = target.node.childForFieldName("parameters");
+  const paramNames = paramsNode ? parseMethodParameterNames(paramsNode) : [];
+  let inner = stripOuterBraces(target.node.childForFieldName("body")?.text ?? "{}");
+
+  for (let i = 0; i < paramNames.length; i++) {
+    const paramName = paramNames[i];
+    const argExpr = argExprs[i];
+    if (!paramName || paramName === "ctx" || !argExpr) continue;
+    inner = replaceIdentifier(inner, paramName, normalizeArgumentSubstitution(argExpr));
+  }
+  return inner;
+}
+
+/**
+ * Expand a wrapper that contains one or more `TypeName::method(args)` calls
+ * to known impl methods. Handles both the single-call case ChiefWoods uses
+ * everywhere:
  *
  *   pub fn initialize(ctx: Context<Initialize>, amount: u64) -> Result<()> {
  *     Initialize::handler(ctx, amount)
  *   }
  *
- *   impl Initialize<'_> {
- *     pub fn handler(ctx: Context<Initialize>, amount: u64) -> Result<()> { ... }
+ * AND multi-statement bodies common in dice/escrow-blueshift cohort:
+ *
+ *   pub fn resolve_bet(ctx: Context<ResolveBet>, sig: Vec<u8>) -> Result<()> {
+ *     ResolveBet::verify_ed25519_signature(&ctx, &sig)?;
+ *     ResolveBet::handler(ctx, &sig)
  *   }
  *
- * The impl method body already uses `ctx.accounts.X` directly so once it's
- * inlined the existing classifier + walker handle the rest. Non-ctx
- * parameters get substituted with the wrapper's call-site argument
- * expressions; the `ctx` parameter is identical on both sides so we leave
- * it alone.
+ * Walks each top-level statement. For each one whose TEXT matches a known
+ * impl method on the Accounts struct, inlines that method's body in place;
+ * non-matching statements (let bindings, if guards, raw expressions) pass
+ * through verbatim. The result is wrapped in a synthetic block and re-parsed
+ * so the body classifier sees the fully-inlined source.
+ *
+ * Returns null when no statement matched a known impl method — leaves the
+ * original body intact for later resolvers (or pass-through classification).
+ */
+function expandTypeAssociatedCalls(
+  parser: Parser,
+  fnNode: SyntaxNode,
+  implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
+): { bodyNode: SyntaxNode; rawBody: string } | null {
+  const bodyNode = fnNode.childForFieldName("body");
+  if (!bodyNode) return null;
+  if (implMethods.length === 0) return null;
+
+  // Quick pre-flight: skip the AST walk if the body text doesn't even
+  // contain a Type::method-style identifier. Saves time on every plain
+  // handler we go through.
+  if (!/[A-Z][A-Za-z0-9_]*::\w+\s*\(/.test(bodyNode.text)) return null;
+
+  const methodLookup = new Map<string, { implName: string; name: string; node: SyntaxNode }>();
+  for (const im of implMethods) {
+    methodLookup.set(`${im.implName}::${im.name}`, im);
+  }
+
+  // Walk the block's named children — each is a statement (expression_statement,
+  // let_declaration, …) or the final tail expression. For each, try to match
+  // a `Type::method(args)(\?)?(;)?` shape and look up the impl method.
+  const callRe =
+    /^\s*([A-Z][A-Za-z0-9_]*)::(\w+)\s*\(([\s\S]*)\)\s*(\??)\s*(;)?\s*$/s;
+
+  const inlinedParts: string[] = [];
+  let didExpand = false;
+
+  for (let i = 0; i < bodyNode.namedChildCount; i++) {
+    const child = bodyNode.namedChild(i);
+    if (!child) {
+      continue;
+    }
+    const text = child.text;
+
+    const match = text.match(callRe);
+    if (match) {
+      const typeName = match[1]!;
+      const methodName = match[2]!;
+      const argsRaw = match[3] ?? "";
+      const hasQuestion = !!match[4];
+      const target = methodLookup.get(`${typeName}::${methodName}`);
+      if (target) {
+        const argExprs = splitTopLevelArgs(argsRaw);
+        const innerBody = inlineImplMethodBody(target, argExprs);
+        // Wrap the inlined body in a fresh block so its `let` bindings
+        // don't leak into the surrounding wrapper scope. The block
+        // evaluates to its tail expression, so `?` on the call site
+        // still works (block evaluates → Result → `?` propagates).
+        inlinedParts.push(`{\n${innerBody}\n}${hasQuestion ? "?" : ""};`);
+        didExpand = true;
+        continue;
+      }
+    }
+
+    // Default: keep statement verbatim.
+    inlinedParts.push(text);
+  }
+
+  if (!didExpand) return null;
+
+  const expandedBody = `{\n${inlinedParts.join("\n")}\n}`;
+  const synthetic = parser.parse(`fn __anvil_type_assoc__() ${expandedBody}`);
+  if (!synthetic) return null;
+  const syntheticFn = findDescendant(synthetic.rootNode, "function_item");
+  const syntheticBody = syntheticFn?.childForFieldName("body");
+  if (!syntheticBody) return null;
+
+  return { bodyNode: syntheticBody, rawBody: syntheticBody.text };
+}
+
+/**
+ * Single-statement `{ TypeName::method(args) }` resolver — kept as a
+ * narrowly-scoped helper but the new expandTypeAssociatedCalls covers the
+ * same case plus multi-statement bodies. Left here for stable behavior on
+ * snapshot tests; parseInstructionFn tries the multi-statement resolver
+ * first, then falls back to this one.
  */
 function expandTypeAssociatedHandler(
   parser: Parser,
