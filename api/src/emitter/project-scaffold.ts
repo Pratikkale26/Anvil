@@ -146,10 +146,10 @@ borsh = { version = "1.5", features = ["derive"] }
 # spl-associated-token-account 8 are available upstream and backwards-compatible
 # — bump after verifying your program still builds.
 solana-program = "2.2"
-spl-token = "7"
-spl-token-2022 = "6"
-spl-associated-token-account = "6"
-spl-memo = "6"
+spl-token = { version = "7", features = ["no-entrypoint"] }
+spl-token-2022 = { version = "6", features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "6", features = ["no-entrypoint"] }
+spl-memo = { version = "6", features = ["no-entrypoint"] }
 thiserror = "2.0"
 ${optionalSection}
 [dev-dependencies]
