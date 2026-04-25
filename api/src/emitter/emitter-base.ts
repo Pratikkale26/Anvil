@@ -399,7 +399,17 @@ export abstract class BaseEmitter {
 
   private emitHelpersFile(ir: SolanaIR): string {
     const sections: string[] = [];
-    sections.push(`use super::*;`);
+    // Carried helpers may reference state structs (e.g. `&mut Market`) and
+    // error enums (`FundingError::MathOverflow`) declared in sibling modules.
+    // `use super::*;` only re-exports what lib.rs publishes, and lib.rs
+    // declares `state`/`errors` as private modules — so we mirror what
+    // `emitInstructionsModFile` does and pull those scopes in directly.
+    const preludes = [
+      `use super::*;`,
+      ir.accounts.length > 0 ? `use crate::state::*;` : "",
+      ir.errors.length > 0 ? `use crate::errors::*;` : "",
+    ].filter(Boolean).join("\n");
+    sections.push(preludes);
 
     // Framework-specific helpers (transfer_lamports, etc.)
     const frameworkHelpers = this.emitHelperFunctions(ir);
@@ -1019,13 +1029,20 @@ ${fields}
       return "";
     }
 
-    let signerPrelude = "";
+    // The PDA prelude has two halves: the bump derivation (deterministic
+    // from program_id+seeds) and the signer-seed bookkeeping (only used on
+    // the create_program_account path). Keep them as separate strings so
+    // we can hoist the bump out of the `init_if_needed` guard below — the
+    // body code references `bump_X` to write `account.bump = bump_X` after
+    // the guard, and that reference must be in scope on both branches.
+    let bumpPrelude = "";
+    let seedsPrelude = "";
     let signerSeedsExpr: string | undefined;
     if (accountRef.isPda) {
       const pdaSeeds = (accountRef.pdaSeeds ?? [`b"${accountName}"`]).map((seed) =>
         this.normalizeInitSeedExpr(seed)
       );
-      const bumpLine = this.emitBumpSeed(
+      bumpPrelude = this.emitBumpSeed(
         "program_id",
         pdaSeeds,
         accountName,
@@ -1057,9 +1074,8 @@ ${fields}
         return seed;
       });
 
-      const initSeedPreludeStr = initSeedPrelude.length > 0 ? `\n${initSeedPrelude.join("\n")}` : "";
-      signerPrelude = `${bumpLine}${initSeedPreludeStr}
-    let init_${accountName}_seeds: &[&[u8]] = &[
+      const initSeedPreludeStr = initSeedPrelude.length > 0 ? `${initSeedPrelude.join("\n")}\n` : "";
+      seedsPrelude = `${initSeedPreludeStr}    let init_${accountName}_seeds: &[&[u8]] = &[
             ${[...liftedSeeds, `&[bump_${accountName}]`].join(",\n            ")},
         ];
     let init_${accountName}_signer_seeds = &[&init_${accountName}_seeds[..]];`;
@@ -1075,22 +1091,27 @@ ${fields}
 
     // `init_if_needed` means: only allocate if the account doesn't already
     // exist on-chain. An empty data buffer + zero lamports is the standard
-    // heuristic. Wrap the signer-seed setup AND the create call so we don't
-    // pay to re-derive seeds on the no-op path either.
+    // heuristic. The seeds bookkeeping + create call are gated, but the
+    // bump derivation is hoisted to function scope: deterministic from
+    // program_id+seeds (so cheap on either branch) and required by the
+    // body — `account.bump = bump_X` runs after the guard, on both the
+    // freshly-created and pre-existing paths, and must see `bump_X` in
+    // scope.
     const isIfNeeded = accountRef.constraints.some(
       (c) => c.kind === "init_if_needed",
     );
     if (isIfNeeded) {
-      const body = [signerPrelude, createCall].filter(Boolean).join("\n");
+      const inner = [seedsPrelude, createCall].filter(Boolean).join("\n");
       // Indent body so the emitted block stays readable.
-      const indented = body.replace(/^/gm, "    ");
-      return `    // init_if_needed: only allocate when the account is empty.
+      const indented = inner.replace(/^/gm, "    ");
+      const block = `    // init_if_needed: only allocate when the account is empty.
     if ${accountName}.data_is_empty() {
 ${indented}
     }`;
+      return [bumpPrelude, block].filter(Boolean).join("\n");
     }
 
-    return [signerPrelude, createCall].filter(Boolean).join("\n");
+    return [bumpPrelude, seedsPrelude, createCall].filter(Boolean).join("\n");
   }
 
   /**
