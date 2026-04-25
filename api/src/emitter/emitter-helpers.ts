@@ -260,18 +260,25 @@ export function irNeedsToken2022Helper(ir: SolanaIR): boolean {
 }
 
 /**
- * Returns true if any instruction has an init/init_if_needed account with
- * associated_token::mint and associated_token::authority constraints,
- * indicating the emitter needs ATA creation logic.
+ * Returns true if any instruction needs ATA-creation emit support, either via:
+ *  - account constraint path: `init` + `associated_token::*` pair, OR
+ *  - body-CPI path: a `cpi_ata_create` statement somewhere in the instruction.
+ *
+ * Both paths use the same `CreateAssociatedToken` struct, so the emitter only
+ * has to add the `use pinocchio_associated_token_account::instructions::Create
+ * as CreateAssociatedToken;` import once when either trigger fires.
  */
 export function irNeedsAtaCreationHelper(ir: SolanaIR): boolean {
-  return ir.instructions.some((instr) =>
-    instr.accounts.some((account) =>
+  return ir.instructions.some((instr) => {
+    const constraintTrigger = instr.accounts.some((account) =>
       account.isInit &&
       account.constraints.some((c) => c.kind === "associated_token::mint" && c.value) &&
       account.constraints.some((c) => c.kind === "associated_token::authority" && c.value)
-    )
-  );
+    );
+    if (constraintTrigger) return true;
+    const bodyTrigger = (instr.body ?? []).some((stmt) => stmt.kind === "cpi_ata_create");
+    return bodyTrigger;
+  });
 }
 
 export function hasResidualAnchorPatterns(value: string): boolean {

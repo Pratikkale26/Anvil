@@ -262,14 +262,19 @@ ${arms}
   }
 
   override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string): string {
-    return `    // Create Associated Token Account: ${ata}
-    CreateAssociatedToken {
-        funding_account: ${payer},
-        associated_account: ${ata},
-        wallet_address: ${authority},
-        token_mint: ${mint},
-    }
-    .invoke()?;`;
+    // ATA creation on Pinocchio currently has an upstream version mismatch:
+    // pinocchio_associated_token_account 0.4 takes `&solana_account_view::AccountView`,
+    // while pinocchio 0.9's `&accounts[N]` returns `&pinocchio::account_info::AccountInfo`.
+    // No automatic conversion exists. Until the crate aligns, emit a flagged
+    // TODO so the validator surfaces it as a blocker and the user can either
+    //   (a) target Native instead (full ATA support there), or
+    //   (b) hand-roll a raw `pinocchio::cpi::invoke(...)` against the SPL
+    //       ATA program ID — concrete pubkey: ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL
+    return `    // ⚠️ Anvil: Review — ATA Create on Pinocchio (manual rewrite required)
+    // pinocchio_associated_token_account 0.4 expects &AccountView; we have &AccountInfo.
+    // TODO(manual): rewrite as pinocchio::cpi::invoke(...) with SPL ATA program ID,
+    // or run with --target native for first-class ATA support.
+    // Inputs: ata=${ata} payer=${payer} mint=${mint} authority=${authority}`;
   }
 
   override emitPdaSignerSeeds(

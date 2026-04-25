@@ -615,12 +615,14 @@ ${arms}
     authority: string,
     _signerSeeds?: string,
   ): string {
-    return `    // Create Associated Token Account: ${ata}
-    CreateAssociatedToken {
-        funding_account: ${payer},
-        associated_account: ${ata},
-        wallet_address: ${authority},
-        token_mint: ${mint},
+    return `    // ⚠️ Anvil: Review — ATA Create on Quasar (TODO: depends on quasar-spl ATA support)
+    // TODO(manual): replace with the equivalent quasar-spl Create CPI builder.
+    // Inputs: ata=${ata} payer=${payer} mint=${mint} authority=${authority}
+    let _todo_ata_${ata} = (
+        ${payer},
+        ${ata},
+        ${mint},
+        ${authority},
     }
     .invoke()?;`;
   }
