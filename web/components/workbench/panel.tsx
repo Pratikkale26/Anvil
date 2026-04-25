@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /* ─── Panel ──────────────────────────────────────────────────────────────── */
@@ -28,9 +30,11 @@ export function Panel({
 export function PanelHead({
   icon: Icon,
   title,
+  badge,
 }: {
   icon: React.ElementType;
   title: string;
+  badge?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center gap-2 px-4 py-3 border-b border-anvil-line">
@@ -38,7 +42,101 @@ export function PanelHead({
       <span className="text-[13px] font-semibold text-anvil-text-sub">
         {title}
       </span>
+      {badge && <span className="ml-auto">{badge}</span>}
     </div>
+  );
+}
+
+/* ─── CollapsiblePanel ───────────────────────────────────────────────────────
+ *
+ * Toggleable card. Click the header to open/close. Header always visible so
+ * the section index stays scannable without users having to scroll the inner
+ * content. `defaultOpen` sets initial state; `forceOpen` lets a parent pin it
+ * open when something demands attention (e.g. validation errors arriving).
+ */
+
+export function CollapsiblePanel({
+  icon: Icon,
+  title,
+  badge,
+  children,
+  defaultOpen = true,
+  forceOpen,
+  tone,
+}: {
+  icon: React.ElementType;
+  title: string;
+  badge?: React.ReactNode;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  /** When true, panel is open regardless of internal state. */
+  forceOpen?: boolean;
+  /** Optional accent color on the header (e.g. amber for active error, teal for green). */
+  tone?: "amber" | "teal" | "red" | "indigo";
+}) {
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const open = forceOpen ?? internalOpen;
+  const toneClass =
+    tone === "red"
+      ? "text-[#ffb5b5]"
+      : tone === "teal"
+        ? "text-anvil-teal"
+        : tone === "indigo"
+          ? "text-anvil-indigo"
+          : "text-anvil-amber";
+
+  return (
+    <Panel>
+      <button
+        type="button"
+        onClick={() => !forceOpen && setInternalOpen((v) => !v)}
+        className={cn(
+          "flex items-center gap-2 w-full px-4 py-3 cursor-pointer transition-colors",
+          open ? "border-b border-anvil-line" : "",
+          forceOpen ? "cursor-default" : "hover:bg-white/[0.03]"
+        )}
+        aria-expanded={open}
+      >
+        {open ? (
+          <ChevronDown size={14} className="text-anvil-text-dim shrink-0" />
+        ) : (
+          <ChevronRight size={14} className="text-anvil-text-dim shrink-0" />
+        )}
+        <Icon size={14} className={toneClass} />
+        <span className="text-[13px] font-semibold text-anvil-text-sub">
+          {title}
+        </span>
+        {badge && <span className="ml-auto">{badge}</span>}
+      </button>
+      {open && children}
+    </Panel>
+  );
+}
+
+/* ─── HeadCount — small numeric chip for panel headers ─────────────────────── */
+
+export function HeadCount({
+  label,
+  tone = "muted",
+}: {
+  label: string;
+  tone?: "muted" | "amber" | "teal" | "red";
+}) {
+  const cls = {
+    muted: "border-anvil-card-border bg-white/[0.04] text-anvil-text-muted",
+    amber: "border-[rgba(245,166,35,0.35)] bg-[rgba(245,166,35,0.1)] text-anvil-amber",
+    teal: "border-[rgba(14,168,128,0.35)] bg-[rgba(14,168,128,0.1)] text-anvil-teal",
+    red: "border-[rgba(224,90,90,0.35)] bg-[rgba(224,90,90,0.1)] text-[#ffb5b5]",
+  }[tone];
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center px-2 py-0.5 rounded-md border text-[10px] font-bold tracking-wide",
+        cls
+      )}
+    >
+      {label}
+    </span>
   );
 }
 

@@ -27,6 +27,8 @@ import {
 import {
   ActionButton,
   Badge,
+  CollapsiblePanel,
+  HeadCount,
   Hint,
   InputLabel,
   OutBtn,
@@ -106,7 +108,11 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
     <div
       className={cn(
         "flex flex-col gap-3",
-        !isTablet && "sticky top-[70px]"
+        // Pin the column to the top of the viewport on desktop and let it
+        // scroll internally — bounded height + overflow-y-auto means the
+        // Run button can stay `sticky bottom-2` and never sink below the
+        // fold no matter how many cards expand.
+        !isTablet && "sticky top-[70px] max-h-[calc(100vh-90px)] overflow-y-auto pr-1"
       )}
     >
       {/* Input source card */}
@@ -319,12 +325,18 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
         </div>
       </Panel>
 
-      {/* AI Refine card — only rendered when there's something to refine OR
-          a previous refine result to surface. When validation is clean and
-          no result exists, we show a positive "no AI needed" pill instead. */}
+      {/* AI Refine card — collapsible. Default-closed when validation is clean
+          (just a "no AI needed" pill in the header badge). Forced open when
+          there's an active error count, refine result, or provider error so
+          the user doesn't have to hunt for the button. */}
       {hasOutput && errorCount === 0 && !refineResult && !refineError && (
-        <Panel>
-          <PanelHead icon={Sparkles} title="AI Refine" />
+        <CollapsiblePanel
+          icon={Sparkles}
+          title="AI Refine"
+          tone="teal"
+          defaultOpen={false}
+          badge={<HeadCount label="clean" tone="teal" />}
+        >
           <div className="p-4 flex items-center gap-3">
             <div
               className="flex h-9 w-9 items-center justify-center rounded-[10px] shrink-0"
@@ -343,12 +355,25 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
               </div>
             </div>
           </div>
-        </Panel>
+        </CollapsiblePanel>
       )}
 
       {(errorCount > 0 || refineResult || refineError) && (
-        <Panel>
-          <PanelHead icon={Sparkles} title="AI Refine" />
+        <CollapsiblePanel
+          icon={Sparkles}
+          title="AI Refine"
+          tone={errorCount > 0 ? "amber" : refineResult ? "teal" : "red"}
+          forceOpen
+          badge={
+            errorCount > 0 ? (
+              <HeadCount label={`${errorCount} err`} tone="amber" />
+            ) : refineResult?.errorDelta?.after === 0 ? (
+              <HeadCount label="✓ refined" tone="teal" />
+            ) : refineError ? (
+              <HeadCount label="error" tone="red" />
+            ) : null
+          }
+        >
           <div className="p-3 flex flex-col gap-2.5">
             <div className="text-xs text-anvil-text-muted leading-relaxed">
               {isRetryWithFeedback ? (
@@ -615,15 +640,34 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
               </div>
             )}
           </div>
-        </Panel>
+        </CollapsiblePanel>
       )}
 
-      {/* Verify build — runs cargo check on the emitted output and surfaces
-          rustc diagnostics. Ground-truth correctness signal: green here means
-          the generated code actually compiles. */}
+      {/* Verify build — collapsible. Default-closed when nothing has run; auto-
+          opens once a build result, auto-fix loop result, or error appears. */}
       {hasOutput && (
-        <Panel>
-          <PanelHead icon={Hammer} title="Verify build" />
+        <CollapsiblePanel
+          icon={Hammer}
+          title="Verify build"
+          tone={
+            buildResult?.ok || autoFixResult?.ok
+              ? "teal"
+              : buildResult || autoFixResult || buildError || autoFixError
+                ? "red"
+                : "amber"
+          }
+          forceOpen={!!(buildResult || autoFixResult || buildError || autoFixError)}
+          defaultOpen={false}
+          badge={
+            buildResult?.ok ? (
+              <HeadCount label="✓ green" tone="teal" />
+            ) : buildResult ? (
+              <HeadCount label={`${buildResult.errors.length} err`} tone="red" />
+            ) : autoFixResult?.ok ? (
+              <HeadCount label="✓ auto-fixed" tone="teal" />
+            ) : null
+          }
+        >
           <div className="p-3 flex flex-col gap-2.5">
             <div className="text-xs text-anvil-text-muted leading-relaxed">
               {buildResult
@@ -840,14 +884,15 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
               </div>
             )}
           </div>
-        </Panel>
+        </CollapsiblePanel>
       )}
 
-      {/* Run button — ⌘↵ / Ctrl↵ also triggers (wired in workbench/page.tsx). */}
+      {/* Run button — sticky to the bottom of the input column so it never
+          sinks below the fold once cards expand. ⌘↵ / Ctrl↵ also triggers. */}
       <button
         onClick={runPipeline}
         disabled={isRunning}
-        className="flex items-center justify-center gap-2.5 py-[15px] px-5 rounded-[14px] border-none font-extrabold text-[15px] transition-opacity"
+        className="sticky bottom-2 z-20 flex items-center justify-center gap-2.5 py-[15px] px-5 rounded-[14px] border-none font-extrabold text-[15px] transition-opacity shadow-lg"
         style={{
           cursor: isRunning ? "default" : "pointer",
           background: isRunning
@@ -855,6 +900,7 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
             : "linear-gradient(135deg, #f5a623, #e8820a)",
           color: isRunning ? C.textMuted : "#0a0600",
           opacity: isRunning ? 0.7 : 1,
+          boxShadow: isRunning ? "none" : "0 8px 24px -10px rgba(245,166,35,0.6)",
         }}
       >
         {isRunning ? (
