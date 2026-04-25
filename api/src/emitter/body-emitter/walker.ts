@@ -961,20 +961,43 @@ export class BodyWalker {
     // Convert var.set_inner(TypeName { field: value, ... }) into individual field assignments
     transformed = transformed.replace(
       /(\w+)\.set_inner\(\s*(\w+)\s*\{([\s\S]*?)\}\s*\);?/g,
-      (_full, localVar: string, _typeName: string, fieldsStr: string) => {
-        const assignments = fieldsStr
+      (_full, localVar: string, typeName: string, fieldsStr: string) => {
+        // Resolve struct field list so shorthand entries whose value got
+        // substituted by the impl-method inliner (e.g. `bump,` after the
+        // wrapper passed `ctx.bumps.escrow`) still emit the correct lhs
+        // field name. Without this, a shorthand entry whose value the
+        // inliner rewrote to a *different* identifier (e.g. `bump_escrow`
+        // after `ctx.bumps.escrow` was canonicalized) would collapse into
+        // `var.bump_escrow = bump_escrow` because the regex split treats
+        // the substituted token as the field name.
+        const accountDef = this.ir.accounts.find((a) => a.name === typeName);
+        const structFieldNames = accountDef?.fields.map((f) => f.name) ?? [];
+        const fieldEntries = fieldsStr
           .split(",")
           .map((f) => f.trim())
-          .filter((f) => f.length > 0)
-          .map((f) => {
-            const colonIdx = f.indexOf(":");
-            if (colonIdx !== -1) {
-              const fieldName = f.slice(0, colonIdx).trim();
-              const fieldValue = f.slice(colonIdx + 1).trim();
-              return `${localVar}.${fieldName} = ${fieldValue};`;
+          .filter((f) => f.length > 0);
+        const assignments = fieldEntries.map((f, idx) => {
+          const colonIdx = f.indexOf(":");
+          if (colonIdx !== -1) {
+            const fieldName = f.slice(0, colonIdx).trim();
+            const fieldValue = f.slice(colonIdx + 1).trim();
+            return `${localVar}.${fieldName} = ${fieldValue};`;
+          }
+          // No colon: shorthand. The token `f` is meant to be both the
+          // field name and the value. If the struct definition is known
+          // and `f` is *not* a declared field on that struct, the
+          // impl-method inliner has rewritten the shorthand value to a
+          // different identifier — recover the original field name from
+          // the struct's field list at the same comma-position.
+          if (structFieldNames.length > 0 && !structFieldNames.includes(f)) {
+            const fieldName = structFieldNames[idx];
+            if (fieldName) {
+              return `${localVar}.${fieldName} = ${f};`;
             }
-            return `${localVar}.${f} = ${f};`;
-          });
+            return `// ⚠️ Anvil: could not resolve set_inner field at position ${idx} (${f})`;
+          }
+          return `${localVar}.${f} = ${f};`;
+        });
         return assignments.join("\n    ");
       },
     );
