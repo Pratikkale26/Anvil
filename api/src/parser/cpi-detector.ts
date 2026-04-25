@@ -115,12 +115,41 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
     return extractSystemTransfer(callNode);
   }
 
+  // ── SPL Memo CPI ──
+  // Common forms:
+  //   spl_memo::build_memo(memo_bytes, &[signer])
+  //   solana_program::memo::build_memo(...)
+  //   anchor_spl::memo::Memo { ... }   (less common)
+  // The interesting payload is the first argument (the memo data); signer
+  // accounts are optional and tracked separately when present.
+  if (
+    funcText.includes("spl_memo::") ||
+    funcText.includes("memo::build_memo") ||
+    funcText === "build_memo"
+  ) {
+    return extractMemoCpi(callNode);
+  }
+
   // ── Generic invoke / invoke_signed ──
   if (funcText === "invoke" || funcText === "invoke_signed") {
     return extractCustomCpi(callNode);
   }
 
   return null;
+}
+
+function extractMemoCpi(callNode: SyntaxNode): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return fallbackPassThrough(callNode);
+  const args = getArguments(argsNode);
+  // build_memo(data, signers): data is arg[0]; signers (slice) is arg[1].
+  // We carry data as its raw expression text — the emitter quotes/passes
+  // through depending on shape (string literal vs slice expr vs Vec<u8>).
+  const data = args[0]?.text.trim() ?? "&[]";
+  return {
+    kind: "cpi_memo",
+    data,
+  };
 }
 
 // ─── SPL Token Transfer ─────────────────────────────────────────────────────

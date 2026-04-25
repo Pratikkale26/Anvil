@@ -241,6 +241,16 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
   }),
 
+  // SPL Memo CPI — `spl_memo::build_memo(data, &[signer])` or
+  // `solana_program::memo::*`. Data may be a string literal or an expression
+  // evaluating to a slice/Vec<u8>. We carry it as raw text and let the
+  // emitter re-quote / pass through depending on target.
+  z.object({
+    kind: z.literal("cpi_memo"),
+    data: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Generic / custom CPI (invoke or invoke_signed)
   z.object({
     kind: z.literal("cpi_custom"),

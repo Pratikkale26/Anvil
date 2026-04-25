@@ -142,6 +142,9 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // ── Memo CPI ──
+  abstract emitMemo(data: string, signerSeeds?: string): string;
+
   // ── PDA signer seeds ──
   abstract emitPdaSignerSeeds(
     account: string,

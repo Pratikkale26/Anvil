@@ -627,6 +627,13 @@ ${arms}
     .invoke()?;`;
   }
 
+  override emitMemo(data: string, _signerSeeds?: string): string {
+    return `    // ⚠️ Anvil: Review — Memo CPI on Quasar (TODO: quasar-spl memo support TBD)
+    // TODO(manual): replace with the quasar-spl memo helper once available.
+    // Memo data: ${data}
+    let _todo_memo = ${data};`;
+  }
+
   override emitPdaSignerSeeds(
     account: string,
     accountInfoVar: string,

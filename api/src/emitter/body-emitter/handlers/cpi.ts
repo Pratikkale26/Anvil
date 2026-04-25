@@ -13,6 +13,7 @@ type CpiSplMintTo = Extract<BodyStatement, { kind: "cpi_spl_mint_to" }>;
 type CpiSplBurn = Extract<BodyStatement, { kind: "cpi_spl_burn" }>;
 type CpiSplCloseAccount = Extract<BodyStatement, { kind: "cpi_spl_close_account" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
+type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
 
 function shouldEmitSignerSeedsPrelude(w: BodyWalker, signerSeeds: string | undefined): boolean {
@@ -139,6 +140,12 @@ export function handleCpiAtaCreate(w: BodyWalker, stmt: CpiAtaCreate): void {
       stmt.signerSeeds,
     ),
   );
+}
+
+export function handleCpiMemo(w: BodyWalker, stmt: CpiMemo): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: spl_memo::build_memo`);
+  w.lines.push(w.emitter.emitMemo(stmt.data));
 }
 
 export function handleCpiCustom(w: BodyWalker, stmt: CpiCustom): void {

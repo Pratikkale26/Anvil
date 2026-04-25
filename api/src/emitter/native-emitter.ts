@@ -29,6 +29,7 @@ import {
   irNeedsInitAccountHelper,
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
+  irNeedsMemoHelper,
 } from "./emitter-helpers.js";
 
 class NativeEmitter extends BaseEmitter {
@@ -40,7 +41,8 @@ class NativeEmitter extends BaseEmitter {
       || irNeedsUnsignedSplMintToHelper(_ir)
       || irNeedsUnsignedSplBurnHelper(_ir)
       || irNeedsUnsignedSplCloseAccountHelper(_ir)
-      || irNeedsAtaCreationHelper(_ir);
+      || irNeedsAtaCreationHelper(_ir)
+      || irNeedsMemoHelper(_ir);
     const needsInvokeSigned = irNeedsSignedLamportsHelper(_ir)
       || irNeedsSignedSplMintToHelper(_ir)
       || irNeedsSignedSplBurnHelper(_ir)
@@ -80,6 +82,9 @@ use solana_program::{
     }
     if (irNeedsAtaCreationHelper(_ir)) {
       imports.push(`use spl_associated_token_account::instruction::create_associated_token_account;`);
+    }
+    if (irNeedsMemoHelper(_ir)) {
+      imports.push(`use spl_memo;`);
     }
 
     // Add Clock import when any instruction uses sysvar_clock or pass_through references Clock::get
@@ -327,6 +332,18 @@ ${arms}
     invoke(
         &create_ata_ix,
         &[${payer}.clone(), ${ata}.clone(), ${authority}.clone(), ${mint}.clone()],
+    )?;`;
+  }
+
+  override emitMemo(data: string, _signerSeeds?: string): string {
+    // spl_memo crate exposes build_memo(memo: &[u8], signer_pubkeys: &[&Pubkey]).
+    // We coerce string literals to bytes via .as_bytes(); other expressions
+    // are passed through as a slice — caller is responsible for &[u8] shape.
+    const bytesExpr = /^".*"$/.test(data.trim()) ? `${data}.as_bytes()` : data;
+    return `    // SPL Memo CPI
+    invoke(
+        &spl_memo::build_memo(${bytesExpr}, &[]),
+        &[],
     )?;`;
   }
 

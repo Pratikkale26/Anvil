@@ -294,6 +294,27 @@ ${arms}
     }`;
   }
 
+  override emitMemo(data: string, _signerSeeds?: string): string {
+    // No first-party pinocchio_memo crate in the 0.9 ecosystem — hand-roll
+    // a CPI against the SPL Memo program ID
+    // (MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr). Memo data is the
+    // instruction payload; no accounts are required.
+    const bytesExpr = /^".*"$/.test(data.trim()) ? `${data}.as_bytes()` : data;
+    return `    // SPL Memo CPI
+    {
+        const MEMO_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124,
+            124, 53, 181, 221, 188, 146, 187, 129, 228, 31, 168, 64, 65, 5, 68, 141,
+        ];
+        let __memo_ix = pinocchio::instruction::Instruction {
+            program_id: &MEMO_PROGRAM_ID,
+            accounts: &[],
+            data: ${bytesExpr},
+        };
+        pinocchio::cpi::invoke(&__memo_ix, &[])?;
+    }`;
+  }
+
   override emitPdaSignerSeeds(
     account: string,
     accountInfoVar: string,

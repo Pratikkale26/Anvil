@@ -281,6 +281,12 @@ export function irNeedsAtaCreationHelper(ir: SolanaIR): boolean {
   });
 }
 
+export function irNeedsMemoHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    (instr.body ?? []).some((stmt) => stmt.kind === "cpi_memo")
+  );
+}
+
 export function hasResidualAnchorPatterns(value: string): boolean {
   return /ctx\.(accounts|bumps)\./.test(value) ||
     /CpiContext::/.test(value) ||

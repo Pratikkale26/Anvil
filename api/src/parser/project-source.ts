@@ -660,6 +660,23 @@ function consolidateMultiStatementCpi(source: string): string {
     return `${nsPrefix}${fnName}(${ctx}${argsPart})${tryOp};`;
   });
 
+  // ── Memo two-statement form: inline-struct CpiContext + build_memo call ──
+  // `BuildMemo` is a fieldless marker struct, so Anchor code constructs it
+  // inline inside `CpiContext::new(prog, memo::BuildMemo {})` rather than via
+  // a separate `let acc = ...` binding. The other consolidators expect a
+  // separate accounts-let, so they don't fire — handle this shape directly
+  // and rewrite to the simplified `(NS::)?build_memo(DATA)?;` that the
+  // memo CPI detector can consume.
+  const memoStmt = new RegExp(
+    String.raw`let\s+(\w+)` + optTypeAnn + String.raw`\s*=\s*CpiContext::new\(\s*([\s\S]+?)\s*,\s*(?:[\w:]+::)?BuildMemo\s*\{\s*\}\s*,?\s*\)(?:\s*\.with_signer\(([^)]+)\))?\s*;` + ws +
+    String.raw`((?:\w+::)*)build_memo\(\s*\1\s*,\s*([\s\S]*?)\s*\)(\?)?;`,
+    "g",
+  );
+  out = out.replace(memoStmt, (_full, _ctxVar: string, _programExpr: string, _signerSeeds: string | undefined, nsPrefix: string, data: string, q: string | undefined) => {
+    const tryOp = q ?? "";
+    return `${nsPrefix}build_memo(${data.trim()})${tryOp};`;
+  });
+
   return out;
 }
 
