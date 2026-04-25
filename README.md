@@ -23,10 +23,15 @@ That's a generated Solana program that compiles. The same binary is what the web
 
 ## Status
 
-- 12/14 curated demos cargo-build on every commit (CI gate)
-- 17/48 real-world Anchor contracts from `solana-programs-list` cargo-build across Pinocchio + Native + Quasar targets
-- 100% parser coverage on 27 real-world programs (Anvil parses every Anchor contract we've thrown at it)
-- Some advanced contracts still need manual review before deployment — the generated output always flags those sections with a `⚠️ Anvil: Review` banner
+- **12/14 curated demos cargo-build** on every commit, both as single-file emit and as the downloadable project-scaffold bundle. The 2 misses are linker-only on the native target (cc returns 1) — not emitter bugs. Locked in via `scripts/repro-bundle-build.ts` so the download path can't silently regress.
+- **6/6 small real-world Anchor repos cargo-build** on both Pinocchio and Native — `pe-account-data`, `pe-hello-solana`, `pe-favorites` from `solana-developers/program-examples` plus the classic counter. Locked in via `scripts/test-realworld-fixes.ts`.
+- 17/48 mid-size real-world Anchor contracts from `solana-programs-list` cargo-build across Pinocchio + Native + Quasar.
+- 100% parser coverage on 27 real-world programs.
+- AI Refine: structural pre-check + cross-file validation gate + retry-with-feedback + revert button — refines that pass-through can't ship malformed Rust.
+- CI: GitHub Actions (`fast` on every change, `cargo-build` on PRs).
+- Observability: `GET /metrics` exposes refine cache hit rate, accept/reject ratio, per-target validation error counts.
+
+Advanced contracts still flag sections with `⚠️ Anvil: Review` for manual verification before deployment.
 
 ## What Anvil Does
 
@@ -123,7 +128,7 @@ anvil diff       # storage-layout diff between two program versions
 | `--threshold-abs N` | snapshot | Regression threshold, absolute CUs (default 10) |
 | `--snapshot <path>` | snapshot | Snapshot file path (default `./anvil.snapshot.json`) |
 
-All analysis commands return non-zero on failure (blockers / regressions / unsafe-diff), so they drop cleanly into CI.
+All analysis commands return non-zero on failure (blockers / regressions / unsafe-diff), so they drop cleanly into CI. Run `anvil <command> --help` for per-command flags, arguments, and exit codes.
 
 ### Examples
 
@@ -162,8 +167,9 @@ Available routes:
 
 - `GET /` — capabilities + uptime
 - `GET /health` — same payload as `/`, conventional probe path
+- `GET /metrics` — in-memory counters (refine cache hit rate, accept/reject ratio, per-target validation error counts, parse + emit totals)
 - `POST /parse` — Anchor source | file | project | repo → IR
-- `POST /emit` — IR → target-framework Rust (+ `?refine=1` for AI polish, `multiFile: true` for project layout, `projectScaffold: true` for the cargo-buildable bundle)
+- `POST /emit` — IR → target-framework Rust (+ `?refine=1` for AI polish, `multiFile: true` for project layout, `projectScaffold: true` for the cargo-buildable bundle, `previousAttempts: [...]` for retry-with-feedback after a failed refine)
 - `POST /lint` — portability scorecard (reuses `api/src/cli/lint-analyzer.ts`)
 - `POST /ai/refine` — AI-powered fix for validation issues
 - `GET /demo` — list demo names

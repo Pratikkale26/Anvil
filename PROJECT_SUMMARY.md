@@ -53,7 +53,7 @@ scripts/
   batch-cargo.sh      parallel cargo-build runner
 ```
 
-## Current status (April 2026)
+## Current status (April 2026, latest pass)
 
 ### Parser
 - 100% parse success across 27 real-world Anchor programs
@@ -83,11 +83,29 @@ scripts/
 - CU savings pill in output header
 - ⌘↵ / Ctrl↵ runs the pipeline
 - Project-bundle download (`.tar`) is a real multi-file scaffold
+- File-tree filter (shows once outputFiles > 10) — substring-match for navigating real-world programs with 20-50 files
+- LCS-based diff line counts on the refine compare pane (handles reordered + duplicate lines correctly)
+
+### AI Refine
+- Anthropic Sonnet 4 with prompt caching (~1700-token cached system prefix)
+- File-based dedup cache: identical {version, files, issues, previousAttempts} → $0
+- **Tree-sitter structural pre-check** rejects malformed-Rust patches before the validator even sees them
+- **Cross-file validation gate** with deterministic patch ordering — patches sorted by filePath, evaluated against the running global state, so a patch that breaks file B can't slip past a per-file gate
+- **Retry-with-feedback** — clicking Refine again after a rejection forwards the rejected attempts (filePath + reason + truncated content) into the next prompt, and the new request bypasses the cache so the model genuinely tries a different approach
+- **Revert button** rolls back to the deterministic pre-AI output snapshot if a refine looks bad even after passing the validator
+- Error categories: missing_key, invalid_key, rate_limited, server, timeout, malformed_response, **zod_parse_failed**, unknown — each with specific UI recovery hints
+
+### Observability + CI
+- `GET /metrics` — in-memory snapshot of refine cache hit rate, accept/reject ratio, per-target validation error counts, parse + emit totals
+- GitHub Actions: `fast-tests` (typecheck + parser/emitter/validation/api on every push + PR), `cargo-build` (rust-cache + cargo build the demo suite, PRs only)
+- `scripts/repro-bundle-build.ts` and `scripts/test-realworld-fixes.ts` lock in the 12/14 demo and 6/6 real-world cargo-build numbers
 
 ### Tests
 - 14 cargo-build demo tests (12 pass, 2 known native linker fails — expected)
-- Parser snapshots + emitter snapshots + API route tests
-- Sweep: 16 real-world Anchor contracts → 17/48 cargo-build on (pinocchio + native + quasar)
+- 41 fast tests: parser snapshots + emitter snapshots + emitter validation + API routes
+- Bundle repro: 12/14 demo project bundles cargo-build (`scripts/repro-bundle-build.ts`)
+- Real-world repro: 6/6 small Anchor repos from `solana-developers/program-examples` cargo-build on pinocchio + native (`scripts/test-realworld-fixes.ts`)
+- Mid-size sweep: 16 real-world Anchor contracts → 17/48 cargo-build on (pinocchio + native + quasar)
 
 ### Real-world contract coverage
 4 PR branches pushed to `Pratikkale26/solana-programs-list`:
@@ -108,7 +126,10 @@ Ordered by landing:
 
 ## What's still open
 
-- **Impl-method inlining into instruction handlers** — attempted, reverted (interacts with the CPI consolidation regex; produces syntactically-wrong output for escrow-style contracts). Would unblock 3 real-world contracts. ~4 hr of careful work to fix the interaction.
+- **Impl-method inlining into instruction handlers** — investigation showed the prior "reverted attempt" never committed; this is fresh work. Realistic scope: 6–10 hr because it needs (a) generalized inlining of `ctx.accounts.method()` calls anywhere in handler bodies, (b) hardening of the CPI-consolidation regex against the inlined text, (c) adding `anchor-escrow` / `anchor-escrow-blueshift` / `anchor-vault-manager` to the test suite as regression gates first. Would unblock 3 escrow-style real-world contracts. Would also kill the residual `,;` bug in `escrow initialize.rs:99` from the real-world sweep (same root cause family).
+- **CPI catalog for additional programs** (ATA-body-CPI, Memo, Metaplex Core) — needs a 30-min batch-script run over the 31 currently-failing real-world contracts to know which CPIs are actually blocking, then per-target emit support. Speculative without the data.
+- **Compare-targets workbench panel** — chosen as option C earlier (keep single-target view, add side panel). Deferred for a fuller treatment so it doesn't ship half-baked.
+- **Auth / per-key quotas on `/emit?refine=1`** — public endpoint, anyone can drain the Anthropic credit; the existing rate limit caps requests per IP but not AI cost.
 - **Zero-copy accounts** (`#[account(zero_copy)]`) — `#[repr(C)]` layout preservation needed; not realistic before the hackathon.
 - **Pyth / MPL / Switchboard source-level CPI rewrites** — generating correct native SDK calls for these external programs. Out of scope until grant.
 - **Demo video, tech demo, pitch deck** — the hackathon-critical non-code work (Colosseum Frontier, May 11–12 2026).
