@@ -95,6 +95,36 @@ function parseInstructionFn(
     ? parseAccountsStructFields(accountsStruct.node, accountsStruct.attrs)
     : [];
 
+  // ── Reconcile #[instruction(...)] attr arg names with the wrapper handler
+  // ── parameter names. Anchor lets these differ — the attr name is purely
+  // ── a binding for constraint code (`seeds = [..., seeds.to_le_bytes()..]`)
+  // ── while the actual local at runtime carries the handler param name
+  // ── (`pub fn make(ctx, seed, ...)`). Without reconciliation, constraint
+  // ── code references the attr name (`seeds`) which the emitter writes
+  // ── verbatim — but no `seeds` local exists in the emitted body, only
+  // ── `seed`. Rewrite each PDA seed expression positionally.
+  if (accountsStruct && accountsStruct.instructionArgs.length > 0 && args.length > 0) {
+    const renameMap = new Map<string, string>();
+    for (let i = 0; i < accountsStruct.instructionArgs.length && i < args.length; i++) {
+      const attrName = accountsStruct.instructionArgs[i]!;
+      const handlerName = args[i]!.name;
+      if (attrName !== handlerName) renameMap.set(attrName, handlerName);
+    }
+    if (renameMap.size > 0) {
+      for (const account of accounts) {
+        if (account.pdaSeeds && account.pdaSeeds.length > 0) {
+          account.pdaSeeds = account.pdaSeeds.map((seed) => {
+            let rewritten = seed;
+            for (const [from, to] of renameMap) {
+              rewritten = rewritten.replace(new RegExp(`\\b${from}\\b`, "g"), to);
+            }
+            return rewritten;
+          });
+        }
+      }
+    }
+  }
+
   // Two static-impl handler conventions to inline:
   //   (a) ctx.accounts.X(args) — Anchor "thin handler on Accounts struct"
   //       used by anchor-escrow / blueshift cohort.

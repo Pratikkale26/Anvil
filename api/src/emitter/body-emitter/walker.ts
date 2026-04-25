@@ -433,14 +433,24 @@ export class BodyWalker {
   replaceBumpRefs(code: string): { prelude: string[]; code: string } {
     const prelude: string[] = [];
     const seen = new Set<string>();
-    const transformed = code.replace(/ctx\.bumps\.(\w+)/g, (_full, accountName: string) => {
+    const onMatch = (_full: string, accountName: string) => {
       const normalized = snakeCase(accountName);
       if (!seen.has(normalized)) {
         seen.add(normalized);
         prelude.push(this.normalizedBumpLine(normalized));
       }
       return `bump_${normalized}`;
-    });
+    };
+    // Match the wrapped forms first — `(&ctx.bumps).field`, `(ctx.bumps).field`,
+    // and `&ctx.bumps.field` — which arise when the impl-method inliner
+    // substitutes a `&ctx.bumps` arg into a body that uses `bumps.field`. The
+    // bare form `ctx.bumps.field` runs last so the broader regex doesn't
+    // partial-match inside an already-rewritten parens form.
+    const transformed = code
+      .replace(/\(\s*&\s*ctx\.bumps\s*\)\.(\w+)/g, onMatch)
+      .replace(/\(\s*ctx\.bumps\s*\)\.(\w+)/g, onMatch)
+      .replace(/&\s*ctx\.bumps\.(\w+)/g, onMatch)
+      .replace(/ctx\.bumps\.(\w+)/g, onMatch);
     return { prelude, code: transformed };
   }
 
