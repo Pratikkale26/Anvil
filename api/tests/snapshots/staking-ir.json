@@ -1230,7 +1230,10 @@
           "type": "bool"
         }
       ],
-      "space": 139
+      "space": 139,
+      "implItems": [
+        "pub const LEN: usize = 32 + 32 + 32 + 8 + 8 + 8 + 8 + 1 + 1 + 1;"
+      ]
     },
     {
       "name": "UserStake",
@@ -1260,7 +1263,10 @@
           "type": "u8"
         }
       ],
-      "space": 97
+      "space": 97,
+      "implItems": [
+        "pub const LEN: usize = 32 + 32 + 8 + 8 + 8 + 1;"
+      ]
     }
   ],
   "types": [

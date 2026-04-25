@@ -101,6 +101,15 @@ function emitT22Invoke(accountsList: string, signerSeeds: string | undefined): s
         pinocchio::cpi::invoke_signed(&__t22_ix, &[${accountsList}], &[__t22_signer])?;`;
 }
 
+// See native-emitter.ts for rationale; mirrored list of standard impl names.
+const STANDARD_IMPL_NAMES = [
+  "DISCRIMINATOR", "INIT_SPACE", "LEN", "TOTAL_LEN", "SPACE", "SIZE",
+  "read", "write", "save", "from_account_info",
+];
+const STANDARD_IMPL_NAME_RE = new RegExp(
+  `\\bpub\\s+(?:const|fn)\\s+(?:${STANDARD_IMPL_NAMES.join("|")})\\b`,
+);
+
 class PinocchioEmitter extends BaseEmitter {
   override readonly frameworkName = "Pinocchio";
 
@@ -342,10 +351,39 @@ ${arms}
 
   override emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
     if (opts?.tokenProgram === "token_2022") {
-      // pinocchio_token::TransferChecked hardcodes the SPL Token program ID,
-      // so we hand-roll the CPI against the Token-2022 program. Discriminator
-      // 12, accounts [from, mint, to, authority], data layout
-      // [12, amount_u64_le (8 bytes), decimals_u8].
+      // pinocchio_token::Transfer{,Checked} hardcodes the SPL Token program
+      // ID, so we hand-roll the CPI against the Token-2022 program.
+      // Branch on whether the source used `_checked` (decimals provided) vs
+      // the unchecked variant — the routing must mirror the user's choice
+      // since unchecked transfer omits `mint` from the accounts list.
+      if (opts?.decimals === undefined) {
+        // Token-2022 transfer (unchecked) — discriminator 3,
+        // accounts [from, to, authority], data [3, amount_u64_le] (9 bytes).
+        const invokeCall = emitT22Invoke(`${from}, ${to}, ${authority}`, signerSeeds);
+        return `    // Token-2022 transfer (unchecked) — ${from} → ${to}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __t22_amount = (${amount}).to_le_bytes();
+        let __t22_data: [u8; 9] = [
+            3,
+            __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
+            __t22_amount[4], __t22_amount[5], __t22_amount[6], __t22_amount[7],
+        ];
+        let __t22_metas = [
+            pinocchio::instruction::AccountMeta::writable(${from}.key()),
+            pinocchio::instruction::AccountMeta::writable(${to}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __t22_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__t22_metas,
+            data: &__t22_data,
+        };
+${invokeCall}
+    }`;
+      }
+      // Token-2022 transfer_checked — discriminator 12,
+      // accounts [from, mint, to, authority], data [12, amount_u64_le, decimals_u8].
       const mint = opts?.mint ?? "/* TODO: mint */";
       const { decimalsExpr, prelude } = resolveT22DecimalsPinocchio(mint, opts?.decimals);
       const invokeCall = emitT22Invoke(`${from}, ${mint}, ${to}, ${authority}`, signerSeeds);
@@ -383,6 +421,32 @@ ${invokeCall}
 
   override emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
     if (opts?.tokenProgram === "token_2022") {
+      if (opts?.decimals === undefined) {
+        // Token-2022 mint_to (unchecked) — discriminator 7,
+        // accounts [mint, to, authority], data [7, amount_u64_le] (9 bytes).
+        const invokeCall = emitT22Invoke(`${mint}, ${to}, ${authority}`, signerSeeds);
+        return `    // Token-2022 mint_to (unchecked) — ${mint} → ${to}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __t22_amount = (${amount}).to_le_bytes();
+        let __t22_data: [u8; 9] = [
+            7,
+            __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
+            __t22_amount[4], __t22_amount[5], __t22_amount[6], __t22_amount[7],
+        ];
+        let __t22_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+            pinocchio::instruction::AccountMeta::writable(${to}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __t22_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__t22_metas,
+            data: &__t22_data,
+        };
+${invokeCall}
+    }`;
+      }
       // Token-2022 mint_to_checked — discriminator 14,
       // accounts [mint, to, authority], data [14, amount_u64_le, decimals_u8].
       const { decimalsExpr, prelude } = resolveT22DecimalsPinocchio(mint, opts?.decimals);
@@ -417,6 +481,32 @@ ${invokeCall}
 
   override emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
     if (opts?.tokenProgram === "token_2022") {
+      if (opts?.decimals === undefined) {
+        // Token-2022 burn (unchecked) — discriminator 8,
+        // accounts [from, mint, authority], data [8, amount_u64_le] (9 bytes).
+        const invokeCall = emitT22Invoke(`${from}, ${mint}, ${authority}`, signerSeeds);
+        return `    // Token-2022 burn (unchecked) — ${from}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __t22_amount = (${amount}).to_le_bytes();
+        let __t22_data: [u8; 9] = [
+            8,
+            __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
+            __t22_amount[4], __t22_amount[5], __t22_amount[6], __t22_amount[7],
+        ];
+        let __t22_metas = [
+            pinocchio::instruction::AccountMeta::writable(${from}.key()),
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __t22_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__t22_metas,
+            data: &__t22_data,
+        };
+${invokeCall}
+    }`;
+      }
       // Token-2022 burn_checked — discriminator 15,
       // accounts [from, mint, authority], data [15, amount_u64_le, decimals_u8].
       const { decimalsExpr, prelude } = resolveT22DecimalsPinocchio(mint, opts?.decimals);
@@ -755,7 +845,15 @@ ${writeLines}
         let mut data = unsafe { account.borrow_mut_data_unchecked() };
         Self::write(&mut data, value)
     }
-}`;
+}${this.emitInherentImplItems(acc)}`;
+  }
+
+  /** See native-emitter.ts:emitInherentImplItems for rationale. */
+  private emitInherentImplItems(acc: AccountDef): string {
+    if (!acc.implItems || acc.implItems.length === 0) return "";
+    const filtered = acc.implItems.filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw));
+    if (filtered.length === 0) return "";
+    return `\n\nimpl ${acc.name} {\n${filtered.map((s) => `    ${s}`).join("\n\n")}\n}`;
   }
 
   override emitErrorEnum(ir: SolanaIR): string {

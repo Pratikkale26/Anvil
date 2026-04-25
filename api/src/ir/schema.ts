@@ -347,6 +347,14 @@ export const AccountDefSchema = z.object({
   fields: z.array(AccountFieldSchema),
   space: z.number().optional(), // bytes needed
   docs: z.string().optional(),
+  /**
+   * Raw user-written items inside `impl <ThisAccount> { ... }` blocks
+   * (associated functions and consts). Anchor programs commonly carry helpers
+   * like `pub const SEED_PREFIX: &[u8] = b"...";` or `pub fn required_space()`
+   * here. Emitters preserve them verbatim in a separate inherent impl block
+   * so call sites like `Foo::SEED_PREFIX` / `Foo::required_space(...)` resolve.
+   */
+  implItems: z.array(z.string()).optional(),
 });
 
 export type AccountDef = z.infer<typeof AccountDefSchema>;

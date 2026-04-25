@@ -58,6 +58,18 @@ function resolveT22Decimals(mint: string, decimals: string | undefined): { decim
   return { decimalsExpr: localVar, prelude };
 }
 
+// Names already emitted in the standard struct impl — user-authored items
+// matching any of these are dropped from emitInherentImplItems to avoid
+// duplicate-associated-item errors. Matches `pub const NAME` and `pub fn NAME`
+// at any indentation. Both emitters use this list.
+const STANDARD_IMPL_NAMES = [
+  "DISCRIMINATOR", "INIT_SPACE", "LEN", "TOTAL_LEN", "SPACE", "SIZE",
+  "read", "write", "save", "from_account_info",
+];
+const STANDARD_IMPL_NAME_RE = new RegExp(
+  `\\bpub\\s+(?:const|fn)\\s+(?:${STANDARD_IMPL_NAMES.join("|")})\\b`,
+);
+
 class NativeEmitter extends BaseEmitter {
   override readonly frameworkName = "Native";
 
@@ -324,13 +336,31 @@ ${arms}
     const t22 = opts?.tokenProgram === "token_2022";
     const crate = t22 ? "spl_token_2022" : "spl_token";
     if (t22) {
-      // Token-2022 deprecates `transfer`; must use `transfer_checked` with
-      // mint + decimals. Detector backfills these from the TransferChecked
-      // accounts struct + trailing decimals arg.
-      const mint = opts?.mint ?? "/* TODO: mint */";
-      const { decimalsExpr, prelude } = resolveT22Decimals(mint, opts?.decimals);
       const invokeType = signerSeeds ? "invoke_signed" : "invoke";
       const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+      if (opts?.decimals === undefined) {
+        // Token-2022 transfer (unchecked) — `transfer` is deprecated but
+        // still accepted; mirror the user's source choice. No mint, no
+        // decimals; accounts [from, to, authority].
+        return `    // Token-2022 transfer (unchecked) — ${from} → ${to}
+    #[allow(deprecated)]
+    let transfer_ix = ${crate}::instruction::transfer(
+        &${crate}::id(),
+        ${from}.key,
+        ${to}.key,
+        ${authority}.key,
+        &[],
+        ${amount},
+    )?;
+    ${invokeType}(
+        &transfer_ix,
+        &[${from}.clone(), ${to}.clone(), ${authority}.clone()],${signerArg}
+    )?;`;
+      }
+      // Token-2022 transfer_checked — mint + decimals. Detector backfills
+      // these from the TransferChecked accounts struct + trailing decimals arg.
+      const mint = opts?.mint ?? "/* TODO: mint */";
+      const { decimalsExpr, prelude } = resolveT22Decimals(mint, opts?.decimals);
       return `    // Token-2022 transfer_checked — ${from} → ${to}
 ${prelude}    let transfer_ix = ${crate}::instruction::transfer_checked(
         &${crate}::id(),
@@ -384,6 +414,22 @@ ${prelude}    let transfer_ix = ${crate}::instruction::transfer_checked(
     const invokeType = signerSeeds ? "invoke_signed" : "invoke";
     const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
     if (t22) {
+      if (opts?.decimals === undefined) {
+        // Token-2022 mint_to (unchecked) — accounts [mint, to, authority].
+        return `    // Token-2022 mint_to (unchecked) — ${mint} → ${to}
+    let mint_ix = ${crate}::instruction::mint_to(
+        &${crate}::id(),
+        ${mint}.key,
+        ${to}.key,
+        ${authority}.key,
+        &[],
+        ${amount},
+    )?;
+    ${invokeType}(
+        &mint_ix,
+        &[${mint}.clone(), ${to}.clone(), ${authority}.clone()],${signerArg}
+    )?;`;
+      }
       const { decimalsExpr, prelude } = resolveT22Decimals(mint, opts?.decimals);
       return `    // Token-2022 mint_to_checked — ${mint} → ${to}
 ${prelude}    let mint_ix = ${crate}::instruction::mint_to_checked(
@@ -421,6 +467,22 @@ ${prelude}    let mint_ix = ${crate}::instruction::mint_to_checked(
     const invokeType = signerSeeds ? "invoke_signed" : "invoke";
     const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
     if (t22) {
+      if (opts?.decimals === undefined) {
+        // Token-2022 burn (unchecked) — accounts [from, mint, authority].
+        return `    // Token-2022 burn (unchecked) — ${from}
+    let burn_ix = ${crate}::instruction::burn(
+        &${crate}::id(),
+        ${from}.key,
+        ${mint}.key,
+        ${authority}.key,
+        &[],
+        ${amount},
+    )?;
+    ${invokeType}(
+        &burn_ix,
+        &[${from}.clone(), ${mint}.clone(), ${authority}.clone()],${signerArg}
+    )?;`;
+      }
       const { decimalsExpr, prelude } = resolveT22Decimals(mint, opts?.decimals);
       return `    // Token-2022 burn_checked — ${from}
 ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
@@ -655,7 +717,25 @@ ${writeLines}
         let mut data = account.try_borrow_mut_data()?;
         Self::write(&mut data, value)
     }
-}`;
+}${this.emitInherentImplItems(acc)}`;
+  }
+
+  /**
+   * User-authored items inside `impl <ThisAccount> { ... }` from the Anchor
+   * source — typically associated consts (e.g. `pub const SEED_PREFIX`) or
+   * helper fns (e.g. `pub fn required_space(...)`). Programs reference these
+   * from `space = Foo::required_space(...)` / seed exprs, but the standard
+   * struct emit doesn't generate them. Emit them verbatim in a separate
+   * inherent impl so call sites resolve. Items whose name collides with
+   * something the standard emit already produces (DISCRIMINATOR, LEN, etc.)
+   * are dropped — standard emit wins because it's based on the IR's
+   * computed layout, while the user's value may be stale or wrong.
+   */
+  private emitInherentImplItems(acc: AccountDef): string {
+    if (!acc.implItems || acc.implItems.length === 0) return "";
+    const filtered = acc.implItems.filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw));
+    if (filtered.length === 0) return "";
+    return `\n\nimpl ${acc.name} {\n${filtered.map((s) => `    ${s}`).join("\n\n")}\n}`;
   }
 
   override emitErrorEnum(ir: SolanaIR): string {
