@@ -165,18 +165,67 @@ buildRoute.post("/auto-fix", async (req, res) => {
   const maxIterations = parsed.data.maxIterations ?? 3;
   const maxCostUsd = parsed.data.maxCostUsd ?? 0.50;
 
+  // Streaming mode: ?stream=1 → respond as text/event-stream, emit one SSE
+  // event per phase (iteration-start, build-result, refine-start,
+  // refine-result/refine-error, done). Detected here AFTER body validation
+  // so a bad payload still gets a clean 400/422 JSON.
+  const wantsStream = req.query.stream === "1" || req.query.stream === "true";
+
   if (target === "quasar") {
-    res.status(422).json({
+    // Symmetric across both modes — quasar is unsupported either way. For
+    // the stream path we still emit a `done` event so clients have a clean
+    // terminator, and use 422 in both cases.
+    const payload = {
       ok: false,
-      stoppedReason: "unsupported_target",
+      stoppedReason: "unsupported_target" as const,
       iterations: [],
       finalFiles: initialFiles,
       finalOk: false,
       totalDurationMs: 0,
       totalCostUsd: 0,
       message: "Quasar auto-fix is not supported; quasar-lang is too early for cargo check.",
-    });
+    };
+    if (wantsStream) {
+      res.status(422);
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+      res.write(`event: done\ndata: ${JSON.stringify(payload)}\n\n`);
+      res.end();
+    } else {
+      res.status(422).json(payload);
+    }
     return;
+  }
+
+  // SSE writer when streaming, no-op otherwise. emit() runs after each
+  // distinct phase so the client can render iteration cards in real time.
+  if (wantsStream) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+  }
+  const emit = (type: string, data: unknown) => {
+    if (!wantsStream) return;
+    if (res.writableEnded) return;
+    res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // Best-effort client-disconnect detection. On Node the various close
+  // signals (req.aborted, req.close, res.close) interact in surprising
+  // ways with bun's HTTP client and can fire spuriously while the loop
+  // is mid-iteration. We watch `req.aborted` instead — this only flips
+  // true when the client side actually tears down the connection. If it
+  // turns out unreliable in practice we just lose the early-bail-on-
+  // disconnect optimization; the loop is bounded by maxIterations
+  // anyway, so worst case we run one extra cargo check.
+  let clientClosed = false;
+  if (wantsStream) {
+    req.on("aborted", () => {
+      clientClosed = true;
+    });
   }
 
   const t0 = Date.now();
@@ -189,9 +238,22 @@ buildRoute.post("/auto-fix", async (req, res) => {
     refineError?: { category: string; message: string };
   };
   const iterations: Iteration[] = [];
-  let stoppedReason: "green" | "max_iterations" | "cost_cap" | "no_progress" | "refine_error" = "max_iterations";
+  let stoppedReason:
+    | "green"
+    | "max_iterations"
+    | "cost_cap"
+    | "no_progress"
+    | "refine_error"
+    | "client_closed" = "max_iterations";
 
   for (let i = 0; i < maxIterations; i++) {
+    if (clientClosed) {
+      stoppedReason = "client_closed";
+      break;
+    }
+
+    emit("iteration-start", { iteration: i });
+
     const buildRes = await runBuild(target as BuildTarget, currentFiles, programName);
     metrics.recordBuild({ target, ok: buildRes.ok, durationMs: buildRes.durationMs });
 
@@ -206,12 +268,24 @@ buildRoute.post("/auto-fix", async (req, res) => {
     };
     iterations.push(iter);
 
+    emit("build-result", {
+      iteration: i,
+      ok: buildRes.ok,
+      durationMs: buildRes.durationMs,
+      errors: buildRes.errors,
+      warnings: buildRes.warnings,
+    });
+
     if (buildRes.ok) {
       stoppedReason = "green";
       break;
     }
     if (totalCostUsd >= maxCostUsd) {
       stoppedReason = "cost_cap";
+      break;
+    }
+    if (clientClosed) {
+      stoppedReason = "client_closed";
       break;
     }
 
@@ -221,6 +295,8 @@ buildRoute.post("/auto-fix", async (req, res) => {
       content: f.content,
     }));
     const validationIssues = buildRes.errors.map(diagnosticToValidationIssue);
+
+    emit("refine-start", { iteration: i });
 
     try {
       const refineRes = await refineOutput({
@@ -244,6 +320,14 @@ buildRoute.post("/auto-fix", async (req, res) => {
       };
       totalCostUsd += refineRes.usage?.estimatedCostUsd ?? 0;
 
+      emit("refine-result", {
+        iteration: i,
+        acceptedPatches: accepted.length,
+        rejectedPatches: rejected,
+        rationale: refineRes.rationale,
+        estimatedCostUsd: refineRes.usage?.estimatedCostUsd ?? 0,
+      });
+
       if (accepted.length === 0) {
         stoppedReason = "no_progress";
         break;
@@ -257,10 +341,12 @@ buildRoute.post("/auto-fix", async (req, res) => {
         return patched != null ? { ...f, content: patched } : f;
       });
     } catch (err) {
-      iter.refineError =
+      const errPayload =
         err instanceof AIError
           ? { category: err.category, message: err.message }
           : { category: "unknown", message: err instanceof Error ? err.message : String(err) };
+      iter.refineError = errPayload;
+      emit("refine-error", { iteration: i, ...errPayload });
       stoppedReason = "refine_error";
       break;
     }
@@ -270,7 +356,7 @@ buildRoute.post("/auto-fix", async (req, res) => {
   const finalOk = !!lastIter?.buildResult.ok;
   const totalDurationMs = Date.now() - t0;
 
-  res.json({
+  const finalPayload = {
     ok: finalOk,
     stoppedReason,
     iterations,
@@ -278,5 +364,12 @@ buildRoute.post("/auto-fix", async (req, res) => {
     finalOk,
     totalDurationMs,
     totalCostUsd,
-  });
+  };
+
+  if (wantsStream) {
+    emit("done", finalPayload);
+    if (!res.writableEnded) res.end();
+  } else {
+    res.json(finalPayload);
+  }
 });

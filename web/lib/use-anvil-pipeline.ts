@@ -654,7 +654,10 @@ export function useAnvilPipeline() {
       // them under `src/` internally. The earlier double-prefix attempt
       // ended up at scratch/src/src/lib.rs and broke the lib.rs sanity check.
 
-      const res = await fetch(`${API_BASE}/build/auto-fix`, {
+      // Workbench always uses the SSE path (?stream=1) so the progress
+      // strip can move during the loop. Programmatic callers omit the
+      // query param and get the original single-shot JSON response.
+      const res = await fetch(`${API_BASE}/build/auto-fix?stream=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -666,11 +669,113 @@ export function useAnvilPipeline() {
           maxCostUsd: 0.5,
         }),
       });
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         const p = await res.json().catch(() => ({ error: "Auto-fix failed" }));
         throw new Error(p.details ?? p.error ?? p.message ?? "Auto-fix failed");
       }
-      const result = (await res.json()) as AutoFixResponse;
+
+      // SSE event reader. Each event is `event: <type>\ndata: <json>\n\n`.
+      // We accumulate iterations in-memory and call setAutoFixResult after
+      // each phase so the UI can render progress live.
+      const iterMap = new Map<number, AutoFixResponse["iterations"][number]>();
+      let finalResult: AutoFixResponse | null = null;
+
+      const placeholder = (): AutoFixResponse => ({
+        ok: false,
+        stoppedReason: "max_iterations",
+        iterations: Array.from(iterMap.keys())
+          .sort((a, b) => a - b)
+          .map((k) => iterMap.get(k)!)
+          .filter(Boolean),
+        finalFiles: outputFiles.map((f) => ({ path: f.path, content: f.content })),
+        finalOk: false,
+        totalDurationMs: 0,
+        totalCostUsd: 0,
+      });
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE event boundary is a blank line. Walk the buffer extracting
+        // complete events; leave any partial trailing event in `buffer`.
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary !== -1) {
+          const rawEvent = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          boundary = buffer.indexOf("\n\n");
+
+          // Parse `event:` and `data:` lines (ignore comments / blank).
+          let evtType = "message";
+          const dataLines: string[] = [];
+          for (const line of rawEvent.split("\n")) {
+            if (line.startsWith("event:")) evtType = line.slice(6).trim();
+            else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+          }
+          if (dataLines.length === 0) continue;
+          let payload: unknown;
+          try {
+            payload = JSON.parse(dataLines.join("\n"));
+          } catch {
+            continue;
+          }
+          const data = payload as Record<string, unknown>;
+
+          if (evtType === "iteration-start" && typeof data.iteration === "number") {
+            iterMap.set(data.iteration, {
+              iteration: data.iteration,
+              buildResult: { ok: false, durationMs: 0, errors: [], warnings: [] },
+            });
+            setAutoFixResult(placeholder());
+          } else if (evtType === "build-result" && typeof data.iteration === "number") {
+            const existing = iterMap.get(data.iteration) ?? {
+              iteration: data.iteration,
+              buildResult: { ok: false, durationMs: 0, errors: [], warnings: [] },
+            };
+            existing.buildResult = {
+              ok: !!data.ok,
+              durationMs: typeof data.durationMs === "number" ? data.durationMs : 0,
+              errors: (data.errors as AutoFixResponse["iterations"][number]["buildResult"]["errors"]) ?? [],
+              warnings: (data.warnings as AutoFixResponse["iterations"][number]["buildResult"]["warnings"]) ?? [],
+            };
+            iterMap.set(data.iteration, existing);
+            setAutoFixResult(placeholder());
+          } else if (evtType === "refine-start") {
+            // No state change — placeholder UI already shows the iteration.
+          } else if (evtType === "refine-result" && typeof data.iteration === "number") {
+            const existing = iterMap.get(data.iteration);
+            if (existing) {
+              existing.refine = {
+                acceptedPatches: typeof data.acceptedPatches === "number" ? data.acceptedPatches : 0,
+                rejectedPatches: typeof data.rejectedPatches === "number" ? data.rejectedPatches : 0,
+                rationale: typeof data.rationale === "string" ? data.rationale : "",
+                estimatedCostUsd: typeof data.estimatedCostUsd === "number" ? data.estimatedCostUsd : 0,
+              };
+              setAutoFixResult(placeholder());
+            }
+          } else if (evtType === "refine-error" && typeof data.iteration === "number") {
+            const existing = iterMap.get(data.iteration);
+            if (existing) {
+              existing.refineError = {
+                category: typeof data.category === "string" ? data.category : "unknown",
+                message: typeof data.message === "string" ? data.message : "Refine failed",
+              };
+              setAutoFixResult(placeholder());
+            }
+          } else if (evtType === "done") {
+            finalResult = data as unknown as AutoFixResponse;
+          }
+        }
+      }
+
+      if (!finalResult) {
+        throw new Error("Auto-fix stream ended without a `done` event.");
+      }
+      const result = finalResult;
       setAutoFixResult(result);
 
       // If at least one iteration accepted patches, swap the live output to
