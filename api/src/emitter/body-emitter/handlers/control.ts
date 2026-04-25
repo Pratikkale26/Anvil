@@ -63,6 +63,14 @@ export function handlePdaSignerSeeds(w: BodyWalker, stmt: PdaSignerSeedsStmt): v
     return;
   }
 
+  // Pass 1: gather any explicit bump source. `ctx.bumps.X` and
+  // `&[X.bump]` / `&[ctx.accounts.X.bump]` patterns name the state account
+  // whose stored bump is being passed; that account is unambiguously the
+  // PDA owner. This pass takes precedence over the generic
+  // `ctx.accounts.X.field` match below, otherwise the loop misidentifies
+  // the bump-providing account as whichever account appears first in the
+  // seed list (e.g. anchor-escrow's seeds list begins with `maker.key()`
+  // even though the bump comes from `escrow.bump`).
   for (const seed of stmt.seeds) {
     const ctxBumpMatch = seed.match(/ctx\.bumps\.(\w+)/)?.[1];
     if (ctxBumpMatch) {
@@ -77,20 +85,38 @@ export function handlePdaSignerSeeds(w: BodyWalker, stmt: PdaSignerSeedsStmt): v
       seedStateAccount = normalizedBump;
       continue;
     }
-    const ctxDirectMatch = seed.match(/ctx\.accounts\.(\w+)\.\w+/)?.[1];
-    if (ctxDirectMatch) {
-      seedStateAccount = snakeCase(ctxDirectMatch);
-      break;
+    const ctxBumpField = seed.match(/&\[\s*ctx\.accounts\.(\w+)\.bump\b/)?.[1];
+    if (ctxBumpField && !seedStateAccount) {
+      seedStateAccount = snakeCase(ctxBumpField);
     }
-    const directMatch = seed.match(/^(\w+)\.\w+/)?.[1];
-    if (directMatch && w.stateVars.has(directMatch)) {
-      seedStateAccount = directMatch;
-      break;
+    const directBumpField = seed.match(/&\[(\w+)\.bump\b/)?.[1];
+    if (directBumpField && w.stateVars.has(directBumpField) && !seedStateAccount) {
+      seedStateAccount = directBumpField;
     }
-    const bumpMatch = seed.match(/&\[(\w+)\.\w+/)?.[1];
-    if (bumpMatch && w.stateVars.has(bumpMatch)) {
-      seedStateAccount = bumpMatch;
-      break;
+  }
+  // Pass 2: fall back to the older heuristics if we still don't know which
+  // account owns the PDA. These match generic ctx.accounts.X.<field>
+  // references and inferred state-var bindings — useful for legacy IR shapes
+  // that don't carry an explicit bump seed but do carry a state reference.
+  if (!seedStateAccount) {
+    for (const seed of stmt.seeds) {
+      const ctxBumpMatch = seed.match(/ctx\.bumps\.(\w+)/)?.[1];
+      if (ctxBumpMatch) continue;
+      const ctxDirectMatch = seed.match(/ctx\.accounts\.(\w+)\.\w+/)?.[1];
+      if (ctxDirectMatch) {
+        seedStateAccount = snakeCase(ctxDirectMatch);
+        break;
+      }
+      const directMatch = seed.match(/^(\w+)\.\w+/)?.[1];
+      if (directMatch && w.stateVars.has(directMatch)) {
+        seedStateAccount = directMatch;
+        break;
+      }
+      const bumpMatch = seed.match(/&\[(\w+)\.\w+/)?.[1];
+      if (bumpMatch && w.stateVars.has(bumpMatch)) {
+        seedStateAccount = bumpMatch;
+        break;
+      }
     }
   }
   if (!accRef && seedStateAccount) {
