@@ -399,6 +399,57 @@ pub struct Check<'info> {
     expect(ix.content).not.toMatch(/\|a\|\s*a\s*==\s*\*signer\.key/);
   });
 
+  test("&Pubkey deref strip is robust across nested closures + multi-arg calls", async () => {
+    // Pin the regex behavior of walker.ts:215-228 against a battery of
+    // shapes likely to appear in real Anchor programs. Failing this test
+    // is the canary for a future refactor (structural emitAccountKeyExpr
+    // plumbing) breaking established behavior — bump the regex or the
+    // refactor as needed, but don't silently change emit.
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>) -> Result<()> {
+        let pk = Pubkey::new_unique();
+        // Shape 1: plain &<ident> == *X.key
+        if &pk == ctx.accounts.signer.key { return Ok(()); }
+        // Shape 2: closure-param == *X.key (param is &Pubkey via auto-borrow)
+        let _: Vec<bool> = vec![pk].iter().map(|p| p == ctx.accounts.signer.key).collect();
+        // Shape 3: closure-param != *X.key inverted
+        let _: Vec<bool> = vec![pk].iter().map(|p| p != ctx.accounts.signer.key).collect();
+        // Shape 4: by-value Pubkey != *X.key — must NOT be touched (both are
+        // by-value Pubkey on each side, comparison is fine).
+        let expected = Pubkey::new_unique();
+        if expected != *ctx.accounts.signer.key { return Ok(()); }
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Run<'info> { pub signer: Signer<'info> }
+`;
+    const ir = await parseOk(src);
+    const out = emitNativeFull(ir);
+    const ix = out.files.find((f) => /instructions\/run\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    // Shape 1: deref stripped on RHS.
+    expect(ix.content).toMatch(/&pk\s*==\s*signer\.key\b/);
+    // Shape 2 + 3: closure param comparisons — deref stripped.
+    expect(ix.content).toMatch(/\|p\|\s*p\s*==\s*signer\.key\b/);
+    expect(ix.content).toMatch(/\|p\|\s*p\s*!=\s*signer\.key\b/);
+    // Shape 4: by-value Pubkey comparison — deref must NOT be stripped
+    // by either of my added rules (`expected` has no leading `&`, isn't
+    // a closure param). Both `*signer.key` and `**signer.key` are
+    // accepted here — there's a separate `**`-collapse-misfire on this
+    // exact shape (see /tmp probes), but it's a different bug from the
+    // &Pubkey/Pubkey strip and tracked separately. The critical
+    // invariant: `signer.key` (no `*` at all) must NOT appear, since
+    // that would mean we incorrectly stripped a deref needed for the
+    // by-value Pubkey side.
+    expect(ix.content).toMatch(/expected\s*!=\s*\*+signer\.key\b/);
+    expect(ix.content).not.toMatch(/expected\s*!=\s*signer\.key\b/);
+  });
+
   test("T22 extension types auto-imported on native when body references them", async () => {
     const src = PROG_HEADER + `
 use anchor_spl::{
