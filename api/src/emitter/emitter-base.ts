@@ -64,7 +64,10 @@ export {
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
   hasResidualAnchorPatterns,
+  hasUnsalvageableHelperSignature,
 } from "./emitter-helpers.js";
+
+import { hasResidualAnchorPatterns, hasUnsalvageableHelperSignature } from "./emitter-helpers.js";
 
 // ─── Internal imports ────────────────────────────────────────────────────────
 
@@ -80,7 +83,6 @@ import {
   resolveConstExprValue,
   accountDiscriminator,
 } from "./emitter-utils.js";
-import { hasResidualAnchorPatterns } from "./emitter-helpers.js";
 import {
   emitBodyStatements as emitBodyStatementsImpl,
   type BodyEmitterContext,
@@ -100,6 +102,14 @@ export abstract class BaseEmitter {
   protected transformedCount = 0;
   protected passedThroughCount = 0;
   protected details: string[] = [];
+  /**
+   * Helpers whose signature/body uses Anchor-only types we can't transpile
+   * (`InterfaceAccount`, `Interface<TokenInterface>`, `Box<Account>`, etc.).
+   * Computed in `emit()` and consumed by `emitHelpersFile` (skipped) and
+   * `emitInstructionFile` (call sites commented out). Same compile-clean
+   * fallback the Metaplex-stub commentout uses for unsupported CPIs.
+   */
+  protected unsalvageableHelpers: Set<string> = new Set();
 
   // ── Framework-specific methods (MUST override) ──
 
@@ -313,6 +323,7 @@ export abstract class BaseEmitter {
     this.transformedCount = 0;
     this.passedThroughCount = 0;
     this.details = [];
+    this.unsalvageableHelpers = this.computeUnsalvageableHelpers(ir);
 
     const files: EmitterFile[] = [];
 
@@ -421,7 +432,39 @@ export abstract class BaseEmitter {
   }
 
   private emitInstructionFile(instr: Instruction, ir: SolanaIR): string {
-    return `use super::*;\n\n${this.emitInstructionFunction(instr, ir)}`;
+    const raw = `use super::*;\n\n${this.emitInstructionFunction(instr, ir)}`;
+    return this.unsalvageableHelpers.size > 0
+      ? commentOutUnsalvageableCallSites(raw, this.unsalvageableHelpers)
+      : raw;
+  }
+
+  /**
+   * Walk `ir.helperFns` and return the set of helper names that can't be
+   * transpiled because their signature/body uses Anchor-only types. The
+   * same gate applies to all targets — the wrapper types simply don't
+   * exist on Pinocchio or Native, regardless of how the body is rewritten.
+   *
+   * Result feeds into emitHelpersFile (skip emit) and emitInstructionFile
+   * (comment out call sites) so neither helpers.rs nor the instruction
+   * files reference these helpers — the program compiles, with `// ⚠️
+   * Anvil TODO` markers at every affected site documenting the manual
+   * port required for runtime correctness.
+   */
+  private computeUnsalvageableHelpers(ir: SolanaIR): Set<string> {
+    const out = new Set<string>();
+    for (const helper of ir.helperFns ?? []) {
+      if (hasUnsalvageableHelperSignature(helper.signature)) {
+        out.add(helper.name);
+        continue;
+      }
+      // Body-residual check: helper might have a clean signature but call
+      // CpiContext / token_interface internally. Run the same target-side
+      // transform we'd otherwise apply, then check if Anchor patterns
+      // survived. If yes, the body can't compile.
+      const transformed = this.transformHelperCode(helper.rawCode, ir);
+      if (hasResidualAnchorPatterns(transformed)) out.add(helper.name);
+    }
+    return out;
   }
 
   private emitErrorsFile(ir: SolanaIR): string {
@@ -446,8 +489,15 @@ export abstract class BaseEmitter {
     const frameworkHelpers = this.emitHelperFunctions(ir);
     if (frameworkHelpers.trim()) sections.push(frameworkHelpers);
 
-    // Carry over helper functions from source
+    // Carry over helper functions from source. Unsalvageable helpers
+    // (Anchor-only types in signature/body) get a comment-out block so
+    // helpers.rs still compiles; instruction files have their call sites
+    // commented out by the post-process pass below.
     for (const helper of ir.helperFns) {
+      if (this.unsalvageableHelpers.has(helper.name)) {
+        sections.push(commentOutHelperBlock(helper.rawCode, helper.name, this.frameworkName));
+        continue;
+      }
       sections.push(this.carriedFunctionBlock(helper.rawCode, ir));
     }
 
@@ -456,7 +506,13 @@ export abstract class BaseEmitter {
   }
 
   protected hasHelperModule(ir: SolanaIR): boolean {
-    return Boolean(this.emitHelperFunctions(ir).trim()) || (ir.helperFns?.length ?? 0) > 0;
+    // Unsalvageable helpers no longer count toward "needs a helper module"
+    // — they're commented out, so a project with only those + no framework
+    // helpers shouldn't carry a helpers.rs file at all.
+    const salvageableCount = (ir.helperFns ?? []).filter(
+      (h) => !this.unsalvageableHelpers.has(h.name),
+    ).length;
+    return Boolean(this.emitHelperFunctions(ir).trim()) || salvageableCount > 0;
   }
 
   // ── Combined single-file output ──
@@ -484,8 +540,14 @@ export abstract class BaseEmitter {
     const helpers = this.emitHelperFunctions(ir);
     if (helpers.trim()) sections.push(helpers);
 
-    // Carry over helper functions from source
+    // Carry over helper functions from source. Same unsalvageable check as
+    // multi-file emit — these helpers can't compile against the target's
+    // type system, so emit a comment-out block with a TODO marker instead.
     for (const helper of ir.helperFns) {
+      if (this.unsalvageableHelpers.has(helper.name)) {
+        sections.push(commentOutHelperBlock(helper.rawCode, helper.name, this.frameworkName));
+        continue;
+      }
       sections.push(this.carriedFunctionBlock(helper.rawCode, ir));
     }
 
@@ -493,7 +555,11 @@ export abstract class BaseEmitter {
       sections.push(this.emitErrorEnum(ir));
     }
 
-    return sections.join("\n\n");
+    let combined = sections.join("\n\n");
+    if (this.unsalvageableHelpers.size > 0) {
+      combined = commentOutUnsalvageableCallSites(combined, this.unsalvageableHelpers);
+    }
+    return combined;
   }
 
   // ─── Generic instruction function emitter ──────────────────────────────────
@@ -1367,6 +1433,114 @@ ${fields}
       stateTypes,
     );
   }
+}
+
+/**
+ * Wrap an unsalvageable helper's full source in a single-line-prefixed
+ * comment block with a TODO marker at the top. Used by emitHelpersFile
+ * when the helper signature/body uses Anchor types that don't exist on
+ * the target. Single-file output uses the same wrapper.
+ *
+ * Line-prefix `// ` (vs block `/* ... *​/`) is safer because the source
+ * may itself contain `*​/` inside doc comments or string literals; a
+ * single line-prefix sweep is unambiguous.
+ */
+function commentOutHelperBlock(rawCode: string, name: string, frameworkName: string): string {
+  const banner = [
+    `// ╔════════════════════════════════════════════════════════════════════════════╗`,
+    `// ║  ⚠️  ANVIL TODO: helper '${name}' uses Anchor-only types`,
+    `// ║  (InterfaceAccount, Interface<TokenInterface>, Box<Account>, etc.) that`,
+    `// ║  don't exist on ${frameworkName}. Body commented out below; instruction call sites`,
+    `// ║  are also commented out so the program compiles. MANUAL PORT REQUIRED.`,
+    `// ╚════════════════════════════════════════════════════════════════════════════╝`,
+  ].join("\n");
+  const commented = rawCode
+    .split("\n")
+    .map((line) => (line.length > 0 ? `// ${line}` : "//"))
+    .join("\n");
+  return `${banner}\n${commented}`;
+}
+
+/**
+ * Post-process emitted instruction file text to comment out any statement
+ * that calls an unsalvageable helper. Statement boundaries: from the
+ * previous `;` (or block-open `{`) to the matching trailing `;` or `?;`.
+ *
+ * The pass is text-level rather than IR-level because the emitter renders
+ * pass_through statements verbatim from the parsed source — we don't have
+ * a clean IR-level "this statement is a helper call" hook. Conservative:
+ * only triggers on `<helperName>(` after a word boundary, and only on
+ * statements where that's the dominant call.
+ */
+function commentOutUnsalvageableCallSites(text: string, helpers: Set<string>): string {
+  if (helpers.size === 0) return text;
+  const helperPattern = new RegExp(
+    `\\b(?:${[...helpers].map((h) => h.replace(/[.*+?^${}()|[\\\]\\\\]/g, "\\\\$&")).join("|")})\\s*\\(`,
+    "g",
+  );
+  let out = "";
+  let lineStart = 0;
+  const lines = text.split("\n");
+  // Walk lines, marking those that are part of a call-site statement that
+  // hits an unsalvageable helper. We scan the FULL text once for matches,
+  // then for each match expand backward to the start of its statement
+  // (previous `;` or `{`) and forward to its terminating `;`.
+  const ranges: { startLine: number; endLine: number }[] = [];
+  let m: RegExpExecArray | null;
+  helperPattern.lastIndex = 0;
+  while ((m = helperPattern.exec(text)) !== null) {
+    const matchOffset = m.index;
+    // Walk backward to find the statement start.
+    let depth = 0;
+    let stmtStart = 0;
+    for (let i = matchOffset - 1; i >= 0; i--) {
+      const ch = text[i];
+      if (ch === ")" || ch === "}" || ch === "]") depth++;
+      else if (ch === "(" || ch === "{" || ch === "[") {
+        if (depth === 0) { stmtStart = i + 1; break; }
+        depth--;
+      } else if ((ch === ";" || ch === "\n") && depth === 0) {
+        // Only treat `;` as a hard boundary; `\n` we use only as a soft
+        // hint (let-bindings can span lines). Continue scanning unless we
+        // also see a clear semicolon or block boundary.
+        if (ch === ";") { stmtStart = i + 1; break; }
+      }
+    }
+    // Walk forward to find the statement end (trailing `;` at depth 0).
+    let fwdDepth = 0;
+    let stmtEnd = text.length;
+    for (let i = matchOffset; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === "(" || ch === "{" || ch === "[") fwdDepth++;
+      else if (ch === ")" || ch === "}" || ch === "]") fwdDepth--;
+      else if (ch === ";" && fwdDepth === 0) { stmtEnd = i + 1; break; }
+    }
+    // Convert offsets to line numbers.
+    const startLine = text.slice(0, stmtStart).split("\n").length - 1;
+    const endLine = text.slice(0, stmtEnd).split("\n").length - 1;
+    ranges.push({ startLine, endLine });
+  }
+  if (ranges.length === 0) return text;
+  // Build a "comment-out" set of line indices.
+  const commentOut = new Set<number>();
+  for (const r of ranges) {
+    for (let i = r.startLine; i <= r.endLine; i++) commentOut.add(i);
+  }
+  let prevCommented = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (commentOut.has(i)) {
+      if (!prevCommented) {
+        out += `// ⚠️ Anvil TODO: call site of unsalvageable helper commented out — manual port required\n`;
+      }
+      const original = lines[i] ?? "";
+      out += `// ${original}` + (i < lines.length - 1 ? "\n" : "");
+      prevCommented = true;
+    } else {
+      out += (lines[i] ?? "") + (i < lines.length - 1 ? "\n" : "");
+      prevCommented = false;
+    }
+  }
+  return out;
 }
 
 /**

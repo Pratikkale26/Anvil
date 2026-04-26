@@ -146,6 +146,43 @@ const MUST_PASS: Case[] = [
   { id: "cpi-hand", target: "native",    path: "basics/cross-program-invocation/anchor/programs/hand/src/lib.rs" },
 ];
 
+interface ExternalCase {
+  id: string;
+  target: Target;
+  /** Absolute path to the fixture's `src/lib.rs`. */
+  path: string;
+  /** Repo URL for auto-clone. */
+  repo: string;
+  /** Local clone target for the repo. */
+  cloneRoot: string;
+}
+
+/**
+ * Out-of-corpus MUST_PASS cases — programs hosted in their own repos that
+ * we want to lock in as deterministic green builds. Promoted from
+ * realworld-tracking.test.ts when their cargo error count hit 0. Auto-
+ * clones the parent repo if missing (similar to the program-examples
+ * auto-clone above).
+ */
+const EXTERNAL_MUST_PASS: ExternalCase[] = [
+  // anchor-escrow-2025: promoted after unsalvageable-helper commentout
+  // landed (errors 31/28 → 0/0 across both targets).
+  {
+    id: "escrow2025",
+    target: "pinocchio",
+    path: "/tmp/anchor-escrow-2025/programs/escrow/src/lib.rs",
+    repo: "https://github.com/mikemaccana/anchor-escrow-2025",
+    cloneRoot: "/tmp/anchor-escrow-2025",
+  },
+  {
+    id: "escrow2025",
+    target: "native",
+    path: "/tmp/anchor-escrow-2025/programs/escrow/src/lib.rs",
+    repo: "https://github.com/mikemaccana/anchor-escrow-2025",
+    cloneRoot: "/tmp/anchor-escrow-2025",
+  },
+];
+
 // All 36 program-examples cases now pass deterministically. The pinocchio
 // signer-seeds impedance gap that previously blocked pda-rent-payer was
 // closed by a const-size [Seed; 8] stack-allocation pattern in
@@ -173,6 +210,33 @@ if (!existsSync(PROG_EX) && process.env.ANVIL_NO_CLONE !== "1") {
     console.warn(
       `[realworld-cargo] auto-clone failed (status=${clone.status}). Suite will skip.`,
     );
+  }
+}
+
+// Auto-clone external (out-of-corpus) repos that host promoted MUST_PASS
+// fixtures. Each repo is cloned into its `cloneRoot` if missing. Same
+// rationale as the program-examples auto-clone — silent skip on fresh
+// CI machines was masking the regression layer.
+if (process.env.ANVIL_NO_CLONE !== "1") {
+  const seen = new Set<string>();
+  for (const c of EXTERNAL_MUST_PASS) {
+    if (seen.has(c.cloneRoot)) continue;
+    seen.add(c.cloneRoot);
+    if (!existsSync(c.cloneRoot)) {
+      console.warn(
+        `[realworld-cargo] ${c.cloneRoot} not found — auto-cloning ${c.repo} (depth=1)…`,
+      );
+      const clone = spawnSync(
+        "git",
+        ["clone", "--depth", "1", c.repo, c.cloneRoot],
+        { stdio: "inherit", timeout: 60_000 },
+      );
+      if (clone.status !== 0) {
+        console.warn(
+          `[realworld-cargo] auto-clone failed for ${c.repo} (status=${clone.status}). Suite will skip.`,
+        );
+      }
+    }
   }
 }
 
@@ -229,5 +293,42 @@ if (existsSync(PROG_EX)) {
       `clone missing at ${PROG_EX} — see console warning for fix`,
       () => {},
     );
+  });
+}
+
+// External (out-of-corpus) MUST_PASS — same regression-guard contract as
+// the program-examples loop above, but each case has its own clone root.
+const externalReady = EXTERNAL_MUST_PASS.filter((c) => existsSync(c.path));
+if (externalReady.length > 0) {
+  describe("Real-world Anchor cargo-build regression guard (external)", () => {
+    for (const c of externalReady) {
+      test(`${c.id} / ${c.target}`, async () => {
+        const files = collectProjectFilesFromEntry(c.path);
+        const source = buildProjectSource(getProjectEntryPath(c.path), files);
+        const parsed = await parseAnchor(source);
+        expect(parsed.ok).toBe(true);
+        if (!parsed.ok) return;
+        const out = c.target === "native"
+          ? emitNativeFull(parsed.ir)
+          : emitPinocchioFull(parsed.ir);
+        const r = await runBuild(
+          c.target,
+          out.files.map((f) => ({ path: f.path, content: f.content })),
+          parsed.ir.name,
+        );
+        if (!r.ok) {
+          const head = r.errors
+            .slice(0, 5)
+            .map(
+              (e) =>
+                `  [${e.code ?? "?"}] ${e.filePath}:${e.line ?? "?"}  ${(e.message ?? "").slice(0, 200)}`,
+            )
+            .join("\n");
+          throw new Error(
+            `cargo build failed for ${c.id}/${c.target} (external) — this case used to pass, a recent change broke it:\n${head}`,
+          );
+        }
+      }, 120_000);
+    }
   });
 }

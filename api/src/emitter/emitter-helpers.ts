@@ -303,3 +303,29 @@ export function hasResidualAnchorPatterns(value: string): boolean {
     /\bemit!\(/.test(value) ||
     /\brequire!\(/.test(value);
 }
+
+/**
+ * Detect helper function signatures that reference Anchor-specific wrapper
+ * types (`InterfaceAccount`, `Interface<TokenInterface>`, `Account<'info, X>`,
+ * `Box<Account<...>>`, `Signer<'info>`, `SystemAccount<'info>`, `Context<X>`).
+ * These types don't exist on Pinocchio or Native targets, so the helper
+ * cannot compile against the target's type system regardless of how its
+ * body is transformed.
+ *
+ * Used together with `hasResidualAnchorPatterns` to gate whether a helper
+ * is "unsalvageable" — emitted as a commented-out block, with its call
+ * sites also commented out by the emitter's post-processing step. Same
+ * pattern as the Metaplex-stub commentout already used for unsupported
+ * external CPI calls.
+ */
+export function hasUnsalvageableHelperSignature(signature: string): boolean {
+  return /\bInterfaceAccount\s*<\s*'/.test(signature) ||
+    /\bInterface\s*<\s*'/.test(signature) ||
+    /\bAccount\s*<\s*'/.test(signature) ||
+    /\bBox\s*<\s*(?:Interface)?Account\s*</.test(signature) ||
+    /\bSigner\s*<\s*'/.test(signature) ||
+    /\bSystemAccount\s*<\s*'/.test(signature) ||
+    /\bContext\s*<\s*'?\s*\w+\s*>/.test(signature) ||
+    /\bUncheckedAccount\s*<\s*'/.test(signature) ||
+    /\bAccountLoader\s*<\s*'/.test(signature);
+}

@@ -56,27 +56,8 @@ interface TrackedCase {
 }
 
 const TRACKED: TrackedCase[] = [
-  // anchor-escrow-2025: modern Anchor escrow with `token_interface` +
-  // `solana-kite` test scaffolding. cfg(test) leak fix (8c2b92a) brought
-  // this down from 67. Remaining errors are downstream of impl-method CPI
-  // helpers (`into_*_context()` style) that need full inlining support.
-  {
-    id: "escrow2025",
-    target: "pinocchio",
-    path: "/tmp/anchor-escrow-2025/programs/escrow/src/lib.rs",
-    source: "https://github.com/mikemaccana/anchor-escrow-2025",
-    maxErrors: 35,
-    reason:
-      "impl-method CPI helpers (into_*_context) aren't inlined; downstream resolver failures cascade.",
-  },
-  {
-    id: "escrow2025",
-    target: "native",
-    path: "/tmp/anchor-escrow-2025/programs/escrow/src/lib.rs",
-    source: "https://github.com/mikemaccana/anchor-escrow-2025",
-    maxErrors: 35,
-    reason: "Same as pinocchio — impl-method CPI not inlined.",
-  },
+  // NOTE: anchor-escrow-2025 was promoted to MUST_PASS in realworld-cargo.test.ts
+  // after unsalvageable-helper commentout landed (errors 31/28 → 0/0).
 
   // coral-escrow: classic anchor `into_transfer_to_taker_context()` style
   // helpers + Token-2022 transfer_checked. Sub-expression rewrite (this
