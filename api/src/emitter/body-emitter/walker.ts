@@ -212,7 +212,24 @@ export class BodyWalker {
     const result = this.lines.join("\n");
     return result
       .replace(/\*\*(\w+)\.key\(\)/g, "*$1.key()")
-      .replace(/\*\*(\w+)\.key\b(?!\()/g, "*$1.key");
+      .replace(/\*\*(\w+)\.key\b(?!\()/g, "*$1.key")
+      // Strip the deref on `*<X>.key` / `*<X>.key()` when its sibling in a
+      // comparison is already `&<expr>` — keeps both sides as `&Pubkey`
+      // instead of mixing `&Pubkey` with `Pubkey`. Triggers in iter-chain
+      // shapes like `if &acc.pubkey == *signer.key`, where Anchor source
+      // originally had `... == ctx.accounts.signer.key` (auto-deref'd to
+      // `&Pubkey`) and our `emitAccountKeyExpr` collapsed it to a by-value
+      // form. The `(?:\(\))?` suffix covers both native (`*X.key`, no parens)
+      // and pinocchio (`*X.key()`, parens) shapes.
+      .replace(/(&[\w.]+(?:\(\))?\s*[=!]=\s*)\*(\w+)\.key(\(\))?\b(?!\w)/g, "$1$2.key$3")
+      .replace(/\*(\w+)\.key(\(\))?\b(?!\w)(\s*[=!]=\s*&[\w.]+(?:\(\))?)/g, "$1.key$2$3")
+      // Strip the deref on `*<X>.key[()]` inside iter-chain closure bodies
+      // whose param is compared with `==` / `!=`. The closure param yielded
+      // by `Vec<Pubkey>::iter()` is `&Pubkey` (auto-borrow), so dropping the
+      // deref keeps `&Pubkey == &Pubkey` symmetric. Matches the multisig
+      // `multisig.owners.iter().position(|a| a == *proposer.key)` shape.
+      .replace(/\|\s*(\w+)\s*\|\s*\1\s*([=!]=)\s*\*(\w+)\.key(\(\))?\b(?!\w)/g, "|$1| $1 $2 $3.key$4")
+      .replace(/\|\s*(\w+)\s*\|\s*\*(\w+)\.key(\(\))?\b(?!\w)(\s*[=!]=\s*)\1\b/g, "|$1| $2.key$3$4$1");
   }
 
   // ─── Type / lookup helpers ────────────────────────────────────────────────

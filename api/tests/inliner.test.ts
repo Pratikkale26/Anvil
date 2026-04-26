@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
+import { emitNativeFull } from "../src/emitter/native-emitter.ts";
 
 /**
  * Regression coverage for the four impl-method inliners in
@@ -305,6 +306,60 @@ impl<'info> Make<'info> {
     expect(hasSubstituted).toBe(true);
     // Verify the unresolved form is gone.
     expect(/(?<!\.)\bbumps\.\w+/.test(stringified)).toBe(false);
+  });
+
+  test("body emitter strips *X.key deref when comparison sibling is &<expr>", async () => {
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn check(ctx: Context<Check>) -> Result<()> {
+        let acc_pubkey = Pubkey::new_unique();
+        if &acc_pubkey == ctx.accounts.signer.key {
+            return Ok(());
+        }
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Check<'info> {
+    pub signer: Signer<'info>,
+}
+`;
+    const ir = await parseOk(src);
+    const out = emitNativeFull(ir);
+    const ix = out.files.find((f) => /instructions\/check\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    // Either side stays `&Pubkey` — neither side should be a by-value deref.
+    expect(ix.content).toContain("&acc_pubkey == signer.key");
+    expect(ix.content).not.toMatch(/&acc_pubkey\s*==\s*\*signer\.key/);
+  });
+
+  test("body emitter strips *X.key inside iter-chain closure param comparison", async () => {
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn check(ctx: Context<Check>) -> Result<()> {
+        let owners: Vec<Pubkey> = vec![];
+        let _idx = owners.iter().position(|a| a == ctx.accounts.signer.key);
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Check<'info> {
+    pub signer: Signer<'info>,
+}
+`;
+    const ir = await parseOk(src);
+    const out = emitNativeFull(ir);
+    const ix = out.files.find((f) => /instructions\/check\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    // Closure param `a` is `&Pubkey`; comparison sibling must also be `&Pubkey`.
+    expect(ix.content).toContain("|a| a == signer.key");
+    expect(ix.content).not.toMatch(/\|a\|\s*a\s*==\s*\*signer\.key/);
   });
 
   test("solana_program::program::invoke_signed direct call is commented out on pinocchio", async () => {

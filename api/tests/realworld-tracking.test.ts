@@ -84,28 +84,28 @@ const TRACKED: TrackedCase[] = [
       "Constraint-parser noise + downstream emit gaps. Same root causes as pinocchio.",
   },
 
-  // coral-multisig: pinocchio post-process now comments out `solana_program::
-  // program::invoke{,_signed}` direct calls and the typed `let X: Instruction`
-  // setup that feeds them, dropping pin 7 → 3. Remaining: `seeds` scope (the
-  // body-emitter rewrites `ctx.accounts.multisig` to a local `multisig` but
-  // misses the `let seeds = …` line that still uses the old name) + two
-  // &Pubkey vs Pubkey comparison E0277s in the .iter().any() chain, both
-  // body-emitter level fixes (#3 in this session's batch).
+  // coral-multisig: comparison-context-aware *X.key deref strip (this commit)
+  // dropped pin 3 → 2 and native 4 → 3. The body-emitter post-process now
+  // strips `*` on `*X.key[()]` when the comparison sibling is `&<expr>` or
+  // when the LHS is a closure param yielded by Vec<Pubkey>::iter() (which is
+  // `&Pubkey` by auto-borrow). Remaining errors are unrelated: `seeds` scope
+  // (body emitter doesn't carry the source-side let seeds = …), &*transaction
+  // deref of a Transaction value, transaction-not-mutable shadow.
   {
     id: "coral-multisig",
     target: "pinocchio",
     path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/multisig)",
-    maxErrors: 3,
-    reason: "Body-emitter quirks: &Pubkey/Pubkey comparison, missing seeds scope.",
+    maxErrors: 2,
+    reason: "Missing seeds scope + transaction not declared mut.",
   },
   {
     id: "coral-multisig",
     target: "native",
     path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/multisig)",
-    maxErrors: 4,
-    reason: "Body-emitter quirks: &Pubkey/Pubkey comparison, missing seeds scope, &*transaction deref.",
+    maxErrors: 3,
+    reason: "Missing seeds scope + transaction deref + transaction not declared mut.",
   },
 ];
 
