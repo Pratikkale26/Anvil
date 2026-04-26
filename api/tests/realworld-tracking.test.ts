@@ -108,6 +108,49 @@ const TRACKED: TrackedCase[] = [
     maxErrors: 3,
     reason: "Missing seeds scope + transaction deref + transaction not declared mut.",
   },
+
+  // Token-2022 transfer-fee extension. Anchor program from program-examples
+  // that uses `spl_token_2022::extension::transfer_fee::*`. Tracked here so
+  // the ext-import-resolution gap doesn't silently regress. Most errors are
+  // E0433 (module/crate not declared) — emitter doesn't surface the
+  // spl_token_2022::extension::* import chain. Structural rewrite of the
+  // transfer_fee_config CPI shape is a separate, deferred follow-up.
+  {
+    id: "t22-transfer-fee",
+    target: "pinocchio",
+    path: "/tmp/program-examples/tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs",
+    source: "solana-developers/program-examples (tokens/token-2022/transfer-fee/anchor)",
+    maxErrors: 16,
+    reason: "spl_token_2022::extension::* imports not surfaced in emit.",
+  },
+  {
+    id: "t22-transfer-fee",
+    target: "native",
+    path: "/tmp/program-examples/tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs",
+    source: "solana-developers/program-examples (tokens/token-2022/transfer-fee/anchor)",
+    maxErrors: 14,
+    reason: "spl_token_2022::extension::* imports not surfaced in emit.",
+  },
+
+  // Token-2022 transfer-hook hello-world. Same ext-import gap as transfer-fee
+  // plus the transfer_hook attribute & ExtraAccountMetaList shapes. Tracked
+  // for regression guard — structural rewrite is deferred.
+  {
+    id: "t22-transfer-hook",
+    target: "pinocchio",
+    path: "/tmp/program-examples/tokens/token-2022/transfer-hook/hello-world/anchor/programs/transfer-hook/src/lib.rs",
+    source: "solana-developers/program-examples (tokens/token-2022/transfer-hook/hello-world/anchor)",
+    maxErrors: 11,
+    reason: "spl_token_2022::extension::transfer_hook + ExtraAccountMetaList unhandled.",
+  },
+  {
+    id: "t22-transfer-hook",
+    target: "native",
+    path: "/tmp/program-examples/tokens/token-2022/transfer-hook/hello-world/anchor/programs/transfer-hook/src/lib.rs",
+    source: "solana-developers/program-examples (tokens/token-2022/transfer-hook/hello-world/anchor)",
+    maxErrors: 10,
+    reason: "spl_token_2022::extension::transfer_hook + ExtraAccountMetaList unhandled.",
+  },
 ];
 
 const anyExist = TRACKED.some((c) => existsSync(c.path));
