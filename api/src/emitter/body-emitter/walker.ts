@@ -211,8 +211,17 @@ export class BodyWalker {
 
     const result = this.lines.join("\n");
     return result
-      .replace(/\*\*(\w+)\.key\(\)/g, "*$1.key()")
-      .replace(/\*\*(\w+)\.key\b(?!\()/g, "*$1.key")
+      // Collapse double-deref `**X.key[()]` → single `*X.key[()]`. Use
+      // `\*{2,}` (two-or-more) instead of `\*\*` (exactly two): upstream
+      // transforms can stack stars when source had `*ctx.accounts.X.key`
+      // and `transformAccountReferences` re-prepends another `*` via
+      // `emitAccountKeyExpr`. A literal-two-stars pattern would only strip
+      // one pair per pass, leaving `**X.key` for the `***X.key` shape. The
+      // `\*{2,}` greedy match eats all leading stars except one in a single
+      // pass. Must run BEFORE the comparison-context strips below, since
+      // those expect a single `*` prefix.
+      .replace(/\*{2,}(\w+)\.key\(\)/g, "*$1.key()")
+      .replace(/\*{2,}(\w+)\.key\b(?!\()/g, "*$1.key")
       // Strip the deref on `*<X>.key` / `*<X>.key()` when its sibling in a
       // comparison is already `&<expr>` — keeps both sides as `&Pubkey`
       // instead of mixing `&Pubkey` with `Pubkey`. Triggers in iter-chain
@@ -663,8 +672,10 @@ export class BodyWalker {
         (_full, prefix: string) => `${prefix}${this.emitter.emitAccountKeyExpr(accountInfoVar)}`,
       );
     }
-    transformed = transformed.replace(/\*\*(\w+)\.key\(\)/g, "*$1.key()");
-    transformed = transformed.replace(/\*\*(\w+)\.key\b/g, "*$1.key");
+    // `\*{2,}` (not `\*\*`) so a single pass collapses any number of leading
+    // stars to one — see the matching note in `walk()`'s end-of-pass.
+    transformed = transformed.replace(/\*{2,}(\w+)\.key\(\)/g, "*$1.key()");
+    transformed = transformed.replace(/\*{2,}(\w+)\.key\b/g, "*$1.key");
     return transformed;
   }
 

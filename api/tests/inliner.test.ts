@@ -439,15 +439,15 @@ pub struct Run<'info> { pub signer: Signer<'info> }
     expect(ix.content).toMatch(/\|p\|\s*p\s*!=\s*signer\.key\b/);
     // Shape 4: by-value Pubkey comparison — deref must NOT be stripped
     // by either of my added rules (`expected` has no leading `&`, isn't
-    // a closure param). Both `*signer.key` and `**signer.key` are
-    // accepted here — there's a separate `**`-collapse-misfire on this
-    // exact shape (see /tmp probes), but it's a different bug from the
-    // &Pubkey/Pubkey strip and tracked separately. The critical
-    // invariant: `signer.key` (no `*` at all) must NOT appear, since
-    // that would mean we incorrectly stripped a deref needed for the
-    // by-value Pubkey side.
-    expect(ix.content).toMatch(/expected\s*!=\s*\*+signer\.key\b/);
+    // a closure param). The `**`-collapse-misfire on this exact shape
+    // was fixed by tightening the `\*\*X.key` collapse at walker.ts:215
+    // to `\*{2,}X.key` (greedy across stacked stars from upstream
+    // transforms). The deref must still be present (one `*` only) since
+    // both sides are by-value Pubkey. The `not.toMatch` of `**signer.key`
+    // pins that exactly one star survives.
+    expect(ix.content).toMatch(/expected\s*!=\s*\*signer\.key\b/);
     expect(ix.content).not.toMatch(/expected\s*!=\s*signer\.key\b/);
+    expect(ix.content).not.toMatch(/\*\*signer\.key/);
   });
 
   test("T22 extension types auto-imported on native when body references them", async () => {
