@@ -91,6 +91,14 @@ const MUST_PASS: Case[] = [
   // instruction handler).
   { id: "token-2022-basics", target: "native", path: "tokens/token-2022/basics/anchor/programs/basics/src/lib.rs" },
 
+  // t22-transfer-fee/pinocchio: promoted from tracking after T22 extension
+  // call-site commentout landed (errors 16 → 0). spl_token_2022 lacks a
+  // no_std variant, so the pass excises every body-level reference to
+  // extension types + their call sites, leaving the file compile-clean.
+  // Native version stays in tracking — auto-imports drop most errors but
+  // InterfaceAccount<TokenAccount> in account structs still leaks.
+  { id: "t22-transfer-fee", target: "pinocchio", path: "tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs" },
+
   // create-account/native: locked in by pass-through-aware import scan
   // (`(transfer|create_account|...)\\(\\s*CpiContext::new` triggers the
   // invoke + system_instruction imports the rewriter needs).

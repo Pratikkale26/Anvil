@@ -135,20 +135,8 @@ const TRACKED: TrackedCase[] = [
     reason: "Same as pinocchio, fewer E0107 due to native lifetime tolerance.",
   },
 
-  // Token-2022 transfer-fee extension. Anchor program from program-examples
-  // that uses `spl_token_2022::extension::transfer_fee::*`. Tracked here so
-  // the ext-import-resolution gap doesn't silently regress. Most errors are
-  // E0433 (module/crate not declared) — emitter doesn't surface the
-  // spl_token_2022::extension::* import chain. Structural rewrite of the
-  // transfer_fee_config CPI shape is a separate, deferred follow-up.
-  {
-    id: "t22-transfer-fee",
-    target: "pinocchio",
-    path: "/tmp/program-examples/tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs",
-    source: "solana-developers/program-examples (tokens/token-2022/transfer-fee/anchor)",
-    maxErrors: 0,
-    reason: "T22 extension call sites commented out in pinocchio post-process (spl_token_2022 has no no_std variant).",
-  },
+  // NOTE: t22-transfer-fee/pinocchio promoted to MUST_PASS in
+  // realworld-cargo.test.ts after T22 ext call-site commentout landed (16 → 0).
   {
     id: "t22-transfer-fee",
     target: "native",
