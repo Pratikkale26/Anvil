@@ -107,12 +107,12 @@ const MUST_PASS: Case[] = [
   { id: "rent", target: "pinocchio", path: "basics/rent/anchor/programs/rent-example/src/lib.rs" },
   { id: "rent", target: "native",    path: "basics/rent/anchor/programs/rent-example/src/lib.rs" },
 
-  // pda-rent-payer/native: walker.ts now matches the fluent `.with_signer(...)`
-  // builder form for create_account; comment-strip in transformNestedAnchorCode
-  // lets the regex span struct-field comments. Pinocchio gap remains: Anchor's
-  // &[&[&[u8]]] signer_seeds doesn't trivially convert to pinocchio's
-  // Signer<&[Seed]> without runtime allocation; needs a separate const-aware
-  // emit pass.
+  // pda-rent-payer both targets: pinocchio unlocked by const-size [Seed; 8]
+  // stack-pattern in postProcessPinocchioRewrites — same shape as the
+  // helper functions (transfer_lamports_signed, create_program_account)
+  // already use. Cap of 8 seeds is fine in practice (SPL ATA's 4-seed list
+  // is the densest case in the wild). Native was already green.
+  { id: "pda-rent-payer", target: "pinocchio", path: "basics/pda-rent-payer/anchor/programs/anchor-program-example/src/lib.rs" },
   { id: "pda-rent-payer", target: "native", path: "basics/pda-rent-payer/anchor/programs/anchor-program-example/src/lib.rs" },
 
   // carnival: multi-module within one program (state/{ride,game,food}.rs +
@@ -146,12 +146,10 @@ const MUST_PASS: Case[] = [
   { id: "cpi-hand", target: "native",    path: "basics/cross-program-invocation/anchor/programs/hand/src/lib.rs" },
 ];
 
-// Known gap (do NOT add to MUST_PASS): pda-rent-payer/pinocchio — Anchor's
-// `&[&[&[u8]]]` signer_seeds form doesn't trivially convert to pinocchio's
-// `Signer<'_, '_>::From<&[Seed]>` API without a runtime allocation that
-// pinocchio's no_std environment doesn't permit. Native is unblocked.
-// Possible future fix: emit a const-size match block that handles N=1..8
-// seed counts with stack-allocated Seed arrays.
+// All 36 program-examples cases now pass deterministically. The pinocchio
+// signer-seeds impedance gap that previously blocked pda-rent-payer was
+// closed by a const-size [Seed; 8] stack-allocation pattern in
+// postProcessPinocchioRewrites — matches the helper-function style.
 
 /**
  * Auto-clone the program-examples corpus on first run. Without this, the

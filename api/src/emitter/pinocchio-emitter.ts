@@ -909,10 +909,18 @@ ${writeLines}
         `pinocchio_system::instructions::CreateAccount { from: ${from}, to: ${to}, lamports: ${lamports.trim()}, space: (${space.trim()}) as u64, owner: program_id }.invoke()?;`,
     );
     // Signed form: invoke_signed(...) with trailing `seeds_var,` after the accounts array.
+    // Anchor's `signer_seeds: &[&[&[u8]]]` form needs conversion to pinocchio's
+    // `&[Signer]` (where Signer wraps `&[Seed]`). pinocchio is no_std so we
+    // can't allocate a Vec; use the same const-size [Seed; 8] stack pattern
+    // as the helper functions (transfer_lamports_signed, create_program_account)
+    // — fixed-cap fill with default `Seed::from(&[][..])` placeholders, then
+    // build Signer from `&seeds[..actual_len]`. Caps at 8 seeds; programs
+    // using more return InvalidSeeds at runtime (no Anchor program in the
+    // wild uses >8 seeds; SPL ATA's 4-seed seeds list is the densest case).
     out = out.replace(
       new RegExp(`invoke_signed\\(\\s*${CREATE_ACCT_BODY},\\s*&\\[[^\\]]*\\],\\s*(\\w+),?\\s*\\)\\?;`, "g"),
       (_full, from, to, lamports, space, seedsVar) =>
-        `// PDA-signed create_account via pinocchio_system\n    {\n        let __seed_refs = ${seedsVar}[0];\n        let __signer = pinocchio::instruction::Signer::from(__seed_refs);\n        pinocchio_system::instructions::CreateAccount { from: ${from}, to: ${to}, lamports: ${lamports.trim()}, space: (${space.trim()}) as u64, owner: program_id }.invoke_signed(&[__signer])?;\n    }`,
+        `// PDA-signed create_account via pinocchio_system\n    {\n        let __seed_refs = ${seedsVar}[0];\n        let mut __pda_seeds: [pinocchio::instruction::Seed<'_>; 8] = core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));\n        for (__i, __s) in __seed_refs.iter().enumerate() {\n            if __i >= __pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }\n            __pda_seeds[__i] = pinocchio::instruction::Seed::from(*__s);\n        }\n        let __signer = pinocchio::instruction::Signer::from(&__pda_seeds[..__seed_refs.len()]);\n        pinocchio_system::instructions::CreateAccount { from: ${from}, to: ${to}, lamports: ${lamports.trim()}, space: (${space.trim()}) as u64, owner: program_id }.invoke_signed(&[__signer])?;\n    }`,
     );
     return out;
   }
