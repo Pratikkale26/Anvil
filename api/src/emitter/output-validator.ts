@@ -81,6 +81,19 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<
     message: "Argument deserialization not implemented for a custom type.",
   },
   {
+    // The Token-2022 / SPL `_checked` decimals fallback. When the parser
+    // can't infer mint decimals from the source, the emitter writes
+    // `0u8 /* TODO: decimals — could not infer ... */`. That compiles
+    // cleanly and runs on-chain with WRONG decimals — silent corruption
+    // of every checked-token transfer through this code path. Fail loud.
+    pattern: /\b0u8\s*\/\*\s*TODO:\s*decimals\b/,
+    message: "Token-2022 decimals fallback (0u8 /* TODO: decimals */) — wrong decimals would silently corrupt on-chain transfers. Hand-edit the literal or fix the source so the parser can resolve mint.decimals.",
+  },
+  // NOTE: line-comment markers (// ⚠️ Anvil, // TODO(manual)) are NOT in
+  // ERROR_PATTERNS — they get stripped by stripLineComments() before the
+  // regex check below. They are caught instead by checkUnsafeMarkers() and
+  // checkManualTodos() which operate on raw content with comments intact.
+  {
     pattern: /\b[A-Z][A-Za-z0-9_]*CpiBuilder::new\s*\(/,
     message: "Third-party Anchor CPI builder leaked into a non-native target; this target cannot safely carry external Anchor-style builder CPIs.",
     targets: ["pinocchio", "quasar"],
@@ -597,9 +610,14 @@ function checkBracketBalance(content: string, path: string): ValidationIssue[] {
 }
 
 /**
- * Detect TODO(manual) markers — the refine prompt tells the model to leave
- * this when it cannot fully fix an issue. Surfacing them lets the user know
- * a section still needs human review even if validation otherwise passes.
+ * Detect TODO(manual) / FIXME(anvil) markers. Both are explicit "this code
+ * does not actually work; manual rebuild required" sentinels written by:
+ *   - body-emitter pass-through for unsupported external CPIs
+ *   - walker.ts Metaplex / set_authority commentout fallbacks
+ *   - the AI refine prompt when the model can't safely complete a patch
+ *
+ * Promoted from warning to error: cargo accepts them (they sit in
+ * comments) but on-chain behavior is missing or wrong. Fail loud.
  */
 function checkManualTodos(content: string, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
@@ -607,12 +625,52 @@ function checkManualTodos(content: string, path: string): ValidationIssue[] {
   for (let i = 0; i < lines.length; i++) {
     if (/TODO\(manual\)|FIXME\(anvil\)/.test(lines[i] ?? "")) {
       issues.push({
-        severity: "warning",
-        message: "AI refine left a TODO(manual) marker — this section requires human review.",
+        severity: "error",
+        message: "Anvil TODO(manual) / FIXME(anvil) marker still present — emitter could not safely transform this section; manual rebuild required before deploy.",
         path,
         line: i + 1,
       });
     }
+  }
+  return issues;
+}
+
+/**
+ * Detect the "// ⚠️ Anvil" stub-comment family the emitter writes for
+ * untranslated CPIs. Two severities based on intent:
+ *
+ *   ERROR — markers describing code that does NOT implement the original
+ *     behavior. Regex matches captions like "manual rebuild required",
+ *     "could not resolve", "not yet supported", "TODO". The accompanying
+ *     code is a placeholder skeleton that compiles but no-ops on-chain.
+ *     Fail loud — these are silent runtime breakage waiting to happen.
+ *
+ *   WARNING — markers describing code that IS emitted but where the
+ *     emitter wants a human to verify (account refs, type assumptions).
+ *     Captions like "Review this section", "manually verify". The code
+ *     runs as written; the marker is a hint, not a stub.
+ *
+ * Operates on raw content (not stripLineComments output) because the
+ * regex pattern checks above can't see line comments.
+ */
+function checkUnsafeMarkers(content: string, path: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const isAnvilMarker = /\/\/\s*⚠️\s*Anvil[\s:]/.test(line) || /\/\*\s*⚠️\s*Anvil[\s:]/.test(line);
+    if (!isAnvilMarker) continue;
+    // Truly-broken markers contain one of these phrases; the surrounding
+    // code is a non-functional stub.
+    const isBroken = /manual rebuild required|manual implementation|could not resolve|not yet supported|TODO\(manual\)|TODO:/i.test(line);
+    issues.push({
+      severity: isBroken ? "error" : "warning",
+      message: isBroken
+        ? "Anvil unsafe-marker (// ⚠️ Anvil … manual rebuild / TODO / not yet supported) — the emit contains a non-functional stub that compiles but does not implement the original Anchor behavior."
+        : "Anvil review marker (// ⚠️ Anvil … Review/verify) — code is emitted but flagged for human verification.",
+      path,
+      line: i + 1,
+    });
   }
   return issues;
 }
@@ -717,6 +775,7 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     issues.push(...checkBracketBalance(file.content, file.path));
     issues.push(...checkAnchorTypedAccounts(file.content, file.path, target));
     issues.push(...checkManualTodos(file.content, file.path));
+    issues.push(...checkUnsafeMarkers(file.content, file.path));
     issues.push(...checkDuplicateSeedBindings(file.content, file.path));
     issues.push(...checkAccountCountGuards(file.content, ir, file.path));
     issues.push(...checkOwnerChecks(file.content, ir, file.path));

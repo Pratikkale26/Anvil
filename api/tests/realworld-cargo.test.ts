@@ -24,6 +24,7 @@ import { parseAnchor } from "../src/parser/anchor-parser.ts";
 import { emitNativeFull } from "../src/emitter/native-emitter.ts";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
 import { runBuild } from "../src/build/build-runner.ts";
+import { validateEmitterOutput } from "../src/emitter/output-validator.ts";
 import {
   buildProjectSource,
   collectProjectFilesFromEntry,
@@ -308,6 +309,23 @@ if (existsSync(PROG_EX)) {
         const out = c.target === "native"
           ? emitNativeFull(parsed.ir)
           : emitPinocchioFull(parsed.ir);
+
+        // Validator-clean visibility. Logs unsafe-marker stubs (Metaplex CPI
+        // commentouts, TODO(manual) sentinels, 0u8 /* TODO */ decimals)
+        // loudly without failing the test — a chunk of MUST_PASS fixtures
+        // legitimately ship Metaplex stubs that compile but require manual
+        // rebuild. The cargo-green gate below remains the hard regression
+        // bar; validator-clean is a stricter target we drive toward over
+        // time. A future task can promote this to a hard failure once the
+        // marker-emitting code paths are eliminated from these fixtures.
+        const issues = validateEmitterOutput(parsed.ir, out);
+        const errors = issues.filter((i) => i.severity === "error");
+        if (errors.length > 0) {
+          console.warn(
+            `[validator] ${c.id}/${c.target}: ${errors.length} unsafe-marker error(s) — ${errors.map((e) => `${e.path}:${e.line ?? "?"}`).join(", ")}`,
+          );
+        }
+
         const r = await runBuild(
           c.target,
           out.files.map((f) => ({ path: f.path, content: f.content })),
@@ -361,6 +379,17 @@ if (externalReady.length > 0) {
         const out = c.target === "native"
           ? emitNativeFull(parsed.ir)
           : emitPinocchioFull(parsed.ir);
+
+        // See note on the in-corpus loop above — validator-clean is logged
+        // loudly but not gated; cargo-green remains the regression bar.
+        const issues = validateEmitterOutput(parsed.ir, out);
+        const errors = issues.filter((i) => i.severity === "error");
+        if (errors.length > 0) {
+          console.warn(
+            `[validator] ${c.id}/${c.target} (external): ${errors.length} unsafe-marker error(s) — ${errors.map((e) => `${e.path}:${e.line ?? "?"}`).join(", ")}`,
+          );
+        }
+
         const r = await runBuild(
           c.target,
           out.files.map((f) => ({ path: f.path, content: f.content })),
