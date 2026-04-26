@@ -19,6 +19,7 @@ import {
   type ValidationIssue,
 } from "./constants";
 import { downloadBlob, makeTar } from "./tar";
+import { loadWorkbenchState, saveWorkbenchState } from "./workbench-storage";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -147,6 +148,41 @@ export function useAnvilPipeline() {
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
   }, []);
+
+  // ─── Workbench persistence (localStorage, versioned) ──────────────────────
+  // Hydrate on mount: a refresh, accidental tab-close, or returning later
+  // doesn't lose what the user typed. Output is intentionally NOT persisted —
+  // re-emit is fast and stale output would confuse the workbench's state.
+  // Hydration is ref-gated so the save effect doesn't fire on the load itself.
+  const hydratedRef = useRef(false);
+  useEffect(() => {
+    const stored = loadWorkbenchState();
+    if (stored) {
+      if (stored.mode) setMode(stored.mode);
+      if (stored.target) setTarget(stored.target);
+      if (stored.demoName) setDemoName(stored.demoName);
+      if (typeof stored.sourceText === "string") setSourceText(stored.sourceText);
+      if (typeof stored.repoUrl === "string") setRepoUrl(stored.repoUrl);
+      if (typeof stored.repoRef === "string") setRepoRef(stored.repoRef);
+      if (typeof stored.repoSubpath === "string") setRepoSubpath(stored.repoSubpath);
+      if (typeof stored.folderCandidate === "string") setFolderCandidate(stored.folderCandidate);
+    }
+    hydratedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    saveWorkbenchState({
+      mode,
+      target,
+      demoName,
+      sourceText,
+      repoUrl,
+      repoRef,
+      repoSubpath,
+      folderCandidate,
+    });
+  }, [mode, target, demoName, sourceText, repoUrl, repoRef, repoSubpath, folderCandidate]);
 
   // ─── Computed values ──────────────────────────────────────────────────────
   const folderCandidates = useMemo(() => {
