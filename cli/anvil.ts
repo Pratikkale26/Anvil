@@ -560,6 +560,15 @@ function validateTarget(target: string | null): TargetName {
   if (!VALID_TARGETS.includes(normalized)) {
     fatal(`Invalid target "${target}". Must be one of: ${VALID_TARGETS.join(", ")}`);
   }
+  if (normalized === "quasar") {
+    // Quasar emit isn't gated by cargo-build tests and a few CPI surfaces
+    // emit `// Anvil TODO` stubs (set_authority, ATA, Memo) awaiting
+    // upstream features. Print to stderr so it doesn't pollute stdout
+    // when piping through other tools.
+    process.stderr.write(
+      `${c.yellow}warning:${c.reset} target ${c.bold}quasar${c.reset} is experimental — no cargo-build coverage and some CPIs emit TODO stubs. Treat output as a starting point that needs review.\n`,
+    );
+  }
   return normalized;
 }
 

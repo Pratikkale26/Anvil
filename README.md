@@ -96,7 +96,7 @@ The discriminator routing, signer / writable / owner checks, args decoding, PDA 
 | Pyth / MPL Core / Switchboard CPIs | lint only | lint only |
 | Impl-method inlining (`ctx.accounts.foo()`) | partial | partial |
 
-Quasar shares the parser and emitter pipeline but `quasar-lang` 0.0 is too early for an end-to-end cargo-build signal; it sits behind Pinocchio + Native in confidence.
+> **Quasar is experimental.** The Quasar emitter shares the parser and IR pipeline and produces output, but `quasar-lang` 0.0 is too early for an end-to-end cargo-build signal — there are zero cargo-build regression tests on Quasar output and a few CPI surfaces (`set_authority`, ATA, Memo) emit `// Anvil TODO` stubs awaiting upstream features. Treat Quasar output as a starting point that needs review. Pinocchio and Native are the gated targets.
 
 ## Pipeline (one line)
 

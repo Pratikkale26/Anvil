@@ -226,7 +226,7 @@ export const C = {
 
 export const TARGET_META: Record<
   Target,
-  { color: string; label: string; tagline: string }
+  { color: string; label: string; tagline: string; experimental?: boolean }
 > = {
   pinocchio: {
     color: C.amber,
@@ -237,6 +237,10 @@ export const TARGET_META: Record<
     color: C.teal,
     label: "Quasar",
     tagline: "Zero-alloc by Blueshift",
+    // No cargo-build coverage on the Quasar target. Emitter runs and
+    // produces output; producing-genuinely-buildable Rust is not yet
+    // gated by tests. Treat output as a starting point that needs review.
+    experimental: true,
   },
   native: {
     color: C.indigo,

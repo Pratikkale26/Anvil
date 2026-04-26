@@ -268,7 +268,7 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
         <PanelHead icon={Rocket} title="Target framework" />
         <div className="p-3 flex flex-col gap-1.5">
           {TARGETS.map((t) => {
-            const { color, label, tagline } = TARGET_META[t];
+            const { color, label, tagline, experimental } = TARGET_META[t];
             const active = target === t;
             return (
               <button
@@ -286,14 +286,27 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                     background: active ? color : C.textDim,
                   }}
                 />
-                <div>
+                <div className="flex-1 min-w-0">
                   <div
-                    className="font-bold text-sm"
+                    className="font-bold text-sm flex items-center gap-2"
                     style={{
                       color: active ? C.text : C.textSub,
                     }}
                   >
                     {label}
+                    {experimental && (
+                      <span
+                        className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded font-semibold"
+                        style={{
+                          color: C.amber,
+                          background: `${C.amber}18`,
+                          border: `1px solid ${C.amber}40`,
+                        }}
+                        title="No cargo-build coverage. Output runs through the emitter but isn't verified by the test suite — review before deploying."
+                      >
+                        Experimental
+                      </span>
+                    )}
                   </div>
                   <div className="text-[11px] text-anvil-text-muted mt-px">
                     {tagline}
