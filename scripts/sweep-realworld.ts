@@ -352,7 +352,7 @@ function generateMarkdown(rs: RepoResult[]): string {
   md += `**Source:** \`solana-developers/program-examples\` (cloned to \`/tmp/program-examples\`)\n`;
   md += `**Pipeline:** parse → emit per target → cargo check → if fail, AI refine (≤${PER_REFINE_MAX_ITERS} iters, real Anthropic) → cargo check\n`;
   md += `**Targets:** pinocchio + native\n`;
-  md += `**Refine model:** \`claude-sonnet-4-20250514\` (env \`AI_REPAIR_MODEL\`)\n`;
+  md += `**Refine model:** \`claude-sonnet-4-6\` (env \`AI_REPAIR_MODEL\`)\n`;
   md += `**Total budget:** \$${TOTAL_BUDGET_USD.toFixed(2)} cap\n\n`;
 
   md += `## Summary\n\n`;

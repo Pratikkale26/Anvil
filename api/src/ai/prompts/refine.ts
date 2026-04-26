@@ -4,7 +4,7 @@ import type { RejectedAttempt } from "../refine-schemas.js";
 // Bumped to v5: added pinocchio is_signer/is_writable method-call hint and
 // hard "do not fabricate symbols" rule. Cache key folds in this version so
 // v4 cached results never collide.
-export const REFINE_PROMPT_VERSION = "refine.v5";
+export const REFINE_PROMPT_VERSION = "refine.v6"; // bumped for sonnet-4-6 upgrade — invalidates file-cache for clean cost telemetry
 
 /** Max preview length per rejected attempt — keeps retry prompts bounded. */
 const REJECTED_ATTEMPT_PREVIEW_CHARS = 2000;

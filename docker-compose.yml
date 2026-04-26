@@ -11,7 +11,7 @@ services:
       - RATE_LIMIT=${RATE_LIMIT:-60}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - AI_PROVIDER=anthropic
-      - AI_REPAIR_MODEL=${AI_REPAIR_MODEL:-claude-sonnet-4-20250514}
+      - AI_REPAIR_MODEL=${AI_REPAIR_MODEL:-claude-sonnet-4-6}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]
