@@ -422,6 +422,16 @@ export abstract class BaseEmitter {
     if (ir.instructions.length > 0) {
       sections.push("use instructions::*;");
     }
+    // User trait impls land AFTER `mod state;` so account-struct types
+    // emitted into state.rs resolve when referenced. We pull them into
+    // lib.rs scope with `use state::*;` since trait-impl bodies often
+    // reference state structs verbatim (coral-multisig:
+    // `impl From<&Transaction> for Instruction { … }`).
+    const userTraitImpls = this.emitUserTraitImpls(ir);
+    if (userTraitImpls) {
+      if (ir.accounts.length > 0) sections.push("use state::*;");
+      sections.push(userTraitImpls);
+    }
 
     sections.push(this.emitEntrypoint(ir));
     sections.push(this.emitRouter(ir));
@@ -552,6 +562,8 @@ export abstract class BaseEmitter {
     sections.push(this.emitUseStatements(ir));
     if (constants.length > 0) sections.push(constants.join("\n\n"));
     if (types.length > 0) sections.push(this.emitCustomTypes({ ...ir, types }));
+    const userTraitImplsSingle = this.emitUserTraitImpls(ir);
+    if (userTraitImplsSingle) sections.push(userTraitImplsSingle);
     sections.push(this.emitEntrypoint(ir));
     sections.push(this.emitRouter(ir));
 
@@ -903,6 +915,18 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     const size = typeDef.fields.reduce((sum, field) => sum + this.resolveTypeSize(field.type, visited), 0);
     visited.delete(typeName);
     return size;
+  }
+
+  /**
+   * Emit user-defined trait impls collected by the parser. Default impl is
+   * a verbatim concatenation; targets that need to filter or rewrite can
+   * override. Returns "" when there are none so callers can guard with a
+   * truthy check.
+   */
+  protected emitUserTraitImpls(ir: SolanaIR): string {
+    const impls = ir.userTraitImpls ?? [];
+    if (impls.length === 0) return "";
+    return impls.join("\n\n");
   }
 
   protected emitCustomTypes(ir: SolanaIR): string {

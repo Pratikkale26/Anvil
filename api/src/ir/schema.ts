@@ -500,6 +500,15 @@ export const SolanaIRSchema = z.object({
   helperFns: z.array(HelperFnSchema).default([]),
   /** use statements from the source (helps emitters determine imports) */
   imports: z.array(z.string()).default([]),
+  /**
+   * User-defined trait impls between user types (e.g. `impl From<&Transaction>
+   * for Instruction { … }`) preserved verbatim from the source. Only impls
+   * whose body is "Anchor-clean" (no Anchor wrapper types, CpiContext, etc.)
+   * survive — others would compile-fail on a target that strips Anchor.
+   * Emitted after the custom-types block so secondary `Into::into` chains
+   * inside instruction bodies resolve correctly.
+   */
+  userTraitImpls: z.array(z.string()).default([]),
   metadata: IRMetadataSchema,
 });
 

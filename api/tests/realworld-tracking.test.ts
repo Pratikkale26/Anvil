@@ -105,8 +105,8 @@ const TRACKED: TrackedCase[] = [
     target: "native",
     path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/multisig)",
-    maxErrors: 3,
-    reason: "Missing seeds scope + transaction deref + transaction not declared mut.",
+    maxErrors: 2,
+    reason: "Missing seeds scope + transaction not declared mut. Transaction deref fixed via &*X strip + From-impl preservation.",
   },
 
   // coral-swap: previously failed to parse (E0RUST_PARSE / unclosed-delimiter)

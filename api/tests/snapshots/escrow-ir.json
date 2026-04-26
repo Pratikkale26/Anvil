@@ -713,6 +713,7 @@
     "use anchor_lang::prelude::*",
     "use super::*"
   ],
+  "userTraitImpls": [],
   "metadata": {
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",

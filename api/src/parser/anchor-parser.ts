@@ -150,6 +150,15 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
     });
     const constants = topLevel.constants.map((node) => node.text);
 
+    // Capture user-defined trait impls (From, Into, AsRef, Display, Debug, …)
+    // whose body is "Anchor-clean" — no Anchor wrapper types or CPI helper
+    // refs that the target strips. coral-multisig's
+    // `impl From<TransactionAccount> for AccountMeta { … }` is the canonical
+    // case: bodies of inlined From-trait `.into()` chains rely on it
+    // resolving on the target side (`Vec<TransactionAccount>::into_iter()
+    // .map(Into::into).collect()` invokes this impl).
+    const userTraitImpls = topLevel.userTraitImpls;
+
     const irRaw: SolanaIR = {
       name: programName,
       programId,
@@ -160,6 +169,7 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
       errors,
       helperFns,
       imports,
+      userTraitImpls,
       metadata: {
         sourceFramework: "anchor",
         sourceVersion: detectAnchorVersion(source),
@@ -206,6 +216,12 @@ interface TopLevelItems {
   implItems: { implName: string; kind: "fn" | "const"; name: string; rawText: string }[];
   /** From-trait impls, keyed for resolving typed `.into()` call sites at parse time. */
   fromImpls: FromImplCatalogEntry[];
+  /**
+   * Raw text of user-defined trait impls (impl Trait for Type) whose body
+   * contains no Anchor patterns — preserved verbatim into emit so secondary
+   * `Into::into` chains in pass-through bodies resolve.
+   */
+  userTraitImpls: string[];
   customTypes: { node: SyntaxNode; attrs: SyntaxNode[]; kind: "struct" | "enum" }[];
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[];
   constants: SyntaxNode[];
@@ -221,6 +237,7 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
     implMethods: [],
     implItems: [],
     fromImpls: [],
+    userTraitImpls: [],
     customTypes: [],
     functionIndex: [],
     constants: [],
@@ -324,6 +341,14 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
         case "impl_item": {
           const fromEntry = parseFromImplDeclaration(child);
           if (fromEntry) items.fromImpls.push(fromEntry);
+          // Capture trait impls (impl Trait for Type) whose body is Anchor-
+          // clean — those survive into emit verbatim. Filter inherent impls
+          // (no `trait` field) since their items are already gathered into
+          // `implMethods` / `implItems`.
+          const traitField = child.childForFieldName("trait");
+          if (traitField && isAnchorCleanTraitImpl(child.text)) {
+            items.userTraitImpls.push(child.text);
+          }
           const implName = extractImplTargetName(child);
           const implBody = child.childForFieldName("body") ?? findDescendant(child, "declaration_list");
           if (!implName || !implBody) break;
@@ -383,5 +408,49 @@ function extractInstructionArgs(attrs: SyntaxNode[]): string[] {
 function detectAnchorVersion(source: string): string {
   const vMatch = source.match(/anchor[_-]lang\s*=\s*"([^"]+)"/);
   return vMatch?.[1] ?? "0.30.0";
+}
+
+/**
+ * Decide whether a trait-impl block's text is safe to emit verbatim onto a
+ * post-Anchor target. Filters out impls whose body or trait references any
+ * Anchor wrapper type, CpiContext, anchor_lang/anchor_spl helpers, or
+ * Anchor-only macros. Keeps impls that operate only on the user's own
+ * structs and stable solana-program / std types.
+ *
+ * The check is text-level rather than typed because the trait/target/body
+ * span is large and tree-sitter doesn't give us a clean
+ * "list-of-mentioned-types" selector. False negatives (rejecting an
+ * actually-clean impl) are fine — the impl just stays out of emit and
+ * downstream `Into::into` calls fall back to whatever they would have
+ * done. False positives (admitting a referent-Anchor impl) would produce
+ * a compile error, which is worse, so the bar is conservative.
+ */
+function isAnchorCleanTraitImpl(implText: string): boolean {
+  // Lifetime parameters anywhere in the impl signature or body almost always
+  // indicate Anchor-context types (`<'info, T>` accounts structs, fluent
+  // CPI builders, sibling-program account contexts). Even when the lifetime
+  // itself is innocuous, the surrounding types it parameterizes typically
+  // aren't available post-emit. Reject conservatively — coral-swap's
+  // `impl<'info> From<&Swap<'info>> for OrderbookClient<'info>` is the
+  // canonical case (`OrderbookClient` lives in serum_dex which we can't
+  // resolve). Trade-off: clean impls with `'a` lifetimes get false-rejected;
+  // those rarely appear between user types in real Anchor programs.
+  if (/<\s*'/.test(implText)) return false;
+  if (/\bAccount\s*<\s*'/.test(implText)) return false;
+  if (/\bInterfaceAccount\s*<\s*'/.test(implText)) return false;
+  if (/\bInterface\s*<\s*'/.test(implText)) return false;
+  if (/\bSigner\s*<\s*'/.test(implText)) return false;
+  if (/\bSystemAccount\s*<\s*'/.test(implText)) return false;
+  if (/\bUncheckedAccount\s*<\s*'/.test(implText)) return false;
+  if (/\bAccountLoader\s*<\s*'/.test(implText)) return false;
+  if (/\bContext\s*<\s*'?\s*\w+\s*>/.test(implText)) return false;
+  if (/\bBox\s*<\s*(?:Interface)?Account\s*</.test(implText)) return false;
+  if (/\bCpiContext\b/.test(implText)) return false;
+  if (/\banchor_lang\b/.test(implText)) return false;
+  if (/\banchor_spl\b/.test(implText)) return false;
+  if (/\btoken_interface\s*::/.test(implText)) return false;
+  if (/\bemit!\s*\(/.test(implText)) return false;
+  if (/\brequire!\s*\(/.test(implText)) return false;
+  return true;
 }
 

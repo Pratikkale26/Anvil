@@ -303,6 +303,18 @@ ${arms}
     return `*${accountName}.key()`;
   }
 
+  /**
+   * pinocchio doesn't expose `Instruction`, `AccountMeta`, or other
+   * solana_program::instruction types that user-defined trait impls often
+   * target (coral-multisig: `impl From<&Transaction> for Instruction`).
+   * The companion call-site commentout pass (postProcessPinocchioRewrites)
+   * already excises every consumer of those impls, so emitting the impls
+   * themselves only adds compile errors. Skip entirely on pinocchio.
+   */
+  override emitUserTraitImpls(_ir: SolanaIR): string {
+    return "";
+  }
+
   override emitAccountKeyAsRefExpr(accountName: string): string {
     return `${accountName}.key().as_ref()`;
   }

@@ -1397,6 +1397,7 @@
     "use anchor_lang::solana_program::clock::Clock",
     "use super::*"
   ],
+  "userTraitImpls": [],
   "metadata": {
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",

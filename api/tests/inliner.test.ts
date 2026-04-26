@@ -399,6 +399,87 @@ pub struct Check<'info> {
     expect(ix.content).not.toMatch(/\|a\|\s*a\s*==\s*\*signer\.key/);
   });
 
+  test("user-defined From impl between user types is preserved on native", async () => {
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>) -> Result<()> { Ok(()) }
+}
+#[derive(Accounts)]
+pub struct Run<'info> { pub state: Account<'info, S> }
+#[account] pub struct S { pub x: u64 }
+
+#[derive(Clone)]
+pub struct MyKey { pub bytes: [u8; 32] }
+
+impl From<MyKey> for [u8; 32] {
+    fn from(k: MyKey) -> Self { k.bytes }
+}
+`;
+    const ir = await parseOk(src);
+    expect(ir.userTraitImpls.length).toBeGreaterThan(0);
+    const out = emitNativeFull(ir);
+    const lib = out.files.find((f) => f.path === "lib.rs");
+    expect(lib).toBeDefined();
+    expect(lib!.content).toContain("impl From<MyKey> for [u8; 32]");
+    // Pinocchio emit drops user trait impls — secondary Into::into
+    // chains are unreachable there since the post-process commentout
+    // strips their consumers.
+    const pin = emitPinocchioFull(ir);
+    const pinLib = pin.files.find((f) => f.path === "lib.rs");
+    expect(pinLib).toBeDefined();
+    expect(pinLib!.content).not.toContain("impl From<MyKey> for [u8; 32]");
+  });
+
+  test("Anchor-flavored trait impl with <'info> is filtered out", async () => {
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>) -> Result<()> { Ok(()) }
+}
+#[derive(Accounts)]
+pub struct Run<'info> { pub state: Account<'info, S> }
+#[account] pub struct S { pub x: u64 }
+
+pub struct OrderbookClient<'info> { pub _marker: std::marker::PhantomData<&'info ()> }
+
+impl<'info> From<&Run<'info>> for OrderbookClient<'info> {
+    fn from(_: &Run<'info>) -> Self { OrderbookClient { _marker: std::marker::PhantomData } }
+}
+`;
+    const ir = await parseOk(src);
+    // The lifetime-parameterized impl was filtered — would have caused
+    // E0412 "OrderbookClient cannot be found" in the emitted file otherwise.
+    expect(ir.userTraitImpls.length).toBe(0);
+  });
+
+  test("(&*ctx.accounts.state).into() collapses to (&state).into() on native", async () => {
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>, _x: u64) -> Result<()> {
+        let _y = (&*ctx.accounts.state).into();
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Run<'info> { pub state: Account<'info, S> }
+#[account] pub struct S { pub x: u64 }
+`;
+    const ir = await parseOk(src);
+    const out = emitNativeFull(ir);
+    const ix = out.files.find((f) => /instructions\/run\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    // The emitted code must not contain `&*` followed by a state-local
+    // identifier — that produces E0614 "type cannot be dereferenced"
+    // since the state-read pass already deref'd into a value local.
+    expect(ix.content).not.toMatch(/&\s*\*\s*state\b/);
+  });
+
   test("unsalvageable-helper commentout preserves preceding block-closer `};`", async () => {
     // Reproduces coral-swap: an unsalvageable helper (signature uses
     // anchor wrapper types) is invoked immediately after a `let X = { … };`

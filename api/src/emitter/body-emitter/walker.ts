@@ -771,6 +771,16 @@ export class BodyWalker {
         `&accounts[${namedAccountCount}..]`,
       );
     }
+    // `&*ctx.accounts.X` is Anchor's idiom for borrowing the deref'd value
+    // out of `Account<'info, T>` / `InterfaceAccount<'info, T>`. After our
+    // state-read pass, the local `X` is already a `T` value (no auto-deref
+    // needed), so collapse `&*` to `&`. Without this, `(&*x).into()` survives
+    // verbatim and rustc rejects with E0614 (`type cannot be dereferenced`)
+    // on the now-non-Deref local.
+    transformed = transformed.replace(
+      /&\s*\*\s*ctx\.accounts\.(\w+)/g,
+      (_full, name: string) => `&ctx.accounts.${name}`,
+    );
     transformed = transformed.replace(
       /&mut\s*ctx\.accounts\.(\w+)/g,
       (_full, name: string) => `&mut ${snakeCase(name)}`,
