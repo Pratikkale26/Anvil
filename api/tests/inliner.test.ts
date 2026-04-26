@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
+import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
 
 /**
  * Regression coverage for the four impl-method inliners in
@@ -304,5 +305,42 @@ impl<'info> Make<'info> {
     expect(hasSubstituted).toBe(true);
     // Verify the unresolved form is gone.
     expect(/(?<!\.)\bbumps\.\w+/.test(stringified)).toBe(false);
+  });
+
+  test("solana_program::program::invoke_signed direct call is commented out on pinocchio", async () => {
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>) -> Result<()> {
+        let mut ix: Instruction = Instruction { program_id: Pubkey::default(), accounts: vec![], data: vec![] };
+        ix.accounts = vec![];
+        let signer = &[&[][..]];
+        let accounts = ctx.remaining_accounts;
+        solana_program::program::invoke_signed(&ix, &accounts, signer)?;
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Run<'info> {
+    pub authority: Signer<'info>,
+}
+`;
+    const ir = await parseOk(src);
+    const out = emitPinocchioFull(ir);
+    const ix = out.files.find((f) => /instructions\/run\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    expect(ix.content).toContain("Anvil TODO: solana_program direct call");
+    // Both the typed-Instruction decl and the invoke_signed call must be
+    // commented (line starts with `//`, possibly preceded by whitespace).
+    const lines = ix.content.split("\n");
+    const declCommented = lines.some((l) => /^\s*\/\/.*let\s+mut\s+ix\s*:\s*Instruction/.test(l));
+    const callCommented = lines.some((l) => /^\s*\/\/.*solana_program::program::invoke_signed/.test(l));
+    expect(declCommented).toBe(true);
+    expect(callCommented).toBe(true);
+    // No active (non-`//`) line containing the invoke.
+    const activeLines = lines.filter((l) => !l.trimStart().startsWith("//"));
+    expect(activeLines.some((l) => l.includes("solana_program::program::invoke_signed"))).toBe(false);
   });
 });

@@ -84,20 +84,20 @@ const TRACKED: TrackedCase[] = [
       "Constraint-parser noise + downstream emit gaps. Same root causes as pinocchio.",
   },
 
-  // coral-multisig: Vec<Pubkey> normalization fix + auto-import for
-  // Instruction/AccountMeta + anchor_lang::solana_program rewrite cut
-  // native 10 → 4. Pinocchio still 7 because source uses
-  // `solana_program::program::invoke_signed(...)` directly which has no
-  // pinocchio equivalent at pass-through level. Remaining native errors:
-  // `seeds` scope, `&Pubkey vs Pubkey` body-emitter quirk, `&*transaction`
-  // can't deref the inlined struct.
+  // coral-multisig: pinocchio post-process now comments out `solana_program::
+  // program::invoke{,_signed}` direct calls and the typed `let X: Instruction`
+  // setup that feeds them, dropping pin 7 → 3. Remaining: `seeds` scope (the
+  // body-emitter rewrites `ctx.accounts.multisig` to a local `multisig` but
+  // misses the `let seeds = …` line that still uses the old name) + two
+  // &Pubkey vs Pubkey comparison E0277s in the .iter().any() chain, both
+  // body-emitter level fixes (#3 in this session's batch).
   {
     id: "coral-multisig",
     target: "pinocchio",
     path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/multisig)",
-    maxErrors: 7,
-    reason: "Source uses solana_program:: directly which pinocchio can't carry.",
+    maxErrors: 3,
+    reason: "Body-emitter quirks: &Pubkey/Pubkey comparison, missing seeds scope.",
   },
   {
     id: "coral-multisig",

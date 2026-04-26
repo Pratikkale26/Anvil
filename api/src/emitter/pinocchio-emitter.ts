@@ -950,6 +950,15 @@ ${writeLines}
    */
   private postProcessPinocchioRewrites(body: string): string {
     let out = body;
+    // Comment out `solana_program::program::invoke{,_signed}` direct calls
+    // and the typed `let X: Instruction` setup that feeds them. pinocchio
+    // exposes neither solana_program::Instruction nor solana_program's CPI
+    // entry point; rewriting the shape is structurally infeasible (different
+    // account/seed types). The surrounding `ix.accounts = …` mutation reads
+    // a now-removed binding, so we excise the whole block as TODO. Same
+    // strategy as the unsalvageable-helper commentout — keeps the file
+    // compile-clean while flagging the manual-port site.
+    out = commentOutSolanaProgramInvoke(out);
     out = out.replace(
       /\*\*(\w+)\.try_borrow_mut_lamports\(\)\?/g,
       "*$1.try_borrow_mut_lamports()?",
@@ -1369,4 +1378,146 @@ export function emitPinocchio(ir: SolanaIR): string {
  */
 export function emitPinocchioFull(ir: SolanaIR) {
   return emitter.emit(ir);
+}
+
+/**
+ * Walk an emitted instruction body and comment out:
+ *
+ *   (a) `solana_program::program::invoke{,_signed}(...)?;` direct calls
+ *   (b) `let [mut] X[: Instruction] = …;` declarations whose RHS or type
+ *       references types pinocchio doesn't expose (`Instruction`, `AccountMeta`)
+ *   (c) Subsequent `X.field = …` mutations on now-commented identifiers
+ *
+ * Comments are added with the same `// ⚠️ Anvil TODO: …` banner as the
+ * unsalvageable-helper commentout pass. Statement boundaries: previous `;`
+ * (or block-open `{`) to terminating `;` at depth 0.
+ *
+ * Why these together: commenting the invoke alone leaves a dangling `let
+ * mut ix: Instruction = …;` that still refers to a missing type. The setup
+ * lines exist solely to feed the now-dead invoke, so the entire chain is
+ * excised together. The alternative — synthesizing a pinocchio-shaped
+ * Instruction from a solana_program one — needs runtime type conversion
+ * that pinocchio's no_std / unalloc constraints make non-trivial.
+ */
+function commentOutSolanaProgramInvoke(body: string): string {
+  const SOLANA_INVOKE_RE = /solana_program\s*::\s*program\s*::\s*invoke(?:_signed)?\s*\(/g;
+  const matches: { stmtStart: number; stmtEnd: number }[] = [];
+  let m: RegExpExecArray | null;
+  SOLANA_INVOKE_RE.lastIndex = 0;
+  while ((m = SOLANA_INVOKE_RE.exec(body)) !== null) {
+    matches.push(expandStatementBounds(body, m.index));
+  }
+  if (matches.length === 0) return body;
+
+  const trackedIdents = collectIdentsFromCommentedRanges(body, matches);
+  const declRanges = findIdentDeclAndMutationRanges(body, trackedIdents);
+
+  const allRanges = [...matches, ...declRanges].sort((a, b) => a.stmtStart - b.stmtStart);
+  return commentOutRanges(body, allRanges);
+}
+
+interface StmtRange { stmtStart: number; stmtEnd: number }
+
+function expandStatementBounds(text: string, anchor: number): StmtRange {
+  // Walk back to previous `;` or `{` at depth 0.
+  let depth = 0;
+  let stmtStart = 0;
+  for (let i = anchor - 1; i >= 0; i--) {
+    const ch = text[i];
+    if (ch === ")" || ch === "}" || ch === "]") depth++;
+    else if (ch === "(" || ch === "[") {
+      if (depth === 0) { stmtStart = i + 1; break; }
+      depth--;
+    } else if (ch === "{") {
+      if (depth === 0) { stmtStart = i + 1; break; }
+      depth--;
+    } else if (ch === ";" && depth === 0) {
+      stmtStart = i + 1;
+      break;
+    }
+  }
+  // Walk forward to terminating `;` at depth 0.
+  let fwdDepth = 0;
+  let stmtEnd = text.length;
+  for (let i = anchor; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "(" || ch === "{" || ch === "[") fwdDepth++;
+    else if (ch === ")" || ch === "}" || ch === "]") fwdDepth--;
+    else if (ch === ";" && fwdDepth === 0) { stmtEnd = i + 1; break; }
+  }
+  return { stmtStart, stmtEnd };
+}
+
+function collectIdentsFromCommentedRanges(body: string, ranges: StmtRange[]): Set<string> {
+  // Collect identifiers used as `&IDENT` first-arg of the invoke (the typed
+  // Instruction binding). Conservative: only pick `&\w+` immediately after
+  // `(` since that's the invoke's first arg shape we care about.
+  const idents = new Set<string>();
+  for (const r of ranges) {
+    const slice = body.slice(r.stmtStart, r.stmtEnd);
+    const argMatch = slice.match(/invoke(?:_signed)?\s*\(\s*&\s*(\w+)/);
+    if (argMatch?.[1]) idents.add(argMatch[1]);
+  }
+  return idents;
+}
+
+function findIdentDeclAndMutationRanges(body: string, idents: Set<string>): StmtRange[] {
+  if (idents.size === 0) return [];
+  const out: StmtRange[] = [];
+  for (const ident of idents) {
+    // Match the binding declaration when its annotated type is `Instruction`
+    // OR the RHS is a `<expr>.into()` shape (typed via inference). Stripping
+    // every `let <ident> = …;` would be too aggressive — only the typed
+    // binding feeding the invoke is dead code.
+    const typedDeclRe = new RegExp(
+      `let\\s+(?:mut\\s+)?${ident}\\s*:\\s*Instruction\\b[^;]*;`,
+      "g",
+    );
+    const intoDeclRe = new RegExp(
+      `let\\s+(?:mut\\s+)?${ident}\\s*(?::[^=;]*)?=\\s*[^;]*?\\.into\\s*\\(\\s*\\)\\s*;`,
+      "g",
+    );
+    for (const re of [typedDeclRe, intoDeclRe]) {
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(body)) !== null) {
+        out.push({ stmtStart: m.index, stmtEnd: m.index + m[0].length });
+      }
+    }
+    // Match field-mutation statements `<ident>.X = …;` that operate on the
+    // commented binding. These reference fields on the now-missing type.
+    const mutRe = new RegExp(`${ident}\\s*\\.\\s*\\w+\\s*=\\s*[^;]*;`, "g");
+    let m: RegExpExecArray | null;
+    while ((m = mutRe.exec(body)) !== null) {
+      out.push({ stmtStart: m.index, stmtEnd: m.index + m[0].length });
+    }
+  }
+  return out;
+}
+
+function commentOutRanges(body: string, ranges: StmtRange[]): string {
+  if (ranges.length === 0) return body;
+  // Merge overlapping ranges.
+  const merged: StmtRange[] = [];
+  for (const r of ranges.sort((a, b) => a.stmtStart - b.stmtStart)) {
+    const last = merged[merged.length - 1];
+    if (last && r.stmtStart <= last.stmtEnd) {
+      last.stmtEnd = Math.max(last.stmtEnd, r.stmtEnd);
+    } else {
+      merged.push({ ...r });
+    }
+  }
+  let out = "";
+  let cursor = 0;
+  for (const r of merged) {
+    out += body.slice(cursor, r.stmtStart);
+    const stmt = body.slice(r.stmtStart, r.stmtEnd);
+    const commented = stmt
+      .split("\n")
+      .map((line) => (line.length > 0 ? `// ${line}` : "//"))
+      .join("\n");
+    out += `// ⚠️ Anvil TODO: solana_program direct call has no pinocchio equivalent — manual port required\n${commented}`;
+    cursor = r.stmtEnd;
+  }
+  out += body.slice(cursor);
+  return out;
 }
