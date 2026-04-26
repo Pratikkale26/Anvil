@@ -43,7 +43,9 @@ export function splitConstraintTokens(attrBody: string): string[] {
   let inString = false;
   let stringQuote = "";
   let escaped = false;
-  for (const ch of attrBody) {
+  for (let i = 0; i < attrBody.length; i++) {
+    const ch = attrBody[i]!;
+    const next = attrBody[i + 1] ?? "";
     if (inString) {
       current += ch;
       if (escaped) {
@@ -62,16 +64,40 @@ export function splitConstraintTokens(attrBody: string): string[] {
     }
 
     if (ch === '"' || ch === "'") {
-      inString = true;
-      stringQuote = ch;
+      // Skip Rust char literals — `'a` (lifetime) and `'x'` (char). Strings
+      // (`"…"`) still consume to the matching close. The lifetime sequence
+      // (`'`) is followed by an identifier char, not another `'`, so it
+      // doesn't get treated as a string opener.
+      if (ch === "'" && next && /[A-Za-z_]/.test(next)) {
+        // Lifetime token — consume until next non-ident.
+        // Drop into the regular path so depth tracking continues.
+      } else {
+        inString = true;
+        stringQuote = ch;
+      }
     } else if (ch === "(") {
       parenDepth++;
     } else if (ch === ")") {
       parenDepth--;
     } else if (ch === "<") {
-      angleDepth++;
+      // `<=`, `<<`, and operator-context `<` (after expression value) must
+      // not increment angle depth. Only treat `<` as a generic open when
+      // followed by an identifier-start or lifetime `'` — i.e. the
+      // `Type<...>` shape. Anything else (`<=`, `<<`, `< 5`) is operator.
+      if (next === "=" || next === "<" || next === " " || next === "") {
+        // operator-context — leave depth alone
+      } else if (/[A-Za-z_'&]/.test(next)) {
+        angleDepth++;
+      }
     } else if (ch === ">") {
-      angleDepth--;
+      // Mirror: only decrement angle depth when we're actually inside a
+      // generic. `>=`, `>>` are operators. Closing a generic that was
+      // never opened (depth==0) is also a no-op.
+      if (next === "=" || next === ">") {
+        // operator-context
+      } else if (angleDepth > 0) {
+        angleDepth--;
+      }
     } else if (ch === "[") {
       bracketDepth++;
     } else if (ch === "]") {

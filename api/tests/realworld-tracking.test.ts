@@ -59,29 +59,30 @@ const TRACKED: TrackedCase[] = [
   // NOTE: anchor-escrow-2025 was promoted to MUST_PASS in realworld-cargo.test.ts
   // after unsalvageable-helper commentout landed (errors 31/28 → 0/0).
 
-  // coral-escrow: From-trait `ctx.accounts.into()` inlining (this commit) folds
-  // the From<&mut InitializeEscrow> for CpiContext<SetAuthority> body into the
-  // call site, routing init_escrow's set_authority through cpi_spl_set_authority
-  // instead of pass_through. Pin 17 → 15, native 13 → 10. Remaining errors are
-  // constraint-parser noise (`constraint = …, close = …` literals from
-  // #[account(...)] parse) and #[account] meta-attr propagation gaps.
+  // coral-escrow: splitConstraintTokens now handles `<=` / `>=` operators
+  // inside constraint values without inflating angle-depth, so each
+  // `constraint = …` token in #[account(...)] is split correctly into its
+  // own Constraint entry. Bare `constraint` / `close` identifiers no
+  // longer leak into emit. Pin 15 → 11, native 10 → 6. Remaining gaps:
+  // `seeds` scope, `to_account_info` method on bare AccountInfo, missing
+  // `token_account_amount` helper for InterfaceAccount<TokenAccount>.
   {
     id: "coral-escrow",
     target: "pinocchio",
     path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 15,
+    maxErrors: 11,
     reason:
-      "Constraint-parser noise + downstream emit gaps. From-trait CPI inlining landed for the CpiContext factory shape.",
+      "to_account_info on AccountInfo + missing token_account_amount + find_program_address on Pubkey array.",
   },
   {
     id: "coral-escrow",
     target: "native",
     path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 10,
+    maxErrors: 6,
     reason:
-      "Constraint-parser noise + downstream emit gaps. Same root causes as pinocchio.",
+      "to_account_info on AccountInfo + missing token_account_amount + seeds scope.",
   },
 
   // coral-multisig: comparison-context-aware *X.key deref strip (this commit)

@@ -308,6 +308,43 @@ impl<'info> Make<'info> {
     expect(/(?<!\.)\bbumps\.\w+/.test(stringified)).toBe(false);
   });
 
+  test("constraint = <expr_with_LE_or_GE> splits into separate IR constraints", async () => {
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>) -> Result<()> { Ok(()) }
+}
+#[derive(Accounts)]
+pub struct Run<'info> {
+    #[account(
+        mut,
+        constraint = state.amount <= other.amount,
+        constraint = state.threshold >= 1,
+        close = recipient
+    )]
+    pub state: Account<'info, S>,
+    pub other: Account<'info, S>,
+    /// CHECK:
+    pub recipient: AccountInfo<'info>,
+}
+#[account] pub struct S { pub amount: u64, pub threshold: u64 }
+`;
+    const ir = await parseOk(src);
+    const stateAcc = ir.instructions[0]!.accounts.find((a) => a.name === "state")!;
+    const constraintEntries = stateAcc.constraints.filter((c) => c.kind === "constraint");
+    // The `<=` and `>=` inside constraint values previously leaked into a
+    // single concatenated value because angle-depth tracking didn't
+    // distinguish operator `<` from generic open. Each constraint must
+    // now stand on its own.
+    expect(constraintEntries.length).toBe(2);
+    expect(constraintEntries[0]!.value).toContain("<=");
+    expect(constraintEntries[1]!.value).toContain(">=");
+    // close= constraint preserved alongside.
+    const closeEntry = stateAcc.constraints.find((c) => c.kind === "close");
+    expect(closeEntry?.value).toBe("recipient");
+  });
+
   test("body emitter strips *X.key deref when comparison sibling is &<expr>", async () => {
     const src = PROG_HEADER + `
 #[program]
