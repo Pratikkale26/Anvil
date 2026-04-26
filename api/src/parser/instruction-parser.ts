@@ -12,6 +12,7 @@ import type {
   Arg,
   BodyStatement,
 } from "../ir/schema.js";
+import { parseGuarded } from "./ts-init.js";
 import type { Parser, SyntaxNode } from "./ts-init.js";
 import { findDescendant, findTopLevelComma } from "./ast-helpers.js";
 import { normalizeSolanaType } from "./utils.js";
@@ -158,7 +159,7 @@ function parseInstructionFn(
   let bodyNode = expandedWrapper?.bodyNode ?? bodyFnNode.childForFieldName("body");
   if (bodyNode && contextName && contextName !== "ctx") {
     const renamed = renameContextIdentifier(bodyNode.text, contextName);
-    const synthetic = parser.parse(`fn __anvil_ctx_norm__() ${renamed}`);
+    const synthetic = parseGuarded(parser, `fn __anvil_ctx_norm__() ${renamed}`);
     if (synthetic) {
       const fn = findDescendant(synthetic.rootNode, "function_item");
       const synBody = fn?.childForFieldName("body");
@@ -533,7 +534,7 @@ function expandTypeAssociatedCalls(
   if (!didExpand) return null;
 
   const expandedBody = `{\n${inlinedParts.join("\n")}\n}`;
-  const synthetic = parser.parse(`fn __anvil_type_assoc__() ${expandedBody}`);
+  const synthetic = parseGuarded(parser, `fn __anvil_type_assoc__() ${expandedBody}`);
   if (!synthetic) return null;
   const syntheticFn = findDescendant(synthetic.rootNode, "function_item");
   const syntheticBody = syntheticFn?.childForFieldName("body");
@@ -621,7 +622,7 @@ function expandAccountsMethodCalls(
   if (!didExpand) return null;
 
   const expandedBody = `{\n${inlinedParts.join("\n")}\n}`;
-  const synthetic = parser.parse(`fn __anvil_accounts_calls__() ${expandedBody}`);
+  const synthetic = parseGuarded(parser, `fn __anvil_accounts_calls__() ${expandedBody}`);
   if (!synthetic) return null;
   const syntheticFn = findDescendant(synthetic.rootNode, "function_item");
   const syntheticBody = syntheticFn?.childForFieldName("body");
@@ -954,7 +955,7 @@ function rewriteFromTraitConversions(
   if (!didRewrite) return null;
 
   const expandedBody = `{\n${parts.join("\n")}\n}`;
-  const synthetic = parser.parse(`fn __anvil_from_trait__() ${expandedBody}`);
+  const synthetic = parseGuarded(parser, `fn __anvil_from_trait__() ${expandedBody}`);
   if (!synthetic) return null;
   return findDescendant(synthetic.rootNode, "function_item") ?? null;
 }
@@ -1165,7 +1166,7 @@ function expandTypeAssociatedHandler(
   }
 
   const expandedBody = `{\n${inner}\n}`;
-  const synthetic = parser.parse(`fn __anvil_type_assoc__() ${expandedBody}`);
+  const synthetic = parseGuarded(parser, `fn __anvil_type_assoc__() ${expandedBody}`);
   if (!synthetic) return null;
   const syntheticFn = findDescendant(synthetic.rootNode, "function_item");
   const syntheticBody = syntheticFn?.childForFieldName("body");
@@ -1199,7 +1200,7 @@ function expandAccountsMethodWrapper(
   );
   if (!expandedBody) return null;
 
-  const synthetic = parser.parse(`fn __anvil_wrapper__() ${expandedBody}`);
+  const synthetic = parseGuarded(parser, `fn __anvil_wrapper__() ${expandedBody}`);
   if (!synthetic) return null;
   const syntheticRoot = synthetic.rootNode;
   const syntheticFn = findDescendant(syntheticRoot, "function_item");

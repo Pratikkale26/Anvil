@@ -26,7 +26,7 @@ import {
 import type {
   SolanaIR,
 } from "../ir/schema.js";
-import { getParser } from "./ts-init.js";
+import { getParser, withParseDeadline, parseGuarded, ParseTimeoutError } from "./ts-init.js";
 import type { SyntaxNode } from "./ts-init.js";
 import {
   hasAttribute,
@@ -76,14 +76,28 @@ export interface ParseError {
  * }
  * ```
  */
-export async function parseAnchor(source: string): Promise<ParseResult | ParseError> {
+export async function parseAnchor(
+  source: string,
+  opts?: { timeoutMs?: number },
+): Promise<ParseResult | ParseError> {
+  const timeoutMs = opts?.timeoutMs ?? 10_000;
   try {
-    const parser = await getParser();
-    const tree = parser.parse(source);
-    if (!tree) {
-      return { ok: false, error: "tree-sitter returned null parse tree" };
-    }
-    const root = tree.rootNode;
+    return await withParseDeadline(timeoutMs, async () => {
+      const parser = await getParser();
+      let tree;
+      try {
+        tree = parseGuarded(parser, source);
+      } catch (err) {
+        if (err instanceof ParseTimeoutError) {
+          return {
+            ok: false as const,
+            error: "Parse timed out",
+            details: err.message,
+          };
+        }
+        throw err;
+      }
+      const root = tree.rootNode;
 
     // ── Walk top-level items and classify by attributes ──
     const topLevel = classifyTopLevel(root);
@@ -188,8 +202,16 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
       };
     }
 
-    return { ok: true, ir: result.data };
+      return { ok: true as const, ir: result.data };
+    });
   } catch (e) {
+    if (e instanceof ParseTimeoutError) {
+      return {
+        ok: false,
+        error: "Parse timed out",
+        details: e.message,
+      };
+    }
     return {
       ok: false,
       error: "Parse failed",
