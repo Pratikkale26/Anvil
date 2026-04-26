@@ -7,6 +7,7 @@ import { analyzeCU } from "../emitter/cu-analyzer.js";
 import { validateEmitterOutput } from "../emitter/output-validator.js";
 import { refineOutput } from "../ai/refine.js";
 import { RejectedAttemptSchema, type RejectedAttempt } from "../ai/refine-schemas.js";
+import { checkSpendCap, recordSpend } from "../ai/spend-tracker.js";
 import { buildDeterministicReviewReport } from "../ai/review-report.js";
 import { AIError } from "../ai/errors.js";
 import { buildProjectScaffold } from "../emitter/project-scaffold.js";
@@ -163,7 +164,22 @@ emitRoute.post("/", async (req, res) => {
 
     // ─── AI Refine (optional, single call) ─────────────────────────────────
     if (refine && validationErrors.length > 0) {
-      try {
+      // Per-IP daily spend cap. Hit-cap path returns the deterministic emit
+      // with a structured refineError so the caller doesn't lose their work.
+      const callerIp = req.ip ?? req.socket.remoteAddress ?? "unknown";
+      const spendCheck = checkSpendCap(callerIp);
+      if (!spendCheck.allowed) {
+        const message =
+          spendCheck.reason ??
+          `Daily AI spend cap of $${spendCheck.capUsd.toFixed(2)} per IP reached.`;
+        console.warn(
+          `[emit][refine] daily AI spend cap hit ip=${callerIp} todayUsd=${spendCheck.todayUsd.toFixed(4)} cap=${spendCheck.capUsd.toFixed(2)}`,
+        );
+        validationWarnings.push(`AI refine unavailable: ${message}`);
+        refineError = { category: "daily_cap_hit", message };
+        metrics.recordRefineError("daily_cap_hit");
+        res.setHeader("Retry-After", String(spendCheck.retryAfterSec));
+      } else try {
         const retryNote = previousAttempts ? ` (retry with ${previousAttempts.length} prior rejection(s))` : "";
         console.log(`[emit][refine] ${validationErrors.length} validation errors found — running AI refine pass${retryNote}.`);
         const result = await refineOutput({
@@ -175,6 +191,9 @@ emitRoute.post("/", async (req, res) => {
           validationIssues,
           previousAttempts,
         });
+
+        // Cached calls cost $0 — record but don't move the budget needle.
+        recordSpend(callerIp, result.cached ? 0 : (result.usage?.estimatedCostUsd ?? 0));
 
         // Apply accepted patches
         const acceptedPatches = result.patches.filter((p) => p.accepted);

@@ -6,6 +6,7 @@ import { metrics } from "../metrics.js";
 import { SolanaIRSchema, type SolanaIR } from "../ir/schema.js";
 import { refineOutput } from "../ai/refine.js";
 import { AIError } from "../ai/errors.js";
+import { checkSpendCap, recordSpend } from "../ai/spend-tracker.js";
 import type { ValidationIssue } from "../emitter/output-validator.js";
 
 export const buildRoute = Router();
@@ -253,7 +254,10 @@ buildRoute.post("/auto-fix", async (req, res) => {
     | "no_progress"
     | "refine_error"
     | "client_closed"
-    | "regression_reverted" = "max_iterations";
+    | "regression_reverted"
+    | "daily_spend_cap_hit" = "max_iterations";
+
+  const callerIp = req.ip ?? req.socket.remoteAddress ?? "unknown";
 
   for (let i = 0; i < maxIterations; i++) {
     if (clientClosed) {
@@ -315,6 +319,23 @@ buildRoute.post("/auto-fix", async (req, res) => {
       break;
     }
 
+    // Per-IP daily AI spend cap. Stops the auto-fix loop before the next
+    // refine call if this IP has burned through its daily budget. Different
+    // from cost_cap (per-request) — this enforces aggregate-per-day.
+    const spendCheck = checkSpendCap(callerIp);
+    if (!spendCheck.allowed) {
+      console.warn(
+        `[build][auto-fix] daily AI spend cap hit ip=${callerIp} todayUsd=${spendCheck.todayUsd.toFixed(4)} cap=${spendCheck.capUsd.toFixed(2)}`,
+      );
+      iter.refineError = {
+        category: "daily_cap_hit",
+        message: spendCheck.reason ?? "Daily AI spend cap reached.",
+      };
+      emit("refine-error", { iteration: i, category: "daily_cap_hit", message: iter.refineError.message });
+      stoppedReason = "daily_spend_cap_hit";
+      break;
+    }
+
     // Strip the `src/` prefix so refine sees the bare paths it generated.
     const refineFiles = currentFiles.map((f) => ({
       path: f.path.replace(/^src\//, ""),
@@ -345,6 +366,8 @@ buildRoute.post("/auto-fix", async (req, res) => {
         estimatedCostUsd: refineRes.usage?.estimatedCostUsd ?? 0,
       };
       totalCostUsd += refineRes.usage?.estimatedCostUsd ?? 0;
+      // Cached calls cost $0 — record but don't move the per-IP budget.
+      recordSpend(callerIp, refineRes.cached ? 0 : (refineRes.usage?.estimatedCostUsd ?? 0));
 
       emit("refine-result", {
         iteration: i,

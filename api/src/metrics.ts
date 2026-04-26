@@ -6,6 +6,8 @@
  * API has done since start.
  */
 
+import { spendSnapshot } from "./ai/spend-tracker.js";
+
 type Counter = Record<string, number>;
 
 export interface MetricsSnapshot {
@@ -35,6 +37,12 @@ export interface MetricsSnapshot {
     failure: number;
     p50DurationMs: number;
     byTarget: Counter;
+  };
+  spend: {
+    capUsd: number;
+    todayTotalUsd: number;
+    todayCallCount: number;
+    topSpendersToday: Array<{ ipPrefix: string; usd: number; calls: number }>;
   };
 }
 
@@ -131,6 +139,7 @@ export const metrics = {
         p50DurationMs: p50(buildDurations),
         byTarget: { ...buildCounters.byTarget },
       },
+      spend: spendSnapshot(),
     };
   },
 };
