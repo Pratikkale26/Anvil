@@ -770,6 +770,17 @@ export class BodyWalker {
       (_, name: string) =>
         this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(name))),
     );
+    // `.key.as_ref()` / `.key().as_ref()` MUST come before the generic
+    // `.key` rewrite — the generic match would consume `.key` and leave a
+    // stray `.as_ref()` on the wrong shape (e.g. `*X.key.as_ref()`
+    // instead of `X.key.as_ref()`). Only fires for seed-list-style
+    // `&[…X.key.as_ref()…]` shapes; the seed normalizer has its own copy
+    // for the seed-extracted path.
+    transformed = transformed.replace(
+      /ctx\.accounts\.(\w+)\.key(?:\(\))?\.as_ref\(\)/g,
+      (_, name: string) =>
+        this.emitter.emitAccountKeyAsRefExpr(this.resolveAccountInfoVar(snakeCase(name))),
+    );
     transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\(\)/g, (_, name: string) =>
       this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(name))),
     );

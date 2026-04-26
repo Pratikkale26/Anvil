@@ -75,6 +75,12 @@ export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
     }
   }
 
+  // Position of the deferred `let seeds = …` statement, so we can re-insert
+  // it inline when nothing downstream consumes it. Tracked here rather
+  // than by appending at end of body — the fallback insert MUST land
+  // before the statement that references `seeds` (otherwise we either
+  // shadow nothing or produce a `seeds not in scope` E0425).
+  let pendingSeedsIndex: number | null = null;
   for (const child of flatChildren) {
     if (!child) continue;
 
@@ -86,11 +92,13 @@ export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
     // Track seeds for PDA signer seeds grouping
     if (classified._seedsData) {
       pendingSeeds = classified._seedsData;
+      pendingSeedsIndex = statements.length;
       // Don't emit this statement yet — it'll be merged with signer_seeds
       continue;
     }
     if (classified._signerSeedsConsumed) {
       pendingSeeds = null;
+      pendingSeedsIndex = null;
     }
 
     // Track CPI context variables — don't emit the let statement
@@ -119,6 +127,24 @@ export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
     }
 
     statements.push(classified.stmt);
+  }
+
+  // If `pendingSeeds` survived the whole body without being consumed by a
+  // downstream CPI, the source's `let seeds = …` block was elided from the
+  // IR and any later reference to `seeds` would land unresolved. Splice
+  // the raw let back at the position it was originally seen so it shadows
+  // any later `&seeds[..]` reference in scope. Triggers when seeds feed a
+  // non-cpi-IR consumer (e.g. coral-multisig's
+  // `solana_program::program::invoke_signed(&ix, &accounts, signer)` —
+  // pass-through that gets either commented out on pinocchio or kept
+  // verbatim on native; either way the `seeds` binding it references
+  // must be in scope).
+  if (pendingSeeds && pendingSeedsIndex !== null) {
+    statements.splice(pendingSeedsIndex, 0, {
+      kind: "pass_through",
+      code: pendingSeeds.rawCode,
+      needsReview: false,
+    });
   }
 
   return statements;

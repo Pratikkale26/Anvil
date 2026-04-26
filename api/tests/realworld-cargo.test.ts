@@ -189,6 +189,40 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     repo: "https://github.com/mikemaccana/anchor-escrow-2025",
     cloneRoot: "/tmp/anchor-escrow-2025",
   },
+
+  // coral-escrow/native: promoted from tracking (was at 1 ceiling — `seeds`
+  // scope) after the body-classifier seed-orphan splice landed (#3 in this
+  // batch). Plus the prior #2 batch's universal `.to_account_info()` strip
+  // and constraint-value token_account_amount trigger together took it from
+  // 6 → 0. Pin still gapped on pinocchio Pubkey ([u8; 32] vs struct).
+  {
+    id: "coral-escrow",
+    target: "native",
+    path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor",
+    cloneRoot: "/tmp/coral-anchor",
+  },
+
+  // coral-multisig/pinocchio: promoted after seed-orphan splice (this commit)
+  // closed the last `seeds` scope error. The full chain to 0:
+  // (1) #2 batch — solana_program::invoke{,_signed} commentout
+  // (2) #3 batch — &Pubkey/Pubkey deref strip in iter closures
+  // (3) #4 batch — index-assignment mut detection
+  // (4) this commit — seed-orphan splice keeps `let seeds = …` in scope.
+  {
+    id: "coral-multisig",
+    target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor",
+    cloneRoot: "/tmp/coral-anchor",
+  },
+  {
+    id: "coral-multisig",
+    target: "native",
+    path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor",
+    cloneRoot: "/tmp/coral-anchor",
+  },
 ];
 
 // All 36 program-examples cases now pass deterministically. The pinocchio

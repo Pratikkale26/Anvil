@@ -59,12 +59,8 @@ const TRACKED: TrackedCase[] = [
   // NOTE: anchor-escrow-2025 was promoted to MUST_PASS in realworld-cargo.test.ts
   // after unsalvageable-helper commentout landed (errors 31/28 → 0/0).
 
-  // coral-escrow: universal `.to_account_info()` strip + token_account_amount
-  // helper firing on constraint expressions (this commit) closes 5 errors on
-  // each target. Pin 11 → 6, native 6 → 1. Native remaining: just `seeds`
-  // scope (#3 in this batch). Pin remaining: pinocchio Pubkey is [u8; 32]
-  // not a struct, so `Pubkey::find_program_address` from source pass-through
-  // doesn't resolve — separate gap not covered by this commit.
+  // NOTE: coral-escrow/native promoted to MUST_PASS in realworld-cargo.test.ts
+  // after seed-orphan splice landed (1 → 0). Pin remains tracked:
   {
     id: "coral-escrow",
     target: "pinocchio",
@@ -72,40 +68,12 @@ const TRACKED: TrackedCase[] = [
     source: "https://github.com/coral-xyz/anchor (tests/escrow)",
     maxErrors: 6,
     reason:
-      "Pubkey::find_program_address on pinocchio's [u8; 32] alias + seeds scope + E0282 type inference.",
-  },
-  {
-    id: "coral-escrow",
-    target: "native",
-    path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
-    source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 1,
-    reason:
-      "Just `seeds` scope (#3 follow-up — body-emitter drops source-side `let seeds = …`).",
+      "Pubkey::find_program_address on pinocchio's [u8; 32] alias + E0282 type inference. Native promoted to MUST_PASS.",
   },
 
-  // coral-multisig: detectPassThroughMutations now matches index-assignment
-  // (`<acc>.<field>[idx] = …`) and chained-field (`<acc>.x.y = …`) shapes
-  // in addition to plain `.field = …`. coral-multisig's `transaction.
-  // signers[owner_index] = true;` triggers `let mut transaction` instead
-  // of `let transaction`. Both targets pin/native: 2 → 1. Only `seeds`
-  // scope remains (#3 follow-up).
-  {
-    id: "coral-multisig",
-    target: "pinocchio",
-    path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
-    source: "https://github.com/coral-xyz/anchor (tests/multisig)",
-    maxErrors: 1,
-    reason: "Just `seeds` scope — body emitter drops source-side `let seeds = …`.",
-  },
-  {
-    id: "coral-multisig",
-    target: "native",
-    path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
-    source: "https://github.com/coral-xyz/anchor (tests/multisig)",
-    maxErrors: 1,
-    reason: "Just `seeds` scope — body emitter drops source-side `let seeds = …`.",
-  },
+  // NOTE: coral-multisig/pinocchio + native both promoted to MUST_PASS in
+  // realworld-cargo.test.ts after seed-orphan splice + .key.as_ref()
+  // route-through-AccountInfo-var landed (1 → 0 each).
 
   // coral-swap: previously failed to parse (E0RUST_PARSE / unclosed-delimiter)
   // because the unsalvageable-helper commentout swept the `};` block-closer

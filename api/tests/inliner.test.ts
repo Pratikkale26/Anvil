@@ -399,6 +399,39 @@ pub struct Check<'info> {
     expect(ix.content).not.toMatch(/\|a\|\s*a\s*==\s*\*signer\.key/);
   });
 
+  test("orphan `let seeds = …` is spliced back when no CPI consumer fires", async () => {
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>) -> Result<()> {
+        let seeds = &[
+            ctx.accounts.state.to_account_info().key.as_ref(),
+            &[0u8],
+        ];
+        let signer_refs = &[&seeds[..]];
+        let _ = signer_refs;
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Run<'info> { pub state: Account<'info, S> }
+#[account] pub struct S { pub x: u64 }
+`;
+    const ir = await parseOk(src);
+    const out = emitNativeFull(ir);
+    const ix = out.files.find((f) => /instructions\/run\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    // The `let seeds = …` block must survive into the emitted instruction.
+    expect(ix.content).toMatch(/let\s+seeds\s*=\s*&\[/);
+    // And the .key.as_ref() must route to the AccountInfo binding (here
+    // the var is `state` since the body doesn't trigger a state-read
+    // shadow). The .to_account_info() call must be stripped.
+    expect(ix.content).toMatch(/state\.key\.as_ref\(\)/);
+    expect(ix.content).not.toContain(".to_account_info()");
+  });
+
   test("index-assignment on state account triggers mut declaration", async () => {
     const src = PROG_HEADER + `
 #[program]
