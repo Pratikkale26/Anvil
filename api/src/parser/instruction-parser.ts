@@ -501,6 +501,7 @@ function expandAccountsMethodCalls(
 
   const callRe =
     /^\s*ctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\(([\s\S]*)\)\s*(\??)\s*(;)?\s*$/s;
+  const scopedMethodNames = new Set(scopedMethods.map((m) => m.name));
 
   const inlinedParts: string[] = [];
   let didExpand = false;
@@ -526,6 +527,23 @@ function expandAccountsMethodCalls(
       }
     }
 
+    // Sub-expression form: `transfer_checked(ctx.accounts.into_X_context().with_signer(seeds), amount, decimals)?;`
+    // The top-level match above only fires on `^ctx.accounts.X(...);$`. Coral-escrow
+    // / anchor-escrow nest the helper call inside a CPI argument list. We fold the
+    // helper body (a "pure CpiContext factory" — N let-bindings + a tail of
+    // `CpiContext::new(prog, accounts)`) directly into the call site as
+    // `CpiContext::new(...)` or `CpiContext::new_with_signer(..., seeds)` if a
+    // chained `.with_signer(seeds)` is present. Result is the exact shape the
+    // CPI detector consumes (cpi-detector.ts:242, :251) so signer_seeds, struct
+    // field names, etc. all flow correctly. Strict shape gate — non-factory
+    // helpers fall through unchanged.
+    const rewritten = rewriteAccountsSubExpressions(text, scopedMethods, scopedMethodNames, accounts);
+    if (rewritten !== null) {
+      inlinedParts.push(rewritten);
+      didExpand = true;
+      continue;
+    }
+
     inlinedParts.push(text);
   }
 
@@ -539,6 +557,353 @@ function expandAccountsMethodCalls(
   if (!syntheticBody) return null;
 
   return { bodyNode: syntheticBody, rawBody: syntheticBody.text };
+}
+
+interface AccountsMethodSubExprMatch {
+  start: number;
+  end: number;
+  methodName: string;
+  argsRaw: string;
+  /** Raw text inside `.with_signer( ... )` if chained immediately after, else undefined. */
+  chainedSigner?: string;
+}
+
+/**
+ * SPL CPI helper names whose first parameter is a `CpiContext`. Gating
+ * the sub-expression rewrite on these names ensures we only fold helper
+ * methods at sites where the body classifier will recognize the resulting
+ * inline CpiContext expression as a `cpi_*` IR statement. Unrecognized
+ * wrappers (e.g. `set_authority`, `freeze_account`) classify as
+ * `pass_through` — folding the helper there would leak Anchor-specific
+ * types (`CpiContext`, `SetAuthority`, `token_interface`, etc.) into
+ * verbatim source, which the native target doesn't import.
+ *
+ * Add to this set as the CPI detector grows new branches.
+ */
+const RECOGNIZED_CPI_FN_NAMES = new Set([
+  "transfer",
+  "transfer_checked",
+  "mint_to",
+  "mint_to_checked",
+  "burn",
+  "burn_checked",
+  "close_account",
+  "build_memo",
+  "create",
+  "create_idempotent",
+]);
+
+/**
+ * Look backwards from `subExprStart` to find the function-call name that
+ * wraps the sub-expression. e.g. for the statement
+ *   `token_interface::transfer_checked(ctx.accounts.into_X(), ..., ...)?;`
+ * with `subExprStart` pointing at `ctx`, returns "transfer_checked".
+ *
+ * Returns null if the sub-expression isn't inside a function call (e.g.
+ * it's the top-level statement, or wrapped in something other than `(`).
+ * Module path prefixes (`NS::FN(`, `MOD::SUB::FN(`) are stripped — we want
+ * the bare function identifier.
+ */
+function findWrappingCallName(text: string, subExprStart: number): string | null {
+  let depth = 0;
+  let openParenIdx = -1;
+  for (let k = subExprStart - 1; k >= 0; k--) {
+    const ch = text[k];
+    if (ch === ")") depth++;
+    else if (ch === "(") {
+      if (depth === 0) {
+        openParenIdx = k;
+        break;
+      }
+      depth--;
+    }
+  }
+  if (openParenIdx === -1) return null;
+  // Walk back over whitespace, then collect a `(?:WORD::)*WORD` identifier chain.
+  let j = openParenIdx - 1;
+  while (j >= 0 && /\s/.test(text[j]!)) j--;
+  let end = j + 1;
+  while (j >= 0 && /[A-Za-z0-9_:]/.test(text[j]!)) j--;
+  const ident = text.slice(j + 1, end);
+  if (!ident) return null;
+  // Strip module path prefix.
+  const lastSep = ident.lastIndexOf("::");
+  return lastSep === -1 ? ident : ident.slice(lastSep + 2);
+}
+
+/**
+ * Scan a statement's text for `ctx.accounts.<scopedMethod>(args)` sub-expressions,
+ * including the optional immediately-chained `.with_signer(seeds)`. Methods
+ * not in `scopedNames` are skipped (their parens may be unbalanced from the
+ * scanner's POV anyway). Whitespace and newlines between `ctx . accounts . X`
+ * tokens and between `)` and `.with_signer(` are tolerated — coral-escrow
+ * formats this across 3 lines.
+ */
+function findAccountsMethodSubExpressions(
+  text: string,
+  scopedNames: Set<string>,
+): AccountsMethodSubExprMatch[] {
+  const out: AccountsMethodSubExprMatch[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const startIdx = text.indexOf("ctx", i);
+    if (startIdx === -1) break;
+    // Word-boundary check on the left: don't match `myctx.accounts...`.
+    const leftCh = startIdx > 0 ? text[startIdx - 1]! : "";
+    if (leftCh && /[A-Za-z0-9_]/.test(leftCh)) {
+      i = startIdx + 1;
+      continue;
+    }
+    const m = text.slice(startIdx).match(/^ctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\(/);
+    if (!m) {
+      i = startIdx + 1;
+      continue;
+    }
+    const methodName = m[1]!;
+    if (!scopedNames.has(methodName)) {
+      i = startIdx + 1;
+      continue;
+    }
+    const openParen = startIdx + m[0].length - 1;
+    const closeParen = findMatchingClose(text, openParen);
+    if (closeParen === -1) {
+      i = startIdx + 1;
+      continue;
+    }
+    const argsRaw = text.slice(openParen + 1, closeParen);
+    let end = closeParen + 1;
+
+    // Optional immediately-chained `.with_signer(seeds)`. The CPI detector
+    // text-checks `firstArg.text.includes("new_with_signer")` — without this
+    // fold, signer_seeds would be silently dropped from the IR.
+    let chainedSigner: string | undefined;
+    const sigMatch = text.slice(end).match(/^\s*\.\s*with_signer\s*\(/);
+    if (sigMatch) {
+      const sigOpen = end + sigMatch[0].length - 1;
+      const sigClose = findMatchingClose(text, sigOpen);
+      if (sigClose !== -1) {
+        chainedSigner = text.slice(sigOpen + 1, sigClose).trim();
+        end = sigClose + 1;
+      }
+    }
+
+    out.push({ start: startIdx, end, methodName, argsRaw, chainedSigner });
+    i = end;
+  }
+  return out;
+}
+
+function findMatchingClose(text: string, openIdx: number): number {
+  let depth = 1;
+  for (let k = openIdx + 1; k < text.length; k++) {
+    const ch = text[k];
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) return k;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Rewrite each `ctx.accounts.<helper>()(.with_signer(...))?` sub-expression
+ * in `text` to the inline `CpiContext::new(prog, struct{...})` form
+ * (or `CpiContext::new_with_signer(...)` when chained). Helpers whose body
+ * is not a pure CpiContext-factory shape (let* + `CpiContext::new(...)` tail)
+ * are left untouched.
+ *
+ * Returns null when no rewrite happened, so the caller can decide between
+ * marking the statement as "did expand" or passing through verbatim.
+ */
+function rewriteAccountsSubExpressions(
+  text: string,
+  scopedMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
+  scopedNames: Set<string>,
+  accounts: AccountRef[],
+): string | null {
+  const matches = findAccountsMethodSubExpressions(text, scopedNames);
+  if (matches.length === 0) return null;
+
+  let out = "";
+  let cursor = 0;
+  let didRewrite = false;
+
+  for (const m of matches) {
+    out += text.slice(cursor, m.start);
+    const target = scopedMethods.find((s) => s.name === m.methodName);
+    if (!target) {
+      out += text.slice(m.start, m.end);
+      cursor = m.end;
+      continue;
+    }
+    // Gate: only rewrite at sub-expression sites whose wrapping function is
+    // a recognized CPI helper. Otherwise we'd leak Anchor types (CpiContext,
+    // SetAuthority, AuthorityType, token_interface) into verbatim
+    // pass-through code that the target doesn't import.
+    const wrappingCall = findWrappingCallName(text, m.start);
+    if (!wrappingCall || !RECOGNIZED_CPI_FN_NAMES.has(wrappingCall)) {
+      out += text.slice(m.start, m.end);
+      cursor = m.end;
+      continue;
+    }
+    const inlined = inlineAsFactoryExpression(
+      target,
+      m.argsRaw,
+      m.chainedSigner,
+      accounts,
+      scopedMethods,
+    );
+    if (inlined === null) {
+      out += text.slice(m.start, m.end);
+      cursor = m.end;
+      continue;
+    }
+    out += inlined;
+    cursor = m.end;
+    didRewrite = true;
+  }
+  out += text.slice(cursor);
+
+  return didRewrite ? out : null;
+}
+
+/**
+ * Inline a `ctx.accounts.<helper>()` call as a single inline CpiContext
+ * expression when the helper body is a "pure CpiContext factory" — N
+ * let-bindings followed by a tail expression of `CpiContext::new(prog, acc)`.
+ * Linear let-substitution folds bindings into the tail args, producing
+ * `CpiContext::new(<inlined-prog>, <inlined-acc>)` or, when the call site
+ * chained `.with_signer(seeds)`, `CpiContext::new_with_signer(prog, acc, seeds)`.
+ *
+ * Returns null when the shape gate fails (helper has if/match/etc. or its
+ * tail isn't a CpiContext::new call). The caller leaves the source untouched
+ * in that case.
+ */
+function inlineAsFactoryExpression(
+  target: { implName: string; name: string; node: SyntaxNode; modulePath: string[] },
+  argsRaw: string,
+  chainedSigner: string | undefined,
+  accounts: AccountRef[],
+  scopedMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
+): string | null {
+  const argExprs = splitTopLevelArgs(argsRaw);
+  // expandImplMethod handles parameter substitution, recursive `self.X` →
+  // `ctx.accounts.X`, and inlines nested impl calls. Returns `{ ... }`.
+  const expandedBlock = expandImplMethod(target.name, argExprs, scopedMethods, accounts, new Set());
+  if (!expandedBlock) return null;
+  const inner = stripOuterBraces(expandedBlock).trim();
+
+  const parsed = parseLetBindingsAndTail(inner);
+  if (parsed === null || parsed.tail === null) return null;
+
+  const cpiNew = parseCpiContextNew(parsed.tail);
+  if (!cpiNew) return null;
+
+  // Linear substitution: walk bindings in REVERSE so later bindings (which
+  // may reference earlier ones) get folded into expressions that already
+  // resolve to ctx.accounts/refs. e.g. with `let a = X; let b = a.foo();`
+  // and tail `CpiContext::new(b, …)`, reverse order substitutes `b` →
+  // `a.foo()` first, then `a` → `X`, yielding `X.foo()`.
+  let prog = cpiNew.prog;
+  let acc = cpiNew.acc;
+  for (let i = parsed.bindings.length - 1; i >= 0; i--) {
+    const { name, value } = parsed.bindings[i]!;
+    prog = replaceIdentifier(prog, name, `(${value})`);
+    acc = replaceIdentifier(acc, name, `(${value})`);
+  }
+  // Strip redundant outer parens added by the substitution helper around
+  // identifier-only values. Cosmetic only — Rust accepts either.
+  prog = peelRedundantParens(prog);
+  acc = peelRedundantParens(acc);
+
+  if (chainedSigner) {
+    return `CpiContext::new_with_signer(${prog}, ${acc}, ${chainedSigner})`;
+  }
+  return `CpiContext::new(${prog}, ${acc})`;
+}
+
+interface LetBinding {
+  name: string;
+  value: string;
+}
+
+/**
+ * Split a block-body's inner text into a list of `let` bindings and the tail
+ * expression. Returns null if the body has any non-let, non-tail content
+ * (if/match/while/etc.) — the shape gate for inlineAsFactoryExpression.
+ */
+function parseLetBindingsAndTail(
+  inner: string,
+): { bindings: LetBinding[]; tail: string | null } | null {
+  const bindings: LetBinding[] = [];
+  let cursor = 0;
+  while (cursor < inner.length) {
+    while (cursor < inner.length && /\s/.test(inner[cursor]!)) cursor++;
+    if (cursor >= inner.length) break;
+
+    if (inner.slice(cursor).startsWith("let ") || inner.slice(cursor).startsWith("let\t")) {
+      const letMatch = inner.slice(cursor).match(/^let\s+(?:mut\s+)?(\w+)(?:\s*:\s*[^=]+?)?\s*=\s*/);
+      if (!letMatch) return null;
+      const name = letMatch[1]!;
+      const eqEnd = cursor + letMatch[0].length;
+      const semi = findStmtTerminator(inner, eqEnd);
+      if (semi === -1) return null;
+      const value = inner.slice(eqEnd, semi).trim();
+      bindings.push({ name, value });
+      cursor = semi + 1;
+      continue;
+    }
+
+    // Anything that's not `let` is the tail. Strip a trailing `;` if present
+    // (Rust allows `expr;` as last statement but the tail of a block expr is
+    // usually unsemicolon'd — be liberal in either case).
+    const tail = inner.slice(cursor).trim().replace(/;\s*$/, "").trim();
+    return { bindings, tail };
+  }
+  return { bindings, tail: null };
+}
+
+/** Find the next `;` at delimiter-depth zero, scanning {} () []. */
+function findStmtTerminator(text: string, start: number): number {
+  let depth = 0;
+  for (let k = start; k < text.length; k++) {
+    const ch = text[k];
+    if (ch === "{" || ch === "(" || ch === "[") depth++;
+    else if (ch === "}" || ch === ")" || ch === "]") depth--;
+    else if (ch === ";" && depth === 0) return k;
+  }
+  return -1;
+}
+
+function parseCpiContextNew(tail: string): { prog: string; acc: string } | null {
+  const m = tail.match(/^CpiContext\s*::\s*new\s*\(/);
+  if (!m) return null;
+  const openParen = m[0].length - 1;
+  const closeParen = findMatchingClose(tail, openParen);
+  if (closeParen === -1) return null;
+  // The CpiContext::new(...) must be the entire tail (no trailing chains).
+  if (tail.slice(closeParen + 1).trim().length > 0) return null;
+  const argsRaw = tail.slice(openParen + 1, closeParen);
+  const args = splitTopLevelArgs(argsRaw);
+  if (args.length !== 2) return null;
+  return { prog: args[0]!, acc: args[1]! };
+}
+
+function peelRedundantParens(expr: string): string {
+  const trimmed = expr.trim();
+  if (!trimmed.startsWith("(") || !trimmed.endsWith(")")) return trimmed;
+  // Verify the outer parens are matched as a single group (not `(a) + (b)`).
+  let depth = 0;
+  for (let k = 0; k < trimmed.length; k++) {
+    const ch = trimmed[k];
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0 && k < trimmed.length - 1) return trimmed;
+    }
+  }
+  return trimmed.slice(1, -1).trim();
 }
 
 /**

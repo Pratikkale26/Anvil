@@ -79,25 +79,29 @@ const TRACKED: TrackedCase[] = [
   },
 
   // coral-escrow: classic anchor `into_transfer_to_taker_context()` style
-  // helpers + Token-2022 transfer_checked. TODO-stub fix (cbc6f3c) cut this
-  // from 34 → 25 by replacing broken `/* TODO: mint */` syntax with
-  // commented-out stubs. The remaining errors expose the underlying
-  // impl-inlining gap.
+  // helpers + Token-2022 transfer_checked. Sub-expression rewrite (this
+  // session) folded `transfer_checked(ctx.accounts.into_X_context()
+  // .with_signer(seeds), ...)` into inline CpiContext::new_with_signer,
+  // moving these from 24/15 → 23/14. Remaining errors are pass-through
+  // `set_authority` (no `cpi_set_authority` IR kind yet) and constraint
+  // parser issues unrelated to impl-method inlining.
   {
     id: "coral-escrow",
     target: "pinocchio",
     path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 28,
-    reason: "Impl-method CPI inlining gap.",
+    maxErrors: 23,
+    reason:
+      "set_authority pass-through + constraint parser gaps. Impl-method CPI inlining lands for transfer/transfer_checked but not unrecognized helpers.",
   },
   {
     id: "coral-escrow",
     target: "native",
     path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 22,
-    reason: "Impl-method CPI inlining gap.",
+    maxErrors: 14,
+    reason:
+      "set_authority pass-through + constraint parser gaps. Impl-method CPI inlining lands for transfer/transfer_checked but not unrecognized helpers.",
   },
 
   // coral-multisig: err! macro fix (cbc6f3c) cut this 13 → 10. Remaining
