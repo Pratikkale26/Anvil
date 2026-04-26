@@ -72,7 +72,7 @@ pub fn increment(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> 
 }
 ```
 
-The discriminator routing, signer / writable / owner checks, args decoding, PDA derivation, and Borsh-equivalent read / write are all generated. Anvil's CU analyzer reports `increment` at 405 → 141 CU on this program (65% saved) on the deterministic estimator — your real-runtime numbers will vary.
+The discriminator routing, signer / writable / owner checks, args decoding, PDA derivation, and Borsh-equivalent read / write are all generated. Anvil's CU analyzer reports `increment` at 405 → 141 CU on this program (65% saved) on the **deterministic estimator** — a constant-table heuristic (`api/src/emitter/cu-analyzer.ts`) that adds up per-construct costs (account deserialize, signer check, PDA derive, etc.). Your real-runtime numbers from `solana-test-validator` will vary; the estimator gives an order-of-magnitude comparison for relative ranking, not an exact prediction.
 
 ## What works today, per target
 
@@ -108,19 +108,21 @@ The same IR feeds the emitters, the `lint` / `bench` / `snapshot` / `diff` CLI c
 
 ## Status
 
-- **14/16 curated demos cargo-build** as the downloadable project-scaffold bundle. The 2 misses are linker-only on the native target (cc returns 1) — not emitter bugs. Locked in via `scripts/repro-bundle-build.ts` so the download path can't silently regress.
-- **6/6 small real-world Anchor repos cargo-build** on both Pinocchio and Native — `pe-account-data`, `pe-hello-solana`, `pe-favorites` from `solana-developers/program-examples` plus the classic counter. Locked in via `scripts/test-realworld-fixes.ts`.
-- 17/48 mid-size real-world Anchor contracts from `solana-programs-list` cargo-build across Pinocchio + Native + Quasar.
-- 100% parser coverage on 27 real-world programs.
-- 0 cargo warnings across the entire 14-bundle demo suite (was 65+ before targeted emitter fixes).
-- **Verify Build** in the workbench — `POST /build` runs `cargo check --message-format=json` on emitted output and returns structured rustc diagnostics. Warm cargo check ~250-500ms on the demo suite.
-- **Verify + Auto-fix loop** — `POST /build/auto-fix` orchestrates: cargo check → feed errors as ValidationIssues → AI refine → apply patches → re-check → repeat (up to 3 iterations or $0.50 cost cap). Closes the loop on transpiler correctness.
-- **Compare targets** in the workbench — emit the same IR for Pinocchio + Native side-by-side without re-parsing.
-- **Compatibility lint warnings** for unsupported imports — `mpl_core`, `pyth_*`, `switchboard_*`, `drift`, `jupiter`, `clockwork`, zero-copy accounts, `token_interface` extensions. Per-target verdicts (some are blockers on Pinocchio but ready on Native).
-- **AI Refine**: tree-sitter structural pre-check + cross-file validation gate + retry-with-feedback + revert button. Refines that fall through can't ship malformed Rust.
-- Observability: `GET /metrics` exposes refine cache hit rate, accept/reject ratio, per-target validation error counts, build success/failure ratios.
+The headline correctness signal is **43 deterministic cargo-build regression gates** locked in via `api/tests/realworld-cargo.test.ts`: 36 fixtures from the `program-examples` corpus (18 unique programs × 2 targets) + 7 external (escrow2025, coral-escrow, coral-multisig, t22-transfer-fee/pinocchio across both targets). Every one of them must `cargo build` green deterministically — no AI refine in the loop — for a PR to merge. CI gates the suite via `.github/workflows/test.yml`.
 
-Advanced contracts still flag sections with `⚠️ Anvil: Review` for manual verification before deployment.
+- **43 MUST_PASS cargo regressions** — Pinocchio + Native, real-world Anchor, no AI in the loop. Plus 14/16 curated demos on the bundle download path and 5 ceiling-tracked fixtures (coral-swap, t22-extensions) that surface regressions even when they can't yet hit zero errors.
+- **100% parser coverage on 27 real-world programs** — the IR layer has not regressed on any program in the corpus.
+- **Hardened public API** — `/build` runs cargo inside a layered sandbox (firejail / bwrap / unshare with mount-namespace + tmpfs over /tmp + prlimit caps), env stripped of `ANTHROPIC_API_KEY`-class secrets, network namespace cut. Per-IP daily AI spend cap (default $2/IP/day) prevents budget exhaustion on the public refine endpoint. Parser timeout of 10s prevents tree-sitter wedge on pathological input.
+- **Verify Build** in the workbench — `POST /build` runs `cargo check --message-format=json` on emitted output and returns structured rustc diagnostics. Warm cargo check ~250-500ms on the demo suite.
+- **Verify + Auto-fix loop** — `POST /build/auto-fix` orchestrates: cargo check → feed errors as ValidationIssues → AI refine → apply patches → re-check → repeat (up to 3 iterations or $0.50 per-request cap, with a separate per-IP daily ceiling). Closes the loop on transpiler correctness.
+- **Output validator** — splits unsafe markers into ERROR (broken stubs requiring manual rebuild) vs WARNING (review hints where code IS emitted), surfaces both in MUST_PASS test output. Token-2022 decimals fallback (`0u8 /* TODO */`) is hard-rejected because wrong decimals silently corrupt on-chain transfers.
+- **Compare targets** in the workbench — emit the same IR for Pinocchio + Native side-by-side without re-parsing.
+- **Runtime-correctness differential** — `differential-counter.test.ts` builds both Anchor counter + Anvil-Pinocchio counter to `.so`, runs the same Initialize+Increment in litesvm, asserts byte-equal CounterAccount state. Requires Solana CLI 2.1+; skips with an actionable message on older toolchains.
+- **AI Refine**: tree-sitter structural pre-check + cross-file validation gate + retry-with-feedback + revert button. Refines that fall through can't ship malformed Rust.
+- **Compatibility lint warnings** for unsupported imports — `mpl_core`, `pyth_*`, `switchboard_*`, `drift`, `jupiter`, `clockwork`, zero-copy accounts, `token_interface` extensions. Per-target verdicts (some are blockers on Pinocchio but ready on Native).
+- **Observability**: `GET /metrics` exposes refine cache hit rate, accept/reject ratio, per-target validation error counts, build success/failure ratios, plus per-IP spend snapshot (IPs masked to /24 ⁄ ::/64).
+
+Advanced contracts still flag sections with `⚠️ Anvil: Review` for manual verification before deployment. Pinocchio is the hero target; Native is the production-ready reference; Quasar is experimental (no cargo-build coverage).
 
 ## What Anvil Does
 
