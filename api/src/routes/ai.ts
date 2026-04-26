@@ -69,6 +69,7 @@ aiRoute.post("/refine", async (req, res) => {
       helperFns: [],
       constants: [],
       imports: [],
+      userTraitImpls: [],
       metadata: {
         sourceFramework: "anchor" as const,
         anvilVersion: "0.2.0",
