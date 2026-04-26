@@ -146,8 +146,8 @@ const TRACKED: TrackedCase[] = [
     target: "pinocchio",
     path: "/tmp/program-examples/tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs",
     source: "solana-developers/program-examples (tokens/token-2022/transfer-fee/anchor)",
-    maxErrors: 16,
-    reason: "spl_token_2022::extension::* imports not surfaced in emit.",
+    maxErrors: 0,
+    reason: "T22 extension call sites commented out in pinocchio post-process (spl_token_2022 has no no_std variant).",
   },
   {
     id: "t22-transfer-fee",
@@ -166,8 +166,8 @@ const TRACKED: TrackedCase[] = [
     target: "pinocchio",
     path: "/tmp/program-examples/tokens/token-2022/transfer-hook/hello-world/anchor/programs/transfer-hook/src/lib.rs",
     source: "solana-developers/program-examples (tokens/token-2022/transfer-hook/hello-world/anchor)",
-    maxErrors: 11,
-    reason: "spl_token_2022::extension::transfer_hook + ExtraAccountMetaList unhandled.",
+    maxErrors: 3,
+    reason: "T22 extension call sites commented out in pinocchio post-process. Remaining 3 errors are leaked source `use spl_*::*` imports at module scope (spl_tlv_account_resolution / spl_transfer_hook_interface / spl_discriminator) that the import filter doesn't yet drop on pinocchio.",
   },
   {
     id: "t22-transfer-hook",

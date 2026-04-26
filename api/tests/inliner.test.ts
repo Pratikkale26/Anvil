@@ -653,4 +653,54 @@ pub struct Run<'info> {
     const activeLines = lines.filter((l) => !l.trimStart().startsWith("//"));
     expect(activeLines.some((l) => l.includes("solana_program::program::invoke_signed"))).toBe(false);
   });
+
+  test("pinocchio comments out Token-2022 extension call sites", async () => {
+    // Token-2022 extension types like `StateWithExtensions::<MintState>::unpack`
+    // and `.get_extension::<TransferFeeConfig>()` live in `spl_token_2022::*`,
+    // which pinocchio's no_std target can't link against. The post-process pass
+    // excises those statements with the same TODO banner as the
+    // solana_program::invoke commentout. This test exercises a minimal source
+    // that hits TransferFeeConfig + StateWithExtensions + the `.data.borrow()`
+    // upstream chain. Native is unaffected (auto-imports spl_token_2022 ext
+    // types).
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>) -> Result<()> {
+        let mint = &ctx.accounts.mint;
+        let mint_data = mint.data.borrow();
+        let mint_with_extension = StateWithExtensions::<MintState>::unpack(&mint_data)?;
+        let extension_data = mint_with_extension.get_extension::<TransferFeeConfig>()?;
+        msg!("{:?}", extension_data);
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Run<'info> {
+    pub mint: AccountInfo<'info>,
+}
+`;
+    const ir = await parseOk(src);
+    const out = emitPinocchioFull(ir);
+    const ix = out.files.find((f) => /instructions\/run\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    expect(ix.content).toContain("Anvil TODO: Token-2022 extension call site");
+    const lines = ix.content.split("\n");
+    // The StateWithExtensions::unpack call must be commented out — it cannot
+    // be reached from a non-`//` line.
+    const activeLines = lines.filter((l) => !l.trimStart().startsWith("//"));
+    expect(
+      activeLines.some((l) => l.includes("StateWithExtensions::<MintState>::unpack")),
+    ).toBe(false);
+    // The transitively-cascaded `extension_data` reader must also be excised.
+    expect(
+      activeLines.some((l) => /\bextension_data\b/.test(l)),
+    ).toBe(false);
+    // And the upstream `.data.borrow()` (E0609 on pinocchio AccountInfo) too.
+    expect(
+      activeLines.some((l) => /\.data\.borrow\(\)/.test(l)),
+    ).toBe(false);
+  });
 });

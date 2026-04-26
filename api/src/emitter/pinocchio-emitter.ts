@@ -971,6 +971,16 @@ ${writeLines}
     // strategy as the unsalvageable-helper commentout — keeps the file
     // compile-clean while flagging the manual-port site.
     out = commentOutSolanaProgramInvoke(out);
+    // Comment out call sites of Token-2022 extension types that pinocchio
+    // can't satisfy. Pinocchio's Cargo.toml does not include `spl_token_2022`
+    // (and the crate isn't no_std-compatible), so any source that walks the
+    // TLV-encoded extension data via `StateWithExtensions::<MintState>::unpack`
+    // / `.get_extension::<TransferFeeConfig>()` / `transfer_fee_set(...)` /
+    // `transfer_checked_with_fee(...)` etc. cannot link. Excise those statements
+    // (with the same TODO banner as the unsalvageable-helper commentout) so
+    // the file stays compile-clean and flags the manual port site. Native
+    // emit auto-imports the spl_token_2022 ext types — this is pinocchio-only.
+    out = commentOutT22ExtensionCallSites(out);
     out = out.replace(
       /\*\*(\w+)\.try_borrow_mut_lamports\(\)\?/g,
       "*$1.try_borrow_mut_lamports()?",
@@ -1411,6 +1421,316 @@ export function emitPinocchioFull(ir: SolanaIR) {
  * Instruction from a solana_program one — needs runtime type conversion
  * that pinocchio's no_std / unalloc constraints make non-trivial.
  */
+/**
+ * Comment out Token-2022 extension call sites that pinocchio can't satisfy.
+ *
+ * Pinocchio's Cargo.toml does not include `spl_token_2022` as a dep, and the
+ * crate isn't no_std-compatible anyway. So any source that exercises the
+ * Token-2022 extension surface — `StateWithExtensions::<MintState>::unpack`,
+ * `.get_extension::<TransferFeeConfig>()`, `transfer_fee_set(...)`,
+ * `transfer_checked_with_fee(...)`, etc. — cannot link on pinocchio.
+ *
+ * We comment out those statements (and their downstream readers via a
+ * transitive closure on commented `let X = …;` LHS identifiers) with the
+ * same `// ⚠️ Anvil TODO: …` banner as the solana_program-invoke commentout
+ * pass. Native emit handles these via auto-imports (commit 5c9a097); this
+ * function runs on pinocchio only.
+ *
+ * Why a different statement-bound walker than `expandStatementBounds`:
+ * the matched ident often appears INSIDE a `assert_eq!(…)` macro arg, so the
+ * existing depth-tracking back-walker would hit the `(` of `assert_eq!` at
+ * depth 0 and bail mid-statement. We pre-compute all top-level statement
+ * spans in one pass and look up the enclosing span for each match.
+ */
+function commentOutT22ExtensionCallSites(body: string): string {
+  // Direct-blacklist patterns. Each must be a complete word so we don't accidentally
+  // strip names that contain these as substrings. `StateWithExtensions` covers both
+  // bare and `BaseStateWithExtensions::*` (substring overlap is OK — same fix shape).
+  // `\bMint::unpack\b` is NOT here — pinocchio_token's Mint::unpack body-scan prelude
+  // (commit #52) emits valid pinocchio code; we only kill the T22-specific extension
+  // unpack form which always co-occurs with `StateWithExtensions`.
+  const TYPE_BLACKLIST = [
+    "TransferFeeConfig",
+    "TransferFeeAmount",
+    "MintCloseAuthority",
+    "PermanentDelegate",
+    "StateWithExtensions",
+    "BaseStateWithExtensions",
+    "ExtensionType",
+    "PodMint",
+    "MintState",
+    "OptionalNonZeroPubkey",
+    "TransferHookExtension",
+    "ExtraAccountMetaList",
+    "ExecuteInstruction",
+    "InitializeExtraAccountMetaList",
+    "InterfaceAccount",
+  ];
+  const FN_BLACKLIST = [
+    "transfer_fee_set",
+    "transfer_checked_with_fee",
+    "transfer_fee_initialize",
+    "withdraw_withheld_tokens_from_mint",
+    "harvest_withheld_tokens_to_mint",
+  ];
+  // Direct E0609 source on pinocchio: Anchor source uses `<acct>.data.borrow()`
+  // which assumes the typed Anchor wrapper that exposes a `data: RefCell<Vec<u8>>`
+  // field. Pinocchio's `&AccountInfo` has no `.data` field — only methods like
+  // `try_borrow_data()`. Always broken on pinocchio. The pattern is part of the
+  // T22 ext-unpack chain (`let mint_data = mint.data.borrow();` upstream of
+  // `StateWithExtensions::unpack(&mint_data)`) — commenting it cleans the chain.
+  // Conservative: only `\.data\.borrow(_mut)?\(\)` form. Don't match qualified
+  // module paths.
+  const DATA_BORROW_RE = /\b\w+\.data\.borrow(?:_mut)?\(\)/g;
+
+  // Pre-compute top-level statement spans (depth-aware, single forward pass).
+  // A statement ends at `;` or `}` at depth 0; a fresh statement begins after
+  // any whitespace/newlines. We track string-literal state to avoid false
+  // delimiter counts inside string contents.
+  const stmtSpans = computeTopLevelStatementSpans(body);
+
+  // Pre-compute comment-stripped span text to avoid false-positive regex hits
+  // inside `// …` lines (e.g. an existing CPI commentout block referencing
+  // `sources` shouldn't drag the surrounding span into the cascade).
+  const spanCodeText: string[] = stmtSpans.map((s) =>
+    stripCommentsAndStrings(body.slice(s.stmtStart, s.stmtEnd)),
+  );
+
+  // Identify which statement spans match a blacklist pattern. Run regexes
+  // against the stripped per-span text rather than the whole body.
+  const markedSpanIdx = new Set<number>();
+  for (const ident of TYPE_BLACKLIST) {
+    const re = new RegExp(`\\b${ident}\\b`);
+    for (let i = 0; i < stmtSpans.length; i++) {
+      if (markedSpanIdx.has(i)) continue;
+      const code = spanCodeText[i] ?? "";
+      if (re.test(code)) markedSpanIdx.add(i);
+    }
+  }
+  for (const fn of FN_BLACKLIST) {
+    const re = new RegExp(`\\b${fn}\\s*\\(`);
+    for (let i = 0; i < stmtSpans.length; i++) {
+      if (markedSpanIdx.has(i)) continue;
+      const code = spanCodeText[i] ?? "";
+      if (re.test(code)) markedSpanIdx.add(i);
+    }
+  }
+  for (let i = 0; i < stmtSpans.length; i++) {
+    if (markedSpanIdx.has(i)) continue;
+    const code = spanCodeText[i] ?? "";
+    if (DATA_BORROW_RE.test(code)) markedSpanIdx.add(i);
+    DATA_BORROW_RE.lastIndex = 0;
+  }
+
+  // Transitive closure: collect `let X = …;` LHS idents from marked spans, then
+  // mark any later span that references those idents (in non-comment code).
+  // Repeat until fixed-point.
+  const lhsRe = /^\s*let\s+(?:mut\s+)?(\w+)(?:\s*:[^=]+)?\s*=/;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const trackedIdents = new Set<string>();
+    for (const idx of markedSpanIdx) {
+      const text = spanCodeText[idx] ?? "";
+      const m = text.match(lhsRe);
+      if (m?.[1]) trackedIdents.add(m[1]);
+    }
+    if (trackedIdents.size === 0) break;
+    for (let i = 0; i < stmtSpans.length; i++) {
+      if (markedSpanIdx.has(i)) continue;
+      const code = spanCodeText[i] ?? "";
+      for (const ident of trackedIdents) {
+        const re = new RegExp(`\\b${ident}\\b`);
+        if (re.test(code)) {
+          markedSpanIdx.add(i);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  if (markedSpanIdx.size === 0) return body;
+  const ranges: StmtRange[] = [];
+  for (const i of [...markedSpanIdx].sort((a, b) => a - b)) {
+    const span = stmtSpans[i];
+    if (span) ranges.push(span);
+  }
+  return commentOutT22Ranges(body, ranges);
+}
+
+/**
+ * Compute statement spans across `body`. A "statement" here is any code unit
+ * bounded by `;` (when paren/bracket depth is 0) OR by the closing `}` of a
+ * block, OR by the opening `{` of a block. We track only paren/bracket depth
+ * (not brace depth) so that `;` inside nested blocks (`if`/`for`/`fn` bodies)
+ * is still a statement terminator at that block's level.
+ *
+ * Comment and string contents are skipped to avoid false `;` / delimiter hits.
+ *
+ * Spans are returned in source order. Adjacent whitespace-only regions are
+ * skipped at the start of each new span. The list contains a span for every
+ * `;`-terminated or `}`-terminated unit, including those inside nested
+ * blocks — which is what we want for statement-level commentout matching.
+ */
+function computeTopLevelStatementSpans(body: string): StmtRange[] {
+  const out: StmtRange[] = [];
+  let i = 0;
+  const n = body.length;
+  while (i < n) {
+    // Skip leading whitespace.
+    while (i < n && /\s/.test(body[i] ?? "")) i++;
+    if (i >= n) break;
+    const start = i;
+    let parenDepth = 0;
+    let inString = false;
+    let inLineComment = false;
+    let inBlockComment = false;
+    let end = n;
+    let advanced = false;
+    for (; i < n; i++) {
+      const ch = body[i];
+      const next = body[i + 1];
+      if (inLineComment) {
+        if (ch === "\n") inLineComment = false;
+        continue;
+      }
+      if (inBlockComment) {
+        if (ch === "*" && next === "/") { inBlockComment = false; i++; }
+        continue;
+      }
+      if (inString) {
+        if (ch === "\\") { i++; continue; }
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === "/" && next === "/") { inLineComment = true; i++; continue; }
+      if (ch === "/" && next === "*") { inBlockComment = true; i++; continue; }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === "(" || ch === "[") parenDepth++;
+      else if (ch === ")" || ch === "]") {
+        if (parenDepth > 0) parenDepth--;
+      } else if (ch === "{" && parenDepth === 0) {
+        // Block-open closes the current span at the `{` so the block body
+        // is decomposed as separate sub-spans.
+        end = i + 1;
+        i++;
+        advanced = true;
+        break;
+      } else if (ch === "}" && parenDepth === 0) {
+        // Block-close: if span is non-empty, end before the `}`; emit `}`
+        // as its own span so it's still tracked.
+        if (i > start) {
+          end = i;
+          // Don't advance — let the next iteration consume the `}` as its own span.
+          advanced = false;
+          break;
+        }
+        end = i + 1;
+        i++;
+        advanced = true;
+        break;
+      } else if (ch === ";" && parenDepth === 0) {
+        end = i + 1;
+        i++;
+        advanced = true;
+        break;
+      }
+    }
+    if (!advanced && end === n) {
+      // Hit EOF without terminator.
+    }
+    if (end > start) out.push({ stmtStart: start, stmtEnd: end });
+    if (end >= n) break;
+  }
+  return out;
+}
+
+/**
+ * Strip line comments, block comments, and string-literal contents from
+ * `text`. Used to avoid false-positive blacklist hits inside comments (e.g.
+ * an existing CPI-commentout block referencing a tracked ident name). String
+ * contents are zeroed out (replaced with same-length spaces) so any regex
+ * inside doesn't fire, but offsets are preserved if needed downstream.
+ */
+function stripCommentsAndStrings(text: string): string {
+  const out: string[] = [];
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const ch = text[i] ?? "";
+    const next = text[i + 1] ?? "";
+    if (ch === "/" && next === "/") {
+      // Line comment to next newline.
+      while (i < n && text[i] !== "\n") {
+        out.push(text[i] === "\n" ? "\n" : " ");
+        i++;
+      }
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      // Block comment terminator: '*' followed by '/'.
+      out.push("  ");
+      i += 2;
+      while (i < n) {
+        if (text[i] === "*" && text[i + 1] === "/") {
+          out.push("  ");
+          i += 2;
+          break;
+        }
+        out.push(text[i] === "\n" ? "\n" : " ");
+        i++;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      out.push('"');
+      i++;
+      while (i < n && text[i] !== '"') {
+        if (text[i] === "\\" && i + 1 < n) {
+          out.push("  ");
+          i += 2;
+          continue;
+        }
+        out.push(text[i] === "\n" ? "\n" : " ");
+        i++;
+      }
+      if (i < n) { out.push('"'); i++; }
+      continue;
+    }
+    out.push(ch);
+    i++;
+  }
+  return out.join("");
+}
+
+function commentOutT22Ranges(body: string, ranges: StmtRange[]): string {
+  // Merge overlapping/adjacent ranges (defensive — top-level spans are non-overlapping).
+  const merged: StmtRange[] = [];
+  for (const r of ranges.sort((a, b) => a.stmtStart - b.stmtStart)) {
+    const last = merged[merged.length - 1];
+    if (last && r.stmtStart <= last.stmtEnd) {
+      last.stmtEnd = Math.max(last.stmtEnd, r.stmtEnd);
+    } else {
+      merged.push({ ...r });
+    }
+  }
+  let outStr = "";
+  let cursor = 0;
+  for (const r of merged) {
+    outStr += body.slice(cursor, r.stmtStart);
+    const stmt = body.slice(r.stmtStart, r.stmtEnd);
+    const commented = stmt
+      .split("\n")
+      .map((line) => (line.length > 0 ? `// ${line}` : "//"))
+      .join("\n");
+    outStr += `// ⚠️ Anvil TODO: Token-2022 extension call site has no pinocchio equivalent — manual port required\n${commented}`;
+    cursor = r.stmtEnd;
+  }
+  outStr += body.slice(cursor);
+  return outStr;
+}
+
 function commentOutSolanaProgramInvoke(body: string): string {
   const SOLANA_INVOKE_RE = /solana_program\s*::\s*program\s*::\s*invoke(?:_signed)?\s*\(/g;
   const matches: { stmtStart: number; stmtEnd: number }[] = [];
