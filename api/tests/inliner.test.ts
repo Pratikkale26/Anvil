@@ -399,6 +399,35 @@ pub struct Check<'info> {
     expect(ix.content).not.toMatch(/\|a\|\s*a\s*==\s*\*signer\.key/);
   });
 
+  test("'info lifetime in typed-local-binding pass-through is rewritten to '_", async () => {
+    const src = PROG_HEADER + `
+pub struct Marker<'info> { pub _phantom: std::marker::PhantomData<&'info ()> }
+impl<'info> From<&Run<'info>> for Marker<'info> {
+    fn from(_: &Run<'info>) -> Self { Marker { _phantom: std::marker::PhantomData } }
+}
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>) -> Result<()> {
+        let _m: Marker<'info> = (&*ctx.accounts).into();
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Run<'info> { pub state: Account<'info, S> }
+#[account] pub struct S { pub x: u64 }
+`;
+    const ir = await parseOk(src);
+    const out = emitNativeFull(ir);
+    const ix = out.files.find((f) => /instructions\/run\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    // The 'info lifetime in the typed-local annotation must be rewritten
+    // to '_ (rust's "infer it") since the standalone fn has no <'info>.
+    expect(ix.content).not.toMatch(/'info\b/);
+    expect(ix.content).toMatch(/Marker<'_>/);
+  });
+
   test("orphan `let seeds = …` is spliced back when no CPI consumer fires", async () => {
     const src = PROG_HEADER + `
 #[program]

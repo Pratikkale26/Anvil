@@ -89,16 +89,16 @@ const TRACKED: TrackedCase[] = [
     target: "pinocchio",
     path: "/tmp/coral-anchor/tests/swap/programs/swap/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/swap)",
-    maxErrors: 53,
-    reason: "serum_dex sibling crate + bare-AccountInfo field accesses + undefined helpers.",
+    maxErrors: 52,
+    reason: "serum_dex sibling crate + bare-AccountInfo field accesses + undefined helpers. 'info typed-local strip closed the E0261.",
   },
   {
     id: "coral-swap",
     target: "native",
     path: "/tmp/coral-anchor/tests/swap/programs/swap/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/swap)",
-    maxErrors: 49,
-    reason: "Same as pinocchio, fewer E0107 due to native lifetime tolerance.",
+    maxErrors: 48,
+    reason: "Same as pinocchio. 'info typed-local strip closed the E0261; rest is serum_dex.",
   },
 
   // NOTE: t22-transfer-fee/pinocchio promoted to MUST_PASS in

@@ -238,5 +238,13 @@ export function simplifyPassThroughCode(value: string): string {
   // macro invocations: `err!(ErrorCode::X)` has `!` preceded by `r` (an
   // identifier char), so the macro keeps its parens.
   simplified = simplified.replace(/(?<![A-Za-z0-9_])!\(([A-Za-z_][A-Za-z0-9_:.]*)\)/g, "!$1");
+  // Strip `'info` lifetime references in `<…>` type-annotation positions.
+  // Source-level `let orderbook: OrderbookClient<'info> = …;` survives into
+  // pass-through verbatim, but the emitted standalone fn doesn't declare
+  // `<'info>`. Substitute `'_` (rust's "infer it" lifetime) so the binding
+  // still type-checks. coral-swap pattern. `\b` doesn't match between `<`
+  // and `'` (both non-word chars), so the lifetime is bounded by `'` itself
+  // on the left and `\b` (word→non-word) after `info` on the right.
+  simplified = simplified.replace(/'info\b/g, "'_");
   return simplified;
 }
