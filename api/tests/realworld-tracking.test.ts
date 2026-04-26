@@ -84,28 +84,27 @@ const TRACKED: TrackedCase[] = [
       "Just `seeds` scope (#3 follow-up — body-emitter drops source-side `let seeds = …`).",
   },
 
-  // coral-multisig: comparison-context-aware *X.key deref strip (this commit)
-  // dropped pin 3 → 2 and native 4 → 3. The body-emitter post-process now
-  // strips `*` on `*X.key[()]` when the comparison sibling is `&<expr>` or
-  // when the LHS is a closure param yielded by Vec<Pubkey>::iter() (which is
-  // `&Pubkey` by auto-borrow). Remaining errors are unrelated: `seeds` scope
-  // (body emitter doesn't carry the source-side let seeds = …), &*transaction
-  // deref of a Transaction value, transaction-not-mutable shadow.
+  // coral-multisig: detectPassThroughMutations now matches index-assignment
+  // (`<acc>.<field>[idx] = …`) and chained-field (`<acc>.x.y = …`) shapes
+  // in addition to plain `.field = …`. coral-multisig's `transaction.
+  // signers[owner_index] = true;` triggers `let mut transaction` instead
+  // of `let transaction`. Both targets pin/native: 2 → 1. Only `seeds`
+  // scope remains (#3 follow-up).
   {
     id: "coral-multisig",
     target: "pinocchio",
     path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/multisig)",
-    maxErrors: 2,
-    reason: "Missing seeds scope + transaction not declared mut.",
+    maxErrors: 1,
+    reason: "Just `seeds` scope — body emitter drops source-side `let seeds = …`.",
   },
   {
     id: "coral-multisig",
     target: "native",
     path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/multisig)",
-    maxErrors: 2,
-    reason: "Missing seeds scope + transaction not declared mut. Transaction deref fixed via &*X strip + From-impl preservation.",
+    maxErrors: 1,
+    reason: "Just `seeds` scope — body emitter drops source-side `let seeds = …`.",
   },
 
   // coral-swap: previously failed to parse (E0RUST_PARSE / unclosed-delimiter)

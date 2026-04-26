@@ -399,6 +399,33 @@ pub struct Check<'info> {
     expect(ix.content).not.toMatch(/\|a\|\s*a\s*==\s*\*signer\.key/);
   });
 
+  test("index-assignment on state account triggers mut declaration", async () => {
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>, idx: u32) -> Result<()> {
+        ctx.accounts.state.flags[idx as usize] = true;
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Run<'info> {
+    #[account(mut)] pub state: Account<'info, S>,
+}
+#[account] pub struct S { pub flags: Vec<bool> }
+`;
+    const ir = await parseOk(src);
+    const out = emitNativeFull(ir);
+    const ix = out.files.find((f) => /instructions\/run\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    // Index-assignment must trigger `let mut state = …` instead of
+    // `let state = …`. Without the regex extension, this would land
+    // as immutable, then the assignment would fail with E0596.
+    expect(ix.content).toMatch(/let\s+mut\s+state\s*=\s*S::read/);
+  });
+
   test(".to_account_info() stripped universally on native + token_account_amount fires on constraint values", async () => {
     const src = PROG_HEADER + `
 #[program]

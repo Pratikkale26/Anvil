@@ -248,8 +248,17 @@ export class BodyWalker {
   }
 
   detectPassThroughMutations(code: string): string[] {
+    // Detect any `<account>.<field-chain-or-index>… = <RHS>` assignment.
+    // The original regex only caught direct `.field = …` shapes; coral-
+    // multisig's `transaction.signers[owner_index] = true;` (index
+    // assignment) and chained `state.inner.value = …` (nested field)
+    // both slipped through and produced E0596 / E0594. Match an
+    // arbitrary chain of `.field` / `[index]` followed by `=` that
+    // ISN'T part of `==`, `!=`, `<=`, `>=`.
     return this.stateAccountNames.filter((accountName) =>
-      new RegExp(`\\b${accountName}\\.\\w+\\s*=`).test(code),
+      new RegExp(
+        `\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\s*=(?!=)`,
+      ).test(code),
     );
   }
 
