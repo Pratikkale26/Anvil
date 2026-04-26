@@ -83,10 +83,16 @@ export function parseCustomType(
   kind: "struct" | "enum",
 ): SolanaIR["types"][0] {
   const name = (node.childForFieldName("name")?.text) ?? "Unknown";
+  // Capture `<'info>` / `<T: Clone>` so structs whose fields reference a
+  // lifetime can emit with it in scope. Without this, coral-swap-style
+  // wrapper types lose the generic and emit `MarketAccounts<'info>` against
+  // an `OrderbookClient` declaration that never declared `'info` (E0261).
+  const genericsNode = node.childForFieldName("type_parameters");
+  const generics = genericsNode?.text;
 
   if (kind === "struct") {
     const fields = parseStructFields(node);
-    return { name, kind: "struct", fields, rawCode: node.text };
+    return { name, kind: "struct", fields, rawCode: node.text, generics };
   }
 
   // Enum variants
@@ -103,7 +109,7 @@ export function parseCustomType(
     }
   }
 
-  return { name, kind: "enum", variants, rawCode: node.text };
+  return { name, kind: "enum", variants, rawCode: node.text, generics };
 }
 
 // ─── Import extraction ──────────────────────────────────────────────────────

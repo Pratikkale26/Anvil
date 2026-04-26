@@ -851,8 +851,11 @@ ${arms}
         .map((field) => `    pub ${snakeCase(field.name)}: ${this.rustTypeForCustomType(field.type)},`)
         .join("\n");
       const implBlock = this.emitTypeInherentImpl(typeDef);
+      // Preserve `<'info>` / generic params on the struct decl so fields
+      // that reference them (e.g. `MarketAccounts<'info>`) compile.
+      const generics = typeDef.generics ?? "";
       return `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
-pub struct ${typeDef.name} {
+pub struct ${typeDef.name}${generics} {
 ${fields}
 }${implBlock}`;
     }).join("\n\n");
@@ -863,7 +866,10 @@ ${fields}
    * emitInherentImplItems hook in the target emitters. */
   protected emitTypeInherentImpl(typeDef: TypeDef): string {
     if (!typeDef.implItems || typeDef.implItems.length === 0) return "";
-    return `\n\nimpl ${typeDef.name} {\n${typeDef.implItems.map((s) => `    ${s}`).join("\n\n")}\n}`;
+    // Mirror the struct's generics on the impl block so methods can use
+    // them. `impl<'info> Foo<'info> { … }` for a `struct Foo<'info>`.
+    const gen = typeDef.generics ?? "";
+    return `\n\nimpl${gen} ${typeDef.name}${gen} {\n${typeDef.implItems.map((s) => `    ${s}`).join("\n\n")}\n}`;
   }
 
   // ─── File header ───────────────────────────────────────────────────────────

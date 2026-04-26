@@ -367,6 +367,15 @@ export const TypeDefSchema = z.object({
   fields: z.array(AccountFieldSchema).optional(),
   variants: z.array(z.string()).optional(),
   rawCode: z.string().optional(),
+  /**
+   * Generic parameter list as written in source — e.g. `<'info>`, `<'info, T>`,
+   * `<T: Clone>`. Captured verbatim from the AST's `type_parameters` child so
+   * structs that use lifetimes in their fields (e.g. coral-swap's
+   * `OrderbookClient<'info>` with `pub market: MarketAccounts<'info>`) emit
+   * with the lifetime in scope. Stored as a single string including the
+   * angle brackets, or empty/undefined for non-generic types.
+   */
+  generics: z.string().optional(),
   /** Same as AccountDef.implItems — raw text of `impl <ThisType> { ... }` items
    * (associated fns + consts) carried over verbatim by the emitter so call
    * sites like `Ride::new(...)` resolve. Most relevant for plain Rust state
