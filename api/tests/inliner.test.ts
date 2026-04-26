@@ -399,6 +399,53 @@ pub struct Check<'info> {
     expect(ix.content).not.toMatch(/\|a\|\s*a\s*==\s*\*signer\.key/);
   });
 
+  test("unsalvageable-helper commentout preserves preceding block-closer `};`", async () => {
+    // Reproduces coral-swap: an unsalvageable helper (signature uses
+    // anchor wrapper types) is invoked immediately after a `let X = { … };`
+    // block. The walk-back to the previous `;` lands on `};` — the
+    // previous version of this pass swept that line into the comment range,
+    // leaving `let X = { … }` open without a closer (E0RUST_PARSE
+    // unclosed-delimiter). The block-closer-aware fix advances past
+    // `};` to keep delimiters balanced.
+    const src = PROG_HEADER + `
+use anchor_spl::token::{self, TokenAccount};
+fn unsalvageable_helper(x: &Account<'_, S>) -> Result<()> { Ok(()) }
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>) -> Result<()> {
+        let scoped_value = {
+            let inner = 1;
+            inner + 1
+        };
+        unsalvageable_helper(&ctx.accounts.state)?;
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Run<'info> {
+    pub state: Account<'info, S>,
+}
+#[account] pub struct S { pub x: u64 }
+`;
+    const ir = await parseOk(src);
+    const out = emitNativeFull(ir);
+    const ix = out.files.find((f) => /instructions\/run\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    // The `};` block-closer of `let scoped_value = { … };` must NOT be
+    // commented. The helper call MUST be commented.
+    const lines = ix.content.split("\n");
+    const closerActive = lines.some((l) =>
+      /^\s*\};/.test(l) && !l.trimStart().startsWith("//"),
+    );
+    const helperCommented = lines.some(
+      (l) => /^\s*\/\/.*unsalvageable_helper/.test(l),
+    );
+    expect(closerActive).toBe(true);
+    expect(helperCommented).toBe(true);
+  });
+
   test("solana_program::program::invoke_signed direct call is commented out on pinocchio", async () => {
     const src = PROG_HEADER + `
 #[program]

@@ -1519,17 +1519,29 @@ function commentOutUnsalvageableCallSites(text: string, helpers: Set<string>): s
     // Walk backward to find the statement start.
     let depth = 0;
     let stmtStart = 0;
+    let stopChar: string | null = null;
+    let stopPrevChar: string | null = null;
     for (let i = matchOffset - 1; i >= 0; i--) {
       const ch = text[i];
       if (ch === ")" || ch === "}" || ch === "]") depth++;
       else if (ch === "(" || ch === "{" || ch === "[") {
-        if (depth === 0) { stmtStart = i + 1; break; }
+        if (depth === 0) { stmtStart = i + 1; stopChar = ch; break; }
         depth--;
       } else if ((ch === ";" || ch === "\n") && depth === 0) {
         // Only treat `;` as a hard boundary; `\n` we use only as a soft
         // hint (let-bindings can span lines). Continue scanning unless we
         // also see a clear semicolon or block boundary.
-        if (ch === ";") { stmtStart = i + 1; break; }
+        if (ch === ";") {
+          stmtStart = i + 1;
+          stopChar = ch;
+          // The char just before this `;` tells us whether it's `};`
+          // (block-closer + stmt terminator) vs `expr;` (normal stmt end).
+          // Walk back over whitespace to find the meaningful char.
+          let j = i - 1;
+          while (j >= 0 && /\s/.test(text[j] ?? "")) j--;
+          stopPrevChar = j >= 0 ? text[j] ?? null : null;
+          break;
+        }
       }
     }
     // Walk forward to find the statement end (trailing `;` at depth 0).
@@ -1541,8 +1553,24 @@ function commentOutUnsalvageableCallSites(text: string, helpers: Set<string>): s
       else if (ch === ")" || ch === "}" || ch === "]") fwdDepth--;
       else if (ch === ";" && fwdDepth === 0) { stmtEnd = i + 1; break; }
     }
+    // Block-closer detection: when the walk-back stopped at a `;` whose
+    // preceding non-whitespace was `}`, that's a `};` shape — the line
+    // also contains the closer of an outer block (e.g. `let X = { … };`)
+    // that we MUST NOT comment out. Advance stmtStart past the trailing
+    // `;\n` to the next line. For non-block `;` (preceding char `)`, ident,
+    // literal, etc.) we keep the original behavior — including the `;`
+    // line in the comment range incidentally cleans up orphan
+    // `let X = …;` setup statements whose only consumer was the
+    // commented helper call. coral-swap's transitive helper closes a
+    // let-block (`};`) right before the call; escrow2025's call follows
+    // a chain of inert setup let-bindings (`);`) that are dead without it.
+    let normalizedStart = stmtStart;
+    if (stopChar === ";" && stopPrevChar === "}") {
+      while (normalizedStart < text.length && /[ \t]/.test(text[normalizedStart] ?? "")) normalizedStart++;
+      if (text[normalizedStart] === "\n") normalizedStart++;
+    }
     // Convert offsets to line numbers.
-    const startLine = text.slice(0, stmtStart).split("\n").length - 1;
+    const startLine = text.slice(0, normalizedStart).split("\n").length - 1;
     const endLine = text.slice(0, stmtEnd).split("\n").length - 1;
     ranges.push({ startLine, endLine });
   }

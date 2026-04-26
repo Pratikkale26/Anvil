@@ -109,6 +109,32 @@ const TRACKED: TrackedCase[] = [
     reason: "Missing seeds scope + transaction deref + transaction not declared mut.",
   },
 
+  // coral-swap: previously failed to parse (E0RUST_PARSE / unclosed-delimiter)
+  // because the unsalvageable-helper commentout swept the `};` block-closer
+  // along with the helper call. Block-closer-aware walk-back (this commit)
+  // unblocks the parse, surfacing real downstream errors that were hidden:
+  // serum_dex sibling-crate references (`serum_dex::*` imports — 25 E0433),
+  // bare-AccountInfo struct-field accesses (`from.coin_wallet` — 6 E0609),
+  // and undefined helpers (`orderbook_to`, `orderbook_from`, `apply_risk_checks`).
+  // None of these are reachable without serum_dex CPI emit support, which
+  // is documented as a post-grant gap. Tracked here as a regression guard.
+  {
+    id: "coral-swap",
+    target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/swap/programs/swap/src/lib.rs",
+    source: "https://github.com/coral-xyz/anchor (tests/swap)",
+    maxErrors: 53,
+    reason: "serum_dex sibling crate + bare-AccountInfo field accesses + undefined helpers.",
+  },
+  {
+    id: "coral-swap",
+    target: "native",
+    path: "/tmp/coral-anchor/tests/swap/programs/swap/src/lib.rs",
+    source: "https://github.com/coral-xyz/anchor (tests/swap)",
+    maxErrors: 49,
+    reason: "Same as pinocchio, fewer E0107 due to native lifetime tolerance.",
+  },
+
   // Token-2022 transfer-fee extension. Anchor program from program-examples
   // that uses `spl_token_2022::extension::transfer_fee::*`. Tracked here so
   // the ext-import-resolution gap doesn't silently regress. Most errors are
