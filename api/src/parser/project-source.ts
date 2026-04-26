@@ -649,7 +649,7 @@ function rewriteErrMacroToExplicit(source: string): string {
       break;
     }
     // Verify `err!` is a standalone macro name, not a suffix like `myerr!`.
-    const prev = idx > 0 ? source[idx - 1] : "";
+    const prev = idx > 0 ? source[idx - 1]! : "";
     const isWordPrev = prev !== "" && /[A-Za-z0-9_]/.test(prev);
     if (isWordPrev) {
       out += source.slice(i, idx + 4);
