@@ -191,9 +191,18 @@ if (existsSync(PROG_EX)) {
     }
   });
 } else {
-  describe("Real-world Anchor cargo-build regression guard [skipped]", () => {
+  // Loud skip — silent CI skips have masked broken regression layers before.
+  // The warning + the test.skip name both surface the missing fixture so
+  // local devs and CI logs can't lose this coverage without noticing.
+  console.warn(
+    `\n[realworld-cargo] SKIPPED: ${MUST_PASS.length} regression cases not run.\n` +
+      `  Reason: ${PROG_EX} not found.\n` +
+      `  To restore coverage:\n` +
+      `    git clone --depth 1 https://github.com/solana-developers/program-examples ${PROG_EX}\n`,
+  );
+  describe("Real-world Anchor cargo-build regression guard [SKIPPED — clone missing]", () => {
     test.skip(
-      `clone missing — run: git clone --depth 1 https://github.com/solana-developers/program-examples ${PROG_EX}`,
+      `clone missing at ${PROG_EX} — see console warning for fix`,
       () => {},
     );
   });

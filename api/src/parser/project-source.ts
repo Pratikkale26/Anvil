@@ -73,10 +73,30 @@ export function getProjectEntryPath(entryPath: string): string {
 
 // ─── Module declaration helpers ──────────────────────────────────────────────
 
+/**
+ * Strip `#[cfg(test)] mod X;` declarations (and `#[cfg(any(test, …))]`
+ * variants) from a source string. These point at sibling test files
+ * (`tests.rs`, etc.) holding litesvm/solana-kite test harnesses. Without
+ * this step, the file walker pulls those siblings in and their imports
+ * leak into the emitted lib.rs as unresolvable extern crate references.
+ * Modern Anchor programs adopting the recommended `#[cfg(test)] mod tests;`
+ * pattern hit this; older corpus programs didn't, which is why the bug
+ * stayed hidden until the out-of-corpus probe surfaced it.
+ */
+function stripCfgTestModuleDecls(source: string): string {
+  return source.replace(
+    /^[ \t]*#\[\s*cfg\s*\([^)]*\btest\b[^)]*\)\s*\][ \t]*\r?\n[ \t]*(?:pub\s+)?mod\s+\w+\s*;[ \t]*\r?\n?/gm,
+    "",
+  );
+}
+
 /** External module declarations like `mod X;` or `pub mod X;`. */
 function extractExternalModuleDecls(source: string): ExternalModuleDecl[] {
+  // Strip cfg(test)-gated declarations first so the resolver never tries to
+  // pull in test-only sibling files.
+  const stripped = stripCfgTestModuleDecls(source);
   const decls: ExternalModuleDecl[] = [];
-  for (const match of source.matchAll(/^\s*(pub\s+)?mod\s+(\w+)\s*;/gm)) {
+  for (const match of stripped.matchAll(/^\s*(pub\s+)?mod\s+(\w+)\s*;/gm)) {
     if (!match[2]) continue;
     decls.push({
       name: match[2],
@@ -496,6 +516,12 @@ function buildFlattenedSource(
     if (fileRenames) {
       processed = applyRenames(processed, fileRenames);
     }
+
+    // Drop `#[cfg(test)] mod X;` declarations entirely so the test harness
+    // doesn't leak into the flattened source. extractExternalModuleDecls
+    // already excludes cfg(test) names from the resolver, but the literal
+    // declaration line still needs to disappear from the emitted output.
+    processed = stripCfgTestModuleDecls(processed);
 
     // Strip mod declarations
     const moduleDecls = extractExternalModuleDecls(processed);

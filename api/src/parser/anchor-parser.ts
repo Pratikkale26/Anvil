@@ -30,6 +30,7 @@ import { getParser } from "./ts-init.js";
 import type { SyntaxNode } from "./ts-init.js";
 import {
   hasAttribute,
+  hasCfgTestAttribute,
   hasDeriveAttribute,
   findDescendant,
 } from "./ast-helpers.js";
@@ -251,6 +252,12 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
         case "mod_item": {
           const modName = extractModuleName(child);
           const isProgramModule = hasAttribute(attrs, "program");
+          // Skip cfg(test)-gated modules entirely. Their imports + functions
+          // are test-only (typically litesvm/solana-kite test harnesses) and
+          // walking into them leaks `use solana_kite::…`-style imports into
+          // the emitted lib.rs. The #[program] module itself is never
+          // cfg(test)-gated, so this can't drop real instructions.
+          if (hasCfgTestAttribute(attrs)) break;
           if (isProgramModule) {
             items.programModule = { node: child, attrs };
           }

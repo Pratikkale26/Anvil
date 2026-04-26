@@ -234,6 +234,9 @@ export function emitRequireGuard(condition: string, error: string, indent = "   
 export function simplifyPassThroughCode(value: string): string {
   let simplified = stripAnchorConstraintError(value);
   simplified = simplified.replace(/\bif\s+!\(!([A-Za-z0-9_:.]+)\)/g, "if $1");
-  simplified = simplified.replace(/!\(([A-Za-z_][A-Za-z0-9_:.]*)\)/g, "!$1");
+  // Boolean negation `!(IDENT_PATH)` → `!IDENT_PATH`. The lookbehind blocks
+  // macro invocations: `err!(ErrorCode::X)` has `!` preceded by `r` (an
+  // identifier char), so the macro keeps its parens.
+  simplified = simplified.replace(/(?<![A-Za-z0-9_])!\(([A-Za-z_][A-Za-z0-9_:.]*)\)/g, "!$1");
   return simplified;
 }

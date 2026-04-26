@@ -188,6 +188,24 @@ export function hasAttribute(attrs: SyntaxNode[], name: string): boolean {
 }
 
 /**
+ * Check if attributes contain a `cfg(test)` predicate — directly or via
+ * `cfg(any(test, …))` / `cfg(all(test, …))` etc. Used to skip modules whose
+ * imports/items are test-only and shouldn't be lifted into program emit.
+ * Modern Anchor programs commonly declare `#[cfg(test)] mod tests;` with
+ * litesvm/solana-kite imports inside, which leak into lib.rs without this.
+ */
+export function hasCfgTestAttribute(attrs: SyntaxNode[]): boolean {
+  for (const attr of attrs) {
+    const text = attr.text;
+    // `\bcfg\b` then anywhere a `\btest\b` token appears inside the cfg
+    // predicate. False positives would need a literal "cfg(... test ..." in
+    // a non-cfg context, which doesn't occur in Rust attribute syntax.
+    if (/\bcfg\s*\([^)]*\btest\b/.test(text)) return true;
+  }
+  return false;
+}
+
+/**
  * Check if attributes contain #[derive(X)] where X matches the target.
  * e.g. hasDeriveAttribute(attrs, "Accounts")
  */

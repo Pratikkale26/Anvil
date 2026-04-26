@@ -231,11 +231,19 @@ buildRoute.post("/auto-fix", async (req, res) => {
   const t0 = Date.now();
   let currentFiles: BuildFile[] = [...initialFiles];
   let totalCostUsd = 0;
+  // Revert-on-regression bookkeeping. Track the lowest-error state we've
+  // seen so a refine round that strictly worsens the build can be rolled
+  // back rather than committed. Mirrors sweep-realworld.ts behavior so the
+  // production /build/auto-fix path inherits the same accept-gate semantics
+  // as the offline sweep harness.
+  let bestFiles: BuildFile[] = [...initialFiles];
+  let bestErrorCount = Number.POSITIVE_INFINITY;
   type Iteration = {
     iteration: number;
     buildResult: { ok: boolean; durationMs: number; errors: BuildDiagnostic[]; warnings: BuildDiagnostic[] };
     refine?: { acceptedPatches: number; rejectedPatches: number; rationale: string; estimatedCostUsd: number };
     refineError?: { category: string; message: string };
+    reverted?: boolean;
   };
   const iterations: Iteration[] = [];
   let stoppedReason:
@@ -244,7 +252,8 @@ buildRoute.post("/auto-fix", async (req, res) => {
     | "cost_cap"
     | "no_progress"
     | "refine_error"
-    | "client_closed" = "max_iterations";
+    | "client_closed"
+    | "regression_reverted" = "max_iterations";
 
   for (let i = 0; i < maxIterations; i++) {
     if (clientClosed) {
@@ -277,9 +286,26 @@ buildRoute.post("/auto-fix", async (req, res) => {
     });
 
     if (buildRes.ok) {
+      bestFiles = currentFiles;
+      bestErrorCount = 0;
       stoppedReason = "green";
       break;
     }
+
+    // Revert-on-regression: if this iteration's cargo check is strictly
+    // worse than the best state we've seen, the previous refine round
+    // hurt more than helped. Roll currentFiles back to bestFiles and stop.
+    // (i === 0 always sets the baseline since bestErrorCount is +Infinity.)
+    if (buildRes.errors.length > bestErrorCount) {
+      currentFiles = [...bestFiles];
+      iter.reverted = true;
+      emit("reverted", { iteration: i, errorCount: buildRes.errors.length, bestErrorCount });
+      stoppedReason = "regression_reverted";
+      break;
+    }
+    bestFiles = [...currentFiles];
+    bestErrorCount = buildRes.errors.length;
+
     if (totalCostUsd >= maxCostUsd) {
       stoppedReason = "cost_cap";
       break;
@@ -356,11 +382,18 @@ buildRoute.post("/auto-fix", async (req, res) => {
   const finalOk = !!lastIter?.buildResult.ok;
   const totalDurationMs = Date.now() - t0;
 
+  // Hand back the lowest-error state we observed, not the live currentFiles.
+  // On a clean green run these are identical. On regression_reverted they
+  // differ — currentFiles was already reverted above, so this is a no-op
+  // there too, but keeping it explicit means the contract is clear: callers
+  // always get the best-seen state.
+  const finalFiles = bestErrorCount === 0 ? currentFiles : bestFiles;
+
   const finalPayload = {
     ok: finalOk,
     stoppedReason,
     iterations,
-    finalFiles: currentFiles,
+    finalFiles,
     finalOk,
     totalDurationMs,
     totalCostUsd,
