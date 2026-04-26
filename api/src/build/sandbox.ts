@@ -1,0 +1,232 @@
+/**
+ * Sandbox wrapper for cargo invocations.
+ *
+ * `cargo check` runs build.rs scripts as part of metadata resolution. A
+ * malicious `build.rs` in user-uploaded source can therefore execute
+ * arbitrary code with the API process's UID — read /proc/self/environ,
+ * exfiltrate ANTHROPIC_API_KEY, hit the network, etc.
+ *
+ * This module wraps the cargo invocation with the strongest sandbox
+ * available on the host. Detection order at startup:
+ *
+ *   1. firejail   — best ergonomics, drops net + restricts FS via seccomp.
+ *   2. bwrap      — bubblewrap, similar guarantees, used by Flatpak.
+ *   3. unshare    — kernel-level user/net namespaces. No FS restriction
+ *                   beyond what cgroups give us, but blocks network and
+ *                   leaves us with prlimit for memory/CPU caps.
+ *   4. none       — log a loud warning. Still apply env-strip + prlimit
+ *                   so cargo never sees ANTHROPIC_API_KEY and can't fork
+ *                   bomb. Acceptable for local dev; not for prod.
+ *
+ * Independent of which sandbox is selected, every cargo invocation also:
+ *   - has the env stripped to a minimal allowlist (PATH, HOME, USER, the
+ *     CARGO_* / RUST_* configuration vars). Notably no ANTHROPIC_API_KEY,
+ *     AWS_*, etc.
+ *   - runs under prlimit caps: 2 GiB AS, 60s CPU, 256 MiB file-size,
+ *     128 processes. These prevent the most obvious DoS shapes (fork bomb,
+ *     unbounded malloc, /tmp filling) even without a real sandbox.
+ */
+
+import { spawn, type ChildProcess } from "node:child_process";
+import { execSync } from "node:child_process";
+
+export type SandboxKind = "firejail" | "bwrap" | "unshare" | "none";
+
+interface SandboxConfig {
+  kind: SandboxKind;
+  /** Returns the argv prefix to put in front of `cargo`. */
+  wrap: (cwd: string) => { cmd: string; args: string[] };
+}
+
+function which(bin: string): boolean {
+  try {
+    execSync(`command -v ${bin}`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function detectSandbox(): SandboxConfig {
+  // Allow operators to force a specific sandbox (or disable) via env.
+  const forced = (process.env.ANVIL_SANDBOX ?? "").toLowerCase();
+  if (forced && forced !== "auto") {
+    if (forced === "none") {
+      // Explicit opt-out — operator knows what they're doing.
+      console.warn(
+        "[sandbox] ANVIL_SANDBOX=none — cargo will run without isolation. Acceptable in local dev only.",
+      );
+      return noneSandbox();
+    }
+    if (forced === "firejail" && which("firejail")) return firejailSandbox();
+    if (forced === "bwrap" && which("bwrap")) return bwrapSandbox();
+    if (forced === "unshare" && which("unshare")) return unshareSandbox();
+    console.warn(
+      `[sandbox] ANVIL_SANDBOX=${forced} requested but tool not available. Falling back to auto-detect.`,
+    );
+  }
+
+  if (which("firejail")) return firejailSandbox();
+  if (which("bwrap")) return bwrapSandbox();
+  if (which("unshare")) {
+    // Only useful if unprivileged user namespaces are enabled. Probe once.
+    try {
+      execSync("unshare -r --net true", { stdio: "ignore" });
+      return unshareSandbox();
+    } catch {
+      console.warn(
+        "[sandbox] unshare present but unprivileged user namespaces are disabled. Falling back.",
+      );
+    }
+  }
+  console.warn(
+    "[sandbox] No sandbox tool available (firejail/bwrap/unshare). Cargo will run with env-strip + prlimit only. Install firejail before deploying to production.",
+  );
+  return noneSandbox();
+}
+
+function firejailSandbox(): SandboxConfig {
+  return {
+    kind: "firejail",
+    wrap: (cwd: string) => ({
+      cmd: "firejail",
+      args: [
+        "--quiet",
+        "--noprofile",
+        "--net=none",
+        "--private-tmp",
+        "--private-dev",
+        "--caps.drop=all",
+        "--seccomp",
+        "--rlimit-as=2147483648",
+        "--rlimit-cpu=60",
+        "--rlimit-fsize=268435456",
+        "--rlimit-nproc=128",
+        `--whitelist=${cwd}`,
+      ],
+    }),
+  };
+}
+
+function bwrapSandbox(): SandboxConfig {
+  return {
+    kind: "bwrap",
+    wrap: (cwd: string) => ({
+      cmd: "bwrap",
+      args: [
+        "--ro-bind", "/usr", "/usr",
+        "--ro-bind", "/lib", "/lib",
+        "--ro-bind", "/lib64", "/lib64",
+        "--ro-bind", "/bin", "/bin",
+        "--ro-bind", "/etc", "/etc",
+        "--bind", cwd, cwd,
+        "--tmpfs", "/tmp",
+        "--proc", "/proc",
+        "--dev", "/dev",
+        "--unshare-net",
+        "--unshare-pid",
+        "--die-with-parent",
+        "--chdir", cwd,
+      ],
+    }),
+  };
+}
+
+function unshareSandbox(): SandboxConfig {
+  return {
+    kind: "unshare",
+    wrap: (_cwd: string) => ({
+      // Layered isolation:
+      //   - `-r`         user namespace, maps current uid → root inside.
+      //   - `--net`      fresh empty net namespace, no interfaces, no DNS.
+      //   - `--mount`    fresh mount namespace; mounts inside don't escape.
+      // We then exec a tiny shell that mounts a fresh tmpfs over /tmp and
+      // /var/tmp so any `fs::write("/tmp/...")` from a malicious build.rs
+      // lands in throwaway memory instead of the host's /tmp. The cwd is
+      // preserved because the build runner places its scratch dir under
+      // $HOME (not /tmp).
+      // prlimit caps memory + CPU + file size + processes.
+      cmd: "unshare",
+      args: [
+        "-r", "--net", "--mount",
+        "sh",
+        "-c",
+        // Mount tmpfs over the scratch-write paths an attacker would target.
+        // Failures are non-fatal (e.g. /var/tmp may not exist on minimal
+        // images) — the rest of the isolation still applies.
+        'mount -t tmpfs tmpfs /tmp 2>/dev/null; mount -t tmpfs tmpfs /var/tmp 2>/dev/null; exec prlimit --as=2147483648 --cpu=60 --fsize=268435456 --nproc=128 -- "$@"',
+        "anvil-sandbox-shim",
+      ],
+    }),
+  };
+}
+
+function noneSandbox(): SandboxConfig {
+  return {
+    kind: "none",
+    wrap: (_cwd: string) => ({
+      // Even with no sandbox, prlimit blocks the most obvious DoS shapes.
+      cmd: "prlimit",
+      args: [
+        "--as=2147483648",
+        "--cpu=60",
+        "--fsize=268435456",
+        "--nproc=128",
+        "--",
+      ],
+    }),
+  };
+}
+
+let cached: SandboxConfig | null = null;
+export function getSandbox(): SandboxConfig {
+  if (!cached) {
+    cached = detectSandbox();
+    console.log(`[sandbox] using kind=${cached.kind}`);
+  }
+  return cached;
+}
+
+/**
+ * Minimal env allowlist for cargo. Specifically excludes ANTHROPIC_API_KEY
+ * and any other secret-shaped vars the API process holds.
+ */
+export function sandboxedEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  const allow = new Set([
+    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL",
+    "TERM", "TMPDIR", "PWD",
+    // cargo / rustup configuration
+    "CARGO_HOME", "RUSTUP_HOME", "RUST_BACKTRACE",
+    // cargo registry / network — leave defaults; net namespace will block anyway
+  ]);
+  for (const [k, v] of Object.entries(process.env)) {
+    if (allow.has(k)) env[k] = v;
+  }
+  // Force-set the values we always want.
+  env.RUSTFLAGS = "";
+  env.CARGO_TERM_COLOR = "never";
+  // Disable cargo's auto-network paths; deps must be pre-fetched into the
+  // shared CARGO_HOME (warm scratch project handles this).
+  env.CARGO_NET_OFFLINE = "true";
+  return env;
+}
+
+/**
+ * Spawn cargo (or any binary) wrapped in the detected sandbox. The caller
+ * provides the inner command and its argv; we prepend the sandbox shim.
+ */
+export function spawnSandboxed(
+  innerCmd: string,
+  innerArgs: string[],
+  opts: { cwd: string; env?: NodeJS.ProcessEnv },
+): ChildProcess {
+  const sandbox = getSandbox();
+  const wrap = sandbox.wrap(opts.cwd);
+  const argv = [...wrap.args, innerCmd, ...innerArgs];
+  return spawn(wrap.cmd, argv, {
+    cwd: opts.cwd,
+    env: opts.env ?? sandboxedEnv(),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}

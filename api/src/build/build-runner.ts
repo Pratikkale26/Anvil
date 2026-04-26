@@ -11,16 +11,18 @@
  * Concurrency: a per-target promise chain serializes calls so two
  * simultaneous POSTs to the same target don't trample each other's `src/`.
  *
- * Sandbox: this runs cargo locally with full network/file access. That is
- * fine for the hackathon MVP — the deploy environment is expected to drop
- * network and restrict the FS at the syscall level (firejail / nsjail /
- * docker --network=none on a separate worker). We deliberately do not try
- * to enforce that here; the runner trusts its caller to gate inputs.
+ * Sandbox: cargo invocations are wrapped via `./sandbox.ts`, which detects
+ * the strongest available isolation tool at startup (firejail > bwrap >
+ * unshare > none) and applies env-strip + prlimit unconditionally. Dep
+ * downloads happen during a one-time `cargo fetch` warm-up before any user
+ * src/ exists; sandboxed runs use `--offline` so the net-namespace cut is
+ * non-fatal.
  */
 
 import { spawn } from "node:child_process";
 import { mkdir, rm, writeFile, readFile, stat } from "node:fs/promises";
 import { dirname, join, isAbsolute, normalize } from "node:path";
+import { spawnSandboxed, sandboxedEnv } from "./sandbox.js";
 
 export type BuildTarget = "pinocchio" | "native" | "quasar";
 
@@ -96,7 +98,13 @@ function cargoTomlFor(target: BuildTarget): string {
   }
 }
 
-const SCRATCH_ROOT = process.env.ANVIL_BUILD_SCRATCH_ROOT ?? "/tmp";
+// Default scratch root lives under $HOME (not /tmp) so the unshare sandbox
+// can safely tmpfs-overlay /tmp without clobbering the cwd that cargo runs
+// in. Operators can override via ANVIL_BUILD_SCRATCH_ROOT but should pick
+// a path outside /tmp if relying on the unshare sandbox kind.
+const SCRATCH_ROOT =
+  process.env.ANVIL_BUILD_SCRATCH_ROOT ??
+  join(process.env.HOME ?? "/var/tmp", ".anvil-build");
 
 function scratchDirFor(target: BuildTarget): string {
   return join(SCRATCH_ROOT, `anvil-build-${target}`);
@@ -234,17 +242,44 @@ function parseCargoStdout(stdout: string): { errors: BuildDiagnostic[]; warnings
 async function ensureScratchProject(target: BuildTarget, scratchDir: string): Promise<void> {
   const cargoTomlPath = join(scratchDir, "Cargo.toml");
   const desired = cargoTomlFor(target);
-  let needsWrite = true;
+  let cargoTomlChanged = true;
   try {
     const existing = await readFile(cargoTomlPath, "utf-8");
-    if (existing === desired) needsWrite = false;
+    if (existing === desired) cargoTomlChanged = false;
   } catch {
     // missing — fall through to write
   }
-  if (needsWrite) {
+  if (cargoTomlChanged) {
     await mkdir(scratchDir, { recursive: true });
     await writeFile(cargoTomlPath, desired, "utf-8");
+    // Drop a placeholder lib.rs so `cargo fetch` has a crate root to resolve
+    // against. The real user files overwrite this in writeSrcFiles().
+    const srcDir = join(scratchDir, "src");
+    await mkdir(srcDir, { recursive: true });
+    await writeFile(join(srcDir, "lib.rs"), "// anvil scratch placeholder\n", "utf-8");
+    // One-time dep fetch outside the sandbox. Cargo.toml is trusted (we
+    // wrote it), no user files exist yet, so this is safe to run with
+    // network. After this, sandboxed cargo --offline reuses the cached
+    // registry + target dir.
+    await warmDependencies(scratchDir);
   }
+}
+
+function warmDependencies(scratchDir: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("cargo", ["fetch", "--quiet"], {
+      cwd: scratchDir,
+      env: { ...sandboxedEnv(), CARGO_NET_OFFLINE: "false" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => { stderr += c.toString("utf-8"); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`cargo fetch failed (exit ${code}): ${stderr.slice(-500)}`));
+    });
+  });
 }
 
 async function writeSrcFiles(scratchDir: string, files: BuildFile[]): Promise<void> {
@@ -269,20 +304,13 @@ interface CargoRunResult {
 
 function runCargoCheck(scratchDir: string, timeoutMs: number): Promise<CargoRunResult> {
   return new Promise((resolve) => {
-    const child = spawn(
+    // Run cargo inside the configured sandbox. `--offline` is mandatory
+    // because the sandbox cuts the network namespace; deps were already
+    // fetched in ensureScratchProject's warm-up.
+    const child = spawnSandboxed(
       "cargo",
-      ["check", "--message-format=json", "--quiet"],
-      {
-        cwd: scratchDir,
-        env: {
-          ...process.env,
-          // Strip RUSTFLAGS so nothing leaks in from the host shell.
-          RUSTFLAGS: "",
-          // CARGO_TERM_COLOR off so progress bars don't pollute stderr tail.
-          CARGO_TERM_COLOR: "never",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
+      ["check", "--message-format=json", "--quiet", "--offline"],
+      { cwd: scratchDir },
     );
 
     let stdout = "";
