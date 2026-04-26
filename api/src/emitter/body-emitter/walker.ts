@@ -734,6 +734,13 @@ export class BodyWalker {
       .replace(/\bcontext\.bumps\b/g, "ctx.bumps")
       .replace(/\bcontext\.program_id\b/g, "ctx.program_id")
       .replace(/\bcontext\.remaining_accounts\b/g, "ctx.remaining_accounts");
+    // Strip `.to_account_info()` universally — Anchor's Account<'info, T>
+    // method that's a noop on bare AccountInfo (native) and unresolvable
+    // on pinocchio/quasar. Constraint-check emit + helper bodies + impl-
+    // method inlinings all flow through this transformer, so a single
+    // strip here covers them all. seed-expression normalizer has its
+    // own equivalent strip; both paths converge to the same shape.
+    transformed = transformed.replace(/\.to_account_info\(\)/g, "");
     // Anchor's `id()` returns the program's declared pubkey. In compiled
     // handlers the parameter `program_id: &Pubkey` is in scope and points at
     // the same thing, so we route both `&id()` and bare `id()` to it. This

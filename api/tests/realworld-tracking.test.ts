@@ -59,30 +59,29 @@ const TRACKED: TrackedCase[] = [
   // NOTE: anchor-escrow-2025 was promoted to MUST_PASS in realworld-cargo.test.ts
   // after unsalvageable-helper commentout landed (errors 31/28 → 0/0).
 
-  // coral-escrow: splitConstraintTokens now handles `<=` / `>=` operators
-  // inside constraint values without inflating angle-depth, so each
-  // `constraint = …` token in #[account(...)] is split correctly into its
-  // own Constraint entry. Bare `constraint` / `close` identifiers no
-  // longer leak into emit. Pin 15 → 11, native 10 → 6. Remaining gaps:
-  // `seeds` scope, `to_account_info` method on bare AccountInfo, missing
-  // `token_account_amount` helper for InterfaceAccount<TokenAccount>.
+  // coral-escrow: universal `.to_account_info()` strip + token_account_amount
+  // helper firing on constraint expressions (this commit) closes 5 errors on
+  // each target. Pin 11 → 6, native 6 → 1. Native remaining: just `seeds`
+  // scope (#3 in this batch). Pin remaining: pinocchio Pubkey is [u8; 32]
+  // not a struct, so `Pubkey::find_program_address` from source pass-through
+  // doesn't resolve — separate gap not covered by this commit.
   {
     id: "coral-escrow",
     target: "pinocchio",
     path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 11,
+    maxErrors: 6,
     reason:
-      "to_account_info on AccountInfo + missing token_account_amount + find_program_address on Pubkey array.",
+      "Pubkey::find_program_address on pinocchio's [u8; 32] alias + seeds scope + E0282 type inference.",
   },
   {
     id: "coral-escrow",
     target: "native",
     path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 6,
+    maxErrors: 1,
     reason:
-      "to_account_info on AccountInfo + missing token_account_amount + seeds scope.",
+      "Just `seeds` scope (#3 follow-up — body-emitter drops source-side `let seeds = …`).",
   },
 
   // coral-multisig: comparison-context-aware *X.key deref strip (this commit)

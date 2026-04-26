@@ -84,10 +84,12 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     w.lines.push(signerSeedsPrelude);
   }
 
-  // Strip .to_account_info() — not available in pinocchio/quasar
-  if (w.emitter.frameworkName !== "Native") {
-    transformedRawCode = transformedRawCode.replace(/\.to_account_info\(\)/g, "");
-  }
+  // Strip .to_account_info() on all targets. Anchor's Account<'info, T>
+  // exposes the method; once we've resolved to bare solana_program /
+  // pinocchio AccountInfo (which IS AccountInfo by definition — no-op on
+  // native, doesn't exist on pinocchio/quasar), the method call is
+  // either redundant or unresolvable. Strip universally.
+  transformedRawCode = transformedRawCode.replace(/\.to_account_info\(\)/g, "");
 
   // ── Final CPI cleanup: convert remaining CpiContext patterns to invoke() ──
   // Handles cases where CpiContext::new() uses pre-extracted variables or was

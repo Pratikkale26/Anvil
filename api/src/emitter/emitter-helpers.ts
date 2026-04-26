@@ -126,8 +126,27 @@ export function irNeedsSignedLamportsHelper(ir: SolanaIR): boolean {
 }
 
 export function irNeedsTokenAmountHelper(ir: SolanaIR): boolean {
-  return ir.instructions.some((instr) =>
-    instr.body.some((stmt) => {
+  return ir.instructions.some((instr) => {
+    // Constraint-check emit invokes `transformCtxAccountsReferences` on the
+    // raw constraint value, which rewrites `<X>.amount` → `token_account_amount(X)?`
+    // when X is a token-like account. coral-escrow's `constraint =
+    // escrow_account.taker_amount <= taker_deposit_token_account.amount` is
+    // the canonical case — body classifies this as a `constraint` Constraint
+    // entry, not a pass_through, so we have to scan constraint values too.
+    const constraintTrigger = instr.accounts.some((account) =>
+      account.constraints.some((c) =>
+        c.kind === "constraint" &&
+        !!c.value &&
+        instr.accounts.some((other) => {
+          const otherName = snakeCase(other.name);
+          const tokenLike = other.accountType.includes("TokenAccount")
+            || other.constraints.some((oc) => oc.kind.startsWith("token::") || oc.kind.startsWith("associated_token::"));
+          return tokenLike && new RegExp(`\\b${otherName}\\.amount\\b`).test(c.value!);
+        })
+      )
+    );
+    if (constraintTrigger) return true;
+    return instr.body.some((stmt) => {
       switch (stmt.kind) {
         case "cpi_spl_transfer":
         case "cpi_spl_mint_to":
@@ -146,8 +165,8 @@ export function irNeedsTokenAmountHelper(ir: SolanaIR): boolean {
         default:
           return false;
       }
-    })
-  );
+    });
+  });
 }
 
 export function irNeedsUnsignedSplMintToHelper(ir: SolanaIR): boolean {

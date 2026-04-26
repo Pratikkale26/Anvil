@@ -399,6 +399,41 @@ pub struct Check<'info> {
     expect(ix.content).not.toMatch(/\|a\|\s*a\s*==\s*\*signer\.key/);
   });
 
+  test(".to_account_info() stripped universally on native + token_account_amount fires on constraint values", async () => {
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>) -> Result<()> { Ok(()) }
+}
+#[derive(Accounts)]
+pub struct Run<'info> {
+    #[account(
+        mut,
+        constraint = vault.amount >= 100,
+        constraint = state.deposit == *vault.to_account_info().key,
+    )]
+    pub state: Account<'info, S>,
+    pub vault: Account<'info, anchor_spl::token::TokenAccount>,
+}
+#[account] pub struct S { pub deposit: Pubkey }
+`;
+    const ir = await parseOk(src);
+    const out = emitNativeFull(ir);
+    const ix = out.files.find((f) => /instructions\/run\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    // .to_account_info() must be gone from constraint check emit (was
+    // gated to non-Native, now universal).
+    expect(ix.content).not.toContain(".to_account_info()");
+    // token_account_amount helper should fire because vault.amount is
+    // referenced in a constraint = … expression.
+    const helpers = out.files.find((f) => f.path === "helpers.rs");
+    expect(helpers?.content).toMatch(/fn token_account_amount/);
+    // The constraint check should have rewritten vault.amount to the helper.
+    expect(ix.content).toMatch(/token_account_amount\(vault\)\?/);
+  });
+
   test("&Pubkey deref strip is robust across nested closures + multi-arg calls", async () => {
     // Pin the regex behavior of walker.ts:215-228 against a battery of
     // shapes likely to appear in real Anchor programs. Failing this test
