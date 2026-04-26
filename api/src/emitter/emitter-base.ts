@@ -243,10 +243,28 @@ export abstract class BaseEmitter {
     return (ir.imports ?? [])
       .map((statement) => {
         const trimmed = statement.trim().replace(/;$/, "");
-        return trimmed.startsWith("use ") || trimmed.startsWith("pub use ")
+        const normalized = trimmed.startsWith("use ") || trimmed.startsWith("pub use ")
           ? `${trimmed};`
           : `use ${trimmed};`;
+        // Anchor re-exports solana-program, so users often write
+        // `use anchor_lang::solana_program::instruction::Instruction;`.
+        // The anchor_lang filter below would strip that, leaving the
+        // referenced types undefined. Rewrite to `use solana_program::...`
+        // so they resolve against the target's solana-program dep
+        // (native ships it; pinocchio doesn't, so the rewrite survives
+        // for native and gets dropped by the pinocchio filter below).
+        const rewritten = normalized.replace(
+          /\banchor_lang\s*::\s*solana_program\b/g,
+          "solana_program",
+        );
+        // Skip rewritten Clock / Rent imports — the native emitter adds
+        // those automatically when sysvar usage is detected, and a second
+        // import for the same type triggers E0252 (defined multiple times).
+        if (/^use\s+solana_program::(?:sysvar::)?clock::Clock\s*;?$/.test(rewritten.trim())) return "";
+        if (/^use\s+solana_program::(?:sysvar::)?rent::Rent\s*;?$/.test(rewritten.trim())) return "";
+        return rewritten;
       })
+      .filter((stmt) => stmt.length > 0)
       .filter((statement) => {
         if (statement.startsWith("use anchor_lang::")) return false;
         // Filter out `use { anchor_lang::..., anchor_spl::... }` block imports
@@ -277,6 +295,13 @@ export abstract class BaseEmitter {
         // Drop the imports so the file compiles. Affects fixtures like
         // cpi-hand → cpi-lever.
         if (/^use\s+\w+::(?:cpi|accounts|program)(?:::|;)/.test(statement)) return false;
+        // solana_program imports are valid on native (which deps it) but
+        // not on pinocchio/quasar (which use their own crate). Drop on
+        // non-native. The anchor_lang::solana_program rewrite above means
+        // a source `use anchor_lang::solana_program::X;` lands here as
+        // `use solana_program::X;` and gets correctly stripped on those
+        // targets while surviving on native.
+        if (!isNative && /^use\s+solana_program(?:::|;)/.test(statement)) return false;
         // External crates: native carries them through (project-scaffold adds
         // matching deps to Cargo.toml). Pinocchio/Quasar filter them out
         // because there's no compatible dep in their Cargo.toml.

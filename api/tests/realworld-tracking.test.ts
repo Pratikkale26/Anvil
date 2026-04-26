@@ -85,25 +85,28 @@ const TRACKED: TrackedCase[] = [
       "From-trait conversions + constraint parser gaps. Same as pinocchio.",
   },
 
-  // coral-multisig: err! macro fix (cbc6f3c) cut this 13 → 10. Remaining
-  // errors are Vec-on-account-field ops (`multisig.owners.iter()` etc.)
-  // which Anvil's IR doesn't yet model + execute_transaction's Instruction
-  // / AccountMeta type usage.
+  // coral-multisig: Vec<Pubkey> normalization fix + auto-import for
+  // Instruction/AccountMeta + anchor_lang::solana_program rewrite cut
+  // native 10 → 4. Pinocchio still 7 because source uses
+  // `solana_program::program::invoke_signed(...)` directly which has no
+  // pinocchio equivalent at pass-through level. Remaining native errors:
+  // `seeds` scope, `&Pubkey vs Pubkey` body-emitter quirk, `&*transaction`
+  // can't deref the inlined struct.
   {
     id: "coral-multisig",
     target: "pinocchio",
     path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/multisig)",
-    maxErrors: 12,
-    reason: "Vec-typed account field ops (.iter/.len) + execute_transaction CPI shape.",
+    maxErrors: 7,
+    reason: "Source uses solana_program:: directly which pinocchio can't carry.",
   },
   {
     id: "coral-multisig",
     target: "native",
     path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/multisig)",
-    maxErrors: 12,
-    reason: "Same as pinocchio.",
+    maxErrors: 4,
+    reason: "Body-emitter quirks: &Pubkey/Pubkey comparison, missing seeds scope, &*transaction deref.",
   },
 ];
 

@@ -162,6 +162,18 @@ export function normalizeSolanaType(rustType: string): string {
     "bool","String","Vec<u8>",
   ]);
   if (primitives.has(t)) return t;
-  if (t === "Pubkey" || t.includes("Pubkey")) return "Pubkey";
+  // Container types must be checked BEFORE the bare-Pubkey collapse, otherwise
+  // `Vec<Pubkey>` and `Option<Pubkey>` lose their wrapper and the body
+  // emitter treats `field.iter()` / `field.is_some()` as method calls on a
+  // single Pubkey (E0599 cascade in coral-multisig).
+  if (/^Vec\s*<\s*Pubkey\s*>$/.test(t)) return "Vec<Pubkey>";
+  if (/^Option\s*<\s*Pubkey\s*>$/.test(t)) return "Option<Pubkey>";
+  if (/^Vec\s*<\s*bool\s*>$/.test(t)) return "Vec<bool>";
+  if (/^Vec\s*<\s*[ui]\d+\s*>$/.test(t)) return t;
+  if (t === "Pubkey") return "Pubkey";
+  // Bare `Pubkey` substring (after the container checks above) catches
+  // qualified paths like `solana_program::pubkey::Pubkey` — collapse to
+  // the bare type since that's what the rest of the pipeline expects.
+  if (/\bPubkey\b/.test(t) && !/[<>]/.test(t)) return "Pubkey";
   return t; // custom type
 }

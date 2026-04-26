@@ -252,6 +252,43 @@ use solana_program::{
       imports.push(`use solana_program::sysvar::rent::Rent;`);
     }
 
+    // Auto-import Instruction / AccountMeta when source-level pass-through,
+    // helper bodies, custom-type impl items, or account impl items reference
+    // them unqualified. Anchor's `prelude::*` re-exports both, but our
+    // import filter strips the glob — without this auto-import the
+    // references are unresolved on native (coral-multisig pattern).
+    // Scan every text-bearing IR field — pass_through code, state-assign
+    // values, helper bodies, type/account impl items. The
+    // `AccountMeta::new_readonly(...)` in coral-multisig's
+    // `ix.accounts = ix.accounts.iter().map(...).collect()` lives inside a
+    // state_field_assign value, not a pass_through.
+    const allCarriedText = [
+      ..._ir.instructions.flatMap((i) =>
+        (i.body ?? []).flatMap((s) => {
+          if (s.kind === "pass_through") return [(s as { code: string }).code];
+          if (s.kind === "state_field_assign") return [(s as { value: string }).value];
+          if (s.kind === "require") return [(s as { condition: string; errorMsg?: string }).condition];
+          return [];
+        }),
+      ),
+      ...(_ir.helperFns ?? []).map((h) => h.rawCode),
+      ..._ir.types.flatMap((t) => [t.rawCode ?? "", ...(t.implItems ?? [])]),
+      ..._ir.accounts.flatMap((a) => a.implItems ?? []),
+    ].join("\n");
+    const sourceImportsText = (_ir.imports ?? []).join("\n");
+    const alreadyImportsInstruction = /\binstruction::Instruction\b/.test(sourceImportsText);
+    const alreadyImportsAccountMeta = /\binstruction::AccountMeta\b/.test(sourceImportsText);
+    const referencesInstruction =
+      /\bInstruction\b/.test(allCarriedText) && !alreadyImportsInstruction;
+    const referencesAccountMeta =
+      /\bAccountMeta\b/.test(allCarriedText) && !alreadyImportsAccountMeta;
+    const items: string[] = [];
+    if (referencesInstruction) items.push("Instruction");
+    if (referencesAccountMeta) items.push("AccountMeta");
+    if (items.length > 0) {
+      imports.push(`use solana_program::instruction::{${items.join(", ")}};`);
+    }
+
     imports.push(...this.filteredSourceImports(_ir));
     return imports.join("\n");
   }
