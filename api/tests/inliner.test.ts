@@ -399,6 +399,45 @@ pub struct Check<'info> {
     expect(ix.content).not.toMatch(/\|a\|\s*a\s*==\s*\*signer\.key/);
   });
 
+  test("T22 extension types auto-imported on native when body references them", async () => {
+    const src = PROG_HEADER + `
+use anchor_spl::{
+    token_2022::spl_token_2022::{
+        extension::{
+            transfer_fee::TransferFeeConfig, BaseStateWithExtensions, StateWithExtensions,
+        },
+        state::Mint as MintState,
+    },
+    token_interface::{Mint, Token2022, TokenAccount},
+};
+#[program]
+pub mod p {
+    use super::*;
+    pub fn check(ctx: Context<Check>) -> Result<()> {
+        let mint_data = ctx.accounts.mint.to_account_info().data.borrow();
+        let _state = StateWithExtensions::<MintState>::unpack(&mint_data)?;
+        let _config = _state.get_extension::<TransferFeeConfig>()?;
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Check<'info> {
+    pub mint: Account<'info, S>,
+}
+#[account] pub struct S { pub x: u64 }
+`;
+    const ir = await parseOk(src);
+    const out = emitNativeFull(ir);
+    const lib = out.files.find((f) => f.path === "lib.rs");
+    expect(lib).toBeDefined();
+    if (!lib) return;
+    // Auto-imports added — `anchor_spl::*` was filtered, but the body
+    // still references TransferFeeConfig / StateWithExtensions / MintState.
+    expect(lib.content).toContain("use spl_token_2022::extension::transfer_fee::TransferFeeConfig;");
+    expect(lib.content).toContain("use spl_token_2022::extension::StateWithExtensions;");
+    expect(lib.content).toContain("use spl_token_2022::state::Mint as MintState;");
+  });
+
   test("user-defined From impl between user types is preserved on native", async () => {
     const src = PROG_HEADER + `
 #[program]

@@ -289,6 +289,17 @@ use solana_program::{
       imports.push(`use solana_program::instruction::{${items.join(", ")}};`);
     }
 
+    // Auto-import SPL Token-2022 extension types when the source body
+    // references them. Source typically pulls these in through nested
+    // `anchor_spl::{token_2022::spl_token_2022::extension::*, …}` blocks
+    // that the import filter strips wholesale (anchor_spl is always
+    // filtered to avoid leaking Anchor-internals). The names below are
+    // the standard Token-2022 extension surface used by program-examples
+    // and the common Anchor T22 patterns. Only added when the source
+    // doesn't already provide a direct `spl_token_2022::*` import.
+    const t22ExtImports = collectT22ExtensionAutoImports(allCarriedText, sourceImportsText);
+    if (t22ExtImports.length > 0) imports.push(...t22ExtImports);
+
     imports.push(...this.filteredSourceImports(_ir));
     return imports.join("\n");
   }
@@ -1192,4 +1203,58 @@ export function emitNative(ir: SolanaIR): string {
 
 export function emitNativeFull(ir: SolanaIR) {
   return emitter.emit(ir);
+}
+
+/**
+ * Build the spl_token_2022 / spl_pod use-statements needed by the emitted
+ * native body. The source typically imports these through a nested
+ * `anchor_spl::{token_2022::spl_token_2022::extension::*, …}` block which
+ * the global anchor_spl filter strips. Without a replacement, every
+ * extension-type reference in the body becomes E0412 / E0433.
+ *
+ * Only adds an import when (a) the body actually references the symbol
+ * and (b) the source's other imports don't already cover it. Aliased
+ * references like `Mint as MintState` need the explicit alias preserved
+ * — we hardcode the canonical aliases used across program-examples.
+ */
+function collectT22ExtensionAutoImports(allCarriedText: string, sourceImportsText: string): string[] {
+  const out: string[] = [];
+  const has = (re: RegExp) => re.test(allCarriedText);
+
+  // Anchor source typically pulls extension types in through a nested
+  // `use anchor_spl::{ token_2022::spl_token_2022::extension::*, … }`
+  // block. The global anchor_spl filter strips that wholesale (any
+  // `use` containing the substring `anchor_spl` is dropped), so even
+  // though the type identifiers ARE mentioned in the source's imports
+  // text, they don't survive into the emitted file. Dedup against
+  // direct `use spl_token_2022::*` / `use spl_pod::*` lines only —
+  // those would have come from a user-hand-rolled non-Anchor import.
+  const directSourceImports = sourceImportsText
+    .split(/(?=^use\s)/m)
+    .filter((stmt) => !/\banchor_spl\b/.test(stmt))
+    .join("\n");
+  const directHas = (re: RegExp) => re.test(directSourceImports);
+
+  // Extension types live in `spl_token_2022::extension::*`.
+  const extensionTypes: { ident: string; path: string }[] = [
+    { ident: "TransferFeeConfig", path: "spl_token_2022::extension::transfer_fee::TransferFeeConfig" },
+    { ident: "BaseStateWithExtensions", path: "spl_token_2022::extension::BaseStateWithExtensions" },
+    { ident: "StateWithExtensions", path: "spl_token_2022::extension::StateWithExtensions" },
+    { ident: "ExtensionType", path: "spl_token_2022::extension::ExtensionType" },
+    { ident: "PodMint", path: "spl_token_2022::pod::PodMint" },
+    { ident: "OptionalNonZeroPubkey", path: "spl_pod::optional_keys::OptionalNonZeroPubkey" },
+  ];
+  for (const { ident, path } of extensionTypes) {
+    if (!has(new RegExp(`\\b${ident}\\b`))) continue;
+    if (directHas(new RegExp(`\\b${ident}\\b`))) continue;
+    out.push(`use ${path};`);
+  }
+
+  // Aliased `state::Mint as MintState` — special-case the alias since
+  // the symbol identity differs from the path tail.
+  if (has(/\bMintState\b/) && !directHas(/\bspl_token_2022::state::Mint\s+as\s+MintState\b/)) {
+    out.push(`use spl_token_2022::state::Mint as MintState;`);
+  }
+
+  return out;
 }

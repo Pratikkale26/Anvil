@@ -154,8 +154,8 @@ const TRACKED: TrackedCase[] = [
     target: "native",
     path: "/tmp/program-examples/tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs",
     source: "solana-developers/program-examples (tokens/token-2022/transfer-fee/anchor)",
-    maxErrors: 14,
-    reason: "spl_token_2022::extension::* imports not surfaced in emit.",
+    maxErrors: 6,
+    reason: "Remaining: InterfaceAccount<TokenAccount> referenced in account structs + 2 E0599 method-not-found on AccountInfo. Extension types now auto-imported.",
   },
 
   // Token-2022 transfer-hook hello-world. Same ext-import gap as transfer-fee
@@ -174,8 +174,8 @@ const TRACKED: TrackedCase[] = [
     target: "native",
     path: "/tmp/program-examples/tokens/token-2022/transfer-hook/hello-world/anchor/programs/transfer-hook/src/lib.rs",
     source: "solana-developers/program-examples (tokens/token-2022/transfer-hook/hello-world/anchor)",
-    maxErrors: 10,
-    reason: "spl_token_2022::extension::transfer_hook + ExtraAccountMetaList unhandled.",
+    maxErrors: 8,
+    reason: "ExtraAccountMetaList shape unhandled + InterfaceAccount<TokenAccount> in struct. Extension types now auto-imported.",
   },
 ];
 
