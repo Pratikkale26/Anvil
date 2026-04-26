@@ -34,7 +34,7 @@ import {
   hasDeriveAttribute,
   findDescendant,
 } from "./ast-helpers.js";
-import { parseInstructions, extractImplTargetName } from "./instruction-parser.js";
+import { parseInstructions, extractImplTargetName, parseFromImplDeclaration, type FromImplCatalogEntry } from "./instruction-parser.js";
 import { parseAccountDataStruct } from "./account-parser.js";
 import { parseErrorEnum, parseHelperFn, parseCustomType, extractImports, extractProgramId } from "./type-parser.js";
 
@@ -126,6 +126,7 @@ export async function parseAnchor(source: string): Promise<ParseResult | ParseEr
       topLevel.accountsStructs,
       topLevel.implMethods,
       topLevel.functionIndex,
+      topLevel.fromImpls,
       source,
     );
 
@@ -203,6 +204,8 @@ interface TopLevelItems {
    * them in their own inherent impl block.
    */
   implItems: { implName: string; kind: "fn" | "const"; name: string; rawText: string }[];
+  /** From-trait impls, keyed for resolving typed `.into()` call sites at parse time. */
+  fromImpls: FromImplCatalogEntry[];
   customTypes: { node: SyntaxNode; attrs: SyntaxNode[]; kind: "struct" | "enum" }[];
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[];
   constants: SyntaxNode[];
@@ -217,6 +220,7 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
     helperFns: [],
     implMethods: [],
     implItems: [],
+    fromImpls: [],
     customTypes: [],
     functionIndex: [],
     constants: [],
@@ -318,6 +322,8 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
         }
 
         case "impl_item": {
+          const fromEntry = parseFromImplDeclaration(child);
+          if (fromEntry) items.fromImpls.push(fromEntry);
           const implName = extractImplTargetName(child);
           const implBody = child.childForFieldName("body") ?? findDescendant(child, "declaration_list");
           if (!implName || !implBody) break;

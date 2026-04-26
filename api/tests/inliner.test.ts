@@ -226,6 +226,51 @@ impl<'info> Foo<'info> {
     expect(okCount).toBe(1);
   });
 
+  test("From<&mut Accounts> for CpiContext is inlined at ctx.accounts.into() call site", async () => {
+    const src = PROG_HEADER + `
+use anchor_spl::token::{self, SetAuthority};
+#[program]
+pub mod p {
+    use super::*;
+    pub fn freeze(ctx: Context<Freeze>) -> Result<()> {
+        token::set_authority(
+            ctx.accounts.into(),
+            anchor_spl::token::spl_token::instruction::AuthorityType::AccountOwner,
+            Some(Pubkey::new_unique()),
+        )?;
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Freeze<'info> {
+    #[account(mut)] pub account: Account<'info, S>,
+    pub authority: Signer<'info>,
+    pub token_program: Program<'info, anchor_spl::token::Token>,
+}
+impl<'info> From<&mut Freeze<'info>> for CpiContext<'_, '_, '_, 'info, SetAuthority<'info>> {
+    fn from(accounts: &mut Freeze<'info>) -> Self {
+        let cpi_accounts = SetAuthority {
+            account_or_mint: accounts.account.to_account_info(),
+            current_authority: accounts.authority.to_account_info(),
+        };
+        let cpi_program_id = accounts.token_program.to_account_info();
+        CpiContext::new(cpi_program_id, cpi_accounts)
+    }
+}
+#[account] pub struct S { pub x: u64 }
+`;
+    const ir = await parseOk(src);
+    const ix = ir.instructions[0]!;
+    // The classifier should recognize the inlined CpiContext::new(...) and
+    // emit a cpi_spl_set_authority statement. Without From-trait inlining,
+    // this would have stayed as ctx.accounts.into() and classified as pass_through.
+    const setAuth = ix.body.find((s) => s.kind === "cpi_spl_set_authority");
+    expect(setAuth).toBeDefined();
+    expect(ix.rawBody).toContain("CpiContext::new");
+    expect(ix.rawBody).toContain("ctx.accounts.account.to_account_info()");
+    expect(ix.rawBody).not.toContain("ctx.accounts.into()");
+  });
+
   test("&ctx.bumps argument is substituted into impl body bumps refs", async () => {
     const src = PROG_HEADER + `
 #[program]

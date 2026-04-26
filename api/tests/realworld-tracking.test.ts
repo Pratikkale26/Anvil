@@ -59,30 +59,29 @@ const TRACKED: TrackedCase[] = [
   // NOTE: anchor-escrow-2025 was promoted to MUST_PASS in realworld-cargo.test.ts
   // after unsalvageable-helper commentout landed (errors 31/28 → 0/0).
 
-  // coral-escrow: classic anchor `into_transfer_to_taker_context()` style
-  // helpers + Token-2022 transfer_checked. Sub-expression rewrite (this
-  // session) folded `transfer_checked(ctx.accounts.into_X_context()
-  // .with_signer(seeds), ...)` into inline CpiContext::new_with_signer,
-  // moving these from 24/15 → 23/14. Remaining errors are pass-through
-  // `set_authority` (no `cpi_set_authority` IR kind yet) and constraint
-  // parser issues unrelated to impl-method inlining.
+  // coral-escrow: From-trait `ctx.accounts.into()` inlining (this commit) folds
+  // the From<&mut InitializeEscrow> for CpiContext<SetAuthority> body into the
+  // call site, routing init_escrow's set_authority through cpi_spl_set_authority
+  // instead of pass_through. Pin 17 → 15, native 13 → 10. Remaining errors are
+  // constraint-parser noise (`constraint = …, close = …` literals from
+  // #[account(...)] parse) and #[account] meta-attr propagation gaps.
   {
     id: "coral-escrow",
     target: "pinocchio",
     path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 17,
+    maxErrors: 15,
     reason:
-      "From-trait conversions (`ctx.accounts.into()` typed as CpiContext<SetAuthority>) + constraint parser gaps. set_authority CPI lands for inline-CpiContext shape; From-trait shape needs #3.",
+      "Constraint-parser noise + downstream emit gaps. From-trait CPI inlining landed for the CpiContext factory shape.",
   },
   {
     id: "coral-escrow",
     target: "native",
     path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 13,
+    maxErrors: 10,
     reason:
-      "From-trait conversions + constraint parser gaps. Same as pinocchio.",
+      "Constraint-parser noise + downstream emit gaps. Same root causes as pinocchio.",
   },
 
   // coral-multisig: Vec<Pubkey> normalization fix + auto-import for

@@ -26,6 +26,7 @@ export function parseInstructions(
   accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[]; instructionArgs: string[] }[],
   implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
+  fromImpls: FromImplCatalogEntry[],
   source: string,
 ): SolanaIR["instructions"] {
   const body = programModNode.childForFieldName("body");
@@ -44,7 +45,7 @@ export function parseInstructions(
     }
 
     if (child.type === "function_item") {
-      const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, source);
+      const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, fromImpls, source);
       if (instr) instructions.push(instr);
     }
 
@@ -61,6 +62,7 @@ function parseInstructionFn(
   accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[]; instructionArgs: string[] }[],
   implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
+  fromImpls: FromImplCatalogEntry[],
   source: string,
 ): SolanaIR["instructions"][0] | null {
   const fnName = fnNode.childForFieldName("name")?.text;
@@ -123,6 +125,16 @@ function parseInstructionFn(
         }
       }
     }
+  }
+
+  // From-trait inlining runs first as a textual pre-pass: typed `<expr>.into()`
+  // sites are rewritten to the inlined From body so downstream passes see the
+  // concrete CpiContext / struct literal. Without this, coral-escrow's
+  // `ctx.accounts.into()` and coral-multisig's `(&*tx).into()` survive
+  // verbatim and the CPI detector / emitter can't make sense of them.
+  if (fromImpls.length > 0) {
+    const rewritten = rewriteFromTraitConversions(parser, bodyFnNode, fromImpls, contextType);
+    if (rewritten) bodyFnNode = rewritten;
   }
 
   // Two static-impl handler conventions to inline:
@@ -295,6 +307,65 @@ export function extractImplTargetName(implNode: SyntaxNode): string | null {
 
   const textMatch = implNode.text.match(/^impl(?:<[^>]+>)?\s+([A-Za-z_][A-Za-z0-9_]*)/);
   return textMatch?.[1] ?? null;
+}
+
+export interface FromImplCatalogEntry {
+  /** Source type the From is keyed on, with leading `&`/`&mut` stripped. */
+  sourceType: string;
+  /** The `for X` target's leading identifier (CpiContext, Instruction, …). */
+  targetType: string;
+  /** Whether the source was `&mut T` (vs `&T` or `T`). */
+  isMutRef: boolean;
+  /** Param name in `fn from(NAME: …)`, used for in-body identifier substitution. */
+  paramName: string;
+  /** `fn from`'s body inner text (no outer braces). */
+  bodyText: string;
+}
+
+/**
+ * Recognize `impl[<G>] From<[&[mut ]]Source[<…>]> for Target[<…>] { fn from(NAME: …) -> … { … } }`.
+ * Returns null when the impl isn't a From conversion or the `from` body
+ * can't be located. Used to resolve typed `<expr>.into()` call sites at
+ * parse time (coral-escrow's `ctx.accounts.into()` → CpiContext<SetAuthority>,
+ * coral-multisig's `(&*tx).into()` → Instruction).
+ */
+export function parseFromImplDeclaration(implNode: SyntaxNode): FromImplCatalogEntry | null {
+  const traitField = implNode.childForFieldName("trait");
+  if (!traitField) return null;
+  const traitText = traitField.text;
+  const traitMatch = traitText.match(/^From\s*<\s*(&\s*(?:mut\s+)?)?\s*([A-Za-z_][A-Za-z0-9_]*)/);
+  if (!traitMatch?.[2]) return null;
+  const isMutRef = !!traitMatch[1] && /mut/.test(traitMatch[1]);
+  const sourceType = traitMatch[2];
+
+  const typeField = implNode.childForFieldName("type");
+  if (!typeField) return null;
+  const targetMatch = typeField.text.match(/([A-Za-z_][A-Za-z0-9_]*)/);
+  if (!targetMatch?.[1]) return null;
+  const targetType = targetMatch[1];
+
+  const body = implNode.childForFieldName("body") ?? findDescendant(implNode, "declaration_list");
+  if (!body) return null;
+
+  for (let i = 0; i < body.namedChildCount; i++) {
+    const child = body.namedChild(i);
+    if (!child || child.type !== "function_item") continue;
+    if (child.childForFieldName("name")?.text !== "from") continue;
+    const params = child.childForFieldName("parameters");
+    const fnBody = child.childForFieldName("body");
+    if (!params || !fnBody) continue;
+    const paramNames = parseMethodParameterNames(params);
+    const paramName = paramNames[0];
+    if (!paramName) continue;
+    return {
+      sourceType,
+      targetType,
+      isMutRef,
+      paramName,
+      bodyText: stripOuterBraces(fnBody.text).trim(),
+    };
+  }
+  return null;
 }
 
 function parseMethodParameterNames(paramsNode: SyntaxNode): string[] {
@@ -818,6 +889,147 @@ function inlineAsFactoryExpression(
   prog = peelRedundantParens(prog);
   acc = peelRedundantParens(acc);
 
+  if (chainedSigner) {
+    return `CpiContext::new_with_signer(${prog}, ${acc}, ${chainedSigner})`;
+  }
+  return `CpiContext::new(${prog}, ${acc})`;
+}
+
+/**
+ * Pre-pass that resolves typed `<expr>.into()` call sites against the From-impl
+ * catalog and rewrites them to the inlined From body. Currently handles the
+ * one shape that's safe to inline standalone:
+ *
+ *   Recognized CPI fn arg: `set_authority(<expr>.into(), …)` where the From
+ *   impl produces `CpiContext<Marker>`. The body must be a pure CpiContext
+ *   factory — same shape gate as the helper-method inliner — and we emit
+ *   `CpiContext::new(prog, acc)` (or `new_with_signer` if a `.with_signer(seeds)`
+ *   is chained).
+ *
+ * The let-binding shape (`let X: Target = <expr>.into();`) is intentionally
+ * NOT handled here. coral-multisig's `From<&Transaction> for Instruction`
+ * body chains a secondary `Into::into` over `TransactionAccount`, so inlining
+ * without coordinated From-impl preservation in emit produces a body that
+ * references a no-longer-emitted impl. Until emit gains that coordination,
+ * leaving the call site verbatim is strictly better than a broken inline.
+ *
+ * Returns a re-parsed body node when at least one rewrite happened, else null.
+ * Source-type matching is conservative: only `<expr>` ∈ {`ctx.accounts`,
+ * `&mut ctx.accounts`, `&ctx.accounts`} maps to sourceType=contextType. Other
+ * receivers fall through unchanged, since misclassifying a sibling `Foo.into()`
+ * as the wrapper's accounts From would silently corrupt code.
+ */
+function rewriteFromTraitConversions(
+  parser: Parser,
+  fnNode: SyntaxNode,
+  fromImpls: FromImplCatalogEntry[],
+  contextType: string,
+): SyntaxNode | null {
+  const bodyNode = fnNode.childForFieldName("body");
+  if (!bodyNode) return null;
+  if (!bodyNode.text.includes(".into()")) return null;
+
+  const ctxAccountsFrom = fromImpls.find(
+    (f) => f.sourceType === contextType && f.targetType === "CpiContext",
+  );
+  if (!ctxAccountsFrom) return null;
+
+  const parts: string[] = [];
+  let didRewrite = false;
+
+  for (let i = 0; i < bodyNode.namedChildCount; i++) {
+    const child = bodyNode.namedChild(i);
+    if (!child) continue;
+    let stmtText = child.text;
+
+    const cpiRewritten = rewriteCpiArgCtxAccountsInto(stmtText, ctxAccountsFrom);
+    if (cpiRewritten !== null) {
+      stmtText = cpiRewritten;
+      didRewrite = true;
+    }
+
+    parts.push(stmtText);
+  }
+
+  if (!didRewrite) return null;
+
+  const expandedBody = `{\n${parts.join("\n")}\n}`;
+  const synthetic = parser.parse(`fn __anvil_from_trait__() ${expandedBody}`);
+  if (!synthetic) return null;
+  return findDescendant(synthetic.rootNode, "function_item") ?? null;
+}
+
+/**
+ * Rewrite a `<expr>.into()` sub-expression sitting as the first arg of a
+ * recognized CPI fn, when `<expr>` resolves to `ctx.accounts` (Anchor's
+ * convention for typed From-impls — the receiver is always the accounts
+ * struct). Optional immediately-chained `.with_signer(seeds)` is preserved.
+ */
+function rewriteCpiArgCtxAccountsInto(
+  text: string,
+  fromImpl: FromImplCatalogEntry,
+): string | null {
+  // Match `ctx.accounts.into()` or `(&[mut ]ctx.accounts).into()`. The
+  // expression boundary on the left is a `(` — these only fire as CPI args.
+  const intoRe = /(\(\s*(?:&\s*(?:mut\s+)?)?\s*ctx\s*\.\s*accounts\s*\)|ctx\s*\.\s*accounts)\s*\.\s*into\s*\(\s*\)/g;
+  let didRewrite = false;
+  let out = "";
+  let cursor = 0;
+  let m: RegExpExecArray | null;
+  while ((m = intoRe.exec(text)) !== null) {
+    const startIdx = m.index;
+    const endIdx = startIdx + m[0].length;
+    // Confirm the `.into()` is the first arg of a recognized CPI fn.
+    const wrapping = findWrappingCallName(text, startIdx);
+    if (!wrapping || !RECOGNIZED_CPI_FN_NAMES.has(wrapping)) continue;
+    let chainedSigner: string | undefined;
+    const sigMatch = text.slice(endIdx).match(/^\s*\.\s*with_signer\s*\(/);
+    let consumeEnd = endIdx;
+    if (sigMatch) {
+      const sigOpen = endIdx + sigMatch[0].length - 1;
+      const sigClose = findMatchingClose(text, sigOpen);
+      if (sigClose !== -1) {
+        chainedSigner = text.slice(sigOpen + 1, sigClose).trim();
+        consumeEnd = sigClose + 1;
+      }
+    }
+    const inlined = inlineFromBodyAsCpiFactory(fromImpl, "ctx.accounts", chainedSigner);
+    if (inlined === null) continue;
+    out += text.slice(cursor, startIdx) + inlined;
+    cursor = consumeEnd;
+    didRewrite = true;
+  }
+  if (!didRewrite) return null;
+  out += text.slice(cursor);
+  return out;
+}
+
+/**
+ * Inline the `from` body as a `CpiContext::new[_with_signer](prog, acc[, seeds])`
+ * expression. Returns null if the body isn't the pure-factory shape (let* +
+ * `CpiContext::new(prog, acc)` tail) — same gate as the helper-method
+ * factory inliner above, since they target the same downstream consumer
+ * (the CPI detector's `firstArg.text.includes("CpiContext::")` text-check).
+ */
+function inlineFromBodyAsCpiFactory(
+  fromImpl: FromImplCatalogEntry,
+  receiverExpr: string,
+  chainedSigner: string | undefined,
+): string | null {
+  const substituted = replaceIdentifier(fromImpl.bodyText, fromImpl.paramName, receiverExpr);
+  const parsed = parseLetBindingsAndTail(substituted);
+  if (parsed === null || parsed.tail === null) return null;
+  const cpiNew = parseCpiContextNew(parsed.tail);
+  if (!cpiNew) return null;
+  let prog = cpiNew.prog;
+  let acc = cpiNew.acc;
+  for (let i = parsed.bindings.length - 1; i >= 0; i--) {
+    const { name, value } = parsed.bindings[i]!;
+    prog = replaceIdentifier(prog, name, `(${value})`);
+    acc = replaceIdentifier(acc, name, `(${value})`);
+  }
+  prog = peelRedundantParens(prog);
+  acc = peelRedundantParens(acc);
   if (chainedSigner) {
     return `CpiContext::new_with_signer(${prog}, ${acc}, ${chainedSigner})`;
   }
