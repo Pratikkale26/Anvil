@@ -90,7 +90,13 @@ function emitT22Invoke(accountsList: string, signerSeeds: string | undefined): s
   if (!signerSeeds) {
     return `        pinocchio::cpi::invoke(&__t22_ix, &[${accountsList}])?;`;
   }
-  return `        let __t22_seed_group = ${signerSeeds}.first().ok_or(ProgramError::InvalidSeeds)?;
+  // Bind signerSeeds to a named local first — when the call site passes a
+  // literal like `&[&seeds[..]]`, calling `.first()` on the temporary
+  // expression directly creates a temp that's dropped before the borrow
+  // returned by `.first()` finishes (E0716 temporary dropped while borrowed).
+  // The named binding extends the temp's lifetime to the enclosing scope.
+  return `        let __t22_signer_seeds = ${signerSeeds};
+        let __t22_seed_group = __t22_signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
         let mut __t22_seeds: [pinocchio::instruction::Seed<'_>; 8] =
             core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
         for (__i, __seed) in __t22_seed_group.iter().enumerate() {
@@ -624,8 +630,20 @@ ${invokeCall}
             28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
         ];`;
     const programIdRef = opts?.tokenProgram === "token_2022" ? "TOKEN_2022_PROGRAM_ID" : "SPL_TOKEN_PROGRAM_ID";
+    // Convert Anchor's `&[&[&[u8]]]` signer-seeds shape into pinocchio's
+    // `&[Signer]` (where Signer wraps `&[Seed]`). Use the same const-size
+    // [Seed; 8] stack-alloc pattern as the create_account_signed rewrite
+    // in postProcessPinocchioRewrites — fixed cap, no Vec, no_std-safe.
     const invokeCall = signerSeeds
-      ? `        pinocchio::cpi::invoke_signed(&__sa_ix, &[${account}, ${currentAuthority}], ${signerSeeds})?;`
+      ? `        let __sa_seed_refs = ${signerSeeds}[0];
+        let mut __sa_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__sa_i, __sa_s) in __sa_seed_refs.iter().enumerate() {
+            if __sa_i >= __sa_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __sa_pda_seeds[__sa_i] = pinocchio::instruction::Seed::from(*__sa_s);
+        }
+        let __sa_signer = pinocchio::instruction::Signer::from(&__sa_pda_seeds[..__sa_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__sa_ix, &[${account}, ${currentAuthority}], &[__sa_signer])?;`
       : `        pinocchio::cpi::invoke(&__sa_ix, &[${account}, ${currentAuthority}])?;`;
     return `    // ${opts?.tokenProgram === "token_2022" ? "Token-2022" : "SPL Token"} set authority — ${account}
     {
@@ -962,6 +980,16 @@ ${writeLines}
    */
   private postProcessPinocchioRewrites(body: string): string {
     let out = body;
+    // Pinocchio's Pubkey is a `[u8; 32]` type alias, not a struct, so it
+    // has no associated methods. Source-level `Pubkey::find_program_address(
+    // seeds, program_id)` and `Pubkey::create_program_address(...)` need
+    // to route to the standalone fns at `pinocchio::pubkey::*`. Match
+    // both bare `Pubkey::` and `solana_program::pubkey::Pubkey::`
+    // qualified shapes. coral-escrow / pinocchio pattern.
+    out = out.replace(
+      /(?:solana_program\s*::\s*pubkey\s*::\s*)?Pubkey\s*::\s*(find_program_address|create_program_address)\b/g,
+      "pinocchio::pubkey::$1",
+    );
     // Comment out `solana_program::program::invoke{,_signed}` direct calls
     // and the typed `let X: Instruction` setup that feeds them. pinocchio
     // exposes neither solana_program::Instruction nor solana_program's CPI

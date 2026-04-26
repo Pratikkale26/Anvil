@@ -399,6 +399,36 @@ pub struct Check<'info> {
     expect(ix.content).not.toMatch(/\|a\|\s*a\s*==\s*\*signer\.key/);
   });
 
+  test("Pubkey::find_program_address routes to pinocchio::pubkey:: on pinocchio target", async () => {
+    const src = PROG_HEADER + `
+#[program]
+pub mod p {
+    use super::*;
+    pub fn run(ctx: Context<Run>) -> Result<()> {
+        let (_pda, _bump) = Pubkey::find_program_address(&[b"seed"], ctx.program_id);
+        Ok(())
+    }
+}
+#[derive(Accounts)]
+pub struct Run<'info> { pub state: Account<'info, S> }
+#[account] pub struct S { pub x: u64 }
+`;
+    const ir = await parseOk(src);
+    const pin = emitPinocchioFull(ir);
+    const ix = pin.files.find((f) => /instructions\/run\.rs$/.test(f.path));
+    expect(ix).toBeDefined();
+    if (!ix) return;
+    // Pinocchio's Pubkey is [u8; 32] (no associated methods), so the call
+    // must route to the standalone fn.
+    expect(ix.content).toContain("pinocchio::pubkey::find_program_address");
+    expect(ix.content).not.toMatch(/\bPubkey::find_program_address\b/);
+    // Native target must NOT rewrite — solana_program's Pubkey has the
+    // associated method natively.
+    const nat = emitNativeFull(ir);
+    const natIx = nat.files.find((f) => /instructions\/run\.rs$/.test(f.path));
+    expect(natIx?.content).toMatch(/\bPubkey::find_program_address\b/);
+  });
+
   test("'info lifetime in typed-local-binding pass-through is rewritten to '_", async () => {
     const src = PROG_HEADER + `
 pub struct Marker<'info> { pub _phantom: std::marker::PhantomData<&'info ()> }

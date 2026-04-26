@@ -59,17 +59,10 @@ const TRACKED: TrackedCase[] = [
   // NOTE: anchor-escrow-2025 was promoted to MUST_PASS in realworld-cargo.test.ts
   // after unsalvageable-helper commentout landed (errors 31/28 → 0/0).
 
-  // NOTE: coral-escrow/native promoted to MUST_PASS in realworld-cargo.test.ts
-  // after seed-orphan splice landed (1 → 0). Pin remains tracked:
-  {
-    id: "coral-escrow",
-    target: "pinocchio",
-    path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
-    source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 6,
-    reason:
-      "Pubkey::find_program_address on pinocchio's [u8; 32] alias + E0282 type inference. Native promoted to MUST_PASS.",
-  },
+  // NOTE: BOTH coral-escrow targets promoted to MUST_PASS in
+  // realworld-cargo.test.ts. Native after seed-orphan splice; pinocchio
+  // after Pubkey:: -> pinocchio::pubkey:: rewrite + signer-seeds shape
+  // conversion + temp-borrow fix.
 
   // NOTE: coral-multisig/pinocchio + native both promoted to MUST_PASS in
   // realworld-cargo.test.ts after seed-orphan splice + .key.as_ref()

@@ -190,14 +190,22 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     cloneRoot: "/tmp/anchor-escrow-2025",
   },
 
-  // coral-escrow/native: promoted from tracking (was at 1 ceiling — `seeds`
-  // scope) after the body-classifier seed-orphan splice landed (#3 in this
-  // batch). Plus the prior #2 batch's universal `.to_account_info()` strip
-  // and constraint-value token_account_amount trigger together took it from
-  // 6 → 0. Pin still gapped on pinocchio Pubkey ([u8; 32] vs struct).
+  // coral-escrow/native: promoted after seed-orphan splice (commit 0a881e2).
   {
     id: "coral-escrow",
     target: "native",
+    path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor",
+    cloneRoot: "/tmp/coral-anchor",
+  },
+
+  // coral-escrow/pinocchio: promoted after Pubkey:: -> pinocchio::pubkey::
+  // rewrite + signer-seeds shape conversion in set_authority emit + temp-
+  // borrow fix in t22 transfer signer-seeds template (this commit).
+  // 6 -> 0. Final coral fixture in MUST_PASS.
+  {
+    id: "coral-escrow",
+    target: "pinocchio",
     path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
     repo: "https://github.com/coral-xyz/anchor",
     cloneRoot: "/tmp/coral-anchor",
