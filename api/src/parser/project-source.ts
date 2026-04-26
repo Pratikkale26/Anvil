@@ -608,6 +608,14 @@ function buildFlattenedSource(
   let source = sections.join("\n\n") + "\n";
   source = source.replace(/\n{3,}/g, "\n\n");
 
+  // Rewrite Anchor's `err!(MyError::X)` macro to the explicit
+  // `Err(MyError::X.into())` form. The macro doesn't exist on Pinocchio /
+  // Native targets; classifyReturn handles the top-level `return err!(...)`
+  // shape, but err!() also appears inside nested if-blocks (multisig.rs,
+  // various others) which classify as opaque pass-through. Rewriting at
+  // the source-flattening level catches every form before the AST walk.
+  source = rewriteErrMacroToExplicit(source);
+
   // Consolidate multi-statement SPL CPI patterns into the inline form the
   // CPI detector understands. Anchor codebases commonly write:
   //   let cpi_accounts = MintTo { mint: ..., to: ..., authority: ... };
@@ -619,6 +627,65 @@ function buildFlattenedSource(
   source = consolidateMultiStatementCpi(source);
 
   return { source, includedFiles, missingModules };
+}
+
+/**
+ * Rewrite `err!(EXPR)` → `Err(EXPR.into())`. Anchor's `err!` macro expands
+ * to that form; targets don't carry the macro definition, so a literal
+ * `err!(...)` produces a "cannot find macro" error. The lookbehind blocks
+ * matching word-suffixed names like `myerr!(...)`.
+ *
+ * Implementation: paren-balanced extraction by linear scan rather than a
+ * single regex, since a regex with `[\s\S]+?` fails on nested parens like
+ * `err!(MyError::Wrap(other_err))` — the lazy match stops at the first `)`.
+ */
+function rewriteErrMacroToExplicit(source: string): string {
+  let out = "";
+  let i = 0;
+  while (i < source.length) {
+    const idx = source.indexOf("err!", i);
+    if (idx === -1) {
+      out += source.slice(i);
+      break;
+    }
+    // Verify `err!` is a standalone macro name, not a suffix like `myerr!`.
+    const prev = idx > 0 ? source[idx - 1] : "";
+    const isWordPrev = prev !== "" && /[A-Za-z0-9_]/.test(prev);
+    if (isWordPrev) {
+      out += source.slice(i, idx + 4);
+      i = idx + 4;
+      continue;
+    }
+    // Find the opening paren after optional whitespace.
+    let parenStart = idx + 4;
+    while (parenStart < source.length && /\s/.test(source[parenStart]!)) parenStart++;
+    if (source[parenStart] !== "(") {
+      out += source.slice(i, idx + 4);
+      i = idx + 4;
+      continue;
+    }
+    // Paren-balanced scan for the matching `)`.
+    let depth = 0;
+    let parenEnd = -1;
+    for (let j = parenStart; j < source.length; j++) {
+      const ch = source[j]!;
+      if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth === 0) { parenEnd = j; break; }
+      }
+    }
+    if (parenEnd === -1) {
+      // Unbalanced — leave the rest of the source untouched.
+      out += source.slice(i);
+      break;
+    }
+    out += source.slice(i, idx);
+    const inner = source.slice(parenStart + 1, parenEnd).trim();
+    out += `Err(${inner}.into())`;
+    i = parenEnd + 1;
+  }
+  return out;
 }
 
 // CPI structs + their common call-site function names. For pure
@@ -822,9 +889,12 @@ export function buildProjectSourceGraph(entryPath: string, files: ProjectFile[])
     return buildFlattenedSource(normalizedEntry, fileMap);
   }
 
-  // Single file — apply CPI consolidation but otherwise return as-is.
+  // Single file — apply CPI consolidation + err! rewrite. The err! rewrite
+  // also runs inside buildFlattenedSource for multi-file projects; this
+  // path is for single-file Anchor programs (coral-multisig pattern) where
+  // err! still needs to be neutralized before the AST walk.
   return {
-    source: consolidateMultiStatementCpi(entryFile.content),
+    source: rewriteErrMacroToExplicit(consolidateMultiStatementCpi(entryFile.content)),
     includedFiles: [normalizedEntry],
     missingModules: [],
   };

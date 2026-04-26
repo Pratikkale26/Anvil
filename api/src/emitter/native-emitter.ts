@@ -398,7 +398,17 @@ ${arms}
       }
       // Token-2022 transfer_checked — mint + decimals. Detector backfills
       // these from the TransferChecked accounts struct + trailing decimals arg.
-      const mint = opts?.mint ?? "/* TODO: mint */";
+      // Helper-method CPI shapes (e.g. `into_transfer_to_taker_context()`)
+      // can leave mint unresolved — emit a comment-only stub instead of a
+      // partial block whose `${mint}.key` becomes `/* TODO */.key` (syntax
+      // error). Same threshold as unsupported Metaplex CPI stubs.
+      if (!opts?.mint) {
+        return `    // TODO(manual): Token-2022 transfer_checked — ${from} → ${to}
+    // Could not resolve mint argument from helper-method CPI context.
+    // Reconstruct manually: pass the mint AccountInfo + decimals literal.
+    // Original call shape: transfer_checked(ctx, amount, decimals)`;
+      }
+      const mint = opts.mint;
       const { decimalsExpr, prelude } = resolveT22Decimals(mint, opts?.decimals);
       return `    // Token-2022 transfer_checked — ${from} → ${to}
 ${prelude}    let transfer_ix = ${crate}::instruction::transfer_checked(

@@ -824,14 +824,15 @@ export class BodyWalker {
       );
     }
 
-    // Drop redundant `.into()` on `Err(<TypeOrVariant>::Foo.into())` — Anchor
-    // wraps return errors with `.into()` for its custom Error type, but
-    // native/pinocchio targets just return ProgramError directly so the
-    // identity conversion is ambiguous (E0283 type annotations needed).
-    // Conservative match: only the trailing `.into()` immediately after a
-    // `::Variant` ident, inside an Err(...) wrapper.
+    // Drop redundant `.into()` on `Err(ProgramError::Foo.into())` —
+    // identity conversion on ProgramError is ambiguous (E0283). Restrict to
+    // ProgramError specifically: user error enums (e.g. `ErrorCode::X`)
+    // need `.into()` since they coerce ErrorCode → ProgramError via their
+    // generated `impl From<ErrorCode> for ProgramError`. The previous
+    // shape `\w+(?:::\w+)+` matched both, which broke `Err(ErrorCode::X)`
+    // with E0308 (expected ProgramError, found ErrorCode).
     transformed = transformed.replace(
-      /\bErr\(\s*(\w+(?:::\w+)+)\.into\(\)\s*\)/g,
+      /\bErr\(\s*(ProgramError::\w+(?:\([^)]*\))?)\.into\(\)\s*\)/g,
       "Err($1)",
     );
 

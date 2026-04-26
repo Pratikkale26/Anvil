@@ -486,6 +486,38 @@ function analyzeInstructions(ir: SolanaIR, findings: LintFinding[]): void {
         where: instr.name,
       });
     }
+
+    // Patterns the out-of-corpus probe (2026-04-25) surfaced as silently
+    // uncaught — coral-multisig scored 100/100 yet failed cargo with 13
+    // errors. Flag the shapes that bypass the IR but still hit cargo:
+    //
+    // (a) `<vec>.iter()` / `.len()` on Vec-typed account fields. Anvil's IR
+    //     models scalar account fields but not Vec ops; the call passes
+    //     through and rustc errors with `no method named iter` on Pubkey
+    //     when the field is misclassified.
+    // (b) `*<state> = …` deref-write on an Account<State>. Anchor's
+    //     `&mut Multisig` shape lets you `*multisig = …`; targets see a
+    //     bare struct, which doesn't deref.
+    if (/\b\w+\.(iter|len|push|pop|contains)\s*\(/.test(bodyText)) {
+      findings.push({
+        level: "review",
+        category: "Vec ops",
+        title: `${instr.name} calls Vec methods (iter/len/push/...) on a field`,
+        detail:
+          "Anvil's IR models scalar account fields but not Vec<T> field operations. The call passes through verbatim; if the field is a Vec, the target needs the same Vec to compile (typically requires `BorshDeserialize` of a Vec<T> from the AccountInfo data).",
+        where: instr.name,
+      });
+    }
+    if (/(?:^|\s)\*\w+\s*=/m.test(bodyText)) {
+      findings.push({
+        level: "review",
+        category: "State deref-write",
+        title: `${instr.name} writes via deref (\`*<account> = …\`)`,
+        detail:
+          "Anchor's `Account<'info, T>` deref's to `&mut T`; the target's typed account wrapper may not. Verify the assignment target has the same DerefMut shape, or rewrite to per-field writes.",
+        where: instr.name,
+      });
+    }
   }
 }
 

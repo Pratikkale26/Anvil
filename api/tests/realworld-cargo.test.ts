@@ -19,6 +19,7 @@
  */
 import { describe, test, expect } from "bun:test";
 import { existsSync } from "fs";
+import { spawnSync } from "child_process";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
 import { emitNativeFull } from "../src/emitter/native-emitter.ts";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
@@ -151,6 +152,31 @@ const MUST_PASS: Case[] = [
 // pinocchio's no_std environment doesn't permit. Native is unblocked.
 // Possible future fix: emit a const-size match block that handles N=1..8
 // seed counts with stack-allocated Seed arrays.
+
+/**
+ * Auto-clone the program-examples corpus on first run. Without this, the
+ * suite silently auto-skips on fresh CI machines or new contributor laptops
+ * — coverage that's invisible until someone notices the regression layer
+ * never runs. 60s timeout since the depth-1 clone is small (~50MB) and a
+ * slow network shouldn't wedge the whole test run.
+ *
+ * Set ANVIL_NO_CLONE=1 to disable (e.g. for offline development).
+ */
+if (!existsSync(PROG_EX) && process.env.ANVIL_NO_CLONE !== "1") {
+  console.warn(
+    `[realworld-cargo] ${PROG_EX} not found — auto-cloning program-examples (depth=1)…`,
+  );
+  const clone = spawnSync(
+    "git",
+    ["clone", "--depth", "1", "https://github.com/solana-developers/program-examples", PROG_EX],
+    { stdio: "inherit", timeout: 60_000 },
+  );
+  if (clone.status !== 0) {
+    console.warn(
+      `[realworld-cargo] auto-clone failed (status=${clone.status}). Suite will skip.`,
+    );
+  }
+}
 
 if (existsSync(PROG_EX)) {
   describe("Real-world Anchor cargo-build regression guard", () => {

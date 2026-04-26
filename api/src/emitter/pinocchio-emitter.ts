@@ -386,7 +386,21 @@ ${invokeCall}
       }
       // Token-2022 transfer_checked — discriminator 12,
       // accounts [from, mint, to, authority], data [12, amount_u64_le, decimals_u8].
-      const mint = opts?.mint ?? "/* TODO: mint */";
+      // When the helper-method CPI flow couldn't resolve the mint argument
+      // (probe surfaced this in coral-escrow / anchor-escrow's
+      // `into_transfer_to_taker_context`-style helpers), emit a fully
+      // commented-out stub instead of a partial block with `.key()` on a
+      // raw `/* TODO */` placeholder — that placeholder shape produces
+      // `error: expected expression, found '.'` and wedges parsing for the
+      // entire surrounding function. Compiling-but-runtime-no-op is the
+      // same threshold we already use for unsupported Metaplex CPIs.
+      if (!opts?.mint) {
+        return `    // TODO(manual): Token-2022 transfer_checked — ${from} → ${to}
+    // Could not resolve mint argument from helper-method CPI context.
+    // Reconstruct manually: pass the mint AccountInfo + decimals literal.
+    // Original call shape: transfer_checked(ctx, amount, decimals)`;
+      }
+      const mint = opts.mint;
       const { decimalsExpr, prelude } = resolveT22DecimalsPinocchio(mint, opts?.decimals);
       const invokeCall = emitT22Invoke(`${from}, ${mint}, ${to}, ${authority}`, signerSeeds);
       return `    // Token-2022 transfer_checked — ${from} → ${to}

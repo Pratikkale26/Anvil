@@ -540,6 +540,20 @@ function classifyReturn(node: SyntaxNode): BodyStatement {
     return { kind: "return_ok" };
   }
 
+  // `return err!(MyError::X);` — Anchor macro that expands to
+  // `Err(error!(MyError::X))` ≈ `Err(MyError::X.into())`. The macro doesn't
+  // exist on Pinocchio/Native targets, so rewrite to the explicit form.
+  // Match BEFORE the generic `Err(` branch so we don't fall into it (we
+  // never would today since `Err(` isn't a substring of `err!(`, but the
+  // ordering keeps this robust against later edits).
+  const errMacroMatch = text.match(/\berr!\s*\(([\s\S]+?)\)\s*;?\s*$/);
+  if (errMacroMatch?.[1]) {
+    return {
+      kind: "return_err",
+      error: `${errMacroMatch[1].trim()}.into()`,
+    };
+  }
+
   if (text.includes("Err(")) {
     const errMatch = text.match(/Err\(([^)]+)\)/);
     return {
