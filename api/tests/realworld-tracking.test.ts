@@ -71,18 +71,18 @@ const TRACKED: TrackedCase[] = [
     target: "pinocchio",
     path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 23,
+    maxErrors: 17,
     reason:
-      "set_authority pass-through + constraint parser gaps. Impl-method CPI inlining lands for transfer/transfer_checked but not unrecognized helpers.",
+      "From-trait conversions (`ctx.accounts.into()` typed as CpiContext<SetAuthority>) + constraint parser gaps. set_authority CPI lands for inline-CpiContext shape; From-trait shape needs #3.",
   },
   {
     id: "coral-escrow",
     target: "native",
     path: "/tmp/coral-anchor/tests/escrow/programs/escrow/src/lib.rs",
     source: "https://github.com/coral-xyz/anchor (tests/escrow)",
-    maxErrors: 14,
+    maxErrors: 13,
     reason:
-      "set_authority pass-through + constraint parser gaps. Impl-method CPI inlining lands for transfer/transfer_checked but not unrecognized helpers.",
+      "From-trait conversions + constraint parser gaps. Same as pinocchio.",
   },
 
   // coral-multisig: err! macro fix (cbc6f3c) cut this 13 → 10. Remaining

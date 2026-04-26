@@ -12,6 +12,7 @@ type CpiSplTransfer = Extract<BodyStatement, { kind: "cpi_spl_transfer" }>;
 type CpiSplMintTo = Extract<BodyStatement, { kind: "cpi_spl_mint_to" }>;
 type CpiSplBurn = Extract<BodyStatement, { kind: "cpi_spl_burn" }>;
 type CpiSplCloseAccount = Extract<BodyStatement, { kind: "cpi_spl_close_account" }>;
+type CpiSplSetAuthority = Extract<BodyStatement, { kind: "cpi_spl_set_authority" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -139,6 +140,31 @@ export function handleCpiSplCloseAccount(w: BodyWalker, stmt: CpiSplCloseAccount
       snakeCase(stmt.account),
       snakeCase(stmt.destination),
       authority,
+      stmt.signerSeeds,
+      { tokenProgram: stmt.tokenProgram },
+    ),
+  );
+}
+
+export function handleCpiSplSetAuthority(w: BodyWalker, stmt: CpiSplSetAuthority): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(
+    `Transformed: token::set_authority(${stmt.account}, ${stmt.authorityType})`,
+  );
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.currentAuthority)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  const currentAuthority = stmt.signerSeeds
+    ? w.resolveAccountInfoVar(snakeCase(stmt.currentAuthority))
+    : snakeCase(stmt.currentAuthority);
+  w.lines.push(
+    w.emitter.emitSplSetAuthority(
+      snakeCase(stmt.account),
+      currentAuthority,
+      stmt.authorityType,
+      stmt.newAuthority,
       stmt.signerSeeds,
       { tokenProgram: stmt.tokenProgram },
     ),

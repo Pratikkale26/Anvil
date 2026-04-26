@@ -235,6 +235,27 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
   }),
 
+  // SPL Token set_authority CPI
+  // Anchor: token::set_authority(ctx, AuthorityType::X, Some(new_pubkey))
+  // Native: spl_token[_2022]::instruction::set_authority(...)
+  // Pinocchio: hand-rolled — pinocchio_token doesn't expose a set_authority helper.
+  z.object({
+    kind: z.literal("cpi_spl_set_authority"),
+    account: z.string(),
+    currentAuthority: z.string(),
+    /**
+     * Anchor's `AuthorityType::X` variant carried as raw text. Common values:
+     * `AccountOwner`, `MintTokens`, `FreezeAccount`, `CloseAccount`. Emitter
+     * maps to the target's enum (`spl_token::instruction::AuthorityType::X`).
+     */
+    authorityType: z.string(),
+    /** Raw text expression for the new authority. May be `Some(pk)`, `None`, or a variable. */
+    newAuthority: z.string(),
+    signerSeeds: z.string().optional(),
+    /** Which token program to invoke: "token" (default) or "token_2022" */
+    tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
+  }),
+
   // Associated Token Account creation CPI
   // Anchor: anchor_spl::associated_token::create(...)
   // Native: spl_associated_token_account::instruction::create_associated_token_account(...)

@@ -597,6 +597,21 @@ ${arms}
     spl_token_close_account${signed}(${account}, ${destination}, ${authority}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
   }
 
+  override emitSplSetAuthority(
+    account: string,
+    currentAuthority: string,
+    authorityType: string,
+    newAuthority: string,
+    signerSeeds?: string,
+    _opts?: Token2022Opts,
+  ): string {
+    // Quasar 0.0 doesn't expose a set_authority helper. Emit a TODO
+    // placeholder consistent with other unimplemented quasar CPIs.
+    return `    // ⚠️ Anvil TODO: set_authority not yet supported in quasar emitter
+    // account=${account}, current=${currentAuthority}, type=${authorityType}, new=${newAuthority}, signer_seeds=${signerSeeds ?? "none"}
+    Ok::<(), quasar_lang::ProgramError>(())?;`;
+  }
+
   override emitProgramAccountClose(
     account: string,
     destination: string,

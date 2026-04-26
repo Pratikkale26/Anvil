@@ -581,6 +581,40 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     )?;`;
   }
 
+  override emitSplSetAuthority(
+    account: string,
+    currentAuthority: string,
+    authorityType: string,
+    newAuthority: string,
+    signerSeeds?: string,
+    opts?: Token2022Opts,
+  ): string {
+    const crate = opts?.tokenProgram === "token_2022" ? "spl_token_2022" : "spl_token";
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    // Map Anchor's `AuthorityType::X` variant to the target's enum path.
+    // Anchor exposes the same variant names as spl_token, so we just rewrite
+    // the path. `.into()` covers cases where the user wrote a fully-qualified
+    // SPL variant already.
+    const remapped = authorityType.replace(
+      /\bAuthorityType\b/g,
+      `${crate}::instruction::AuthorityType`,
+    );
+    return `    // ${crate === "spl_token_2022" ? "Token-2022" : "SPL Token"} set authority — ${account}
+    let set_authority_ix = ${crate}::instruction::set_authority(
+        &${crate}::id(),
+        ${account}.key,
+        match &${newAuthority} { Some(pk) => Some(pk), None => None },
+        ${remapped},
+        ${currentAuthority}.key,
+        &[],
+    )?;
+    ${invokeType}(
+        &set_authority_ix,
+        &[${account}.clone(), ${currentAuthority}.clone()],${signerArg}
+    )?;`;
+  }
+
   override emitProgramAccountClose(account: string, destination: string): string {
     return `    close_program_account(${account}, ${destination})?;`;
   }

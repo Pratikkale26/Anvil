@@ -581,6 +581,71 @@ ${invokeCall}
     spl_token_close_account${signed}(${account}, ${destination}, ${authority}${signerSeeds ? `, ${signerSeeds}` : ""})?;`;
   }
 
+  override emitSplSetAuthority(
+    account: string,
+    currentAuthority: string,
+    authorityType: string,
+    newAuthority: string,
+    signerSeeds?: string,
+    opts?: Token2022Opts,
+  ): string {
+    // Map Anchor's `AuthorityType::X` variant to the SPL byte. Unknown
+    // variants get a TODO comment + a default of AccountOwner (the most
+    // common). pinocchio_token doesn't expose set_authority, so we
+    // hand-roll the raw CPI against the program ID.
+    const variant = authorityType.trim().match(/AuthorityType::(\w+)/)?.[1];
+    const variantByte: Record<string, number> = {
+      MintTokens: 0,
+      FreezeAccount: 1,
+      AccountOwner: 2,
+      CloseAccount: 3,
+    };
+    const authTypeByte =
+      variant && variantByte[variant] !== undefined
+        ? `${variantByte[variant]}u8`
+        : `2u8/* ⚠️ Anvil TODO: unrecognized AuthorityType '${authorityType}', defaulted to AccountOwner */`;
+    const programIdConst =
+      opts?.tokenProgram === "token_2022"
+        ? TOKEN_2022_PROGRAM_ID_CONST
+        : `        const SPL_TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
+            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+        ];`;
+    const programIdRef = opts?.tokenProgram === "token_2022" ? "TOKEN_2022_PROGRAM_ID" : "SPL_TOKEN_PROGRAM_ID";
+    const invokeCall = signerSeeds
+      ? `        pinocchio::cpi::invoke_signed(&__sa_ix, &[${account}, ${currentAuthority}], ${signerSeeds})?;`
+      : `        pinocchio::cpi::invoke(&__sa_ix, &[${account}, ${currentAuthority}])?;`;
+    return `    // ${opts?.tokenProgram === "token_2022" ? "Token-2022" : "SPL Token"} set authority — ${account}
+    {
+${programIdConst}
+        let __sa_auth_byte: u8 = ${authTypeByte};
+        let mut __sa_data = [0u8; 35];
+        let mut __sa_len = 3usize;
+        __sa_data[0] = 6;
+        __sa_data[1] = __sa_auth_byte;
+        match &${newAuthority} {
+            Some(__pk) => {
+                __sa_data[2] = 1;
+                __sa_data[3..35].copy_from_slice(__pk.as_ref());
+                __sa_len = 35;
+            }
+            None => {
+                __sa_data[2] = 0;
+            }
+        }
+        let __sa_metas = [
+            pinocchio::instruction::AccountMeta::writable(${account}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${currentAuthority}.key()),
+        ];
+        let __sa_ix = pinocchio::instruction::Instruction {
+            program_id: &${programIdRef},
+            accounts: &__sa_metas,
+            data: &__sa_data[..__sa_len],
+        };
+${invokeCall}
+    }`;
+  }
+
   override emitProgramAccountClose(account: string, destination: string): string {
     return `    close_program_account(${account}, ${destination})?;`;
   }

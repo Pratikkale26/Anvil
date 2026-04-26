@@ -37,6 +37,7 @@ import {
   handleCpiSplMintTo,
   handleCpiSplBurn,
   handleCpiSplCloseAccount,
+  handleCpiSplSetAuthority,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -196,6 +197,7 @@ export class BodyWalker {
         case "cpi_spl_mint_to": handleCpiSplMintTo(this, stmt); break;
         case "cpi_spl_burn": handleCpiSplBurn(this, stmt); break;
         case "cpi_spl_close_account": handleCpiSplCloseAccount(this, stmt); break;
+        case "cpi_spl_set_authority": handleCpiSplSetAuthority(this, stmt); break;
         case "cpi_ata_create": handleCpiAtaCreate(this, stmt); break;
         case "cpi_memo": handleCpiMemo(this, stmt); break;
         case "cpi_custom": handleCpiCustom(this, stmt); break;

@@ -76,6 +76,13 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
       }
       return result;
     }
+    if (funcText.includes("set_authority") || funcText.includes("SetAuthority")) {
+      const result = extractSplSetAuthority(callNode);
+      if (result.kind === "cpi_spl_set_authority") {
+        return { ...result, tokenProgram: "token_2022" as const };
+      }
+      return result;
+    }
   }
 
   // ── SPL Token transfer ──
@@ -112,7 +119,7 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
     // Fall through — likely system_program::transfer; the system branch
     // below handles namespaced forms.
   }
-  if (funcText === "mint_to" || funcText === "burn" || funcText === "close_account") {
+  if (funcText === "mint_to" || funcText === "burn" || funcText === "close_account" || funcText === "set_authority") {
     const argsNode = callNode.childForFieldName("arguments");
     const args = argsNode ? getArguments(argsNode) : [];
     const firstArg = args[0];
@@ -120,6 +127,7 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
       if (funcText === "mint_to") return extractSplMintTo(callNode);
       if (funcText === "burn") return extractSplBurn(callNode);
       if (funcText === "close_account") return extractSplCloseAccount(callNode);
+      if (funcText === "set_authority") return extractSplSetAuthority(callNode);
     }
   }
 
@@ -157,6 +165,20 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
   // ── SPL Token close_account ──
   if (funcText.includes("close_account") || funcText.includes("CloseAccount")) {
     return extractSplCloseAccount(callNode);
+  }
+
+  // ── SPL Token set_authority ──
+  // Anchor: token::set_authority(ctx, AuthorityType::X, Some(pk))
+  // Also matches the unqualified `set_authority(...)` form post-consolidation
+  // (when the user `use anchor_spl::token::set_authority;` brought it into scope)
+  // and the `token_interface::set_authority(...)` Token-2022 form (handled
+  // above in the token_interface branch).
+  if (
+    funcText === "set_authority" ||
+    funcText.includes("token::set_authority") ||
+    funcText.includes("::set_authority")
+  ) {
+    return extractSplSetAuthority(callNode);
   }
 
   // ── Associated Token Account create ──
@@ -366,6 +388,58 @@ function extractSplBurn(callNode: SyntaxNode): BodyStatement {
     amount,
     signerSeeds,
     ...(decimals ? { decimals } : {}),
+  };
+}
+
+// ─── SPL Token Set Authority ────────────────────────────────────────────────
+
+function extractSplSetAuthority(callNode: SyntaxNode): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return fallbackPassThrough(callNode);
+
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+
+  // We can only emit an active set_authority CPI when the first arg carries
+  // an inline `CpiContext::new(...)` whose accounts struct lets us extract
+  // the SetAuthority { account_or_mint, current_authority } fields. The
+  // From-trait shape (`ctx.accounts.into()`) doesn't expose those — fall
+  // back to pass_through so the source survives verbatim. (#3 — From-trait
+  // inlining — would later promote those sites into the typed IR.)
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return fallbackPassThrough(callNode);
+  }
+
+  // Anchor: `SetAuthority { account_or_mint, current_authority }` — field
+  // name is `account_or_mint`, but we model both as `account` in the IR
+  // since the SPL instruction takes a single AccountInfo for the target.
+  const setAuthStruct = findDescendant(firstArg, "struct_expression");
+  if (!setAuthStruct) return fallbackPassThrough(callNode);
+
+  const accountRaw = extractStructField(setAuthStruct, "account_or_mint")
+    ?? extractStructField(setAuthStruct, "account");
+  const currentAuthorityRaw = extractStructField(setAuthStruct, "current_authority");
+  if (!accountRaw || !currentAuthorityRaw) return fallbackPassThrough(callNode);
+
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+
+  // The remaining args are: AuthorityType variant + new_authority option.
+  // Both are raw text — emitter maps the AuthorityType variant to the
+  // target's enum path. We strip `ctx.accounts.` from new_authority since
+  // the body walker emits accounts as flat locals (`<name> = &accounts[i]`).
+  const authorityType = args[1]?.text.trim() ?? "AuthorityType::AccountOwner";
+  const newAuthority = (args[2]?.text.trim() ?? "None")
+    .replace(/\bctx\s*\.\s*accounts\s*\./g, "");
+
+  return {
+    kind: "cpi_spl_set_authority",
+    account: cleanAccountRef(accountRaw),
+    currentAuthority: cleanAccountRef(currentAuthorityRaw),
+    authorityType,
+    newAuthority,
+    signerSeeds,
   };
 }
 

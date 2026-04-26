@@ -588,6 +588,7 @@ const RECOGNIZED_CPI_FN_NAMES = new Set([
   "burn",
   "burn_checked",
   "close_account",
+  "set_authority",
   "build_memo",
   "create",
   "create_idempotent",
