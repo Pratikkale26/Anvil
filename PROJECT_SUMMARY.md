@@ -5,7 +5,7 @@
 ## Live surfaces
 
 - **Web:** [anvilsol.xyz](https://anvilsol.xyz) — paste Anchor, pick a target, download the full cargo-buildable project
-- **API:** `https://anvil-api-65aj4.ondigitalocean.app/` (`/parse`, `/emit`, `/lint`, `/demo`, `/ai/refine`, `/health`)
+- **API:** `https://anvil-prod-api-wff8f.ondigitalocean.app/` (`/parse`, `/emit`, `/lint`, `/demo`, `/ai/refine`, `/health`)
 - **CLI:** `bun cli/anvil.ts <command> <input>` — seven commands, all operate on the same IR
 
 ```

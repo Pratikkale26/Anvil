@@ -4,7 +4,7 @@ Anchor → Pinocchio / Native / Quasar transpiler. Pipe Anchor source through `a
 
 - **Live workbench:** [anvilsol.xyz](https://anvilsol.xyz)
 - **Repo:** [github.com/Pratikkale26/Anvil](https://github.com/Pratikkale26/Anvil)
-- **API:** `https://anvil-api-65aj4.ondigitalocean.app/`
+- **API:** `https://anvil-prod-api-wff8f.ondigitalocean.app/`
 
 ## Install
 

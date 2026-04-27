@@ -9,7 +9,7 @@ Anvil is a compiler-style Solana transpiler.
 It parses Anchor-style Rust into a typed intermediate representation, then emits lower-level runtime-oriented Rust targets such as Pinocchio, Quasar, and a native Solana target.
 
 - **Live:** [anvilsol.xyz](https://anvilsol.xyz) — paste an Anchor program, pick a target, download the full Cargo project
-- **API:** [anvil-api-65aj4.ondigitalocean.app](https://anvil-api-65aj4.ondigitalocean.app)
+- **API:** [anvil-prod-api-wff8f.ondigitalocean.app](https://anvil-prod-api-wff8f.ondigitalocean.app)
 - **CLI:** `bun cli/anvil.ts compile <anchor-dir> --target native` — local transpile with no server round-trip
 
 ## Try it in 30 seconds
