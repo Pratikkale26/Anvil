@@ -64,25 +64,39 @@ const c = {
 
 // ─── Output Helpers ──────────────────────────────────────────────────────────
 
+// When true, suppress human-progress output that would pollute stdout for
+// pipelines consuming --json. main() sets this from args.json before any
+// command handler runs. lint/bench/snapshot/diff already gate banner/markdown
+// inline; this flag covers compile/parse/validate which previously printed
+// banner + progress before JSON, making `anvil parse foo.rs --json | jq`
+// fail.
+let quietMode = false;
+
 function banner(): void {
+  if (quietMode) return;
   console.log();
   console.log(`  ${c.bold}${c.cyan}ANVIL${c.reset} ${c.dim}v${VERSION}${c.reset}`);
   console.log();
 }
 
 function progress(msg: string): void {
+  if (quietMode) return;
   process.stdout.write(`  ${c.blue}▸${c.reset} ${msg}\n`);
 }
 
 function success(msg: string): void {
+  if (quietMode) return;
   console.log(`  ${c.green}✓${c.reset} ${msg}`);
 }
 
 function warn(msg: string): void {
+  if (quietMode) return;
   console.log(`  ${c.yellow}!${c.reset} ${msg}`);
 }
 
 function error(msg: string): void {
+  // ALWAYS surface errors, even in quiet mode — but route to stderr so
+  // they don't pollute stdout-as-data when the caller is piping JSON.
   console.error(`  ${c.red}✗${c.reset} ${msg}`);
 }
 
@@ -1513,6 +1527,10 @@ function cmdCompletion(args: CliArgs): void {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv);
+
+  // Suppress banner / progress / success / warn output when the caller
+  // wants machine-parseable JSON. Errors still surface (to stderr).
+  if (args.json) quietMode = true;
 
   if (args.help && !args.command) {
     printHelp();
