@@ -198,6 +198,23 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
     return extractSystemTransfer(callNode);
   }
 
+  // ── Free-function `transfer(cpi_ctx, amount)` ──
+  // pda-rent-payer style: source has `use anchor_lang::system_program::{transfer, Transfer}`
+  // and calls bare `transfer(cpi_context, fund_lamports)?;`. The first arg is
+  // a CpiContext::new(SYSTEM_PROGRAM, Transfer { from, to }). Disambiguate
+  // from spl-token's bare `transfer` by checking: (a) the CpiContext program
+  // arg references system_program, OR (b) the struct only has from+to (token's
+  // Transfer struct also has `authority`).
+  if (funcText === "transfer") {
+    const argsNode = callNode.childForFieldName("arguments");
+    const firstArgText = argsNode ? (getArguments(argsNode)[0]?.text ?? "") : "";
+    const looksSystem =
+      /\bsystem_program\b/.test(firstArgText) &&
+      /\bTransfer\s*\{/.test(firstArgText) &&
+      !/\bauthority\s*:/.test(firstArgText);
+    if (looksSystem) return extractSystemTransfer(callNode);
+  }
+
   // ── SPL Memo CPI ──
   // Common forms:
   //   spl_memo::build_memo(memo_bytes, &[signer])
