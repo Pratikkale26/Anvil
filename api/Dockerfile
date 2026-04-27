@@ -41,10 +41,13 @@ COPY tsconfig.json ./
 
 # Expose port
 ENV PORT=8080
-# Force the strongest sandbox available; `auto` would silently fall back if
-# bubblewrap were missing — we just installed both bwrap + firejail, so
-# bwrap is preferred (better FS isolation than firejail or unshare).
-ENV ANVIL_SANDBOX=bwrap
+# Sandbox selection: bwrap has the strongest FS isolation but requires
+# unprivileged user namespaces, which DigitalOcean App Platform's
+# container runtime blocks ('bwrap: Creating new namespace failed:
+# Operation not permitted'). firejail uses setuid + seccomp + a separate
+# kernel mechanism DO permits. bwrap stays installed as the local-dev
+# preference (sandbox.ts auto-detect picks it on machines that allow it).
+ENV ANVIL_SANDBOX=firejail
 EXPOSE 8080
 
 # Health check
