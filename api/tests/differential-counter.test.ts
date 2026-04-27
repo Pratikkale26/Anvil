@@ -69,13 +69,19 @@ const SBF_TOOLCHAIN_OK = (() => {
   });
   if (r.status !== 0) return false;
   const out = (r.stdout?.toString() ?? "") + (r.stderr?.toString() ?? "");
-  // Match either `solana-cargo-build-sbf X.Y.Z` or platform-tools `vN.M`.
+  // Prefer rustc version directly when surfaced — that's the actual gate
+  // (edition2024 needs Cargo 1.85+). Fall back to platform-tools as a proxy.
+  const rustcMatch = out.match(/rustc\s+(\d+)\.(\d+)/);
+  if (rustcMatch) {
+    const major = parseInt(rustcMatch[1] ?? "0", 10);
+    const minor = parseInt(rustcMatch[2] ?? "0", 10);
+    return major > 1 || minor >= 85;
+  }
   const platformMatch = out.match(/platform-tools\s+v(\d+)\.(\d+)/);
   if (platformMatch) {
     const major = parseInt(platformMatch[1] ?? "0", 10);
     const minor = parseInt(platformMatch[2] ?? "0", 10);
-    // platform-tools v1.54+ ships rustc 1.85 (handles edition2024).
-    return major > 1 || minor >= 54;
+    return major > 1 || minor >= 52;
   }
   return true; // unknown — let the build try
 })();
@@ -119,11 +125,21 @@ if (!SBF_AVAILABLE || !ANCHOR_AVAILABLE || !SBF_TOOLCHAIN_OK) {
       }
 
       // Run the same instruction sequence against both binaries and compare
-      // the resulting Counter PDA state.
-      const anchorState = await runScenario(readFileSync(anchorSoPath));
-      const anvilState = await runScenario(readFileSync(anvilSoPath));
+      // the resulting Counter PDA state. The same authority keypair is
+      // shared across both scenarios so the PDA derives to the same bump
+      // and the authority bytes line up — otherwise the scenarios would
+      // diverge on Pubkey + bump even though count math is identical.
+      const sharedAuthority = Keypair.generate();
+      const anchorState = await runScenario(readFileSync(anchorSoPath), sharedAuthority);
+      const anvilState = await runScenario(readFileSync(anvilSoPath), sharedAuthority);
 
-      expect(anvilState.equals(anchorState)).toBe(true);
+      const equal = anvilState.equals(anchorState);
+      if (!equal) {
+        console.log("\n[differential] STATE MISMATCH — first diverging bytes:");
+        console.log(`  anchor (len=${anchorState.length}):`, anchorState.toString("hex").match(/.{1,16}/g)?.slice(0, 6));
+        console.log(`  anvil  (len=${anvilState.length}):`, anvilState.toString("hex").match(/.{1,16}/g)?.slice(0, 6));
+      }
+      expect(equal).toBe(true);
     }, 600_000); // long timeout: first-run SBF builds take minutes
   });
 }
@@ -172,12 +188,19 @@ async function buildAnvilSo(source: string, outPath: string): Promise<void> {
   const parsed = await parseAnchor(source);
   if (!parsed.ok) throw new Error(`parseAnchor failed: ${parsed.error}`);
   const out = emitPinocchioFull(parsed.ir);
-  // project-scaffold writes a complete cargo-buildable layout.
-  const scaffold = buildProjectScaffold("pinocchio", parsed.ir, out);
+  // project-scaffold writes the meta files (Cargo.toml/README/etc); the
+  // actual .rs source comes from the emitter output. Combine + write.
+  const scaffoldMeta = buildProjectScaffold(parsed.ir, "pinocchio");
   const scratch = join(CACHE_ROOT, "_anvil_build");
   rmSync(scratch, { recursive: true, force: true });
-  for (const f of scaffold.files) {
+  for (const f of scaffoldMeta) {
     const p = join(scratch, f.path);
+    mkdirSync(dirOf(p), { recursive: true });
+    writeFileSync(p, f.content, "utf-8");
+  }
+  // The emitted .rs files live under src/ in the bundle layout.
+  for (const f of out.files) {
+    const p = join(scratch, "src", f.path);
     mkdirSync(dirOf(p), { recursive: true });
     writeFileSync(p, f.content, "utf-8");
   }
@@ -218,11 +241,10 @@ function bytesToHex(b: Uint8Array): string {
  * Anchor discriminator on the Anchor side; Pinocchio side has no
  * discriminator so we strip a synthetic 8 bytes if present to align).
  */
-async function runScenario(programSo: Buffer): Promise<Buffer> {
+async function runScenario(programSo: Buffer, authority: Keypair): Promise<Buffer> {
   const svm = new LiteSVM();
   svm.addProgram(PROGRAM_ID, programSo);
 
-  const authority = Keypair.generate();
   // Fund the payer. litesvm's airdrop returns void; we just need lamports.
   svm.airdrop(authority.publicKey, BigInt(1_000_000_000));
 

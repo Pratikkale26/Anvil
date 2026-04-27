@@ -23,7 +23,7 @@
     "@solana/web3.js": "^1.98.4",
     "@types/bun": "latest",
     "@types/cors": "^2.8.19",
-    "litesvm": "^1.0.0"
+    "litesvm": "0.7.0"
   },
   "peerDependencies": {
     "typescript": "^5"
