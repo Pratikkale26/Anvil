@@ -135,6 +135,43 @@ app.use((req, res) => {
   });
 });
 
+// ─── Body-parser error middleware ───────────────────────────────────────────
+// express.json() throws on malformed JSON or oversized body. Without this
+// middleware the global handler's else-branch returns generic 500 / 4999,
+// hiding the real cause from the client. The 2026-04-27 API audit caught
+// this — three paths (malformed JSON, >2 MB body, /build path-traversal)
+// all returned 500 where 400/413 was correct.
+app.use(
+  (
+    err: Error & { type?: string; status?: number },
+    _req: express.Request,
+    res: express.Response,
+    next: express.NextFunction,
+  ) => {
+    if (err && err.type === "entity.parse.failed") {
+      const aerr = new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "Malformed JSON body — could not parse request payload",
+        err.message,
+        400,
+      );
+      res.status(aerr.statusCode).json(aerr.toJSON());
+      return;
+    }
+    if (err && err.type === "entity.too.large") {
+      const aerr = new AnvilError(
+        ErrorCode.SOURCE_TOO_LARGE,
+        "Request body too large (limit 2 MB)",
+        err.message,
+        413,
+      );
+      res.status(aerr.statusCode).json(aerr.toJSON());
+      return;
+    }
+    next(err);
+  },
+);
+
 // ─── Global error handler ────────────────────────────────────────────────────
 app.use(
   (

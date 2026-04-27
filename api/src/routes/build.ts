@@ -99,12 +99,17 @@ buildRoute.post("/", async (req, res) => {
       stderrTail: result.stderrTail,
     });
   } catch (e) {
-    const err = new AnvilError(
-      ErrorCode.INTERNAL_ERROR,
-      "Build runner failed",
-      e instanceof Error ? e.message : String(e),
-      500,
-    );
+    const message = e instanceof Error ? e.message : String(e);
+    // safeRelativePath() in the build runner throws Error for path-
+    // traversal, absolute, or empty paths — those are caller errors,
+    // not server errors. Map to 400 instead of generic 500.
+    const isInputError =
+      /file path must be (a non-empty string|relative)/i.test(message) ||
+      /file path may not contain '\.\.'/i.test(message) ||
+      /at least one file is required/i.test(message);
+    const code = isInputError ? ErrorCode.VALIDATION_FAILED : ErrorCode.INTERNAL_ERROR;
+    const status = isInputError ? 400 : 500;
+    const err = new AnvilError(code, isInputError ? "Invalid file path" : "Build runner failed", message, status);
     metrics.recordBuild({ target, ok: false, durationMs: 0 });
     res.status(err.statusCode).json(err.toJSON());
   }
