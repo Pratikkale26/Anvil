@@ -1,0 +1,10 @@
+{
+  "name": "UserAccount",
+  "version": "v2",
+  "discriminator": "f9e1d8c7b6a59483",
+  "fields": [
+    { "name": "owner", "type": "Pubkey", "size": 32, "doc": "RENAMED from authority." },
+    { "name": "balance", "type": "u128", "size": 16, "doc": "RETYPED: u64 → u128 for higher-precision DeFi positions." },
+    { "name": "bump", "type": "u8", "size": 1 }
+  ]
+}

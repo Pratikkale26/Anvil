@@ -35,6 +35,9 @@ import {
 } from "../api/src/cli/snapshot.js";
 import { diffIRs, renderDiffMarkdown } from "../api/src/cli/diff-analyzer.js";
 import type { SolanaIR, EmitterOutput, CUEstimate } from "../api/src/ir/schema.js";
+import { LayoutSchema, type Layout } from "./migrate/types.js";
+import { diffLayouts, renderDiffPretty } from "./migrate/diff.js";
+import { codegenMigration } from "./migrate/codegen.js";
 
 // ─── Version ─────────────────────────────────────────────────────────────────
 
@@ -95,6 +98,9 @@ interface CliArgs {
   input: string | null;
   /** Optional second positional — used by `diff` for the new-version path. */
   input2: string | null;
+  /** Any additional positional args after command + input. Used by
+   *  `migrate diff <a.json> <b.json>` where `input` is the subcommand. */
+  rest: string[];
   target: string | null;
   output: string | null;
   singleFile: boolean;
@@ -113,6 +119,7 @@ function parseArgs(argv: string[]): CliArgs {
     command: null,
     input: null,
     input2: null,
+    rest: [],
     target: null,
     output: null,
     singleFile: false,
@@ -211,13 +218,17 @@ function parseArgs(argv: string[]): CliArgs {
       fatal(`Unknown option: ${arg}\n\n  Run ${c.cyan}anvil --help${c.reset} for usage.`);
     }
 
-    // Positional arguments
+    // Positional arguments. command + input are kept as named slots for
+    // backward compat (`anvil compile foo.rs`); subcommand-style usage
+    // (`anvil migrate diff a.json b.json`) reads `rest` for everything
+    // after `input`.
     if (args.command === null) {
       args.command = arg;
     } else if (args.input === null) {
       args.input = arg;
-    } else if (args.input2 === null) {
-      args.input2 = arg;
+    } else {
+      if (args.input2 === null) args.input2 = arg;
+      args.rest.push(arg);
     }
 
     i++;
@@ -246,6 +257,7 @@ function printHelp(): void {
     bench        Per-instruction CU estimate vs Anchor baseline
     snapshot     Save / check CU baseline — fails on regression
     diff         Storage layout diff between two program versions
+    migrate      Anchor v1.0 Migration<From, To> codegen + safety analysis
     completion   Print shell completion script (bash | zsh)
 
   ${c.bold}OPTIONS${c.reset}
@@ -502,6 +514,7 @@ function printCommandHelp(command: string): void {
     case "bench":      printBenchHelp();      return;
     case "snapshot":   printSnapshotHelp();   return;
     case "diff":       printDiffHelp();       return;
+    case "migrate":    printMigrateHelp();    return;
     case "completion": printCompletionHelp(); return;
     default:           printHelp();
   }
@@ -1542,11 +1555,129 @@ async function main(): Promise<void> {
     case "completion":
       cmdCompletion(args);
       break;
+    case "migrate":
+      await cmdMigrate(args);
+      break;
     default:
       error(`Unknown command: ${args.command}`);
       console.log(`\n  Run ${c.cyan}anvil --help${c.reset} for usage.\n`);
       process.exit(1);
   }
+}
+
+// ─── migrate ─────────────────────────────────────────────────────────────────
+
+async function cmdMigrate(args: CliArgs): Promise<void> {
+  // `anvil migrate <subcommand> [args]` — args.input is the subcommand,
+  // args.rest contains positional file paths.
+  const sub = args.input;
+  if (!sub || sub === "help") {
+    printMigrateHelp();
+    return;
+  }
+
+  if (sub === "diff") {
+    const [fromPath, toPath] = args.rest;
+    if (!fromPath || !toPath) {
+      error("usage: anvil migrate diff <from-layout.json> <to-layout.json>");
+      process.exit(1);
+    }
+    const from = loadLayout(fromPath);
+    const to = loadLayout(toPath);
+    const d = diffLayouts(from, to);
+    if (args.json) {
+      console.log(JSON.stringify(d, null, 2));
+    } else {
+      console.log(renderDiffPretty(d, isColorSupported));
+    }
+    process.exit(d.isSafe ? 0 : 2);
+  }
+
+  if (sub === "codegen") {
+    const [fromPath, toPath] = args.rest;
+    if (!fromPath || !toPath) {
+      error("usage: anvil migrate codegen <from-layout.json> <to-layout.json> [--output file.rs] [--target anchor|pinocchio|native]");
+      process.exit(1);
+    }
+    const from = loadLayout(fromPath);
+    const to = loadLayout(toPath);
+    const d = diffLayouts(from, to);
+    const code = codegenMigration(from, to, d, {
+      target: (args.target as "anchor" | "pinocchio" | "native" | undefined) ?? "anchor",
+    });
+    if (args.output) {
+      const outPath = resolve(args.output);
+      mkdirSync(dirname(outPath), { recursive: true });
+      writeFileSync(outPath, code, "utf-8");
+      console.log(`${c.green}✓${c.reset} migration body written to ${c.cyan}${args.output}${c.reset}`);
+      console.log(`  ${c.dim}safety:${c.reset} ${d.isSafe ? c.green + "safe" : c.yellow + "UNSAFE — review TODOs"}${c.reset}`);
+    } else {
+      process.stdout.write(code);
+    }
+    return;
+  }
+
+  error(`Unknown migrate subcommand: ${sub}. Try 'anvil migrate help'.`);
+  process.exit(1);
+}
+
+function loadLayout(path: string): Layout {
+  const resolved = resolve(path);
+  if (!existsSync(resolved)) {
+    error(`Layout file not found: ${path}`);
+    process.exit(1);
+  }
+  const raw = JSON.parse(readFileSync(resolved, "utf-8"));
+  const parsed = LayoutSchema.safeParse(raw);
+  if (!parsed.success) {
+    error(`Invalid layout file: ${path}`);
+    console.error(parsed.error.message);
+    process.exit(1);
+  }
+  return parsed.data;
+}
+
+function printMigrateHelp(): void {
+  console.log(`
+  ${c.bold}anvil migrate${c.reset} — Anchor v1.0 Migration<From, To> codegen + safety analysis
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil migrate diff      <from.json> <to.json> [--json]
+    anvil migrate codegen   <from.json> <to.json> [--output file.rs] [--target anchor|pinocchio|native]
+
+  ${c.bold}WHY${c.reset}
+
+    Anchor v1.0 (PR #4060) shipped \`Migration<'info, From, To>\` — a
+    runtime container that auto-detects whether an account is in the old
+    or new format and forces \`.migrate()\` before exit. The runtime is
+    upstream; the body of \`.migrate()\` still gets hand-written, and
+    that's where the bugs live.
+
+    \`anvil migrate\` is the codegen + safety layer:
+
+      ${c.cyan}diff${c.reset}      structural comparison + safety verdict (exit 2 = unsafe)
+      ${c.cyan}codegen${c.reset}   emit the .migrate() body. Safe diffs get a lossless
+                deterministic body; unsafe diffs get a TODO-marked
+                skeleton with each unsafe change explained inline.
+
+  ${c.bold}LAYOUT FILE FORMAT${c.reset}
+
+    {
+      "name": "UserAccount",
+      "version": "v1",
+      "discriminator": "f9e1d8c7b6a59483",
+      "fields": [
+        { "name": "authority", "type": "Pubkey", "size": 32 },
+        { "name": "balance",   "type": "u64",    "size": 8  }
+      ]
+    }
+
+  ${c.bold}EXAMPLES${c.reset}
+
+    anvil migrate diff cli/migrate/examples/v1.json cli/migrate/examples/v2.json
+    anvil migrate codegen cli/migrate/examples/v1.json cli/migrate/examples/v2.json --output migration.rs
+`);
 }
 
 main().catch((err: unknown) => {

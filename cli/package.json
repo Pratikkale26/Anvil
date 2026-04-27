@@ -1,9 +1,49 @@
 {
-  "name": "anvil-cli",
+  "name": "anvil-sol",
   "version": "0.3.0",
+  "description": "Anvil — Anchor → Pinocchio/Native/Quasar transpiler. Drop-in CLI that converts Anchor source into a cargo-buildable project in three target Rust dialects, all from a single typed IR with deterministic emit + validator + portability lint.",
   "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://anvilsol.xyz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pratikkale26/Anvil.git",
+    "directory": "cli"
+  },
+  "bugs": {
+    "url": "https://github.com/Pratikkale26/Anvil/issues"
+  },
+  "keywords": [
+    "solana",
+    "anchor",
+    "pinocchio",
+    "transpiler",
+    "compute-units",
+    "cu-optimization",
+    "rust",
+    "cli"
+  ],
+  "author": "Pratik Kale",
   "bin": {
     "anvil": "./anvil.ts"
   },
-  "dependencies": {}
+  "files": [
+    "anvil.ts",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "peerDependencies": {
+    "bun": ">=1.0.0"
+  },
+  "dependencies": {
+    "tree-sitter-rust": "^0.24.0",
+    "web-tree-sitter": "^0.26.7",
+    "zod": "^4.3.6"
+  },
+  "scripts": {
+    "test": "bun anvil.ts --help"
+  }
 }
