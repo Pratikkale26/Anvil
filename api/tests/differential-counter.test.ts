@@ -52,44 +52,50 @@ const ANCHOR_AVAILABLE = (() => {
 })();
 
 /**
- * Probe the SBF rustc version. cargo-build-sbf in Solana CLI <= 2.0.x
- * bundles rustc 1.75 which cannot compile modern Anchor's transitive
- * dependency tree (notably block-buffer 0.12 which requires edition2024,
- * stabilized in Cargo 1.85). Solana CLI 2.1+ ships rustc 1.79+ which
- * works. Detect and skip with an actionable message rather than failing
- * with a wall of cargo errors.
+ * Probe whether the SBF toolchain can compile modern Anchor's dependency
+ * tree. The current edition2024-requiring transitive deps (block-buffer
+ * 0.12 via blake3 1.8+, toml_edit 0.25+) need Cargo 1.85, which means
+ * Anza/Solana CLI 3.x with platform-tools v1.54+. Older toolchains
+ * (Solana CLI 2.x with rustc 1.75/1.79) fail at dep download with a wall
+ * of "feature edition2024 is required" errors.
+ *
+ * Detect by looking for `cargo-build-sbf` >= 3.0 (the version line reads
+ * `solana-cargo-build-sbf X.Y.Z`).
  */
-const SBF_RUSTC_OK = (() => {
+const SBF_TOOLCHAIN_OK = (() => {
   const r = spawnSync("cargo-build-sbf", ["--version"], {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 5_000,
   });
   if (r.status !== 0) return false;
   const out = (r.stdout?.toString() ?? "") + (r.stderr?.toString() ?? "");
-  const m = out.match(/rustc\s+(\d+)\.(\d+)/);
-  if (!m) return true; // unknown — let the build try
-  const major = parseInt(m[1] ?? "0", 10);
-  const minor = parseInt(m[2] ?? "0", 10);
-  // Need >= 1.79 to handle modern Anchor's edition2024 transitive deps.
-  return major > 1 || minor >= 79;
+  // Match either `solana-cargo-build-sbf X.Y.Z` or platform-tools `vN.M`.
+  const platformMatch = out.match(/platform-tools\s+v(\d+)\.(\d+)/);
+  if (platformMatch) {
+    const major = parseInt(platformMatch[1] ?? "0", 10);
+    const minor = parseInt(platformMatch[2] ?? "0", 10);
+    // platform-tools v1.54+ ships rustc 1.85 (handles edition2024).
+    return major > 1 || minor >= 54;
+  }
+  return true; // unknown — let the build try
 })();
 
 const COUNTER_SRC = join(import.meta.dir, "..", "src", "demo-programs", "counter.rs");
 
 const CACHE_ROOT = process.env.ANVIL_DIFF_CACHE ?? join(process.env.HOME ?? "/tmp", ".anvil-diff-cache");
 
-if (!SBF_AVAILABLE || !ANCHOR_AVAILABLE || !SBF_RUSTC_OK) {
+if (!SBF_AVAILABLE || !ANCHOR_AVAILABLE || !SBF_TOOLCHAIN_OK) {
   const why = !SBF_AVAILABLE
     ? "cargo-build-sbf missing"
     : !ANCHOR_AVAILABLE
       ? "anchor CLI missing"
-      : "SBF rustc < 1.79 (Solana CLI <= 2.0.x bundles rustc 1.75 which can't compile modern Anchor's edition2024 transitive deps — upgrade to Solana CLI 2.1+)";
+      : "SBF platform-tools < v1.54 (modern Anchor's transitive deps need rustc 1.85 / Cargo edition2024 — install Anza CLI 3.x or wait for Solana CLI 2.x to ship platform-tools v1.54)";
   console.warn(
     `\n[differential-counter] SKIPPED — ${why}.\n` +
-      `  cargo-build-sbf: ${SBF_AVAILABLE ? "found" : "MISSING"}\n` +
-      `  anchor:          ${ANCHOR_AVAILABLE ? "found" : "MISSING"}\n` +
-      `  SBF rustc >=1.79: ${SBF_RUSTC_OK ? "yes" : "NO"}\n` +
-      `  Install/upgrade Solana CLI + Anchor to enable this runtime-correctness gate.\n`,
+      `  cargo-build-sbf:        ${SBF_AVAILABLE ? "found" : "MISSING"}\n` +
+      `  anchor:                 ${ANCHOR_AVAILABLE ? "found" : "MISSING"}\n` +
+      `  platform-tools v1.54+:  ${SBF_TOOLCHAIN_OK ? "yes" : "NO"}\n` +
+      `  To enable: 'sh -c \"$(curl -sSfL https://release.anza.xyz/v3.1.13/install)\"'.\n`,
   );
   describe.skip(`Anchor vs Anvil-Pinocchio differential [SKIPPED — ${why}]`, () => {
     test.skip("see console warning", () => {});
