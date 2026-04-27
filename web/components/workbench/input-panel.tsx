@@ -78,6 +78,10 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
     autoFixBusy,
     autoFixResult,
     autoFixError,
+    runRefine,
+    refineBusy,
+    refineError,
+    refineErrorCategory,
     handleLocalFileChange,
     handleFolderChange,
   } = state;
@@ -382,10 +386,58 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                       {errorCount} validator error{errorCount === 1 ? "" : "s"}
                     </span>
                     <span className="text-anvil-text-muted">
-                      — Auto-fix runs cargo + AI in a loop.
+                      — try AI Refine, or run Auto-fix below.
                     </span>
+                    {/* Single-shot AI Refine button — uses the deterministic
+                        emit + AI Refine pass without the cargo loop. Cheaper
+                        than Auto-fix; useful when validator errors are
+                        clearly fixable without a real cargo round-trip. */}
+                    <button
+                      onClick={() => void runRefine()}
+                      disabled={refineBusy || autoFixBusy || !hasOutput}
+                      className="ml-auto px-2 py-1 rounded-md text-[11px] font-bold transition-colors"
+                      style={{
+                        cursor: refineBusy ? "default" : "pointer",
+                        background: refineBusy
+                          ? "rgba(255,255,255,0.05)"
+                          : "rgba(245,166,35,0.15)",
+                        border: "1px solid rgba(245,166,35,0.4)",
+                        color: C.amber,
+                        opacity: !hasOutput ? 0.4 : 1,
+                      }}
+                      title={
+                        refineBusy
+                          ? "Refining…"
+                          : "Single-shot AI Refine (no cargo loop)"
+                      }
+                    >
+                      {refineBusy ? "Refining…" : "AI Refine"}
+                    </button>
                   </>
                 )}
+              </div>
+            )}
+
+            {/* Refine error surface — daily_cap_hit, quota_exceeded,
+                provider_timeout, etc. Without this the user has no idea
+                why the AI Refine button didn't help. */}
+            {refineError && (
+              <div
+                className="px-3 py-2 rounded-xl border text-xs"
+                style={{
+                  borderColor: "rgba(245,166,35,0.35)",
+                  background: "rgba(245,166,35,0.06)",
+                  color: C.amber,
+                }}
+              >
+                <span className="font-bold">AI Refine: </span>
+                {refineErrorCategory === "daily_cap_hit"
+                  ? "Daily cap hit. Try again tomorrow, or reach out for an exception."
+                  : refineErrorCategory === "quota_exceeded"
+                    ? "Provider quota exceeded."
+                    : refineErrorCategory === "provider_timeout"
+                      ? "Provider timed out — retry."
+                      : refineError}
               </div>
             )}
 
@@ -518,6 +570,22 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                             : ""}
                         </span>
                       )}
+                      {/* Per-iteration refine error — daily_cap_hit, quota_exceeded,
+                          provider_timeout, etc. Without this, the iteration just shows
+                          "0 err → " with no explanation when the AI call failed. */}
+                      {it.refineError && (
+                        <span style={{ color: "#f5a623" }} title={it.refineError.message}>
+                          → AI {
+                            it.refineError.category === "daily_cap_hit"
+                              ? "daily cap hit"
+                              : it.refineError.category === "quota_exceeded"
+                                ? "quota exceeded"
+                                : it.refineError.category === "provider_timeout"
+                                  ? "timeout"
+                                  : `error (${it.refineError.category})`
+                          }
+                        </span>
+                      )}
                       <span className="text-anvil-text-dim ml-auto">
                         {it.buildResult.durationMs}ms
                       </span>
@@ -561,7 +629,7 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                   </div>
                   {buildResult.ok
                     ? "Generated bundle is ready to ship."
-                    : "Click AI Refine above to feed these into the repair model."}
+                    : "Run Auto-fix below — feeds cargo errors back to the AI repair model in a loop."}
                 </div>
               </div>
             )}
