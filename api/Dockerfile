@@ -31,27 +31,26 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       --no-modify-path \
   && rustc --version && cargo --version
 
-# Pre-warm the cargo dep cache + scratch project target/ for both Pinocchio
-# and Native targets. Without this, the FIRST request to /build on a fresh
-# container does a cold cargo build (downloads ~80 deps + compiles solana-
-# program / pinocchio / borsh / spl-token = 60-120s) which exceeds the
-# DigitalOcean App Platform request timeout (504 gateway). Warming at image-
-# build time means the first runtime request is ~2-5s instead.
+# Pre-fetch (download only, no compile) the cargo registry tarballs for the
+# Pinocchio + Native dep trees. cargo check at runtime reuses these,
+# eliminating the network round-trip from the first /build request. We do
+# NOT cargo check at image-build time — that needs >2 GB RAM to compile
+# solana-program 2.2's transitive deps and exceeded the DigitalOcean App
+# Platform image-build memory limit, causing 503 'no_healthy_upstream' on
+# the previous deploy attempt.
 #
-# Uses ANVIL_BUILD_SCRATCH_ROOT=/root/.anvil-build to match the runtime
-# default (build-runner.ts: process.env.HOME ?? '/var/tmp', .anvil-build).
-RUN mkdir -p /root/.anvil-build/anvil-build-pinocchio/src \
-            /root/.anvil-build/anvil-build-native/src \
-  && cd /root/.anvil-build/anvil-build-pinocchio \
-  && printf '[package]\nname = "anvil-build"\nversion = "0.1.0"\nedition = "2021"\n[lib]\ncrate-type = ["cdylib", "lib"]\n[dependencies]\nborsh = { version = "1.5", features = ["derive"] }\npinocchio = "0.9"\npinocchio-system = "0.4"\npinocchio-token = "0.4"\npinocchio-associated-token-account = "0.4"\n' > Cargo.toml \
-  && echo 'pub fn x() {}' > src/lib.rs \
-  && cargo fetch \
-  && cargo check --quiet \
-  && cd /root/.anvil-build/anvil-build-native \
-  && printf '[package]\nname = "anvil-build"\nversion = "0.1.0"\nedition = "2021"\n[lib]\ncrate-type = ["cdylib", "lib"]\n[dependencies]\nborsh = { version = "1.5", features = ["derive"] }\nsolana-program = "2.2"\nspl-token = { version = "7", features = ["no-entrypoint"] }\nspl-token-2022 = { version = "6", features = ["no-entrypoint"] }\nspl-associated-token-account = { version = "6", features = ["no-entrypoint"] }\n' > Cargo.toml \
-  && echo 'pub fn x() {}' > src/lib.rs \
-  && cargo fetch \
-  && cargo check --quiet
+# Failure here is non-fatal — '|| true' lets the image build complete
+# even if a registry hiccup or new dep version blocks one of the fetches.
+# The runtime fallback (cargo fetch on first scratch-project init) covers it.
+RUN set -e; \
+    mkdir -p /root/.anvil-build/anvil-build-pinocchio/src \
+             /root/.anvil-build/anvil-build-native/src; \
+    printf '[package]\nname = "anvil-build"\nversion = "0.1.0"\nedition = "2021"\n[lib]\ncrate-type = ["cdylib", "lib"]\n[dependencies]\nborsh = { version = "1.5", features = ["derive"] }\npinocchio = "0.9"\npinocchio-system = "0.4"\npinocchio-token = "0.4"\npinocchio-associated-token-account = "0.4"\n' > /root/.anvil-build/anvil-build-pinocchio/Cargo.toml; \
+    echo 'pub fn x() {}' > /root/.anvil-build/anvil-build-pinocchio/src/lib.rs; \
+    printf '[package]\nname = "anvil-build"\nversion = "0.1.0"\nedition = "2021"\n[lib]\ncrate-type = ["cdylib", "lib"]\n[dependencies]\nborsh = { version = "1.5", features = ["derive"] }\nsolana-program = "2.2"\nspl-token = { version = "7", features = ["no-entrypoint"] }\nspl-token-2022 = { version = "6", features = ["no-entrypoint"] }\nspl-associated-token-account = { version = "6", features = ["no-entrypoint"] }\n' > /root/.anvil-build/anvil-build-native/Cargo.toml; \
+    echo 'pub fn x() {}' > /root/.anvil-build/anvil-build-native/src/lib.rs; \
+    (cd /root/.anvil-build/anvil-build-pinocchio && cargo fetch) || true; \
+    (cd /root/.anvil-build/anvil-build-native && cargo fetch) || true
 
 # Install dependencies
 COPY package.json bun.lock ./
