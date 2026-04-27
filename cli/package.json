@@ -1,6 +1,6 @@
 {
   "name": "anvil-sol",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Anvil — Anchor → Pinocchio/Native/Quasar transpiler. Drop-in CLI that converts Anchor source into a cargo-buildable project in three target Rust dialects, all from a single typed IR with deterministic emit + validator + portability lint.",
   "type": "module",
   "license": "Apache-2.0",
@@ -25,11 +25,11 @@
   ],
   "author": "Pratik Kale",
   "bin": {
-    "anvil": "./anvil.ts"
+    "anvil": "./src/anvil.ts"
   },
   "files": [
-    "anvil.ts",
     "src",
+    "migrate",
     "README.md"
   ],
   "engines": {
@@ -44,6 +44,8 @@
     "zod": "^4.3.6"
   },
   "scripts": {
-    "test": "bun anvil.ts --help"
+    "test": "bun anvil.ts --help",
+    "prepack": "bun scripts/prepack.ts",
+    "smoke": "bun pack && cd /tmp && rm -rf _anvil-sol-smoke && mkdir _anvil-sol-smoke && cd _anvil-sol-smoke && bun add $OLDPWD/anvil-sol-*.tgz && bunx anvil-sol --version"
   }
 }

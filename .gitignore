@@ -49,3 +49,8 @@ api/.anvil-data
 codex-session.jsonl
 .claude/
 api/scratch-*.ts
+video.md
+posts/
+test-ledger/
+# anvil-sol prepack output (regenerated on each npm publish)
+cli/src/

@@ -23,43 +23,58 @@ export function getParser(): Promise<Parser> {
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
+    // Try multiple plausible node_modules roots — the layout varies by
+    // deploy shape:
+    //   - api dev:        api/src/parser/ts-init.ts  → ../../node_modules
+    //   - cli npm publish: cli/src/api-src/parser/ts-init.ts → ../../../node_modules
+    //   - bunx pnp / hoisted: deeper still
+    // We probe each candidate; first one that resolves wins.
+    const moduleRoots = [
+      resolve(__dirname, "../../node_modules"),
+      resolve(__dirname, "../../../node_modules"),
+      resolve(__dirname, "../../../../node_modules"),
+    ];
+
+    let webTreeSitterRoot: string | null = null;
+    for (const root of moduleRoots) {
+      const candidate = resolve(root, "web-tree-sitter");
+      try {
+        // statSync via dynamic import to keep this file ESM-clean.
+        const fs = require("node:fs") as typeof import("node:fs");
+        if (fs.existsSync(resolve(candidate, "web-tree-sitter.wasm"))) {
+          webTreeSitterRoot = candidate;
+          break;
+        }
+      } catch { /* try next */ }
+    }
+    if (!webTreeSitterRoot) {
+      throw new Error(
+        `Could not find web-tree-sitter package. Tried roots:\n${moduleRoots.join("\n")}\nRun: bun add web-tree-sitter tree-sitter-rust`,
+      );
+    }
+
     await Parser.init({
-      // Help web-tree-sitter find its own WASM file
       locateFile(scriptName: string, _scriptDirectory: string) {
-        return resolve(
-          __dirname,
-          "../../node_modules/web-tree-sitter",
-          scriptName
-        );
+        return resolve(webTreeSitterRoot!, scriptName);
       },
     });
 
     const parser = new Parser();
 
-    // Load the Rust grammar WASM — try multiple potential paths
-    const wasmPaths = [
-      resolve(__dirname, "../../node_modules/tree-sitter-rust/tree-sitter-rust.wasm"),
-      resolve(__dirname, "../../../node_modules/tree-sitter-rust/tree-sitter-rust.wasm"),
-    ];
-
-    let loaded = false;
-    for (const wasmPath of wasmPaths) {
-      try {
-        const Rust = await Language.load(wasmPath);
-        parser.setLanguage(Rust);
-        loaded = true;
-        break;
-      } catch {
-        // Try next path
-      }
+    // Same probe for the Rust grammar.
+    let wasmPath: string | null = null;
+    for (const root of moduleRoots) {
+      const candidate = resolve(root, "tree-sitter-rust", "tree-sitter-rust.wasm");
+      const fs = require("node:fs") as typeof import("node:fs");
+      if (fs.existsSync(candidate)) { wasmPath = candidate; break; }
     }
-
-    if (!loaded) {
+    if (!wasmPath) {
       throw new Error(
-        `Could not load tree-sitter-rust.wasm. Tried:\n${wasmPaths.join("\n")}\n` +
-        `Run: bun add web-tree-sitter tree-sitter-rust`
+        `Could not find tree-sitter-rust.wasm. Tried roots:\n${moduleRoots.join("\n")}\nRun: bun add tree-sitter-rust`,
       );
     }
+    const Rust = await Language.load(wasmPath);
+    parser.setLanguage(Rust);
 
     parserInstance = parser;
     return parser;
