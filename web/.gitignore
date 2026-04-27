@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# Opt-in: production-build env contains the public API URL only — no
+# secrets — and committing it means Vercel auto-picks the right URL on
+# every build without a dashboard env var dance.
+!.env.production
 
 # vercel
 .vercel
