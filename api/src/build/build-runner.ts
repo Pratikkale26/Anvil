@@ -342,6 +342,22 @@ function runCargoCheck(scratchDir: string, timeoutMs: number): Promise<CargoRunR
   });
 }
 
+// Cache the cargo-availability probe — `which cargo` is a syscall, no point
+// re-running it on every request. Re-evaluated on process restart.
+let cargoAvailableCache: boolean | null = null;
+function cargoAvailable(): boolean {
+  if (cargoAvailableCache !== null) return cargoAvailableCache;
+  try {
+    // execSync is fine — startup-time only.
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
+    execSync("command -v cargo", { stdio: "ignore" });
+    cargoAvailableCache = true;
+  } catch {
+    cargoAvailableCache = false;
+  }
+  return cargoAvailableCache;
+}
+
 function tailString(s: string, bytes: number): string {
   if (s.length <= bytes) return s;
   // Slice on bytes by encoding to a buffer first — avoids splitting a
@@ -387,6 +403,32 @@ export async function runBuild(
 
   if (!Array.isArray(files) || files.length === 0) {
     throw new Error("at least one file is required");
+  }
+
+  // Detect missing cargo BEFORE doing any scratch-dir work — gives the
+  // caller a clean `unsupported` so they don't waste IR/refine round-trips
+  // on a deployment where /build can't function. The 2026-04-27 prod audit
+  // caught this: build.success=0/4 on prod metrics because cargo wasn't
+  // installed in the DigitalOcean container.
+  if (!cargoAvailable()) {
+    return {
+      ok: false,
+      durationMs: 0,
+      errors: [
+        {
+          filePath: "",
+          line: 0,
+          column: 0,
+          code: null,
+          message:
+            "cargo is not installed on this deployment. The /build endpoint requires the Rust toolchain — install via `apt install cargo` or rustup, then redeploy.",
+          spanText: "",
+        },
+      ],
+      warnings: [],
+      stderrTail: "",
+      unsupported: { reason: "cargo not installed" },
+    };
   }
 
   const scratchDir = scratchDirFor(target);
