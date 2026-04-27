@@ -102,6 +102,15 @@ export function parseCustomType(
     for (let i = 0; i < bodyNode.namedChildCount; i++) {
       const child = bodyNode.namedChild(i);
       if (!child) continue;
+      // Skip line/block comments + attribute nodes — these are siblings of
+      // the actual enum_variant nodes in tree-sitter's named-children list.
+      // Without this guard, doc-commented enums (`/// description \n A,`)
+      // caused the comment text to be accepted as a variant name; the
+      // synthesized TryFrom<u8> impl in emitter-base then rendered
+      // `Self::/// description` as a match arm → unparseable Rust.
+      // Hits any production Anchor program with TryFrom enums (mango,
+      // openbook, squads, drift, …).
+      if (child.type === "line_comment" || child.type === "block_comment" || child.type === "attribute_item") continue;
       const variantName = child.childForFieldName("name")?.text ?? child.text.replace(/,\s*$/, "").trim();
       if (variantName && variantName !== "pub" && variantName !== "enum") {
         variants.push(variantName);
