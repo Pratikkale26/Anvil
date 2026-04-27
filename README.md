@@ -72,7 +72,9 @@ pub fn increment(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> 
 }
 ```
 
-The discriminator routing, signer / writable / owner checks, args decoding, PDA derivation, and Borsh-equivalent read / write are all generated. Anvil's CU analyzer reports `increment` at 405 → 141 CU on this program (65% saved) on the **deterministic estimator** — a constant-table heuristic (`api/src/emitter/cu-analyzer.ts`) that adds up per-construct costs (account deserialize, signer check, PDA derive, etc.). Your real-runtime numbers from `solana-test-validator` will vary; the estimator gives an order-of-magnitude comparison for relative ranking, not an exact prediction.
+The discriminator routing, signer / writable / owner checks, args decoding, PDA derivation, and Borsh-equivalent read / write are all generated.
+
+**Compute-unit comparison.** Anvil's deterministic estimator predicts `increment` at 405 → 141 CU on this program (65% saved). The estimator is a constant-table heuristic (`api/src/emitter/cu-analyzer.ts`) that adds up per-construct costs (account deserialize, signer check, PDA derive, etc.) — useful for relative ranking, NOT an exact prediction. For measured numbers, run `bun scripts/measure-cu.ts` against a local `solana-test-validator` after building both `.so` binaries with `bun test api/tests/differential-counter.test.ts`. The differential test + measurement script require **Anza CLI 3.x** (Solana CLI 2.x ships rustc < 1.85, can't compile current Anchor's transitive deps); the script otherwise skips with an actionable install line. Measured numbers will replace the heuristic figures here when the toolchain rolls forward.
 
 ## What works today, per target
 
