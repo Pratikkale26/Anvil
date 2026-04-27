@@ -211,11 +211,20 @@ export function spendSnapshot(top = 10): {
 }
 
 function maskIp(ip: string): string {
-  // IPv4: a.b.c.d -> a.b.c.0/24. IPv6: prefix to first 4 hex groups + ::/64.
+  // IPv4-mapped IPv6 (Express behind a reverse proxy serves these as
+  // ::ffff:a.b.c.d). Match BEFORE plain IPv6 / IPv4 branches — otherwise
+  // the colons send it into the IPv6 branch and the ::ffff: prefix +
+  // dotted-quad render as `::ffff:a.b.c::/64`, leaking the full v4.
+  const v4mapped = ip.match(/^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/i);
+  if (v4mapped) {
+    return `${v4mapped[1]}.${v4mapped[2]}.${v4mapped[3]}.0/24`;
+  }
+  // Plain IPv4: a.b.c.d -> a.b.c.0/24.
   if (ip.includes(".") && !ip.includes(":")) {
     const parts = ip.split(".");
     if (parts.length === 4) return `${parts[0]}.${parts[1]}.${parts[2]}.0/24`;
   }
+  // Plain IPv6: prefix to first 4 hex groups + ::/64.
   if (ip.includes(":")) {
     const parts = ip.split(":");
     return `${parts.slice(0, 4).join(":")}::/64`;

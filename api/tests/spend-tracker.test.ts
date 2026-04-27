@@ -84,6 +84,25 @@ describe("spend-tracker", () => {
     expect(prefixes).not.toContain("1.2.3.4");
   });
 
+  it("masks IPv4-mapped IPv6 (::ffff:a.b.c.d) — the form Express serves behind reverse proxies", async () => {
+    // Regression: maskIp previously checked .includes(":") before
+    // ::ffff: — leaked full v4 octets as `::ffff:100.127.5::/64` on prod.
+    const { recordSpend, spendSnapshot, __resetForTest } = await import("../src/ai/spend-tracker.js");
+    __resetForTest();
+    recordSpend("::ffff:100.127.5.6", 0.50);
+    recordSpend("::ffff:8.8.8.8", 0.25);
+    const snap = spendSnapshot();
+    const prefixes = snap.topSpendersToday.map((s) => s.ipPrefix);
+    expect(prefixes).toContain("100.127.5.0/24");
+    expect(prefixes).toContain("8.8.8.0/24");
+    // Full IPs and the ::ffff: prefix must not appear.
+    for (const p of prefixes) {
+      expect(p).not.toMatch(/::ffff:/);
+      expect(p).not.toMatch(/100\.127\.5\.6/);
+      expect(p).not.toMatch(/8\.8\.8\.8/);
+    }
+  });
+
   it("persists across reload via the JSON store", async () => {
     const mod1 = await import("../src/ai/spend-tracker.js");
     mod1.__resetForTest();
