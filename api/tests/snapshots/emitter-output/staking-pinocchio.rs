@@ -263,7 +263,10 @@ pub fn stake(
     pool.total_staked = pool.total_staked.checked_add(amount).ok_or(StakingError::Overflow)?;
     // SPL Token transfer — user_stake_ata → stake_vault
     spl_token_transfer(user_stake_ata, stake_vault, user, amount)?;
-    // Event: StakeEvent
+    // ⚠️ Anvil: Anchor emit!(StakeEvent) → text log only on Pinocchio.
+    //   For indexer-compatible borsh-encoded events, replace with
+    //   sol_log_data(&[disc, borsh_bytes]) once your event type derives
+    //   BorshSerialize.
     pinocchio::log::sol_log("event:StakeEvent");
     // Event data: user: ctx.accounts.user.key(),             amount,             timestamp: now,
     UserStake::save(user_stake_account, &user_stake)?;
@@ -338,7 +341,10 @@ pub fn claim_rewards(
     // SPL Token mint_to — reward_mint → user_reward_ata
     spl_token_mint_to_signed(reward_mint, user_reward_ata, pool_account, rewards, signer_seeds)?;
     user_stake.last_claim = now;
-    // Event: RewardEvent
+    // ⚠️ Anvil: Anchor emit!(RewardEvent) → text log only on Pinocchio.
+    //   For indexer-compatible borsh-encoded events, replace with
+    //   sol_log_data(&[disc, borsh_bytes]) once your event type derives
+    //   BorshSerialize.
     pinocchio::log::sol_log("event:RewardEvent");
     // Event data: user: ctx.accounts.user.key(),             rewards,             timestamp: now,
     UserStake::save(user_stake_account, &user_stake)?;
@@ -419,7 +425,10 @@ pub fn unstake(
             spl_token_mint_to_signed(reward_mint, user_reward_ata, pool_account, pending_rewards, signer_seeds)?;
         }
     pool.total_staked = pool.total_staked.checked_sub(user_stake.amount).ok_or(StakingError::Underflow)?;
-    // Event: UnstakeEvent
+    // ⚠️ Anvil: Anchor emit!(UnstakeEvent) → text log only on Pinocchio.
+    //   For indexer-compatible borsh-encoded events, replace with
+    //   sol_log_data(&[disc, borsh_bytes]) once your event type derives
+    //   BorshSerialize.
     pinocchio::log::sol_log("event:UnstakeEvent");
     // Event data: user: ctx.accounts.user.key(),             amount: user_stake.amount,             rewards: pending_rewards,             timestamp: now,
     close_program_account(user_stake_account, user)?;

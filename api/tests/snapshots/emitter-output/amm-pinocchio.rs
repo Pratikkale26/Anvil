@@ -322,7 +322,10 @@ pub fn add_liquidity(
     pool.reserve_a = pool.reserve_a.checked_add(amount_a).ok_or(AmmError::Overflow)?;
     pool.reserve_b = pool.reserve_b.checked_add(amount_b).ok_or(AmmError::Overflow)?;
     pool.lp_supply = pool.lp_supply.checked_add(lp_tokens).ok_or(AmmError::Overflow)?;
-    // Event: LiquidityAdded
+    // ⚠️ Anvil: Anchor emit!(LiquidityAdded) → text log only on Pinocchio.
+    //   For indexer-compatible borsh-encoded events, replace with
+    //   sol_log_data(&[disc, borsh_bytes]) once your event type derives
+    //   BorshSerialize.
     pinocchio::log::sol_log("event:LiquidityAdded");
     // Event data: user: ctx.accounts.user.key(),             amount_a,             amount_b,             lp_tokens,
     AmmPool::save(pool_account, &pool)?;
@@ -431,7 +434,10 @@ pub fn remove_liquidity(
     pool.reserve_a = pool.reserve_a.checked_sub(amount_a).ok_or(AmmError::Underflow)?;
     pool.reserve_b = pool.reserve_b.checked_sub(amount_b).ok_or(AmmError::Underflow)?;
     pool.lp_supply = pool.lp_supply.checked_sub(lp_amount).ok_or(AmmError::Underflow)?;
-    // Event: LiquidityRemoved
+    // ⚠️ Anvil: Anchor emit!(LiquidityRemoved) → text log only on Pinocchio.
+    //   For indexer-compatible borsh-encoded events, replace with
+    //   sol_log_data(&[disc, borsh_bytes]) once your event type derives
+    //   BorshSerialize.
     pinocchio::log::sol_log("event:LiquidityRemoved");
     // Event data: user: ctx.accounts.user.key(),             amount_a,             amount_b,             lp_tokens: lp_amount,
     AmmPool::save(pool_account, &pool)?;
@@ -562,7 +568,10 @@ pub fn swap(
             pool.reserve_a = pool.reserve_a.checked_sub(amount_out).ok_or(AmmError::Underflow)?;
             pool.total_fees_b = pool.total_fees_b.checked_add(lp_fee).ok_or(AmmError::Overflow)?;
         }
-    // Event: Swapped
+    // ⚠️ Anvil: Anchor emit!(Swapped) → text log only on Pinocchio.
+    //   For indexer-compatible borsh-encoded events, replace with
+    //   sol_log_data(&[disc, borsh_bytes]) once your event type derives
+    //   BorshSerialize.
     pinocchio::log::sol_log("event:Swapped");
     // Event data: user: ctx.accounts.user.key(),             amount_in,             amount_out,             fee_amount,             a_to_b,
     AmmPool::save(pool_account, &pool)?;

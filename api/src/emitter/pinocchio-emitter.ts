@@ -854,11 +854,29 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override emitEmit(event: string, fields: string): string {
+    // Anchor's `emit!(Event { … })` expands to a sol_log_data CPI with
+    // the borsh-encoded event preceded by an 8-byte event discriminator
+    // (sha256("event:<EventName>")[..8]). Off-chain indexers parse that
+    // shape. Pinocchio has no `emit!` macro — we keep a sol_log
+    // text-log fallback (always works, doesn't need BorshSerialize on
+    // the event struct) and document the divergence inline so users
+    // know to wire sol_log_data themselves if they need indexer-
+    // compatible event output.
+    //
+    // Why not auto-emit sol_log_data: requires the user's event types
+    // to derive BorshSerialize, which Anchor adds via `#[event]` but
+    // Anvil's emitted state structs don't currently. Switching the
+    // derive across all targets is a bigger change than this
+    // divergence note; the differential corpus byte-equality is on
+    // ACCOUNT STATE, not on logs, so this gap doesn't break the
+    // tested fixtures. Tracked as a separate roadmap item.
     if (!fields.trim()) {
       return `    pinocchio::log::sol_log("event:${event}");`;
     }
-    // Preserve event field data as comments so the developer can add proper serialization
-    return `    // Event: ${event}
+    return `    // ⚠️ Anvil: Anchor emit!(${event}) → text log only on Pinocchio.
+    //   For indexer-compatible borsh-encoded events, replace with
+    //   sol_log_data(&[disc, borsh_bytes]) once your event type derives
+    //   BorshSerialize.
     pinocchio::log::sol_log("event:${event}");
     // Event data: ${fields.replace(/\n/g, " ")}`;
   }
