@@ -147,6 +147,21 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    * sparingly; every mask is correctness lost.
    */
   ignoreRanges?: Record<string, Array<{ offset: number; length: number }>>;
+  /**
+   * If true (default), also compare account lamports across scenarios.
+   * Catches divergences where the data byte-equals but the lamport
+   * accounting differs (e.g. vault holding SOL, rent-exempt minimums).
+   * Set false for accounts where lamports are expected to vary
+   * (e.g. fee-payer with arbitrary residual after txs).
+   */
+  compareLamports?: boolean;
+}
+
+/** Single account snapshot — captured post-scenario for byte-compare. */
+interface AccountSnapshot {
+  data: Buffer;
+  lamports: bigint;
+  owner: string;
 }
 
 /**
@@ -206,13 +221,20 @@ export function defineDifferential<S extends DifferentialSetup>(
         const anvilState = await runScenario(fixture, anvilSo, ctx, programId);
 
         const accounts = fixture.accountsToCompare(ctx);
-        let firstMismatch: { label: string; anchor: Buffer; anvil: Buffer } | null = null;
+        const compareLamports = fixture.compareLamports ?? true;
+        type Mismatch =
+          | { kind: "data"; label: string; anchor: Buffer; anvil: Buffer }
+          | { kind: "lamports"; label: string; anchor: bigint; anvil: bigint };
+        let firstMismatch: Mismatch | null = null;
 
         for (const { pubkey, label } of accounts) {
-          let a = anchorState.get(pubkey.toBase58());
-          let v = anvilState.get(pubkey.toBase58());
-          if (!a) throw new Error(`anchor: account ${label} (${pubkey.toBase58()}) missing post-scenario`);
-          if (!v) throw new Error(`anvil: account ${label} (${pubkey.toBase58()}) missing post-scenario`);
+          const aSnap = anchorState.get(pubkey.toBase58());
+          const vSnap = anvilState.get(pubkey.toBase58());
+          if (!aSnap) throw new Error(`anchor: account ${label} (${pubkey.toBase58()}) missing post-scenario`);
+          if (!vSnap) throw new Error(`anvil: account ${label} (${pubkey.toBase58()}) missing post-scenario`);
+
+          let a = aSnap.data;
+          let v = vSnap.data;
           if (stripDisc) {
             a = a.length >= 8 ? a.subarray(8) : a;
             v = v.length >= 8 ? v.subarray(8) : v;
@@ -223,23 +245,32 @@ export function defineDifferential<S extends DifferentialSetup>(
             v = applyMask(v, masks);
           }
           if (!a.equals(v)) {
-            firstMismatch ??= { label, anchor: Buffer.from(a), anvil: Buffer.from(v) };
+            firstMismatch ??= { kind: "data", label, anchor: Buffer.from(a), anvil: Buffer.from(v) };
+          }
+          if (compareLamports && aSnap.lamports !== vSnap.lamports) {
+            firstMismatch ??= { kind: "lamports", label, anchor: aSnap.lamports, anvil: vSnap.lamports };
           }
         }
 
         if (firstMismatch) {
-          console.log(`\n[differential-${fixture.fixtureName}] STATE MISMATCH on '${firstMismatch.label}':`);
-          console.log(`  anchor (len=${firstMismatch.anchor.length}):`,
-            firstMismatch.anchor.toString("hex").match(/.{1,16}/g)?.slice(0, 8));
-          console.log(`  anvil  (len=${firstMismatch.anvil.length}):`,
-            firstMismatch.anvil.toString("hex").match(/.{1,16}/g)?.slice(0, 8));
-          // Find first differing byte.
-          const minLen = Math.min(firstMismatch.anchor.length, firstMismatch.anvil.length);
-          let diffOffset = minLen;
-          for (let i = 0; i < minLen; i++) {
-            if (firstMismatch.anchor[i] !== firstMismatch.anvil[i]) { diffOffset = i; break; }
+          if (firstMismatch.kind === "data") {
+            console.log(`\n[differential-${fixture.fixtureName}] DATA MISMATCH on '${firstMismatch.label}':`);
+            console.log(`  anchor (len=${firstMismatch.anchor.length}):`,
+              firstMismatch.anchor.toString("hex").match(/.{1,16}/g)?.slice(0, 8));
+            console.log(`  anvil  (len=${firstMismatch.anvil.length}):`,
+              firstMismatch.anvil.toString("hex").match(/.{1,16}/g)?.slice(0, 8));
+            const minLen = Math.min(firstMismatch.anchor.length, firstMismatch.anvil.length);
+            let diffOffset = minLen;
+            for (let i = 0; i < minLen; i++) {
+              if (firstMismatch.anchor[i] !== firstMismatch.anvil[i]) { diffOffset = i; break; }
+            }
+            console.log(`  first diff at byte ${diffOffset} of ${minLen}`);
+          } else {
+            console.log(`\n[differential-${fixture.fixtureName}] LAMPORT MISMATCH on '${firstMismatch.label}':`);
+            console.log(`  anchor lamports: ${firstMismatch.anchor}`);
+            console.log(`  anvil  lamports: ${firstMismatch.anvil}`);
+            console.log(`  delta:           ${firstMismatch.anvil - firstMismatch.anchor}`);
           }
-          console.log(`  first diff at byte ${diffOffset} of ${minLen}`);
         }
         expect(firstMismatch).toBeNull();
       },
@@ -329,16 +360,22 @@ async function runScenario<S extends DifferentialSetup>(
   programSo: Buffer,
   ctx: S,
   programId: PublicKey,
-): Promise<Map<string, Buffer>> {
+): Promise<Map<string, AccountSnapshot>> {
   const svm = new LiteSVM();
   svm.addProgram(programId, programSo);
   await fixture.callScript(svm, ctx, programId);
   // Snapshot every account named in accountsToCompare. Use a Map so the
   // caller can index by base58 — comparing across scenarios.
-  const snap = new Map<string, Buffer>();
+  const snap = new Map<string, AccountSnapshot>();
   for (const { pubkey } of fixture.accountsToCompare(ctx)) {
     const acct = svm.getAccount(pubkey);
-    if (acct) snap.set(pubkey.toBase58(), Buffer.from(acct.data));
+    if (acct) {
+      snap.set(pubkey.toBase58(), {
+        data: Buffer.from(acct.data),
+        lamports: BigInt(acct.lamports),
+        owner: new PublicKey(acct.owner).toBase58(),
+      });
+    }
   }
   return snap;
 }
