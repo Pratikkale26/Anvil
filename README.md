@@ -1,16 +1,26 @@
 # Anvil v0.3.0
 
-## Why Anvil?
+> **Anchor → Pinocchio (or Native), with proof.** Paste Anchor source, get a cargo-buildable project in a leaner Solana runtime — and verify the conversion produces byte-equal on-chain effects, not just code that compiles.
 
-Anchor is the ergonomic default for Solana programs, but its account macros, runtime checks, and Borsh layer add real CU overhead. Pinocchio and `solana-program`-native cut that overhead — at the cost of writing the discriminator routing, account validation, PDA derivation, and CPI plumbing by hand. Anvil is one button between those worlds: paste Anchor source, get a cargo-buildable project in three target Rust dialects (Pinocchio, Native, Quasar), all driven from a single typed IR with deterministic emit, validator, and portability lint. Same Anchor ergonomics on the way in, leaner runtime on the way out.
+## What you can verify yourself (April 2026)
 
-Anvil is a compiler-style Solana transpiler.
+- **Byte-equal differential tests on 2 fixtures (counter, vault).** `bun test api/tests/differential-*.test.ts` builds both the Anchor original and the Anvil-Pinocchio conversion to `.so`, runs the same instruction sequence in LiteSVM, and asserts byte-equal account data + lamport equality. cargo-green is necessary but not sufficient; this is the assertion that the transpiler is *correct*, not just that it compiles.
+- **43 cargo-green regression gates.** Real-world Anchor programs (36 from `program-examples` + escrow2025 + coral cohort + Token-2022 transfer-fee) must `cargo build` deterministically — no AI in the loop — for a PR to merge. CI-gated.
+- **Layered build sandbox.** Public `/build` endpoint runs cargo inside firejail (or bwrap / unshare on fallback) with prlimit caps (2 GiB AS, 60s CPU), env stripped of `ANTHROPIC_API_KEY`-class secrets, network namespace cut. Per-IP daily AI spend cap on top.
+- **AI repair loop with cargo-driven accept gate.** When deterministic emit doesn't compile, `POST /build/auto-fix` feeds rustc errors to Sonnet 4.6, applies patches, re-checks. Strict revert-on-regression — patches that increase error count are discarded. The workbench surfaces a persistent yellow banner whenever AI patches are present in the active output.
 
-It parses Anchor-style Rust into a typed intermediate representation, then emits lower-level runtime-oriented Rust targets such as Pinocchio, Quasar, and a native Solana target.
+What we don't claim:
+- AI-patched output is **not** under the differential corpus. Audit before you deploy.
+- Quasar is emitter-clean but has no cargo coverage and no runtime test. Disabled in the workbench picker; available via `anvil compile --target quasar` for power users who want to inspect.
+- The CU table in the workbench is a heuristic estimator (`api/src/emitter/cu-analyzer.ts`), not a measured number. `scripts/measure-cu.ts` produces real numbers via LiteSVM.
 
 - **Live:** [anvilsol.xyz](https://anvilsol.xyz) — paste an Anchor program, pick a target, download the full Cargo project
 - **API:** [anvil-prod-api-wff8f.ondigitalocean.app](https://anvil-prod-api-wff8f.ondigitalocean.app)
 - **CLI:** `bun cli/anvil.ts compile <anchor-dir> --target native` — local transpile with no server round-trip
+
+## Why Anvil?
+
+Anchor is the ergonomic default for Solana programs, but its account macros, runtime checks, and Borsh layer add real CU overhead. Pinocchio and `solana-program`-native cut that overhead — at the cost of writing the discriminator routing, account validation, PDA derivation, and CPI plumbing by hand. Anvil is one button between those worlds: paste Anchor source, get a cargo-buildable project in three target Rust dialects (Pinocchio, Native, Quasar), all driven from a single typed IR with deterministic emit, validator, and portability lint. Same Anchor ergonomics on the way in, leaner runtime on the way out.
 
 ## Try it in 30 seconds
 
@@ -119,7 +129,7 @@ The headline correctness signal is **43 deterministic cargo-build regression gat
 - **Verify + Auto-fix loop** — `POST /build/auto-fix` orchestrates: cargo check → feed errors as ValidationIssues → AI refine → apply patches → re-check → repeat (up to 3 iterations or $0.50 per-request cap, with a separate per-IP daily ceiling). Closes the loop on transpiler correctness.
 - **Output validator** — splits unsafe markers into ERROR (broken stubs requiring manual rebuild) vs WARNING (review hints where code IS emitted), surfaces both in MUST_PASS test output. Token-2022 decimals fallback (`0u8 /* TODO */`) is hard-rejected because wrong decimals silently corrupt on-chain transfers.
 - **Compare targets** in the workbench — emit the same IR for Pinocchio + Native side-by-side without re-parsing.
-- **Runtime-correctness differential** — `differential-counter.test.ts` builds both Anchor counter + Anvil-Pinocchio counter to `.so`, runs the same Initialize+Increment in litesvm, asserts byte-equal CounterAccount state. Requires Solana CLI 2.1+; skips with an actionable message on older toolchains.
+- **Runtime-correctness differential** — `api/tests/differential-{counter,vault}.test.ts` build both Anchor and Anvil-Pinocchio versions to `.so`, run identical instruction sequences in LiteSVM with the same keypairs, and assert byte-equal account data + lamport-equal residual SOL. Vault exercises PDA-as-vault + signer-seeded `system_program::transfer` — surfaces emit divergences that cargo-green wouldn't catch. Adding a third fixture is a ~30-line file via `differential-harness.ts`. Requires Anza CLI 3.x / platform-tools v1.54+; skips with an actionable message otherwise.
 - **AI Refine**: tree-sitter structural pre-check + cross-file validation gate + retry-with-feedback + revert button. Refines that fall through can't ship malformed Rust.
 - **Compatibility lint warnings** for unsupported imports — `mpl_core`, `pyth_*`, `switchboard_*`, `drift`, `jupiter`, `clockwork`, zero-copy accounts, `token_interface` extensions. Per-target verdicts (some are blockers on Pinocchio but ready on Native).
 - **Observability**: `GET /metrics` exposes refine cache hit rate, accept/reject ratio, per-target validation error counts, build success/failure ratios, plus per-IP spend snapshot (IPs masked to /24 ⁄ ::/64).
@@ -451,10 +461,10 @@ For many hosts, the platform will inject `PORT` automatically.
 
 The accurate framing for demos, grants, and public posts:
 
-- "Anchor → alternative Solana runtimes through a typed IR"
-- "17/48 real-world Anchor programs cargo-build across Pinocchio + Native + Quasar"
+- "Anchor → Pinocchio (or Native) through a typed IR, with byte-equal differential tests on counter + vault — not just cargo-green"
+- "43 real-world Anchor programs cargo-build deterministically across Pinocchio + Native (CI-gated, no AI in the loop)"
 - "Seven CLI commands — transpile, plus portability / CU / snapshot / layout-diff analyses that all reuse the same IR"
-- "Manual review is still flagged in the output for advanced lifecycle logic"
+- "Manual review is flagged in the output for advanced lifecycle logic; AI-patched output is banner-flagged in the workbench"
 
 That framing is strong without overstating support.
 

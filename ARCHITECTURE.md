@@ -2,224 +2,129 @@
 
 ## Overview
 
-Anvil is structured as a small compiler pipeline with a web demo on top.
-
-High-level flow:
+Anvil is a small compiler that turns Anchor Rust into one of three target
+backends — Pinocchio, Native (raw `solana_program`), or Quasar — via a typed,
+schema-validated IR.
 
 ```text
 Anchor-like Rust
-  -> parser
-  -> Solana IR
-  -> target emitter
-  -> generated Rust output
-  -> CU comparison metadata
+  ├─► tree-sitter parse
+  ├─► structural classification (instructions, accounts, constraints, body stmts)
+  ├─► SolanaIR (Zod-validated)
+  ├─► target emitter (Pinocchio | Native | Quasar)
+  ├─► output validator (structural)
+  └─► generated Rust + CU metadata
 ```
 
-The system is split into two main apps:
+Two apps:
 
-- `api/`: Bun + Express backend for parsing, emitting, and demo fixtures
-- `web/`: Next.js frontend for landing-page messaging and the live playground
+- `api/` — Bun + Express HTTP server hosting the parse/emit/build/refine pipeline
+- `web/` — Next.js workbench: paste source, pick target, see emitted code, verify with cargo, optionally repair with AI
 
-## Backend
+## Pipeline Layers
 
-Backend entrypoint:
+### Parser
 
-- [api/src/index.ts](/home/pk/Anvil/api/src/index.ts)
+`api/src/parser/` — tree-sitter-driven AST walker. Extracts:
 
-Main responsibilities:
-
-- expose HTTP routes
-- parse Anchor-like source into IR
-- emit target Rust code from IR
-- serve preloaded demo fixtures
-- resolve local source files and project directories for parser input
-
-### Routes
-
-- [api/src/routes/parse.ts](/home/pk/Anvil/api/src/routes/parse.ts)
-  - accepts raw source, a local Rust file path, or a local project directory
-  - returns normalized IR plus resolved parser path metadata
-
-- [api/src/routes/emit.ts](/home/pk/Anvil/api/src/routes/emit.ts)
-  - accepts IR + target
-  - returns generated code and CU data
-
-- [api/src/routes/demo.ts](/home/pk/Anvil/api/src/routes/demo.ts)
-  - returns preloaded IR fixtures
-  - current public demo scope is `counter` and `vault`
-
-## Parser Layer
-
-The parser extracts:
-
-- instructions
-- accounts
-- args
-- constraints
+- instructions and their args
+- account contexts with full constraint normalization (16 kinds: `init`, `mut`, `seeds`, `bump`, `has_one`, `close`, `init_if_needed`, `payer`, `space`, `token::*`, `associated_token::*`, freeform `constraint = …`, etc.)
 - custom errors
-- helper functions
-- body statements classified into transform vs pass-through IR
+- helper / inherent-impl methods (now flow-preserved into emit)
+- body statements classified into 17 IR kinds (`account_field_assign`, `cpi_spl_transfer`, `cpi_spl_set_authority`, `cpi_ata_create`, `cpi_memo`, `state_field_op`, `pass_through`, …)
 
-This information is normalized into a typed IR so emitters do not need to depend on source-text quirks.
+Project ingestion supports raw source, single `.rs` file, project directory, or git repo URL with `programs/*/src/lib.rs` auto-detection.
 
-Actual parser files in the current codebase:
+Key files:
+- [`api/src/parser/anchor-parser.ts`](api/src/parser/anchor-parser.ts) — entry
+- [`api/src/parser/body-classifier.ts`](api/src/parser/body-classifier.ts) — body-statement → IR-kind dispatch
+- [`api/src/parser/cpi-detector.ts`](api/src/parser/cpi-detector.ts) — pattern-matches Anchor CPI shapes
+- [`api/src/parser/constraint-parser.ts`](api/src/parser/constraint-parser.ts) — `splitConstraintTokens` distinguishes `<=` / `>=` from generics
+- [`api/src/parser/project-source.ts`](api/src/parser/project-source.ts) — multi-file resolution
+- [`api/src/parser/ts-init.ts`](api/src/parser/ts-init.ts) — tree-sitter parser bootstrap (process-once cache)
 
-- [api/src/parser/anchor-parser.ts](/home/pk/Anvil/api/src/parser/anchor-parser.ts)
-- [api/src/parser/body-classifier.ts](/home/pk/Anvil/api/src/parser/body-classifier.ts)
-- [api/src/parser/constraint-parser.ts](/home/pk/Anvil/api/src/parser/constraint-parser.ts)
-- [api/src/parser/cpi-detector.ts](/home/pk/Anvil/api/src/parser/cpi-detector.ts)
-- [api/src/parser/ast-helpers.ts](/home/pk/Anvil/api/src/parser/ast-helpers.ts)
-- [api/src/parser/local-source.ts](/home/pk/Anvil/api/src/parser/local-source.ts)
-- [api/src/parser/utils.ts](/home/pk/Anvil/api/src/parser/utils.ts)
-- [api/src/parser/ts-init.ts](/home/pk/Anvil/api/src/parser/ts-init.ts)
+### IR
 
-### Project-level parsing
+[`api/src/ir/schema.ts`](api/src/ir/schema.ts) — Zod schema. Discriminated unions for body statements; structural validation at every emit boundary so the emitter never sees malformed IR. IR is **compiler-oriented**, distinct from Anchor IDL (which is interface-oriented).
 
-Anvil now supports parser input from local disk in three forms:
+### Emitters
 
-- raw Rust source text
-- a single `.rs` file path
-- a project directory
+- [`api/src/emitter/pinocchio-emitter.ts`](api/src/emitter/pinocchio-emitter.ts) — primary target. Hand-rolled CPI for SPL Token / Token-2022 / ATA / Memo. PDA signer-seed expansion. Const-size `[Seed; N]` allocation patterns for `no_std`-compat signers.
+- [`api/src/emitter/native-emitter.ts`](api/src/emitter/native-emitter.ts) — `solana_program` reference. Auto-imports SPL crates only when CPI body needs them; auto-injects `Mint::unpack` prelude when `<account>.decimals` is referenced.
+- [`api/src/emitter/quasar-emitter.ts`](api/src/emitter/quasar-emitter.ts) — experimental. Validator passes; not cargo-build-gated.
+- [`api/src/emitter/output-validator.ts`](api/src/emitter/output-validator.ts) — structural checks on emitted file set (no orphan refs, balanced braces, required imports present).
+- [`api/src/emitter/cu-analyzer.ts`](api/src/emitter/cu-analyzer.ts) — heuristic CU comparison (constants table, NOT measured; `scripts/measure-cu.ts` uses LiteSVM for real numbers).
 
-For project directories, the current auto-detection prefers:
+### Build + Sandbox
 
-- `programs/*/src/lib.rs`
-- `src/lib.rs`
-- `src/main.rs`
+`POST /build` (with optional SSE streaming) compiles emitted output via `cargo check` inside a layered sandbox detected at boot:
 
-This works well for many Anchor repos, but it is not yet a full workspace graph loader. If a repository contains multiple programs, tests are more reliable when you target one exact program file with `sourcePath`.
+- **firejail** (default) — DigitalOcean App Platform compat
+- **bwrap** — local Linux fallback
+- **unshare + prlimit** — minimal fallback (used by realworld-cargo.test)
+- **none** — explicit dev opt-out
 
-## IR
+Sandbox contract enforces: 2 GiB AS / 60s CPU / 256 MiB fsize / 128 nproc, env allowlist (no `ANTHROPIC_API_KEY` leak), separate cwd / network namespace where possible. See [`api/src/build/sandbox.ts`](api/src/build/sandbox.ts).
 
-IR schema:
+Per-target cargo scratch lives at `$HOME/.anvil-build/<target>/`; per-target promise queue serializes builds for the same target; `safeRelativePath` rejects path-traversal in user-supplied file lists.
 
-- [api/src/ir/schema.ts](/home/pk/Anvil/api/src/ir/schema.ts)
+### AI Refine Loop
 
-Fixtures:
+`POST /build/auto-fix` orchestrates a bounded repair loop on cargo failures:
 
-- [api/src/ir/fixtures/counter.json](/home/pk/Anvil/api/src/ir/fixtures/counter.json)
-- [api/src/ir/fixtures/vault.json](/home/pk/Anvil/api/src/ir/fixtures/vault.json)
-- [api/src/ir/fixtures/escrow.json](/home/pk/Anvil/api/src/ir/fixtures/escrow.json)
-- [api/src/ir/fixtures/staking.json](/home/pk/Anvil/api/src/ir/fixtures/staking.json)
+1. Run cargo, capture rustc errors.
+2. Send focused prompt (only error-bearing files + rustc-error → fix-shape table) to Sonnet 4.6.
+3. Validate response: tree-sitter parse pre-check + cross-file accept gate (each patch validated against the running file set, not just its own file).
+4. **Revert on regression** — if patches strictly increase error count vs the pre-iteration baseline, discard.
+5. Cap: `max_iterations=3`, `max_cost_usd=$0.50`, `previousAttempts` fed back so retries don't repeat the same wrong fix.
 
-### IR vs IDL
+Per-IP daily $ cap on top ([`api/src/ai/spend-tracker.ts`](api/src/ai/spend-tracker.ts)) — UTC-midnight reset, file-mirrored, IP-masked in `/metrics`.
 
-Anvil’s IR is not the same thing as an Anchor IDL.
+See [`api/src/ai/refine.ts`](api/src/ai/refine.ts).
 
-IDL is interface-oriented:
+## Test Layers
 
-- what instructions exist
-- what accounts and args they take
-- what types are exposed publicly
+| Layer | Tests | What it gates |
+|------|-------|---------------|
+| Unit (parser / emitter / validator / API / spend-tracker) | 142 | Code correctness |
+| Cargo MUST_PASS (program-examples + escrow2025 + coral cohort + t22-transfer-fee) | 43 fixtures × {pinocchio,native} | Emitted code compiles |
+| Cargo tracking ceilings (coral-swap, t22-transfer-hook, …) | 6 fixtures | Emitted code regression-guard (errors ≤ ceiling) |
+| **Differential** ([api/tests/differential-*.test.ts](api/tests/)) | counter, vault | **Anchor ↔ Anvil-Pinocchio runtime equality (LiteSVM byte-equal)** |
 
-IR is compiler-oriented:
-
-- normalized constraints
-- emitter-friendly account metadata
-- derived seed information
-- lower-level details useful for transformation and code generation
-
-IDL can be one source of truth for interface shape, but IR is the internal format used to transform programs.
-
-## Emitters
-
-Relevant files:
-
-- [api/src/emitter/pinocchio-emitter.ts](/home/pk/Anvil/api/src/emitter/pinocchio-emitter.ts)
-- [api/src/emitter/quasar-emitter.ts](/home/pk/Anvil/api/src/emitter/quasar-emitter.ts)
-- [api/src/emitter/native-emitter.ts](/home/pk/Anvil/api/src/emitter/native-emitter.ts)
-- [api/src/emitter/emitter-base.ts](/home/pk/Anvil/api/src/emitter/emitter-base.ts)
-- [api/src/emitter/cu-analyzer.ts](/home/pk/Anvil/api/src/emitter/cu-analyzer.ts)
-
-### Pinocchio emitter
-
-Current strengths:
-
-- working counter path
-- working vault path
-- local escrow/staking generation is now much stronger
-- full PDA seed preservation from parser -> IR -> emitter
-- account-info aliasing prevents state/account shadow bugs
-- signer-side CPI authority stays as `AccountInfo`
-- token vault close generation for PDA-controlled escrow-style accounts with `close = ...`
-- manual account byte encoding to avoid layout/alignment pitfalls
-
-### Quasar emitter
-
-Current strengths:
-
-- working counter path
-- working vault path
-- avoids returning references from short-lived borrow guards
-- manual value read/write strategy for account data
-
-### Native emitter
-
-This target exists and can be exercised locally, but it is still not at the same maturity level as Pinocchio for complex contracts.
+The differential layer is the load-bearing correctness signal — cargo-green is necessary but not sufficient. `differential-harness.ts` provides a per-fixture API: caller supplies setup + callScript + accountsToCompare, the harness handles building, running both .so files in LiteSVM with the same keypairs, and byte-comparing post-scenario state + lamports.
 
 ## Frontend
 
-Frontend entrypoint:
+[`web/app/`](web/app/) — Next.js. Workbench panels:
 
-- [web/app/page.tsx](/home/pk/Anvil/web/app/page.tsx)
-
-Main responsibilities:
-
-- present Anvil as a product
-- explain the compiler pipeline
-- expose the live demo for the supported contracts
-- visualize generated output and CU comparisons
-
-The frontend currently shows:
-
-- selectable live demos: `counter`, `vault`
-- visible but disabled roadmap demos: `escrow`, `staking`
-- selectable live targets: `pinocchio`, `quasar`
-- visible but disabled roadmap target: `native`
+- **Input panel** — demo / source / file / folder / repo modes; target picker (Quasar disabled in UI pending differential coverage)
+- **Output panel** — emitted file tree, single-file view, diff view (Anchor ↔ emit), compare-targets side-by-side, CU panel, lint panel
+- **Verify build** — runs `POST /build`, shows cargo errors inline
+- **Auto-fix** — runs `POST /build/auto-fix`, surfaces per-patch accept/reject reasons
+- **AI-patched audit banner** — persistent yellow warning when AI patches are present in the active output (cargo-green ≠ runtime-equal)
 
 ## Design Choices
 
-### Why use IR?
+### IR-mediated, not source-to-source
+Each target emitter consumes the same Zod-validated IR. Adding a target is a single-file emitter, not a fork of the parser.
 
-IR keeps the system modular.
+### cargo is the ground truth
+Heuristic structural validation is fast feedback, but cargo error count is the only accept gate that matters. The auto-fix loop reverts on cargo regression — never trusts the model's claim that a patch helps.
 
-Without IR, each target emitter would need to understand Anchor source directly. With IR:
+### Differential testing > snapshot testing
+Snapshot tests confirm "the emitter still emits the same string." Differential tests confirm "the emitted program produces the same on-chain effects as the Anchor original." When they conflict, differential wins.
 
-- parsing is centralized
-- emitters stay simpler
-- new targets can be added more cleanly
-- future sources like IDL or repo ingestion become easier to support
+## Known Gaps (current)
 
-### Why keep the live demo narrow?
+- Differential corpus is 2 fixtures (counter, vault). Escrow + staking are tracked but not yet differential-gated.
+- Quasar target is emitter-clean but has no cargo coverage and no runtime test.
+- Workspace ingestion (multi-program Anchor repos) requires explicit `sourcePath` per program.
+- CU heuristic table doesn't auto-update; real numbers come from `scripts/measure-cu.ts`.
+- Token-2022 extension surfaces (transfer-hook, transfer-fee) have ceilings, not green builds, on Pinocchio.
 
-The goal right now is credibility, not breadth theater.
+## Recommended next milestones
 
-It is better to have:
-
-- a clean `counter` path
-- a meaningful `vault` path
-- clear roadmap labels
-
-than to claim broad contract support before token-heavy flows are correct.
-
-## Known Gaps
-
-The biggest remaining technical gaps are:
-
-- richer semantic validation for Anchor constraints like `has_one`, `close`, and `init_if_needed`
-- ATA creation and lifecycle rewriting
-- generated-code compile verification across all targets
-- native/quasar parity on more token-heavy contracts
-- direct repo/local-file ingestion in the frontend
-
-## Next Milestones
-
-Recommended order:
-
-1. repo/local-file ingestion
-2. stronger output validation and integration tests
-3. richer constraint validation
-4. lifecycle rewrites for escrow-like flows
-5. native target completion
-
-That ordering keeps the public product story strong while expanding backend depth in a controlled way.
+1. Expand differential corpus (escrow → staking → real-world fixtures).
+2. Workspace ingestion (programs/*/Cargo.toml driven).
+3. Token-2022 extension parity on Pinocchio.
+4. CU measurement automation (replace heuristic table with measured numbers per fixture).
