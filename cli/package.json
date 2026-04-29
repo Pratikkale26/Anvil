@@ -46,6 +46,7 @@
   "scripts": {
     "test": "bun anvil.ts --help",
     "prepack": "bun scripts/prepack.ts",
+    "prepack:check": "bun scripts/prepack-check.ts",
     "smoke": "bun pack && cd /tmp && rm -rf _anvil-sol-smoke && mkdir _anvil-sol-smoke && cd _anvil-sol-smoke && bun add $OLDPWD/anvil-sol-*.tgz && bunx anvil-sol --version"
   }
 }
