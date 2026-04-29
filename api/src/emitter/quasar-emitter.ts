@@ -605,11 +605,51 @@ ${arms}
     signerSeeds?: string,
     _opts?: Token2022Opts,
   ): string {
-    // Quasar 0.0 doesn't expose a set_authority helper. Emit a TODO
-    // placeholder consistent with other unimplemented quasar CPIs.
-    return `    // ⚠️ Anvil TODO: set_authority not yet supported in quasar emitter
-    // account=${account}, current=${currentAuthority}, type=${authorityType}, new=${newAuthority}, signer_seeds=${signerSeeds ?? "none"}
-    Ok::<(), quasar_lang::ProgramError>(())?;`;
+    // Hand-rolled SPL Token set_authority CPI against the SPL Token program
+    // ID — quasar-spl 0.0 doesn't surface a typed helper. Discriminator 6
+    // (SetAuthority) + AuthorityType byte + COption<Pubkey> for new authority.
+    //
+    // AuthorityType encoding:
+    //   MintTokens=0, FreezeAccount=1, AccountOwner=2, CloseAccount=3
+    // Unrecognized variants default to AccountOwner with an inline TODO marker
+    // so the user sees the assumption, not a silent breakage.
+    const authorityByte = (() => {
+      switch (authorityType.replace(/^.*::/, "")) {
+        case "MintTokens": return "0u8";
+        case "FreezeAccount": return "1u8";
+        case "AccountOwner": return "2u8";
+        case "CloseAccount": return "3u8";
+        default:
+          return `2u8 /* ⚠️ Anvil: unrecognized AuthorityType '${authorityType}', defaulted to AccountOwner */`;
+      }
+    })();
+    const newAuthMatch = newAuthority.match(/^Some\(([\s\S]+)\)\s*$/);
+    const newAuthExpr = newAuthMatch?.[1]?.trim() ?? null;
+    const invokeFn = signerSeeds ? "invoke_signed" : "invoke";
+    const seedArgs = signerSeeds ? `, ${signerSeeds}` : "";
+    return `    // SPL Token set_authority CPI (hand-rolled — quasar-spl has no helper)
+    {
+        const SPL_TOKEN_PROGRAM_ID: quasar_lang::Pubkey = quasar_lang::Pubkey::new_from_array([
+            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
+            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+        ]);
+        let mut __sa_data: [u8; 35] = [0; 35];
+        let mut __sa_len: usize = 3;
+        __sa_data[0] = 6u8; // SetAuthority discriminator
+        __sa_data[1] = ${authorityByte};
+        ${newAuthExpr
+          ? `__sa_data[2] = 1u8; // COption::Some\n        __sa_data[3..35].copy_from_slice((${newAuthExpr}).as_ref());\n        __sa_len = 35;`
+          : `__sa_data[2] = 0u8; // COption::None`}
+        let __sa_ix = quasar_lang::Instruction {
+            program_id: SPL_TOKEN_PROGRAM_ID,
+            accounts: vec![
+                quasar_lang::AccountMeta::new(*${account}.key, false),
+                quasar_lang::AccountMeta::new_readonly(*${currentAuthority}.key, true),
+            ],
+            data: __sa_data[..__sa_len].to_vec(),
+        };
+        quasar_lang::program::${invokeFn}(&__sa_ix, &[${account}.clone(), ${currentAuthority}.clone()]${seedArgs})?;
+    }`;
   }
 
   override emitProgramAccountClose(
@@ -635,23 +675,58 @@ ${arms}
     authority: string,
     _signerSeeds?: string,
   ): string {
-    return `    // ⚠️ Anvil: Review — ATA Create on Quasar (TODO: depends on quasar-spl ATA support)
-    // TODO(manual): replace with the equivalent quasar-spl Create CPI builder.
-    // Inputs: ata=${ata} payer=${payer} mint=${mint} authority=${authority}
-    let _todo_ata_${ata} = (
-        ${payer},
-        ${ata},
-        ${mint},
-        ${authority},
-    }
-    .invoke()?;`;
+    // Hand-rolled SPL Associated Token Account create CPI against the
+    // ATA program ID. quasar-spl 0.0 doesn't expose a typed builder, but
+    // ATA's wire format is stable: empty instruction data + 7 accounts in
+    // order (payer, ata, owner, mint, system_program, token_program, rent).
+    return `    // SPL Associated Token Account create CPI (hand-rolled — quasar-spl has no builder)
+    {
+        const ATA_PROGRAM_ID: quasar_lang::Pubkey = quasar_lang::Pubkey::new_from_array([
+            140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131,
+            11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
+        ]);
+        const SYSTEM_PROGRAM_ID: quasar_lang::Pubkey = quasar_lang::Pubkey::default();
+        const SPL_TOKEN_PROGRAM_ID: quasar_lang::Pubkey = quasar_lang::Pubkey::new_from_array([
+            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
+            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+        ]);
+        let __ata_ix = quasar_lang::Instruction {
+            program_id: ATA_PROGRAM_ID,
+            accounts: vec![
+                quasar_lang::AccountMeta::new(*${payer}.key, true),
+                quasar_lang::AccountMeta::new(*${ata}.key, false),
+                quasar_lang::AccountMeta::new_readonly(*${authority}.key, false),
+                quasar_lang::AccountMeta::new_readonly(*${mint}.key, false),
+                quasar_lang::AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
+                quasar_lang::AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
+            ],
+            data: vec![0u8], // create_associated_token_account discriminator
+        };
+        quasar_lang::program::invoke(&__ata_ix, &[
+            ${payer}.clone(), ${ata}.clone(), ${authority}.clone(), ${mint}.clone(),
+        ])?;
+    }`;
   }
 
   override emitMemo(data: string, _signerSeeds?: string): string {
-    return `    // ⚠️ Anvil: Review — Memo CPI on Quasar (TODO: quasar-spl memo support TBD)
-    // TODO(manual): replace with the quasar-spl memo helper once available.
-    // Memo data: ${data}
-    let _todo_memo = ${data};`;
+    // Hand-rolled SPL Memo CPI against the Memo program ID. The program
+    // takes raw UTF-8 bytes as instruction data and zero accounts (signers
+    // are passed as account metas if present, but for the unsigned form
+    // the empty accounts vec is correct).
+    return `    // SPL Memo CPI (hand-rolled — quasar-spl has no memo helper)
+    {
+        const MEMO_PROGRAM_ID: quasar_lang::Pubkey = quasar_lang::Pubkey::new_from_array([
+            5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124,
+            124, 53, 181, 221, 188, 146, 187, 129, 228, 31, 168, 64, 65, 5, 68, 141,
+        ]);
+        let __memo_data: Vec<u8> = (${data}).into();
+        let __memo_ix = quasar_lang::Instruction {
+            program_id: MEMO_PROGRAM_ID,
+            accounts: vec![],
+            data: __memo_data,
+        };
+        quasar_lang::program::invoke(&__memo_ix, &[])?;
+    }`;
   }
 
   override emitPdaSignerSeeds(
