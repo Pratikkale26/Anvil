@@ -125,6 +125,15 @@ interface CliArgs {
   thresholdPct: number;
   thresholdAbs: number;
   snapshotPath: string | null;
+  /**
+   * --strict on `compile`: refuse to write output when the validator
+   * reports any error or when the emitted code carries `// TODO(manual)`
+   * / `// ⚠️ Anvil … manual rebuild required` stubs. Default behavior is
+   * permissive (writes anyway, prints warnings) for explore-mode users;
+   * --strict is the gate for "I'm about to deploy this." Exit code 2 on
+   * failure, distinct from 1 (parse/emit error).
+   */
+  strict: boolean;
   help: boolean;
 }
 
@@ -144,6 +153,7 @@ function parseArgs(argv: string[]): CliArgs {
     thresholdPct: 5,
     thresholdAbs: 10,
     snapshotPath: null,
+    strict: false,
     help: false,
   };
 
@@ -225,6 +235,12 @@ function parseArgs(argv: string[]): CliArgs {
     if (arg === "--snapshot") {
       args.snapshotPath = rest[i + 1] ?? null;
       i += 2;
+      continue;
+    }
+
+    if (arg === "--strict") {
+      args.strict = true;
+      i++;
       continue;
     }
 
@@ -327,11 +343,16 @@ function printCompileHelp(): void {
     --output, -o <dir>      Output directory (default: ./anvil-output/)
     --single-file           Emit a single .rs file instead of project layout
     --json                  Output the IR as JSON instead of writing files
+    --strict                Refuse to write output if the validator finds
+                            errors or the emit contains TODO(manual) /
+                            "manual rebuild required" stub markers. Use
+                            this gate before deploy. Exit code 2 on refusal.
 
   ${c.bold}EXAMPLES${c.reset}
 
     anvil compile program.rs --target pinocchio
     anvil compile ./my-program --target native --output ./dist
+    anvil compile ./my-program --target pinocchio --strict
 `);
 }
 
@@ -791,7 +812,36 @@ async function cmdCompile(args: CliArgs): Promise<void> {
   console.log(formatCUAnalysis(cuEstimates, target));
   console.log();
 
-  // 5. Write output
+  // 5. Strict-mode gate (--strict)
+  // Don't write output if the user asked for "deploy-grade" semantics and
+  // either (a) the validator found errors, or (b) the emit carries known-
+  // broken stub markers. Errors are already enumerated above; we re-scan
+  // for the stub patterns here because the validator catches them but
+  // some users only see this exit-code signal.
+  if (args.strict) {
+    const allText = (output.files.length > 0 ? output.files.map((f) => f.content) : [output.singleFile]).join("\n");
+    const stubMarkers = [
+      /TODO\(manual\)/,
+      /⚠️\s*Anvil[^\n]*manual rebuild required/i,
+      /⚠️\s*Anvil[^\n]*not yet supported/i,
+      /\b0u8\s*\/\*\s*TODO:\s*decimals\b/,
+    ];
+    const stubHits = stubMarkers.filter((re) => re.test(allText));
+    if (errors.length > 0 || stubHits.length > 0) {
+      error(`--strict refusal: emit not deploy-safe.`);
+      if (errors.length > 0) {
+        console.log(`    ${c.dim}validator errors: ${errors.length}${c.reset}`);
+      }
+      if (stubHits.length > 0) {
+        console.log(
+          `    ${c.dim}stub markers detected (${stubHits.length} pattern${stubHits.length !== 1 ? "s" : ""}); the emit contains compile-clean placeholders that no-op the original behavior. Re-run without --strict to inspect, or fix the source.${c.reset}`,
+        );
+      }
+      process.exit(2);
+    }
+  }
+
+  // 6. Write output
   const outputDir = args.output ?? "./anvil-output";
 
   progress(`Writing to ${outputDir}/...`);
