@@ -355,6 +355,107 @@ async function buildAnvilSo<S extends DifferentialSetup>(
   writeFileSync(outPath, so);
 }
 
+/**
+ * Programmatic byte-equal compare for callers outside the Bun test runner
+ * (e.g. the AI-under-differential gate in differential-with-ai.test.ts).
+ * Takes pre-built .so binaries, runs the fixture's call script in two
+ * fresh LiteSVM scenarios, and returns the first mismatch (or null on
+ * full equality). Mirrors the assertion path inside `defineDifferential`
+ * but as a pure function so it can compose into other tests.
+ */
+export type CompareMismatch =
+  | { kind: "data"; label: string; anchor: Buffer; anvil: Buffer; firstDiffByte: number }
+  | { kind: "lamports"; label: string; anchor: bigint; anvil: bigint };
+
+export async function runDifferentialCompare<S extends DifferentialSetup>(
+  fixture: DifferentialFixture<S>,
+  anchorSo: Buffer,
+  anvilSo: Buffer,
+  programId: PublicKey,
+  ctx: S,
+): Promise<CompareMismatch | null> {
+  const stripDisc = fixture.stripDiscriminator ?? true;
+  const compareLamports = fixture.compareLamports ?? true;
+
+  const anchorState = await runScenario(fixture, anchorSo, ctx, programId);
+  const anvilState = await runScenario(fixture, anvilSo, ctx, programId);
+
+  const accounts = fixture.accountsToCompare(ctx);
+  for (const { pubkey, label } of accounts) {
+    const aSnap = anchorState.get(pubkey.toBase58());
+    const vSnap = anvilState.get(pubkey.toBase58());
+    if (!aSnap) throw new Error(`anchor: account ${label} (${pubkey.toBase58()}) missing post-scenario`);
+    if (!vSnap) throw new Error(`anvil: account ${label} (${pubkey.toBase58()}) missing post-scenario`);
+
+    let a = aSnap.data;
+    let v = vSnap.data;
+    if (stripDisc) {
+      a = a.length >= 8 ? a.subarray(8) : a;
+      v = v.length >= 8 ? v.subarray(8) : v;
+    }
+    const masks = fixture.ignoreRanges?.[label];
+    if (masks && masks.length > 0) {
+      a = applyMask(a, masks);
+      v = applyMask(v, masks);
+    }
+    if (!a.equals(v)) {
+      const minLen = Math.min(a.length, v.length);
+      let diffOffset = minLen;
+      for (let i = 0; i < minLen; i++) {
+        if (a[i] !== v[i]) { diffOffset = i; break; }
+      }
+      return { kind: "data", label, anchor: Buffer.from(a), anvil: Buffer.from(v), firstDiffByte: diffOffset };
+    }
+    if (compareLamports && aSnap.lamports !== vSnap.lamports) {
+      return { kind: "lamports", label, anchor: aSnap.lamports, anvil: vSnap.lamports };
+    }
+  }
+  return null;
+}
+
+/**
+ * Build helpers exposed for the AI-under-differential test path. Default
+ * fixture flow caches both .so by source-hash; the AI path needs to build
+ * the Anvil .so from CUSTOM (post-AI-patch) source, so it gets its own
+ * fresh build call without the cache.
+ */
+export async function buildAnchorSoForFixture<S extends DifferentialSetup>(
+  fixture: DifferentialFixture<S>,
+  outPath: string,
+): Promise<void> {
+  return buildAnchorSo(fixture, outPath);
+}
+
+export async function buildAnvilSoFromFiles(
+  fixture: { fixtureName: string },
+  emittedScaffold: Array<{ path: string; content: string }>,
+  emittedSrc: Array<{ path: string; content: string }>,
+  outPath: string,
+): Promise<void> {
+  const scratch = join(CACHE_ROOT, `_build_${fixture.fixtureName}_anvil_custom`);
+  rmSync(scratch, { recursive: true, force: true });
+  for (const f of emittedScaffold) {
+    const p = join(scratch, f.path);
+    mkdirSync(nodeDirname(p), { recursive: true });
+    writeFileSync(p, f.content, "utf-8");
+  }
+  for (const f of emittedSrc) {
+    const p = join(scratch, "src", f.path);
+    mkdirSync(nodeDirname(p), { recursive: true });
+    writeFileSync(p, f.content, "utf-8");
+  }
+  const r = spawnSync(
+    "cargo-build-sbf",
+    ["--manifest-path", join(scratch, "Cargo.toml")],
+    { stdio: "inherit", timeout: 600_000, env: { ...process.env, RUSTFLAGS: "" } },
+  );
+  if (r.status !== 0) {
+    throw new Error(`cargo build-sbf (Anvil custom, ${fixture.fixtureName}) failed with status ${r.status}`);
+  }
+  const so = readSoFromDir(join(scratch, "target/deploy"));
+  writeFileSync(outPath, so);
+}
+
 async function runScenario<S extends DifferentialSetup>(
   fixture: DifferentialFixture<S>,
   programSo: Buffer,
