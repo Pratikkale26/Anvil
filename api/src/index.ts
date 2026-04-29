@@ -10,6 +10,29 @@ import { buildRoute } from "./routes/build.js";
 import { metricsDashboardHandler } from "./routes/metrics-dashboard.js";
 import { AnvilError, ErrorCode } from "./errors.js";
 import { metrics } from "./metrics.js";
+import { getSandbox } from "./build/sandbox.js";
+
+// ─── Production sandbox guard ────────────────────────────────────────────────
+// `sandbox.kind === 'none'` means firejail/bwrap/unshare are all unavailable,
+// so cargo runs with env-strip + prlimit only — no FS isolation, no network
+// cut. That's acceptable in local dev; in production it's a footgun (the
+// /build endpoint executes attacker-controlled build.rs scripts). The
+// Dockerfile installs firejail + bubblewrap so prod should always have one;
+// if neither is present, refuse to start so the failure is loud instead of
+// silent. Override via ANVIL_ALLOW_INSECURE_SANDBOX=1 if you really know
+// what you're doing (e.g. running behind another isolation layer).
+if (process.env.NODE_ENV === "production") {
+  const kind = getSandbox().kind;
+  if (kind === "none" && process.env.ANVIL_ALLOW_INSECURE_SANDBOX !== "1") {
+    console.error(
+      "[startup] FATAL: NODE_ENV=production and no sandbox available (firejail/bwrap/unshare).\n" +
+      "  /build runs cargo against attacker-controlled source; without isolation a malicious\n" +
+      "  build.rs has process-level access. Install firejail or bubblewrap, or set\n" +
+      "  ANVIL_ALLOW_INSECURE_SANDBOX=1 to override (you assume responsibility).",
+    );
+    process.exit(1);
+  }
+}
 
 const app = express();
 
