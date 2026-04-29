@@ -581,10 +581,32 @@ function classifyReturn(node: SyntaxNode): BodyStatement {
   }
 
   if (text.includes("Err(")) {
-    const errMatch = text.match(/Err\(([^)]+)\)/);
+    // Paren-balanced extract — `[^)]+` truncated `Err(MyError::Custom(0).into())`
+    // at the first inner `)` and silently dropped the remainder. Scan for the
+    // matching `)` instead so chained method calls + nested ctor args survive.
+    const open = text.indexOf("Err(");
+    if (open !== -1) {
+      const start = open + 4;
+      let depth = 1;
+      let end = -1;
+      for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === "(") depth++;
+        else if (ch === ")") {
+          depth--;
+          if (depth === 0) { end = i; break; }
+        }
+      }
+      if (end !== -1) {
+        return {
+          kind: "return_err",
+          error: text.slice(start, end).trim(),
+        };
+      }
+    }
     return {
       kind: "return_err",
-      error: errMatch?.[1] ?? "ProgramError::Custom(0)",
+      error: "ProgramError::Custom(0)",
     };
   }
 
