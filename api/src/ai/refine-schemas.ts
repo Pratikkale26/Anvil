@@ -25,11 +25,29 @@ export const AIFindingSchema = z.object({
 export type AIFinding = z.infer<typeof AIFindingSchema>;
 
 /**
+ * Hard upper bound on patch size. 200 KB is ~7000 lines of dense Rust —
+ * larger than any single emitted file we produce in practice. Larger
+ * `patchedContent` is either a hallucination (model dumped its training
+ * data) or an attempt to OOM the server. Cap at the schema layer so the
+ * cache write + tree-sitter parse never get an oversized blob.
+ */
+const PATCH_MAX_BYTES = 200_000;
+
+/**
  * A single file patch from the AI.
  */
 export const RefinePatchSchema = z.object({
-  filePath: z.string(),
-  patchedContent: z.string(),
+  filePath: z.string().min(1).max(512),
+  patchedContent: z
+    .string()
+    .max(PATCH_MAX_BYTES, `patchedContent exceeds ${PATCH_MAX_BYTES} bytes`)
+    // Strip ASCII control chars (except tab/LF/CR) — bytes a real Rust file
+    // never contains. Some models occasionally insert NUL or BEL bytes that
+    // confuse downstream tools. Refuse early.
+    .refine(
+      (s) => !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(s),
+      "patchedContent contains control characters",
+    ),
 });
 export type RefinePatch = z.infer<typeof RefinePatchSchema>;
 
