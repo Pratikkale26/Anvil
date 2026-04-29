@@ -1,0 +1,5 @@
+node_modules
+dist
+*.log
+.anvil-data*
+.DS_Store
