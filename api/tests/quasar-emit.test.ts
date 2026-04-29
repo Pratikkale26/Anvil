@@ -25,6 +25,7 @@ import { join } from "node:path";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
 import { emitQuasarFull } from "../src/emitter/quasar-emitter.ts";
 import { validateQuasarOutput } from "../src/emitter/quasar-validator.ts";
+import { getParser } from "../src/parser/ts-init.ts";
 
 // Demos with zero validator errors on Quasar emit. The remaining demos
 // have known gaps tracked separately below — same pattern as the
@@ -91,6 +92,62 @@ describe("Quasar emitter — structural smoke", () => {
         for (const e of errors) console.log(`  ${e.message}${e.path ? ` (${e.path})` : ""}`);
       }
       expect(errors.length).toBeLessThanOrEqual(ceiling);
+    });
+  }
+
+  // Tree-sitter syntax check (tracking ceiling).
+  //
+  // Quasar emit historically carries some pre-existing syntax errors in
+  // generated code paths (anchor_lang::*-prefixed CPI rewrites, deref
+  // expressions inside CpiContext arg positions). These pre-date the
+  // CPI build-out work and are tracked here as a per-demo ceiling,
+  // mirroring the TRACKED_DEMOS pattern above. Ratchet down as the
+  // generated Quasar output gets cleaner.
+  //
+  // ERROR-node count is the maximum tolerated total across all emitted
+  // files (single-file + multi-file project) for that demo.
+  const SYNTAX_CEILINGS: Record<string, number> = {
+    counter: 15,
+    vault: 15,
+    escrow: 18,
+  };
+  for (const [demo, ceiling] of Object.entries(SYNTAX_CEILINGS)) {
+    test(`${demo}: Quasar emit syntax-error count <= ${ceiling}`, async () => {
+      const source = readFileSync(
+        join(import.meta.dir, "..", "src", "demo-programs", `${demo}.rs`),
+        "utf-8",
+      );
+      const parsed = await parseAnchor(source);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) return;
+      const out = emitQuasarFull(parsed.ir);
+      const ts = await getParser();
+      const filesToCheck = [
+        ...out.files.map((f) => ({ path: f.path, content: f.content })),
+        { path: "__singleFile__", content: out.singleFile },
+      ];
+      let totalErrs = 0;
+      const samples: Array<{ path: string; start: number; text: string }> = [];
+      for (const f of filesToCheck) {
+        const tree = ts.parse(f.content);
+        if (!tree?.rootNode.hasError) continue;
+        const walk = (n: any) => {
+          if (!n) return;
+          if (n.type === "ERROR" || n.isMissing) {
+            totalErrs++;
+            if (samples.length < 5) {
+              samples.push({ path: f.path, start: n.startIndex ?? 0, text: (n.text ?? "").slice(0, 80) });
+            }
+          }
+          for (let i = 0; i < (n.namedChildCount ?? 0); i++) walk(n.namedChild?.(i));
+        };
+        walk(tree.rootNode);
+      }
+      if (totalErrs > ceiling) {
+        console.log(`[quasar-emit] ${demo} REGRESSED past ceiling ${ceiling} → ${totalErrs}:`);
+        for (const s of samples) console.log(`  ${s.path} @${s.start}: ${s.text}`);
+      }
+      expect(totalErrs).toBeLessThanOrEqual(ceiling);
     });
   }
 
