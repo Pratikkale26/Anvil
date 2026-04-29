@@ -82,7 +82,10 @@ export type LandingTarget = {
 
 export const LANDING_TARGETS: LandingTarget[] = [
   { id: "pinocchio", label: "Pinocchio", color: "#e8820a", tagline: "Zero-copy, zero-dependency by Anza", available: true },
-  { id: "quasar", label: "Quasar", color: "#0ea880", tagline: "Zero-allocation by Blueshift", available: true },
+  // Quasar is wired into the pipeline but not test-gated — keeping it
+  // selectable here would imply a confidence the suite doesn't back. Mark
+  // unavailable so the playground falls back to one of the verified targets.
+  { id: "quasar", label: "Quasar", color: "#0ea880", tagline: "Zero-allocation by Blueshift (experimental — CLI only)", available: false },
   { id: "native", label: "Native", color: "#6b7bff", tagline: "Raw solana_program + borsh", available: true },
 ];
 

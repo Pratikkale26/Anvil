@@ -274,14 +274,28 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
           {TARGETS.map((t) => {
             const { color, label, tagline, experimental } = TARGET_META[t];
             const active = target === t;
+            // Experimental targets are visually present (so reviewers see
+            // the surface area) but not clickable — no cargo-green coverage,
+            // no differential test, no claim of correctness. Power users
+            // can still emit via the CLI.
+            const disabled = experimental === true;
             return (
               <button
                 key={t}
-                onClick={() => setTarget(t)}
-                className="flex items-center gap-3 py-[11px] px-3.5 rounded-xl border text-left cursor-pointer transition-colors"
+                onClick={() => { if (!disabled) setTarget(t); }}
+                disabled={disabled}
+                aria-disabled={disabled}
+                title={
+                  disabled
+                    ? "Experimental target. Not exposed in the workbench yet — emit via the CLI: anvil compile --target quasar"
+                    : undefined
+                }
+                className="flex items-center gap-3 py-[11px] px-3.5 rounded-xl border text-left transition-colors"
                 style={{
                   background: active ? `${color}12` : "transparent",
                   borderColor: active ? `${color}45` : C.cardBorder,
+                  cursor: disabled ? "not-allowed" : "pointer",
+                  opacity: disabled ? 0.55 : 1,
                 }}
               >
                 <div
@@ -306,7 +320,7 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                           background: `${C.amber}18`,
                           border: `1px solid ${C.amber}40`,
                         }}
-                        title="No cargo-build coverage. Output runs through the emitter but isn't verified by the test suite — review before deploying."
+                        title="Experimental — emitter runs but not cargo-green or differential-tested. Use the CLI if you want to inspect output."
                       >
                         Experimental
                       </span>

@@ -35,7 +35,10 @@ export function loadWorkbenchState(): Partial<PersistedWorkbench> | null {
     const p = parsed as Record<string, unknown>;
     const out: Partial<PersistedWorkbench> = {};
     if (isInputMode(p.mode)) out.mode = p.mode;
-    if (isTarget(p.target)) out.target = p.target;
+    // Drop stored experimental targets at hydration so a previous selection
+    // of (now-disabled) quasar doesn't leave the workbench stuck on a
+    // target the user can no longer toggle off via the disabled button.
+    if (isTarget(p.target) && p.target !== "quasar") out.target = p.target;
     if (typeof p.demoName === "string") out.demoName = p.demoName;
     if (typeof p.sourceText === "string") out.sourceText = p.sourceText;
     if (typeof p.repoUrl === "string") out.repoUrl = p.repoUrl;
