@@ -22,6 +22,8 @@ export interface MetricsSnapshot {
     patchesRejected: number;
     acceptRate: number;
     errorsByCategory: Counter;
+    /** Histogram-style buckets so a public p50 is meaningful as accept-rate moves. */
+    acceptRateBuckets: { p10: number; p50: number; p90: number };
   };
   emit: {
     total: number;
@@ -36,6 +38,8 @@ export interface MetricsSnapshot {
     success: number;
     failure: number;
     p50DurationMs: number;
+    p95DurationMs: number;
+    p99DurationMs: number;
     byTarget: Counter;
   };
   spend: {
@@ -67,11 +71,27 @@ function pushDuration(ms: number): void {
 }
 
 function p50(samples: number[]): number {
+  return percentile(samples, 50);
+}
+
+function percentile(samples: number[], p: number): number {
   if (samples.length === 0) return 0;
   const sorted = [...samples].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[mid] ?? 0;
-  return Math.round(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2);
+  // Nearest-rank method — fine for our window (50 samples).
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return Math.round(sorted[idx] ?? 0);
+}
+
+// Refine accept-rate window — last 50 calls. Same window size as build
+// durations so metrics stay roughly comparable. Each entry is a number
+// in [0,1] representing the accept rate of that single refine call
+// (accepted / total patches).
+const REFINE_RATE_WINDOW = 50;
+const refineRateSamples: number[] = [];
+
+function pushRefineRate(rate: number): void {
+  refineRateSamples.push(rate);
+  if (refineRateSamples.length > REFINE_RATE_WINDOW) refineRateSamples.shift();
 }
 
 export const metrics = {
@@ -81,6 +101,8 @@ export const metrics = {
     else refineCalls.aiCallsMade++;
     refineCalls.patchesAccepted += opts.accepted;
     refineCalls.patchesRejected += opts.rejected;
+    const total = opts.accepted + opts.rejected;
+    if (total > 0) pushRefineRate(opts.accepted / total);
   },
 
   recordRefineError(category: string): void {
@@ -123,6 +145,11 @@ export const metrics = {
           refineCalls.patchesAccepted + refineCalls.patchesRejected,
         ),
         errorsByCategory: { ...refineErrorsByCategory },
+        acceptRateBuckets: {
+          p10: percentile(refineRateSamples, 10),
+          p50: percentile(refineRateSamples, 50),
+          p90: percentile(refineRateSamples, 90),
+        },
       },
       emit: {
         total: emitCounters.total,
@@ -136,7 +163,9 @@ export const metrics = {
         total: buildCounters.total,
         success: buildCounters.success,
         failure: buildCounters.failure,
-        p50DurationMs: p50(buildDurations),
+        p50DurationMs: percentile(buildDurations, 50),
+        p95DurationMs: percentile(buildDurations, 95),
+        p99DurationMs: percentile(buildDurations, 99),
         byTarget: { ...buildCounters.byTarget },
       },
       spend: spendSnapshot(),

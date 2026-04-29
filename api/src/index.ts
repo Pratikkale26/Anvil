@@ -12,6 +12,38 @@ import { AnvilError, ErrorCode } from "./errors.js";
 import { metrics } from "./metrics.js";
 import { getSandbox } from "./build/sandbox.js";
 
+// ─── Optional Sentry observability ───────────────────────────────────────────
+// Lazy import + env-gated: SENTRY_DSN unset = no Sentry traffic, no perf hit.
+// PII strip: clear request bodies and IPs from events before send so user
+// source code + caller addresses never leave the deploy.
+if (process.env.SENTRY_DSN) {
+  // Top-level await isn't allowed in this entry; use a void-IIFE so init
+  // races with the rest of the bootstrap. Errors before init register
+  // are still caught by the global handlers below.
+  (async () => {
+    try {
+      const Sentry = await import("@sentry/node");
+      Sentry.init({
+        dsn: process.env.SENTRY_DSN,
+        environment: process.env.NODE_ENV ?? "development",
+        tracesSampleRate: 0.05,
+        beforeSend(event) {
+          // Strip caller IPs.
+          if (event.user?.ip_address) delete event.user.ip_address;
+          if (event.request) {
+            delete event.request.cookies;
+            delete event.request.data; // body
+          }
+          return event;
+        },
+      });
+      console.log(`[sentry] enabled (env=${process.env.NODE_ENV ?? "development"})`);
+    } catch (err) {
+      console.warn(`[sentry] init failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  })();
+}
+
 // ─── Production sandbox guard ────────────────────────────────────────────────
 // `sandbox.kind === 'none'` means firejail/bwrap/unshare are all unavailable,
 // so cargo runs with env-strip + prlimit only — no FS isolation, no network
