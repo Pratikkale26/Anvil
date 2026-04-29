@@ -542,15 +542,16 @@ function printCompletionHelp(): void {
 
 function printCommandHelp(command: string): void {
   switch (command) {
-    case "compile":    printCompileHelp();    return;
-    case "parse":      printParseHelp();      return;
-    case "validate":   printValidateHelp();   return;
-    case "lint":       printLintHelp();       return;
-    case "bench":      printBenchHelp();      return;
-    case "snapshot":   printSnapshotHelp();   return;
-    case "diff":       printDiffHelp();       return;
-    case "migrate":    printMigrateHelp();    return;
-    case "completion": printCompletionHelp(); return;
+    case "compile":      printCompileHelp();    return;
+    case "parse":        printParseHelp();      return;
+    case "validate":     printValidateHelp();   return;
+    case "lint":         printLintHelp();       return;
+    case "bench":        printBenchHelp();      return;
+    case "snapshot":     printSnapshotHelp();   return;
+    case "diff":         printDiffHelp();       return;
+    case "migrate":      printMigrateHelp();    return;
+    case "completion":   printCompletionHelp(); return;
+    case "differential": cmdDifferential({ ...({} as CliArgs), help: true } as CliArgs); return;
     default:           printHelp();
   }
 }
@@ -1626,11 +1627,134 @@ async function main(): Promise<void> {
     case "migrate":
       await cmdMigrate(args);
       break;
+    case "differential":
+      await cmdDifferential(args);
+      break;
     default:
       error(`Unknown command: ${args.command}`);
       console.log(`\n  Run ${c.cyan}anvil --help${c.reset} for usage.\n`);
       process.exit(1);
   }
+}
+
+// ─── differential ────────────────────────────────────────────────────────────
+
+async function cmdDifferential(args: CliArgs): Promise<void> {
+  if (args.help) {
+    console.log(`
+  ${c.bold}anvil differential${c.reset} — Build the Anvil-Pinocchio .so from your
+  Anchor source so you can byte-compare against the original in LiteSVM.
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil differential <input> --target pinocchio [-o <dir>]
+
+  ${c.bold}WHAT IT DOES${c.reset}
+
+    1. Parse <input> (Anchor .rs file or project directory)
+    2. Emit a Pinocchio project to <output>/anvil/
+    3. Build it via cargo-build-sbf — produces target/deploy/<name>.so
+
+  ${c.bold}NEXT STEPS${c.reset}
+
+  Wire your own scenario script that:
+    - Builds the original Anchor source into a separate .so via 'anchor build'
+    - Loads BOTH binaries into a LiteSVM instance with the same program ID
+    - Runs identical TransactionInstructions against each
+    - Byte-compares account state via svm.getAccount(pubkey).data
+
+  See api/tests/differential-counter.test.ts for a working pattern.
+  Pin Clock + Slot in both runs (svm.warpToTimestamp / svm.warpToSlot)
+  if the source's logic depends on time.
+
+  ${c.bold}REQUIREMENTS${c.reset}
+
+    - cargo-build-sbf (Anza CLI 3.x recommended)
+    - The original Anchor project with its own anchor build path
+
+  ${c.bold}WHY THIS MATTERS${c.reset}
+
+  Cargo-green proves the emit COMPILES. Byte-equal differential testing
+  proves the emit produces identical on-chain state — the actual
+  correctness signal. Anvil's bundled fixtures cover counter, vault,
+  ata-mint, spl-transfer, spl-burn, has-one, t22-transfer (7 fixtures).
+  This subcommand is the entry point for getting your OWN program
+  under the same gate.
+`);
+    return;
+  }
+
+  if (!args.input) {
+    fatal("Missing input file or directory.\n\n  Usage: anvil differential <input> --target pinocchio");
+  }
+
+  const target = validateTarget(args.target ?? "pinocchio");
+  if (target !== "pinocchio") {
+    fatal("Differential testing is only supported for target=pinocchio (Anvil's primary correctness gate target).");
+  }
+
+  banner();
+
+  // Step 1: parse + emit (same path as compile, but to a "anvil" subdir of
+  // --output so the user can keep their original anchor build alongside).
+  progress(`Parsing ${args.input}...`);
+  const source = resolveSource(args.input);
+  const parsed = await parseAnchor(source);
+  if (!parsed.ok) {
+    error(`Parse failed: ${parsed.error}`);
+    if (parsed.details) console.log(`    ${c.dim}${parsed.details}${c.reset}`);
+    process.exit(1);
+  }
+  const ir = parsed.ir;
+  success(`Parsed: ${ir.instructions.length} instruction${ir.instructions.length !== 1 ? "s" : ""}, ${ir.accounts.length} account${ir.accounts.length !== 1 ? "s" : ""}`);
+  console.log();
+
+  progress("Emitting Pinocchio project...");
+  const output = emitPinocchioFull(ir);
+  const outputDir = args.output ?? "./anvil-output";
+  const anvilProjDir = join(outputDir, "anvil");
+  mkdirSync(anvilProjDir, { recursive: true });
+
+  const scaffold = buildProjectScaffold(ir, "pinocchio");
+  const sourceFiles = output.files.length > 0
+    ? output.files.map((f) => ({ path: join("src", f.path), content: f.content }))
+    : [{ path: join("src", "lib.rs"), content: output.singleFile }];
+  for (const f of [...scaffold, ...sourceFiles]) {
+    const fp = join(anvilProjDir, f.path);
+    mkdirSync(dirname(fp), { recursive: true });
+    writeFileSync(fp, f.content, "utf8");
+  }
+  success(`Wrote Anvil project to ${anvilProjDir}/`);
+  console.log();
+
+  // Step 2: cargo-build-sbf
+  progress("Building Pinocchio .so via cargo-build-sbf...");
+  const { spawnSync } = await import("node:child_process");
+  const r = spawnSync("cargo-build-sbf", ["--manifest-path", join(anvilProjDir, "Cargo.toml")], {
+    stdio: "inherit",
+    timeout: 600_000,
+    env: { ...process.env, RUSTFLAGS: "" },
+  });
+  if (r.status !== 0) {
+    error(`cargo-build-sbf failed (exit ${r.status}). The emitted code may have a target compatibility gap; run 'anvil compile' first to inspect.`);
+    process.exit(1);
+  }
+  const soDir = join(anvilProjDir, "target", "deploy");
+  success(`Pinocchio .so ready in ${soDir}/`);
+  console.log();
+
+  // Step 3: print next-steps for the user
+  console.log(`  ${c.bold}Next steps${c.reset}`);
+  console.log();
+  console.log(`  ${c.dim}# build the original Anchor reference into its own .so${c.reset}`);
+  console.log(`  cd <your-anchor-project> && anchor build`);
+  console.log();
+  console.log(`  ${c.dim}# write a scenario that loads BOTH .so into LiteSVM and byte-compares${c.reset}`);
+  console.log(`  ${c.dim}# template: api/tests/differential-counter.test.ts${c.reset}`);
+  console.log();
+  console.log(`  ${c.cyan}If the byte-compare diverges, the Anvil emit has drifted semantically${c.reset}`);
+  console.log(`  ${c.cyan}from the Anchor original. File an issue with the diff bytes + offset.${c.reset}`);
+  console.log();
 }
 
 // ─── migrate ─────────────────────────────────────────────────────────────────
