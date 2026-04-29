@@ -328,7 +328,12 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
             Audit each patch (Diff tab) and run your own tests before deploying.
             Anvil does not guarantee runtime equivalence for AI-modified code —
             the cargo-build accept gate confirms it compiles, not that the
-            runtime behavior matches the original.
+            runtime behavior matches the original.{" "}
+            {refineResult?.usage?.estimatedCostUsd != null && refineResult.usage.estimatedCostUsd > 0 && (
+              <span className="text-[11px] font-mono opacity-90">
+                · refine est. cost ${refineResult.usage.estimatedCostUsd.toFixed(4)}
+              </span>
+            )}
           </div>
         </div>
       )}

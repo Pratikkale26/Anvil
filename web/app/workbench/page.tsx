@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 
 export default function Workbench() {
   const state = useAnvilPipeline();
-  const { apiOk, isMobile, isTablet, runPipeline, isRunning } = state;
+  const { apiOk, isMobile, isTablet, runPipeline, isRunning, spendTodayUsd, spendCapUsd } = state;
 
   // Keyboard shortcut: Cmd+Enter / Ctrl+Enter runs the pipeline from
   // anywhere in the workbench. Avoids the reach for the mouse on every
@@ -60,23 +60,40 @@ export default function Workbench() {
               </div>
             </div>
           </div>
-          {/* API dot */}
-          <div className={cn(
-            "flex items-center gap-[7px] text-xs py-[5px] px-3.5 rounded-full border",
-            apiOk
-              ? "bg-[rgba(14,168,128,0.08)] border-[rgba(14,168,128,0.22)]"
-              : "bg-white/[0.04] border-anvil-card-border"
-          )}>
+          {/* API + spend chips */}
+          <div className="flex items-center gap-2 flex-wrap">
             <div className={cn(
-              "w-[7px] h-[7px] rounded-full",
-              apiOk ? "bg-anvil-teal" : "bg-anvil-text-dim"
-            )} />
-            <span className={cn(
-              "font-semibold",
-              apiOk ? "text-anvil-teal" : "text-anvil-text-muted"
+              "flex items-center gap-[7px] text-xs py-[5px] px-3.5 rounded-full border",
+              apiOk
+                ? "bg-[rgba(14,168,128,0.08)] border-[rgba(14,168,128,0.22)]"
+                : "bg-white/[0.04] border-anvil-card-border"
             )}>
-              {apiOk ? "API live" : "API offline"}
-            </span>
+              <div className={cn(
+                "w-[7px] h-[7px] rounded-full",
+                apiOk ? "bg-anvil-teal" : "bg-anvil-text-dim"
+              )} />
+              <span className={cn(
+                "font-semibold",
+                apiOk ? "text-anvil-teal" : "text-anvil-text-muted"
+              )}>
+                {apiOk ? "API live" : "API offline"}
+              </span>
+            </div>
+            {/* AI spend today (server-wide aggregate, refreshed after each
+                refine call). Shown only when the API actually reports a cap
+                so the UI doesn't claim transparency for a deploy that
+                doesn't have spend tracking enabled. */}
+            {spendCapUsd != null && spendTodayUsd != null && (
+              <div
+                className="flex items-center gap-[7px] text-xs py-[5px] px-3.5 rounded-full border bg-white/[0.04] border-anvil-card-border"
+                title={`Aggregated AI spend across all callers today (resets at 00:00 UTC). Per-IP cap is enforced server-side at $${spendCapUsd.toFixed(2)}/day.`}
+              >
+                <span className="text-anvil-text-muted font-mono">AI</span>
+                <span className="text-anvil-text-sub font-semibold font-mono">
+                  ${spendTodayUsd.toFixed(2)} / ${spendCapUsd.toFixed(2)}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </nav>

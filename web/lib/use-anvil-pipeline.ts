@@ -121,6 +121,15 @@ export function useAnvilPipeline() {
   // ─── Viewport ─────────────────────────────────────────────────────────────
   const [viewportWidth, setViewportWidth] = useState(1280);
 
+  // ─── AI spend (today, capped per IP) ──────────────────────────────────────
+  // Pulled from /metrics on workbench load so the user can see how close
+  // they are to the daily cap before triggering a refine. Refreshed after
+  // every refine call (downstream — the runRefine path increments
+  // `metricsBump` to trigger a re-fetch here).
+  const [spendTodayUsd, setSpendTodayUsd] = useState<number | null>(null);
+  const [spendCapUsd, setSpendCapUsd] = useState<number | null>(null);
+  const [metricsBump, setMetricsBump] = useState(0);
+
   // ─── Effects ──────────────────────────────────────────────────────────────
   useEffect(() => {
     fetch(`${API_BASE}/`, { cache: "no-store" })
@@ -141,6 +150,22 @@ export function useAnvilPipeline() {
       })
       .catch(() => setDemoNames(["counter", "vault", "escrow", "staking"]));
   }, []);
+
+  // Fetch spend snapshot on load + after every refine. The /metrics endpoint
+  // returns aggregated counters incl. spend.todayTotalUsd + capUsd. We don't
+  // expose per-IP detail — server-side topSpendersToday already masks IPs to
+  // /24 and we don't surface that to the user anyway.
+  useEffect(() => {
+    fetch(`${API_BASE}/metrics`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((m) => {
+        if (m?.spend) {
+          if (typeof m.spend.todayTotalUsd === "number") setSpendTodayUsd(m.spend.todayTotalUsd);
+          if (typeof m.spend.capUsd === "number") setSpendCapUsd(m.spend.capUsd);
+        }
+      })
+      .catch(() => { /* metrics endpoint optional; UI degrades silently */ });
+  }, [metricsBump]);
 
   useEffect(() => {
     const update = () => setViewportWidth(window.innerWidth);
@@ -594,6 +619,8 @@ export function useAnvilPipeline() {
       setRefineError(err instanceof Error ? err.message : String(err));
     } finally {
       setRefineBusy(false);
+      // Refresh /metrics so the spend chip updates after each AI call.
+      setMetricsBump((n) => n + 1);
     }
   }
 
@@ -952,6 +979,10 @@ export function useAnvilPipeline() {
     activeRefinePatch,
     compareOriginalContent,
     comparePatchedContent,
+
+    // AI spend telemetry (today)
+    spendTodayUsd,
+    spendCapUsd,
 
     // Layout
     isTablet,
