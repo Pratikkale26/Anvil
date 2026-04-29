@@ -281,6 +281,33 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
         <PipelineStrip pipelineStage={pipelineStage} />
       </div>
 
+      {/* AI-patched audit banner. Surfaced whenever an AI-refine result has
+          been applied to the active output. Distinct from the small "AI
+          refined" badge in the header — this one is large + yellow + non-
+          dismissable per session because the underlying property (this
+          output is partially AI-generated, runtime equivalence not
+          guaranteed) doesn't go away just by clicking through. */}
+      {hasAppliedRefine && (
+        <div
+          className="px-5 py-2.5 border-b text-[12px] flex items-start gap-2.5"
+          style={{
+            background: "rgba(245,166,35,0.07)",
+            borderColor: "rgba(245,166,35,0.25)",
+            color: "#f5a623",
+          }}
+          role="alert"
+        >
+          <span aria-hidden="true" className="font-bold leading-snug">!</span>
+          <div className="leading-snug">
+            <span className="font-semibold">AI-applied patches in this output.</span>{" "}
+            Audit each patch (Diff tab) and run your own tests before deploying.
+            Anvil does not guarantee runtime equivalence for AI-modified code —
+            the cargo-build accept gate confirms it compiles, not that the
+            runtime behavior matches the original.
+          </div>
+        </div>
+      )}
+
       {/* Tabs (dimmed + inert while the AI-refine diff overlay is up) */}
       <div
         className={cn(
