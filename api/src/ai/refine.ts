@@ -11,6 +11,7 @@ import {
   REFINE_PROMPT_VERSION,
   REFINE_RESPONSE_JSON_SCHEMA,
 } from "./prompts/refine.js";
+import { estimateCostUsd } from "./model-pricing.js";
 
 export { REFINE_PROMPT_VERSION };
 
@@ -106,15 +107,11 @@ export async function refineOutput(
   }
   const parsed = schemaResult.data;
 
-  // Best-effort USD estimate. Sonnet 4 published pricing as of 2026-04:
-  //   $3/M input, $15/M output, cache write 1.25× input, cache read 0.1× input.
-  // Other models will mis-report — surfaced as "estimated" not exact.
-  const estimatedCostUsd =
-    (usage.inputTokens * 3 +
-      usage.outputTokens * 15 +
-      usage.cacheCreationTokens * 3.75 +
-      usage.cacheReadTokens * 0.3) /
-    1_000_000;
+  // Per-model USD estimate. Pricing table lives in `model-pricing.ts` so a
+  // model swap (Sonnet → Opus, or vendor change) updates exactly one place
+  // instead of drifting silently. Unknown models fall back to Sonnet-class
+  // pricing with a one-time console warning.
+  const estimatedCostUsd = estimateCostUsd(repairModel, usage);
 
   // Init tree-sitter once for structural pre-checks. Patches whose patchedContent
   // doesn't parse as valid Rust (unbalanced braces, broken expressions) are
