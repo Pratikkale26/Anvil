@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("Escrow111111111111111111111111111111111111111");
+declare_id!("Escrw11111111111111111111111111111111111111");
 
 #[program]
 pub mod escrow {

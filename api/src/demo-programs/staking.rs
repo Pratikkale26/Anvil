@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Mint, Transfer, MintTo};
 use anchor_lang::solana_program::clock::Clock;
 
-declare_id!("Stak1ngPr0gram111111111111111111111111111111");
+declare_id!("Stak1ng111111111111111111111111111111111111");
 
 #[program]
 pub mod staking {
