@@ -1,322 +1,74 @@
 /**
- * Runtime-correctness differential: Anchor vs Anvil-Pinocchio.
+ * Counter differential — first fixture, smallest surface.
  *
- * Cargo-green is necessary but not sufficient — emitted code that compiles
- * can still misbehave on-chain. This test takes the canonical demo
- * (counter.rs), builds two .so binaries:
- *
- *   1. The Anchor original  → cargo build-sbf
- *   2. Anvil → Pinocchio    → bun cli compile + cargo build-sbf
- *
- * Then loads both into litesvm with the SAME program ID, sends the same
- * Initialize + Increment instructions with the same input, reads the
- * Counter account, and asserts byte-equal state. If the Anvil-emitted
- * program drifts semantically from the Anchor original, this fires.
- *
- * One fixture is the credibility lever — it converts "transpiler" from
- * a claim into evidence. Expand the corpus over time.
- *
- * Skips loudly when the SBF toolchain isn't available (cargo-build-sbf,
- * anchor) instead of silently passing.
+ * Exercises: account init, PDA derivation, simple u64 state mutation.
+ * No SPL, no signer seeds, no CPI. If this fails, every other fixture
+ * will fail, so it stays first in the suite.
  */
-import { describe, test, expect } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { LiteSVM } from "litesvm";
+import { Transaction, TransactionInstruction, SystemProgram } from "@solana/web3.js";
 import {
+  defineDifferential,
+  anchorIxDiscriminator,
+  encodeU64LE,
+  concatBytes,
   Keypair,
   PublicKey,
-  SystemProgram,
-  Transaction,
-  TransactionInstruction,
-  type AccountMeta,
-} from "@solana/web3.js";
-import { sha256 } from "@noble/hashes/sha2.js";
-import { parseAnchor } from "../src/parser/anchor-parser.ts";
-import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
-import { buildProjectScaffold } from "../src/emitter/project-scaffold.ts";
-
-// Shared program ID across both builds. Solana pubkey stability + the on-
-// chain "owner" check both require the same ID.
-const PROGRAM_ID = new PublicKey("Counter111111111111111111111111111111111111");
-
-const SBF_AVAILABLE = (() => {
-  const r = spawnSync("cargo-build-sbf", ["--version"], { stdio: "ignore", timeout: 5_000 });
-  return r.status === 0;
-})();
-
-const ANCHOR_AVAILABLE = (() => {
-  const r = spawnSync("anchor", ["--version"], { stdio: "ignore", timeout: 5_000 });
-  return r.status === 0;
-})();
-
-/**
- * Probe whether the SBF toolchain can compile modern Anchor's dependency
- * tree. The current edition2024-requiring transitive deps (block-buffer
- * 0.12 via blake3 1.8+, toml_edit 0.25+) need Cargo 1.85, which means
- * Anza/Solana CLI 3.x with platform-tools v1.54+. Older toolchains
- * (Solana CLI 2.x with rustc 1.75/1.79) fail at dep download with a wall
- * of "feature edition2024 is required" errors.
- *
- * Detect by looking for `cargo-build-sbf` >= 3.0 (the version line reads
- * `solana-cargo-build-sbf X.Y.Z`).
- */
-const SBF_TOOLCHAIN_OK = (() => {
-  const r = spawnSync("cargo-build-sbf", ["--version"], {
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 5_000,
-  });
-  if (r.status !== 0) return false;
-  const out = (r.stdout?.toString() ?? "") + (r.stderr?.toString() ?? "");
-  // Prefer rustc version directly when surfaced — that's the actual gate
-  // (edition2024 needs Cargo 1.85+). Fall back to platform-tools as a proxy.
-  const rustcMatch = out.match(/rustc\s+(\d+)\.(\d+)/);
-  if (rustcMatch) {
-    const major = parseInt(rustcMatch[1] ?? "0", 10);
-    const minor = parseInt(rustcMatch[2] ?? "0", 10);
-    return major > 1 || minor >= 85;
-  }
-  const platformMatch = out.match(/platform-tools\s+v(\d+)\.(\d+)/);
-  if (platformMatch) {
-    const major = parseInt(platformMatch[1] ?? "0", 10);
-    const minor = parseInt(platformMatch[2] ?? "0", 10);
-    return major > 1 || minor >= 52;
-  }
-  return true; // unknown — let the build try
-})();
+  LiteSVM,
+} from "./differential-harness.ts";
 
 const COUNTER_SRC = join(import.meta.dir, "..", "src", "demo-programs", "counter.rs");
+const PROGRAM_ID = "Counter111111111111111111111111111111111111";
 
-const CACHE_ROOT = process.env.ANVIL_DIFF_CACHE ?? join(process.env.HOME ?? "/tmp", ".anvil-diff-cache");
+defineDifferential({
+  fixtureName: "counter",
+  programIdBase58: PROGRAM_ID,
+  anchorSource: readFileSync(COUNTER_SRC, "utf-8"),
+  anchorPackageName: "counter_anchor_diff",
 
-if (!SBF_AVAILABLE || !ANCHOR_AVAILABLE || !SBF_TOOLCHAIN_OK) {
-  const why = !SBF_AVAILABLE
-    ? "cargo-build-sbf missing"
-    : !ANCHOR_AVAILABLE
-      ? "anchor CLI missing"
-      : "SBF platform-tools < v1.54 (modern Anchor's transitive deps need rustc 1.85 / Cargo edition2024 — install Anza CLI 3.x or wait for Solana CLI 2.x to ship platform-tools v1.54)";
-  console.warn(
-    `\n[differential-counter] SKIPPED — ${why}.\n` +
-      `  cargo-build-sbf:        ${SBF_AVAILABLE ? "found" : "MISSING"}\n` +
-      `  anchor:                 ${ANCHOR_AVAILABLE ? "found" : "MISSING"}\n` +
-      `  platform-tools v1.54+:  ${SBF_TOOLCHAIN_OK ? "yes" : "NO"}\n` +
-      `  To enable: 'sh -c \"$(curl -sSfL https://release.anza.xyz/v3.1.13/install)\"'.\n`,
-  );
-  describe.skip(`Anchor vs Anvil-Pinocchio differential [SKIPPED — ${why}]`, () => {
-    test.skip("see console warning", () => {});
-  });
-} else {
-  describe("Anchor vs Anvil-Pinocchio runtime correctness (counter)", () => {
-    test("initialize + increment produce byte-equal CounterAccount state", async () => {
-      // Cache the two .so by source-content hash so re-runs reuse builds.
-      const counterSource = readFileSync(COUNTER_SRC, "utf-8");
-      const sourceHash = bytesToHex(sha256(new TextEncoder().encode(counterSource))).slice(0, 12);
-      const cacheDir = join(CACHE_ROOT, sourceHash);
-      mkdirSync(cacheDir, { recursive: true });
-      const anchorSoPath = join(cacheDir, "counter_anchor.so");
-      const anvilSoPath = join(cacheDir, "counter_anvil.so");
+  setup: async () => {
+    const authority = Keypair.generate();
+    const programId = new PublicKey(PROGRAM_ID);
+    const [counterPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("counter"), authority.publicKey.toBuffer()],
+      programId,
+    );
+    return { authority, counterPda };
+  },
 
-      if (!existsSync(anchorSoPath)) {
-        await buildAnchorSo(counterSource, anchorSoPath);
-      }
-      if (!existsSync(anvilSoPath)) {
-        await buildAnvilSo(counterSource, anvilSoPath);
-      }
+  callScript: async (svm: LiteSVM, ctx, programId: PublicKey) => {
+    svm.airdrop(ctx.authority.publicKey, BigInt(1_000_000_000));
 
-      // Run the same instruction sequence against both binaries and compare
-      // the resulting Counter PDA state. The same authority keypair is
-      // shared across both scenarios so the PDA derives to the same bump
-      // and the authority bytes line up — otherwise the scenarios would
-      // diverge on Pubkey + bump even though count math is identical.
-      const sharedAuthority = Keypair.generate();
-      const anchorState = await runScenario(readFileSync(anchorSoPath), sharedAuthority);
-      const anvilState = await runScenario(readFileSync(anvilSoPath), sharedAuthority);
+    const initIx = new TransactionInstruction({
+      programId,
+      keys: [
+        { pubkey: ctx.counterPda, isSigner: false, isWritable: true },
+        { pubkey: ctx.authority.publicKey, isSigner: true, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data: Buffer.from(concatBytes(anchorIxDiscriminator("initialize"), encodeU64LE(10n))),
+    });
+    const incIx = new TransactionInstruction({
+      programId,
+      keys: [
+        { pubkey: ctx.counterPda, isSigner: false, isWritable: true },
+        { pubkey: ctx.authority.publicKey, isSigner: true, isWritable: false },
+      ],
+      data: Buffer.from(concatBytes(anchorIxDiscriminator("increment"), encodeU64LE(5n))),
+    });
 
-      const equal = anvilState.equals(anchorState);
-      if (!equal) {
-        console.log("\n[differential] STATE MISMATCH — first diverging bytes:");
-        console.log(`  anchor (len=${anchorState.length}):`, anchorState.toString("hex").match(/.{1,16}/g)?.slice(0, 6));
-        console.log(`  anvil  (len=${anvilState.length}):`, anvilState.toString("hex").match(/.{1,16}/g)?.slice(0, 6));
-      }
-      expect(equal).toBe(true);
-    }, 600_000); // long timeout: first-run SBF builds take minutes
-  });
-}
+    for (const ix of [initIx, incIx]) {
+      const tx = new Transaction().add(ix);
+      tx.recentBlockhash = svm.latestBlockhash();
+      tx.feePayer = ctx.authority.publicKey;
+      tx.sign(ctx.authority);
+      const r = svm.sendTransaction(tx);
+      if ("err" in r) throw new Error(`tx failed: ${JSON.stringify(r.err)}`);
+    }
+  },
 
-async function buildAnchorSo(source: string, outPath: string): Promise<void> {
-  // Standalone Anchor scaffold pinned to the same anchor-lang version
-  // the demo source assumes. cargo build-sbf produces target/deploy/<name>.so.
-  const scratch = join(CACHE_ROOT, "_anchor_build");
-  rmSync(scratch, { recursive: true, force: true });
-  mkdirSync(join(scratch, "src"), { recursive: true });
-  writeFileSync(join(scratch, "Cargo.toml"), `[package]
-name = "counter_anchor_diff"
-version = "0.1.0"
-edition = "2021"
-[lib]
-crate-type = ["cdylib", "lib"]
-name = "counter_anchor_diff"
-[features]
-no-entrypoint = []
-no-idl = []
-no-log-ix-name = []
-cpi = ["no-entrypoint"]
-default = []
-[dependencies]
-anchor-lang = "0.31"
-`);
-  writeFileSync(join(scratch, "src/lib.rs"), source);
-  const r = spawnSync("cargo-build-sbf", ["--manifest-path", join(scratch, "Cargo.toml")], {
-    stdio: "inherit",
-    timeout: 600_000,
-    env: { ...process.env, RUSTFLAGS: "" },
-  });
-  if (r.status !== 0) {
-    throw new Error(`cargo build-sbf (Anchor) failed with status ${r.status}`);
-  }
-  const builtSo = join(scratch, "target/deploy/counter_anchor_diff.so");
-  if (!existsSync(builtSo)) {
-    throw new Error(`expected .so not produced at ${builtSo}`);
-  }
-  // Copy to cache.
-  writeFileSync(outPath, readFileSync(builtSo));
-}
-
-async function buildAnvilSo(source: string, outPath: string): Promise<void> {
-  // Pipe through the actual emitter pipeline — no shortcuts.
-  const parsed = await parseAnchor(source);
-  if (!parsed.ok) throw new Error(`parseAnchor failed: ${parsed.error}`);
-  const out = emitPinocchioFull(parsed.ir);
-  // project-scaffold writes the meta files (Cargo.toml/README/etc); the
-  // actual .rs source comes from the emitter output. Combine + write.
-  const scaffoldMeta = buildProjectScaffold(parsed.ir, "pinocchio");
-  const scratch = join(CACHE_ROOT, "_anvil_build");
-  rmSync(scratch, { recursive: true, force: true });
-  for (const f of scaffoldMeta) {
-    const p = join(scratch, f.path);
-    mkdirSync(dirOf(p), { recursive: true });
-    writeFileSync(p, f.content, "utf-8");
-  }
-  // The emitted .rs files live under src/ in the bundle layout.
-  for (const f of out.files) {
-    const p = join(scratch, "src", f.path);
-    mkdirSync(dirOf(p), { recursive: true });
-    writeFileSync(p, f.content, "utf-8");
-  }
-  const r = spawnSync("cargo-build-sbf", ["--manifest-path", join(scratch, "Cargo.toml")], {
-    stdio: "inherit",
-    timeout: 600_000,
-    env: { ...process.env, RUSTFLAGS: "" },
-  });
-  if (r.status !== 0) {
-    throw new Error(`cargo build-sbf (Anvil) failed with status ${r.status}`);
-  }
-  // The crate name in scaffold's Cargo.toml drives the .so filename.
-  const targetDir = join(scratch, "target/deploy");
-  const so = readSoFromDir(targetDir);
-  writeFileSync(outPath, so);
-}
-
-function readSoFromDir(dir: string): Buffer {
-  const fs = require("node:fs") as typeof import("node:fs");
-  const entries = fs.readdirSync(dir).filter((f: string) => f.endsWith(".so"));
-  if (entries.length === 0) throw new Error(`no .so found in ${dir}`);
-  return fs.readFileSync(join(dir, entries[0]!));
-}
-
-function dirOf(p: string): string {
-  return p.slice(0, p.lastIndexOf("/"));
-}
-
-function bytesToHex(b: Uint8Array): string {
-  return Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
-}
-
-/**
- * Scenario both programs run identically.
- * 1. initialize(start_value=10) on the counter PDA.
- * 2. increment(amount=5).
- * Returns the final raw account data of the counter PDA (skip 8-byte
- * Anchor discriminator on the Anchor side; Pinocchio side has no
- * discriminator so we strip a synthetic 8 bytes if present to align).
- */
-async function runScenario(programSo: Buffer, authority: Keypair): Promise<Buffer> {
-  const svm = new LiteSVM();
-  svm.addProgram(PROGRAM_ID, programSo);
-
-  // Fund the payer. litesvm's airdrop returns void; we just need lamports.
-  svm.airdrop(authority.publicKey, BigInt(1_000_000_000));
-
-  const [counterPda, _bump] = PublicKey.findProgramAddressSync(
-    [Buffer.from("counter"), authority.publicKey.toBuffer()],
-    PROGRAM_ID,
-  );
-
-  // Anchor instruction discriminator: first 8 bytes of sha256("global:<name>").
-  // Pinocchio will look for the same discriminator IF Anvil's emit follows
-  // Anchor's convention (it does — that's what makes the swap drop-in).
-  const initializeIx: TransactionInstruction = makeIx(
-    PROGRAM_ID,
-    discriminator("initialize"),
-    encodeU64(10n), // start_value=10
-    [
-      meta(counterPda, false, true),
-      meta(authority.publicKey, true, true),
-      meta(SystemProgram.programId, false, false),
-    ],
-  );
-  const incrementIx: TransactionInstruction = makeIx(
-    PROGRAM_ID,
-    discriminator("increment"),
-    encodeU64(5n), // amount=5
-    [
-      meta(counterPda, false, true),
-      meta(authority.publicKey, true, false),
-    ],
-  );
-
-  for (const ix of [initializeIx, incrementIx]) {
-    const tx = new Transaction().add(ix);
-    tx.recentBlockhash = svm.latestBlockhash();
-    tx.feePayer = authority.publicKey;
-    tx.sign(authority);
-    const r = svm.sendTransaction(tx);
-    if ("err" in r) throw new Error(`tx failed: ${JSON.stringify(r.err)}`);
-  }
-
-  const acct = svm.getAccount(counterPda);
-  if (!acct) throw new Error("counter account missing after run");
-  // Strip 8-byte discriminator from both sides for byte-equal compare.
-  return Buffer.from(acct.data.slice(8));
-}
-
-function discriminator(ixName: string): Uint8Array {
-  return sha256(new TextEncoder().encode(`global:${ixName}`)).slice(0, 8);
-}
-
-function encodeU64(n: bigint): Uint8Array {
-  const out = new Uint8Array(8);
-  for (let i = 0; i < 8; i++) out[i] = Number((n >> BigInt(i * 8)) & 0xffn);
-  return out;
-}
-
-function makeIx(
-  programId: PublicKey,
-  disc: Uint8Array,
-  data: Uint8Array,
-  accounts: AccountMeta[],
-): TransactionInstruction {
-  const buf = new Uint8Array(disc.length + data.length);
-  buf.set(disc, 0);
-  buf.set(data, disc.length);
-  return new TransactionInstruction({
-    programId,
-    keys: accounts,
-    data: Buffer.from(buf),
-  });
-}
-
-function meta(pubkey: PublicKey, isSigner: boolean, isWritable: boolean): AccountMeta {
-  return { pubkey, isSigner, isWritable };
-}
+  accountsToCompare: (ctx) => [
+    { pubkey: ctx.counterPda, label: "counter_pda" },
+  ],
+});
