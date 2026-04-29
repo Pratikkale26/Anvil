@@ -312,31 +312,44 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
           dismissable per session because the underlying property (this
           output is partially AI-generated, runtime equivalence not
           guaranteed) doesn't go away just by clicking through. */}
-      {hasAppliedRefine && (
-        <div
-          className="px-5 py-2.5 border-b text-[12px] flex items-start gap-2.5"
-          style={{
-            background: "rgba(245,166,35,0.07)",
-            borderColor: "rgba(245,166,35,0.25)",
-            color: "#f5a623",
-          }}
-          role="alert"
-        >
-          <span aria-hidden="true" className="font-bold leading-snug">!</span>
-          <div className="leading-snug">
-            <span className="font-semibold">AI-applied patches in this output.</span>{" "}
-            Audit each patch (Diff tab) and run your own tests before deploying.
-            Anvil does not guarantee runtime equivalence for AI-modified code —
-            the cargo-build accept gate confirms it compiles, not that the
-            runtime behavior matches the original.{" "}
-            {refineResult?.usage?.estimatedCostUsd != null && refineResult.usage.estimatedCostUsd > 0 && (
-              <span className="text-[11px] font-mono opacity-90">
-                · refine est. cost ${refineResult.usage.estimatedCostUsd.toFixed(4)}
-              </span>
-            )}
+      {hasAppliedRefine && (() => {
+        const corpus = new Set(["counter", "vault", "ata_mint", "ata-mint"]);
+        const inCorpus = corpus.has(programName);
+        return (
+          <div
+            className="px-5 py-2.5 border-b text-[12px] flex items-start gap-2.5"
+            style={{
+              background: "rgba(245,166,35,0.07)",
+              borderColor: "rgba(245,166,35,0.25)",
+              color: "#f5a623",
+            }}
+            role="alert"
+          >
+            <span aria-hidden="true" className="font-bold leading-snug">!</span>
+            <div className="leading-snug">
+              <span className="font-semibold">AI-applied patches in this output.</span>{" "}
+              {inCorpus ? (
+                <>
+                  This program is in the byte-equal differential corpus, but{" "}
+                  <span className="underline">the AI patch you just applied has not been re-verified</span>{" "}
+                  — re-run <code className="font-mono text-[11px]">bun test api/tests/differential-with-ai.test.ts</code> locally to byte-compare.
+                </>
+              ) : (
+                <>
+                  This program is NOT in the byte-equal differential corpus. The cargo-build accept gate confirms it
+                  compiles, not that the runtime behavior matches the original. Audit each patch (Diff tab) and run
+                  your own tests before deploying.
+                </>
+              )}
+              {refineResult?.usage?.estimatedCostUsd != null && refineResult.usage.estimatedCostUsd > 0 && (
+                <span className="text-[11px] font-mono opacity-90">
+                  {" "}· refine est. cost ${refineResult.usage.estimatedCostUsd.toFixed(4)}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Tabs (dimmed + inert while the AI-refine diff overlay is up) */}
       <div
