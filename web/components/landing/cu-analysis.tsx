@@ -20,9 +20,22 @@ export function CuAnalysis({
   return (
     <section id="cu-analysis" className="anvil-container pb-20">
       <div className="text-eyebrow">Compute unit analysis</div>
-      <h2 className="text-h1 text-anvil-text mt-2 mb-7">
+      <h2 className="text-h1 text-anvil-text mt-2 mb-3">
         {DEMOS[demo].title} — savings per instruction
       </h2>
+      {/* Heuristic disclosure. Numbers come from a constant-table estimator
+          in api/src/emitter/cu-analyzer.ts — useful for relative ranking,
+          NOT exact prediction. README leads with this; surfacing it here
+          too so the workbench/landing copy doesn't imply measurement. */}
+      <div
+        className="inline-flex items-center gap-2 mb-7 text-[11px] font-semibold text-anvil-text-muted"
+        title="CU numbers shown are heuristic constant-table estimates from api/src/emitter/cu-analyzer.ts. For measured numbers, run `bun scripts/measure-cu.ts` against a local solana-test-validator."
+      >
+        <span className="px-1.5 py-px rounded bg-white/[0.04] border border-anvil-card-border tracking-wide">
+          ESTIMATED
+        </span>
+        <span className="text-anvil-text-dim">heuristic — see scripts/measure-cu.ts for measured numbers</span>
+      </div>
       <div className="overflow-hidden rounded-2xl border border-anvil-card-border bg-anvil-card">
         <div className={`overflow-x-auto ${isMobile ? "px-4 py-5" : "px-7 py-6"}`}>
           <div

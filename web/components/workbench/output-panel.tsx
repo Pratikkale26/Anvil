@@ -773,10 +773,18 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
               style={{ height: editorHeight, overflowY: "auto" }}
               className="px-5 py-4"
             >
-              <div className="mb-3 text-xs text-anvil-text-muted leading-relaxed">
-                Per-instruction compute-unit estimate vs the Anchor baseline.
-                Hotspots sorted by {tm.label} cost (largest first). Same data
-                as <code className="font-mono text-[11px] text-anvil-text-sub">anvil bench</code>.
+              <div className="mb-3 text-xs text-anvil-text-muted leading-relaxed flex flex-wrap items-center gap-2">
+                <span
+                  className="text-[10px] font-bold tracking-widest text-anvil-text-sub px-1.5 py-px rounded bg-white/[0.04] border border-anvil-card-border"
+                  title="CU numbers shown are heuristic constant-table estimates from api/src/emitter/cu-analyzer.ts. For measured numbers, run `bun scripts/measure-cu.ts` against a local solana-test-validator."
+                >
+                  ESTIMATED
+                </span>
+                <span>
+                  Per-instruction compute-unit estimate vs the Anchor baseline.
+                  Hotspots sorted by {tm.label} cost (largest first). Same data
+                  as <code className="font-mono text-[11px] text-anvil-text-sub">anvil bench</code>.
+                </span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs font-mono">
