@@ -211,6 +211,31 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                     AI refined
                   </span>
                 )}
+                {/* Byte-equal corpus badge. Whitelist match by program name —
+                    these are the fixtures with passing differential tests in
+                    api/tests/differential-*.test.ts (Anchor + Anvil .so built,
+                    same instructions in LiteSVM, byte-compared). For any
+                    other program the corpus doesn't cover it, so we say so
+                    explicitly rather than implying coverage. */}
+                {(() => {
+                  const corpus = new Set(["counter", "vault", "ata_mint", "ata-mint"]);
+                  const inCorpus = corpus.has(programName);
+                  return inCorpus ? (
+                    <span
+                      title="Anvil's emit for this program has been byte-compared against the Anchor original in LiteSVM. See api/tests/differential-*.test.ts."
+                      className="text-[10px] font-bold text-anvil-teal px-1.5 py-px rounded bg-[rgba(14,168,128,0.12)] border border-[rgba(14,168,128,0.28)]"
+                    >
+                      ✓ byte-equal
+                    </span>
+                  ) : (
+                    <span
+                      title="This program isn't in Anvil's differential fixture corpus — emit compiled OK, but byte-equal correctness vs the Anchor original is not proven. Verify behavior before deploy."
+                      className="text-[10px] font-medium text-anvil-text-muted px-1.5 py-px rounded bg-white/[0.03] border border-anvil-card-border"
+                    >
+                      byte-equal: not in corpus
+                    </span>
+                  );
+                })()}
               </div>
             )}
           </div>
