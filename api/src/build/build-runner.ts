@@ -142,16 +142,76 @@ function safeRelativePath(p: string): string {
  * Per-target serial queue. Two simultaneous calls to `runBuild("pinocchio", ...)`
  * would otherwise race on `src/`; this chains them so the second waits for
  * the first to finish.
+ *
+ * Bounded depth: `MAX_QUEUE_DEPTH` in-flight per target. Over the cap we
+ * fail fast with QUEUE_FULL — better than letting a request dangle for
+ * minutes while N earlier ones serialize through. Default 16; override via
+ * ANVIL_BUILD_MAX_QUEUE_DEPTH.
+ *
+ * Per-request wall-clock: `MAX_QUEUE_WAIT_MS` cap on time spent waiting in
+ * the queue (not counting the cargo run itself; cargo has its own
+ * DEFAULT_TIMEOUT_MS). Default 90s.
  */
 const targetQueues: Map<BuildTarget, Promise<unknown>> = new Map();
+const targetDepth: Map<BuildTarget, number> = new Map();
+
+const MAX_QUEUE_DEPTH = (() => {
+  const raw = process.env.ANVIL_BUILD_MAX_QUEUE_DEPTH;
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 16;
+})();
+
+const MAX_QUEUE_WAIT_MS = (() => {
+  const raw = process.env.ANVIL_BUILD_MAX_QUEUE_WAIT_MS;
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 90_000;
+})();
+
+export class QueueFullError extends Error {
+  constructor(target: BuildTarget, depth: number, cap: number) {
+    super(`build queue full for target=${target}: ${depth}/${cap} in flight, refusing`);
+    this.name = "QueueFullError";
+  }
+}
+
+export class QueueWaitTimeoutError extends Error {
+  constructor(target: BuildTarget, waitMs: number) {
+    super(`build queue wait exceeded ${waitMs}ms for target=${target}`);
+    this.name = "QueueWaitTimeoutError";
+  }
+}
 
 function enqueue<T>(target: BuildTarget, fn: () => Promise<T>): Promise<T> {
+  const depth = targetDepth.get(target) ?? 0;
+  if (depth >= MAX_QUEUE_DEPTH) {
+    return Promise.reject(new QueueFullError(target, depth, MAX_QUEUE_DEPTH));
+  }
+  targetDepth.set(target, depth + 1);
+
   const prev = targetQueues.get(target) ?? Promise.resolve();
-  const next = prev.then(fn, fn);
-  // Don't let a rejection break the chain for the next caller.
+
+  // Wrap the actual fn() in a wait-cap so a long backlog can't strand a
+  // caller forever. The cargo run itself isn't bounded by this — it has
+  // its own DEFAULT_TIMEOUT_MS — but the time spent WAITING in the queue is.
+  const startedAt = Date.now();
+  const guarded = async (): Promise<T> => {
+    const waited = Date.now() - startedAt;
+    if (waited >= MAX_QUEUE_WAIT_MS) {
+      throw new QueueWaitTimeoutError(target, waited);
+    }
+    return fn();
+  };
+
+  const next = prev.then(guarded, guarded);
+
+  // Don't let a rejection break the chain for the next caller; also drop
+  // the depth counter regardless of outcome.
+  const tail = next.finally(() => {
+    targetDepth.set(target, Math.max(0, (targetDepth.get(target) ?? 1) - 1));
+  });
   targetQueues.set(
     target,
-    next.catch(() => undefined),
+    tail.catch(() => undefined),
   );
   return next;
 }

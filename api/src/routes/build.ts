@@ -1,6 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
-import { runBuild, type BuildTarget, type BuildFile, type BuildDiagnostic } from "../build/build-runner.js";
+import {
+  runBuild,
+  QueueFullError,
+  QueueWaitTimeoutError,
+  type BuildTarget,
+  type BuildFile,
+  type BuildDiagnostic,
+} from "../build/build-runner.js";
 import { AnvilError, ErrorCode } from "../errors.js";
 import { metrics } from "../metrics.js";
 import { SolanaIRSchema, type SolanaIR } from "../ir/schema.js";
@@ -99,6 +106,22 @@ buildRoute.post("/", async (req, res) => {
       stderrTail: result.stderrTail,
     });
   } catch (e) {
+    // QueueFullError → 503 (transient overload), QueueWaitTimeoutError → 504
+    // (we did try, but the backlog was too deep to honor the wait budget).
+    if (e instanceof QueueFullError) {
+      metrics.recordBuild({ target, ok: false, durationMs: 0 });
+      res.status(503).setHeader("Retry-After", "5").json(
+        new AnvilError(ErrorCode.RATE_LIMITED, "Build queue full — try again shortly", e.message, 503).toJSON(),
+      );
+      return;
+    }
+    if (e instanceof QueueWaitTimeoutError) {
+      metrics.recordBuild({ target, ok: false, durationMs: 0 });
+      res.status(504).json(
+        new AnvilError(ErrorCode.INTERNAL_ERROR, "Build queue wait exceeded budget", e.message, 504).toJSON(),
+      );
+      return;
+    }
     const message = e instanceof Error ? e.message : String(e);
     // safeRelativePath() in the build runner throws Error for path-
     // traversal, absolute, or empty paths — those are caller errors,
