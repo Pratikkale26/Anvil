@@ -45,14 +45,68 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "2mb" }));
 
-// Simple rate limiter — per-IP, sliding window
+// Per-IP rate limiter. Two backing stores:
+//   - default: in-memory Map (single instance only — sufficient for the
+//     current deploy, simple, fast).
+//   - REDIS_URL set: Redis with INCR + EXPIRE so counters survive process
+//     restart AND multiple replicas converge on the same per-IP cap.
+//
+// The Redis path is best-effort: if the connection drops mid-request we
+// log once and let the request through (better than blocking traffic on
+// a transient outage). The in-memory fallback path stays in place under
+// `localBackup` for that case.
+import { getRedis, isRedisEnabled } from "./redis-store.js";
+
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT = parseInt(process.env.RATE_LIMIT ?? '60'); // requests per window
 const RATE_WINDOW = 60_000; // 1 minute
+const RATE_WINDOW_SEC = RATE_WINDOW / 1000;
 
 app.use((req, res, next) => {
   const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
   const now = Date.now();
+
+  // Try Redis path first when configured. Pipeline INCR + EXPIRE so the
+  // window TTL is set on the first request of the minute and inherited
+  // by every later one in the same window.
+  if (isRedisEnabled()) {
+    const redis = getRedis();
+    if (redis) {
+      const key = `anvil:ratelimit:${ip}`;
+      redis
+        .multi()
+        .incr(key)
+        .expire(key, RATE_WINDOW_SEC, "NX")
+        .exec()
+        .then((results) => {
+          const count = results?.[0]?.[1] as number | undefined;
+          const used = count ?? 0;
+          res.setHeader('X-RateLimit-Limit', RATE_LIMIT);
+          res.setHeader('X-RateLimit-Remaining', Math.max(0, RATE_LIMIT - used));
+          if (used > RATE_LIMIT) {
+            const err = new AnvilError(ErrorCode.RATE_LIMITED, "Too many requests", undefined, 429);
+            res.status(err.statusCode).json(err.toJSON());
+            return;
+          }
+          next();
+        })
+        .catch((err) => {
+          // Fall through to in-memory if Redis hiccups.
+          console.warn(`[ratelimit] redis pipeline failed (${err.message}) — falling back to in-memory for this request.`);
+          inMemoryRateLimit(ip, now, res, next);
+        });
+      return;
+    }
+  }
+  inMemoryRateLimit(ip, now, res, next);
+});
+
+function inMemoryRateLimit(
+  ip: string,
+  now: number,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
   let entry = rateLimitMap.get(ip);
   if (!entry || now > entry.resetAt) {
     entry = { count: 0, resetAt: now + RATE_WINDOW };
@@ -67,9 +121,10 @@ app.use((req, res, next) => {
     return;
   }
   next();
-});
+}
 
-// Clean up stale entries every 5 minutes
+// Clean up stale in-memory entries every 5 minutes (Redis entries
+// auto-expire via TTL).
 setInterval(() => {
   const now = Date.now();
   for (const [ip, entry] of rateLimitMap) {

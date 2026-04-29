@@ -16,6 +16,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { getRedis, isRedisEnabled } from "../redis-store.js";
 
 const DEFAULT_CAP_USD = 2.0;
 const FLUSH_DEBOUNCE_MS = 1000;
@@ -146,8 +147,47 @@ export interface SpendCheck {
  * Cap enforcement is on cumulative-USD-today >= cap. Cached AI calls
  * (recordSpend(ip, 0)) don't move the needle, so a heavy cache-hit user
  * can keep using the system normally.
+ *
+ * Redis path: when REDIS_URL is set we read the cumulative micro-USD
+ * counter at `anvil:spend:<day>:<ip>` and divide by 1e6. Falls back to
+ * in-memory if Redis is unreachable.
  */
-export function checkSpendCap(ip: string): SpendCheck {
+export async function checkSpendCap(ip: string): Promise<SpendCheck> {
+  ensureInit();
+  const cap = capUsd();
+  const day = todayKey();
+  let todayUsd = memStore.days[day]?.[ip]?.usd ?? 0;
+
+  if (isRedisEnabled()) {
+    const redis = getRedis();
+    if (redis) {
+      try {
+        const microStr = await redis.get(`anvil:spend:${day}:${ip}`);
+        if (microStr) todayUsd = Math.max(todayUsd, Number(microStr) / 1_000_000);
+      } catch {
+        // Fall through to in-memory value.
+      }
+    }
+  }
+
+  const allowed = todayUsd < cap;
+  return {
+    allowed,
+    todayUsd,
+    capUsd: cap,
+    retryAfterSec: allowed ? 0 : secondsUntilUtcMidnight(),
+    reason: allowed
+      ? undefined
+      : `Daily AI spend cap of $${cap.toFixed(2)} per IP reached. Resets at 00:00 UTC.`,
+  };
+}
+
+/**
+ * Synchronous variant kept for legacy call sites that can't easily await.
+ * Reads only from the in-memory store; the Redis-backed checkSpendCap is
+ * preferred when the caller is already in async context.
+ */
+export function checkSpendCapSync(ip: string): SpendCheck {
   ensureInit();
   const cap = capUsd();
   const day = todayKey();
@@ -167,17 +207,39 @@ export function checkSpendCap(ip: string): SpendCheck {
 
 /**
  * Record `usd` spend for `ip`. Pass 0 for cache hits (so the call counter
- * still increments but the budget doesn't move).
+ * still increments but the budget doesn't move). Writes to BOTH backing
+ * stores when Redis is enabled — the in-memory copy stays useful as a
+ * read-side fast path AND survives Redis flakes.
  */
 export function recordSpend(ip: string, usd: number): void {
   ensureInit();
   const day = todayKey();
   const dayMap = memStore.days[day] ?? (memStore.days[day] = {});
   const bucket = dayMap[ip] ?? (dayMap[ip] = { usd: 0, calls: 0, lastAt: 0 });
-  bucket.usd += Math.max(0, usd);
+  const sanitized = Math.max(0, usd);
+  bucket.usd += sanitized;
   bucket.calls += 1;
   bucket.lastAt = Date.now();
   scheduleFlush();
+
+  // Mirror to Redis. Cumulative micro-USD as INT (so INCRBY is atomic).
+  // 48-hour TTL — covers same-day reads + a buffer for clocks that drift
+  // across UTC midnight before the new bucket takes over.
+  if (isRedisEnabled()) {
+    const redis = getRedis();
+    if (redis && sanitized > 0) {
+      const micro = Math.round(sanitized * 1_000_000);
+      const key = `anvil:spend:${day}:${ip}`;
+      redis
+        .multi()
+        .incrby(key, micro)
+        .expire(key, 48 * 60 * 60, "NX")
+        .exec()
+        .catch((err: Error) => {
+          console.warn(`[spend-tracker] redis incrby failed: ${err.message}`);
+        });
+    }
+  }
 }
 
 /**

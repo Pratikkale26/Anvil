@@ -167,7 +167,7 @@ emitRoute.post("/", async (req, res) => {
       // Per-IP daily spend cap. Hit-cap path returns the deterministic emit
       // with a structured refineError so the caller doesn't lose their work.
       const callerIp = req.ip ?? req.socket.remoteAddress ?? "unknown";
-      const spendCheck = checkSpendCap(callerIp);
+      const spendCheck = await checkSpendCap(callerIp);
       if (!spendCheck.allowed) {
         const message =
           spendCheck.reason ??

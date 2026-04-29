@@ -37,7 +37,7 @@ afterEach(async () => {
 describe("spend-tracker", () => {
   it("allows the first call from a new IP", async () => {
     const { checkSpendCap } = await import("../src/ai/spend-tracker.js");
-    const r = checkSpendCap("1.2.3.4");
+    const r = await checkSpendCap("1.2.3.4");
     expect(r.allowed).toBe(true);
     expect(r.todayUsd).toBe(0);
     expect(r.capUsd).toBe(2);
@@ -47,9 +47,9 @@ describe("spend-tracker", () => {
     const { checkSpendCap, recordSpend, __resetForTest } = await import("../src/ai/spend-tracker.js");
     __resetForTest();
     recordSpend("1.2.3.4", 1.5);
-    expect(checkSpendCap("1.2.3.4").allowed).toBe(true);
+    expect((await checkSpendCap("1.2.3.4")).allowed).toBe(true);
     recordSpend("1.2.3.4", 0.6); // total 2.1 > cap 2
-    const r = checkSpendCap("1.2.3.4");
+    const r = await checkSpendCap("1.2.3.4");
     expect(r.allowed).toBe(false);
     expect(r.todayUsd).toBeGreaterThanOrEqual(2);
     expect(r.retryAfterSec).toBeGreaterThan(0);
@@ -60,15 +60,15 @@ describe("spend-tracker", () => {
     const { checkSpendCap, recordSpend, __resetForTest } = await import("../src/ai/spend-tracker.js");
     __resetForTest();
     recordSpend("1.2.3.4", 5.0); // way over for IP A
-    expect(checkSpendCap("1.2.3.4").allowed).toBe(false);
-    expect(checkSpendCap("5.6.7.8").allowed).toBe(true);
+    expect((await checkSpendCap("1.2.3.4")).allowed).toBe(false);
+    expect((await checkSpendCap("5.6.7.8")).allowed).toBe(true);
   });
 
   it("treats zero-cost (cached) calls as free", async () => {
     const { checkSpendCap, recordSpend, __resetForTest } = await import("../src/ai/spend-tracker.js");
     __resetForTest();
     for (let i = 0; i < 100; i++) recordSpend("1.2.3.4", 0);
-    expect(checkSpendCap("1.2.3.4").allowed).toBe(true);
+    expect((await checkSpendCap("1.2.3.4")).allowed).toBe(true);
   });
 
   it("masks IPs in the snapshot", async () => {
@@ -115,7 +115,7 @@ describe("spend-tracker", () => {
 
     // Simulate fresh load: reset then re-check (loadFromDisk runs in ensureInit).
     mod1.__resetForTest();
-    const r = mod1.checkSpendCap("1.2.3.4");
+    const r = await mod1.checkSpendCap("1.2.3.4");
     expect(r.todayUsd).toBeCloseTo(1.5, 4);
   });
 

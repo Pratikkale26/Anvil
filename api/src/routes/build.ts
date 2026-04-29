@@ -350,7 +350,7 @@ buildRoute.post("/auto-fix", async (req, res) => {
     // Per-IP daily AI spend cap. Stops the auto-fix loop before the next
     // refine call if this IP has burned through its daily budget. Different
     // from cost_cap (per-request) — this enforces aggregate-per-day.
-    const spendCheck = checkSpendCap(callerIp);
+    const spendCheck = await checkSpendCap(callerIp);
     if (!spendCheck.allowed) {
       console.warn(
         `[build][auto-fix] daily AI spend cap hit ip=${callerIp} todayUsd=${spendCheck.todayUsd.toFixed(4)} cap=${spendCheck.capUsd.toFixed(2)}`,
