@@ -41,7 +41,7 @@ import { codegenMigration } from "./migrate/codegen.js";
 
 // ─── Version ─────────────────────────────────────────────────────────────────
 
-const VERSION = "0.3.0";
+const VERSION = "0.3.3";
 
 // ─── ANSI Colors ─────────────────────────────────────────────────────────────
 
