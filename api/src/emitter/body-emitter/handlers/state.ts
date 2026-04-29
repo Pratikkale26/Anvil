@@ -61,9 +61,26 @@ export function handleStateRead(w: BodyWalker, stmt: StateRead): void {
   w.stateVars.set(accountName, localVar);
   w.accountInfoVars.set(accountName, accountInfoVar);
 
-  if (accountRef?.isInit) {
-    // Account is being initialized — no on-chain data yet. Use emitStateInit
-    // to produce a zero-initialized struct that the body populates before save.
+  const isInitIfNeeded = accountRef?.constraints.some(
+    (c) => c.kind === "init_if_needed",
+  ) ?? false;
+
+  if (isInitIfNeeded) {
+    // init_if_needed: account may already exist OR be freshly created. Emit
+    // a runtime if/else: read existing state when not empty, default-init
+    // otherwise. Body code that follows operates on the same `let mut`
+    // binding either way. Without this branch the emit unconditionally
+    // default-initializes, silently overwriting any pre-existing state.
+    w.lines.push(
+      w.emitter.emitStateReadOrInit(
+        accountInfoVar,
+        stmt.accountType || "Unknown",
+        localVar,
+        stmt.mutable || w.mutableStateAccounts.has(accountName),
+      ),
+    );
+  } else if (accountRef?.isInit) {
+    // Plain init — account doesn't exist yet, default-init only.
     w.lines.push(w.emitter.emitStateInit(stmt.accountType || "Unknown", localVar));
   } else {
     w.lines.push(

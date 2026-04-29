@@ -1409,6 +1409,34 @@ ${indented}
   }
 
   /**
+   * Emit a conditional state read for `init_if_needed` accounts: read existing
+   * state when the account isn't empty, default-init when it is. The resulting
+   * `let mut <var>` binding is the same shape regardless of branch, so the
+   * body code that follows doesn't need to know which path it took.
+   *
+   * Default implementation composes the existing read + init helpers; targets
+   * with cheaper paths can override.
+   */
+  protected emitStateReadOrInit(
+    accountInfoVar: string,
+    typeName: string,
+    localVar: string,
+    _mutable: boolean,
+  ): string {
+    const accountDef = this.currentIr?.accounts.find((account) => account.name === typeName);
+    const initStruct = accountDef
+      ? `${typeName} {\n${accountDef.fields
+          .map((field) => `            ${snakeCase(field.name)}: ${this.defaultValueForType(field.type)},`)
+          .join("\n")}\n        }`
+      : `${typeName}::default()`;
+    return `    let mut ${localVar} = if ${accountInfoVar}.data_is_empty() {
+        ${initStruct}
+    } else {
+        ${typeName}::from_account_info(${accountInfoVar})?
+    };`;
+  }
+
+  /**
    * Emit a safe field-by-field initialized local variable for an account struct
    * that is being created (isInit). This avoids reading discriminator-protected
    * account data before the create-account CPI has happened and avoids `unsafe`

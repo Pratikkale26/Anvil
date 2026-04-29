@@ -347,9 +347,30 @@ export class BodyWalker {
     this.stateVars.set(normalized, localVar);
     this.accountInfoVars.set(normalized, accountInfoVar);
 
-    if (accountRef?.isInit) {
-      // Account is being initialized — no on-chain data yet. Use emitStateInit
-      // to produce a zero-initialized struct that the body populates before save.
+    const isInitIfNeeded = accountRef?.constraints.some(
+      (c) => c.kind === "init_if_needed",
+    ) ?? false;
+
+    if (isInitIfNeeded) {
+      // init_if_needed: at runtime the account may already exist with real
+      // state, OR be freshly created (allocation gated by data_is_empty in
+      // emitInitAccountPrelude). Either way the body manipulates a struct
+      // local, so we need to default-init when empty AND read existing
+      // when not. Without this branch the emit unconditionally created a
+      // default struct, silently overwriting any pre-existing state on
+      // every call.
+      this.lines.push(
+        this.emitter.emitStateReadOrInit(
+          accountInfoVar,
+          typeName,
+          localVar,
+          mutable || this.mutableStateAccounts.has(normalized),
+        ),
+      );
+    } else if (accountRef?.isInit) {
+      // Plain `init` — account doesn't exist yet at this point in the
+      // function (emitInitAccountPrelude allocated it above). Default-init
+      // a struct, body populates fields, save() at end.
       this.lines.push(this.emitter.emitStateInit(typeName, localVar));
     } else {
       this.lines.push(
