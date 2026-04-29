@@ -155,6 +155,16 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    * (e.g. fee-payer with arbitrary residual after txs).
    */
   compareLamports?: boolean;
+  /**
+   * Pin Clock::get().unix_timestamp before the first instruction.
+   * Default: 1_700_000_000 (a fixed Unix timestamp in 2023). Programs
+   * reading the clock see this exact value in both Anchor and Anvil
+   * scenarios. Override per-fixture when the source's logic depends
+   * on a specific timestamp (e.g. claim-after-cliff staking).
+   */
+  pinClockTimestamp?: number;
+  /** Pin slot height before the first instruction. Default 1. */
+  pinClockSlot?: number;
 }
 
 /** Single account snapshot — captured post-scenario for byte-compare. */
@@ -464,6 +474,24 @@ async function runScenario<S extends DifferentialSetup>(
 ): Promise<Map<string, AccountSnapshot>> {
   const svm = new LiteSVM();
   svm.addProgram(programId, programSo);
+  // Pin clock + slot so both Anchor and Anvil scenarios see identical
+  // sysvar values. Without this, programs reading Clock::get() see
+  // different timestamps across the two runs and produce divergent
+  // state even when the emit is correct. The pinned values are
+  // deterministic per-fixture (default 1700000000s + slot 1) so cached
+  // SBF builds + repeated runs produce stable byte-comparisons.
+  if (typeof (svm as { warpToTimestamp?: unknown }).warpToTimestamp === "function") {
+    try {
+      (svm as { warpToTimestamp: (ts: bigint) => unknown })
+        .warpToTimestamp(BigInt(fixture.pinClockTimestamp ?? 1_700_000_000));
+    } catch { /* best-effort; fall through to natural clock */ }
+  }
+  if (typeof (svm as { warpToSlot?: unknown }).warpToSlot === "function") {
+    try {
+      (svm as { warpToSlot: (s: bigint) => unknown })
+        .warpToSlot(BigInt(fixture.pinClockSlot ?? 1));
+    } catch { /* same */ }
+  }
   await fixture.callScript(svm, ctx, programId);
   // Snapshot every account named in accountsToCompare. Use a Map so the
   // caller can index by base58 — comparing across scenarios.
