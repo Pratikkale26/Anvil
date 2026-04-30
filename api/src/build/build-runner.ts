@@ -602,6 +602,25 @@ function cargoAvailable(): boolean {
   return cargoAvailableCache;
 }
 
+// Same probe for cargo-build-sbf — cargo discovers it via PATH (any
+// `cargo-foo` binary on PATH is exposed as `cargo foo`). Without this
+// pre-flight, requesting mode=build-sbf on a host that only has plain
+// cargo gets the cryptic cargo error 'no such command: build-sbf' and
+// the workbench shows it as a build infrastructure error with no
+// actionable next step.
+let cargoBuildSbfAvailableCache: boolean | null = null;
+function cargoBuildSbfAvailable(): boolean {
+  if (cargoBuildSbfAvailableCache !== null) return cargoBuildSbfAvailableCache;
+  try {
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
+    execSync("command -v cargo-build-sbf", { stdio: "ignore" });
+    cargoBuildSbfAvailableCache = true;
+  } catch {
+    cargoBuildSbfAvailableCache = false;
+  }
+  return cargoBuildSbfAvailableCache;
+}
+
 function tailString(s: string, bytes: number): string {
   if (s.length <= bytes) return s;
   // Slice on bytes by encoding to a buffer first — avoids splitting a
@@ -717,6 +736,36 @@ async function runBuildInternal(
       warnings: [],
       stderrTail: "",
       unsupported: { reason: "cargo not installed" },
+    };
+  }
+
+  // Same pre-flight for build-sbf — cargo on its own can't run the SBF
+  // cross-compile path; you need cargo-build-sbf from Anza CLI on PATH.
+  // Without this check, mode=build-sbf on a plain-cargo host returns
+  // cargo's own "no such command: build-sbf" message which renders as
+  // an opaque build-infrastructure error with no install hint.
+  if (mode === "build-sbf" && !cargoBuildSbfAvailable()) {
+    return {
+      ok: false,
+      durationMs: 0,
+      errors: [
+        {
+          filePath: "",
+          line: 0,
+          column: 0,
+          code: null,
+          message:
+            "cargo-build-sbf is not installed on this deployment. The Deploy build mode produces a Solana .so via the Anza CLI. " +
+            "Install with:\n" +
+            "  sh -c \"$(curl -sSfL https://release.anza.xyz/v3.1.13/install)\"\n" +
+            "Then ensure ~/.local/share/solana/install/active_release/bin is on PATH and redeploy. " +
+            "Or use Build mode (cargo build) which catches type + linker + codegen errors against the host arch.",
+          spanText: "",
+        },
+      ],
+      warnings: [],
+      stderrTail: "",
+      unsupported: { reason: "cargo-build-sbf not installed" },
     };
   }
 
