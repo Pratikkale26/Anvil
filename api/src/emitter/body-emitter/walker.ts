@@ -51,6 +51,7 @@ import {
   handleReturnOk,
   handleReturnErr,
 } from "./handlers/control.js";
+import { dispatchV2 } from "./walker-v2.js";
 
 export class BodyWalker {
   readonly lines: string[] = [];
@@ -184,6 +185,12 @@ export class BodyWalker {
     this.emitAccountConstraintChecks();
 
     for (const stmt of this.statements) {
+      // Walker v2 opt-in (ANVIL_WALKER_V2=1): per-IR-kind handlers
+      // migrated to v2 are dispatched here first. Returns true when
+      // v2 handled the statement; false to fall through to v1's
+      // per-kind handler below. Today only state_read is migrated.
+      if (dispatchV2(this, stmt)) continue;
+
       switch (stmt.kind) {
         case "pass_through": handlePassThrough(this, stmt); break;
         case "state_read": handleStateRead(this, stmt); break;

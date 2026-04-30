@@ -1,110 +1,207 @@
 /**
- * Walker v2 — AST-driven body emitter (skeleton + design doc).
+ * Walker v2 — per-IR-kind handlers, behaviour-equivalent to v1, gated
+ * by the ANVIL_WALKER_V2 feature flag.
  *
- * STATUS: skeleton only. The active walker is still walker.ts; this file
- * is the seam where the M4 grant deliverable lands. See WALKER_V2_DESIGN
- * comment block below for the migration plan.
+ * STATUS: state_read migrated. Other IR kinds still fall through to v1.
  *
- * Why the rewrite:
+ * Why this is here:
  *
- * The current walker (walker.ts, 1397 LOC) is a hybrid:
+ * The current walker (walker.ts, ~1400 LOC) is a hybrid:
+ *   - IR-kind handlers live in handlers/* and are mostly clean.
+ *   - Pass-through statements get regex post-processing — every new
+ *     edge case adds a regex, every regex tightening risks regressing
+ *     unrelated patterns.
  *
- *   - Transform statements (state_read, cpi_*, sysvar_*, …) are emitted
- *     IR-first via per-kind handlers. These are robust.
- *   - Pass-through statements are kept as opaque source text and post-
- *     processed with regex (transformAccountReferences,
- *     normalizeKeyValueUsages, transformCtxAccountsReferences,
- *     transformHelperCalls, detectPassThroughMutations, …). These are
- *     fragile: every new edge case adds a regex with a new negative
- *     lookbehind, and a tightening of one regex silently regresses
- *     another.
+ * Walker v2's eventual goal is to AST-walk the pass-through code with
+ * tree-sitter so the regex zoo retires. The seam is being filled
+ * IR-kind-by-IR-kind so each step is mechanical and the test suite
+ * gates each migration. State-shape transforms (state_read,
+ * bumps_access, sysvar_*, cpi_*) are simple to migrate first because
+ * they're already IR-driven; pass_through is the hard one.
  *
- * Walker v2 reparses every pass-through statement with tree-sitter and
- * walks the AST. Each transform becomes a node visitor — the same
- * patterns the regexes today match (ctx.accounts.X, X.key(), Vec.push,
- * From-trait Into chains) become explicit visit fns.
+ * Migration policy: each migrated kind must produce byte-equal output
+ * to v1 on the entire test suite. Behavioral changes wait until the
+ * full migration completes — at that point we can clean up the
+ * accumulated regex layer.
  *
- *   Today:    `\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\.(?:push|…)\\(`
- *   v2:       visit(MethodCallExpression) { if (recv is field of state account
- *                                             && method.name in MUT_METHODS)
- *                                              this.markMutable(stateAccount); }
- *
- * What this gets us, concretely:
- *
- *   1. coral-swap pinocchio (53 errors tracked) — the residual
- *      E0261 in `let x: OrderbookClient<'info> = …` is a string-shape
- *      regex couldn't safely rewrite. AST walker can: it sees the
- *      typed_local_binding node and rewrites both the type ascription
- *      and the RHS in one pass.
- *   2. T22 transfer-fee (currently tracked) — same shape, same fix.
- *   3. detectPassThroughMutations zoo collapses to a single visitor
- *      over assignment_expression + method_call_expression nodes.
- *   4. New pattern coverage is mechanical: "add a visit fn" rather
- *      than "add a regex and pray it doesn't break the others".
- *   5. Cross-pattern interactions become tractable. Today, a state
- *      read that's also a has_one constraint that's also part of an
- *      init_if_needed branch needs three regex passes that interact
- *      in subtle ways. AST walker emits each in the right order
- *      because order is data-driven (pre/post visit).
- *
- * Migration plan:
- *
- *   1. (this commit) Define BodyWalkerV2 interface + per-statement
- *      visit() entry points. No emit logic — falls back to walker.ts
- *      for every IR kind.
- *   2. Migrate one IR kind at a time, gated by:
- *      - cargo-build.test.ts green on bundled demos
- *      - realworld-cargo.test.ts green on the 36-program corpus
- *      - All differential-*.test.ts byte-equal
- *      Order of migration: easiest IR kinds first (state_read,
- *      bumps_access, sysvar_*) → mid (cpi_*) → hardest (pass_through
- *      string transforms).
- *   3. Once all kinds are on v2, retire walker.ts.
- *
- * Risk gate: each PR must keep the entire test suite green. The seam
- * here is a feature flag (ANVIL_WALKER_V2 env var) so production can
- * stay on v1 until v2 is fully validated.
+ * Risk gate: the feature flag (`ANVIL_WALKER_V2=1`) defaults off in
+ * production. Migrating a kind to v2 doesn't affect normal traffic;
+ * only opted-in test runs (CI matrix step) exercise the v2 path.
  */
 
-import type { SolanaIR, Instruction } from "../../ir/schema.js";
+import type { BodyStatement, SolanaIR, Instruction } from "../../ir/schema.js";
 import type { BodyEmitterContext, BodyEmitterCallbacks } from "./types.js";
+import { snakeCase, isProgramAccount } from "../emitter-utils.js";
+import type { BodyWalker } from "./walker.js";
 
 /**
- * Feature flag for walker v2. Default off — v2 is a stub and falls
- * through to v1 for every IR kind. Flip ANVIL_WALKER_V2=1 to opt in
- * once individual IR kinds are migrated.
+ * Feature flag for walker v2. Default off — v2 only handles state_read
+ * today; everything else falls through to v1. Flip ANVIL_WALKER_V2=1
+ * (or `true`) to opt in.
  */
 export function walkerV2Enabled(): boolean {
   return process.env.ANVIL_WALKER_V2 === "1" || process.env.ANVIL_WALKER_V2 === "true";
 }
 
 /**
- * Walker v2 entry point — invoked by the existing emit() pipeline when
- * the feature flag is on. Today this is a no-op fallthrough (returns
- * null to signal "use the v1 walker"). Future commits replace the
- * fallthrough one IR kind at a time.
+ * Per-IR-kind dispatch table for v2. When a kind is registered here,
+ * the walker uses v2 for that kind; otherwise it falls through to v1.
+ * Each handler returns true if it handled the statement, false to
+ * delegate back to v1.
  *
- * @returns The emitted body lines if v2 fully handled the instruction,
- *          or null to signal "fall back to v1".
+ * Keeping the per-kind handlers ON the walker class (via a method
+ * called from the dispatch fn) means v2 handlers have access to the
+ * same `lines`, `stateVars`, `accountInfoVars`, etc. mutable state v1
+ * does. That's necessary because subsequent statements in the same
+ * function body need to see each other's bindings.
  */
-export function emitInstructionBodyV2(
-  _ir: SolanaIR,
-  _instr: Instruction,
-  _emitter: BodyEmitterCallbacks,
-  _ctx: BodyEmitterContext,
-): string[] | null {
-  // Fallthrough — v1 owns every IR kind today. As IR kinds migrate, this
-  // function dispatches to per-kind v2 handlers and returns the lines.
-  // Until then, returning null preserves v1 behavior unchanged.
-  return null;
+type V2Handler = (w: BodyWalker, stmt: BodyStatement) => boolean;
+
+const V2_HANDLERS: Partial<Record<BodyStatement["kind"], V2Handler>> = {
+  state_read: handleStateReadV2,
+};
+
+/**
+ * Walker v2 dispatch entry point — invoked from the v1 walker's main
+ * statement loop. Returns true if v2 handled this statement, false to
+ * fall through to v1's per-kind handler.
+ */
+export function dispatchV2(w: BodyWalker, stmt: BodyStatement): boolean {
+  if (!walkerV2Enabled()) return false;
+  const handler = V2_HANDLERS[stmt.kind];
+  if (!handler) return false;
+  return handler(w, stmt);
+}
+
+/**
+ * v2 implementation of state_read. Behaviour-equivalent to v1's
+ * handleStateRead in handlers/state.ts as of 2026-04-30. Test suite +
+ * cached differentials must stay green with ANVIL_WALKER_V2=1.
+ *
+ * The shape mirrors v1 deliberately — at this stage we want byte-equal
+ * output to validate the seam works. Behavioural improvements come
+ * after all kinds migrate and we can clean up unified.
+ *
+ * Comments below MARK each branch with the IR-driven assumption it
+ * relies on, to make the AST-rewrite migration easier later.
+ */
+function handleStateReadV2(w: BodyWalker, stmt: BodyStatement): boolean {
+  if (stmt.kind !== "state_read") return false;
+
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`[v2] ctx.accounts.${stmt.account} → framework state read`);
+
+  // ── Branch 1: skip program accounts (system_program, token_program, …)
+  // No state to deserialize. Body code reads them directly as AccountInfo.
+  if (isProgramAccount(stmt.accountType || "")) return true;
+
+  // ── Branch 2: skip unknown / non-generated types. Emitting
+  // `Unknown::from_account_info()` would fail to compile; the surrounding
+  // pass-through code references the account by name, no binding needed.
+  if (
+    !stmt.accountType ||
+    stmt.accountType === "Unknown" ||
+    !w.isGeneratedStateType(stmt.accountType)
+  ) {
+    return true;
+  }
+
+  const accountName = snakeCase(stmt.account);
+  const localVar = snakeCase(stmt.localVar);
+
+  // ── Branch 3: account already deserialized. Record alias if the IR is
+  // asking for a different local name than what's already bound.
+  if (w.stateVars.has(accountName)) {
+    const existing = w.stateVars.get(accountName)!;
+    if (existing !== localVar && !w.localAliases.has(localVar)) {
+      w.localAliases.set(localVar, existing);
+    }
+    return true;
+  }
+
+  const accountRef = w.instr.accounts.find(
+    (acc) => snakeCase(acc.name) === accountName,
+  );
+
+  // ── Branch 4: optional account. No deserialization — bind the
+  // AccountInfo as the local var directly so downstream `Some/None`
+  // pass-through code resolves.
+  if (accountRef?.isOptional) {
+    w.stateVars.set(accountName, localVar);
+    w.accountInfoVars.set(accountName, accountName);
+    w.lines.push(`    let ${localVar} = ${accountName};`);
+    return true;
+  }
+
+  // ── Naming: avoid shadowing. If the account name and the local var
+  // are the same, alias the AccountInfo to `<name>_account` so the
+  // deserialized struct doesn't shadow the AccountInfo binding the rest
+  // of the body needs (CPI account-info args, key checks, etc.).
+  const needsAlias = accountName === localVar;
+  const accountInfoVar = needsAlias ? `${accountName}_account` : accountName;
+  if (needsAlias) {
+    w.lines.push(`    let ${accountInfoVar} = ${accountName};`);
+  }
+  w.stateVars.set(accountName, localVar);
+  w.accountInfoVars.set(accountName, accountInfoVar);
+
+  // ── Branch 5: init_if_needed (read-or-default).
+  const isInitIfNeeded = accountRef?.constraints.some(
+    (c) => c.kind === "init_if_needed",
+  ) ?? false;
+
+  if (isInitIfNeeded) {
+    w.lines.push(
+      w.emitter.emitStateReadOrInit(
+        accountInfoVar,
+        stmt.accountType || "Unknown",
+        localVar,
+        stmt.mutable || w.mutableStateAccounts.has(accountName),
+      ),
+    );
+  } else if (accountRef?.isInit) {
+    // Plain init — account doesn't exist; default-init only.
+    w.lines.push(w.emitter.emitStateInit(stmt.accountType || "Unknown", localVar));
+  } else {
+    // Plain read — deserialize from AccountInfo.
+    w.lines.push(
+      w.emitter.emitStateRead(
+        accountInfoVar,
+        stmt.accountType || "Unknown",
+        localVar,
+        stmt.mutable || w.mutableStateAccounts.has(accountName),
+      ),
+    );
+  }
+
+  // ── has_one runtime checks. Each `has_one = X` emits a guard
+  // verifying the deserialized state's `X` field equals `X.key`.
+  const hasOneConstraints =
+    accountRef?.constraints.filter(
+      (constraint) => constraint.kind === "has_one" && constraint.value,
+    ) ?? [];
+  for (const constraint of hasOneConstraints) {
+    const targetAccount = snakeCase(constraint.value!);
+    w.lines.push(
+      `    if ${localVar}.${snakeCase(constraint.value!)} != ${w.emitter.emitAccountKeyExpr(w.resolveAccountInfoVar(targetAccount))} {`,
+    );
+    w.lines.push(`        return Err(ProgramError::InvalidAccountData);`);
+    w.lines.push(`    }`);
+  }
+
+  return true;
 }
 
 /**
  * Smoke check that the seam plumbs through correctly. Run via:
- *   ANVIL_WALKER_V2=1 bun test api/tests/cargo-build.test.ts
- * If v2 is enabled and emitInstructionBodyV2 returns null for every
- * instruction (current behavior), the v1 path runs and the entire
- * test suite stays green. Migration commits flip individual IR kinds
- * to v2; the test suite gates each step.
+ *   ANVIL_WALKER_V2=1 bun test api/tests/
+ * If v2 handles a kind, dispatchV2 returns true and v1 skips that
+ * statement. If every kind handled is byte-equal to v1, the suite stays
+ * green.
  */
-export const WALKER_V2_VERSION = "0.0.0-skeleton";
+export const WALKER_V2_VERSION = "0.1.0-state_read";
+
+// Reserved for future per-IR-kind v2 handlers (state_field_assign,
+// bumps_access, sysvar_*, cpi_*). Each lands as a new entry in
+// V2_HANDLERS gated by the same flag.
+export type { SolanaIR, Instruction, BodyEmitterContext, BodyEmitterCallbacks };
