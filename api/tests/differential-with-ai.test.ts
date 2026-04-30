@@ -243,18 +243,21 @@ if (!TOOLCHAIN_OK) {
           files: corruptedFiles,
           validationIssues: issues,
         });
+        // Hard gate: the corruption is a single-line TODO(manual) sentinel
+        // the model is instructed to remove. If the model returns no patches
+        // OR all patches are rejected, that's a CI signal — either the prompt
+        // drifted, the model regressed, or the validator's accept-gate is
+        // broken. Silent vacuous pass would mask all three.
+        //
+        // Earlier this branch returned without asserting; that defeated the
+        // purpose of the test: a Sonnet drift could ship runtime-divergent
+        // patches and CI would never notice. Now we assert the AI engaged
+        // with the corruption AND at least one patch survived the validator's
+        // accept gate. The byte-equal compare below then proves the surviving
+        // patch didn't introduce semantic divergence.
+        expect(refineResult.patches.length).toBeGreaterThan(0);
         const acceptedCount = refineResult.patches.filter((p) => p.accepted).length;
-        if (acceptedCount === 0) {
-          // Test passes vacuously: if the AI didn't produce an accepted
-          // patch, there's nothing to verify byte-equal against. The gate
-          // we care about is "AI-accepted patches preserve byte-equality"
-          // — silent on the case where the AI declined to patch. CI logs
-          // the skip so we notice if it's chronic.
-          console.warn(
-            `[ai-differential] real-refine: AI returned ${refineResult.patches.length} patches but none were accepted; skipping byte-equal check.`,
-          );
-          return;
-        }
+        expect(acceptedCount).toBeGreaterThan(0);
 
         // Apply accepted patches.
         const acceptedByPath = new Map(
