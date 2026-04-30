@@ -19,6 +19,7 @@ use pinocchio::instruction::{Seed, Signer};
 use pinocchio_system::create_account_with_minimum_balance_signed;
 use pinocchio_token::instructions::Transfer as TokenTransfer;
 use pinocchio::sysvars::clock::Clock;
+use pinocchio::sysvars::rent::Rent;
 use pinocchio::sysvars::Sysvar;
 
 pub const VESTING_SEED: &[u8] = b"vesting";

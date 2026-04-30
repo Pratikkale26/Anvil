@@ -39,7 +39,7 @@ These run on every Anvil release; any emit divergence fails the gate.
 | `t22-transfer` | Token-2022 `transfer_checked` (decimals extraction) |
 | `close-account` | `close = receiver` rent refund + reap |
 | `set-authority` | hand-rolled raw SPL `set_authority` on Pinocchio |
-| `escrow` | PDA init + ATA init (vault, `associated_token::*` form) + `token::transfer` |
+| `escrow` | PDA init + non-ATA token init (`init token::*` vault) + `token::transfer` |
 
 Deferred stubs (file headers in `api/tests/differential-*.test.ts` document the path to enable):
 
@@ -77,11 +77,11 @@ Anvil's bundled demos, deployed both as Anchor original and Anvil-emitted Pinocc
 |---|---:|---:|---:|
 | `counter::initialize(start_value=10)` | 6,074 | 3,268 | **46%** |
 | `counter::increment(amount=5)` | 2,753 | 1,801 | **35%** |
-| `escrow::create_escrow(seed=42, amount=250000)` | 43,720 | 31,413 | **28%** |
+| `escrow::create_escrow(seed=42, deposit=250000, receive=500000)` | 26,614 | 16,133 | **39%** |
 
 Reproduce: `solana-test-validator --reset --quiet &` in one terminal, then `bun scripts/measure-cu.ts` in another. Set `ANVIL_CU_FIXTURES=counter` (or `escrow`) to run a single fixture. The script generates fresh program keypairs each run, patches `declare_id!()` to match, deploys both `.so` binaries, runs the scenario via `getTransaction(...).meta.logMessages`, and parses the `consumed N of M compute units` line.
 
-What this tells you: state-only programs (counter) save ~35-46% from leaner account validation + manual Borsh skipping Anchor's macro-emitted runtime checks. SPL-CPI programs (escrow: PDA init + ATA init + token::transfer) save 28% — lower percentage because the SPL Token CPI itself dominates the CU budget on both sides; Anvil shaves the Anchor runtime overhead but cannot make the actual CPI cheaper.
+What this tells you: state-only programs (counter) save ~35-46% from leaner account validation + manual Borsh skipping Anchor's macro-emitted runtime checks. SPL-CPI programs (escrow: PDA init + non-ATA token init + token::transfer) save 39% — Anchor's `init token::*` macro adds substantial validation/wrapper overhead on top of the system::create_account + initialize_account3 CPIs. Anvil emits the same on-chain CPIs but skips the surrounding Anchor runtime checks.
 
 ### External SPL primitives ([Helius p-token](https://github.com/helius-labs/p-token))
 

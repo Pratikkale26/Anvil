@@ -31,6 +31,7 @@ import {
   irNeedsInitAccountHelper,
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
+  irNeedsTokenAccountInitHelper,
 } from "./emitter-helpers.js";
 
 /**
@@ -211,6 +212,11 @@ class PinocchioEmitter extends BaseEmitter {
     if (irNeedsAtaCreationHelper(_ir)) {
       imports.push(`use pinocchio_associated_token_account::instructions::Create as CreateAssociatedToken;`);
     }
+    // The hand-rolled InitializeAccount3 references CreateAccount +
+    // Instruction via full paths, so no extra imports here. Sysvar (for
+    // Rent::get()) lands via the unified needsClock/needsRent block below
+    // — `irNeedsTokenAccountInitHelper` ORs into needsRent, which pulls
+    // both `Rent` and `Sysvar` into scope without duplicating either.
 
     // Add Clock import when any instruction uses sysvar_clock or pass_through references Clock::get
     const needsClock = _ir.instructions.some(i =>
@@ -225,7 +231,7 @@ class PinocchioEmitter extends BaseEmitter {
         s.kind === 'sysvar_rent' ||
         (s.kind === 'pass_through' && /\bRent::get\(\)/.test(s.code))
       )
-    );
+    ) || irNeedsTokenAccountInitHelper(_ir);
     if (needsClock) {
       imports.push(`use pinocchio::sysvars::clock::Clock;`);
     }
@@ -714,6 +720,48 @@ ${invokeCall}
             &__ata_ix,
             &[${payer}, ${ata}, ${authority}, ${mint}, system_program, token_program],
         )?;
+    }`;
+  }
+
+  override emitCreateTokenAccount(
+    account: string, payer: string, mint: string, authority: string, _signerSeeds?: string,
+  ): string {
+    // Anchor's `init token::*` lowers to system::create_account (165 bytes,
+    // owner=token_program) + Token::initialize_account3 (binds mint +
+    // authority). We hand-roll both CPIs against the SPL Token program ID
+    // (TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA) — pinocchio 0.9 +
+    // pinocchio_token 0.4 use different `&AccountView` vs `&AccountInfo`
+    // types, so the wrapped instructions don't compose. The hand-roll
+    // mirrors the on-chain wire format exactly.
+    return `    // Init token account: ${account}
+    {
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
+            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+        ];
+        // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
+        let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
+        pinocchio_system::instructions::CreateAccount {
+            from: ${payer},
+            to: ${account},
+            lamports: __ta_rent,
+            space: 165u64,
+            owner: &TOKEN_PROGRAM_ID,
+        }.invoke()?;
+        // 2. InitializeAccount3 — discriminator 18, data: 32-byte authority.
+        let mut __ta_init_data = [0u8; 33];
+        __ta_init_data[0] = 18;
+        __ta_init_data[1..33].copy_from_slice(${authority}.key().as_ref());
+        let __ta_init_metas = [
+            pinocchio::instruction::AccountMeta::new(${account}.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(${mint}.key(), false, false),
+        ];
+        let __ta_init_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_PROGRAM_ID,
+            accounts: &__ta_init_metas,
+            data: &__ta_init_data,
+        };
+        pinocchio::cpi::invoke(&__ta_init_ix, &[${account}, ${mint}])?;
     }`;
   }
 

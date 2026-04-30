@@ -20,6 +20,7 @@ use solana_program::{
     sysvar::Sysvar,
 };
 use solana_program::sysvar::clock::Clock;
+use solana_program::sysvar::rent::Rent;
 
 #[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
 pub struct StakeEvent {

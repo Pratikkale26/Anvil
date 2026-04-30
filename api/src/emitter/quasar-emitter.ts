@@ -708,6 +708,19 @@ ${arms}
     }`;
   }
 
+  override emitCreateTokenAccount(
+    account: string, _payer: string, _mint: string, _authority: string, _signerSeeds?: string,
+  ): string {
+    // Quasar has no end-to-end cargo-build coverage today; emit a TODO
+    // marker rather than a half-baked CPI. See docs/feature-matrix.md
+    // "Quasar status" — fixture tests only validate emitter cleanliness,
+    // not on-chain semantics, so a stub is the honest signal.
+    return `    // Anvil TODO: init token::* account ${account} — quasar-spl needs a typed
+    // builder for SPL Token InitializeAccount3 before this can land. Hand-roll
+    // against the SPL Token program ID once quasar_lang::Instruction surface
+    // is stable.`;
+  }
+
   override emitMemo(data: string, _signerSeeds?: string): string {
     // Hand-rolled SPL Memo CPI against the Memo program ID. The program
     // takes raw UTF-8 bytes as instruction data and zero accounts (signers

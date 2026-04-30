@@ -38,7 +38,7 @@ Cargo green is necessary but not sufficient. This is the actual correctness sign
 | `t22-transfer` | Token-2022 `transfer_checked` (mint decimals extraction) |
 | `close-account` | `close = receiver` rent refund + reap |
 | `set-authority` | Hand-rolled raw SPL `set_authority` on Pinocchio |
-| `escrow` | PDA init + ATA init (vault) + `token::transfer` |
+| `escrow` | PDA init + non-ATA token init (`init token::*` vault) + `token::transfer` |
 
 `bun test api/tests/differential-*.test.ts` runs all 10 + the AI-under-differential framework smoke. Plus 36+ deterministic real-world cargo-build regression gates from `solana-developers/program-examples`.
 
@@ -50,7 +50,7 @@ Built both as Anchor original and Anvil-emitted Pinocchio, deployed to `solana-t
 |---|---:|---:|---:|
 | `counter::initialize(start_value=10)` | 6,074 | 3,268 | **46%** |
 | `counter::increment(amount=5)` | 2,753 | 1,801 | **35%** |
-| `escrow::create_escrow(seed=42, amount=250000)` | 43,720 | 31,413 | **28%** |
+| `escrow::create_escrow(seed=42, deposit=250000, receive=500000)` | 26,614 | 16,133 | **39%** |
 
 For SPL-heavy workloads (transfers, mints, burns), the savings are larger — Helius's hand-written p-token Pinocchio implementations measure 97-98% CU reduction vs SPL-Token-via-Anchor on those primitives, and Anvil's `cpi_spl_*` emit uses the same `pinocchio_token` builders. See [docs/feature-matrix.md](docs/feature-matrix.md#cu-savings) for the full breakdown.
 

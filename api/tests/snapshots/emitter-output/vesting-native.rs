@@ -20,6 +20,7 @@ use solana_program::{
     sysvar::Sysvar,
 };
 use solana_program::sysvar::clock::Clock;
+use solana_program::sysvar::rent::Rent;
 
 pub const VESTING_SEED: &[u8] = b"vesting";
 

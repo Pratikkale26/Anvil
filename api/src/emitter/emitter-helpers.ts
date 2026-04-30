@@ -312,6 +312,22 @@ export function irNeedsMemoHelper(ir: SolanaIR): boolean {
   );
 }
 
+/**
+ * Returns true if any instruction needs the inline-token-account init emit
+ * (sibling of irNeedsAtaCreationHelper for `init token::*`). Triggered only
+ * by the constraint path — there's no body-CPI equivalent (Anchor's macro
+ * doesn't expand to a user-visible CPI; the inline-init is the only path).
+ */
+export function irNeedsTokenAccountInitHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.accounts.some((account) =>
+      account.isInit &&
+      account.constraints.some((c) => c.kind === "token::mint" && c.value) &&
+      account.constraints.some((c) => c.kind === "token::authority" && c.value)
+    )
+  );
+}
+
 export function hasResidualAnchorPatterns(value: string): boolean {
   return /ctx\.(accounts|bumps)\./.test(value) ||
     /CpiContext::/.test(value) ||

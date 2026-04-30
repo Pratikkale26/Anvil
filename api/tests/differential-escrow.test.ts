@@ -1,17 +1,21 @@
 /**
- * Escrow differential — exercises a multi-CPI surface in one ix:
+ * Escrow differential — exercises the REAL Anchor-shaped escrow with the
+ * harder init paths (the simple-escrow.rs sidestep version was retired
+ * once we fixed the underlying emit gap):
  *
  *   1. PDA init for the escrow state account (seeds = ["escrow", maker, seed])
- *   2. ATA init for the vault token account (associated_token::mint=mint,
- *      authority=escrow)
- *   3. SPL token::transfer from maker_ata → vault
+ *   2. `init token::mint=… token::authority=…` — non-ATA token account that
+ *      the program allocates via system::create_account + Token::
+ *      initialize_account3. Vault is a fresh keypair signing the tx, NOT
+ *      an ATA. This was the path that originally diverged at runtime
+ *      because Anvil silently dropped the inline-init prelude; fixed in
+ *      the same commit as this fixture.
+ *   3. `token::transfer` from maker_ata_a → vault.
  *
- * Uses simple-escrow.rs which sidesteps the `init token::*` runtime path
- * that earlier blocked the original escrow.rs fixture (Anchor's
- * macro-emitted init-token CPI sequence diverges in subtle ways from
- * what's straightforward to drive from a test scenario). Using
- * `init associated_token::*` instead routes through the ATA program — the
- * same shape ata-mint and spl-transfer already exercise green.
+ * If the emit drifts for any of these — wrong account ordering on
+ * initialize_account3, missed Rent::get(), wrong instruction tag, wrong
+ * 165-byte size — the post-tx byte-compare on the escrow PDA or the
+ * vault SPL Token account fails the gate.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,6 +28,7 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   MINT_SIZE,
+  ACCOUNT_SIZE,
   createInitializeMintInstruction,
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
@@ -39,41 +44,41 @@ import {
   LiteSVM,
 } from "./differential-harness.ts";
 
-const SRC = join(import.meta.dir, "..", "src", "demo-programs", "simple-escrow.rs");
-const PROGRAM_ID = "SimEscrw11111111111111111111111111111111111";
+const SRC = join(import.meta.dir, "..", "src", "demo-programs", "escrow.rs");
+const PROGRAM_ID = "Escrw11111111111111111111111111111111111111";
 
 defineDifferential({
   fixtureName: "escrow",
   programIdBase58: PROGRAM_ID,
   anchorSource: readFileSync(SRC, "utf-8"),
-  anchorPackageName: "simple_escrow_anchor_diff",
+  anchorPackageName: "escrow_anchor_diff",
   anchorExtraDeps: `anchor-spl = { version = "0.31", features = ["associated_token"] }`,
+  // accept_escrow uses `init_if_needed associated_token::*` for taker_ata_a +
+  // maker_ata_b — Anchor requires this feature opt-in (re-init mitigation
+  // acknowledgement). create_escrow alone wouldn't need it, but we share
+  // the same .so binary across the test scenario.
+  anchorLangFeatures: ["init-if-needed"],
 
   setup: async () => {
     const payer = Keypair.generate();
     const maker = Keypair.generate();
-    const mint = Keypair.generate();
-    const seed = 42n;
+    const mintA = Keypair.generate();
+    const mintB = Keypair.generate();
+    // vault is a FRESH keypair — not an ATA. `init token::*` allocates
+    // via system::create_account where the new account itself signs.
+    const vault = Keypair.generate();
+    const seed = 7n;
     const programIdPk = new PublicKey(PROGRAM_ID);
 
-    // Escrow PDA: seeds = [b"escrow", maker.key(), seed.to_le_bytes()]
     const seedBytes = Buffer.alloc(8);
     seedBytes.writeBigUInt64LE(seed);
     const [escrowPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("escrow"), maker.publicKey.toBuffer(), seedBytes],
       programIdPk,
     );
+    const makerAtaA = getAssociatedTokenAddressSync(mintA.publicKey, maker.publicKey);
 
-    // maker_ata = ATA(mint, maker)
-    const makerAta = getAssociatedTokenAddressSync(mint.publicKey, maker.publicKey);
-    // vault = ATA(mint, escrow_pda) — owned by a PDA, allowOwnerOffCurve=true
-    const vault = getAssociatedTokenAddressSync(
-      mint.publicKey,
-      escrowPda,
-      true,
-    );
-
-    return { payer, maker, mint, seed, escrowPda, makerAta, vault };
+    return { payer, maker, mintA, mintB, vault, seed, escrowPda, makerAtaA };
   },
 
   callScript: async (svm: LiteSVM, ctx, programId: PublicKey) => {
@@ -81,51 +86,49 @@ defineDifferential({
     svm.airdrop(ctx.payer.publicKey, BigInt(10_000_000_000));
     svm.airdrop(ctx.maker.publicKey, BigInt(2_000_000_000));
 
-    // ── Setup: mint, maker_ata, mint 1M tokens to maker_ata.
+    // ── Setup: both mints, maker_ata_a, mint 1M tokens to maker_ata_a.
     const mintRent = svm.minimumBalanceForRentExemption(BigInt(MINT_SIZE));
     const setupTx = new Transaction()
       .add(SystemProgram.createAccount({
         fromPubkey: ctx.payer.publicKey,
-        newAccountPubkey: ctx.mint.publicKey,
+        newAccountPubkey: ctx.mintA.publicKey,
         lamports: Number(mintRent),
         space: MINT_SIZE,
         programId: TOKEN_PROGRAM_ID,
       }))
-      .add(createInitializeMintInstruction(
-        ctx.mint.publicKey,
-        6,
-        ctx.payer.publicKey,
-        ctx.payer.publicKey,
-      ))
+      .add(createInitializeMintInstruction(ctx.mintA.publicKey, 6, ctx.payer.publicKey, ctx.payer.publicKey))
+      .add(SystemProgram.createAccount({
+        fromPubkey: ctx.payer.publicKey,
+        newAccountPubkey: ctx.mintB.publicKey,
+        lamports: Number(mintRent),
+        space: MINT_SIZE,
+        programId: TOKEN_PROGRAM_ID,
+      }))
+      .add(createInitializeMintInstruction(ctx.mintB.publicKey, 6, ctx.payer.publicKey, ctx.payer.publicKey))
       .add(createAssociatedTokenAccountInstruction(
-        ctx.payer.publicKey,
-        ctx.makerAta,
-        ctx.maker.publicKey,
-        ctx.mint.publicKey,
+        ctx.payer.publicKey, ctx.makerAtaA, ctx.maker.publicKey, ctx.mintA.publicKey,
       ))
       .add(createMintToInstruction(
-        ctx.mint.publicKey,
-        ctx.makerAta,
-        ctx.payer.publicKey,
-        1_000_000n,
+        ctx.mintA.publicKey, ctx.makerAtaA, ctx.payer.publicKey, 1_000_000n,
       ));
     setupTx.recentBlockhash = svm.latestBlockhash();
     setupTx.feePayer = ctx.payer.publicKey;
-    setupTx.sign(ctx.payer, ctx.mint);
+    setupTx.sign(ctx.payer, ctx.mintA, ctx.mintB);
     const r1 = svm.sendTransaction(setupTx);
-    if ("err" in r1) {
-      throw new Error(`setup failed: ${JSON.stringify(r1.err)}`);
-    }
+    if ("err" in r1) throw new Error(`setup failed: ${JSON.stringify(r1.err)}`);
 
-    // ── Call create_escrow(seed=42, deposit_amount=250_000).
+    // ── create_escrow(seed, deposit_amount=250_000, receive_amount=500_000).
+    // Vault signs because Anchor's init token::* allocates via
+    // system::create_account where the new account itself is a signer.
     const ix = new TransactionInstruction({
       programId,
       keys: [
         { pubkey: ctx.maker.publicKey, isSigner: true, isWritable: true },
-        { pubkey: ctx.mint.publicKey, isSigner: false, isWritable: false },
-        { pubkey: ctx.makerAta, isSigner: false, isWritable: true },
+        { pubkey: ctx.mintA.publicKey, isSigner: false, isWritable: false },
+        { pubkey: ctx.mintB.publicKey, isSigner: false, isWritable: false },
+        { pubkey: ctx.makerAtaA, isSigner: false, isWritable: true },
         { pubkey: ctx.escrowPda, isSigner: false, isWritable: true },
-        { pubkey: ctx.vault, isSigner: false, isWritable: true },
+        { pubkey: ctx.vault.publicKey, isSigner: true, isWritable: true },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
@@ -134,32 +137,27 @@ defineDifferential({
         anchorIxDiscriminator("create_escrow"),
         encodeU64LE(ctx.seed),
         encodeU64LE(250_000n),
+        encodeU64LE(500_000n),
       )),
     });
     const tx = new Transaction().add(ix);
     tx.recentBlockhash = svm.latestBlockhash();
     tx.feePayer = ctx.maker.publicKey;
-    tx.sign(ctx.maker);
+    tx.sign(ctx.maker, ctx.vault);
     const r2 = svm.sendTransaction(tx);
-    if ("err" in r2) {
-      throw new Error(`create_escrow failed: ${JSON.stringify(r2.err)}`);
-    }
+    if ("err" in r2) throw new Error(`create_escrow failed: ${JSON.stringify(r2.err)}`);
   },
 
   // Compare:
-  //   - escrow PDA: 8-byte Anchor disc + struct fields (maker/mint/amount/seed/bump).
-  //     stripDiscriminator default true is correct here.
-  //   - vault ATA: SPL Token account (165 bytes, no Anchor disc).
-  // We need different stripping per account, so use ignoreRanges to mask
-  // the Anchor disc on escrow only, and disable global stripping. Wait —
-  // simpler: leave stripDiscriminator true; for the SPL Token account
-  // (vault, 165 bytes), the first 8 bytes are part of the mint pubkey
-  // which is identical between scenarios anyway. Stripping them changes
-  // nothing semantic — both sides drop the same 8 bytes.
+  //   - escrow PDA: 8-byte Anchor disc + struct fields. Strip default true.
+  //   - vault: SPL Token account (165 bytes, no Anchor disc). Stripping the
+  //     first 8 bytes drops the same prefix of the mint pubkey on both
+  //     sides — semantically a no-op, harmlessly ignored.
+  //   - maker_ata_a: SPL Token account, post-transfer balance check.
   stripDiscriminator: true,
   accountsToCompare: (ctx) => [
     { pubkey: ctx.escrowPda, label: "escrow_pda" },
-    { pubkey: ctx.vault, label: "vault_ata" },
-    { pubkey: ctx.makerAta, label: "maker_ata" },
+    { pubkey: ctx.vault.publicKey, label: "vault" },
+    { pubkey: ctx.makerAtaA, label: "maker_ata_a" },
   ],
 });

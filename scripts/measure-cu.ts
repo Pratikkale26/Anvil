@@ -49,7 +49,7 @@ import { buildProjectScaffold } from "../api/src/emitter/project-scaffold.js";
 
 const RPC = process.env.ANVIL_VALIDATOR_RPC ?? "http://localhost:8899";
 const COUNTER_SRC = "/home/pk/Anvil/api/src/demo-programs/counter.rs";
-const ESCROW_SRC = "/home/pk/Anvil/api/src/demo-programs/simple-escrow.rs";
+const ESCROW_SRC = "/home/pk/Anvil/api/src/demo-programs/escrow.rs";
 const SOLANA_ID_PATH = join(process.env.HOME ?? "", ".config/solana/id.json");
 // Subset selector: comma-separated "counter,escrow" or unset = all.
 const FIXTURES = (process.env.ANVIL_CU_FIXTURES ?? "counter,escrow")
@@ -110,7 +110,7 @@ async function main(): Promise<void> {
       const anchorEscrowCU = await runAndMeasureEscrow(conn, payer, anchorPid, "Anchor");
       const anvilEscrowCU  = await runAndMeasureEscrow(conn, payer, anvilPid,  "Anvil-Pinocchio");
       rows.push({
-        ix: "escrow::create_escrow(seed=42, amount=250000)",
+        ix: "escrow::create_escrow(seed=42, deposit=250000, receive=500000)",
         anchor: anchorEscrowCU.createEscrow,
         anvil: anvilEscrowCU.createEscrow,
       });
@@ -170,13 +170,16 @@ async function buildAnchorEscrow(
   source: string,
   scratchDir: string,
 ): Promise<{ soPath: string; programId: PublicKey }> {
-  // anchor-spl's `associated_token` feature gates the constraint expansion
-  // for `init associated_token::*`. Without it, the macro emits broken code.
+  // accept_escrow uses `init_if_needed associated_token::*` — Anchor's
+  // re-init mitigation requires this feature to be opted in explicitly.
+  // anchor-spl needs the `associated_token` feature for constraint
+  // expansion of `init associated_token::*`.
   return buildAnchorScratch(
     source,
     scratchDir,
-    "simple_escrow_anchor_cu",
+    "escrow_anchor_cu",
     `anchor-spl = { version = "0.31", features = ["associated_token"] }`,
+    ["init-if-needed"],
   );
 }
 
@@ -185,9 +188,14 @@ async function buildAnchorScratch(
   scratchDir: string,
   cratename: string,
   extraDeps: string,
+  anchorLangFeatures: string[] = [],
 ): Promise<{ soPath: string; programId: PublicKey }> {
   const programKp = Keypair.generate();
   const patchedSource = patchDeclareId(source, programKp.publicKey.toBase58());
+
+  const anchorLangDep = anchorLangFeatures.length > 0
+    ? `anchor-lang = { version = "0.31", features = ["${anchorLangFeatures.join('", "')}"] }`
+    : `anchor-lang = "0.31"`;
 
   mkdirSync(join(scratchDir, "src"), { recursive: true });
   writeFileSync(join(scratchDir, "Cargo.toml"), `[package]
@@ -204,7 +212,7 @@ no-log-ix-name = []
 cpi = ["no-entrypoint"]
 default = []
 [dependencies]
-anchor-lang = "0.31"
+${anchorLangDep}
 ${extraDeps}
 `);
   writeFileSync(join(scratchDir, "src/lib.rs"), patchedSource);
@@ -372,62 +380,73 @@ async function runEscrowTrial(
   label: string,
 ): Promise<number> {
   const maker = Keypair.generate();
-  const mint = Keypair.generate();
+  const mintA = Keypair.generate();
+  const mintB = Keypair.generate();
+  // Vault is a fresh keypair (init token::* — account itself signs the
+  // create_account CPI). NOT an ATA; the program calls system::create
+  // directly with vault as signer.
+  const vault = Keypair.generate();
   const seed = 42n;
 
-  // Fund the maker so it can pay rent for escrow + vault ATA.
+  // Fund the maker so it can pay rent for escrow + vault.
   await airdrop(conn, maker.publicKey, 2);
 
-  // Derive escrow PDA + maker_ata + vault ATA.
+  // Derive escrow PDA + maker_ata_a.
   const seedBytes = Buffer.alloc(8);
   seedBytes.writeBigUInt64LE(seed);
   const [escrowPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("escrow"), maker.publicKey.toBuffer(), seedBytes],
     programId,
   );
-  const makerAta = getAssociatedTokenAddressSync(mint.publicKey, maker.publicKey);
-  // vault is owned by escrow PDA; allowOwnerOffCurve=true.
-  const vault = getAssociatedTokenAddressSync(mint.publicKey, escrowPda, true);
+  const makerAtaA = getAssociatedTokenAddressSync(mintA.publicKey, maker.publicKey);
 
-  // ── Setup tx: create+initialize mint, create maker_ata, mint 1M.
+  // ── Setup tx: both mints, maker_ata_a, mint 1M.
   const lamportsForMint = await conn.getMinimumBalanceForRentExemption(MINT_SIZE);
   const setupTx = new Transaction()
     .add(SystemProgram.createAccount({
       fromPubkey: payer.publicKey,
-      newAccountPubkey: mint.publicKey,
+      newAccountPubkey: mintA.publicKey,
       lamports: lamportsForMint,
       space: MINT_SIZE,
       programId: TOKEN_PROGRAM_ID,
     }))
-    .add(createInitializeMintInstruction(
-      mint.publicKey, 6, payer.publicKey, payer.publicKey,
-    ))
+    .add(createInitializeMintInstruction(mintA.publicKey, 6, payer.publicKey, payer.publicKey))
+    .add(SystemProgram.createAccount({
+      fromPubkey: payer.publicKey,
+      newAccountPubkey: mintB.publicKey,
+      lamports: lamportsForMint,
+      space: MINT_SIZE,
+      programId: TOKEN_PROGRAM_ID,
+    }))
+    .add(createInitializeMintInstruction(mintB.publicKey, 6, payer.publicKey, payer.publicKey))
     .add(createAssociatedTokenAccountInstruction(
-      payer.publicKey, makerAta, maker.publicKey, mint.publicKey,
+      payer.publicKey, makerAtaA, maker.publicKey, mintA.publicKey,
     ))
     .add(createMintToInstruction(
-      mint.publicKey, makerAta, payer.publicKey, 1_000_000n,
+      mintA.publicKey, makerAtaA, payer.publicKey, 1_000_000n,
     ));
   const { blockhash: bh1 } = await conn.getLatestBlockhash();
   setupTx.recentBlockhash = bh1;
   setupTx.feePayer = payer.publicKey;
-  setupTx.sign(payer, mint);
+  setupTx.sign(payer, mintA, mintB);
   const setupSig = await conn.sendRawTransaction(setupTx.serialize());
   await conn.confirmTransaction(setupSig, "confirmed");
 
-  // ── Measured tx: create_escrow(seed, deposit_amount).
-  const data = new Uint8Array(8 + 8 + 8);
+  // ── Measured tx: create_escrow(seed, deposit_amount, receive_amount).
+  const data = new Uint8Array(8 + 8 + 8 + 8);
   data.set(discriminator("create_escrow"), 0);
   data.set(encodeU64(seed), 8);
   data.set(encodeU64(250_000n), 16);
+  data.set(encodeU64(500_000n), 24);
   const ix = new TransactionInstruction({
     programId,
     keys: [
       meta(maker.publicKey, true, true),
-      meta(mint.publicKey, false, false),
-      meta(makerAta, false, true),
+      meta(mintA.publicKey, false, false),
+      meta(mintB.publicKey, false, false),
+      meta(makerAtaA, false, true),
       meta(escrowPda, false, true),
-      meta(vault, false, true),
+      meta(vault.publicKey, true, true),
       meta(SystemProgram.programId, false, false),
       meta(TOKEN_PROGRAM_ID, false, false),
       meta(ASSOCIATED_TOKEN_PROGRAM_ID, false, false),
@@ -438,7 +457,7 @@ async function runEscrowTrial(
   const { blockhash: bh2 } = await conn.getLatestBlockhash();
   tx.recentBlockhash = bh2;
   tx.feePayer = maker.publicKey;
-  tx.sign(maker);
+  tx.sign(maker, vault);
   const sig = await conn.sendRawTransaction(tx.serialize());
   await conn.confirmTransaction(sig, "confirmed");
 

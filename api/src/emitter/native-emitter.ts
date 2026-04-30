@@ -31,6 +31,7 @@ import {
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
   irNeedsMemoHelper,
+  irNeedsTokenAccountInitHelper,
 } from "./emitter-helpers.js";
 
 /**
@@ -176,6 +177,7 @@ class NativeEmitter extends BaseEmitter {
       || irNeedsUnsignedSplCloseAccountHelper(_ir)
       || irNeedsAtaCreationHelper(_ir)
       || irNeedsMemoHelper(_ir)
+      || irNeedsTokenAccountInitHelper(_ir)
       || t22NeedsInvoke
       || passThroughNeedsInvoke;
     const needsInvokeSigned = irNeedsSignedLamportsHelper(_ir)
@@ -229,6 +231,10 @@ use solana_program::{
     if (irNeedsMemoHelper(_ir)) {
       imports.push(`use spl_memo;`);
     }
+    // `init token::*` needs Rent::get() for the rent-exempt minimum.
+    // sysvar::Sysvar and system_instruction are already in the base
+    // preamble; Rent is added below by the needsRent check (which we
+    // OR with this trigger).
 
     // Add Clock import when any instruction uses sysvar_clock or pass_through references Clock::get
     const needsClock = _ir.instructions.some(i =>
@@ -247,7 +253,7 @@ use solana_program::{
         (s.kind === 'pass_through' && /\bRent::\w/.test(s.code)) ||
         (s.kind === 'state_field_assign' && /\bRent::\w/.test(s.value))
       )
-    );
+    ) || irNeedsTokenAccountInitHelper(_ir);
     if (needsRent) {
       imports.push(`use solana_program::sysvar::rent::Rent;`);
     }
@@ -683,6 +689,31 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
         &create_ata_ix,
         &[${payer}.clone(), ${ata}.clone(), ${authority}.clone(), ${mint}.clone()],
     )?;`;
+  }
+
+  override emitCreateTokenAccount(
+    account: string, payer: string, mint: string, authority: string, _signerSeeds?: string,
+  ): string {
+    // Two-step: rent-exempt allocate (165 bytes for SPL TokenAccount) +
+    // initialize_account3 binding mint and authority. Account itself signs
+    // the create_account; no sysvar required for v3 init.
+    return `    // Init token account: ${account}
+    let __ta_lamports = Rent::get()?.minimum_balance(165);
+    let __ta_create = system_instruction::create_account(
+        ${payer}.key,
+        ${account}.key,
+        __ta_lamports,
+        165,
+        &spl_token::id(),
+    );
+    invoke(&__ta_create, &[${payer}.clone(), ${account}.clone()])?;
+    let __ta_init = spl_token::instruction::initialize_account3(
+        &spl_token::id(),
+        ${account}.key,
+        ${mint}.key,
+        ${authority}.key,
+    )?;
+    invoke(&__ta_init, &[${account}.clone(), ${mint}.clone()])?;`;
   }
 
   override emitMemo(data: string, _signerSeeds?: string): string {

@@ -155,6 +155,20 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  /**
+   * Init a non-ATA token account from `init token::mint = X, token::authority = Y`.
+   * Two CPIs: system::create_account (165 bytes, owner=token_program) +
+   * Token::initialize_account3 (binds mint + authority). Sibling of
+   * emitCreateAta — different macro path in Anchor, different CPI sequence.
+   */
+  abstract emitCreateTokenAccount(
+    account: string,
+    payer: string,
+    mint: string,
+    authority: string,
+    signerSeeds?: string,
+  ): string;
+
   // ── Memo CPI ──
   abstract emitMemo(data: string, signerSeeds?: string): string;
 
@@ -641,18 +655,31 @@ export abstract class BaseEmitter {
     // Arg parsing
     const argsBlock = this.emitArgParsing(instr.args);
 
-    // `init associated_token::*` is neither a custom-state PDA nor a
-    // pdaSeeds-init — the address is derived by the ATA program from
-    // (mint, authority). Without this third clause the emitter silently
-    // drops the vault prelude and downstream `token::transfer` runs
-    // against an uninitialized vault.
-    const isAtaInit = (a: Instruction["accounts"][number]) =>
+    // Inline-init accounts whose address is NOT a PDA derived by us:
+    // (a) `init associated_token::*` — address derived by the ATA program
+    //     from (mint, authority); we emit a CreateAssociatedToken CPI.
+    // (b) `init token::*` — non-ATA token account; account itself signs
+    //     system::create_account, then we emit Token::initialize_account3.
+    // Without these two clauses, the emitter silently drops the prelude and
+    // downstream code (e.g. `token::transfer`) runs against an
+    // uninitialized account. Both shapes share the "needs an external init
+    // CPI" property — neither is a custom-state PDA.
+    const isInlineAtaInit = (a: Instruction["accounts"][number]) =>
       a.constraints.some((c) => c.kind === "associated_token::mint" && c.value) &&
       a.constraints.some((c) => c.kind === "associated_token::authority" && c.value);
+    const isInlineTokenInit = (a: Instruction["accounts"][number]) =>
+      a.constraints.some((c) => c.kind === "token::mint" && c.value) &&
+      a.constraints.some((c) => c.kind === "token::authority" && c.value) &&
+      // PDA-derived `init token::*` (vesting, staking, amm vaults) needs
+      // signer seeds for the create_account CPI — falls through to the
+      // existing PDA branch below to retain its bump_X derivation.
+      !(a.isPda && a.pdaSeeds?.length);
+    const isInlineAccountInit = (a: Instruction["accounts"][number]) =>
+      isInlineAtaInit(a) || isInlineTokenInit(a);
     const initAccountsWithBumps = instr.accounts
       .filter((a) => a.isInit && a.isPda && a.pdaSeeds?.length && (isCustomState(a.accountType) || (a.isPda && a.pdaSeeds?.length)));
     const initPreludes = instr.accounts
-      .filter((a) => a.isInit && (isCustomState(a.accountType) || (a.isPda && a.pdaSeeds?.length) || isAtaInit(a)))
+      .filter((a) => a.isInit && (isCustomState(a.accountType) || (a.isPda && a.pdaSeeds?.length) || isInlineAccountInit(a)))
       .map((a) => this.emitInitAccountPrelude(a, instr, ir))
       .filter(Boolean)
       .join("\n");
@@ -1183,6 +1210,27 @@ ${fields}
       const authority = snakeCase(ataAuthorityConstraint.value);
       const payer = payerName ?? "payer";
       return this.emitCreateAta(accountName, payer, mint, authority);
+    }
+
+    // ── `init token::*` (non-ATA, non-PDA token account): account itself
+    // signs system::create_account + initialize_account3. PDA-derived
+    // token accounts (e.g. vesting's `seeds + bump + token::*`) need a
+    // signer-seed-aware path; that case falls through to the bump-only
+    // PDA branch below today, which keeps cargo-green at the cost of
+    // runtime correctness for those programs (no in-suite differential
+    // exercises them). Tracked as a follow-up — when added, mirror this
+    // dispatch but pass signer seeds through.
+    const tokenMintConstraint = accountRef.constraints.find((c) => c.kind === "token::mint" && c.value);
+    const tokenAuthorityConstraint = accountRef.constraints.find((c) => c.kind === "token::authority" && c.value);
+    if (
+      tokenMintConstraint?.value &&
+      tokenAuthorityConstraint?.value &&
+      !(accountRef.isPda && accountRef.pdaSeeds?.length)
+    ) {
+      const mint = snakeCase(tokenMintConstraint.value);
+      const authority = snakeCase(tokenAuthorityConstraint.value);
+      const payer = payerName ?? "payer";
+      return this.emitCreateTokenAccount(accountName, payer, mint, authority);
     }
 
     if (!payerName || !accountRef.initSpace) {

@@ -20,6 +20,8 @@ use pinocchio_system::create_account_with_minimum_balance_signed;
 use pinocchio_token::instructions::Transfer as TokenTransfer;
 use pinocchio_token::instructions::CloseAccount as TokenCloseAccount;
 use pinocchio_associated_token_account::instructions::Create as CreateAssociatedToken;
+use pinocchio::sysvars::rent::Rent;
+use pinocchio::sysvars::Sysvar;
 
 entrypoint!(process_instruction);
 
@@ -117,6 +119,36 @@ pub fn create_escrow(
         ];
     let init_escrow_signer_seeds = &[&init_escrow_seeds[..]];
     create_program_account(escrow, maker, (8 + Escrow::INIT_SPACE) as usize, program_id, init_escrow_signer_seeds)?;
+    // Init token account: vault
+    {
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
+            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+        ];
+        // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
+        let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
+        pinocchio_system::instructions::CreateAccount {
+            from: maker,
+            to: vault,
+            lamports: __ta_rent,
+            space: 165u64,
+            owner: &TOKEN_PROGRAM_ID,
+        }.invoke()?;
+        // 2. InitializeAccount3 — discriminator 18, data: 32-byte authority.
+        let mut __ta_init_data = [0u8; 33];
+        __ta_init_data[0] = 18;
+        __ta_init_data[1..33].copy_from_slice(escrow.key().as_ref());
+        let __ta_init_metas = [
+            pinocchio::instruction::AccountMeta::new(vault.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(mint_a.key(), false, false),
+        ];
+        let __ta_init_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_PROGRAM_ID,
+            accounts: &__ta_init_metas,
+            data: &__ta_init_data,
+        };
+        pinocchio::cpi::invoke(&__ta_init_ix, &[vault, mint_a])?;
+    }
 
 
     let escrow_account = escrow;

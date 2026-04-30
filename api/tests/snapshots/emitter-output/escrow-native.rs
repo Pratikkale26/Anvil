@@ -19,6 +19,7 @@ use solana_program::{
     sysvar::Sysvar,
 };
 use spl_associated_token_account::instruction::create_associated_token_account as spl_create_ata_ix;
+use solana_program::sysvar::rent::Rent;
 
 entrypoint!(process_instruction);
 
@@ -118,6 +119,23 @@ pub fn create_escrow(
         ];
     let init_escrow_signer_seeds = &[&init_escrow_seeds[..]];
     create_program_account(escrow, maker, (8 + Escrow::INIT_SPACE) as u64, program_id, init_escrow_signer_seeds)?;
+    // Init token account: vault
+    let __ta_lamports = Rent::get()?.minimum_balance(165);
+    let __ta_create = system_instruction::create_account(
+        maker.key,
+        vault.key,
+        __ta_lamports,
+        165,
+        &spl_token::id(),
+    );
+    invoke(&__ta_create, &[maker.clone(), vault.clone()])?;
+    let __ta_init = spl_token::instruction::initialize_account3(
+        &spl_token::id(),
+        vault.key,
+        mint_a.key,
+        escrow.key,
+    )?;
+    invoke(&__ta_init, &[vault.clone(), mint_a.clone()])?;
 
 
     let escrow_account = escrow;

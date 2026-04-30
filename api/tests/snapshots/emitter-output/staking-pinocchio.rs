@@ -20,6 +20,7 @@ use pinocchio_system::create_account_with_minimum_balance_signed;
 use pinocchio_token::instructions::Transfer as TokenTransfer;
 use pinocchio_token::instructions::MintTo as TokenMintTo;
 use pinocchio::sysvars::clock::Clock;
+use pinocchio::sysvars::rent::Rent;
 use pinocchio::sysvars::Sysvar;
 
 #[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
