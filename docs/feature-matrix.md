@@ -71,16 +71,17 @@ Treat Quasar output as a starting point that needs review. **Pinocchio and Nativ
 
 ### First-party measured (`scripts/measure-cu.ts` against `solana-test-validator`)
 
-Counter — Anvil's bundled `counter` demo, deployed both as Anchor original and Anvil-emitted Pinocchio, run side-by-side. Best-case across 5 trials per side (controls for `find_program_address` bump-iteration variance).
+Anvil's bundled demos, deployed both as Anchor original and Anvil-emitted Pinocchio, run side-by-side. Best-case across 5 trials per side (controls for `find_program_address` bump-iteration variance).
 
 | Instruction | Anchor CU | Anvil-Pinocchio CU | Saved |
 |---|---:|---:|---:|
 | `counter::initialize(start_value=10)` | 6,074 | 3,268 | **46%** |
 | `counter::increment(amount=5)` | 2,753 | 1,801 | **35%** |
+| `escrow::create_escrow(seed=42, amount=250000)` | 43,720 | 31,413 | **28%** |
 
-Reproduce: `solana-test-validator --reset --quiet &` in one terminal, then `bun scripts/measure-cu.ts` in another. The script generates fresh program keypairs each run, patches `declare_id!()` to match, deploys both `.so` binaries, runs the scenario via `getTransaction(...).meta.logMessages`, and parses the `consumed N of M compute units` line.
+Reproduce: `solana-test-validator --reset --quiet &` in one terminal, then `bun scripts/measure-cu.ts` in another. Set `ANVIL_CU_FIXTURES=counter` (or `escrow`) to run a single fixture. The script generates fresh program keypairs each run, patches `declare_id!()` to match, deploys both `.so` binaries, runs the scenario via `getTransaction(...).meta.logMessages`, and parses the `consumed N of M compute units` line.
 
-What this tells you: for state-only programs (no SPL CPIs) the savings come from Anvil's leaner account validation + manual Borsh path skipping Anchor's macro-emitted runtime checks. The savings are real but smaller than SPL-heavy workloads.
+What this tells you: state-only programs (counter) save ~35-46% from leaner account validation + manual Borsh skipping Anchor's macro-emitted runtime checks. SPL-CPI programs (escrow: PDA init + ATA init + token::transfer) save 28% — lower percentage because the SPL Token CPI itself dominates the CU budget on both sides; Anvil shaves the Anchor runtime overhead but cannot make the actual CPI cheaper.
 
 ### External SPL primitives ([Helius p-token](https://github.com/helius-labs/p-token))
 

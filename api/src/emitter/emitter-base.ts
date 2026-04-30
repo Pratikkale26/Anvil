@@ -641,10 +641,18 @@ export abstract class BaseEmitter {
     // Arg parsing
     const argsBlock = this.emitArgParsing(instr.args);
 
+    // `init associated_token::*` is neither a custom-state PDA nor a
+    // pdaSeeds-init — the address is derived by the ATA program from
+    // (mint, authority). Without this third clause the emitter silently
+    // drops the vault prelude and downstream `token::transfer` runs
+    // against an uninitialized vault.
+    const isAtaInit = (a: Instruction["accounts"][number]) =>
+      a.constraints.some((c) => c.kind === "associated_token::mint" && c.value) &&
+      a.constraints.some((c) => c.kind === "associated_token::authority" && c.value);
     const initAccountsWithBumps = instr.accounts
       .filter((a) => a.isInit && a.isPda && a.pdaSeeds?.length && (isCustomState(a.accountType) || (a.isPda && a.pdaSeeds?.length)));
     const initPreludes = instr.accounts
-      .filter((a) => a.isInit && (isCustomState(a.accountType) || (a.isPda && a.pdaSeeds?.length)))
+      .filter((a) => a.isInit && (isCustomState(a.accountType) || (a.isPda && a.pdaSeeds?.length) || isAtaInit(a)))
       .map((a) => this.emitInitAccountPrelude(a, instr, ir))
       .filter(Boolean)
       .join("\n");
@@ -1613,15 +1621,22 @@ function commentOutUnsalvageableCallSites(text: string, helpers: Set<string>): s
     // preceding non-whitespace was `}`, that's a `};` shape — the line
     // also contains the closer of an outer block (e.g. `let X = { … };`)
     // that we MUST NOT comment out. Advance stmtStart past the trailing
-    // `;\n` to the next line. For non-block `;` (preceding char `)`, ident,
-    // literal, etc.) we keep the original behavior — including the `;`
-    // line in the comment range incidentally cleans up orphan
-    // `let X = …;` setup statements whose only consumer was the
-    // commented helper call. coral-swap's transitive helper closes a
-    // let-block (`};`) right before the call; escrow2025's call follows
-    // a chain of inert setup let-bindings (`);`) that are dead without it.
+    // `;\n` to the next line.
+    //
+    // Same advance for `?;` shape: the prior statement is a `?`-postfix
+    // fallible call (real CPI invocation, helper that returns Result, etc.)
+    // — almost certainly NOT orphan setup. Without this, the new ATA-init
+    // prelude (`invoke(…)?;` for the vault) gets swallowed when the body
+    // also calls an unsalvageable helper. escrow2025/native demonstrated
+    // the cross-statement sweep producing a syntax error.
+    //
+    // For non-block `;` (preceding char `)`, ident, literal — i.e. the
+    // tail of `let X = …;` shape) we keep the original behavior, including
+    // the `;` line in the comment range. This cleans up orphan setup
+    // let-bindings (CpiContext / cpi_program / cpi_accounts) whose only
+    // consumer was the commented helper call.
     let normalizedStart = stmtStart;
-    if (stopChar === ";" && stopPrevChar === "}") {
+    if (stopChar === ";" && (stopPrevChar === "}" || stopPrevChar === "?")) {
       while (normalizedStart < text.length && /[ \t]/.test(text[normalizedStart] ?? "")) normalizedStart++;
       if (text[normalizedStart] === "\n") normalizedStart++;
     }

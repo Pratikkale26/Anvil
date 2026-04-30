@@ -189,6 +189,29 @@ pub fn accept_escrow(
         return Err(ProgramError::InvalidInstructionData);
     }
 
+    // Create Associated Token Account: taker_ata_a
+    let create_ata_ix = spl_create_ata_ix(
+        taker.key,
+        taker.key,
+        mint_a.key,
+        &spl_token::id(),
+    );
+    invoke(
+        &create_ata_ix,
+        &[taker.clone(), taker_ata_a.clone(), taker.clone(), mint_a.clone()],
+    )?;
+    // Create Associated Token Account: maker_ata_b
+    let create_ata_ix = spl_create_ata_ix(
+        taker.key,
+        maker.key,
+        mint_b.key,
+        &spl_token::id(),
+    );
+    invoke(
+        &create_ata_ix,
+        &[taker.clone(), maker_ata_b.clone(), maker.clone(), mint_b.clone()],
+    )?;
+
 
     let escrow_account = escrow;
     let escrow = Escrow::read(&escrow_account.data.borrow())?;

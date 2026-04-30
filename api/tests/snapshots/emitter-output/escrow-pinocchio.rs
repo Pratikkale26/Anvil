@@ -159,8 +159,8 @@ pub fn accept_escrow(
     let maker_ata_b = &accounts[6];
     let escrow = &accounts[7];
     let vault = &accounts[8];
-    let _system_program = &accounts[9];
-    let _token_program = &accounts[10];
+    let system_program = &accounts[9];
+    let token_program = &accounts[10];
     let _associated_token_program = &accounts[11];
 
     if !taker.is_signer() {
@@ -175,6 +175,55 @@ pub fn accept_escrow(
 
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
+    }
+
+    // Create Associated Token Account: taker_ata_a
+    {
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131,
+            11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
+        ];
+        let __ata_metas = [
+            pinocchio::instruction::AccountMeta::new(taker.key(), true, true),
+            pinocchio::instruction::AccountMeta::new(taker_ata_a.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(taker.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(mint_a.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
+        ];
+        let __ata_ix = pinocchio::instruction::Instruction {
+            program_id: &ATA_PROGRAM_ID,
+            accounts: &__ata_metas,
+            data: &[],
+        };
+        pinocchio::cpi::invoke(
+            &__ata_ix,
+            &[taker, taker_ata_a, taker, mint_a, system_program, token_program],
+        )?;
+    }
+    // Create Associated Token Account: maker_ata_b
+    {
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131,
+            11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
+        ];
+        let __ata_metas = [
+            pinocchio::instruction::AccountMeta::new(taker.key(), true, true),
+            pinocchio::instruction::AccountMeta::new(maker_ata_b.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(maker.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(mint_b.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
+        ];
+        let __ata_ix = pinocchio::instruction::Instruction {
+            program_id: &ATA_PROGRAM_ID,
+            accounts: &__ata_metas,
+            data: &[],
+        };
+        pinocchio::cpi::invoke(
+            &__ata_ix,
+            &[taker, maker_ata_b, maker, mint_b, system_program, token_program],
+        )?;
     }
 
 

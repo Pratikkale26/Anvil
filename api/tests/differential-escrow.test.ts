@@ -1,50 +1,165 @@
 /**
- * Escrow differential — DEFERRED (investigation in progress).
+ * Escrow differential — exercises a multi-CPI surface in one ix:
  *
- * Why this is still a stub:
+ *   1. PDA init for the escrow state account (seeds = ["escrow", maker, seed])
+ *   2. ATA init for the vault token account (associated_token::mint=mint,
+ *      authority=escrow)
+ *   3. SPL token::transfer from maker_ata → vault
  *
- * 2026-04-30 attempt: scaffolded the full SPL setup (create+initialize
- * mints, create+mint to maker_ata_a, taker_ata_b), wired keys for
- * create_escrow + accept_escrow, signed vault as the freshly-allocated
- * SPL Token account, enabled `init-if-needed` via the new harness
- * `anchorLangFeatures` knob. Both Anchor and Anvil .so build green.
- *
- * Runtime: Anchor's create_escrow fails with InvalidAccountData inside
- * the first Token CPI, before the body runs. LiteSVM logs:
- *   Program Escrw invoke [1]
- *   Program 11111 invoke [2]                       ← system::create_account success
- *   Program TokenkegQ... invoke [2]
- *   Program log: Error: InvalidAccountData          ← Token program rejects
- *   Program TokenkegQ... failed: invalid account data for instruction
- *
- * Suspected cause: anchor-spl's `init token::mint = X, token::authority = Y`
- * macro (without the `associated_token::*` form) expands to a code path
- * where the second system::create_account for vault and the
- * Token::initialize_account interact differently than how the
- * scenario sets things up. ata-mint and spl-transfer fixtures pass —
- * they use `associated_token::*` constraints which take a different
- * Anchor expansion path through the ATA program.
- *
- * Path to enable (estimated 2-4 hours of focused debugging):
- *   - Read anchor-spl 0.31's `__init_account` impl for `init token::*`
- *     to confirm exact CPI sequence + account ordering expected.
- *   - Compare against the working ata-mint fixture's keys layout.
- *   - Likely fix: order issue, missing rent sysvar in keys, or the
- *     vault Keypair signer requirement is more nuanced than just
- *     `vault.sign(tx)`.
- *
- * OR easier path: write a `simple-escrow.rs` demo that uses
- * `associated_token::*` for vault (same logical semantics, ATA-program
- * expansion path that we know works from ata-mint) and target that
- * for the fixture. That sidesteps the `init token::*` debug entirely
- * and ships a working escrow gate today.
- *
- * Net: harness improvements landed (anchorLangFeatures + better err
- * formatting). The runtime byte-equal escrow gate remains deferred
- * pending the chosen path above.
+ * Uses simple-escrow.rs which sidesteps the `init token::*` runtime path
+ * that earlier blocked the original escrow.rs fixture (Anchor's
+ * macro-emitted init-token CPI sequence diverges in subtle ways from
+ * what's straightforward to drive from a test scenario). Using
+ * `init associated_token::*` instead routes through the ATA program — the
+ * same shape ata-mint and spl-transfer already exercise green.
  */
-import { describe, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  Transaction,
+  TransactionInstruction,
+  SystemProgram,
+} from "@solana/web3.js";
+import {
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  MINT_SIZE,
+  createInitializeMintInstruction,
+  createAssociatedTokenAccountInstruction,
+  createMintToInstruction,
+  getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
+import {
+  defineDifferential,
+  anchorIxDiscriminator,
+  encodeU64LE,
+  concatBytes,
+  Keypair,
+  PublicKey,
+  LiteSVM,
+} from "./differential-harness.ts";
 
-describe.skip("Anchor vs Anvil-Pinocchio runtime correctness (escrow) [DEFERRED — anchor-spl init token::* runtime debug]", () => {
-  test.skip("see file header for the path to enable", () => {});
+const SRC = join(import.meta.dir, "..", "src", "demo-programs", "simple-escrow.rs");
+const PROGRAM_ID = "SimEscrw11111111111111111111111111111111111";
+
+defineDifferential({
+  fixtureName: "escrow",
+  programIdBase58: PROGRAM_ID,
+  anchorSource: readFileSync(SRC, "utf-8"),
+  anchorPackageName: "simple_escrow_anchor_diff",
+  anchorExtraDeps: `anchor-spl = { version = "0.31", features = ["associated_token"] }`,
+
+  setup: async () => {
+    const payer = Keypair.generate();
+    const maker = Keypair.generate();
+    const mint = Keypair.generate();
+    const seed = 42n;
+    const programIdPk = new PublicKey(PROGRAM_ID);
+
+    // Escrow PDA: seeds = [b"escrow", maker.key(), seed.to_le_bytes()]
+    const seedBytes = Buffer.alloc(8);
+    seedBytes.writeBigUInt64LE(seed);
+    const [escrowPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), maker.publicKey.toBuffer(), seedBytes],
+      programIdPk,
+    );
+
+    // maker_ata = ATA(mint, maker)
+    const makerAta = getAssociatedTokenAddressSync(mint.publicKey, maker.publicKey);
+    // vault = ATA(mint, escrow_pda) — owned by a PDA, allowOwnerOffCurve=true
+    const vault = getAssociatedTokenAddressSync(
+      mint.publicKey,
+      escrowPda,
+      true,
+    );
+
+    return { payer, maker, mint, seed, escrowPda, makerAta, vault };
+  },
+
+  callScript: async (svm: LiteSVM, ctx, programId: PublicKey) => {
+    svm.withDefaultPrograms().withNativeMints();
+    svm.airdrop(ctx.payer.publicKey, BigInt(10_000_000_000));
+    svm.airdrop(ctx.maker.publicKey, BigInt(2_000_000_000));
+
+    // ── Setup: mint, maker_ata, mint 1M tokens to maker_ata.
+    const mintRent = svm.minimumBalanceForRentExemption(BigInt(MINT_SIZE));
+    const setupTx = new Transaction()
+      .add(SystemProgram.createAccount({
+        fromPubkey: ctx.payer.publicKey,
+        newAccountPubkey: ctx.mint.publicKey,
+        lamports: Number(mintRent),
+        space: MINT_SIZE,
+        programId: TOKEN_PROGRAM_ID,
+      }))
+      .add(createInitializeMintInstruction(
+        ctx.mint.publicKey,
+        6,
+        ctx.payer.publicKey,
+        ctx.payer.publicKey,
+      ))
+      .add(createAssociatedTokenAccountInstruction(
+        ctx.payer.publicKey,
+        ctx.makerAta,
+        ctx.maker.publicKey,
+        ctx.mint.publicKey,
+      ))
+      .add(createMintToInstruction(
+        ctx.mint.publicKey,
+        ctx.makerAta,
+        ctx.payer.publicKey,
+        1_000_000n,
+      ));
+    setupTx.recentBlockhash = svm.latestBlockhash();
+    setupTx.feePayer = ctx.payer.publicKey;
+    setupTx.sign(ctx.payer, ctx.mint);
+    const r1 = svm.sendTransaction(setupTx);
+    if ("err" in r1) {
+      throw new Error(`setup failed: ${JSON.stringify(r1.err)}`);
+    }
+
+    // ── Call create_escrow(seed=42, deposit_amount=250_000).
+    const ix = new TransactionInstruction({
+      programId,
+      keys: [
+        { pubkey: ctx.maker.publicKey, isSigner: true, isWritable: true },
+        { pubkey: ctx.mint.publicKey, isSigner: false, isWritable: false },
+        { pubkey: ctx.makerAta, isSigner: false, isWritable: true },
+        { pubkey: ctx.escrowPda, isSigner: false, isWritable: true },
+        { pubkey: ctx.vault, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      ],
+      data: Buffer.from(concatBytes(
+        anchorIxDiscriminator("create_escrow"),
+        encodeU64LE(ctx.seed),
+        encodeU64LE(250_000n),
+      )),
+    });
+    const tx = new Transaction().add(ix);
+    tx.recentBlockhash = svm.latestBlockhash();
+    tx.feePayer = ctx.maker.publicKey;
+    tx.sign(ctx.maker);
+    const r2 = svm.sendTransaction(tx);
+    if ("err" in r2) {
+      throw new Error(`create_escrow failed: ${JSON.stringify(r2.err)}`);
+    }
+  },
+
+  // Compare:
+  //   - escrow PDA: 8-byte Anchor disc + struct fields (maker/mint/amount/seed/bump).
+  //     stripDiscriminator default true is correct here.
+  //   - vault ATA: SPL Token account (165 bytes, no Anchor disc).
+  // We need different stripping per account, so use ignoreRanges to mask
+  // the Anchor disc on escrow only, and disable global stripping. Wait —
+  // simpler: leave stripDiscriminator true; for the SPL Token account
+  // (vault, 165 bytes), the first 8 bytes are part of the mint pubkey
+  // which is identical between scenarios anyway. Stripping them changes
+  // nothing semantic — both sides drop the same 8 bytes.
+  stripDiscriminator: true,
+  accountsToCompare: (ctx) => [
+    { pubkey: ctx.escrowPda, label: "escrow_pda" },
+    { pubkey: ctx.vault, label: "vault_ata" },
+    { pubkey: ctx.makerAta, label: "maker_ata" },
+  ],
 });

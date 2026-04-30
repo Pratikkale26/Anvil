@@ -347,7 +347,7 @@ pub fn purchase(
 
     let buyer = &accounts[0];
     let seller = &accounts[1];
-    let _nft_mint = &accounts[2];
+    let nft_mint = &accounts[2];
     let buyer_ata = &accounts[3];
     let listing = &accounts[4];
     let marketplace = &accounts[5];
@@ -373,6 +373,18 @@ pub fn purchase(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
+
+    // Create Associated Token Account: buyer_ata
+    let create_ata_ix = spl_create_ata_ix(
+        buyer.key,
+        buyer.key,
+        nft_mint.key,
+        &spl_token::id(),
+    );
+    invoke(
+        &create_ata_ix,
+        &[buyer.clone(), buyer_ata.clone(), buyer.clone(), nft_mint.clone()],
+    )?;
 
 
     let listing_account = listing;

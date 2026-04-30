@@ -303,15 +303,15 @@ pub fn purchase(
 
     let buyer = &accounts[0];
     let seller = &accounts[1];
-    let _nft_mint = &accounts[2];
+    let nft_mint = &accounts[2];
     let buyer_ata = &accounts[3];
     let listing = &accounts[4];
     let marketplace = &accounts[5];
     let treasury = &accounts[6];
     let vault = &accounts[7];
-    let _token_program = &accounts[8];
+    let token_program = &accounts[8];
     let _associated_token_program = &accounts[9];
-    let _system_program = &accounts[10];
+    let system_program = &accounts[10];
 
     if !buyer.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -328,6 +328,31 @@ pub fn purchase(
 
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
+    }
+
+    // Create Associated Token Account: buyer_ata
+    {
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131,
+            11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
+        ];
+        let __ata_metas = [
+            pinocchio::instruction::AccountMeta::new(buyer.key(), true, true),
+            pinocchio::instruction::AccountMeta::new(buyer_ata.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(buyer.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(nft_mint.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
+        ];
+        let __ata_ix = pinocchio::instruction::Instruction {
+            program_id: &ATA_PROGRAM_ID,
+            accounts: &__ata_metas,
+            data: &[],
+        };
+        pinocchio::cpi::invoke(
+            &__ata_ix,
+            &[buyer, buyer_ata, buyer, nft_mint, system_program, token_program],
+        )?;
     }
 
 
