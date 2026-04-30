@@ -31,6 +31,32 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       --no-modify-path \
   && rustc --version && cargo --version
 
+# Anza CLI — provides `cargo-build-sbf`, which the workbench's "Deploy"
+# mode uses to produce a deployable Solana .so. Plain rustup cargo
+# doesn't include this; cargo discovers it via PATH (any `cargo-foo`
+# binary on PATH gets exposed as `cargo foo`). Without this, /build
+# with mode=build-sbf returns the cargo error 'no such command:
+# build-sbf' which we now intercept with an actionable install hint —
+# but baking the toolchain into the image is the actual fix.
+#
+# v3.1.13 matches the version cited in error messages, the README, and
+# SECURITY.md. Bump in lockstep across all four if Anza's release
+# stream moves.
+#
+# The installer drops binaries in
+# ~/.local/share/solana/install/active_release/bin and writes a path
+# helper to ~/.profile. We don't source ~/.profile in the bun run path
+# (the Dockerfile CMD doesn't go through a login shell), so set PATH
+# explicitly via ENV so spawned cargo invocations inherit it.
+#
+# `cargo-build-sbf --version` is the smoke check — it both confirms
+# the wrapper resolves AND triggers Anza's lazy platform-tools install
+# inside the same RUN layer so the first runtime /build request
+# doesn't pay for the download cold.
+ENV PATH=/root/.local/share/solana/install/active_release/bin:$PATH
+RUN sh -c "$(curl --proto '=https' --tlsv1.2 -sSf https://release.anza.xyz/v3.1.13/install)" \
+  && cargo-build-sbf --version
+
 # Pre-fetch (download only, no compile) the cargo registry tarballs for the
 # Pinocchio + Native dep trees. cargo check at runtime reuses these,
 # eliminating the network round-trip from the first /build request. We do
