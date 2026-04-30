@@ -118,6 +118,13 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    */
   anchorExtraDeps?: string;
   /**
+   * Optional anchor-lang features to enable (in addition to the defaults).
+   * Common case: `["init-if-needed"]` for fixtures using the init_if_needed
+   * constraint, which requires this feature opt-in by Anchor convention
+   * (re-init attack mitigation acknowledgement).
+   */
+  anchorLangFeatures?: string[];
+  /**
    * One-time setup before both scenarios. Generates shared keypairs,
    * derives PDAs, etc. Called exactly once per test invocation.
    */
@@ -329,7 +336,9 @@ no-log-ix-name = []
 cpi = ["no-entrypoint"]
 default = []
 [dependencies]
-anchor-lang = "0.31"
+${fixture.anchorLangFeatures && fixture.anchorLangFeatures.length > 0
+  ? `anchor-lang = { version = "0.31", features = ["${fixture.anchorLangFeatures.join('", "')}"] }`
+  : `anchor-lang = "0.31"`}
 ${fixture.anchorExtraDeps ?? ""}
 `;
   writeFileSync(join(scratch, "Cargo.toml"), cargoToml);

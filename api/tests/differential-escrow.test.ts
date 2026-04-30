@@ -1,39 +1,50 @@
 /**
- * Escrow differential — TODO, scaffolded but not yet executable.
+ * Escrow differential — DEFERRED (investigation in progress).
  *
- * Why this is a stub instead of a passing test:
- * Escrow exercises a substantially heavier surface than vault — SPL
- * Token mint + ATA setup, init_if_needed on taker ATAs, account-close
- * with rent refund — and the pre-flight setup needs the SPL Token
- * program loaded into LiteSVM plus mints initialized + tokens minted
- * to maker/taker before the program's create_escrow can fire. None of
- * that exists yet in this test environment (@solana/spl-token isn't
- * a dependency, and the harness doesn't bundle SPL setup helpers).
+ * Why this is still a stub:
  *
- * The TODO list to convert this from a stub to a passing test:
- *   1. `bun add @solana/spl-token` to api/package.json
- *   2. In setup(): create maker + taker keypairs, two mint Keypairs,
- *      derive maker_ata_a / maker_ata_b / taker_ata_a / taker_ata_b /
- *      escrow_pda / vault_pda
- *   3. In callScript():
- *      a. airdrop maker + taker enough SOL for rent + fees
- *      b. createMint(svm, maker, mint_a, decimals=6)
- *      c. createMint(svm, maker, mint_b, decimals=6)
- *      d. mintTo(svm, mint_a, maker, maker_ata_a, 1000)
- *      e. mintTo(svm, mint_b, taker, taker_ata_b, 1000)
- *      f. send create_escrow(seed=42, deposit=100, receive=200)
- *      g. send accept_escrow()
- *   4. accountsToCompare: maker_ata_a, maker_ata_b, taker_ata_a,
- *      taker_ata_b, escrow_pda (closed → 0 lamports), vault_pda (closed)
- *   5. lamport equality check on closed accounts catches if Anvil's
- *      close emit forgets to zero out / reassign owner
+ * 2026-04-30 attempt: scaffolded the full SPL setup (create+initialize
+ * mints, create+mint to maker_ata_a, taker_ata_b), wired keys for
+ * create_escrow + accept_escrow, signed vault as the freshly-allocated
+ * SPL Token account, enabled `init-if-needed` via the new harness
+ * `anchorLangFeatures` knob. Both Anchor and Anvil .so build green.
  *
- * Running cost: ~3-5 minutes for first build (Anchor escrow has SPL
- * deps that compile slowly the first time). Subsequent runs use the
- * harness cache.
+ * Runtime: Anchor's create_escrow fails with InvalidAccountData inside
+ * the first Token CPI, before the body runs. LiteSVM logs:
+ *   Program Escrw invoke [1]
+ *   Program 11111 invoke [2]                       ← system::create_account success
+ *   Program TokenkegQ... invoke [2]
+ *   Program log: Error: InvalidAccountData          ← Token program rejects
+ *   Program TokenkegQ... failed: invalid account data for instruction
+ *
+ * Suspected cause: anchor-spl's `init token::mint = X, token::authority = Y`
+ * macro (without the `associated_token::*` form) expands to a code path
+ * where the second system::create_account for vault and the
+ * Token::initialize_account interact differently than how the
+ * scenario sets things up. ata-mint and spl-transfer fixtures pass —
+ * they use `associated_token::*` constraints which take a different
+ * Anchor expansion path through the ATA program.
+ *
+ * Path to enable (estimated 2-4 hours of focused debugging):
+ *   - Read anchor-spl 0.31's `__init_account` impl for `init token::*`
+ *     to confirm exact CPI sequence + account ordering expected.
+ *   - Compare against the working ata-mint fixture's keys layout.
+ *   - Likely fix: order issue, missing rent sysvar in keys, or the
+ *     vault Keypair signer requirement is more nuanced than just
+ *     `vault.sign(tx)`.
+ *
+ * OR easier path: write a `simple-escrow.rs` demo that uses
+ * `associated_token::*` for vault (same logical semantics, ATA-program
+ * expansion path that we know works from ata-mint) and target that
+ * for the fixture. That sidesteps the `init token::*` debug entirely
+ * and ships a working escrow gate today.
+ *
+ * Net: harness improvements landed (anchorLangFeatures + better err
+ * formatting). The runtime byte-equal escrow gate remains deferred
+ * pending the chosen path above.
  */
 import { describe, test } from "bun:test";
 
-describe.skip("Anchor vs Anvil-Pinocchio runtime correctness (escrow) [TODO]", () => {
+describe.skip("Anchor vs Anvil-Pinocchio runtime correctness (escrow) [DEFERRED — anchor-spl init token::* runtime debug]", () => {
   test.skip("see file header for the path to enable", () => {});
 });
