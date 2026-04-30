@@ -67,16 +67,33 @@ Treat Quasar output as a starting point that needs review. **Pinocchio and Nativ
 - **Impl-method inlining for `ctx.accounts.foo()`.** Partial: the flattener preserves impl-scoped names, but inlining method bodies into instruction handlers interacts with the CPI-consolidation regex. Affects some escrow-style programs. Tracked-ceiling in `realworld-tracking.test.ts`.
 - **`token_interface` extensions** (transfer-fee, transfer-hook, confidential-transfer). Tracked-ceiling only.
 
-## CU savings (illustrative, not measured-by-Anvil)
+## CU savings
 
-Anvil's CU table in the workbench is a heuristic estimator (`api/src/emitter/cu-analyzer.ts`). For measured numbers, `bun scripts/measure-cu.ts` runs both `.so` binaries against `solana-test-validator`. External benchmarks for SPL primitives:
+### First-party measured (`scripts/measure-cu.ts` against `solana-test-validator`)
 
-| Operation | Anchor CU | Pinocchio CU | Saved |
+Counter — Anvil's bundled `counter` demo, deployed both as Anchor original and Anvil-emitted Pinocchio, run side-by-side. Best-case across 5 trials per side (controls for `find_program_address` bump-iteration variance).
+
+| Instruction | Anchor CU | Anvil-Pinocchio CU | Saved |
+|---|---:|---:|---:|
+| `counter::initialize(start_value=10)` | 6,074 | 3,268 | **46%** |
+| `counter::increment(amount=5)` | 2,753 | 1,801 | **35%** |
+
+Reproduce: `solana-test-validator --reset --quiet &` in one terminal, then `bun scripts/measure-cu.ts` in another. The script generates fresh program keypairs each run, patches `declare_id!()` to match, deploys both `.so` binaries, runs the scenario via `getTransaction(...).meta.logMessages`, and parses the `consumed N of M compute units` line.
+
+What this tells you: for state-only programs (no SPL CPIs) the savings come from Anvil's leaner account validation + manual Borsh path skipping Anchor's macro-emitted runtime checks. The savings are real but smaller than SPL-heavy workloads.
+
+### External SPL primitives ([Helius p-token](https://github.com/helius-labs/p-token))
+
+Hand-written Pinocchio implementations of SPL Token primitives, measured by Helius:
+
+| Operation | Anchor / SPL Token CU | Pinocchio CU | Saved |
 |---|---:|---:|---:|
 | SPL `transfer` | 4,645 | 79 | 98% |
 | SPL `mint_to` | 4,538 | 123 | 97% |
 | SPL `burn` | 4,753 | 133 | 97% |
 
-Source: [Helius p-token](https://github.com/helius-labs/p-token).
+These are not Anvil-emitted, but Anvil's `cpi_spl_*` IR kinds emit Pinocchio code that uses the same `pinocchio_token` builders Helius uses. Programs that lean on SPL CPIs (transfers, mints, burns, ATA creates) will see savings closer to this row than the counter row.
 
-For Anvil's own demo programs, the deterministic estimator predicts e.g. `counter::increment` at 405 → 141 CU on Native (~65% saved). Treat that figure as relative ranking; the measurement script is the source of truth for absolute numbers.
+### Workbench heuristic
+
+The CU table in the workbench (`api/src/emitter/cu-analyzer.ts`) is a constant-table estimator that adds up per-construct costs. Useful for relative ranking between targets ("is Pinocchio cheaper than Native here?") but **not** an exact prediction. The measurement script is the source of truth for absolute numbers.

@@ -41,10 +41,23 @@ Cargo green is necessary but not sufficient. This is the actual correctness sign
 
 `bun test api/tests/differential-*.test.ts` runs all 9 + the AI-under-differential framework smoke. Plus 36+ deterministic real-world cargo-build regression gates from `solana-developers/program-examples`.
 
+### Measured CU savings on the bundled `counter` demo
+
+Built both as Anchor original and Anvil-emitted Pinocchio, deployed to `solana-test-validator`, run side-by-side. Best-case across 5 trials per side (controls for `find_program_address` bump-iteration variance).
+
+| Instruction | Anchor CU | Anvil-Pinocchio CU | Saved |
+|---|---:|---:|---:|
+| `counter::initialize(start_value=10)` | 6,074 | 3,268 | **46%** |
+| `counter::increment(amount=5)` | 2,753 | 1,801 | **35%** |
+
+For SPL-heavy workloads (transfers, mints, burns), the savings are larger — Helius's hand-written p-token Pinocchio implementations measure 97-98% CU reduction vs SPL-Token-via-Anchor on those primitives, and Anvil's `cpi_spl_*` emit uses the same `pinocchio_token` builders. See [docs/feature-matrix.md](docs/feature-matrix.md#cu-savings) for the full breakdown.
+
+Reproduce: `solana-test-validator --reset --quiet &` in one terminal, then `bun scripts/measure-cu.ts` in another.
+
 What we **don't** claim:
 
 - AI-patched output is **not** under the differential corpus. The workbench surfaces a persistent yellow banner whenever AI patches are present; audit before deploy.
-- The CU table in the workbench is a heuristic estimator. `scripts/measure-cu.ts` produces measured numbers via `solana-test-validator`.
+- The CU table in the workbench is a heuristic estimator (constant-table per-construct sum). The measurement script above is the source of truth for absolute numbers.
 - Quasar is emitter-clean but has no cargo coverage. Disabled in the workbench picker; available via `anvil-sol compile --target quasar` for inspection.
 
 ---

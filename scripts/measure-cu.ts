@@ -235,8 +235,36 @@ async function runAndMeasure(
   programId: PublicKey,
   label: string,
 ): Promise<{ initialize: number; increment: number }> {
-  const authority = Keypair.generate();
-  await airdrop(conn, authority.publicKey, 2);
+  // Multi-trial: PDAs derived from a random authority can have any bump
+  // 255 → ~250 with `find_program_address` iterating from 255 downward
+  // — each iteration costs ~1500 CU. Single-trial numbers swing ±3000-
+  // 6000 CU on the same program. Running N independent authorities and
+  // taking the minimum CU value approximates the bump=255 "best case"
+  // (the Anchor / Anvil emitter's actual cost without the find-bump
+  // noise).
+  const TRIALS = 5;
+  let bestInit = Infinity;
+  let bestInc = Infinity;
+  for (let i = 0; i < TRIALS; i++) {
+    const authority = Keypair.generate();
+    await airdrop(conn, authority.publicKey, 2);
+    const r = await runOneTrial(conn, payer, programId, authority, label);
+    if (r.initialize > 0 && r.initialize < bestInit) bestInit = r.initialize;
+    if (r.increment > 0 && r.increment < bestInc) bestInc = r.increment;
+  }
+  return {
+    initialize: bestInit === Infinity ? 0 : bestInit,
+    increment: bestInc === Infinity ? 0 : bestInc,
+  };
+}
+
+async function runOneTrial(
+  conn: Connection,
+  payer: Keypair,
+  programId: PublicKey,
+  authority: Keypair,
+  label: string,
+): Promise<{ initialize: number; increment: number }> {
 
   const [counterPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("counter"), authority.publicKey.toBuffer()],
