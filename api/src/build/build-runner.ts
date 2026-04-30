@@ -78,6 +78,16 @@ export interface BuildResult {
 // purpose — importing from `tests/` would invert the layering and the test
 // file is intentionally simple. The package name is static; the user-supplied
 // `programName` only affects the response context.
+//
+// SECURITY-CRITICAL: these TOML strings are the entire dependency surface
+// the sandbox warmup `cargo fetch` resolves. Both that warmup AND the
+// platform-tools first-run download for build-sbf happen OUTSIDE the
+// sandbox (see ensureScratchProject + sandbox.ts threat model), so the
+// dependency list MUST stay hard-coded here — never sourced from user
+// input. If you add user-controlled deps (e.g. `?extra-deps=...` or
+// uploading a custom Cargo.toml), the network-namespace cut is
+// circumvented and a malicious crate can run code with the API
+// process's credentials. See SECURITY.md.
 const PINOCCHIO_CARGO_TOML = `[package]
 name = "anvil-build"
 version = "0.1.0"
