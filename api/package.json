@@ -16,7 +16,9 @@
     "test:api": "bun test tests/api.test.ts",
     "test:snapshots": "bun test tests/emitter-snapshots.test.ts",
     "test:cargo": "bun test tests/cargo-build.test.ts --timeout 600000",
-    "test:all": "bun test tests/"
+    "test:all": "bun test tests/",
+    "test:update-snapshots": "find tests/snapshots/emitter-output -maxdepth 1 -name '*.rs' -not -name '*.actual.rs' -delete && bun test tests/emitter-snapshots.test.ts",
+    "test:check-clean": "bun scripts/check-clean-snapshots.ts"
   },
   "devDependencies": {
     "@noble/hashes": "^2.2.0",
