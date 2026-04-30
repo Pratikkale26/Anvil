@@ -1,0 +1,24 @@
+{
+  "programId": "Counter111111111111111111111111111111111111",
+  "signers": [
+    { "name": "authority", "airdrop": 2000000000 }
+  ],
+  "pdas": [
+    { "name": "counter", "seeds": ["counter", "$authority.pubkey"] }
+  ],
+  "instructions": [
+    {
+      "ix": "initialize",
+      "args": { "start_value": 10 },
+      "accounts": ["counter", "authority", "system_program"]
+    },
+    {
+      "ix": "increment",
+      "args": { "amount": 5 },
+      "accounts": ["counter", "authority"]
+    }
+  ],
+  "compare": [
+    { "name": "counter" }
+  ]
+}

@@ -84,6 +84,8 @@ A scenario is a small JSON file describing the instructions to run and the accou
 }
 ```
 
+A runnable copy of this scenario lives at [`examples/differential/counter.json`](../examples/differential/counter.json) — drop it into your project as a starting template and adapt to your own program.
+
 ### Run
 
 ```bash

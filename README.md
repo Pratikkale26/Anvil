@@ -73,6 +73,11 @@ bun install && cd cli && bun install && cd ..
 # Transpile a bundled demo and cargo-build it
 bun cli/anvil.ts compile api/src/demo-programs/counter.rs --target native -o /tmp/counter-native
 cd /tmp/counter-native && cargo build
+
+# Or run the differential gate against a bundled scenario:
+bun cli/anvil.ts differential api/src/demo-programs/counter.rs \
+    --scenario examples/differential/counter.json --fuzz 100
+# → 100/100 byte-equal on randomized scalar args
 ```
 
 Or use the public workbench: paste source at [anvilsol.xyz](https://anvilsol.xyz), pick a target, download the bundle.

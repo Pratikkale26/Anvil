@@ -125,17 +125,22 @@ Don't take this on faith. Run the gates yourself.
 git clone https://github.com/Pratikkale26/Anvil && cd Anvil
 bun install && bun test api/tests/differential-*.test.ts
 
-# 2. Run your own scenario against your own program
+# 2. Run a bundled example scenario (counter — initialize + increment).
+#    Templates for your own program: examples/differential/README.md
+anvil-sol differential api/src/demo-programs/counter.rs \
+    --scenario examples/differential/counter.json --fuzz 100
+
+# 3. Run your own scenario against your own program
 anvil-sol differential ./your-program.rs \
     --scenario your-audited-scenarios.json \
     --anchor-extra-deps 'anchor-spl = "0.31"'
 
-# 3. Fuzz test (Path B) — add random inputs on top of your scenario
+# 4. Fuzz test (Path B) — add random inputs on top of your scenario
 anvil-sol differential ./your-program.rs \
     --scenario your-audited-scenarios.json \
     --fuzz 1000
 
-# 4. Confirm the audit log
+# 5. Confirm the audit log
 #    (every IR kind exercised, every gate result, seeds of any divergence)
 ```
 
