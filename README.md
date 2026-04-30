@@ -25,7 +25,7 @@ Cargo green is necessary but not sufficient. This is the actual correctness sign
 
 ## What's verified today
 
-**9 byte-equal differential fixtures** lock these emit shapes against the Anchor reference on every commit:
+**10 byte-equal differential fixtures** lock these emit shapes against the Anchor reference on every commit:
 
 | Fixture | Surface |
 |---|---|
@@ -38,8 +38,9 @@ Cargo green is necessary but not sufficient. This is the actual correctness sign
 | `t22-transfer` | Token-2022 `transfer_checked` (mint decimals extraction) |
 | `close-account` | `close = receiver` rent refund + reap |
 | `set-authority` | Hand-rolled raw SPL `set_authority` on Pinocchio |
+| `escrow` | PDA init + ATA init (vault) + `token::transfer` |
 
-`bun test api/tests/differential-*.test.ts` runs all 9 + the AI-under-differential framework smoke. Plus 36+ deterministic real-world cargo-build regression gates from `solana-developers/program-examples`.
+`bun test api/tests/differential-*.test.ts` runs all 10 + the AI-under-differential framework smoke. Plus 36+ deterministic real-world cargo-build regression gates from `solana-developers/program-examples`.
 
 ### Measured CU savings on bundled demos
 
@@ -205,7 +206,7 @@ docs/   Architecture, differential testing, feature matrix, migration guide
 
 ## Status
 
-v0.3.4. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). 118+ tests passing, 9 byte-equal differential fixtures, 36+ real-world cargo regressions, hardened sandbox.
+v0.3.4. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). 118+ tests passing, 10 byte-equal differential fixtures, 36+ real-world cargo regressions, hardened sandbox.
 
 Working notes for grant + migration: [docs/migration-guide.md](docs/migration-guide.md).
 

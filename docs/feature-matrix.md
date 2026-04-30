@@ -39,10 +39,10 @@ These run on every Anvil release; any emit divergence fails the gate.
 | `t22-transfer` | Token-2022 `transfer_checked` (decimals extraction) |
 | `close-account` | `close = receiver` rent refund + reap |
 | `set-authority` | hand-rolled raw SPL `set_authority` on Pinocchio |
+| `escrow` | PDA init + ATA init (vault, `associated_token::*` form) + `token::transfer` |
 
 Deferred stubs (file headers in `api/tests/differential-*.test.ts` document the path to enable):
 
-- `escrow` — full SPL flow with two-party authority transfer
 - `staking` — clock + `emit!` event log handling
 - `realloc` — Vec-grow rent delta + zero-fill
 
