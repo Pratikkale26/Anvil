@@ -234,14 +234,28 @@ export function defineDifferential<S extends DifferentialSetup>(
         const compareLamports = fixture.compareLamports ?? true;
         type Mismatch =
           | { kind: "data"; label: string; anchor: Buffer; anvil: Buffer }
-          | { kind: "lamports"; label: string; anchor: bigint; anvil: bigint };
+          | { kind: "lamports"; label: string; anchor: bigint; anvil: bigint }
+          | { kind: "presence"; label: string; anchorPresent: boolean; anvilPresent: boolean };
         let firstMismatch: Mismatch | null = null;
 
         for (const { pubkey, label } of accounts) {
           const aSnap = anchorState.get(pubkey.toBase58());
           const vSnap = anvilState.get(pubkey.toBase58());
-          if (!aSnap) throw new Error(`anchor: account ${label} (${pubkey.toBase58()}) missing post-scenario`);
-          if (!vSnap) throw new Error(`anvil: account ${label} (${pubkey.toBase58()}) missing post-scenario`);
+          // Both missing = byte-equal (both runs closed/garbage-collected
+          // the account). Useful for `close = X` constraint fixtures where
+          // the account is fully reaped after the close instruction.
+          if (!aSnap && !vSnap) continue;
+          // One missing, one present = divergence — surface it as a
+          // presence mismatch so the test fails loudly with a clear cause.
+          if (!aSnap || !vSnap) {
+            firstMismatch ??= {
+              kind: "presence",
+              label,
+              anchorPresent: !!aSnap,
+              anvilPresent: !!vSnap,
+            };
+            continue;
+          }
 
           let a = aSnap.data;
           let v = vSnap.data;
@@ -275,11 +289,16 @@ export function defineDifferential<S extends DifferentialSetup>(
               if (firstMismatch.anchor[i] !== firstMismatch.anvil[i]) { diffOffset = i; break; }
             }
             console.log(`  first diff at byte ${diffOffset} of ${minLen}`);
-          } else {
+          } else if (firstMismatch.kind === "lamports") {
             console.log(`\n[differential-${fixture.fixtureName}] LAMPORT MISMATCH on '${firstMismatch.label}':`);
             console.log(`  anchor lamports: ${firstMismatch.anchor}`);
             console.log(`  anvil  lamports: ${firstMismatch.anvil}`);
             console.log(`  delta:           ${firstMismatch.anvil - firstMismatch.anchor}`);
+          } else {
+            console.log(`\n[differential-${fixture.fixtureName}] PRESENCE MISMATCH on '${firstMismatch.label}':`);
+            console.log(`  anchor present: ${firstMismatch.anchorPresent}`);
+            console.log(`  anvil  present: ${firstMismatch.anvilPresent}`);
+            console.log(`  one side closed/reaped the account; the other left it live.`);
           }
         }
         expect(firstMismatch).toBeNull();
