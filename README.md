@@ -2,7 +2,7 @@
 
 > **Anchor → Pinocchio, with proof.** Paste an Anchor program in, get a cargo-buildable Pinocchio project out — verified byte-equal to the original by running both inside a real VM.
 
-[anvilsol.xyz](https://anvilsol.xyz) · [npm](https://www.npmjs.com/package/anvil-sol) · [docs](docs/) · [security](SECURITY.md)
+[anvilsol.xyz](https://anvilsol.xyz) · [npm](https://www.npmjs.com/package/anvil-sol) · [docs](docs/) · [security](SECURITY.md) · [audit trust model](docs/audit-trust-model.md)
 
 ---
 

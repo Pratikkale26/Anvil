@@ -574,6 +574,194 @@ export function findBuiltSo(targetDeployDir: string): Buffer {
   return readFileSync(join(targetDeployDir, entries[0]!));
 }
 
+// ─── Fuzz support — Path B in docs/audit-trust-model.md ─────────────────────
+
+/**
+ * Deterministic LCG — same seed → same sequence. Not cryptographic; we
+ * only need reproducibility (`--fuzz-seed <hex>` re-runs the exact
+ * mutation sequence) and uniform-ish distribution. Constants from
+ * Numerical Recipes' linear congruential.
+ */
+class FuzzRng {
+  private state: bigint;
+  constructor(seed: bigint) {
+    // Mix the seed so seed=0 doesn't degenerate to all-zero state.
+    this.state = (seed ^ 0x9e3779b97f4a7c15n) & 0xffffffffffffffffn;
+  }
+  /** Next u64. */
+  nextU64(): bigint {
+    // xorshift64 — fast, simple, decorrelates seed bits.
+    let x = this.state;
+    x ^= x << 13n; x &= 0xffffffffffffffffn;
+    x ^= x >> 7n;
+    x ^= x << 17n; x &= 0xffffffffffffffffn;
+    this.state = x;
+    return x;
+  }
+  /** Random integer in [0, max). max must fit in u53 (JS safe int). */
+  nextRange(max: number): number {
+    return Number(this.nextU64() % BigInt(max));
+  }
+  /** True with probability 1/n. */
+  oneIn(n: number): boolean {
+    return this.nextRange(n) === 0;
+  }
+}
+
+/**
+ * Mutate one scalar arg value. Biases ~30% toward boundary values
+ * (0, 1, MAX, MIN) and ~70% uniformly random — boundaries catch
+ * off-by-one and integer-overflow bugs that uniform random misses.
+ * Pubkey args are not mutated (they reference scenario-named keys);
+ * unsupported types throw.
+ */
+function fuzzArgValue(
+  arg: Arg,
+  rng: FuzzRng,
+): number | string | boolean {
+  // Bias toward boundaries 30% of the time. Each integer type gets
+  // 0, 1, MAX, MIN; bool flips uniformly.
+  const useBoundary = rng.oneIn(3);
+
+  switch (arg.type) {
+    case "u8":   return useBoundary ? pickBoundary(rng, [0, 1, 255]) : rng.nextRange(256);
+    case "u16":  return useBoundary ? pickBoundary(rng, [0, 1, 65535]) : rng.nextRange(65536);
+    case "u32":  return useBoundary ? pickBoundary(rng, [0, 1, 4294967295]) : rng.nextRange(4294967296);
+    case "u64":  return useBoundary
+      ? pickBoundary(rng, [0, 1, Number.MAX_SAFE_INTEGER])
+      : Number(rng.nextU64() & 0x1fffffffffffffn);  // u53 to stay JS-safe
+    case "u128": return useBoundary ? 0 : Number(rng.nextU64() & 0x1fffffffffffffn);
+    case "i8":   return useBoundary ? pickBoundary(rng, [-128, -1, 0, 1, 127]) : rng.nextRange(256) - 128;
+    case "i16":  return useBoundary ? pickBoundary(rng, [-32768, 0, 32767]) : rng.nextRange(65536) - 32768;
+    case "i32":  return useBoundary ? pickBoundary(rng, [-2147483648, 0, 2147483647]) : rng.nextRange(4294967296) - 2147483648;
+    case "i64":  return useBoundary
+      ? pickBoundary(rng, [-Number.MAX_SAFE_INTEGER, 0, Number.MAX_SAFE_INTEGER])
+      : Number(rng.nextU64() & 0x1fffffffffffffn);
+    case "i128": return useBoundary ? 0 : Number(rng.nextU64() & 0x1fffffffffffffn);
+    case "bool": return rng.oneIn(2);
+    case "Pubkey":
+      throw new Error(
+        `--fuzz can't randomize Pubkey args ('${arg.name}' on this ix). ` +
+        `Pubkeys must reference scenario-named keys to remain meaningful — fix the scenario ` +
+        `to bind '${arg.name}' to a signer or PDA, or remove this ix from the fuzzed scenario.`,
+      );
+    default:
+      throw new Error(
+        `--fuzz can't randomize arg '${arg.name}' (type '${arg.type}'). ` +
+        `Hand-write a TS fixture using api/tests/differential-harness.ts for this case.`,
+      );
+  }
+}
+
+function pickBoundary(rng: FuzzRng, choices: number[]): number {
+  return choices[rng.nextRange(choices.length)] ?? 0;
+}
+
+/**
+ * Produce a fuzzed copy of a scenario: mutate every scalar arg in every
+ * instruction. PDAs, signers, accounts, compare lists are preserved
+ * exactly — only ix args change. The byte-equal post-state assertion
+ * is meaningful because identical args produce identical state on both
+ * sides.
+ */
+export function fuzzScenarioArgs(
+  base: DifferentialScenario,
+  ir: SolanaIR,
+  rng: FuzzRng,
+): DifferentialScenario {
+  const newInstructions = base.instructions.map((scenIx) => {
+    const irIx = ir.instructions.find((i) => i.name === scenIx.ix);
+    if (!irIx) {
+      throw new Error(
+        `--fuzz: instruction '${scenIx.ix}' from scenario not found in parsed IR. ` +
+        `IR has: ${ir.instructions.map((i) => i.name).join(", ")}.`,
+      );
+    }
+    const newArgs: Record<string, number | string | boolean> = { ...(scenIx.args ?? {}) };
+    for (const arg of irIx.args) {
+      // Only mutate scalar args. Pubkey args throw inside fuzzArgValue
+      // (intentional — fuzzing a Pubkey doesn't lead anywhere useful;
+      // user must bind it to a scenario name).
+      if (arg.type === "Pubkey") continue;
+      newArgs[arg.name] = fuzzArgValue(arg, rng);
+    }
+    return { ...scenIx, args: newArgs };
+  });
+  return { ...base, instructions: newInstructions };
+}
+
+export interface FuzzRunResult {
+  totalIterations: number;
+  passed: number;
+  divergentIteration?: {
+    iteration: number;
+    seed: string;
+    scenario: DifferentialScenario;
+    failure: ScenarioRunResult["results"];
+  };
+  durationMs: number;
+}
+
+/**
+ * Run --fuzz N iterations. Stops on first divergence (the user wants the
+ * minimal repro). Each iteration uses a deterministic sub-seed derived
+ * from the master seed + iteration index, so a divergence at iteration K
+ * can be reproduced by re-running with the printed seed and inspecting
+ * the K-th sub-seed offline.
+ *
+ * Compatible with both --anchor-so + Anvil .so and built-from-source
+ * .so — caller passes already-built buffers.
+ */
+export async function runFuzzDifferential(args: {
+  baseScenario: DifferentialScenario;
+  anchorSo: Buffer;
+  anvilSo: Buffer;
+  ir: SolanaIR;
+  iterations: number;
+  /** Hex string. If undefined, generated from Math.random. */
+  seed?: string;
+  /** Called once per iteration with (i, total) for progress reporting. */
+  onProgress?: (iteration: number, total: number) => void;
+}): Promise<FuzzRunResult> {
+  const t0 = Date.now();
+  const masterSeed = args.seed ?? Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, "0");
+  const masterSeedBig = BigInt("0x" + masterSeed);
+  let passed = 0;
+  for (let i = 0; i < args.iterations; i++) {
+    args.onProgress?.(i, args.iterations);
+    // Derive a per-iteration seed: master ^ i (rotated). Stable across
+    // runs given the same master seed.
+    const iterSeed = (masterSeedBig ^ (BigInt(i) * 0xdeadbeefn)) & 0xffffffffffffffffn;
+    const rng = new FuzzRng(iterSeed);
+    const fuzzed = fuzzScenarioArgs(args.baseScenario, args.ir, rng);
+    const result = await runScenarioDifferential({
+      scenario: fuzzed,
+      anchorSo: args.anchorSo,
+      anvilSo: args.anvilSo,
+      ir: args.ir,
+    });
+    if (!result.ok) {
+      return {
+        totalIterations: args.iterations,
+        passed,
+        divergentIteration: {
+          iteration: i,
+          seed: masterSeed,
+          scenario: fuzzed,
+          failure: result.results,
+        },
+        durationMs: Date.now() - t0,
+      };
+    }
+    passed++;
+  }
+  return {
+    totalIterations: args.iterations,
+    passed,
+    durationMs: Date.now() - t0,
+  };
+}
+
 // ─── JSON schema documentation ───────────────────────────────────────────────
 
 export function schemaHelp(): string {

@@ -164,6 +164,21 @@ interface CliArgs {
   anchorExtraDepsFile: string | null;
   /** `differential --skip-cache` forces both .so to rebuild even if cached. */
   skipCache: boolean;
+  /**
+   * `differential --fuzz <N>` — run the scenario N times with randomized
+   * scalar args each iteration (uN, iN, bool). Pubkey
+   * args stay bound to the scenario's named keys. Reports the seed of
+   * any divergence so the user can re-run with that exact mutation.
+   * Path B in docs/audit-trust-model.md — covers the long-tail inputs
+   * hand-written scenarios miss.
+   */
+  fuzz: number | null;
+  /**
+   * `differential --fuzz-seed <hex>` — pin the RNG seed for reproducibility.
+   * Defaults to a fresh 32-bit seed each run; reproduce a divergence by
+   * passing the seed printed at the divergence boundary.
+   */
+  fuzzSeed: string | null;
   help: boolean;
 }
 
@@ -187,6 +202,8 @@ function parseArgs(argv: string[]): CliArgs {
     scenario: null,
     anchorSo: null,
     anchorExtraDeps: [],
+    fuzz: null,
+    fuzzSeed: null,
     anchorExtraDepsFile: null,
     skipCache: false,
     help: false,
@@ -307,6 +324,23 @@ function parseArgs(argv: string[]): CliArgs {
     if (arg === "--skip-cache") {
       args.skipCache = true;
       i++;
+      continue;
+    }
+
+    if (arg === "--fuzz") {
+      const v = rest[i + 1];
+      const n = v ? parseInt(v, 10) : NaN;
+      if (!Number.isFinite(n) || n <= 0) {
+        fatal(`--fuzz requires a positive integer (got '${v ?? ""}')`);
+      }
+      args.fuzz = n;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--fuzz-seed") {
+      args.fuzzSeed = rest[i + 1] ?? null;
+      i += 2;
       continue;
     }
 
@@ -1741,6 +1775,15 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     --output, -o <dir>      Working directory (default: ./anvil-output/)
     --skip-cache            Force both .so to rebuild even if cached.
     --target, -t pinocchio  Anvil target (only pinocchio is gated for now)
+    --fuzz <N>              Run the scenario N times with randomized scalar
+                            args each iteration. Catches the long-tail inputs
+                            hand-written scenarios miss (boundary integer
+                            values, sign flips, arbitrary u64). Stops on first
+                            divergence and prints the seed + args needed to
+                            reproduce. See docs/audit-trust-model.md (Path B).
+    --fuzz-seed <hex>       Pin the RNG seed for reproducibility. Defaults to
+                            a fresh 32-bit seed each run; pass the seed printed
+                            at a divergence to re-run the exact mutation.
 
   ${c.bold}WHAT IT DOES (with --scenario)${c.reset}
 
@@ -1961,12 +2004,79 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
   }
   console.log();
 
-  // Load Anvil .so + run scenario.
+  // Load Anvil .so + (single run | fuzz N runs).
+  let anvilSoBytes: Buffer;
+  try {
+    const { findBuiltSo } = await import("./scenario-runner.js");
+    anvilSoBytes = findBuiltSo(anvilSoDir);
+  } catch (err) {
+    error(`could not locate Anvil .so: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
+  if (args.fuzz && args.fuzz > 0) {
+    // ── Fuzz path: run N iterations with randomized scalar args.
+    progress(`Fuzzing scenario in LiteSVM — ${args.fuzz} iterations${args.fuzzSeed ? ` (seed=${args.fuzzSeed})` : ""}...`);
+    let fuzzResult;
+    try {
+      const { runFuzzDifferential } = await import("./scenario-runner.js");
+      fuzzResult = await runFuzzDifferential({
+        baseScenario: scenario,
+        anchorSo: anchorSoBytes,
+        anvilSo: anvilSoBytes,
+        ir,
+        iterations: args.fuzz,
+        seed: args.fuzzSeed ?? undefined,
+        // Progress every 10% (or every iteration if N < 10).
+        onProgress: (i, total) => {
+          const tick = Math.max(1, Math.floor(total / 10));
+          if (i > 0 && i % tick === 0) {
+            console.log(`    ${c.dim}…${i}/${total} iterations${c.reset}`);
+          }
+        },
+      });
+    } catch (err) {
+      error(`fuzz run failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    console.log();
+    if (!fuzzResult.divergentIteration) {
+      success(`${c.bold}BYTE-EQUAL under fuzz${c.reset} — ${fuzzResult.passed}/${fuzzResult.totalIterations} iterations passed. (${fuzzResult.durationMs}ms)`);
+      console.log();
+      console.log(`  ${c.dim}Anvil's emit produced byte-identical state on every randomized input.${c.reset}`);
+      console.log(`  ${c.dim}This covers the long-tail inputs hand-written scenarios miss — see${c.reset}`);
+      console.log(`  ${c.dim}docs/audit-trust-model.md (Path B) for what this proves.${c.reset}`);
+      console.log();
+      return;
+    }
+    const div = fuzzResult.divergentIteration;
+    error(`${c.bold}DIVERGENCE at iteration ${div.iteration}${c.reset} — ${fuzzResult.passed} prior iterations passed. (${fuzzResult.durationMs}ms)`);
+    console.log();
+    console.log(`    Reproduce: ${c.cyan}anvil differential ${args.input} --scenario ${args.scenario} --fuzz ${div.iteration + 1} --fuzz-seed ${div.seed}${c.reset}`);
+    console.log();
+    console.log(`    ${c.dim}Divergent ix args (iteration ${div.iteration}):${c.reset}`);
+    for (const ix of div.scenario.instructions) {
+      console.log(`      ${c.dim}${ix.ix}: ${JSON.stringify(ix.args ?? {})}${c.reset}`);
+    }
+    console.log();
+    for (const r of div.failure) {
+      if (r.ok) {
+        console.log(`    ${c.green}✓${c.reset} ${r.name}`);
+      } else {
+        console.log(`    ${c.red}✗${c.reset} ${r.name} [${r.kind}] ${r.details}`);
+      }
+    }
+    console.log();
+    console.log(`  ${c.dim}File an issue with the seed + ix args at https://github.com/Pratikkale26/Anvil/issues${c.reset}`);
+    console.log();
+    process.exit(2);
+  }
+
+  // ── Default path: single run.
   progress("Running scenario in LiteSVM (Anchor + Anvil)...");
   let runResult;
   try {
-    const { findBuiltSo, runScenarioDifferential } = await import("./scenario-runner.js");
-    const anvilSoBytes = findBuiltSo(anvilSoDir);
+    const { runScenarioDifferential } = await import("./scenario-runner.js");
     runResult = await runScenarioDifferential({
       scenario,
       anchorSo: anchorSoBytes,
