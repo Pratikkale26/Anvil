@@ -134,6 +134,21 @@ interface CliArgs {
    * failure, distinct from 1 (parse/emit error).
    */
   strict: boolean;
+  /**
+   * `differential --scenario path/to/scenario.json` — drives the byte-equal
+   * compare against the Anchor reference using a user-supplied JSON
+   * scenario. Without --scenario, the differential subcommand only builds
+   * the Anvil .so and points the user at the example fixtures.
+   */
+  scenario: string | null;
+  /**
+   * `differential --anchor-so path.so` — pre-built Anchor reference .so.
+   * If unset, the runner builds it from the same source as the Anvil side
+   * (assumes the user wants a self-test against the input source itself).
+   */
+  anchorSo: string | null;
+  /** `differential --skip-cache` forces both .so to rebuild even if cached. */
+  skipCache: boolean;
   help: boolean;
 }
 
@@ -154,6 +169,9 @@ function parseArgs(argv: string[]): CliArgs {
     thresholdAbs: 10,
     snapshotPath: null,
     strict: false,
+    scenario: null,
+    anchorSo: null,
+    skipCache: false,
     help: false,
   };
 
@@ -240,6 +258,24 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--strict") {
       args.strict = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--scenario") {
+      args.scenario = rest[i + 1] ?? null;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--anchor-so") {
+      args.anchorSo = rest[i + 1] ?? null;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--skip-cache") {
+      args.skipCache = true;
       i++;
       continue;
     }
@@ -1642,50 +1678,94 @@ async function main(): Promise<void> {
 async function cmdDifferential(args: CliArgs): Promise<void> {
   if (args.help) {
     console.log(`
-  ${c.bold}anvil differential${c.reset} — Build the Anvil-Pinocchio .so from your
-  Anchor source so you can byte-compare against the original in LiteSVM.
+  ${c.bold}anvil differential${c.reset} — Byte-equal correctness gate for your own
+  Anchor program. Builds Anchor + Anvil-Pinocchio .so binaries and runs
+  a user-supplied JSON scenario against both in LiteSVM, asserting
+  byte-equal account state.
 
   ${c.bold}USAGE${c.reset}
 
-    anvil differential <input> --target pinocchio [-o <dir>]
+    anvil differential <input> --scenario scenario.json [options]
+    anvil differential <input>                         ${c.dim}# build-only, no compare${c.reset}
 
-  ${c.bold}WHAT IT DOES${c.reset}
+  ${c.bold}OPTIONS${c.reset}
 
-    1. Parse <input> (Anchor .rs file or project directory)
-    2. Emit a Pinocchio project to <output>/anvil/
-    3. Build it via cargo-build-sbf — produces target/deploy/<name>.so
+    --scenario <path>       JSON scenario file describing instructions to run
+                            and accounts to compare (see SCENARIO FORMAT below)
+    --anchor-so <path>      Pre-built Anchor reference .so. If unset, the
+                            runner builds one from the same source via
+                            cargo-build-sbf.
+    --output, -o <dir>      Working directory (default: ./anvil-output/)
+    --skip-cache            Force both .so to rebuild even if cached.
+    --target, -t pinocchio  Anvil target (only pinocchio is gated for now)
 
-  ${c.bold}NEXT STEPS${c.reset}
+  ${c.bold}WHAT IT DOES (with --scenario)${c.reset}
 
-  Wire your own scenario script that:
-    - Builds the original Anchor source into a separate .so via 'anchor build'
-    - Loads BOTH binaries into a LiteSVM instance with the same program ID
-    - Runs identical TransactionInstructions against each
-    - Byte-compares account state via svm.getAccount(pubkey).data
+    1. Parse <input> Anchor source
+    2. Emit + cargo-build-sbf the Anvil-Pinocchio .so
+    3. cargo-build-sbf the Anchor reference .so (or use --anchor-so)
+    4. Load both into LiteSVM with deterministic keypairs (sha256 seed)
+    5. Run scenario.instructions sequentially against each
+    6. Byte-compare scenario.compare accounts (data + lamports)
+    7. Print PASS / FAIL with diff offset on mismatch (exit code 2 on fail)
 
-  See api/tests/differential-counter.test.ts for a working pattern.
-  Pin Clock + Slot in both runs (svm.warpToTimestamp / svm.warpToSlot)
-  if the source's logic depends on time.
+  ${c.bold}WHAT IT DOES (without --scenario)${c.reset}
+
+  Build-only mode — produces the Anvil .so under <output>/anvil/, points
+  you at a TS template fixture for hand-written scenarios. Useful when
+  your program uses arg shapes the JSON scenario can't safely encode
+  (Vec<u8>, custom structs, etc.).
+
+  ${c.bold}SCENARIO FORMAT${c.reset}
+
+    {
+      "programId": "<base58 program id>",
+      "signers": [{ "name": "authority", "airdrop": 2000000000 }],
+      "pdas": [{ "name": "counter_pda",
+                 "seeds": ["counter", "$authority.pubkey"] }],
+      "instructions": [{
+        "ix": "initialize",
+        "args": { "amount": 10 },
+        "accounts": ["counter_pda", "authority", "system_program"]
+      }],
+      "compare": [{ "name": "counter_pda" }]
+    }
+
+  Built-in account names: system_program, token_program,
+  token_2022_program, associated_token_program, rent, clock.
+
+  Seed substitution: "$<signer>.pubkey" expands to that signer's
+  public key bytes; raw strings expand to UTF-8 bytes.
+
+  Supported arg types: u8/u16/u32/u64/u128, i8/i16/i32/i64/i128, bool,
+  Pubkey. For Vec<u8>, custom structs, hand-write a TS fixture against
+  api/tests/differential-harness.ts (see the bundled examples).
 
   ${c.bold}REQUIREMENTS${c.reset}
 
-    - cargo-build-sbf (Anza CLI 3.x recommended)
-    - The original Anchor project with its own anchor build path
+    - cargo-build-sbf (Anza CLI 3.x; platform-tools v1.52+)
+    - For --scenario: ${c.bold}npm install litesvm @solana/web3.js @noble/hashes${c.reset}
+      (peer deps, lazy-loaded — only needed for --scenario)
 
   ${c.bold}WHY THIS MATTERS${c.reset}
 
-  Cargo-green proves the emit COMPILES. Byte-equal differential testing
-  proves the emit produces identical on-chain state — the actual
-  correctness signal. Anvil's bundled fixtures cover counter, vault,
-  ata-mint, spl-transfer, spl-burn, has-one, t22-transfer (7 fixtures).
-  This subcommand is the entry point for getting your OWN program
-  under the same gate.
+  Cargo-green proves the emit COMPILES. Byte-equal differential proves
+  the emit produces identical on-chain state. Anvil's own correctness
+  comes from running this gate on its bundled fixtures (counter, vault,
+  ata-mint, spl-transfer, spl-burn, has-one, t22-transfer, …); this
+  command lets you put your own program under the same gate.
+
+  ${c.bold}EXIT CODES${c.reset}
+
+    0    All compared accounts byte-equal across runs (or build-only mode)
+    1    Build / parse / scenario-load failure
+    2    Byte-equal compare failed — diff details printed
 `);
     return;
   }
 
   if (!args.input) {
-    fatal("Missing input file or directory.\n\n  Usage: anvil differential <input> --target pinocchio");
+    fatal("Missing input file or directory.\n\n  Usage: anvil differential <input> --scenario scenario.json");
   }
 
   const target = validateTarget(args.target ?? "pinocchio");
@@ -1727,9 +1807,14 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
   success(`Wrote Anvil project to ${anvilProjDir}/`);
   console.log();
 
-  // Step 2: cargo-build-sbf
+  // Step 2: cargo-build-sbf the Anvil .so
   progress("Building Pinocchio .so via cargo-build-sbf...");
   const { spawnSync } = await import("node:child_process");
+  const anvilSoDir = join(anvilProjDir, "target", "deploy");
+  if (args.skipCache && existsSync(anvilSoDir)) {
+    const { rmSync } = await import("node:fs");
+    rmSync(anvilSoDir, { recursive: true, force: true });
+  }
   const r = spawnSync("cargo-build-sbf", ["--manifest-path", join(anvilProjDir, "Cargo.toml")], {
     stdio: "inherit",
     timeout: 600_000,
@@ -1739,22 +1824,118 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     error(`cargo-build-sbf failed (exit ${r.status}). The emitted code may have a target compatibility gap; run 'anvil compile' first to inspect.`);
     process.exit(1);
   }
-  const soDir = join(anvilProjDir, "target", "deploy");
-  success(`Pinocchio .so ready in ${soDir}/`);
+  success(`Pinocchio .so ready in ${anvilSoDir}/`);
   console.log();
 
-  // Step 3: print next-steps for the user
-  console.log(`  ${c.bold}Next steps${c.reset}`);
+  // Build-only mode — print the next-steps and exit. User opted out of the
+  // scenario-driven compare (or hasn't written a scenario yet).
+  if (!args.scenario) {
+    console.log(`  ${c.bold}Next step${c.reset}`);
+    console.log();
+    console.log(`  ${c.dim}# write a scenario.json (see 'anvil differential --help' for the shape)${c.reset}`);
+    console.log(`  ${c.cyan}anvil differential ${args.input} --scenario scenario.json${c.reset}`);
+    console.log();
+    console.log(`  ${c.dim}# or hand-write a TS fixture if the JSON shape can't express your case${c.reset}`);
+    console.log(`  ${c.dim}# template: api/tests/differential-counter.test.ts${c.reset}`);
+    console.log();
+    return;
+  }
+
+  // ─── Scenario-driven byte-equal compare ──────────────────────────────────
+  progress(`Loading scenario from ${args.scenario}...`);
+  if (!existsSync(args.scenario)) {
+    error(`scenario file not found: ${args.scenario}`);
+    process.exit(1);
+  }
+  let scenario;
+  try {
+    scenario = JSON.parse(readFileSync(args.scenario, "utf-8"));
+  } catch (err) {
+    error(`scenario JSON parse failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+  // Minimal shape check — defensive, the runner will surface other issues
+  // with an actionable message.
+  if (typeof scenario.programId !== "string" || !Array.isArray(scenario.signers) ||
+      !Array.isArray(scenario.instructions) || !Array.isArray(scenario.compare)) {
+    error(`scenario is missing required keys: programId / signers / instructions / compare`);
+    console.log(`\n  Run 'anvil differential --help' for the schema.\n`);
+    process.exit(1);
+  }
+  success(`Scenario: ${scenario.signers.length} signer(s), ${scenario.instructions.length} instruction(s), ${scenario.compare.length} compare target(s)`);
   console.log();
-  console.log(`  ${c.dim}# build the original Anchor reference into its own .so${c.reset}`);
-  console.log(`  cd <your-anchor-project> && anchor build`);
+
+  // Build (or load) the Anchor reference .so.
+  let anchorSoBytes: Buffer;
+  if (args.anchorSo) {
+    progress(`Using pre-built Anchor reference: ${args.anchorSo}`);
+    if (!existsSync(args.anchorSo)) {
+      error(`--anchor-so file not found: ${args.anchorSo}`);
+      process.exit(1);
+    }
+    anchorSoBytes = readFileSync(args.anchorSo);
+  } else {
+    progress("Building Anchor reference .so via cargo-build-sbf...");
+    const refDir = join(outputDir, "_anchor_ref");
+    if (args.skipCache && existsSync(refDir)) {
+      const { rmSync } = await import("node:fs");
+      rmSync(refDir, { recursive: true, force: true });
+    }
+    try {
+      const { buildAnchorReferenceSo } = await import("./scenario-runner.js");
+      anchorSoBytes = buildAnchorReferenceSo({
+        anchorSource: source,
+        packageName: `anvil_diff_${ir.name.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 32)}`,
+        scratchDir: refDir,
+      });
+    } catch (err) {
+      error(`Anchor reference build failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    success("Anchor reference .so ready");
+  }
   console.log();
-  console.log(`  ${c.dim}# write a scenario that loads BOTH .so into LiteSVM and byte-compares${c.reset}`);
-  console.log(`  ${c.dim}# template: api/tests/differential-counter.test.ts${c.reset}`);
+
+  // Load Anvil .so + run scenario.
+  progress("Running scenario in LiteSVM (Anchor + Anvil)...");
+  let runResult;
+  try {
+    const { findBuiltSo, runScenarioDifferential } = await import("./scenario-runner.js");
+    const anvilSoBytes = findBuiltSo(anvilSoDir);
+    runResult = await runScenarioDifferential({
+      scenario,
+      anchorSo: anchorSoBytes,
+      anvilSo: anvilSoBytes,
+      ir,
+    });
+  } catch (err) {
+    error(`scenario run failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
   console.log();
-  console.log(`  ${c.cyan}If the byte-compare diverges, the Anvil emit has drifted semantically${c.reset}`);
-  console.log(`  ${c.cyan}from the Anchor original. File an issue with the diff bytes + offset.${c.reset}`);
+
+  // Report.
+  if (runResult.ok) {
+    success(`${c.bold}BYTE-EQUAL${c.reset} — all ${runResult.results.length} compared account(s) match. (${runResult.durationMs}ms)`);
+    for (const r of runResult.results) {
+      console.log(`    ${c.green}✓${c.reset} ${r.name}`);
+    }
+    console.log();
+    return;
+  }
+
+  error(`${c.bold}BYTE-EQUAL FAILED${c.reset} — Anvil emit diverges from Anchor reference. (${runResult.durationMs}ms)`);
+  for (const r of runResult.results) {
+    if (r.ok) {
+      console.log(`    ${c.green}✓${c.reset} ${r.name}`);
+    } else {
+      console.log(`    ${c.red}✗${c.reset} ${r.name} [${r.kind}] ${r.details}`);
+    }
+  }
   console.log();
+  console.log(`  ${c.dim}File an issue with the diff details at https://github.com/Pratikkale26/Anvil/issues${c.reset}`);
+  console.log();
+  process.exit(2);
 }
 
 // ─── migrate ─────────────────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ const REPO_ROOT = join(CLI_ROOT, "..");
 const API_SRC = join(REPO_ROOT, "api", "src");
 const OUT_API_SRC = join(CLI_ROOT, "src", "api-src");
 const OUT_ANVIL = join(CLI_ROOT, "src", "anvil.ts");
+const OUT_SCENARIO = join(CLI_ROOT, "src", "scenario-runner.ts");
 
 function rmrf(p: string): void {
   try { rmSync(p, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -94,6 +95,18 @@ function main(): void {
   // ./migrate/... already resolves correctly from cli/src/ (we just copied it).
   const rewritten = original.replace(/(["'`])\.\.\/api\/src\//g, "$1./api-src/");
   writeFileSync(OUT_ANVIL, rewritten, "utf-8");
+
+  // scenario-runner.ts is the JSON-scenario differential runner. It imports
+  // from `./api-src/...` once flattened into cli/src/, same rewrite as anvil.ts.
+  // Lives at cli/scenario-runner.ts in source so it sits next to anvil.ts
+  // and shares the same import-path semantics.
+  const scenarioSrc = join(CLI_ROOT, "scenario-runner.ts");
+  if (existsSync(scenarioSrc)) {
+    console.log(`[prepack] writing scenario-runner.ts with rewritten imports → ${OUT_SCENARIO}`);
+    const sRaw = readFileSync(scenarioSrc, "utf-8");
+    const sRewritten = sRaw.replace(/(["'`])\.\.\/api\/src\//g, "$1./api-src/");
+    writeFileSync(OUT_SCENARIO, sRewritten, "utf-8");
+  }
 
   console.log(`[prepack] verifying entry compiles (typecheck)…`);
   // Caller should run `bun cli/src/anvil.ts --help` smoke test after this
