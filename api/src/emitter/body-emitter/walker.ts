@@ -248,18 +248,38 @@ export class BodyWalker {
   }
 
   detectPassThroughMutations(code: string): string[] {
-    // Detect any `<account>.<field-chain-or-index>… = <RHS>` assignment.
-    // The original regex only caught direct `.field = …` shapes; coral-
-    // multisig's `transaction.signers[owner_index] = true;` (index
-    // assignment) and chained `state.inner.value = …` (nested field)
-    // both slipped through and produced E0596 / E0594. Match an
-    // arbitrary chain of `.field` / `[index]` followed by `=` that
-    // ISN'T part of `==`, `!=`, `<=`, `>=`.
-    return this.stateAccountNames.filter((accountName) =>
-      new RegExp(
-        `\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\s*=(?!=)`,
-      ).test(code),
-    );
+    // Detect mutations on a state account in pass-through code. Three shapes:
+    //   1. Direct/chained assignment: `<account>.<field-chain>… = <RHS>`
+    //      (also catches index assignment like `state.signers[i] = true`)
+    //   2. Compound assignment: `<account>.<field>.<sub> += …` etc.
+    //   3. Mutating method call: `<account>.<field-chain>.<mut-method>(…)`
+    //      where mut-method is a known &mut self method (Vec::push,
+    //      HashMap::insert, etc.) — this previously slipped through and
+    //      produced E0596 "cannot borrow as mutable" on the state read,
+    //      because the binding was emitted as `let X` instead of `let mut X`.
+    //
+    // Match an arbitrary chain of `.field` / `[index]` followed by either
+    // `=` (not part of ==/!=/<=/>=) OR `.<mut-method>(`.
+    const MUT_METHODS = [
+      "push", "push_back", "push_front", "pop", "pop_back", "pop_front",
+      "insert", "remove", "swap_remove",
+      "extend", "extend_from_slice", "append",
+      "clear", "drain", "splice", "truncate", "resize", "resize_with",
+      "retain", "retain_mut", "dedup", "dedup_by", "dedup_by_key",
+      "sort", "sort_by", "sort_by_key", "sort_unstable", "sort_unstable_by",
+      "reverse", "swap", "fill", "fill_with",
+      "set", "replace",
+    ];
+    const mutMethodAlt = MUT_METHODS.join("|");
+    return this.stateAccountNames.filter((accountName) => {
+      if (
+        new RegExp(`\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\s*[+\\-*/]?=(?!=)`).test(code)
+      ) return true;
+      if (
+        new RegExp(`\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\.(?:${mutMethodAlt})\\s*\\(`).test(code)
+      ) return true;
+      return false;
+    });
   }
 
   resolveStateVar(account: string): string {
