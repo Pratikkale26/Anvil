@@ -1,6 +1,6 @@
 {
   "name": "anvil-sol",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Anvil — Anchor → Pinocchio/Native/Quasar transpiler. Drop-in CLI that converts Anchor source into a cargo-buildable project in three target Rust dialects, all from a single typed IR with deterministic emit + validator + portability lint.",
   "type": "module",
   "license": "Apache-2.0",
