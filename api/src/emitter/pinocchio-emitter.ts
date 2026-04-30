@@ -724,15 +724,42 @@ ${invokeCall}
   }
 
   override emitCreateTokenAccount(
-    account: string, payer: string, mint: string, authority: string, _signerSeeds?: string,
+    account: string, payer: string, mint: string, authority: string, signerSeeds?: string,
   ): string {
     // Anchor's `init token::*` lowers to system::create_account (165 bytes,
     // owner=token_program) + Token::initialize_account3 (binds mint +
-    // authority). We hand-roll both CPIs against the SPL Token program ID
+    // authority). When signerSeeds is provided (PDA-derived account, e.g.
+    // vesting/staking vaults), the create_account is invoke_signed with
+    // the PDA seeds. Otherwise the account-as-signer signs the wrapping
+    // tx. The init CPI never takes a signer.
+    //
+    // Hand-rolled against the SPL Token program ID
     // (TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA) — pinocchio 0.9 +
     // pinocchio_token 0.4 use different `&AccountView` vs `&AccountInfo`
-    // types, so the wrapped instructions don't compose. The hand-roll
-    // mirrors the on-chain wire format exactly.
+    // types so the wrapped instructions don't compose.
+    const createInvoke = signerSeeds
+      ? `// PDA-signed create — build a Signer<Seed> from the threaded seeds.
+        let __ta_seed_group = ${signerSeeds}.first().ok_or(pinocchio::program_error::ProgramError::InvalidSeeds)?;
+        let mut __ta_seeds: [pinocchio::instruction::Seed<'_>; 8] = core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (i, s) in __ta_seed_group.iter().enumerate() {
+            if i >= __ta_seeds.len() { return Err(pinocchio::program_error::ProgramError::InvalidSeeds); }
+            __ta_seeds[i] = pinocchio::instruction::Seed::from(*s);
+        }
+        let __ta_signer = pinocchio::instruction::Signer::from(&__ta_seeds[..__ta_seed_group.len()]);
+        pinocchio_system::instructions::CreateAccount {
+            from: ${payer},
+            to: ${account},
+            lamports: __ta_rent,
+            space: 165u64,
+            owner: &TOKEN_PROGRAM_ID,
+        }.invoke_signed(&[__ta_signer])?;`
+      : `pinocchio_system::instructions::CreateAccount {
+            from: ${payer},
+            to: ${account},
+            lamports: __ta_rent,
+            space: 165u64,
+            owner: &TOKEN_PROGRAM_ID,
+        }.invoke()?;`;
     return `    // Init token account: ${account}
     {
         const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
@@ -741,13 +768,7 @@ ${invokeCall}
         ];
         // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
-        pinocchio_system::instructions::CreateAccount {
-            from: ${payer},
-            to: ${account},
-            lamports: __ta_rent,
-            space: 165u64,
-            owner: &TOKEN_PROGRAM_ID,
-        }.invoke()?;
+        ${createInvoke}
         // 2. InitializeAccount3 — discriminator 18, data: 32-byte authority.
         let mut __ta_init_data = [0u8; 33];
         __ta_init_data[0] = 18;

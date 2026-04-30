@@ -141,6 +141,50 @@ pub fn initialize_pool(
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
     create_program_account(pool, admin, (8 + StakingPool::LEN) as usize, program_id, init_pool_signer_seeds)?;
     let bump_reward_vault = bump_seed(program_id, &[b"reward_vault", pool.key().as_ref()], reward_vault.key())?;
+    let init_reward_vault_seeds: &[&[u8]] = &[
+            b"reward_vault",
+            pool.key().as_ref(),
+            &[bump_reward_vault],
+        ];
+    let init_reward_vault_signer_seeds = &[&init_reward_vault_seeds[..]];
+    // Init token account: reward_vault
+    {
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
+            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+        ];
+        // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
+        let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
+        // PDA-signed create — build a Signer<Seed> from the threaded seeds.
+        let __ta_seed_group = init_reward_vault_signer_seeds.first().ok_or(pinocchio::program_error::ProgramError::InvalidSeeds)?;
+        let mut __ta_seeds: [pinocchio::instruction::Seed<'_>; 8] = core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (i, s) in __ta_seed_group.iter().enumerate() {
+            if i >= __ta_seeds.len() { return Err(pinocchio::program_error::ProgramError::InvalidSeeds); }
+            __ta_seeds[i] = pinocchio::instruction::Seed::from(*s);
+        }
+        let __ta_signer = pinocchio::instruction::Signer::from(&__ta_seeds[..__ta_seed_group.len()]);
+        pinocchio_system::instructions::CreateAccount {
+            from: admin,
+            to: reward_vault,
+            lamports: __ta_rent,
+            space: 165u64,
+            owner: &TOKEN_PROGRAM_ID,
+        }.invoke_signed(&[__ta_signer])?;
+        // 2. InitializeAccount3 — discriminator 18, data: 32-byte authority.
+        let mut __ta_init_data = [0u8; 33];
+        __ta_init_data[0] = 18;
+        __ta_init_data[1..33].copy_from_slice(pool.key().as_ref());
+        let __ta_init_metas = [
+            pinocchio::instruction::AccountMeta::new(reward_vault.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(reward_mint.key(), false, false),
+        ];
+        let __ta_init_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_PROGRAM_ID,
+            accounts: &__ta_init_metas,
+            data: &__ta_init_data,
+        };
+        pinocchio::cpi::invoke(&__ta_init_ix, &[reward_vault, reward_mint])?;
+    }
 
 
     if !(reward_rate > 0) {

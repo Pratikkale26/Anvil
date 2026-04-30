@@ -692,11 +692,16 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
   }
 
   override emitCreateTokenAccount(
-    account: string, payer: string, mint: string, authority: string, _signerSeeds?: string,
+    account: string, payer: string, mint: string, authority: string, signerSeeds?: string,
   ): string {
     // Two-step: rent-exempt allocate (165 bytes for SPL TokenAccount) +
-    // initialize_account3 binding mint and authority. Account itself signs
-    // the create_account; no sysvar required for v3 init.
+    // initialize_account3 binding mint and authority. The create_account
+    // CPI signs with the account itself when non-PDA, or with PDA seeds
+    // when given. The init CPI never needs a signer (no signer-required
+    // accounts in v3 init).
+    const createInvoke = signerSeeds
+      ? `invoke_signed(&__ta_create, &[${payer}.clone(), ${account}.clone()], ${signerSeeds})?;`
+      : `invoke(&__ta_create, &[${payer}.clone(), ${account}.clone()])?;`;
     return `    // Init token account: ${account}
     let __ta_lamports = Rent::get()?.minimum_balance(165);
     let __ta_create = system_instruction::create_account(
@@ -706,7 +711,7 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
         165,
         &spl_token::id(),
     );
-    invoke(&__ta_create, &[${payer}.clone(), ${account}.clone()])?;
+    ${createInvoke}
     let __ta_init = spl_token::instruction::initialize_account3(
         &spl_token::id(),
         ${account}.key,

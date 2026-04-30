@@ -139,7 +139,95 @@ pub fn initialize_pool(
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
     create_program_account(pool, admin, (8 + AmmPool::LEN) as usize, program_id, init_pool_signer_seeds)?;
     let bump_vault_a = bump_seed(program_id, &[b"vault_a", pool.key().as_ref()], vault_a.key())?;
+    let init_vault_a_seeds: &[&[u8]] = &[
+            b"vault_a",
+            pool.key().as_ref(),
+            &[bump_vault_a],
+        ];
+    let init_vault_a_signer_seeds = &[&init_vault_a_seeds[..]];
+    // Init token account: vault_a
+    {
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
+            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+        ];
+        // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
+        let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
+        // PDA-signed create — build a Signer<Seed> from the threaded seeds.
+        let __ta_seed_group = init_vault_a_signer_seeds.first().ok_or(pinocchio::program_error::ProgramError::InvalidSeeds)?;
+        let mut __ta_seeds: [pinocchio::instruction::Seed<'_>; 8] = core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (i, s) in __ta_seed_group.iter().enumerate() {
+            if i >= __ta_seeds.len() { return Err(pinocchio::program_error::ProgramError::InvalidSeeds); }
+            __ta_seeds[i] = pinocchio::instruction::Seed::from(*s);
+        }
+        let __ta_signer = pinocchio::instruction::Signer::from(&__ta_seeds[..__ta_seed_group.len()]);
+        pinocchio_system::instructions::CreateAccount {
+            from: admin,
+            to: vault_a,
+            lamports: __ta_rent,
+            space: 165u64,
+            owner: &TOKEN_PROGRAM_ID,
+        }.invoke_signed(&[__ta_signer])?;
+        // 2. InitializeAccount3 — discriminator 18, data: 32-byte authority.
+        let mut __ta_init_data = [0u8; 33];
+        __ta_init_data[0] = 18;
+        __ta_init_data[1..33].copy_from_slice(pool.key().as_ref());
+        let __ta_init_metas = [
+            pinocchio::instruction::AccountMeta::new(vault_a.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(token_mint_a.key(), false, false),
+        ];
+        let __ta_init_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_PROGRAM_ID,
+            accounts: &__ta_init_metas,
+            data: &__ta_init_data,
+        };
+        pinocchio::cpi::invoke(&__ta_init_ix, &[vault_a, token_mint_a])?;
+    }
     let bump_vault_b = bump_seed(program_id, &[b"vault_b", pool.key().as_ref()], vault_b.key())?;
+    let init_vault_b_seeds: &[&[u8]] = &[
+            b"vault_b",
+            pool.key().as_ref(),
+            &[bump_vault_b],
+        ];
+    let init_vault_b_signer_seeds = &[&init_vault_b_seeds[..]];
+    // Init token account: vault_b
+    {
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
+            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+        ];
+        // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
+        let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
+        // PDA-signed create — build a Signer<Seed> from the threaded seeds.
+        let __ta_seed_group = init_vault_b_signer_seeds.first().ok_or(pinocchio::program_error::ProgramError::InvalidSeeds)?;
+        let mut __ta_seeds: [pinocchio::instruction::Seed<'_>; 8] = core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (i, s) in __ta_seed_group.iter().enumerate() {
+            if i >= __ta_seeds.len() { return Err(pinocchio::program_error::ProgramError::InvalidSeeds); }
+            __ta_seeds[i] = pinocchio::instruction::Seed::from(*s);
+        }
+        let __ta_signer = pinocchio::instruction::Signer::from(&__ta_seeds[..__ta_seed_group.len()]);
+        pinocchio_system::instructions::CreateAccount {
+            from: admin,
+            to: vault_b,
+            lamports: __ta_rent,
+            space: 165u64,
+            owner: &TOKEN_PROGRAM_ID,
+        }.invoke_signed(&[__ta_signer])?;
+        // 2. InitializeAccount3 — discriminator 18, data: 32-byte authority.
+        let mut __ta_init_data = [0u8; 33];
+        __ta_init_data[0] = 18;
+        __ta_init_data[1..33].copy_from_slice(pool.key().as_ref());
+        let __ta_init_metas = [
+            pinocchio::instruction::AccountMeta::new(vault_b.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(token_mint_b.key(), false, false),
+        ];
+        let __ta_init_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_PROGRAM_ID,
+            accounts: &__ta_init_metas,
+            data: &__ta_init_data,
+        };
+        pinocchio::cpi::invoke(&__ta_init_ix, &[vault_b, token_mint_b])?;
+    }
 
 
     if !(fee_rate <= 10000) {

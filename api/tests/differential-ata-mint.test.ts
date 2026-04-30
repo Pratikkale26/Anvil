@@ -17,16 +17,11 @@ import {
   Transaction,
   TransactionInstruction,
   SystemProgram,
-  SYSVAR_RENT_PUBKEY,
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
-  MintLayout,
-  createInitializeMintInstruction,
   getAssociatedTokenAddressSync,
-  getMintLen,
-  MINT_SIZE,
 } from "@solana/spl-token";
 import {
   defineDifferential,
@@ -37,6 +32,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { createMintIxs, sendSetupTx } from "./differential-setup-helpers.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "ata-mint.rs");
 const PROGRAM_ID = "AtaMint111111111111111111111111111111111111";
@@ -60,36 +56,16 @@ defineDifferential({
   },
 
   callScript: async (svm: LiteSVM, ctx, programId: PublicKey) => {
-    // Bring in SPL programs + native mints so the ATA + Token programs
-    // work the same way they would on-chain.
     svm.withDefaultPrograms().withNativeMints();
-
     svm.airdrop(ctx.payer.publicKey, BigInt(5_000_000_000));
 
-    // Step 1: Allocate + initialize the mint via SPL Token's standard
-    // instructions. Both Anchor and Anvil scenarios receive an identical
-    // pre-existing mint, so any divergence later is attributable to the
-    // mint_to / ATA-create paths in the program — not to mint setup.
-    const mintRent = svm.minimumBalanceForRentExemption(BigInt(MINT_SIZE));
-    const allocMint = SystemProgram.createAccount({
-      fromPubkey: ctx.payer.publicKey,
-      newAccountPubkey: ctx.mint.publicKey,
-      lamports: Number(mintRent),
-      space: MINT_SIZE,
-      programId: TOKEN_PROGRAM_ID,
-    });
-    const initMint = createInitializeMintInstruction(
-      ctx.mint.publicKey,
-      6,
-      ctx.payer.publicKey,
-      ctx.payer.publicKey,
+    // Pre-existing mint — both Anchor + Anvil scenarios get an identical
+    // starting mint, so any divergence later is attributable to mint_to/
+    // ATA-create in the program, not setup.
+    const setupTx = new Transaction().add(
+      ...createMintIxs(svm, ctx.payer.publicKey, ctx.mint.publicKey, 6, ctx.payer.publicKey, ctx.payer.publicKey),
     );
-    const setupTx = new Transaction().add(allocMint).add(initMint);
-    setupTx.recentBlockhash = svm.latestBlockhash();
-    setupTx.feePayer = ctx.payer.publicKey;
-    setupTx.sign(ctx.payer, ctx.mint);
-    const r1 = svm.sendTransaction(setupTx);
-    if ("err" in r1) throw new Error(`mint setup failed: ${JSON.stringify(r1.err)}`);
+    sendSetupTx(svm, setupTx, ctx.payer.publicKey, [ctx.payer, ctx.mint], "mint setup");
 
     // Step 2: Call mint_with_ata. The Anchor + Anvil binaries both produce
     // ATA-create + mint_to invocations; the test's job is just to drive

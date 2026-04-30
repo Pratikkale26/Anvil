@@ -669,11 +669,7 @@ export abstract class BaseEmitter {
       a.constraints.some((c) => c.kind === "associated_token::authority" && c.value);
     const isInlineTokenInit = (a: Instruction["accounts"][number]) =>
       a.constraints.some((c) => c.kind === "token::mint" && c.value) &&
-      a.constraints.some((c) => c.kind === "token::authority" && c.value) &&
-      // PDA-derived `init token::*` (vesting, staking, amm vaults) needs
-      // signer seeds for the create_account CPI — falls through to the
-      // existing PDA branch below to retain its bump_X derivation.
-      !(a.isPda && a.pdaSeeds?.length);
+      a.constraints.some((c) => c.kind === "token::authority" && c.value);
     const isInlineAccountInit = (a: Instruction["accounts"][number]) =>
       isInlineAtaInit(a) || isInlineTokenInit(a);
     const initAccountsWithBumps = instr.accounts
@@ -1212,24 +1208,62 @@ ${fields}
       return this.emitCreateAta(accountName, payer, mint, authority);
     }
 
-    // ── `init token::*` (non-ATA, non-PDA token account): account itself
-    // signs system::create_account + initialize_account3. PDA-derived
-    // token accounts (e.g. vesting's `seeds + bump + token::*`) need a
-    // signer-seed-aware path; that case falls through to the bump-only
-    // PDA branch below today, which keeps cargo-green at the cost of
-    // runtime correctness for those programs (no in-suite differential
-    // exercises them). Tracked as a follow-up — when added, mirror this
-    // dispatch but pass signer seeds through.
+    // ── `init token::*` (non-ATA token account): account is a fresh keypair
+    // OR a PDA. Both shapes share the same Anchor lowering — system::
+    // create_account (165 bytes, owner=token program) + initialize_account3
+    // — but the create_account CPI signs with the account itself when
+    // non-PDA, and with the PDA's signer seeds when seeds + bump are set.
+    // vesting/staking/amm vaults use the PDA shape; escrow uses the fresh-
+    // keypair shape. Both cases needed before we could claim emit parity.
     const tokenMintConstraint = accountRef.constraints.find((c) => c.kind === "token::mint" && c.value);
     const tokenAuthorityConstraint = accountRef.constraints.find((c) => c.kind === "token::authority" && c.value);
-    if (
-      tokenMintConstraint?.value &&
-      tokenAuthorityConstraint?.value &&
-      !(accountRef.isPda && accountRef.pdaSeeds?.length)
-    ) {
+    if (tokenMintConstraint?.value && tokenAuthorityConstraint?.value) {
       const mint = snakeCase(tokenMintConstraint.value);
       const authority = snakeCase(tokenAuthorityConstraint.value);
       const payer = payerName ?? "payer";
+
+      // PDA case: derive bump first (body code references bump_<name>) +
+      // build the signer-seeds expression that gets threaded into the
+      // create_account CPI. Reuses the same shape as the existing
+      // emitInitAccountPrelude PDA branch — keeping naming consistent
+      // (init_<name>_seeds / init_<name>_signer_seeds) so a downstream
+      // body-code reference resolves identically.
+      if (accountRef.isPda && accountRef.pdaSeeds?.length) {
+        const pdaSeeds = accountRef.pdaSeeds.map((seed) => this.normalizeInitSeedExpr(seed));
+        const bumpPrelude = this.emitBumpSeed("program_id", pdaSeeds, accountName)
+          .replace(/\blet bump =/g, `let bump_${accountName} =`)
+          .replace(/\blet\s+\(expected_key,\s*bump\)\s*=/g, `let (expected_key, bump_${accountName}) =`);
+
+        const initSeedPrelude: string[] = [];
+        let initTempCount = 0;
+        const liftedSeeds = pdaSeeds.map((seed) => {
+          const asRefMatch = seed.match(/^(.+)\.to_le_bytes\(\)\.as_ref\(\)$/);
+          if (asRefMatch?.[1]) {
+            const v = initTempCount === 0 ? `init_seed_bytes` : `init_seed_bytes_${initTempCount + 1}`;
+            initTempCount++;
+            initSeedPrelude.push(`    let ${v} = ${asRefMatch[1].trim()}.to_le_bytes();`);
+            return `${v}.as_ref()`;
+          }
+          const refMatch = seed.match(/^&(.+)\.to_le_bytes\(\)$/);
+          if (refMatch?.[1]) {
+            const v = initTempCount === 0 ? `init_seed_bytes` : `init_seed_bytes_${initTempCount + 1}`;
+            initTempCount++;
+            initSeedPrelude.push(`    let ${v} = ${refMatch[1].trim()}.to_le_bytes();`);
+            return `&${v}`;
+          }
+          return seed;
+        });
+        const seedPreludeStr = initSeedPrelude.length > 0 ? `${initSeedPrelude.join("\n")}\n` : "";
+        const seedsPrelude = `${seedPreludeStr}    let init_${accountName}_seeds: &[&[u8]] = &[
+            ${[...liftedSeeds, `&[bump_${accountName}]`].join(",\n            ")},
+        ];
+    let init_${accountName}_signer_seeds = &[&init_${accountName}_seeds[..]];`;
+        const signerSeedsExpr = `init_${accountName}_signer_seeds`;
+        const tokenCreate = this.emitCreateTokenAccount(accountName, payer, mint, authority, signerSeedsExpr);
+        return `${bumpPrelude}\n${seedsPrelude}\n${tokenCreate}`;
+      }
+
+      // Non-PDA case: account-as-signer create. Just the init CPI.
       return this.emitCreateTokenAccount(accountName, payer, mint, authority);
     }
 

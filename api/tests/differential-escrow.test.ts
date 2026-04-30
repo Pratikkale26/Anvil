@@ -27,11 +27,6 @@ import {
 import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
-  MINT_SIZE,
-  ACCOUNT_SIZE,
-  createInitializeMintInstruction,
-  createAssociatedTokenAccountInstruction,
-  createMintToInstruction,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 import {
@@ -43,6 +38,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { setupMintAndAtaIxs, createMintIxs, sendSetupTx } from "./differential-setup-helpers.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "escrow.rs");
 const PROGRAM_ID = "Escrw11111111111111111111111111111111111111";
@@ -86,36 +82,15 @@ defineDifferential({
     svm.airdrop(ctx.payer.publicKey, BigInt(10_000_000_000));
     svm.airdrop(ctx.maker.publicKey, BigInt(2_000_000_000));
 
-    // ── Setup: both mints, maker_ata_a, mint 1M tokens to maker_ata_a.
-    const mintRent = svm.minimumBalanceForRentExemption(BigInt(MINT_SIZE));
+    // ── Setup: mintA (with maker_ata_a + 1M minted) + mintB (no token
+    // accounts; only its pubkey lands in the escrow state). The
+    // setupMintAndAtaIxs helper does the [allocMint, initMint, createAta,
+    // mintTo] sequence in one call.
     const setupTx = new Transaction()
-      .add(SystemProgram.createAccount({
-        fromPubkey: ctx.payer.publicKey,
-        newAccountPubkey: ctx.mintA.publicKey,
-        lamports: Number(mintRent),
-        space: MINT_SIZE,
-        programId: TOKEN_PROGRAM_ID,
-      }))
-      .add(createInitializeMintInstruction(ctx.mintA.publicKey, 6, ctx.payer.publicKey, ctx.payer.publicKey))
-      .add(SystemProgram.createAccount({
-        fromPubkey: ctx.payer.publicKey,
-        newAccountPubkey: ctx.mintB.publicKey,
-        lamports: Number(mintRent),
-        space: MINT_SIZE,
-        programId: TOKEN_PROGRAM_ID,
-      }))
-      .add(createInitializeMintInstruction(ctx.mintB.publicKey, 6, ctx.payer.publicKey, ctx.payer.publicKey))
-      .add(createAssociatedTokenAccountInstruction(
-        ctx.payer.publicKey, ctx.makerAtaA, ctx.maker.publicKey, ctx.mintA.publicKey,
-      ))
-      .add(createMintToInstruction(
-        ctx.mintA.publicKey, ctx.makerAtaA, ctx.payer.publicKey, 1_000_000n,
-      ));
-    setupTx.recentBlockhash = svm.latestBlockhash();
-    setupTx.feePayer = ctx.payer.publicKey;
-    setupTx.sign(ctx.payer, ctx.mintA, ctx.mintB);
-    const r1 = svm.sendTransaction(setupTx);
-    if ("err" in r1) throw new Error(`setup failed: ${JSON.stringify(r1.err)}`);
+      .add(...setupMintAndAtaIxs(svm, ctx.payer.publicKey, ctx.mintA.publicKey, ctx.makerAtaA, ctx.maker.publicKey, 6, 1_000_000n))
+      .add(...createMintIxs(svm, ctx.payer.publicKey, ctx.mintB.publicKey, 6, ctx.payer.publicKey, ctx.payer.publicKey));
+    sendSetupTx(svm, setupTx, ctx.payer.publicKey,
+      [ctx.payer, ctx.mintA, ctx.mintB], "setup");
 
     // ── create_escrow(seed, deposit_amount=250_000, receive_amount=500_000).
     // Vault signs because Anchor's init token::* allocates via

@@ -153,6 +153,29 @@ pub fn create_vesting(
     if expected_key != *vault.key {
         return Err(ProgramError::InvalidSeeds);
     }
+    let init_vault_seeds: &[&[u8]] = &[
+            VAULT_SEED,
+            vesting.key.as_ref(),
+            &[bump_vault],
+        ];
+    let init_vault_signer_seeds = &[&init_vault_seeds[..]];
+    // Init token account: vault
+    let __ta_lamports = Rent::get()?.minimum_balance(165);
+    let __ta_create = system_instruction::create_account(
+        grantor.key,
+        vault.key,
+        __ta_lamports,
+        165,
+        &spl_token::id(),
+    );
+    invoke_signed(&__ta_create, &[grantor.clone(), vault.clone()], init_vault_signer_seeds)?;
+    let __ta_init = spl_token::instruction::initialize_account3(
+        &spl_token::id(),
+        vault.key,
+        mint.key,
+        vault.key,
+    )?;
+    invoke(&__ta_init, &[vault.clone(), mint.clone()])?;
 
 
     if !(total_amount > 0) {

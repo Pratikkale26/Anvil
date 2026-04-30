@@ -146,6 +146,29 @@ pub fn initialize_pool(
     if expected_key != *reward_vault.key {
         return Err(ProgramError::InvalidSeeds);
     }
+    let init_reward_vault_seeds: &[&[u8]] = &[
+            b"reward_vault",
+            pool.key.as_ref(),
+            &[bump_reward_vault],
+        ];
+    let init_reward_vault_signer_seeds = &[&init_reward_vault_seeds[..]];
+    // Init token account: reward_vault
+    let __ta_lamports = Rent::get()?.minimum_balance(165);
+    let __ta_create = system_instruction::create_account(
+        admin.key,
+        reward_vault.key,
+        __ta_lamports,
+        165,
+        &spl_token::id(),
+    );
+    invoke_signed(&__ta_create, &[admin.clone(), reward_vault.clone()], init_reward_vault_signer_seeds)?;
+    let __ta_init = spl_token::instruction::initialize_account3(
+        &spl_token::id(),
+        reward_vault.key,
+        reward_mint.key,
+        pool.key,
+    )?;
+    invoke(&__ta_init, &[reward_vault.clone(), reward_mint.clone()])?;
 
 
     if !(reward_rate > 0) {

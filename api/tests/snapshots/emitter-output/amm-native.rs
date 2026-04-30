@@ -143,10 +143,56 @@ pub fn initialize_pool(
     if expected_key != *vault_a.key {
         return Err(ProgramError::InvalidSeeds);
     }
+    let init_vault_a_seeds: &[&[u8]] = &[
+            b"vault_a",
+            pool.key.as_ref(),
+            &[bump_vault_a],
+        ];
+    let init_vault_a_signer_seeds = &[&init_vault_a_seeds[..]];
+    // Init token account: vault_a
+    let __ta_lamports = Rent::get()?.minimum_balance(165);
+    let __ta_create = system_instruction::create_account(
+        admin.key,
+        vault_a.key,
+        __ta_lamports,
+        165,
+        &spl_token::id(),
+    );
+    invoke_signed(&__ta_create, &[admin.clone(), vault_a.clone()], init_vault_a_signer_seeds)?;
+    let __ta_init = spl_token::instruction::initialize_account3(
+        &spl_token::id(),
+        vault_a.key,
+        token_mint_a.key,
+        pool.key,
+    )?;
+    invoke(&__ta_init, &[vault_a.clone(), token_mint_a.clone()])?;
     let (expected_key, bump_vault_b) = Pubkey::find_program_address(&[b"vault_b", pool.key.as_ref()], program_id);
     if expected_key != *vault_b.key {
         return Err(ProgramError::InvalidSeeds);
     }
+    let init_vault_b_seeds: &[&[u8]] = &[
+            b"vault_b",
+            pool.key.as_ref(),
+            &[bump_vault_b],
+        ];
+    let init_vault_b_signer_seeds = &[&init_vault_b_seeds[..]];
+    // Init token account: vault_b
+    let __ta_lamports = Rent::get()?.minimum_balance(165);
+    let __ta_create = system_instruction::create_account(
+        admin.key,
+        vault_b.key,
+        __ta_lamports,
+        165,
+        &spl_token::id(),
+    );
+    invoke_signed(&__ta_create, &[admin.clone(), vault_b.clone()], init_vault_b_signer_seeds)?;
+    let __ta_init = spl_token::instruction::initialize_account3(
+        &spl_token::id(),
+        vault_b.key,
+        token_mint_b.key,
+        pool.key,
+    )?;
+    invoke(&__ta_init, &[vault_b.clone(), token_mint_b.clone()])?;
 
 
     if !(fee_rate <= 10000) {
