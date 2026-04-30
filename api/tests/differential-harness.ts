@@ -86,7 +86,7 @@ export const TOOLCHAIN_REASON = !SBF_AVAILABLE
   : !ANCHOR_AVAILABLE
     ? "anchor CLI missing"
     : !SBF_TOOLCHAIN_OK
-      ? "SBF platform-tools < v1.54 (modern Anchor's deps need rustc 1.85)"
+      ? "SBF platform-tools < v1.52 (modern Anchor's deps need rustc 1.85)"
       : "ok";
 
 /**
@@ -190,7 +190,7 @@ export function defineDifferential<S extends DifferentialSetup>(
       `\n[differential-${fixture.fixtureName}] SKIPPED — ${TOOLCHAIN_REASON}.\n` +
         `  cargo-build-sbf:        ${SBF_AVAILABLE ? "found" : "MISSING"}\n` +
         `  anchor:                 ${ANCHOR_AVAILABLE ? "found" : "MISSING"}\n` +
-        `  platform-tools v1.54+:  ${SBF_TOOLCHAIN_OK ? "yes" : "NO"}\n` +
+        `  platform-tools v1.52+:  ${SBF_TOOLCHAIN_OK ? "yes" : "NO"}\n` +
         `  To enable: 'sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.13/install)"'.\n`,
     );
     describe.skip(
