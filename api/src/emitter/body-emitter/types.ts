@@ -38,6 +38,13 @@ export interface BodyEmitterCallbacks {
   emitAccountKeyAsRefExpr(accountName: string): string;
   emitAccountLamportsExpr(accountName: string): string;
   emitStateRead(accountName: string, typeName: string, localVar: string, mutable: boolean): string;
+  /**
+   * `init_if_needed` runtime branch — emit a let-binding that reads existing
+   * state when the account already has data, and default-initializes when
+   * empty. Without this, body code following an `init_if_needed` constraint
+   * would silently overwrite pre-existing state on every call.
+   */
+  emitStateReadOrInit(accountName: string, typeName: string, localVar: string, mutable: boolean): string;
   emitStateSave(accountName: string, typeName: string, localVar: string): string;
   emitStateInit(typeName: string, localVar: string): string;
   emitBumpSeed(programId: string, seeds: string[], expectedKey: string): string;

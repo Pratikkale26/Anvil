@@ -1417,7 +1417,11 @@ ${indented}
    * Default implementation composes the existing read + init helpers; targets
    * with cheaper paths can override.
    */
-  protected emitStateReadOrInit(
+  // Public so the body-emitter walker can call it via the
+  // BodyEmitterCallbacks interface (init_if_needed branch). Default impl
+  // composes existing read + init helpers; targets with cheaper paths
+  // can override.
+  emitStateReadOrInit(
     accountInfoVar: string,
     typeName: string,
     localVar: string,
