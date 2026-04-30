@@ -1,26 +1,53 @@
-# Anvil v0.3.0
+# Anvil
 
-> **Anchor → Pinocchio (or Native), with proof.** Paste Anchor source, get a cargo-buildable project in a leaner Solana runtime — and verify the conversion produces byte-equal on-chain effects, not just code that compiles.
+> **Anchor → Pinocchio, with proof.** Paste an Anchor program in, get a cargo-buildable Pinocchio project out — verified byte-equal to the original by running both inside a real VM.
 
-## What you can verify yourself (April 2026)
+[anvilsol.xyz](https://anvilsol.xyz) · [npm](https://www.npmjs.com/package/anvil-sol) · [docs](docs/) · [security](SECURITY.md)
 
-- **Byte-equal differential tests on 2 fixtures (counter, vault).** `bun test api/tests/differential-*.test.ts` builds both the Anchor original and the Anvil-Pinocchio conversion to `.so`, runs the same instruction sequence in LiteSVM, and asserts byte-equal account data + lamport equality. cargo-green is necessary but not sufficient; this is the assertion that the transpiler is *correct*, not just that it compiles.
-- **43 cargo-green regression gates.** Real-world Anchor programs (36 from `program-examples` + escrow2025 + coral cohort + Token-2022 transfer-fee) must `cargo build` deterministically — no AI in the loop — for a PR to merge. CI-gated.
-- **Layered build sandbox.** Public `/build` endpoint runs cargo inside firejail (or bwrap / unshare on fallback) with prlimit caps (2 GiB AS, 60s CPU), env stripped of `ANTHROPIC_API_KEY`-class secrets, network namespace cut. Per-IP daily AI spend cap on top.
-- **AI repair loop with cargo-driven accept gate.** When deterministic emit doesn't compile, `POST /build/auto-fix` feeds rustc errors to Sonnet 4.6, applies patches, re-checks. Strict revert-on-regression — patches that increase error count are discarded. The workbench surfaces a persistent yellow banner whenever AI patches are present in the active output.
+---
 
-What we don't claim:
-- AI-patched output is **not** under the differential corpus. Audit before you deploy.
-- Quasar is emitter-clean but has no cargo coverage and no runtime test. Disabled in the workbench picker; available via `anvil compile --target quasar` for power users who want to inspect.
-- The CU table in the workbench is a heuristic estimator (`api/src/emitter/cu-analyzer.ts`), not a measured number. `scripts/measure-cu.ts` produces real numbers via LiteSVM.
+The reason most Anchor programs stay on Anchor isn't that anyone prefers it for production — it's that hand-rewriting 2,000–10,000 lines of Rust to a leaner runtime carries unacceptable correctness risk. Anvil removes that risk:
 
-- **Live:** [anvilsol.xyz](https://anvilsol.xyz) — paste an Anchor program, pick a target, download the full Cargo project
-- **API:** [anvil-prod-api-wff8f.ondigitalocean.app](https://anvil-prod-api-wff8f.ondigitalocean.app)
-- **CLI:** `bun cli/anvil.ts compile <anchor-dir> --target native` — local transpile with no server round-trip
+```bash
+# 1. Migrate
+anvil-sol compile ./my-anchor-program --target pinocchio -o ./my-pinocchio
 
-## Why Anvil?
+# 2. Prove it
+anvil-sol differential ./my-anchor-program --scenario scenario.json
+#   ✓ BYTE-EQUAL — all N compared account(s) match.
+```
 
-Anchor is the ergonomic default for Solana programs, but its account macros, runtime checks, and Borsh layer add real CU overhead. Pinocchio and `solana-program`-native cut that overhead — at the cost of writing the discriminator routing, account validation, PDA derivation, and CPI plumbing by hand. Anvil is one button between those worlds: paste Anchor source, get a cargo-buildable project in three target Rust dialects (Pinocchio, Native, Quasar), all driven from a single typed IR with deterministic emit, validator, and portability lint. Same Anchor ergonomics on the way in, leaner runtime on the way out.
+Step 2 is the part nobody else ships. It builds your Anchor source AND the Anvil-emitted Pinocchio version into separate `.so` files, runs the same instruction sequence against both inside [LiteSVM](https://github.com/litesvm/litesvm), and asserts every byte of every account matches at the end. Anything else — wrong CPI account order, missing bump, off-by-one Borsh layout — fails the gate loudly.
+
+Cargo green is necessary but not sufficient. This is the actual correctness signal.
+
+---
+
+## What's verified today
+
+**9 byte-equal differential fixtures** lock these emit shapes against the Anchor reference on every commit:
+
+| Fixture | Surface |
+|---|---|
+| `counter` | Account init + state mutation |
+| `vault` | PDA-as-vault + signer-seeded `system_program::transfer` |
+| `has-one` | Runtime constraint enforcement (`has_one = X`) |
+| `ata-mint` | ATA create + SPL `mint_to` CPI |
+| `spl-transfer` | `token::transfer` CPI |
+| `spl-burn` | `token::burn` CPI |
+| `t22-transfer` | Token-2022 `transfer_checked` (mint decimals extraction) |
+| `close-account` | `close = receiver` rent refund + reap |
+| `set-authority` | Hand-rolled raw SPL `set_authority` on Pinocchio |
+
+`bun test api/tests/differential-*.test.ts` runs all 9 + the AI-under-differential framework smoke. Plus 36+ deterministic real-world cargo-build regression gates from `solana-developers/program-examples`.
+
+What we **don't** claim:
+
+- AI-patched output is **not** under the differential corpus. The workbench surfaces a persistent yellow banner whenever AI patches are present; audit before deploy.
+- The CU table in the workbench is a heuristic estimator. `scripts/measure-cu.ts` produces measured numbers via `solana-test-validator`.
+- Quasar is emitter-clean but has no cargo coverage. Disabled in the workbench picker; available via `anvil-sol compile --target quasar` for inspection.
+
+---
 
 ## Try it in 30 seconds
 
@@ -29,17 +56,15 @@ git clone https://github.com/Pratikkale26/Anvil && cd Anvil
 bun install && cd cli && bun install && cd ..
 
 # Transpile a bundled demo and cargo-build it
-bun cli/anvil.ts compile api/src/demo-programs/counter.rs --target native --output /tmp/counter-native
+bun cli/anvil.ts compile api/src/demo-programs/counter.rs --target native -o /tmp/counter-native
 cd /tmp/counter-native && cargo build
 ```
 
-That's a generated Solana program that compiles. The same binary is what the web playground downloads as a `.tar` bundle.
+Or use the public workbench: paste source at [anvilsol.xyz](https://anvilsol.xyz), pick a target, download the bundle.
 
-## Anchor in, native out — what the transform looks like
+## Anchor in, native out
 
-A 4-line Anchor handler from the bundled `counter` demo, and the corresponding Native (`solana-program`) output Anvil produces. Real code, generated by `bun cli/anvil.ts compile api/src/demo-programs/counter.rs --target native`.
-
-**Anchor source** (`counter.rs`, lines 17–21):
+A handler from `counter.rs`:
 
 ```rust
 pub fn increment(ctx: Context<Update>, amount: u64) -> Result<()> {
@@ -49,7 +74,7 @@ pub fn increment(ctx: Context<Update>, amount: u64) -> Result<()> {
 }
 ```
 
-**Native output** (Anvil-generated, abbreviated for readability):
+What Anvil emits for `--target native` (abbreviated):
 
 ```rust
 pub fn increment(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
@@ -61,495 +86,119 @@ pub fn increment(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> 
     if !counter.is_writable { return Err(ProgramError::InvalidAccountData); }
     if counter.owner != program_id { return Err(ProgramError::IncorrectProgramId); }
 
-    // Decode `amount: u64` from instruction data
-    let (arg_bytes, _rest) = data.split_at(8);
-    let amount: u64 = u64::from_le_bytes(arg_bytes.try_into()
+    let amount = u64::from_le_bytes(data[..8].try_into()
         .map_err(|_| ProgramError::InvalidInstructionData)?);
 
-    // PDA check: seeds = [b"counter", authority.key.as_ref()]
-    let (expected_key, _bump) = Pubkey::find_program_address(
+    let (expected, _bump) = Pubkey::find_program_address(
         &[b"counter", authority.key.as_ref()], program_id);
-    if expected_key != *counter.key { return Err(ProgramError::InvalidSeeds); }
+    if expected != *counter.key { return Err(ProgramError::InvalidSeeds); }
 
-    let mut counter_state = CounterAccount::read(&counter.data.borrow())?;
-    if counter_state.authority != *authority.key {
+    let mut state = CounterAccount::read(&counter.data.borrow())?;
+    if state.authority != *authority.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    counter_state.count = counter_state.count
-        .checked_add(amount).ok_or(CounterError::Overflow)?;
-    CounterAccount::write(&mut counter.data.borrow_mut(), &counter_state)?;
+    state.count = state.count.checked_add(amount).ok_or(CounterError::Overflow)?;
+    CounterAccount::write(&mut counter.data.borrow_mut(), &state)?;
     Ok(())
 }
 ```
 
-The discriminator routing, signer / writable / owner checks, args decoding, PDA derivation, and Borsh-equivalent read / write are all generated.
+Discriminator routing, signer / writable / owner checks, args decoding, PDA derivation, manual Borsh — all generated.
 
-**Compute-unit comparison.** Anvil's deterministic estimator predicts `increment` at 405 → 141 CU on this program (65% saved). The estimator is a constant-table heuristic (`api/src/emitter/cu-analyzer.ts`) that adds up per-construct costs (account deserialize, signer check, PDA derive, etc.) — useful for relative ranking, NOT an exact prediction. For measured numbers, run `bun scripts/measure-cu.ts` against a local `solana-test-validator` after building both `.so` binaries with `bun test api/tests/differential-counter.test.ts`. The differential test + measurement script require **Anza CLI 3.x** (Solana CLI 2.x ships rustc < 1.85, can't compile current Anchor's transitive deps); the script otherwise skips with an actionable install line. Measured numbers will replace the heuristic figures here when the toolchain rolls forward.
+For the equivalent Pinocchio output and side-by-side comparison, see the workbench's "Compare targets" view.
 
-## What works today, per target
+---
 
-`Y` = supported and exercised in the demo or real-world cargo-build suites. `partial` = lands but has known gaps. `lint` = emit passes through, lint flags it for manual review.
+## Pipeline
 
-| Feature                        | Pinocchio | Native    |
-|--------------------------------|-----------|-----------|
-| Parser (Anchor source -> IR)   | Y (shared parser, 100% on 27 real-world programs) | Y (same parser) |
-| Instruction handlers + router  | Y         | Y         |
-| Account constraints (`init`, `init_if_needed`, `mut`, `has_one`, `close`, `seeds`, `bump`, `realloc`) | Y | Y |
-| PDA derivation + signer seeds  | Y         | Y         |
-| `require_*!` + `msg!` + `emit!`| Y         | Y         |
-| System-program transfer        | Y         | Y         |
-| SPL Token CPIs (transfer / mint_to / burn / close_account) | Y | Y |
-| ATA create CPI                 | Y (hand-rolled against SPL ATA program ID) | Y (`create_associated_token_account`) |
-| SPL Memo CPI                   | Y (hand-rolled against MEMO program ID) | Y (`spl_memo`) |
-| Token-2022 checked variants    | runtime pass-through via `pinocchio_token` | Y (`spl_token_2022::*_checked`) |
-| AI Refine (validator-driven)   | Y (shared) | Y (shared) |
-| Verify Build + Auto-fix loop   | Y (shared) | Y (shared) |
-| Zero-copy account layouts      | not yet   | not yet   |
-| Pyth / MPL Core / Switchboard CPIs | lint only | lint only |
-| Impl-method inlining (`ctx.accounts.foo()`) | partial | partial |
-
-> **Quasar is experimental.** The Quasar emitter shares the parser and IR pipeline and produces output, but `quasar-lang` 0.0 is too early for an end-to-end cargo-build signal — there are zero cargo-build regression tests on Quasar output and a few CPI surfaces (`set_authority`, ATA, Memo) emit `// Anvil TODO` stubs awaiting upstream features. Treat Quasar output as a starting point that needs review. Pinocchio and Native are the gated targets.
-
-## Pipeline (one line)
-
-```text
-Anchor source -> tree-sitter -> Zod IR (17 body stmt kinds) -> {Pinocchio, Native, Quasar} emitter -> Validator + Lint
+```
+Anchor source → tree-sitter → Solana IR (Zod, 17 body kinds) → {Pinocchio, Native, Quasar} emit → Validator
+                                                  │
+                                                  └──► Differential harness (LiteSVM byte-equal)
 ```
 
-The same IR feeds the emitters, the `lint` / `bench` / `snapshot` / `diff` CLI commands, the workbench's compare-targets view, and the AI refine validator. No pass duplicates parsing.
+Same IR feeds the emitters, the lint / bench / snapshot / diff CLI commands, the workbench's compare-targets view, and the AI refine validator. No pass duplicates parsing.
 
-## Status
+For detail: [docs/architecture.md](docs/architecture.md).
 
-The headline correctness signal is **43 deterministic cargo-build regression gates** locked in via `api/tests/realworld-cargo.test.ts`: 36 fixtures from the `program-examples` corpus (18 unique programs × 2 targets) + 7 external (escrow2025, coral-escrow, coral-multisig, t22-transfer-fee/pinocchio across both targets). Every one of them must `cargo build` green deterministically — no AI refine in the loop — for a PR to merge. CI gates the suite via `.github/workflows/test.yml`.
+---
 
-- **43 MUST_PASS cargo regressions** — Pinocchio + Native, real-world Anchor, no AI in the loop. Plus 14/16 curated demos on the bundle download path and 5 ceiling-tracked fixtures (coral-swap, t22-extensions) that surface regressions even when they can't yet hit zero errors.
-- **100% parser coverage on 27 real-world programs** — the IR layer has not regressed on any program in the corpus.
-- **Hardened public API** — `/build` runs cargo inside a layered sandbox (firejail / bwrap / unshare with mount-namespace + tmpfs over /tmp + prlimit caps), env stripped of `ANTHROPIC_API_KEY`-class secrets, network namespace cut. Per-IP daily AI spend cap (default $2/IP/day) prevents budget exhaustion on the public refine endpoint. Parser timeout of 10s prevents tree-sitter wedge on pathological input.
-- **Verify Build** in the workbench — `POST /build` runs `cargo check --message-format=json` on emitted output and returns structured rustc diagnostics. Warm cargo check ~250-500ms on the demo suite.
-- **Verify + Auto-fix loop** — `POST /build/auto-fix` orchestrates: cargo check → feed errors as ValidationIssues → AI refine → apply patches → re-check → repeat (up to 3 iterations or $0.50 per-request cap, with a separate per-IP daily ceiling). Closes the loop on transpiler correctness.
-- **Output validator** — splits unsafe markers into ERROR (broken stubs requiring manual rebuild) vs WARNING (review hints where code IS emitted), surfaces both in MUST_PASS test output. Token-2022 decimals fallback (`0u8 /* TODO */`) is hard-rejected because wrong decimals silently corrupt on-chain transfers.
-- **Compare targets** in the workbench — emit the same IR for Pinocchio + Native side-by-side without re-parsing.
-- **Runtime-correctness differential** — `api/tests/differential-{counter,vault}.test.ts` build both Anchor and Anvil-Pinocchio versions to `.so`, run identical instruction sequences in LiteSVM with the same keypairs, and assert byte-equal account data + lamport-equal residual SOL. Vault exercises PDA-as-vault + signer-seeded `system_program::transfer` — surfaces emit divergences that cargo-green wouldn't catch. Adding a third fixture is a ~30-line file via `differential-harness.ts`. Requires Anza CLI 3.x / platform-tools v1.52+; skips with an actionable message otherwise.
-- **AI Refine**: tree-sitter structural pre-check + cross-file validation gate + retry-with-feedback + revert button. Refines that fall through can't ship malformed Rust.
-- **Compatibility lint warnings** for unsupported imports — `mpl_core`, `pyth_*`, `switchboard_*`, `drift`, `jupiter`, `clockwork`, zero-copy accounts, `token_interface` extensions. Per-target verdicts (some are blockers on Pinocchio but ready on Native).
-- **Observability**: `GET /metrics` exposes refine cache hit rate, accept/reject ratio, per-target validation error counts, build success/failure ratios, plus per-IP spend snapshot (IPs masked to /24 ⁄ ::/64).
+## What works (per target)
 
-Advanced contracts still flag sections with `⚠️ Anvil: Review` for manual verification before deployment. Pinocchio is the hero target; Native is the production-ready reference; Quasar is experimental (no cargo-build coverage).
+Pinocchio is the production target. Native is the reference. Quasar is experimental.
 
-## What Anvil Does
+Quick read: parser at 100% on 27 real-world programs; SPL Token + Token-2022 + ATA + Memo + System CPIs all green; account constraints (`init`, `init_if_needed`, `mut`, `has_one`, `close`, `seeds`, `bump`, `realloc`) all green.
 
-Anvil sits between Anchor source and lower-level Solana runtime code.
+Full matrix and known gaps: [docs/feature-matrix.md](docs/feature-matrix.md).
 
-Pipeline:
-
-1. Anchor-like Rust source is parsed into a typed Solana IR.
-2. The IR normalizes instructions, accounts, constraints, args, and errors.
-3. A target emitter generates Rust for a chosen backend runtime.
-4. A CU analyzer attaches estimated per-instruction compute comparisons.
-
-This lets us keep Anchor ergonomics on the input side while experimenting with leaner output runtimes.
-
-## Current Scope
-
-Working today:
-
-- Anchor-style source → typed Solana IR
-- IR → Pinocchio / Native (`solana-program`) / Quasar Rust
-- Multi-file project scaffold: Cargo.toml, README, .cargo/config.toml, rust-toolchain, scripts/deploy.sh, anvil-manifest.json, src/{lib,state,errors,helpers,instructions/*}.rs
-- 8 bundled demo programs (`amm`, `counter`, `escrow`, `marketplace`, `perp-funding`, `staking`, `vault`, `vesting`)
-- Local emission through the API, `anvil` CLI (7 commands), or `api/test-run.ts`
-- Web playground: paste / file / folder / GitHub repo ingestion, live CU analysis, AI refine, project-bundle download
-- `init_if_needed` (conditional create), `realloc = <expr>` (resize + rent-delta on native), SPL CPI transforms (system transfer, SPL token transfer/mint_to/burn/close_account, ATA create, SPL Memo, Token-2022 checked variants on native), `require_{eq,neq,gt,gte,lt,lte}!` macro expansion, PDA seed preservation, `#[borsh(use_discriminant)]` on tagged enums
-- Multi-statement wrapper inlining — `pub fn foo` bodies that end in a `TypeName::handler(ctx, ...)` delegate (verify-then-handle splits, e.g. dice's `ResolveBet::verify_sig(...)?; ResolveBet::handler(ctx, sig)`) inline correctly
-- Target-aware portability lint (external crates are blockers on pinocchio but ready on native since project-scaffold auto-adds the deps)
-
-Still not production-complete:
-
-- Full semantic validation of every Anchor constraint
-- Impl-method inlining for the `ctx.accounts.foo()` pattern used by some escrow-style programs (partial support — the flattener preserves impl-scoped names, but inlining the method bodies into instruction handlers is held back by an interaction with the CPI-consolidation regex)
-- Zero-copy account layouts (`#[account(zero_copy)]`)
-- Source-level CPI rewrites for external programs (mpl-core, pyth, switchboard) — imports are preserved but structural rewrites aren't
-
-## Repo Layout
-
-```text
-api/
-  src/
-    ai/                          AI refine + review-report pipeline
-    demo-programs/               Bundled Anchor sample inputs (8 programs)
-    emitter/
-      emitter-base.ts            Shared base class for all emitters
-      pinocchio-emitter.ts       Pinocchio target
-      quasar-emitter.ts          Quasar target
-      quasar-project-emitter.ts  Quasar multi-file project layout
-      native-emitter.ts          Native solana_program target
-      project-scaffold.ts        Per-target Cargo.toml + README + scripts
-      cu-analyzer.ts             Per-instruction CU estimation
-      output-validator.ts        Deterministic post-emit validation
-      body-emitter/              Per-IR-kind body statement walker + handlers
-    cli/                         Analyzers for the lint / bench / snapshot / diff commands
-    ir/                          IR schema + demo fixture JSON
-    parser/                      Anchor → IR pipeline (tree-sitter + flattener)
-    routes/                      Express routes: /parse /emit /lint /demo /ai /health
-  tests/                         Emitter + parser + cargo-build test suites
-cli/
-  anvil.ts                       7-command CLI entry point
-web/
-  app/                           Next.js landing + /workbench playground
-  components/workbench/          Input / Output / Validation / Lint panels
-  lib/                           Pipeline hook, constants, tar bundler
-scripts/
-  batch-single.ts                Real-world cargo-build sweep driver
-  batch-cargo.sh                 Parallel cargo-build runner
-```
+---
 
 ## CLI
 
-Seven commands, all share the same IR — three run the emit pipeline, four are read-only analyses.
-
-```bash
-anvil compile    # parse → emit → validate → write project scaffold
-anvil parse      # IR as pretty summary or --json
-anvil validate   # parse → emit → surface validator issues
-anvil lint       # portability scorecard (ready / review / blocker)
-anvil bench      # per-instruction CU estimate vs Anchor baseline
-anvil snapshot   # CU regression guard for CI (save + check baseline)
-anvil diff       # storage-layout diff between two program versions
+```
+anvil-sol compile <input> --target <pinocchio|native|quasar> [-o <dir>] [--strict]
+anvil-sol differential <input> [--scenario s.json] [--anchor-so path.so]
+anvil-sol parse <input> [--json]
+anvil-sol validate <input> --target <target> [--json]
+anvil-sol lint <input> --target <target> [--markdown]
+anvil-sol bench <input> [--markdown]
+anvil-sol snapshot <input> --save | --check
+anvil-sol diff <before> <after> [--markdown]
 ```
 
-### Common flags
+`--strict` on `compile` refuses to write output when the validator finds errors or the emit contains `TODO(manual)` markers — gate this before deploy.
 
-| Flag | Applies to | What it does |
-|------|-----------|--------------|
-| `--target, -t <pinocchio\|native\|quasar>` | compile, validate, lint | Target framework |
-| `--output, -o <dir>` | compile | Write output here (default `./anvil-output/`) |
-| `--single-file` | compile | Emit one `.rs` file instead of a multi-file project |
-| `--json` | parse, validate, lint, bench, snapshot, diff | JSON output for tooling |
-| `--markdown, --md` | lint, bench, snapshot, diff | Markdown output (good for CI comments) |
-| `--save` | snapshot | Save baseline to `anvil.snapshot.json` |
-| `--check` | snapshot | Compare against the baseline |
-| `--threshold-pct N` | snapshot | Regression threshold, percent (default 5) |
-| `--threshold-abs N` | snapshot | Regression threshold, absolute CUs (default 10) |
-| `--snapshot <path>` | snapshot | Snapshot file path (default `./anvil.snapshot.json`) |
+`differential --scenario` runs the byte-equal correctness gate against your own program. See [docs/differential-testing.md](docs/differential-testing.md) for the JSON format.
 
-All analysis commands return non-zero on failure (blockers / regressions / unsafe-diff), so they drop cleanly into CI. Run `anvil <command> --help` for per-command flags, arguments, and exit codes.
+---
 
-### Examples
+## Workbench
 
-```bash
-# Transpile + cargo build (the 30-second quickstart from above)
-bun cli/anvil.ts compile api/src/demo-programs/counter.rs --target native --output /tmp/counter
-cd /tmp/counter && cargo build
+The web playground at [anvilsol.xyz](https://anvilsol.xyz):
 
-# Portability report for a local program
-bun cli/anvil.ts lint ./my-anchor-project --target native --markdown > readiness.md
+- Paste / file / folder / GitHub repo ingestion.
+- Live emit + CU heuristic per instruction.
+- AI refine with revert-on-regression (Sonnet 4.6, $0.50 per-request cap, $2/IP/day cap).
+- **Verify Build** — segmented Check / Build / Deploy:
+  - **Check** (`cargo check`, ~3s, runs automatically on every emit).
+  - **Build** (`cargo build`, ~10–15s, catches linker + codegen).
+  - **Deploy** (`cargo build-sbf`, ~30s–2min, produces a deployable `.so`).
+  - SSE-streamed cargo output, cancel-on-disconnect.
+- Project-bundle download (full Cargo project as `.tar`).
 
-# CU bench — hotspots ranked by Pinocchio cost
-bun cli/anvil.ts bench api/src/demo-programs/vault.rs
+---
 
-# CI regression guard
-bun cli/anvil.ts snapshot program.rs --save                 # one-time baseline
-bun cli/anvil.ts snapshot program.rs --check --threshold-pct 2  # in CI
+## Public API
 
-# Storage-layout diff between two versions (generates a migration for safe changes, refuses unsafe ones)
-bun cli/anvil.ts diff ./v1-program.rs ./v2-program.rs --markdown > upgrade-safety.md
+`/parse` `/emit` `/lint` `/build` `/build/auto-fix` `/ai/refine` `/demo` `/health` `/metrics`. Every cargo invocation runs inside firejail / bwrap / unshare with prlimit caps and a stripped env (no `ANTHROPIC_API_KEY`-class secrets reach user code). Per-IP daily AI spend cap, per-IP build-sbf concurrency cap, per-minute rate limit.
+
+Threat model: [SECURITY.md](SECURITY.md). Production deploy reqs are listed at the bottom.
+
+`/health` returns release SHA + sandbox kind + prompt version + toolchain availability; `/metrics` returns refine cache hit rate, accept-rate per prompt version, build success/failure, p50/p95/p99 build latency, per-IP spend snapshot.
+
+---
+
+## Project layout
+
+```
+api/    Bun + Express service: parse, emit, validate, build, AI refine, sandbox
+cli/    anvil-sol — npm CLI, ships api/src bundled via prepack
+web/    Next.js workbench
+docs/   Architecture, differential testing, feature matrix, migration guide
 ```
 
-## Local Development
+---
 
-### API
+## Status
 
-```bash
-cd api
-bun install
-bun run dev
-```
+v0.3.4. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). 118+ tests passing, 9 byte-equal differential fixtures, 36+ real-world cargo regressions, hardened sandbox.
 
-The API starts on `http://localhost:8080` by default.
+Working notes for grant + migration: [docs/migration-guide.md](docs/migration-guide.md).
 
-Available routes:
+## License
 
-- `GET /` — capabilities + uptime
-- `GET /health` — same payload as `/`, conventional probe path
-- `GET /metrics` — in-memory counters (refine cache hit rate, accept/reject ratio, per-target validation error counts, parse/emit/build totals)
-- `POST /parse` — Anchor source | file | project | repo → IR
-- `POST /emit` — IR → target-framework Rust (+ `?refine=1` for AI polish, `multiFile: true` for project layout, `projectScaffold: true` for the cargo-buildable bundle, `previousAttempts: [...]` for retry-with-feedback after a failed refine)
-- `POST /build` — runs `cargo check --message-format=json` on emitted files in a warm scratch project. Returns structured `BuildError[]` with file/line/col/code/message + duration + stderr tail. Ground-truth correctness signal.
-- `POST /build/auto-fix` — verify-build with AI repair loop. Body `{ ir, target, files, programName, maxIterations?, maxCostUsd? }`. Each iteration: cargo check → if errors, refineOutput with cargo errors as ValidationIssues → apply accepted patches → re-check. Returns `iterations[]` with per-step build + refine breakdown, finalFiles, finalOk, totalCostUsd. Stops on green build, max iterations, cost cap, no progress, or refine error.
-- `POST /lint` — portability scorecard with per-target compatibility warnings for unsupported imports
-- `POST /ai/refine` — AI-powered fix for validation issues
-- `GET /demo` — list demo names
-- `GET /demo/:name` — preloaded demo IR for bundled programs
+Apache 2.0. See [LICENSE](LICENSE).
 
-### Frontend
+## Contributing
 
-```bash
-cd web
-bun install
-bun run dev
-```
-
-Set the frontend API base URL with:
-
-```bash
-NEXT_PUBLIC_API_URL=http://localhost:8080
-```
-
-If unset, the frontend falls back to `http://localhost:8080`.
-
-## Testing The Transpiler
-
-### Quick local emitter checks
-
-Start the API first:
-
-```bash
-cd api
-bun install
-bun run dev
-```
-
-Then in another terminal:
-
-```bash
-cd api
-bun test-run.ts counter pinocchio
-bun test-run.ts vault pinocchio
-bun test-run.ts escrow pinocchio
-bun test-run.ts staking pinocchio
-```
-
-You can swap targets too:
-
-```bash
-cd api
-bun test-run.ts vault quasar
-bun test-run.ts vault native
-```
-
-Generated output is written to files like:
-
-- `api/test-output-vault-pinocchio.rs`
-- `api/test-output-escrow-pinocchio.rs`
-
-### Test via the parse API with a source file
-
-Parse a demo program directly:
-
-```bash
-curl -s http://localhost:8080/parse \
-  -H 'Content-Type: application/json' \
-  --data-binary @<(jq -Rs '{source: .}' api/src/demo-programs/escrow.rs)
-```
-
-Parse a local Rust file directly from disk:
-
-```bash
-curl -s http://localhost:8080/parse \
-  -H 'Content-Type: application/json' \
-  -d '{"sourcePath":"/absolute/path/to/programs/my_program/src/lib.rs"}'
-```
-
-Parse a local Anchor workspace directory from disk:
-
-```bash
-curl -s http://localhost:8080/parse \
-  -H 'Content-Type: application/json' \
-  -d '{"projectPath":"/absolute/path/to/anchor-workspace"}'
-```
-
-Current project auto-detection looks for:
-
-- `programs/*/src/lib.rs`
-- `src/lib.rs`
-- `src/main.rs`
-
-If multiple program entry files exist, Anvil returns `candidates` in the response and currently parses the first detected candidate. For serious testing, it is better to call `sourcePath` with the exact program file you want.
-
-Emit from an existing IR fixture:
-
-```bash
-cd api
-bun -e 'import { readFileSync } from "fs"; const ir = JSON.parse(readFileSync("./src/ir/fixtures/escrow.json", "utf8")); const res = await fetch("http://localhost:8080/emit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ir, target: "pinocchio", multiFile: true }) }); console.log(await res.text());'
-```
-
-If you want to test a different contract, the easiest path is:
-
-1. Put the Anchor-style Rust file under `api/src/demo-programs/`
-2. Call `POST /parse` with that file’s contents
-3. Feed the returned IR into `POST /emit`
-4. Compare the emitted Rust against the original contract’s constraints and CPI flow
-
-If you want to test a cloned Solana repo from disk:
-
-1. Clone the repo anywhere on your machine
-2. Identify the program you want to test
-3. If it is a normal Anchor workspace, point Anvil at `projectPath`
-4. If the repo has multiple programs, point Anvil at one exact `sourcePath`
-5. Inspect the returned `sourcePath` and `candidates` from `/parse`
-6. Emit to `pinocchio`, `quasar`, or `native`
-7. Save and review the generated Rust
-
-### Test parser + emitter in one shell
-
-This is handy when you want to inspect parser output and emitted code without the frontend:
-
-```bash
-cd api
-bun -e 'import { readFileSync } from "fs"; import { parseAnchor } from "./src/parser/anchor-parser.ts"; import { emitPinocchioFull } from "./src/emitter/pinocchio-emitter.ts"; const src = readFileSync("./src/demo-programs/staking.rs", "utf8"); const parsed = await parseAnchor(src); if (!parsed.ok) throw new Error(parsed.error); console.log(emitPinocchioFull(parsed.ir).singleFile);'
-```
-
-### What to sanity-check on new contracts
-
-- PDA seeds are preserved exactly from `#[account(seeds = [...])]`
-- PDA signer authorities stay as `AccountInfo`, not deserialized state structs
-- Mutated state accounts are saved once before return
-- Signed CPI helpers use the right backend-specific instruction style
-- Any Anchor-only lifecycle behavior like `close`, `init_if_needed`, or ATA setup is either emitted correctly or clearly marked for review
-- Multi-program repos are pointed at the exact `lib.rs` you intend to parse
-
-### Suggested future testing workflow
-
-For lots of contract testing, this is a good repeatable loop:
-
-1. Clone a repo locally
-2. Parse one program via `sourcePath`
-3. Save the emitted output to a file
-4. Diff the generated code across emitter changes
-5. Add that source as a regression fixture if it exposes a new edge case
-
-Good contract categories to keep adding:
-
-- simple counters and config PDAs
-- SOL vaults
-- token escrow flows
-- staking / reward programs
-- programs with `init_if_needed`, `close`, and multiple PDA authorities
-
-## Deploying
-
-You need both a frontend deployment and a reachable backend deployment.
-
-### Frontend environment
-
-Set:
-
-```bash
-NEXT_PUBLIC_API_URL=https://your-api-domain.com
-```
-
-### Backend environment
-
-Set:
-
-```bash
-PORT=8080
-```
-
-For many hosts, the platform will inject `PORT` automatically.
-
-### Deployment checklist
-
-- Deploy the API somewhere publicly reachable.
-- Deploy the frontend with `NEXT_PUBLIC_API_URL` pointing to that API.
-- Verify `GET /` on the API returns `status: ok`.
-- Verify the frontend can compile `counter` and `vault`.
-- Verify the browser is calling the deployed API, not `localhost`.
-- If frontend is HTTPS, keep the API HTTPS too.
-
-## Product Positioning
-
-The accurate framing for demos, grants, and public posts:
-
-- "Anchor → Pinocchio (or Native) through a typed IR, with byte-equal differential tests on counter + vault — not just cargo-green"
-- "43 real-world Anchor programs cargo-build deterministically across Pinocchio + Native (CI-gated, no AI in the loop)"
-- "Seven CLI commands — transpile, plus portability / CU / snapshot / layout-diff analyses that all reuse the same IR"
-- "Manual review is flagged in the output for advanced lifecycle logic; AI-patched output is banner-flagged in the workbench"
-
-That framing is strong without overstating support.
-
-## API Reference
-
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/` | Capabilities + uptime |
-| `GET` | `/health` | Same payload as `/`, conventional probe path |
-| `POST` | `/parse` | Parse Anchor source into SolanaIR |
-| `POST` | `/emit` | Emit target-framework Rust from SolanaIR |
-| `POST` | `/lint` | Portability scorecard (ready / review / blocker findings) |
-| `POST` | `/ai/refine` | AI-powered fix for validation issues |
-| `GET` | `/demo` | List bundled demo names |
-| `GET` | `/demo/:name` | Pre-loaded demo IR |
-
-### POST /parse
-
-Accepts one of: `source`, `sourcePath`, `projectPath`, `repoUrl`, or `files` + `entryPath`.
-
-```bash
-curl -s http://localhost:8080/parse \
-  -H 'Content-Type: application/json' \
-  -d '{"source": "use anchor_lang::prelude::*; ..."}'
-```
-
-Returns: `{ ir, sourcePath, candidates, source }`
-
-### POST /emit
-
-Requires `ir` (SolanaIR object) and `target` (`pinocchio`, `quasar`, or `native`).
-
-```bash
-curl -s http://localhost:8080/emit \
-  -H 'Content-Type: application/json' \
-  -d '{"ir": {...}, "target": "pinocchio"}'
-```
-
-Returns: `{ code, cu, target, programName, warnings, validationIssues, reviewReport }`
-
-Optional: `multiFile: true` for split project output, `projectScaffold: true` to receive the full cargo-buildable bundle (Cargo.toml + README + src/), `strict: true` to fail on validation errors, `?refine=1` for AI polish.
-
-### POST /lint
-
-Accepts `source` (raw Anchor Rust) or `ir` (already-parsed IR). Optional `target` (`pinocchio` | `native` | `quasar`, default `pinocchio`).
-
-```bash
-curl -s http://localhost:8080/lint \
-  -H 'Content-Type: application/json' \
-  -d '{"source": "use anchor_lang::prelude::*; ...", "target": "native"}'
-```
-
-Returns:
-
-```json
-{
-  "program": "counter",
-  "target": "native",
-  "counts": { "ready": 5, "review": 0, "blocker": 0 },
-  "readinessScore": 100,
-  "verdict": "ready",
-  "findings": [ { "level": "ready", "category": "...", "title": "...", "detail": "...", "where": "..." } ]
-}
-```
-
-### Error Codes
-
-All error responses include a numeric `code` field alongside the `error` message:
-
-| Range | Category | Codes |
-|-------|----------|-------|
-| 1xxx | Parse | `1000` parse failed, `1001` no program module, `1002` no source, `1003` source too large, `1004` invalid Rust, `1005` repo fetch failed, `1006` no entry file |
-| 2xxx | Emit | `2000` invalid IR, `2001` invalid target, `2002` emit failed, `2003` validation failed |
-| 3xxx | AI | `3000` provider error, `3001` refine failed |
-| 4xxx | General | `4000` rate limited, `4999` internal error |
-
-Example error response:
-
-```json
-{ "error": "Missing required input", "code": 1002, "details": "Provide source, sourcePath, ..." }
-```
-
-## More Docs
-
-- Architecture: [ARCHITECTURE.md](./ARCHITECTURE.md) — pipeline internals + IR statement kinds
-- Project summary: [PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md) — current stage, what's done, what's next
+Issues + PRs welcome. Areas where help is most useful: new differential fixtures (the harness is designed for ~30-line additions — see [docs/differential-testing.md](docs/differential-testing.md)), Pyth / Switchboard / Metaplex IR kinds, real-world Anchor programs that fail to transpile (file the source + the divergence).

@@ -42,7 +42,12 @@ next-env.d.ts
 .bun-build
 bun.lock*
 
-docs/
+# docs/ used to be ignored when it held generated reports. Now it
+# holds first-class docs (architecture, differential testing, feature
+# matrix, migration guide) — we WANT them tracked. Re-ignored entries
+# below for the few files that should stay local-only.
+# docs/  <-- left for reference; un-ignored 2026-04-30
+docs/.cache/
 api/generated-outputs
 api/.anvil-data
 .anvil-data/
