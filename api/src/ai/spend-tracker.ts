@@ -246,6 +246,11 @@ export function recordSpend(ip: string, usd: number): void {
  * Snapshot for /metrics. Returns top-N spenders today + totals.
  * Truncates IPs to /24 in the response so a public metrics endpoint
  * doesn't leak full client addresses.
+ *
+ * Synchronous variant — reads in-memory only. Multi-instance deploys
+ * should prefer spendSnapshotAsync() which merges Redis cross-instance
+ * data so the snapshot reflects every replica's spend, not just the
+ * local one's.
  */
 export function spendSnapshot(top = 10): {
   capUsd: number;
@@ -270,6 +275,84 @@ export function spendSnapshot(top = 10): {
     todayCallCount: totalCalls,
     topSpendersToday: topSpenders,
   };
+}
+
+/**
+ * Multi-instance spend snapshot. Scans Redis for today's spend keys
+ * across all replicas, merges with the local in-memory view (which
+ * may have un-flushed entries newer than Redis), returns the union.
+ *
+ * Falls back to the in-memory-only snapshot when Redis is disabled
+ * or the scan fails — bounded leakage on /metrics is acceptable;
+ * blocking the endpoint isn't.
+ *
+ * Cost: one SCAN over `anvil:spend:<day>:*`. With per-IP-per-day
+ * keys and a few hundred unique users/day this is hundreds of keys,
+ * fully tractable for a single endpoint hit.
+ */
+export async function spendSnapshotAsync(top = 10): ReturnType<typeof spendSnapshot> extends infer T ? Promise<T> : never {
+  ensureInit();
+  const cap = capUsd();
+  const day = todayKey();
+
+  // Start from the local view so un-flushed local writes are reflected.
+  const merged = new Map<string, { usd: number; calls: number }>();
+  const localDay = memStore.days[day] ?? {};
+  for (const [ip, b] of Object.entries(localDay)) {
+    merged.set(ip, { usd: b.usd, calls: b.calls });
+  }
+
+  if (isRedisEnabled()) {
+    const redis = getRedis();
+    if (redis) {
+      try {
+        // SCAN avoids blocking Redis on large keyspaces; MATCH narrows to today.
+        const pattern = `anvil:spend:${day}:*`;
+        let cursor = "0";
+        const keys: string[] = [];
+        // Bounded loop — SCAN is non-blocking but a runaway cursor would
+        // hang the request. Cap at 500 iterations (enough for ~500k keys
+        // at COUNT 1000) before bailing out with whatever we have.
+        for (let i = 0; i < 500; i++) {
+          const [next, batch] = (await redis.scan(cursor, "MATCH", pattern, "COUNT", 1000)) as [string, string[]];
+          keys.push(...batch);
+          cursor = next;
+          if (cursor === "0") break;
+        }
+        if (keys.length > 0) {
+          // MGET is one round trip even with hundreds of keys.
+          const values = (await redis.mget(...keys)) as (string | null)[];
+          for (let i = 0; i < keys.length; i++) {
+            const key = keys[i]!;
+            const microStr = values[i];
+            if (!microStr) continue;
+            const ip = key.slice(`anvil:spend:${day}:`.length);
+            const usd = Number(microStr) / 1_000_000;
+            const cur = merged.get(ip) ?? { usd: 0, calls: 0 };
+            // Redis is the cross-instance source of truth — take the max
+            // so a stale local view doesn't underreport another instance.
+            merged.set(ip, { usd: Math.max(cur.usd, usd), calls: cur.calls });
+          }
+        }
+      } catch (err) {
+        console.warn(`[spend-tracker] redis snapshot scan failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+
+  const entries = Array.from(merged.entries()).map(([ip, b]) => ({ ip, ...b }));
+  const totalUsd = entries.reduce((s, e) => s + e.usd, 0);
+  const totalCalls = entries.reduce((s, e) => s + e.calls, 0);
+  const topSpenders = entries
+    .sort((a, b) => b.usd - a.usd)
+    .slice(0, top)
+    .map((e) => ({ ipPrefix: maskIp(e.ip), usd: round(e.usd, 4), calls: e.calls }));
+  return {
+    capUsd: cap,
+    todayTotalUsd: round(totalUsd, 4),
+    todayCallCount: totalCalls,
+    topSpendersToday: topSpenders,
+  } as Awaited<ReturnType<typeof spendSnapshot>>;
 }
 
 function maskIp(ip: string): string {

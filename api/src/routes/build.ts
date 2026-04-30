@@ -5,6 +5,7 @@ import {
   runBuildStreaming,
   QueueFullError,
   QueueWaitTimeoutError,
+  PerIpQueueFullError,
   type BuildTarget,
   type BuildMode,
   type BuildFile,
@@ -102,12 +103,17 @@ buildRoute.post("/", async (req, res) => {
   const queryStream = req.query?.stream === "1" || req.query?.stream === "true";
   const mode: BuildMode = bodyMode ?? (queryStrict ? "build-sbf" : "build");
 
+  // Caller IP is used for the per-IP build-sbf concurrency cap below.
+  // Behind a reverse proxy we trust req.ip (set by Express trust-proxy);
+  // fall through to the raw socket address if not set.
+  const callerIp = req.ip ?? req.socket.remoteAddress ?? "unknown";
+
   if (queryStream) {
-    return handleStreamingBuild(req, res, target as BuildTarget, files, programName, mode);
+    return handleStreamingBuild(req, res, target as BuildTarget, files, programName, mode, callerIp);
   }
 
   try {
-    const result = await runBuild(target as BuildTarget, files, programName, mode);
+    const result = await runBuild(target as BuildTarget, files, programName, mode, { callerIp });
 
     if (result.unsupported) {
       // Quasar today. 422 = the request was well-formed but the target
@@ -139,6 +145,16 @@ buildRoute.post("/", async (req, res) => {
       metrics.recordBuild({ target, ok: false, durationMs: 0 });
       res.status(503).setHeader("Retry-After", "5").json(
         new AnvilError(ErrorCode.RATE_LIMITED, "Build queue full — try again shortly", e.message, 503).toJSON(),
+      );
+      return;
+    }
+    if (e instanceof PerIpQueueFullError) {
+      // 429 = rate-limited (per-caller cap), distinct from 503 (global
+      // backlog). Retry-After hints the user wait until one of their
+      // earlier builds finishes (build-sbf is 30s-2min wall time).
+      metrics.recordBuild({ target, ok: false, durationMs: 0 });
+      res.status(429).setHeader("Retry-After", "30").json(
+        new AnvilError(ErrorCode.RATE_LIMITED, `Per-IP build-sbf cap (${e.cap}) reached — wait for one of your earlier builds to finish`, e.message, 429).toJSON(),
       );
       return;
     }
@@ -322,7 +338,7 @@ buildRoute.post("/auto-fix", async (req, res) => {
 
     emit("iteration-start", { iteration: i });
 
-    const buildRes = await runBuild(target as BuildTarget, currentFiles, programName);
+    const buildRes = await runBuild(target as BuildTarget, currentFiles, programName, "build", { callerIp });
     metrics.recordBuild({ target, ok: buildRes.ok, durationMs: buildRes.durationMs });
 
     const iter: Iteration = {
@@ -506,6 +522,7 @@ async function handleStreamingBuild(
   files: BuildFile[],
   programName: string,
   mode: BuildMode,
+  callerIp: string,
 ): Promise<void> {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -545,6 +562,7 @@ async function handleStreamingBuild(
     const result = await runBuildStreaming(target, files, programName, mode, {
       onLine: (line) => emit("cargo_message", { line }),
       cancelHandle: cancelRef,
+      callerIp,
     });
 
     if (clientGone) {

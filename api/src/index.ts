@@ -216,8 +216,11 @@ app.get("/health", healthHandler);
 // In-memory counters — resets on restart. Snapshot is read-only; callers use
 // it to see refine cache hit rate, accept/reject ratio, and per-target
 // validation error load since the process started.
-app.get("/metrics", (_req, res) => {
-  res.json(metrics.snapshot());
+app.get("/metrics", async (_req, res) => {
+  // Async variant scans Redis for cross-instance spend data when
+  // REDIS_URL is set; falls through to the local in-memory view in
+  // single-instance deploys.
+  res.json(await metrics.snapshotAsync());
 });
 
 // HTML dashboard rendering the same counters. Mounted at the root level so it

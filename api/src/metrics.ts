@@ -6,7 +6,7 @@
  * API has done since start.
  */
 
-import { spendSnapshot } from "./ai/spend-tracker.js";
+import { spendSnapshot, spendSnapshotAsync } from "./ai/spend-tracker.js";
 
 type Counter = Record<string, number>;
 
@@ -170,5 +170,16 @@ export const metrics = {
       },
       spend: spendSnapshot(),
     };
+  },
+
+  /**
+   * Multi-instance-aware snapshot. Identical to snapshot() but uses
+   * spendSnapshotAsync, which scans Redis for cross-instance spend
+   * data. Use this from /metrics in horizontal-scale deploys; the
+   * sync variant is fine for single-instance dev/local.
+   */
+  async snapshotAsync(): Promise<MetricsSnapshot> {
+    const sync = this.snapshot();
+    return { ...sync, spend: await spendSnapshotAsync() };
   },
 };

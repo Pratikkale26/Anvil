@@ -201,6 +201,21 @@ const MAX_QUEUE_WAIT_MS = (() => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 90_000;
 })();
 
+/**
+ * Per-IP cap on concurrent build-sbf runs. Without this, a single user
+ * submitting 5 SBF builds (each ~30s-2min) consumes the entire global
+ * queue depth and starves every other user on the same target for 10
+ * minutes. Default 2 per IP — one in-flight + one queued. Override via
+ * ANVIL_BUILD_SBF_PER_IP_CAP. Cap applies only to build-sbf; build/check
+ * are fast enough that the global queue depth is sufficient.
+ */
+const SBF_PER_IP_CAP = (() => {
+  const raw = process.env.ANVIL_BUILD_SBF_PER_IP_CAP;
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 2;
+})();
+const sbfPerIpInflight: Map<string, number> = new Map();
+
 export class QueueFullError extends Error {
   constructor(target: BuildTarget, depth: number, cap: number) {
     super(`build queue full for target=${target}: ${depth}/${cap} in flight, refusing`);
@@ -215,11 +230,36 @@ export class QueueWaitTimeoutError extends Error {
   }
 }
 
-function enqueue<T>(target: BuildTarget, fn: () => Promise<T>): Promise<T> {
+export class PerIpQueueFullError extends Error {
+  constructor(public readonly ip: string, public readonly cap: number) {
+    super(`per-IP build-sbf cap reached: ${cap} concurrent, refusing`);
+    this.name = "PerIpQueueFullError";
+  }
+}
+
+function enqueue<T>(
+  target: BuildTarget,
+  fn: () => Promise<T>,
+  opts: { mode?: BuildMode; callerIp?: string } = {},
+): Promise<T> {
   const depth = targetDepth.get(target) ?? 0;
   if (depth >= MAX_QUEUE_DEPTH) {
     return Promise.reject(new QueueFullError(target, depth, MAX_QUEUE_DEPTH));
   }
+
+  // Per-IP cap — applies only to build-sbf where each run is 30s-2min.
+  // Without this a single IP pipelining 5 SBF builds blocks every other
+  // user on the same target for 10 minutes.
+  const ip = opts.callerIp;
+  const isSbf = opts.mode === "build-sbf";
+  if (isSbf && ip) {
+    const inflight = sbfPerIpInflight.get(ip) ?? 0;
+    if (inflight >= SBF_PER_IP_CAP) {
+      return Promise.reject(new PerIpQueueFullError(ip, SBF_PER_IP_CAP));
+    }
+    sbfPerIpInflight.set(ip, inflight + 1);
+  }
+
   targetDepth.set(target, depth + 1);
 
   const prev = targetQueues.get(target) ?? Promise.resolve();
@@ -242,6 +282,11 @@ function enqueue<T>(target: BuildTarget, fn: () => Promise<T>): Promise<T> {
   // the depth counter regardless of outcome.
   const tail = next.finally(() => {
     targetDepth.set(target, Math.max(0, (targetDepth.get(target) ?? 1) - 1));
+    if (isSbf && ip) {
+      const v = (sbfPerIpInflight.get(ip) ?? 1) - 1;
+      if (v <= 0) sbfPerIpInflight.delete(ip);
+      else sbfPerIpInflight.set(ip, v);
+    }
   });
   targetQueues.set(
     target,
@@ -582,6 +627,7 @@ export async function runBuildStreaming(
   options: {
     onLine?: CargoStreamCallback;
     cancelHandle?: { current: CargoCancelHandle | null };
+    callerIp?: string;
   },
 ): Promise<BuildResult> {
   return runBuildInternal(target, files, programName, mode, options);
@@ -592,20 +638,27 @@ export async function runBuild(
   files: BuildFile[],
   programName: string,
   mode: BuildMode = "build",
+  opts: { callerIp?: string } = {},
 ): Promise<BuildResult> {
-  return runBuildInternal(target, files, programName, mode, {});
+  return runBuildInternal(target, files, programName, mode, opts);
 }
 
 async function runBuildInternal(
   target: BuildTarget,
   files: BuildFile[],
-  _programName: string,
+  programName: string,
   mode: BuildMode,
   options: {
     onLine?: CargoStreamCallback;
     cancelHandle?: { current: CargoCancelHandle | null };
+    callerIp?: string;
   },
 ): Promise<BuildResult> {
+  // Reserved for future log-prefix tagging (today's stderrTail is already
+  // labeled by the cargo subcommand). Touching the param here both shuts
+  // up the unused-param lint AND documents that programName is intentional
+  // call-site context, not just dead weight.
+  void programName;
   if (target === "quasar") {
     return {
       ok: false,
@@ -744,7 +797,7 @@ async function runBuildInternal(
       warnings,
       stderrTail,
     };
-  });
+  }, { mode, callerIp: options.callerIp });
 }
 
 // Exposed for tests / debugging.
