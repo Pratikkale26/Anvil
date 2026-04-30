@@ -209,12 +209,20 @@ export async function runScenarioDifferential(args: {
     const pubkey = ctx.resolveKey(spec.name);
     const a = anchorState.get(pubkey.toBase58());
     const v = anvilState.get(pubkey.toBase58());
+    // Both missing = byte-equal (both runs closed/garbage-collected the
+    // account — happens for `close = X` constraints where the account
+    // is fully reaped). Mirrors the harness behavior.
+    if (!a && !v) {
+      results.push({ name: spec.name, ok: true });
+      continue;
+    }
+    // Asymmetric — one side reaped, the other live. Real divergence.
     if (!a || !v) {
       results.push({
         name: spec.name,
         ok: false,
         kind: "missing",
-        details: `account missing: anchor=${!!a} anvil=${!!v}`,
+        details: `presence diverges: anchor=${!!a} anvil=${!!v}`,
       });
       continue;
     }
