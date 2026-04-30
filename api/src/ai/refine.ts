@@ -239,6 +239,38 @@ export async function refineOutput(
     `Refine completed: ${accepted}/${total} patches accepted, errors ${beforeErrors} → ${afterErrors}.`,
   );
 
+  // Sentry breadcrumb — best-effort, only when DSN is set. Lets you grep
+  // production for "did this prompt-version regress accept-rate?" without
+  // full transaction tracing. Lazy-loaded so SENTRY_DSN-unset deploys
+  // never resolve the @sentry/node import.
+  if (process.env.SENTRY_DSN) {
+    try {
+      const Sentry = await import("@sentry/node");
+      Sentry.addBreadcrumb({
+        category: "ai.refine",
+        level: "info",
+        message: `refine ${accepted}/${total} accepted · errors ${beforeErrors}→${afterErrors}`,
+        data: {
+          target: input.target,
+          promptVersion: REFINE_PROMPT_VERSION,
+          model: repairModel,
+          provider: provider.name,
+          fileCount: input.files.length,
+          issueCount: input.validationIssues.length,
+          issueSource,
+          patchesProposed: total,
+          patchesAccepted: accepted,
+          errorsBefore: beforeErrors,
+          errorsAfter: afterErrors,
+          inputTokens: usage?.inputTokens,
+          outputTokens: usage?.outputTokens,
+          cacheReadTokens: usage?.cacheReadTokens,
+          estimatedCostUsd,
+        },
+      });
+    } catch { /* breadcrumb is best-effort; never fail the refine on it */ }
+  }
+
   const result: RefineResponse = {
     rationale: parsed.rationale,
     findings: parsed.findings,

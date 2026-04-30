@@ -11,6 +11,8 @@ import { metricsDashboardHandler } from "./routes/metrics-dashboard.js";
 import { AnvilError, ErrorCode } from "./errors.js";
 import { metrics } from "./metrics.js";
 import { getSandbox } from "./build/sandbox.js";
+import { REFINE_PROMPT_VERSION } from "./ai/refine.js";
+import { execSync } from "node:child_process";
 
 // ─── Optional Sentry observability ───────────────────────────────────────────
 // Lazy import + env-gated: SENTRY_DSN unset = no Sentry traffic, no perf hit.
@@ -23,9 +25,27 @@ if (process.env.SENTRY_DSN) {
   (async () => {
     try {
       const Sentry = await import("@sentry/node");
+      // Release tag — prefer the env var (DigitalOcean App Platform sets
+      // SOURCE_COMMIT or VERCEL_GIT_COMMIT_SHA on deploy), fall back to
+      // reading the local git HEAD, fall back to "unknown". Without this
+      // every Sentry event lands on the same release and you can't tell
+      // which deploy regressed.
+      let release = process.env.SENTRY_RELEASE
+        ?? process.env.SOURCE_COMMIT
+        ?? process.env.VERCEL_GIT_COMMIT_SHA
+        ?? process.env.RAILWAY_GIT_COMMIT_SHA;
+      if (!release) {
+        try {
+          const { execSync } = await import("node:child_process");
+          release = execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+        } catch {
+          release = "unknown";
+        }
+      }
       Sentry.init({
         dsn: process.env.SENTRY_DSN,
         environment: process.env.NODE_ENV ?? "development",
+        release,
         tracesSampleRate: 0.05,
         beforeSend(event) {
           // Strip caller IPs.
@@ -189,12 +209,48 @@ app.use((req, res, next) => {
 // Both `/` and `/health` return the same shape. Platform health-probes
 // (DigitalOcean App Platform, k8s liveness, uptime monitors) default to
 // `/health`; browsers and curl users tend to hit `/`.
+//
+// Health includes versioned info so a quick `curl /health` can answer
+// "is the right code running?" and "is the toolchain present?" without
+// SSHing in. Computed once at startup since none of these change while
+// the process is alive.
+const RELEASE = (() => {
+  const env = process.env.SENTRY_RELEASE ?? process.env.SOURCE_COMMIT
+    ?? process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.RAILWAY_GIT_COMMIT_SHA;
+  if (env) return env;
+  try {
+    return execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return "unknown";
+  }
+})();
+
+const TOOLCHAIN = (() => {
+  const probe = (cmd: string): boolean => {
+    try {
+      execSync(`command -v ${cmd}`, { stdio: "ignore" });
+      return true;
+    } catch { return false; }
+  };
+  return {
+    cargo: probe("cargo"),
+    cargoBuildSbf: probe("cargo-build-sbf"),
+    anchor: probe("anchor"),
+  };
+})();
+
 const healthHandler: express.RequestHandler = (_req, res) => {
   res.json({
     service: "Anvil API",
-    version: "0.3.0",
+    version: "0.3.4",
     status: "ok",
     uptime: Math.floor(process.uptime()),
+    release: RELEASE,
+    sandbox: getSandbox().kind,
+    promptVersion: REFINE_PROMPT_VERSION,
+    redis: !!process.env.REDIS_URL,
+    sentry: !!process.env.SENTRY_DSN,
+    toolchain: TOOLCHAIN,
     endpoints: [
       "POST /parse  — Anchor source|file|project → Solana IR",
       "POST /emit   — Solana IR → target framework code (?refine=1 for AI polish)",

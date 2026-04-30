@@ -5,7 +5,7 @@ import { emitQuasar, emitQuasarFull } from "../emitter/quasar-emitter.js";
 import { emitNative, emitNativeFull } from "../emitter/native-emitter.js";
 import { analyzeCU } from "../emitter/cu-analyzer.js";
 import { validateEmitterOutput } from "../emitter/output-validator.js";
-import { refineOutput } from "../ai/refine.js";
+import { refineOutput, REFINE_PROMPT_VERSION } from "../ai/refine.js";
 import { RejectedAttemptSchema, type RejectedAttempt } from "../ai/refine-schemas.js";
 import { checkSpendCap, recordSpend } from "../ai/spend-tracker.js";
 import { buildDeterministicReviewReport } from "../ai/review-report.js";
@@ -202,6 +202,7 @@ emitRoute.post("/", async (req, res) => {
           cached: result.cached ?? false,
           accepted: acceptedPatches.length,
           rejected: rejectedCount,
+          promptVersion: REFINE_PROMPT_VERSION,
         });
         if (acceptedPatches.length > 0) {
           for (const patch of acceptedPatches) {

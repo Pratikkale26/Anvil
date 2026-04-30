@@ -24,6 +24,20 @@ export interface MetricsSnapshot {
     errorsByCategory: Counter;
     /** Histogram-style buckets so a public p50 is meaningful as accept-rate moves. */
     acceptRateBuckets: { p10: number; p50: number; p90: number };
+    /**
+     * Per-prompt-version breakdown so a model swap (Sonnet 4 → 4.6 → 4.7,
+     * or a prompt revision) shows up as a distinct accept-rate distribution
+     * instead of being averaged into the global window. The `current` key
+     * is set on every refine; older versions linger until the process
+     * restarts so a regression on the previous version is visible side-by-
+     * side with the new one.
+     */
+    byPromptVersion: Record<string, {
+      calls: number;
+      patchesAccepted: number;
+      patchesRejected: number;
+      acceptRate: number;
+    }>;
   };
   emit: {
     total: number;
@@ -94,8 +108,19 @@ function pushRefineRate(rate: number): void {
   if (refineRateSamples.length > REFINE_RATE_WINDOW) refineRateSamples.shift();
 }
 
+// Per-prompt-version cumulative counters. Lives until process restart;
+// distinct keys per version mean a regression on the previous version is
+// still visible after a model/prompt swap (e.g. "v6 acceptRate=0.78,
+// v7=0.42" surfaces the regression instead of hiding it in a moving
+// average that combines them).
+const refineByVersion: Record<string, {
+  calls: number;
+  patchesAccepted: number;
+  patchesRejected: number;
+}> = {};
+
 export const metrics = {
-  recordRefineCall(opts: { cached: boolean; accepted: number; rejected: number }): void {
+  recordRefineCall(opts: { cached: boolean; accepted: number; rejected: number; promptVersion?: string }): void {
     refineCalls.total++;
     if (opts.cached) refineCalls.cached++;
     else refineCalls.aiCallsMade++;
@@ -103,6 +128,19 @@ export const metrics = {
     refineCalls.patchesRejected += opts.rejected;
     const total = opts.accepted + opts.rejected;
     if (total > 0) pushRefineRate(opts.accepted / total);
+
+    // Per-prompt-version bucket. Optional so existing call sites without
+    // the prompt-version arg keep working; refine.ts wires this up on the
+    // record path for new traffic.
+    const v = opts.promptVersion;
+    if (v) {
+      const bucket = refineByVersion[v] ?? (refineByVersion[v] = {
+        calls: 0, patchesAccepted: 0, patchesRejected: 0,
+      });
+      bucket.calls++;
+      bucket.patchesAccepted += opts.accepted;
+      bucket.patchesRejected += opts.rejected;
+    }
   },
 
   recordRefineError(category: string): void {
@@ -150,6 +188,14 @@ export const metrics = {
           p50: percentile(refineRateSamples, 50),
           p90: percentile(refineRateSamples, 90),
         },
+        byPromptVersion: Object.fromEntries(
+          Object.entries(refineByVersion).map(([v, b]) => [v, {
+            calls: b.calls,
+            patchesAccepted: b.patchesAccepted,
+            patchesRejected: b.patchesRejected,
+            acceptRate: safeDiv(b.patchesAccepted, b.patchesAccepted + b.patchesRejected),
+          }]),
+        ),
       },
       emit: {
         total: emitCounters.total,
