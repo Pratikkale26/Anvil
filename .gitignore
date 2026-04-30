@@ -52,6 +52,10 @@ api/scratch-*.ts
 video.md
 posts/
 test-ledger/
+# CI workflow held back from commit until ready to enable — would burn
+# free-tier minutes prematurely. Drafted in the working tree at
+# .github/workflows/test.yml; staging it commits the workflow.
+.github/
 # Snapshot test failure leftovers — regenerated on mismatch, byte-identical
 # to .snap.rs once the snapshot updates, otherwise stale-but-harmless.
 api/tests/snapshots/emitter-output/*.actual.rs
