@@ -90,6 +90,30 @@ A scenario is a small JSON file describing the instructions to run and the accou
 anvil-sol differential ./my-program --scenario scenario.json
 ```
 
+If your program imports `anchor-spl`, `mpl-core`, `pyth-sdk-solana`, or any
+crate beyond `anchor-lang`, the Anchor reference build needs them in scope.
+Pass them with `--anchor-extra-deps`:
+
+```bash
+anvil-sol differential ./my-program --scenario s.json \
+  --anchor-extra-deps 'anchor-spl = "0.31"' \
+  --anchor-extra-deps 'spl-token = "7.0"'
+```
+
+Or use a file (cleaner when there are several):
+
+```bash
+cat > extra-deps.toml <<EOF
+anchor-spl = "0.31"
+spl-token = "7.0"
+EOF
+anvil-sol differential ./my-program --scenario s.json --anchor-extra-deps-file extra-deps.toml
+```
+
+Without these, programs using non-`anchor-lang` crates fail at the reference
+build with `error[E0432]: unresolved import`. The CLI surfaces an actionable
+hint pointing here when the build fails and no extra-deps were provided.
+
 The CLI:
 
 1. Parses your Anchor source → Solana IR.

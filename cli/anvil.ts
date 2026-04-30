@@ -147,6 +147,21 @@ interface CliArgs {
    * (assumes the user wants a self-test against the input source itself).
    */
   anchorSo: string | null;
+  /**
+   * `differential --anchor-extra-deps "anchor-spl = \"0.31\""` — extra
+   * lines appended verbatim under [dependencies] in the Anchor reference
+   * Cargo.toml. Each line a TOML dep entry. Without this, the reference
+   * build only has anchor-lang in scope, so any program importing
+   * anchor-spl, spl-token, mpl-core, etc. fails to build at the reference
+   * stage. Repeatable: each --anchor-extra-deps appends one block.
+   */
+  anchorExtraDeps: string[];
+  /**
+   * `differential --anchor-extra-deps-file path` — same as above but read
+   * from a file (newline-separated TOML dep entries). Useful when the
+   * dep list is non-trivial and shell-quoting it gets ugly.
+   */
+  anchorExtraDepsFile: string | null;
   /** `differential --skip-cache` forces both .so to rebuild even if cached. */
   skipCache: boolean;
   help: boolean;
@@ -171,6 +186,8 @@ function parseArgs(argv: string[]): CliArgs {
     strict: false,
     scenario: null,
     anchorSo: null,
+    anchorExtraDeps: [],
+    anchorExtraDepsFile: null,
     skipCache: false,
     help: false,
   };
@@ -270,6 +287,19 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--anchor-so") {
       args.anchorSo = rest[i + 1] ?? null;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--anchor-extra-deps") {
+      const v = rest[i + 1];
+      if (typeof v === "string" && v.length > 0) args.anchorExtraDeps.push(v);
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--anchor-extra-deps-file") {
+      args.anchorExtraDepsFile = rest[i + 1] ?? null;
       i += 2;
       continue;
     }
@@ -1695,6 +1725,19 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     --anchor-so <path>      Pre-built Anchor reference .so. If unset, the
                             runner builds one from the same source via
                             cargo-build-sbf.
+    --anchor-extra-deps <toml-line>
+                            Extra TOML lines to append under [dependencies]
+                            in the Anchor reference Cargo.toml. Repeatable.
+                            Required for programs that import anchor-spl,
+                            mpl-core, pyth-sdk-solana, etc — without these
+                            lines the reference build fails before the
+                            scenario can run. Example:
+                              --anchor-extra-deps 'anchor-spl = "0.31"'
+                            Without this, only anchor-lang is in scope.
+    --anchor-extra-deps-file <path>
+                            Same as above but read from a file. Newline-
+                            separated TOML dep entries. Cleaner than
+                            shell-quoting multiple entries.
     --output, -o <dir>      Working directory (default: ./anvil-output/)
     --skip-cache            Force both .so to rebuild even if cached.
     --target, -t pinocchio  Anvil target (only pinocchio is gated for now)
@@ -1881,15 +1924,37 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
       const { rmSync } = await import("node:fs");
       rmSync(refDir, { recursive: true, force: true });
     }
+    // Concatenate every --anchor-extra-deps + the optional file. Each
+    // entry is appended verbatim under [dependencies] in the reference
+    // Cargo.toml. We don't try to validate TOML — bad input fails the
+    // cargo build with a TOML error which is fine; user-actionable.
+    const extraDepsBlocks: string[] = [...args.anchorExtraDeps];
+    if (args.anchorExtraDepsFile) {
+      if (!existsSync(args.anchorExtraDepsFile)) {
+        error(`--anchor-extra-deps-file not found: ${args.anchorExtraDepsFile}`);
+        process.exit(1);
+      }
+      extraDepsBlocks.push(readFileSync(args.anchorExtraDepsFile, "utf-8"));
+    }
+    const extraDeps = extraDepsBlocks.length > 0
+      ? extraDepsBlocks.map((b) => b.trim()).filter((b) => b.length > 0).join("\n") + "\n"
+      : undefined;
     try {
       const { buildAnchorReferenceSo } = await import("./scenario-runner.js");
       anchorSoBytes = buildAnchorReferenceSo({
         anchorSource: source,
         packageName: `anvil_diff_${ir.name.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 32)}`,
         scratchDir: refDir,
+        extraDeps,
       });
     } catch (err) {
       error(`Anchor reference build failed: ${err instanceof Error ? err.message : String(err)}`);
+      if (extraDepsBlocks.length === 0) {
+        console.log(
+          `    ${c.dim}If the build error is 'use of unresolved module/crate' (E0432/E0433),\n` +
+          `    your program likely needs --anchor-extra-deps. See 'anvil differential --help'.${c.reset}`,
+        );
+      }
       process.exit(1);
     }
     success("Anchor reference .so ready");
