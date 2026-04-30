@@ -84,6 +84,11 @@ export function CollapsiblePanel({
   const prevForceRef = useRef(false);
   useEffect(() => {
     if (forceOpen === true && !prevForceRef.current) {
+      // Rising edge: snap open. Lint flags this as
+      // set-state-in-effect; that warning is for derivable state. Here
+      // the new value depends on history (prevForceRef), which is what
+      // an effect is for. Suppress the rule.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setInternalOpen(true);
     }
     prevForceRef.current = forceOpen === true;
@@ -317,6 +322,54 @@ export function Badge({
     >
       {label}
     </span>
+  );
+}
+
+/* ─── Segmented ──────────────────────────────────────────────────────────────
+ *
+ * Tight 3-pill mode picker for the Verify-build card. Renders one rounded
+ * track with each option as a flush button — picking another option is
+ * what the design uses instead of stacking 3 distinct buttons.
+ */
+
+export function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (next: T) => void;
+  options: ReadonlyArray<{ value: T; label: string; hint?: string; disabled?: boolean }>;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      className="grid gap-1 p-1 rounded-xl border border-anvil-card-border bg-white/[0.02]"
+      style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+    >
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            role="radio"
+            aria-checked={active}
+            disabled={opt.disabled}
+            onClick={() => !opt.disabled && onChange(opt.value)}
+            title={opt.hint}
+            className={cn(
+              "py-1.5 px-2 rounded-lg text-[12px] font-bold transition-colors",
+              active
+                ? "bg-[rgba(245,166,35,0.15)] text-anvil-amber border border-[rgba(245,166,35,0.4)]"
+                : "text-anvil-text-muted hover:bg-white/[0.05] border border-transparent",
+              opt.disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"
+            )}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

@@ -2,11 +2,14 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   runBuild,
+  runBuildStreaming,
   QueueFullError,
   QueueWaitTimeoutError,
   type BuildTarget,
+  type BuildMode,
   type BuildFile,
   type BuildDiagnostic,
+  type CargoCancelHandle,
 } from "../build/build-runner.js";
 import { AnvilError, ErrorCode } from "../errors.js";
 import { metrics } from "../metrics.js";
@@ -27,6 +30,11 @@ const BuildRequestSchema = z.object({
   target: z.enum(["pinocchio", "native", "quasar"]),
   files: z.array(BuildFileSchema).min(1).max(64),
   programName: z.string().min(1).max(128),
+  // 3-tier UX:
+  //   "check"     — fastest, type-only (workbench's "Quick Check" button)
+  //   "build"     — default, catches linker + codegen ("Verify Build" button)
+  //   "build-sbf" — strictest, produces deployable .so ("Verify Deploy" or `?strict=1`)
+  mode: z.enum(["check", "build", "build-sbf"]).optional(),
 });
 
 const AutoFixRequestSchema = z.object({
@@ -57,9 +65,17 @@ const AutoFixRequestSchema = z.object({
  *     stderrTail: string
  *   }
  *
- * Backs the upcoming "Verify build" button in the workbench. Runs
- * `cargo check --message-format=json` against the supplied files in a
- * persistent per-target scratch dir so deps stay warm across calls.
+ * Backs the "Verify Build" button in the workbench.
+ *
+ * Default mode runs `cargo build --message-format=json` against the
+ * supplied files in a persistent per-target scratch dir so deps stay warm
+ * across calls. This catches type errors AND linker / codegen issues that
+ * `cargo check` would miss (e.g. duplicate `entrypoint!` collisions).
+ *
+ * Strict mode (body `mode: "build-sbf"` OR `?strict=1`) runs
+ * `cargo build-sbf` to produce an actual Solana .so — the only thing that
+ * proves the program will load into a validator. ~10x slower than default;
+ * use sparingly (CLI `--strict`, pre-deploy verification).
  *
  * Quasar builds are unsupported (quasar-lang 0.0 is too early); the route
  * returns 422 with a clear message rather than attempting to spawn cargo.
@@ -77,10 +93,21 @@ buildRoute.post("/", async (req, res) => {
     return;
   }
 
-  const { target, files, programName } = parsed.data;
+  const { target, files, programName, mode: bodyMode } = parsed.data;
+
+  // ?strict=1 is the alternate way to request build-sbf for users who
+  // would rather not change their request body shape. Body `mode` wins
+  // if both are set. ?stream=1 routes to the SSE endpoint below.
+  const queryStrict = req.query?.strict === "1" || req.query?.strict === "true";
+  const queryStream = req.query?.stream === "1" || req.query?.stream === "true";
+  const mode: BuildMode = bodyMode ?? (queryStrict ? "build-sbf" : "build");
+
+  if (queryStream) {
+    return handleStreamingBuild(req, res, target as BuildTarget, files, programName, mode);
+  }
 
   try {
-    const result = await runBuild(target as BuildTarget, files, programName);
+    const result = await runBuild(target as BuildTarget, files, programName, mode);
 
     if (result.unsupported) {
       // Quasar today. 422 = the request was well-formed but the target
@@ -155,8 +182,8 @@ function diagnosticToValidationIssue(d: BuildDiagnostic): ValidationIssue {
 /**
  * POST /build/auto-fix — verify-build with AI repair loop.
  *
- * For each iteration: cargo check → if errors, feed them as ValidationIssues
- * to refineOutput → apply accepted patches → cargo check again. Bounded by
+ * For each iteration: cargo build → if errors, feed them as ValidationIssues
+ * to refineOutput → apply accepted patches → cargo build again. Bounded by
  * maxIterations and maxCostUsd. Stops early on green build, no progress
  * (zero patches accepted), refine error, or budget exhaustion.
  *
@@ -212,7 +239,7 @@ buildRoute.post("/auto-fix", async (req, res) => {
       finalOk: false,
       totalDurationMs: 0,
       totalCostUsd: 0,
-      message: "Quasar auto-fix is not supported; quasar-lang is too early for cargo check.",
+      message: "Quasar auto-fix is not supported; quasar-lang is too early for cargo build.",
     };
     if (wantsStream) {
       res.status(422);
@@ -249,7 +276,7 @@ buildRoute.post("/auto-fix", async (req, res) => {
   // true when the client side actually tears down the connection. If it
   // turns out unreliable in practice we just lose the early-bail-on-
   // disconnect optimization; the loop is bounded by maxIterations
-  // anyway, so worst case we run one extra cargo check.
+  // anyway, so worst case we run one extra cargo build.
   let clientClosed = false;
   if (wantsStream) {
     req.on("aborted", () => {
@@ -324,7 +351,7 @@ buildRoute.post("/auto-fix", async (req, res) => {
       break;
     }
 
-    // Revert-on-regression: if this iteration's cargo check is strictly
+    // Revert-on-regression: if this iteration's cargo build is strictly
     // worse than the best state we've seen, the previous refine round
     // hurt more than helped. Roll currentFiles back to bestFiles and stop.
     // (i === 0 always sets the baseline since bestErrorCount is +Infinity.)
@@ -379,7 +406,7 @@ buildRoute.post("/auto-fix", async (req, res) => {
         ir,
         files: refineFiles,
         validationIssues,
-        // These came from cargo check — flag so the prompt tells the model
+        // These came from cargo build — flag so the prompt tells the model
         // to trust the file/line/code as ground truth (vs the heuristic
         // validator path, which can be noisier and is the prompt default).
         issueSource: "cargo",
@@ -457,3 +484,86 @@ buildRoute.post("/auto-fix", async (req, res) => {
     res.json(finalPayload);
   }
 });
+
+/**
+ * SSE-streaming variant of POST /build, dispatched when the route handler
+ * sees `?stream=1`. Same input shape; output is a stream of events:
+ *
+ *   event: build_started   { mode, target }
+ *   event: cargo_message   { line: <one --message-format=json line> }
+ *   event: build_done      { ok, errors, warnings, durationMs, stderrTail }
+ *   event: build_error     { message }   (on failure pre-cargo)
+ *   event: cancelled       {}            (on client disconnect)
+ *
+ * Cancel-on-disconnect: when the SSE client closes, we SIGTERM the cargo
+ * subprocess via the cancel handle so we don't waste server CPU on a
+ * build no one is waiting for.
+ */
+async function handleStreamingBuild(
+  req: import("express").Request,
+  res: import("express").Response,
+  target: BuildTarget,
+  files: BuildFile[],
+  programName: string,
+  mode: BuildMode,
+): Promise<void> {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  // Disable buffering on Vercel / nginx so the client gets events live.
+  res.setHeader("X-Accel-Buffering", "no");
+  // Flush headers immediately so EventSource considers the stream open.
+  if (typeof (res as { flushHeaders?: () => void }).flushHeaders === "function") {
+    (res as { flushHeaders: () => void }).flushHeaders();
+  }
+
+  const emit = (event: string, payload: unknown) => {
+    if (res.writableEnded) return;
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  const cancelRef: { current: CargoCancelHandle | null } = { current: null };
+  let clientGone = false;
+  // `res.on("close")` fires when the response stream closes — both on
+  // normal `res.end()` and on premature disconnect. We treat it as
+  // "client disconnected" only if `res.writableEnded` is false at that
+  // point: end() flips writableEnded → true before emitting close, while
+  // a real disconnect leaves it false. Without this guard, every
+  // successful build gets a spurious `cancelled` event under bun's HTTP
+  // stack because req.on("close") fires on normal completion too.
+  res.on("close", () => {
+    if (!res.writableEnded) {
+      clientGone = true;
+      cancelRef.current?.cancel();
+    }
+  });
+
+  emit("build_started", { mode, target });
+
+  try {
+    const result = await runBuildStreaming(target, files, programName, mode, {
+      onLine: (line) => emit("cargo_message", { line }),
+      cancelHandle: cancelRef,
+    });
+
+    if (clientGone) {
+      emit("cancelled", {});
+    } else {
+      metrics.recordBuild({ target, ok: result.ok, durationMs: result.durationMs });
+      emit("build_done", {
+        ok: result.ok,
+        errors: result.errors,
+        warnings: result.warnings,
+        durationMs: result.durationMs,
+        stderrTail: result.stderrTail,
+        unsupported: result.unsupported,
+      });
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "build failed";
+    emit("build_error", { message: msg });
+  } finally {
+    if (!res.writableEnded) res.end();
+  }
+}

@@ -6,13 +6,12 @@ import {
   TARGET_META,
   TARGETS,
   type InputMode,
-  type Target,
 } from "@/lib/constants";
 import type { AnvilPipelineState } from "@/lib/use-anvil-pipeline";
 import { cn } from "@/lib/utils";
 import {
   CheckCircle2,
-  Download,
+  ChevronRight,
   FolderOpen,
   Hammer,
   Layers3,
@@ -23,17 +22,18 @@ import {
   Undo2,
   Upload,
   XCircle,
+  Zap,
 } from "lucide-react";
+import type { AutoFixResponse, BuildResult } from "@/lib/constants";
+import { useState } from "react";
 import {
   ActionButton,
-  Badge,
   CollapsiblePanel,
-  HeadCount,
   Hint,
   InputLabel,
-  OutBtn,
   Panel,
   PanelHead,
+  Segmented,
   StatTile,
 } from "./panel";
 
@@ -71,9 +71,19 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
     revertRefine,
     canRevertRefine,
     runBuild,
+    cancelBuild,
     buildBusy,
     buildResult,
+    buildResults,
     buildError,
+    buildErrors,
+    buildMode,
+    selectedBuildMode,
+    setSelectedBuildMode,
+    buildMessages,
+    autoCheckResult,
+    autoCheckBusy,
+    autoCheckError,
     runVerifyAndFix,
     autoFixBusy,
     autoFixResult,
@@ -338,7 +348,9 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
 
 
       {/* Verify build — collapsible. Default-closed when nothing has run; auto-
-          opens once a build result, auto-fix loop result, or error appears. */}
+          opens once a build result, auto-fix loop result, or error appears.
+          Header carries the always-on auto-check signal so the user has a
+          minimal pulse on cargo state without expanding the panel. */}
       {hasOutput && (
         <CollapsiblePanel
           icon={Hammer}
@@ -353,357 +365,37 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
           forceOpen={!!(buildResult || autoFixResult || buildError || autoFixError)}
           defaultOpen={false}
           badge={
-            buildResult?.ok ? (
-              <HeadCount label="✓ green" tone="teal" />
-            ) : buildResult ? (
-              <HeadCount label={`${buildResult.errors.length} err`} tone="red" />
-            ) : autoFixResult?.ok ? (
-              <HeadCount label="✓ auto-fixed" tone="teal" />
-            ) : null
+            <AutoCheckSignal
+              busy={autoCheckBusy}
+              result={autoCheckResult}
+              error={autoCheckError}
+            />
           }
         >
-          <div className="p-3 flex flex-col gap-2.5">
-            {/* Pre-build hint: surface the validator state so the user knows
-                whether they're verifying clean code (likely green) or code
-                with known issues (auto-fix recommended). */}
-            {!buildResult && !autoFixResult && (
-              <div
-                className={cn(
-                  "px-3 py-2 rounded-xl border text-xs leading-relaxed flex items-center gap-2"
-                )}
-                style={{
-                  borderColor:
-                    errorCount === 0
-                      ? "rgba(14,168,128,0.35)"
-                      : "rgba(245,166,35,0.35)",
-                  background:
-                    errorCount === 0
-                      ? "rgba(14,168,128,0.07)"
-                      : "rgba(245,166,35,0.06)",
-                  color: errorCount === 0 ? C.teal : C.amber,
-                }}
-              >
-                {errorCount === 0 ? (
-                  <>
-                    <CheckCircle2 size={13} />
-                    <span className="text-anvil-text">
-                      Validation clean
-                    </span>
-                    <span className="text-anvil-text-muted">
-                      — verify with cargo to confirm.
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={13} />
-                    <span className="text-anvil-text">
-                      {errorCount} validator error{errorCount === 1 ? "" : "s"}
-                    </span>
-                    <span className="text-anvil-text-muted">
-                      — try AI Refine, or run Auto-fix below.
-                    </span>
-                    {/* Single-shot AI Refine button — uses the deterministic
-                        emit + AI Refine pass without the cargo loop. Cheaper
-                        than Auto-fix; useful when validator errors are
-                        clearly fixable without a real cargo round-trip. */}
-                    <button
-                      onClick={() => void runRefine()}
-                      disabled={refineBusy || autoFixBusy || !hasOutput}
-                      className="ml-auto px-2 py-1 rounded-md text-[11px] font-bold transition-colors"
-                      style={{
-                        cursor: refineBusy ? "default" : "pointer",
-                        background: refineBusy
-                          ? "rgba(255,255,255,0.05)"
-                          : "rgba(245,166,35,0.15)",
-                        border: "1px solid rgba(245,166,35,0.4)",
-                        color: C.amber,
-                        opacity: !hasOutput ? 0.4 : 1,
-                      }}
-                      title={
-                        refineBusy
-                          ? "Refining…"
-                          : "Single-shot AI Refine (no cargo loop)"
-                      }
-                    >
-                      {refineBusy ? "Refining…" : "AI Refine"}
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* Refine error surface — daily_cap_hit, quota_exceeded,
-                provider_timeout, etc. Without this the user has no idea
-                why the AI Refine button didn't help. */}
-            {refineError && (
-              <div
-                className="px-3 py-2 rounded-xl border text-xs"
-                style={{
-                  borderColor: "rgba(245,166,35,0.35)",
-                  background: "rgba(245,166,35,0.06)",
-                  color: C.amber,
-                }}
-              >
-                <span className="font-bold">AI Refine: </span>
-                {refineErrorCategory === "daily_cap_hit"
-                  ? "Daily cap hit. Try again tomorrow, or reach out for an exception."
-                  : refineErrorCategory === "quota_exceeded"
-                    ? "Provider quota exceeded."
-                    : refineErrorCategory === "provider_timeout"
-                      ? "Provider timed out — retry."
-                      : refineError}
-              </div>
-            )}
-
-            <div className="text-xs text-anvil-text-muted leading-relaxed">
-              {buildResult
-                ? buildResult.ok
-                  ? "Generated code compiles cleanly with cargo check."
-                  : `${buildResult.errors.length} compile error${buildResult.errors.length === 1 ? "" : "s"} reported by rustc.`
-                : "Run cargo check on the emitted output. Real compile errors, not heuristics."}
-            </div>
-
-            <button
-              onClick={() => void runBuild()}
-              disabled={buildBusy || autoFixBusy || !hasOutput}
-              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-none font-extrabold text-sm transition-all"
-              style={{
-                cursor: buildBusy ? "default" : "pointer",
-                background: buildBusy
-                  ? "rgba(255,255,255,0.05)"
-                  : buildResult?.ok
-                    ? "linear-gradient(135deg, rgba(14,168,128,0.9), rgba(11,140,107,0.9))"
-                    : "linear-gradient(135deg, rgba(245,166,35,0.85), rgba(232,130,10,0.85))",
-                color: buildBusy ? C.textMuted : "#0a0600",
-              }}
-            >
-              {buildBusy ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" /> Running cargo
-                  check...
-                </>
-              ) : buildResult?.ok ? (
-                <>
-                  <CheckCircle2 size={14} /> Build verified — {buildResult.durationMs}ms
-                </>
-              ) : (
-                <>
-                  <Hammer size={14} />{" "}
-                  {buildResult ? "Re-run cargo check" : "Verify build"}
-                </>
-              )}
-            </button>
-
-            {/* Auto-fix loop — runs cargo check + AI refine in a loop until
-                green or budget hits. Bigger button than the manual verify
-                because this is the headline workflow once it works. */}
-            <button
-              onClick={() => void runVerifyAndFix()}
-              disabled={autoFixBusy || buildBusy || !hasOutput}
-              className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-none font-extrabold text-sm transition-all"
-              style={{
-                cursor: autoFixBusy ? "default" : "pointer",
-                background: autoFixBusy
-                  ? "rgba(255,255,255,0.05)"
-                  : "linear-gradient(135deg, rgba(107,123,255,0.95), rgba(14,168,128,0.95))",
-                color: autoFixBusy ? C.textMuted : "#fff",
-              }}
-              title="Run cargo check, feed errors to AI, apply patches, re-run. Up to 3 iterations or $0.50 cost cap."
-            >
-              {autoFixBusy ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" /> Auto-fixing...
-                </>
-              ) : (
-                <>
-                  <Sparkles size={14} /> Verify + Auto-fix with AI
-                </>
-              )}
-            </button>
-
-            {autoFixError && (
-              <div className="p-3 rounded-xl bg-[rgba(224,90,90,0.1)] border border-[rgba(224,90,90,0.22)] text-[#ffb5b5] text-xs leading-relaxed">
-                <div className="font-bold mb-1">Auto-fix loop failed</div>
-                <div className="opacity-90">{autoFixError}</div>
-              </div>
-            )}
-
-            {autoFixResult && (
-              <div
-                className="px-3 py-2.5 rounded-xl border"
-                style={{
-                  borderColor:
-                    autoFixResult.stoppedReason === "green"
-                      ? "rgba(14,168,128,0.35)"
-                      : "rgba(245,166,35,0.35)",
-                  background:
-                    autoFixResult.stoppedReason === "green"
-                      ? "rgba(14,168,128,0.08)"
-                      : "rgba(245,166,35,0.07)",
-                }}
-              >
-                <div className="font-mono text-[12px] font-extrabold text-anvil-text mb-1">
-                  {autoFixResult.iterations.length} iteration
-                  {autoFixResult.iterations.length === 1 ? "" : "s"} ·{" "}
-                  {autoFixResult.totalDurationMs}ms · ~$
-                  {autoFixResult.totalCostUsd.toFixed(4)}
-                </div>
-                <div className="text-[11px] text-anvil-text-muted leading-relaxed mb-2">
-                  Stopped: <span className="font-mono">{autoFixResult.stoppedReason}</span>
-                  {autoFixResult.stoppedReason === "green" && " — generated code now compiles."}
-                  {autoFixResult.stoppedReason === "max_iterations" &&
-                    " — hit iteration limit; re-run or fix remaining errors manually."}
-                  {autoFixResult.stoppedReason === "cost_cap" &&
-                    " — hit AI cost cap; raise maxCostUsd or fix manually."}
-                  {autoFixResult.stoppedReason === "no_progress" &&
-                    " — AI accepted no patches this iteration; remaining errors need manual fix."}
-                  {autoFixResult.stoppedReason === "refine_error" &&
-                    " — AI provider error during loop. See JSON download for details."}
-                </div>
-                <div className="flex flex-col gap-1 max-h-[160px] overflow-y-auto">
-                  {autoFixResult.iterations.map((it, i) => (
-                    <div
-                      key={i}
-                      className="flex items-center gap-2 text-[11px] font-mono px-2 py-1 rounded-md"
-                      style={{
-                        background: it.buildResult.ok
-                          ? "rgba(14,168,128,0.1)"
-                          : "rgba(255,255,255,0.04)",
-                      }}
-                    >
-                      <span className="text-anvil-text-dim">#{it.iteration}</span>
-                      <span className={it.buildResult.ok ? "text-anvil-text" : "text-[#ffb5b5]"}>
-                        {it.buildResult.errors.length} err
-                      </span>
-                      {it.refine && (
-                        <span className="text-anvil-text-muted">
-                          → AI {it.refine.acceptedPatches}/
-                          {it.refine.acceptedPatches + it.refine.rejectedPatches}
-                          {it.refine.estimatedCostUsd > 0
-                            ? ` ($${it.refine.estimatedCostUsd.toFixed(4)})`
-                            : ""}
-                        </span>
-                      )}
-                      {/* Per-iteration refine error — daily_cap_hit, quota_exceeded,
-                          provider_timeout, etc. Without this, the iteration just shows
-                          "0 err → " with no explanation when the AI call failed. */}
-                      {it.refineError && (
-                        <span style={{ color: "#f5a623" }} title={it.refineError.message}>
-                          → AI {
-                            it.refineError.category === "daily_cap_hit"
-                              ? "daily cap hit"
-                              : it.refineError.category === "quota_exceeded"
-                                ? "quota exceeded"
-                                : it.refineError.category === "provider_timeout"
-                                  ? "timeout"
-                                  : `error (${it.refineError.category})`
-                          }
-                        </span>
-                      )}
-                      <span className="text-anvil-text-dim ml-auto">
-                        {it.buildResult.durationMs}ms
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {buildError && (
-              <div className="p-3 rounded-xl bg-[rgba(224,90,90,0.1)] border border-[rgba(224,90,90,0.22)] text-[#ffb5b5] text-xs leading-relaxed">
-                <div className="font-bold mb-1">Build endpoint unreachable</div>
-                <div className="opacity-90">{buildError}</div>
-              </div>
-            )}
-
-            {buildResult && (
-              <div
-                className="px-3 py-2.5 rounded-xl border flex items-center gap-3"
-                style={{
-                  borderColor: buildResult.ok
-                    ? "rgba(14,168,128,0.35)"
-                    : "rgba(224,90,90,0.35)",
-                  background: buildResult.ok
-                    ? "rgba(14,168,128,0.08)"
-                    : "rgba(224,90,90,0.07)",
-                }}
-              >
-                {buildResult.ok ? (
-                  <CheckCircle2 size={16} style={{ color: C.teal }} />
-                ) : (
-                  <XCircle size={16} style={{ color: C.red }} />
-                )}
-                <div className="text-[11px] text-anvil-text-muted leading-tight">
-                  <div className="font-mono text-[12px] font-extrabold text-anvil-text">
-                    {buildResult.errors.length} error
-                    {buildResult.errors.length === 1 ? "" : "s"} ·{" "}
-                    {buildResult.warnings.length} warning
-                    {buildResult.warnings.length === 1 ? "" : "s"} ·{" "}
-                    {buildResult.durationMs}ms
-                  </div>
-                  {buildResult.ok
-                    ? "Generated bundle is ready to ship."
-                    : "Run Auto-fix below — feeds cargo errors back to the AI repair model in a loop."}
-                </div>
-              </div>
-            )}
-
-            {/* First-3 error preview so the user can see what to fix without
-                opening another tab. Full list lands in /build's response and
-                in the future Verify pane (TODO). */}
-            {buildResult && buildResult.errors.length > 0 && (
-              <div className="flex flex-col gap-1.5 max-h-[160px] overflow-y-auto">
-                {buildResult.errors.slice(0, 5).map((e, i) => (
-                  <div
-                    key={`${e.filePath}:${e.line ?? 0}:${i}`}
-                    className="px-2.5 py-2 rounded-[10px] text-xs"
-                    style={{
-                      border: "1px solid rgba(224,90,90,0.3)",
-                      background: "rgba(224,90,90,0.06)",
-                    }}
-                  >
-                    <div className="flex justify-between items-center gap-2">
-                      <span className="font-mono text-[11px] text-anvil-text">
-                        {e.filePath}
-                        {e.line ? `:${e.line}` : ""}
-                      </span>
-                      {e.code && (
-                        <span className="text-[10px] font-bold text-[#ffb5b5]">
-                          {e.code}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-anvil-text-muted mt-1">
-                      {e.message}
-                    </div>
-                  </div>
-                ))}
-                {buildResult.errors.length > 5 && (
-                  <div className="text-[10px] text-anvil-text-dim text-center">
-                    + {buildResult.errors.length - 5} more
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Revert — only shown after AI patches landed (manual refine
-                or auto-fix). Rolls back to the deterministic emit. */}
-            {canRevertRefine && (
-              <button
-                onClick={revertRefine}
-                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold transition-colors"
-                style={{
-                  borderColor: "rgba(224,90,90,0.35)",
-                  background: "rgba(224,90,90,0.06)",
-                  color: "#ffb5b5",
-                }}
-                title="Roll back to the deterministic emit output — drops every AI-applied patch from this run."
-              >
-                <Undo2 size={13} />
-                Revert AI changes
-              </button>
-            )}
-          </div>
+          <VerifyBuildBody
+            hasOutput={hasOutput}
+            errorCount={errorCount}
+            selectedBuildMode={selectedBuildMode}
+            setSelectedBuildMode={setSelectedBuildMode}
+            buildBusy={buildBusy}
+            buildMode={buildMode}
+            buildResults={buildResults}
+            buildErrors={buildErrors}
+            buildMessages={buildMessages}
+            autoCheckBusy={autoCheckBusy}
+            runBuild={runBuild}
+            cancelBuild={cancelBuild}
+            runVerifyAndFix={runVerifyAndFix}
+            autoFixBusy={autoFixBusy}
+            autoFixResult={autoFixResult}
+            autoFixError={autoFixError}
+            runRefine={runRefine}
+            refineBusy={refineBusy}
+            refineError={refineError}
+            refineErrorCategory={refineErrorCategory}
+            canRevertRefine={canRevertRefine}
+            revertRefine={revertRefine}
+          />
         </CollapsiblePanel>
       )}
 
@@ -767,6 +459,579 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
             />
           </div>
         </Panel>
+      )}
+    </div>
+  );
+}
+
+/* ─── AutoCheckSignal ─────────────────────────────────────────────────────────
+ *
+ * Tiny header chip — always-on cargo-check status that lives in the Verify
+ * build collapsible's header. Independent of the segmented mode picker so
+ * the user has a constant pulse on whether the emitted code compiles, even
+ * when the body is collapsed or showing a different mode's result.
+ */
+
+function AutoCheckSignal({
+  busy,
+  result,
+  error,
+}: {
+  busy: boolean;
+  result: BuildResult | null;
+  error: string | null;
+}) {
+  // Three states: checking / clean / failed. Failure splits into compile
+  // errors vs infrastructure error (cargo missing, network fail) — both
+  // get the red dot but the label differs.
+  let dotColor: string = C.textDim;
+  let label = "—";
+  if (busy) {
+    dotColor = C.amber;
+    label = "checking…";
+  } else if (error) {
+    dotColor = C.red;
+    label = "check unavailable";
+  } else if (result) {
+    if (result.ok) {
+      dotColor = C.teal;
+      const sec = (result.durationMs / 1000).toFixed(1);
+      label = `check ✓ ${sec}s`;
+    } else {
+      dotColor = C.red;
+      label = `check ✗ ${result.errors.length} err`;
+    }
+  }
+
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[10px] font-mono font-bold tracking-wide"
+      style={{
+        borderColor: "rgba(255,255,255,0.08)",
+        background: "rgba(255,255,255,0.03)",
+        color: C.textMuted,
+      }}
+      title={
+        busy
+          ? "Auto cargo check is running on the latest emit."
+          : error
+            ? `cargo check infra error: ${error}`
+            : result
+              ? result.ok
+                ? `cargo check passed in ${result.durationMs}ms${result.warnings.length ? ` (${result.warnings.length} warnings)` : ""}`
+                : `cargo check found ${result.errors.length} error(s)`
+              : "Run the pipeline to trigger an auto cargo check."
+      }
+    >
+      <span
+        className={cn(
+          "w-1.5 h-1.5 rounded-full shrink-0",
+          busy && "animate-pulse"
+        )}
+        style={{ background: dotColor }}
+      />
+      {label}
+    </span>
+  );
+}
+
+/* ─── VerifyBuildBody ─────────────────────────────────────────────────────────
+ *
+ * The redesigned card body. Previously this was 4 stacked Verify-prefixed
+ * buttons + 5 result/error surfaces, all clobbering each other. Now: one
+ * segmented mode picker, one primary Run button, one result panel keyed
+ * off the selected mode, with AI Auto-fix demoted to a contextual link
+ * shown only when the active result is red.
+ */
+
+type BuildModeKey = "check" | "build" | "build-sbf";
+
+function VerifyBuildBody(props: {
+  hasOutput: boolean;
+  errorCount: number;
+  selectedBuildMode: BuildModeKey;
+  setSelectedBuildMode: (m: BuildModeKey) => void;
+  buildBusy: boolean;
+  buildMode: "build" | "build-sbf";
+  buildResults: { check: BuildResult | null; build: BuildResult | null; "build-sbf": BuildResult | null };
+  buildErrors: { check: string | null; build: string | null; "build-sbf": string | null };
+  /** Streaming cargo --message-format=json log lines. Latest one renders inline
+   *  during busy; full list is available via the disclosure below. */
+  buildMessages: string[];
+  autoCheckBusy: boolean;
+  runBuild: (mode: "check" | "build" | "build-sbf") => void;
+  cancelBuild: () => void;
+  runVerifyAndFix: () => void;
+  autoFixBusy: boolean;
+  autoFixResult: AutoFixResponse | null;
+  autoFixError: string | null;
+  runRefine: () => void;
+  refineBusy: boolean;
+  refineError: string | null;
+  refineErrorCategory: string | null;
+  canRevertRefine: boolean;
+  revertRefine: () => void;
+}) {
+  const {
+    hasOutput,
+    errorCount,
+    selectedBuildMode,
+    setSelectedBuildMode,
+    buildBusy,
+    buildMode,
+    buildResults,
+    buildErrors,
+    buildMessages,
+    autoCheckBusy,
+    runBuild,
+    cancelBuild,
+    runVerifyAndFix,
+    autoFixBusy,
+    autoFixResult,
+    autoFixError,
+    runRefine,
+    refineBusy,
+    refineError,
+    refineErrorCategory,
+    canRevertRefine,
+    revertRefine,
+  } = props;
+
+  // Locally toggled disclosure for the Auto-fix iteration log. Hidden by
+  // default so a failed build doesn't dump 200px of iteration history into
+  // the user's face — they opt in by clicking "Try AI Auto-fix ↗".
+  const [autoFixOpen, setAutoFixOpen] = useState(false);
+
+  // Active result + error — derived purely from the mode the user has
+  // chosen in the segmented control. No more "freshest result wins" race
+  // between auto-check and explicit build.
+  const activeResult = buildResults[selectedBuildMode];
+  const activeError = buildErrors[selectedBuildMode];
+  const activeIsBusy =
+    selectedBuildMode === "check"
+      ? autoCheckBusy
+      : buildBusy && buildMode === selectedBuildMode;
+  // Either kind of cargo work in flight — gates Run/Cancel UI.
+  const anyCargoBusy = buildBusy || autoCheckBusy;
+
+  // Derive a one-line "what cargo is doing right now" summary from the
+  // streaming JSON messages. cargo emits one event per line:
+  //   - compiler-artifact:    {target: {name: "X"}}        → "Compiling X"
+  //   - build-finished:       {success: bool}              → ""
+  //   - compiler-message:     warning/error diag           → skip (renders below)
+  // We just want the freshest crate name to show progress, e.g.
+  // "Compiling pinocchio v0.9.3 (3/27)" while a long SBF build runs.
+  const liveProgress = (() => {
+    if (!buildBusy || buildMessages.length === 0) return null;
+    let total = 0;
+    let compiling: string | null = null;
+    for (const raw of buildMessages) {
+      try {
+        const m = JSON.parse(raw) as { reason?: string; target?: { name?: string } };
+        if (m.reason === "compiler-artifact" && m.target?.name) {
+          total++;
+          compiling = m.target.name;
+        }
+      } catch { /* not JSON; skip */ }
+    }
+    if (!compiling) return null;
+    return `Compiling ${compiling} (${total} crate${total === 1 ? "" : "s"} done)`;
+  })();
+
+  // Per-mode metadata — label, hint, button text, duration estimate. Centralized
+  // so the segmented picker, the run button, and the result banner all read from
+  // the same source of truth instead of branching on string literals.
+  const MODE_META: Record<BuildModeKey, { label: string; hint: string; runLabel: string; runHint: string; durationHint: string }> = {
+    check: {
+      label: "Check",
+      hint: "cargo check — fast (~3s). Catches syntax & type errors.",
+      runLabel: "Re-run Check",
+      runHint: "Triggers cargo check again. Auto-check already runs after every emit, so manual re-runs are mostly only needed to retry a transient failure.",
+      durationHint: "~3s",
+    },
+    build: {
+      label: "Build",
+      hint: "cargo build — full compile (~10–15s on cached deps).",
+      runLabel: "Run Build",
+      runHint: "cargo build. Catches linker and codegen errors that cargo check misses.",
+      durationHint: "~10–15s",
+    },
+    "build-sbf": {
+      label: "Deploy",
+      hint: "cargo build-sbf — produces a deployable Solana .so (~30s–2 min).",
+      runLabel: "Run Deploy",
+      runHint: "cargo build-sbf. Slow but the only mode that proves your program will load into a validator. Use before mainnet.",
+      durationHint: "~30s–2 min",
+    },
+  };
+  const meta = MODE_META[selectedBuildMode];
+
+  // Status banner palette. Same shape across all 3 modes — only the text
+  // and the icon change.
+  const status: { tone: "amber" | "green" | "red" | "muted"; icon: typeof CheckCircle2; label: string } =
+    activeIsBusy
+      ? { tone: "amber", icon: Loader2, label: `Running ${selectedBuildMode === "check" ? "cargo check" : selectedBuildMode === "build" ? "cargo build" : "cargo build-sbf"}…` }
+      : activeError
+        ? { tone: "red", icon: XCircle, label: activeError }
+        : activeResult?.ok
+          ? {
+              tone: "green",
+              icon: CheckCircle2,
+              label:
+                selectedBuildMode === "build-sbf"
+                  ? `Deploy-ready · ${activeResult.durationMs}ms`
+                  : selectedBuildMode === "build"
+                    ? `Build clean · ${activeResult.durationMs}ms`
+                    : `Check clean · ${activeResult.durationMs}ms${activeResult.warnings.length ? ` · ${activeResult.warnings.length} warning${activeResult.warnings.length === 1 ? "" : "s"}` : ""}`,
+            }
+          : activeResult
+            ? {
+                tone: "red",
+                icon: XCircle,
+                label: `${activeResult.errors.length} compile error${activeResult.errors.length === 1 ? "" : "s"}`,
+              }
+            : { tone: "muted", icon: Hammer, label: meta.runHint };
+
+  const palette = {
+    amber: { border: "rgba(245,166,35,0.32)", bg: "rgba(245,166,35,0.07)", fg: "#ffd693" },
+    green: { border: "rgba(14,168,128,0.32)", bg: "rgba(14,168,128,0.08)", fg: "#7be3bf" },
+    red: { border: "rgba(224,90,90,0.32)", bg: "rgba(224,90,90,0.08)", fg: "#ffb5b5" },
+    muted: { border: "rgba(255,255,255,0.08)", bg: "rgba(255,255,255,0.03)", fg: C.textMuted },
+  }[status.tone];
+
+  // Errors for the inline preview — strictly from the active mode's result.
+  const activeErrors = activeResult?.errors ?? [];
+  const showAutoFixLink =
+    selectedBuildMode !== "check" && activeResult && !activeResult.ok && activeErrors.length > 0 && !autoFixBusy;
+
+  return (
+    <div className="p-3 flex flex-col gap-2.5">
+      {/* Mode picker — segmented control instead of three Verify-prefixed
+          buttons. Picking a mode swaps the result panel below to that
+          mode's cached result. Disabled while a build is in flight so the
+          user doesn't switch midway and confuse themselves about which
+          result is being shown. */}
+      <Segmented
+        value={selectedBuildMode}
+        onChange={(m) => setSelectedBuildMode(m)}
+        options={[
+          { value: "check", label: "Check", hint: MODE_META.check.hint, disabled: anyCargoBusy },
+          { value: "build", label: "Build", hint: MODE_META.build.hint, disabled: anyCargoBusy },
+          { value: "build-sbf", label: "Deploy", hint: MODE_META["build-sbf"].hint, disabled: anyCargoBusy },
+        ]}
+      />
+
+      {/* One-line mode hint. Replaces the old multi-line pre-build hint
+          and the redundant validation-clean banner. */}
+      <div className="text-[11px] text-anvil-text-dim leading-relaxed px-1">
+        {meta.hint}
+        {selectedBuildMode === "build" && errorCount > 0 && (
+          <span className="text-anvil-amber font-semibold">
+            {" "}· {errorCount} validator error{errorCount === 1 ? "" : "s"} pending
+          </span>
+        )}
+      </div>
+
+      {/* Primary action — one button. Cancel takes its place while busy.
+          Cancel only works for build/build-sbf (cargo check is fast enough
+          that the cancel handle isn't wired up server-side). */}
+      {buildBusy ? (
+        <button
+          onClick={() => cancelBuild()}
+          className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border font-bold text-sm transition-colors cursor-pointer"
+          style={{
+            background: "rgba(224,90,90,0.08)",
+            borderColor: "rgba(224,90,90,0.32)",
+            color: "#ffb5b5",
+          }}
+          title="Stop the in-flight cargo run."
+        >
+          <Loader2 size={14} className="animate-spin" /> Cancel build
+        </button>
+      ) : autoCheckBusy && selectedBuildMode === "check" ? (
+        <button
+          disabled
+          className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border font-bold text-sm cursor-not-allowed"
+          style={{
+            background: "rgba(255,255,255,0.04)",
+            borderColor: "rgba(255,255,255,0.08)",
+            color: C.textMuted,
+          }}
+        >
+          <Loader2 size={14} className="animate-spin" /> Check running…
+        </button>
+      ) : (
+        <button
+          onClick={() => void runBuild(selectedBuildMode)}
+          disabled={autoFixBusy || anyCargoBusy || !hasOutput}
+          title={meta.runHint}
+          className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-none font-extrabold text-sm transition-all cursor-pointer"
+          style={{
+            background:
+              activeResult?.ok
+                ? "linear-gradient(135deg, rgba(14,168,128,0.9), rgba(11,140,107,0.9))"
+                : "linear-gradient(135deg, rgba(245,166,35,0.85), rgba(232,130,10,0.85))",
+            color: "#0a0600",
+          }}
+        >
+          {selectedBuildMode === "build-sbf" ? <Sparkles size={14} /> : <Hammer size={14} />}
+          {activeResult?.ok ? `Re-run ${meta.label}` : meta.runLabel}
+          <span className="opacity-60 font-medium text-[11px]">
+            {meta.durationHint}
+          </span>
+        </button>
+      )}
+
+      {/* Single result panel — adapts to busy / clean / failed. Replaces
+          the prior status row + pre-build hint + duplicate-result block
+          stack. */}
+      <div
+        className="px-3 py-2.5 rounded-xl border flex items-start gap-2.5"
+        style={{
+          borderColor: palette.border,
+          background: palette.bg,
+          color: palette.fg,
+        }}
+      >
+        <status.icon
+          size={14}
+          className={cn("shrink-0 mt-0.5", activeIsBusy && "animate-spin")}
+        />
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-semibold leading-snug break-words">
+            {status.label}
+          </div>
+          {/* Live cargo progress — shown only while a build is in flight,
+              derived from the streamed --message-format=json events. Gives
+              the user concrete signal during a 30s-2min build-sbf instead
+              of just a spinner. */}
+          {activeIsBusy && liveProgress && (
+            <div className="text-[10px] font-mono text-anvil-text-muted mt-0.5 truncate">
+              {liveProgress}
+            </div>
+          )}
+          {/* Inline Auto-fix link — contextual, only when there's a real
+              build failure to act on. Replaces the standalone gradient
+              "Verify + Auto-fix with AI" button. */}
+          {showAutoFixLink && (
+            <button
+              onClick={() => {
+                setAutoFixOpen(true);
+                void runVerifyAndFix();
+              }}
+              disabled={autoFixBusy}
+              className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-bold cursor-pointer hover:underline"
+              style={{ color: C.amber }}
+              title="Run cargo check, feed errors to AI, apply patches, re-run. Up to 3 iterations or $0.50 cost cap."
+            >
+              <Sparkles size={11} /> Try AI Auto-fix
+              <ChevronRight size={11} />
+            </button>
+          )}
+          {/* Single-shot AI Refine — only when validator (not cargo) errors
+              are pending. Distinct from Auto-fix which runs the cargo loop. */}
+          {!activeResult && errorCount > 0 && selectedBuildMode === "build" && (
+            <button
+              onClick={() => void runRefine()}
+              disabled={refineBusy || autoFixBusy || !hasOutput}
+              className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-bold cursor-pointer hover:underline"
+              style={{ color: C.amber }}
+              title="Single-shot AI Refine (no cargo loop). Cheaper than Auto-fix."
+            >
+              <Zap size={11} /> {refineBusy ? "Refining…" : "Try AI Refine"}
+              <ChevronRight size={11} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Refine error surface — folded into the result panel area but
+          still its own row so it's not lost in the noise. */}
+      {refineError && (
+        <div
+          className="px-3 py-2 rounded-xl border text-xs"
+          style={{
+            borderColor: "rgba(245,166,35,0.35)",
+            background: "rgba(245,166,35,0.06)",
+            color: C.amber,
+          }}
+        >
+          <span className="font-bold">AI Refine: </span>
+          {refineErrorCategory === "daily_cap_hit"
+            ? "Daily cap hit. Try again tomorrow, or reach out for an exception."
+            : refineErrorCategory === "quota_exceeded"
+              ? "Provider quota exceeded."
+              : refineErrorCategory === "provider_timeout"
+                ? "Provider timed out — retry."
+                : refineError}
+        </div>
+      )}
+
+      {/* Inline error preview — only when there's something to show.
+          Capped at 5 entries with a "+N more" footer. The Files tab in
+          the output panel has the full list. */}
+      {activeErrors.length > 0 && !buildBusy && (
+        <div className="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto pr-1">
+          {activeErrors.slice(0, 5).map((e, i) => {
+            // Synthetic infra errors (cargo argv failure, missing toolchain)
+            // come through with empty filePath. Fall back to a generic
+            // "build infrastructure" label so the user doesn't see a
+            // dangling colon-line label that points nowhere.
+            const hasLocation = !!e.filePath;
+            return (
+              <div
+                key={`${e.filePath}:${e.line ?? 0}:${i}`}
+                className="px-2.5 py-2 rounded-[10px] text-xs"
+                style={{
+                  border: "1px solid rgba(224,90,90,0.3)",
+                  background: "rgba(224,90,90,0.06)",
+                }}
+              >
+                <div className="flex justify-between items-center gap-2">
+                  <span className="font-mono text-[11px] text-anvil-text truncate">
+                    {hasLocation
+                      ? `${e.filePath}${e.line ? `:${e.line}` : ""}`
+                      : "build infrastructure"}
+                  </span>
+                  {e.code && (
+                    <span className="text-[10px] font-bold text-[#ffb5b5] shrink-0">
+                      {e.code}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-anvil-text-muted mt-1 leading-snug whitespace-pre-wrap">
+                  {e.message}
+                </div>
+              </div>
+            );
+          })}
+          {activeErrors.length > 5 && (
+            <div className="text-[10px] text-anvil-text-dim text-center">
+              + {activeErrors.length - 5} more
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Auto-fix iteration log — collapsed by default. Opens automatically
+          when the user clicks the inline Try AI Auto-fix link, or when an
+          auto-fix result already exists from a prior click. */}
+      {(autoFixBusy || autoFixResult || autoFixError) && (
+        <div
+          className="rounded-xl border overflow-hidden"
+          style={{
+            borderColor:
+              autoFixResult?.stoppedReason === "green"
+                ? "rgba(14,168,128,0.32)"
+                : autoFixError
+                  ? "rgba(224,90,90,0.32)"
+                  : "rgba(107,123,255,0.28)",
+            background: "rgba(255,255,255,0.02)",
+          }}
+        >
+          <button
+            onClick={() => setAutoFixOpen((v) => !v)}
+            className="w-full flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-white/[0.03]"
+          >
+            {autoFixOpen ? (
+              <ChevronRight size={12} className="text-anvil-text-dim shrink-0 rotate-90 transition-transform" />
+            ) : (
+              <ChevronRight size={12} className="text-anvil-text-dim shrink-0" />
+            )}
+            <Sparkles size={12} className="text-anvil-indigo shrink-0" />
+            <span className="text-[12px] font-bold text-anvil-text">
+              {autoFixBusy
+                ? "Auto-fix running…"
+                : autoFixError
+                  ? "Auto-fix failed"
+                  : autoFixResult?.stoppedReason === "green"
+                    ? "Auto-fix succeeded"
+                    : "Auto-fix stopped"}
+            </span>
+            {autoFixResult && (
+              <span className="ml-auto text-[10px] font-mono text-anvil-text-muted">
+                {autoFixResult.iterations.length} iter · {autoFixResult.totalDurationMs}ms · ${autoFixResult.totalCostUsd.toFixed(4)}
+              </span>
+            )}
+            {autoFixBusy && (
+              <Loader2 size={12} className="ml-auto animate-spin text-anvil-indigo shrink-0" />
+            )}
+          </button>
+          {autoFixOpen && (
+            <div className="px-3 pb-3 pt-1 flex flex-col gap-1">
+              {autoFixError && (
+                <div className="text-[11px] text-[#ffb5b5] leading-snug">
+                  {autoFixError}
+                </div>
+              )}
+              {autoFixResult && (
+                <>
+                  <div className="text-[11px] text-anvil-text-muted leading-snug mb-1">
+                    Stopped: <span className="font-mono">{autoFixResult.stoppedReason}</span>
+                    {autoFixResult.stoppedReason === "green" && " — generated code now compiles."}
+                    {autoFixResult.stoppedReason === "max_iterations" && " — hit iteration limit."}
+                    {autoFixResult.stoppedReason === "cost_cap" && " — hit AI cost cap."}
+                    {autoFixResult.stoppedReason === "no_progress" && " — AI accepted no patches; manual fix needed."}
+                    {autoFixResult.stoppedReason === "refine_error" && " — AI provider error."}
+                  </div>
+                  <div className="flex flex-col gap-1 max-h-[160px] overflow-y-auto">
+                    {autoFixResult.iterations.map((it, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center gap-2 text-[11px] font-mono px-2 py-1 rounded-md"
+                        style={{
+                          background: it.buildResult.ok ? "rgba(14,168,128,0.1)" : "rgba(255,255,255,0.04)",
+                        }}
+                      >
+                        <span className="text-anvil-text-dim">#{it.iteration}</span>
+                        <span className={it.buildResult.ok ? "text-anvil-text" : "text-[#ffb5b5]"}>
+                          {it.buildResult.errors.length} err
+                        </span>
+                        {it.refine && (
+                          <span className="text-anvil-text-muted">
+                            → AI {it.refine.acceptedPatches}/{it.refine.acceptedPatches + it.refine.rejectedPatches}
+                            {it.refine.estimatedCostUsd > 0 ? ` ($${it.refine.estimatedCostUsd.toFixed(4)})` : ""}
+                          </span>
+                        )}
+                        {it.refineError && (
+                          <span style={{ color: "#f5a623" }} title={it.refineError.message}>
+                            → AI {
+                              it.refineError.category === "daily_cap_hit"
+                                ? "daily cap hit"
+                                : it.refineError.category === "quota_exceeded"
+                                  ? "quota exceeded"
+                                  : it.refineError.category === "provider_timeout"
+                                    ? "timeout"
+                                    : `error (${it.refineError.category})`
+                            }
+                          </span>
+                        )}
+                        <span className="text-anvil-text-dim ml-auto">{it.buildResult.durationMs}ms</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Revert — only after AI patches landed. */}
+      {canRevertRefine && (
+        <button
+          onClick={revertRefine}
+          className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl border text-[11px] font-bold transition-colors cursor-pointer"
+          style={{
+            borderColor: "rgba(224,90,90,0.35)",
+            background: "rgba(224,90,90,0.06)",
+            color: "#ffb5b5",
+          }}
+          title="Roll back to the deterministic emit output — drops every AI-applied patch from this run."
+        >
+          <Undo2 size={12} />
+          Revert AI changes
+        </button>
       )}
     </div>
   );

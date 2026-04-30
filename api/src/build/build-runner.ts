@@ -1,9 +1,22 @@
 /**
- * Build runner — takes already-emitted Rust files and runs `cargo check`
- * against them in a warm per-target scratch project, returning the
- * compiler diagnostics in a structured form.
+ * Build runner — takes already-emitted Rust files and runs cargo against
+ * them in a warm per-target scratch project, returning the compiler
+ * diagnostics in a structured form.
  *
- * Layout: one persistent scratch dir per target at `/tmp/anvil-build-<target>/`.
+ * Build modes (see BuildMode):
+ *   - "build" (default): `cargo build` — host-arch compile, catches type
+ *     errors AND linker / codegen / monomorphization errors that pure
+ *     `cargo check` would miss (e.g. duplicate `entrypoint!` macro
+ *     collisions when SPL deps lack `no-entrypoint`). Fast enough for
+ *     the workbench's "Verify Build" button (~5–15s on cached deps for
+ *     a small program).
+ *   - "build-sbf" (strict, opt-in via `?strict=1` on the route): runs
+ *     `cargo build-sbf`, which produces an actual deployable Solana
+ *     `.so`. This is the ONLY mode that proves the program will load
+ *     into the validator. Slow (1–3 min cold; 5–20s warm), so we keep
+ *     it behind an explicit flag.
+ *
+ * Layout: one persistent scratch dir per target at `<scratch>/anvil-build-<target>/`.
  * Cargo.toml is written once (or whenever it changes), and `target/` is
  * reused across calls so dependency builds are warm. Each call wipes
  * `src/` and writes the new files there before invoking cargo.
@@ -25,6 +38,17 @@ import { dirname, join, isAbsolute, normalize } from "node:path";
 import { spawnSandboxed, sandboxedEnv } from "./sandbox.js";
 
 export type BuildTarget = "pinocchio" | "native" | "quasar";
+
+/**
+ * "check" = cargo check (fastest, ~3-5s, type-check only — used for the
+ *           workbench's "Quick Check" button as the user types)
+ * "build" = cargo build (default, ~10-15s, catches linker + codegen on top
+ *           of type errors — backs the "Verify Build" button)
+ * "build-sbf" = cargo build-sbf (strict, ~30s-2min, produces deployable
+ *               Solana .so — backs the "Verify Deploy" button and
+ *               anvil-sol --strict)
+ */
+export type BuildMode = "check" | "build" | "build-sbf";
 
 export interface BuildFile {
   path: string;
@@ -113,7 +137,17 @@ function scratchDirFor(target: BuildTarget): string {
 const DEFAULT_TIMEOUT_MS = (() => {
   const raw = process.env.ANVIL_BUILD_TIMEOUT_MS;
   const parsed = raw ? parseInt(raw, 10) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 90_000;
+})();
+
+// build-sbf is 5–10x slower than build because it (a) cross-compiles to
+// the SBF target, (b) downloads & invokes platform-tools on first run, and
+// (c) does full codegen + linking against bpf-tools. Give it 10 min by
+// default; operators can override via ANVIL_BUILD_SBF_TIMEOUT_MS.
+const SBF_TIMEOUT_MS = (() => {
+  const raw = process.env.ANVIL_BUILD_SBF_TIMEOUT_MS;
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 600_000;
 })();
 
 const STDERR_TAIL_BYTES = 4096;
@@ -362,20 +396,66 @@ interface CargoRunResult {
   timedOut: boolean;
 }
 
-function runCargoCheck(scratchDir: string, timeoutMs: number): Promise<CargoRunResult> {
+/**
+ * Per-line callback fired as cargo emits each `--message-format=json` line.
+ * Used by the streaming /build endpoint to push live progress to clients
+ * via SSE. Synchronous on purpose — we don't want backpressure to slow
+ * down the cargo wrapping; the SSE client buffers naturally.
+ */
+export type CargoStreamCallback = (line: string) => void;
+
+/**
+ * Cancel handle for an in-flight cargo run. Calling `cancel()` sends
+ * SIGTERM to the cargo process group; `cancelled` resolves once the
+ * subprocess actually exits. Used by the streaming /build endpoint to
+ * abort cargo when the SSE client disconnects mid-build.
+ */
+export interface CargoCancelHandle {
+  cancel: () => void;
+  cancelled: Promise<void>;
+}
+
+function runCargo(
+  scratchDir: string,
+  mode: BuildMode,
+  timeoutMs: number,
+  options: { onLine?: CargoStreamCallback; cancelHandle?: { current: CargoCancelHandle | null } } = {},
+): Promise<CargoRunResult> {
   return new Promise((resolve) => {
     // Run cargo inside the configured sandbox. `--offline` is mandatory
     // because the sandbox cuts the network namespace; deps were already
     // fetched in ensureScratchProject's warm-up.
-    const child = spawnSandboxed(
-      "cargo",
-      ["check", "--message-format=json", "--quiet", "--offline"],
-      { cwd: scratchDir },
-    );
+    //
+    // Note on build-sbf: it's a cargo subcommand that wraps `cargo build`
+    // with the sbf-solana-solana target. Unlike `cargo build` / `cargo check`,
+    // its argv parser does NOT accept `--message-format` directly — flags
+    // meant for the inner cargo invocation must come AFTER a `--`
+    // separator. Without the separator the wrapper aborts with
+    //   error: Found argument '--message-format' which wasn't expected
+    // exit code 2, before the inner cargo is even spawned. That's the
+    // failure that surfaces to the workbench as "1 generic error" with
+    // no file/line — actual stderr lives in stderrTail.
+    //
+    // First-run on a fresh scratch dir also needs the SBF platform-tools,
+    // which build-sbf downloads automatically — that download happens
+    // OUTSIDE the sandbox during the ensureScratchProject warm-up if SBF
+    // mode is requested.
+    const cargoArgs: string[] =
+      mode === "build-sbf"
+        ? ["build-sbf", "--", "--message-format=json", "--quiet", "--offline"]
+        : [
+            mode === "check" ? "check" : "build",
+            "--message-format=json",
+            "--quiet",
+            "--offline",
+          ];
+    const child = spawnSandboxed("cargo", cargoArgs, { cwd: scratchDir });
 
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let cancelled = false;
+    let stdoutBuffer = "";
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -384,8 +464,49 @@ function runCargoCheck(scratchDir: string, timeoutMs: number): Promise<CargoRunR
       child.kill("SIGKILL");
     }, timeoutMs);
 
+    // Wire the cancel handle so the streaming endpoint can abort on
+    // client disconnect. SIGTERM first (graceful), SIGKILL after 2s.
+    if (options.cancelHandle) {
+      let exitResolve: () => void = () => {};
+      const cancelled$ = new Promise<void>((r) => {
+        exitResolve = r;
+      });
+      child.on("close", () => exitResolve());
+      options.cancelHandle.current = {
+        cancel: () => {
+          if (cancelled || child.killed) return;
+          cancelled = true;
+          child.kill("SIGTERM");
+          setTimeout(() => {
+            if (!child.killed) child.kill("SIGKILL");
+          }, 2_000);
+        },
+        cancelled: cancelled$,
+      };
+    }
+
     child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf-8");
+      const text = chunk.toString("utf-8");
+      stdout += text;
+      // Line-stream cargo's --message-format=json output to the SSE
+      // callback. Cargo emits one JSON object per line; we buffer
+      // partials across chunks.
+      if (options.onLine) {
+        stdoutBuffer += text;
+        let nl = stdoutBuffer.indexOf("\n");
+        while (nl !== -1) {
+          const line = stdoutBuffer.slice(0, nl);
+          stdoutBuffer = stdoutBuffer.slice(nl + 1);
+          if (line.length > 0) {
+            try {
+              options.onLine(line);
+            } catch {
+              // never let a callback error nuke the cargo wrapper
+            }
+          }
+          nl = stdoutBuffer.indexOf("\n");
+        }
+      }
     });
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf-8");
@@ -397,7 +518,15 @@ function runCargoCheck(scratchDir: string, timeoutMs: number): Promise<CargoRunR
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve({ exitCode: code, stdout, stderr, timedOut });
+      // Flush any trailing line-buffer content (no terminating \n).
+      if (options.onLine && stdoutBuffer.length > 0) {
+        try {
+          options.onLine(stdoutBuffer);
+        } catch {
+          // swallow
+        }
+      }
+      resolve({ exitCode: cancelled ? -1 : code, stdout, stderr, timedOut });
     });
   });
 }
@@ -435,10 +564,47 @@ function tailString(s: string, bytes: number): string {
  * (path traversal, unwritable scratch dir, etc.) and for unsupported
  * targets where the caller should surface a friendly error message.
  */
+/**
+ * Streaming variant of {@link runBuild}. Same input/output as the regular
+ * `runBuild`, but additionally invokes `options.onLine` for every cargo
+ * `--message-format=json` line as it's emitted, and writes a
+ * {@link CargoCancelHandle} into `options.cancelHandle.current` so callers
+ * can abort the in-flight cargo on client disconnect.
+ *
+ * Use from the streaming /build SSE endpoint. The non-streaming /build
+ * endpoint should keep using {@link runBuild} for simplicity.
+ */
+export async function runBuildStreaming(
+  target: BuildTarget,
+  files: BuildFile[],
+  programName: string,
+  mode: BuildMode,
+  options: {
+    onLine?: CargoStreamCallback;
+    cancelHandle?: { current: CargoCancelHandle | null };
+  },
+): Promise<BuildResult> {
+  return runBuildInternal(target, files, programName, mode, options);
+}
+
 export async function runBuild(
   target: BuildTarget,
   files: BuildFile[],
+  programName: string,
+  mode: BuildMode = "build",
+): Promise<BuildResult> {
+  return runBuildInternal(target, files, programName, mode, {});
+}
+
+async function runBuildInternal(
+  target: BuildTarget,
+  files: BuildFile[],
   _programName: string,
+  mode: BuildMode,
+  options: {
+    onLine?: CargoStreamCallback;
+    cancelHandle?: { current: CargoCancelHandle | null };
+  },
 ): Promise<BuildResult> {
   if (target === "quasar") {
     return {
@@ -524,11 +690,19 @@ export async function runBuild(
       };
     }
 
-    const run = await runCargoCheck(scratchDir, DEFAULT_TIMEOUT_MS);
+    const timeoutMs = mode === "build-sbf" ? SBF_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+    const run = await runCargo(scratchDir, mode, timeoutMs, options);
     const durationMs = Date.now() - started;
 
     const { errors, warnings } = parseCargoStdout(run.stdout);
     const stderrTail = tailString(run.stderr, STDERR_TAIL_BYTES);
+
+    const cmdLabel =
+      mode === "build-sbf"
+        ? "cargo build-sbf"
+        : mode === "check"
+          ? "cargo check"
+          : "cargo build";
 
     if (run.timedOut) {
       errors.push({
@@ -536,7 +710,7 @@ export async function runBuild(
         line: 0,
         column: 0,
         code: null,
-        message: `cargo check exceeded ${DEFAULT_TIMEOUT_MS}ms timeout`,
+        message: `${cmdLabel} exceeded ${timeoutMs}ms timeout`,
         spanText: "",
       });
     }
@@ -544,15 +718,21 @@ export async function runBuild(
     // Exit code 101 from cargo means "build failed" — diagnostics on
     // stdout already cover this. A non-101 non-zero exit with no parsed
     // errors usually means the cargo invocation itself failed (missing
-    // toolchain, bad Cargo.toml). Surface that as a synthetic error so
-    // the response is never empty when the build wasn't successful.
+    // toolchain, bad Cargo.toml, bad argv). Surface that as a synthetic
+    // error so the response is never empty — and include the stderr tail
+    // inline since that's where the actual cause lives. Without this the
+    // workbench user just sees a generic "exit code 2" and has nowhere
+    // to look (stderrTail is a separate field that no frontend renders).
     if (run.exitCode !== 0 && errors.length === 0 && !run.timedOut) {
+      const inlineStderr = stderrTail.trim().slice(0, 2000);
       errors.push({
         filePath: "",
         line: 0,
         column: 0,
         code: null,
-        message: `cargo check failed (exit code ${run.exitCode}). See stderrTail for details.`,
+        message: inlineStderr.length > 0
+          ? `${cmdLabel} failed (exit code ${run.exitCode}):\n${inlineStderr}`
+          : `${cmdLabel} failed (exit code ${run.exitCode}) with no stderr output.`,
         spanText: "",
       });
     }

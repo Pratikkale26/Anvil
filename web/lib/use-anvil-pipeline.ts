@@ -79,13 +79,75 @@ export function useAnvilPipeline() {
   const [compareTargetError, setCompareTargetError] = useState<string | null>(null);
 
   // ─── Verify-build state ───────────────────────────────────────────────────
-  // /build runs cargo check on the emitted output. Result is the full set of
-  // rustc diagnostics — used both as a UI display and as the input to the
-  // optional auto-fix loop (call refine with the cargo errors as ground-truth
-  // validation issues, instead of the regex validator's heuristic findings).
-  const [buildResult, setBuildResult] = useState<BuildResult | null>(null);
+  // Two-tier verification UX:
+  //
+  //   1. Auto cargo check — fires automatically whenever a fresh output set
+  //      lands, populates `autoCheckResult` silently. No button. The
+  //      workbench shows a small inline badge with the result.
+  //   2. Explicit verify — user clicks "Verify Build" (cargo build) or
+  //      "Verify Deploy" (cargo build-sbf). Stored in `buildResult`.
+  //
+  // Both paths share the same SSE-streaming /build endpoint. The reason
+  // we keep the state separate is so an in-flight verify-deploy doesn't
+  // clobber the cheap auto-check result the user just saw.
+  //
+  // Results are cached per mode so switching the segmented control between
+  // Build / Deploy doesn't wipe what the user just saw on the other tab.
+  // The `buildResult` getter below is a derived view that picks the slot
+  // matching `selectedBuildMode` — every consumer reads through that, so
+  // the unified result panel always reflects the active mode.
+  type BuildMode = "check" | "build" | "build-sbf";
+  const [buildResults, setBuildResults] = useState<{
+    check: BuildResult | null;
+    build: BuildResult | null;
+    "build-sbf": BuildResult | null;
+  }>({ check: null, build: null, "build-sbf": null });
+  const [buildErrors, setBuildErrors] = useState<{
+    check: string | null;
+    build: string | null;
+    "build-sbf": string | null;
+  }>({ check: null, build: null, "build-sbf": null });
   const [buildBusy, setBuildBusy] = useState(false);
-  const [buildError, setBuildError] = useState<string | null>(null);
+  // Mode currently being executed (drives the busy spinner label). Distinct
+  // from `selectedBuildMode` which is what the user has *picked* to view.
+  const [buildMode, setBuildMode] = useState<"build" | "build-sbf">("build");
+  // Mode the segmented control is showing. Defaults to "check" — fastest
+  // path, runs automatically on every output change, returns in 3-5s on
+  // warm cargo. Users opt into "build" (catches linker/codegen, ~10-15s)
+  // or "build-sbf" (deployable .so, ~30s-2min) when they want stronger
+  // signal. Each step up the ladder is also a step up in latency, surfaced
+  // in the segmented control's hover hints.
+  const [selectedBuildMode, setSelectedBuildMode] = useState<BuildMode>("check");
+  const [buildMessages, setBuildMessages] = useState<string[]>([]);
+  // Auto-cargo-check state — fingerprint of last cached check is tracked
+  // separately so the effect knows when to re-fire, but the result itself
+  // lives in `buildResults.check` and is rendered through the same single
+  // result panel as the explicit modes.
+  const [autoCheckBusy, setAutoCheckBusy] = useState(false);
+
+  // Derived per-mode views. Components read `buildResult` (active mode's
+  // result) when they want "what the user is currently looking at"; the
+  // legacy `autoCheckResult` alias is preserved so the few call sites that
+  // care specifically about the auto-check signal don't have to change.
+  const buildResult = buildResults[selectedBuildMode];
+  const buildError = buildErrors[selectedBuildMode];
+  const autoCheckResult = buildResults.check;
+  const autoCheckError = buildErrors.check;
+
+  function setBuildResultFor(mode: BuildMode, value: BuildResult | null) {
+    setBuildResults((prev) => ({ ...prev, [mode]: value }));
+  }
+  function setBuildErrorFor(mode: BuildMode, value: string | null) {
+    setBuildErrors((prev) => ({ ...prev, [mode]: value }));
+  }
+  // Cancel handle for the in-flight SSE connection. Calling .abort() closes
+  // the fetch, which the server picks up via req.on("close") and SIGTERMs
+  // the cargo subprocess.
+  const buildAbortRef = useRef<AbortController | null>(null);
+  const autoCheckAbortRef = useRef<AbortController | null>(null);
+  // Tracks which output fingerprint we've already auto-checked so the
+  // effect doesn't re-fire on unrelated re-renders.
+  const lastAutoCheckedFingerprintRef = useRef<string | null>(null);
   // Auto-fix loop state. Different from buildResult because it carries the
   // full per-iteration history + cost accounting + stopReason.
   const [autoFixResult, setAutoFixResult] = useState<AutoFixResponse | null>(null);
@@ -380,8 +442,8 @@ export function useAnvilPipeline() {
     setHasAppliedRefine(false);
     setShowCompare(false);
     setPreRefineSnapshot(null);
-    setBuildResult(null);
-    setBuildError(null);
+    setBuildResults({ check: null, build: null, "build-sbf": null });
+    setBuildErrors({ check: null, build: null, "build-sbf": null });
     setAutoFixResult(null);
     setAutoFixError(null);
     setCompareTarget(null);
@@ -859,12 +921,15 @@ export function useAnvilPipeline() {
         // so the existing Verify card shows the final outcome.
         const last = result.iterations[result.iterations.length - 1];
         if (last) {
-          setBuildResult({
+          // Auto-fix runs cargo build internally — surface the final cycle
+          // into the build slot so the unified result panel reflects it.
+          setBuildResultFor("build", {
             ok: last.buildResult.ok,
             durationMs: last.buildResult.durationMs,
             errors: last.buildResult.errors,
             warnings: last.buildResult.warnings,
           });
+          setSelectedBuildMode("build");
         }
         setHasAppliedRefine(true);
       }
@@ -876,42 +941,213 @@ export function useAnvilPipeline() {
   }
 
   /**
-   * Verify build — POST the current emitted files to /build, which runs
-   * `cargo check` on a warm scratch project and returns rustc diagnostics.
-   * This is the ground-truth correctness signal: a green build means the
-   * generated code actually compiles, no heuristics involved.
+   * Internal: stream a /build?stream=1 invocation and collect the result.
+   * Used by both `runBuild` (manual click) and the auto-cargo-check effect.
+   * Returns `{ result, error, cancelled }` — caller decides what state
+   * to write into.
+   *
+   * Uses fetch + ReadableStream because EventSource is GET-only and we
+   * need to POST the file payload. Hand-parses the `event:` / `data:`
+   * SSE wire format from the response body.
    */
-  async function runBuild() {
-    if (!outputFiles.length || !programName) {
-      setBuildError("Run the deterministic pipeline first.");
-      return;
-    }
-    try {
-      setBuildBusy(true);
-      setBuildError(null);
-      setBuildResult(null);
+  async function runCargoStreaming(
+    mode: "check" | "build" | "build-sbf",
+    abortRef: { current: AbortController | null },
+    onLine?: (line: string) => void,
+  ): Promise<{
+    result: BuildResult | null;
+    error: string | null;
+    cancelled: boolean;
+  }> {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-      const res = await fetch(`${API_BASE}/build`, {
+    try {
+      const res = await fetch(`${API_BASE}/build?stream=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          target,
-          files: outputFiles,
-          programName,
-        }),
+        body: JSON.stringify({ target, files: outputFiles, programName, mode }),
+        signal: controller.signal,
       });
-      if (!res.ok) {
-        const p = await res.json().catch(() => ({ error: "Build failed" }));
-        throw new Error(p.details ?? p.error ?? "Build failed");
+      if (!res.ok || !res.body) {
+        const p = await res
+          .json()
+          .catch(() => ({ error: `cargo ${mode} failed (HTTP ${res.status})` }));
+        return {
+          result: null,
+          error: p.details ?? p.error ?? `cargo ${mode} failed`,
+          cancelled: false,
+        };
       }
-      const result = (await res.json()) as BuildResult;
-      setBuildResult(result);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let final: BuildResult | null = null;
+      let cancelled = false;
+      let errMsg: string | null = null;
+
+      readLoop: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let sep = buf.indexOf("\n\n");
+        while (sep !== -1) {
+          const block = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          const lines = block.split("\n");
+          let eventName = "message";
+          let dataRaw = "";
+          for (const line of lines) {
+            if (line.startsWith("event: ")) eventName = line.slice(7);
+            else if (line.startsWith("data: ")) dataRaw += line.slice(6);
+          }
+          let data: unknown = null;
+          if (dataRaw) {
+            try {
+              data = JSON.parse(dataRaw);
+            } catch {
+              // skip malformed
+            }
+          }
+          if (eventName === "cargo_message" && data && typeof data === "object") {
+            const line = (data as { line?: string }).line;
+            if (typeof line === "string" && onLine) onLine(line);
+          } else if (eventName === "build_done") {
+            final = data as BuildResult;
+          } else if (eventName === "build_error") {
+            const m =
+              data && typeof data === "object"
+                ? (data as { message?: string }).message
+                : undefined;
+            errMsg = typeof m === "string" && m.length > 0 ? m : "Build failed";
+            break readLoop;
+          } else if (eventName === "cancelled") {
+            cancelled = true;
+            break readLoop;
+          }
+          sep = buf.indexOf("\n\n");
+        }
+      }
+
+      return { result: final, error: errMsg, cancelled };
     } catch (err) {
-      setBuildError(err instanceof Error ? err.message : String(err));
+      if (err instanceof Error && err.name === "AbortError") {
+        return { result: null, error: null, cancelled: true };
+      }
+      return {
+        result: null,
+        error: err instanceof Error ? err.message : String(err),
+        cancelled: false,
+      };
     } finally {
-      setBuildBusy(false);
+      if (abortRef.current === controller) abortRef.current = null;
     }
   }
+
+  /**
+   * Verify build — explicit user click on "Verify Build" or "Verify Deploy".
+   * Streams cargo output via SSE; renders cargo_message events as a live
+   * log panel; writes the final result to `buildResult`.
+   *
+   * Mode is restricted to "build" / "build-sbf" — cargo check is run
+   * automatically by the effect below, no button needed.
+   */
+  async function runBuild(mode: BuildMode = "build") {
+    if (!outputFiles.length || !programName) {
+      setBuildErrorFor(mode, "Run the deterministic pipeline first.");
+      return;
+    }
+    // Manual cargo check — wire through the auto-check abort ref so a
+    // background auto-check doesn't double-fire while we're explicitly
+    // re-running. Result still lands in buildResults.check, which the
+    // header signal + segmented "Check" tab read from.
+    if (mode === "check") {
+      setAutoCheckBusy(true);
+      setBuildErrorFor("check", null);
+      setBuildResultFor("check", null);
+      setSelectedBuildMode("check");
+      const { result, error } = await runCargoStreaming("check", autoCheckAbortRef);
+      if (error) setBuildErrorFor("check", error);
+      else if (result) setBuildResultFor("check", result);
+      setAutoCheckBusy(false);
+      return;
+    }
+    setBuildBusy(true);
+    setBuildMode(mode);
+    // Switch the segmented control to the mode the user just kicked off so
+    // the result panel below reflects what they asked for.
+    setSelectedBuildMode(mode);
+    setBuildErrorFor(mode, null);
+    setBuildResultFor(mode, null);
+    setBuildMessages([]);
+
+    const messages: string[] = [];
+    const { result, error, cancelled } = await runCargoStreaming(
+      mode,
+      buildAbortRef,
+      (line) => {
+        messages.push(line);
+        if (messages.length % 10 === 0) setBuildMessages([...messages]);
+      },
+    );
+    setBuildMessages(messages);
+
+    if (cancelled) setBuildErrorFor(mode, "Build cancelled.");
+    else if (error) setBuildErrorFor(mode, error);
+    else if (result) setBuildResultFor(mode, result);
+
+    setBuildBusy(false);
+  }
+
+  function cancelBuild() {
+    buildAbortRef.current?.abort();
+    buildAbortRef.current = null;
+  }
+
+  /**
+   * Auto-cargo-check effect. Whenever a fresh output set lands (different
+   * fingerprint from the last one we checked), fire `cargo check` in the
+   * background and write the result to `autoCheckResult`. The workbench
+   * renders a small inline status badge ✓ / ✗ based on this state.
+   *
+   * Fingerprint = target + programName + JSON of outputFiles. Cheap to
+   * compute, stable across re-renders, distinguishes between targets.
+   * The ref guards against re-firing for the same output (e.g. when a
+   * user clicks Verify Build, which doesn't change outputFiles).
+   */
+  useEffect(() => {
+    if (!outputFiles.length || !programName) return;
+    const fingerprint = `${target}::${programName}::${JSON.stringify(outputFiles)}`;
+    if (fingerprint === lastAutoCheckedFingerprintRef.current) return;
+    lastAutoCheckedFingerprintRef.current = fingerprint;
+
+    let stale = false;
+
+    void (async () => {
+      setAutoCheckBusy(true);
+      setBuildErrorFor("check", null);
+      setBuildResultFor("check", null);
+
+      const { result, error } = await runCargoStreaming("check", autoCheckAbortRef);
+
+      if (stale) return;
+      if (error) setBuildErrorFor("check", error);
+      else if (result) setBuildResultFor("check", result);
+      setAutoCheckBusy(false);
+    })();
+
+    return () => {
+      stale = true;
+      autoCheckAbortRef.current?.abort();
+      autoCheckAbortRef.current = null;
+    };
+    // We intentionally depend on the JSON content of outputFiles, not its
+    // identity, since some pipeline paths re-emit the same array. The
+    // fingerprint check inside the effect dedupes those.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outputFiles, target, programName]);
 
   return {
     // Core
@@ -999,9 +1235,19 @@ export function useAnvilPipeline() {
     revertRefine,
     canRevertRefine: preRefineSnapshot !== null && hasAppliedRefine,
     runBuild,
+    cancelBuild,
     buildBusy,
     buildResult,
+    buildResults,
     buildError,
+    buildErrors,
+    buildMode,
+    selectedBuildMode,
+    setSelectedBuildMode,
+    buildMessages,
+    autoCheckResult,
+    autoCheckBusy,
+    autoCheckError,
     runVerifyAndFix,
     autoFixBusy,
     autoFixResult,
