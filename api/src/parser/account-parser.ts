@@ -18,7 +18,7 @@ import { normalizeSolanaType } from "./utils.js";
 
 export function parseAccountsStructFields(
   structNode: SyntaxNode,
-  _outerAttrs: SyntaxNode[],
+  outerAttrs: SyntaxNode[],
 ): AccountRef[] {
   const accounts: AccountRef[] = [];
   const bodyNode = structNode.childForFieldName("body");
@@ -40,6 +40,45 @@ export function parseAccountsStructFields(
       if (account) accounts.push(account);
       currentAttrs = [];
     }
+  }
+
+  // #[event_cpi] auto-injects two extra accounts at the end of the struct:
+  //   event_authority: PDA seeded by [b"__event_authority"]
+  //   program: the current program account (Program<'info, Self>)
+  // Anchor's macro adds these at expansion time so handler bodies + the
+  // emit_cpi! macro can reference them. Anvil mirrors the injection at
+  // parse time so the IR has the right account count + slot positions
+  // for downstream emit (signer checks, account-len guard, etc.).
+  //
+  // Ordering note: Anchor appends them at the end of the existing fields,
+  // so the slot indices for any user-declared accounts are unchanged. Only
+  // accounts.len() grows by 2.
+  const hasEventCpi = outerAttrs.some((a) => /^#\[event_cpi\]/.test(a.text.replace(/\s+/g, "")));
+  if (hasEventCpi) {
+    accounts.push({
+      name: "event_authority",
+      accountType: "Unknown",
+      isSigner: false,
+      isMut: false,
+      isInit: false,
+      isOptional: false,
+      isPda: true,
+      pdaSeeds: [`b"__event_authority"`],
+      constraints: [
+        { kind: "seeds", value: `[b"__event_authority"]` },
+      ],
+    });
+    accounts.push({
+      name: "program",
+      accountType: "Unknown",
+      isSigner: false,
+      isMut: false,
+      isInit: false,
+      isOptional: false,
+      isPda: false,
+      pdaSeeds: [],
+      constraints: [],
+    });
   }
 
   return accounts;
