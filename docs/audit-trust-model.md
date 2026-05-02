@@ -57,6 +57,7 @@ Stated plainly so an auditor can compare to what they've heard us say:
 - **We don't claim "no audit needed."** We claim the *translation step* doesn't need a separate audit when paired with sufficient differential coverage. Source-level audit of the Anchor program is still required for #1 (program semantics).
 - **We don't claim universal byte-equality.** We claim byte-equality on the scenarios you run. Inputs not in your scenarios are not gated.
 - **We don't claim AI-patched output is verified.** AI Refine produces a yellow banner in the workbench whenever patches are present. AI patches are not under the differential corpus today; they're explicitly out of scope for the trust claim.
+- **We don't claim event log parity.** The harness compares data, lamports, and owner — NOT event log payloads (`sol_log_data`). A program that emits `emit!(Event {...})` could byte-equal on state but produce different event payloads. The differential CLI refuses to run on `emit!()`-using sources by default; pass `--ignore-events` to acknowledge the gap and run the gate anyway.
 - **We don't claim Quasar is gated.** Quasar emit passes the validator + has snapshot tests, but no cargo-build coverage. It's flagged experimental in the workbench picker. The trust claims here cover Pinocchio (production) and Native (reference). If you compile to Quasar, treat it as a starting point that needs review.
 
 ---

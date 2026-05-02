@@ -17,7 +17,7 @@ anvil-sol differential ./my-anchor-program --scenario scenario.json
 #   ✓ BYTE-EQUAL — all N compared account(s) match.
 ```
 
-Step 2 is the part nobody else ships. It builds your Anchor source AND the Anvil-emitted Pinocchio version into separate `.so` files, runs the same instruction sequence against both inside [LiteSVM](https://github.com/litesvm/litesvm), and asserts every account's `data`, `lamports`, AND `owner` byte-equal at the end. Anything else — wrong CPI account order, missing bump, off-by-one Borsh layout, account left assigned to the wrong program — fails the gate loudly. Event log payloads (`emit!`) are not compared today; see [docs/audit-trust-model.md](docs/audit-trust-model.md).
+Step 2 is the part nobody else ships. It builds your Anchor source AND the Anvil-emitted Pinocchio version into separate `.so` files, runs the same instruction sequence against both inside [LiteSVM](https://github.com/litesvm/litesvm), and asserts every account's `data`, `lamports`, AND `owner` byte-equal at the end. Anything else — wrong CPI account order, missing bump, off-by-one Borsh layout, account left assigned to the wrong program — fails the gate loudly. Event log payloads (`emit!`) are NOT compared today; the CLI refuses to run on `emit!()`-using sources unless you pass `--ignore-events` to acknowledge the gap. See [docs/audit-trust-model.md](docs/audit-trust-model.md).
 
 Cargo green is necessary but not sufficient. This is the actual correctness signal.
 

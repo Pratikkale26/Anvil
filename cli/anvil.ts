@@ -180,6 +180,17 @@ interface CliArgs {
    * passing the seed printed at the divergence boundary.
    */
   fuzzSeed: string | null;
+  /**
+   * `differential --ignore-events` — opt-in escape hatch for source that
+   * uses Anchor's `emit!` macro. Today the harness compares data, lamports,
+   * and owner — NOT event log payloads. A program that emits events behind
+   * the same data state will pass the gate even if Anvil's emit drops or
+   * re-shapes the event payload. Without this flag, the differential CLI
+   * fails loudly when the source contains `emit!` so users don't get a
+   * silent green on a partial check. With the flag, runs the gate anyway
+   * and prints a banner that event divergence is unchecked.
+   */
+  ignoreEvents: boolean;
   help: boolean;
 }
 
@@ -207,6 +218,7 @@ function parseArgs(argv: string[]): CliArgs {
     fuzzSeed: null,
     anchorExtraDepsFile: null,
     skipCache: false,
+    ignoreEvents: false,
     help: false,
   };
 
@@ -324,6 +336,12 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--skip-cache") {
       args.skipCache = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--ignore-events") {
+      args.ignoreEvents = true;
       i++;
       continue;
     }
@@ -1801,6 +1819,13 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     --fuzz-seed <hex>       Pin the RNG seed for reproducibility. Defaults to
                             a fresh 32-bit seed each run; pass the seed printed
                             at a divergence to re-run the exact mutation.
+    --ignore-events         Source uses Anchor's emit!() macro? The harness
+                            does NOT compare event log payloads — only data,
+                            lamports, and owner. Without this flag the CLI
+                            refuses to run on emit!()-using sources, to stop
+                            users from getting a silent green on a partial
+                            check. With this flag, runs anyway and prints a
+                            banner that event divergence is unchecked.
 
   ${c.bold}WHAT IT DOES (with --scenario)${c.reset}
 
@@ -1809,7 +1834,7 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     3. cargo-build-sbf the Anchor reference .so (or use --anchor-so)
     4. Load both into LiteSVM with deterministic keypairs (sha256 seed)
     5. Run scenario.instructions sequentially against each
-    6. Byte-compare scenario.compare accounts (data + lamports)
+    6. Byte-compare scenario.compare accounts (data + lamports + owner)
     7. Print PASS / FAIL with diff offset on mismatch (exit code 2 on fail)
 
   ${c.bold}WHAT IT DOES (without --scenario)${c.reset}
@@ -1889,6 +1914,35 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     process.exit(1);
   }
   const ir = parsed.ir;
+
+  // emit!() divergence gate.
+  // The harness compares data + lamports + owner. Event log payloads
+  // (sol_log_data) are NOT compared. A program that produces identical
+  // account state but a different event payload will pass byte-equal
+  // even though it's runtime-divergent. Refuse to run unless the user
+  // opts in via --ignore-events.
+  const usesEmitMacro =
+    /\bemit!\s*\(/.test(source) ||
+    ir.instructions.some((i) =>
+      (i.body ?? []).some((s) =>
+        s.kind === "emit" || (s.kind === "pass_through" && /\bemit!\s*\(/.test(s.code)),
+      ),
+    );
+  if (usesEmitMacro && !args.ignoreEvents) {
+    error(`EVENT_LOG_NOT_SUPPORTED: source uses Anchor's emit!() macro.`);
+    console.log();
+    console.log(`    ${c.dim}The differential harness compares data, lamports, and owner — but NOT event log payloads.${c.reset}`);
+    console.log(`    ${c.dim}A program that emits events behind identical state can still byte-equal but be runtime-divergent.${c.reset}`);
+    console.log();
+    console.log(`    Re-run with ${c.bold}--ignore-events${c.reset} to acknowledge the gap and run the gate anyway.`);
+    console.log(`    ${c.dim}See docs/audit-trust-model.md for the full unchecked-surface list.${c.reset}`);
+    console.log();
+    process.exit(1);
+  }
+  if (usesEmitMacro && args.ignoreEvents) {
+    warn(`emit!() detected — running with --ignore-events. Event log divergence is NOT checked by this gate.`);
+    console.log();
+  }
   success(`Parsed: ${ir.instructions.length} instruction${ir.instructions.length !== 1 ? "s" : ""}, ${ir.accounts.length} account${ir.accounts.length !== 1 ? "s" : ""}`);
   console.log();
 
