@@ -602,6 +602,18 @@ function VerifyBuildBody(props: {
   // the user's face — they opt in by clicking "Try AI Auto-fix ↗".
   const [autoFixOpen, setAutoFixOpen] = useState(false);
 
+  // Per-error expand/collapse state. Compact preview is the default; click
+  // an error card to reveal the full cargo message + offending source slice
+  // (spanText) inline. Keyed by index because errors don't have stable ids.
+  const [expandedErrors, setExpandedErrors] = useState<Set<number>>(new Set());
+  const toggleErrorExpand = (i: number) =>
+    setExpandedErrors((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+
   // Active result + error — derived purely from the mode the user has
   // chosen in the segmented control. No more "freshest result wins" race
   // between auto-check and explicit build.
@@ -868,41 +880,85 @@ function VerifyBuildBody(props: {
       )}
 
       {/* Inline error preview — only when there's something to show.
-          Capped at 5 entries with a "+N more" footer. The Files tab in
-          the output panel has the full list. */}
+          Compact by default (file:line + code badge + first message line);
+          click any card to expand and see the full multi-line rustc message
+          + offending source slice (spanText) inline. Capped at 5 entries
+          with a "+N more" footer; max-height grows when any are expanded
+          so the expanded body isn't squeezed inside a 180px scroll cage. */}
       {activeErrors.length > 0 && !buildBusy && (
-        <div className="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto pr-1">
+        <div
+          className="flex flex-col gap-1.5 overflow-y-auto pr-1"
+          style={{ maxHeight: expandedErrors.size > 0 ? 480 : 180 }}
+        >
           {activeErrors.slice(0, 5).map((e, i) => {
             // Synthetic infra errors (cargo argv failure, missing toolchain)
             // come through with empty filePath. Fall back to a generic
             // "build infrastructure" label so the user doesn't see a
             // dangling colon-line label that points nowhere.
             const hasLocation = !!e.filePath;
+            const expanded = expandedErrors.has(i);
+            // Collapsed preview: first non-empty line of the message,
+            // truncated. Expanded: full multi-line message + spanText.
+            const firstLine = e.message.split("\n").find((l) => l.trim().length > 0) ?? e.message;
+            const isMultiline = e.message.includes("\n") || e.message.length > 140;
             return (
-              <div
+              <button
                 key={`${e.filePath}:${e.line ?? 0}:${i}`}
-                className="px-2.5 py-2 rounded-[10px] text-xs"
+                onClick={() => toggleErrorExpand(i)}
+                className="text-left px-2.5 py-2 rounded-[10px] text-xs cursor-pointer hover:bg-[rgba(224,90,90,0.1)] transition-colors"
                 style={{
                   border: "1px solid rgba(224,90,90,0.3)",
                   background: "rgba(224,90,90,0.06)",
                 }}
+                title={expanded ? "Click to collapse" : "Click to see the full rustc message + source span"}
               >
                 <div className="flex justify-between items-center gap-2">
-                  <span className="font-mono text-[11px] text-anvil-text truncate">
-                    {hasLocation
-                      ? `${e.filePath}${e.line ? `:${e.line}` : ""}`
-                      : "build infrastructure"}
-                  </span>
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <ChevronRight
+                      size={11}
+                      className="text-anvil-text-dim shrink-0 transition-transform"
+                      style={{ transform: expanded ? "rotate(90deg)" : "none" }}
+                    />
+                    <span className="font-mono text-[11px] text-anvil-text truncate">
+                      {hasLocation
+                        ? `${e.filePath}${e.line ? `:${e.line}` : ""}${e.column ? `:${e.column}` : ""}`
+                        : "build infrastructure"}
+                    </span>
+                  </div>
                   {e.code && (
                     <span className="text-[10px] font-bold text-[#ffb5b5] shrink-0">
                       {e.code}
                     </span>
                   )}
                 </div>
-                <div className="text-[11px] text-anvil-text-muted mt-1 leading-snug whitespace-pre-wrap">
-                  {e.message}
-                </div>
-              </div>
+                {expanded ? (
+                  <div className="mt-2 flex flex-col gap-2">
+                    <pre className="text-[11px] text-anvil-text leading-snug whitespace-pre-wrap font-mono break-words m-0">
+                      {e.message}
+                    </pre>
+                    {e.spanText && (
+                      <div
+                        className="px-2 py-1.5 rounded-md font-mono text-[11px] leading-snug overflow-x-auto"
+                        style={{
+                          background: "rgba(0,0,0,0.25)",
+                          border: "1px solid rgba(255,255,255,0.06)",
+                          color: "#ffd693",
+                        }}
+                      >
+                        <span className="text-anvil-text-dim mr-1">{">"}</span>
+                        {e.spanText}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-anvil-text-muted mt-1 leading-snug truncate">
+                    {firstLine}
+                    {isMultiline && (
+                      <span className="text-anvil-text-dim ml-1">…</span>
+                    )}
+                  </div>
+                )}
+              </button>
             );
           })}
           {activeErrors.length > 5 && (
