@@ -65,9 +65,9 @@ pub struct Init<'info> {
     pub system_program: Program<'info, System>,
 }
 
-// Each Append* uses a literal-size realloc — same reason as realloc.rs:
-// state.log.len() requires Anchor's macro-side deserialize that Anvil's
-// emit doesn't replicate. Each level grows by exactly N bytes.
+// Each Append* uses `realloc = 8 + 1 + 4 + state.log.len() + N`. Anvil's
+// realloc prelude detects state-field references in the size expression
+// and deserializes the existing state once before the realloc CPI fires.
 
 #[derive(Accounts)]
 pub struct AppendOne<'info> {
@@ -75,7 +75,7 @@ pub struct AppendOne<'info> {
         mut,
         seeds = [b"realloc-grow", owner.key().as_ref()],
         bump = state.bump,
-        realloc = 14,
+        realloc = 8 + 1 + 4 + state.log.len() + 1,
         realloc::payer = owner,
         realloc::zero = true,
     )]
@@ -91,7 +91,7 @@ pub struct AppendTwo<'info> {
         mut,
         seeds = [b"realloc-grow", owner.key().as_ref()],
         bump = state.bump,
-        realloc = 16,
+        realloc = 8 + 1 + 4 + state.log.len() + 2,
         realloc::payer = owner,
         realloc::zero = true,
     )]
@@ -107,7 +107,7 @@ pub struct AppendFour<'info> {
         mut,
         seeds = [b"realloc-grow", owner.key().as_ref()],
         bump = state.bump,
-        realloc = 20,
+        realloc = 8 + 1 + 4 + state.log.len() + 4,
         realloc::payer = owner,
         realloc::zero = true,
     )]

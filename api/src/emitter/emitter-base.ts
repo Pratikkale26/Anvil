@@ -1418,10 +1418,44 @@ ${indented}
     const payerAcc = instr.accounts.find((a) => a.isSigner && a.isMut);
     const payer = payerAcc ? snakeCase(payerAcc.name) : "payer";
 
+    // State-field-in-realloc-expr support. Anchor's macro deserializes the
+    // existing account before evaluating `realloc = <expr>`, so expressions
+    // like `realloc = 8 + 4 + state.log.len() + 1` reference the deserialized
+    // struct's fields. Anvil's emit runs BEFORE any deserialize — so the
+    // expression sees `state` (the AccountInfo) and bails with E0609 / E0599.
+    //
+    // Detection: scan sizeExpr for `<account>.<field>` against the
+    // instruction's account names. If any match, deserialize that account
+    // ONCE inside the new-size scope and rewrite the expression to use the
+    // local var. The body's subsequent state_read still runs (and deserializes
+    // again) — two deserializations is fine; runtime cost is sub-µs.
+    const accountFieldPattern = (acc: string) =>
+      new RegExp(`\\b${acc.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(\\w+)`, "g");
+    const stateAccountsInScope = instr.accounts.filter((a) => a.accountType && this.currentIr?.accounts.some((sa) => sa.name === a.accountType));
+    const referencedStateAccounts: Array<{ name: string; type: string }> = [];
+    for (const acc of stateAccountsInScope) {
+      const accName = snakeCase(acc.name);
+      if (accountFieldPattern(accName).test(sizeExpr)) {
+        referencedStateAccounts.push({ name: accName, type: acc.accountType! });
+      }
+    }
+    let resolvedSizeExpr = sizeExpr;
+    let predeserialize = "";
+    if (referencedStateAccounts.length > 0) {
+      const lines: string[] = [];
+      for (const { name, type } of referencedStateAccounts) {
+        const localVar = `__${name}_for_realloc`;
+        lines.push(`        let ${localVar} = ${type}::from_account_info(${name})?;`);
+        // Rewrite `<name>.<field>` → `<localVar>.<field>` in the size expr.
+        resolvedSizeExpr = resolvedSizeExpr.replace(accountFieldPattern(name), `${localVar}.$1`);
+      }
+      predeserialize = lines.join("\n") + "\n";
+    }
+
     if (this.frameworkName === "Native") {
       return `    // realloc — resize ${accountName} to ${sizeExpr}
     {
-        let __new_size = (${sizeExpr}) as usize;
+${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
         let __rent = solana_program::sysvar::rent::Rent::get()?;
         let __new_lamports = __rent.minimum_balance(__new_size);
         let __delta = __new_lamports.saturating_sub(${accountName}.lamports());

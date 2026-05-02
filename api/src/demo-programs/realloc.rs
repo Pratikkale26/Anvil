@@ -49,20 +49,18 @@ pub struct Init<'info> {
     pub system_program: Program<'info, System>,
 }
 
-// Append uses a literal-size realloc (the test always grows by exactly
-// one byte, so the new size is known at compile time). Using
-// `state.log.len()` in the realloc expression would require Anchor's
-// macro to deserialize before computing — which it does automatically,
-// but Anvil's native emit emits the realloc CPI before any deserialize.
-// Literal keeps the differential honest while sidestepping the in-macro
-// vs in-handler ordering question.
+// Append uses `realloc = 8 + 1 + 4 + state.log.len() + 1`. Anchor's
+// macro deserializes `state` before evaluating the realloc expression;
+// Anvil's emit replicates this by detecting state-field references in
+// the size expression and emitting a from_account_info() call inside
+// the new-size scope before the realloc CPI fires.
 #[derive(Accounts)]
 pub struct Append<'info> {
     #[account(
         mut,
         seeds = [b"realloc-st", owner.key().as_ref()],
         bump = state.bump,
-        realloc = 14,
+        realloc = 8 + 1 + 4 + state.log.len() + 1,
         realloc::payer = owner,
         realloc::zero = false,
     )]
