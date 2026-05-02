@@ -21,6 +21,7 @@ import { emitPinocchioFull } from "../api/src/emitter/pinocchio-emitter.js";
 import { emitNativeFull } from "../api/src/emitter/native-emitter.js";
 import { emitQuasarFull } from "../api/src/emitter/quasar-emitter.js";
 import { validateEmitterOutput } from "../api/src/emitter/output-validator.js";
+import { auditPassthrough } from "../api/src/emitter/passthrough-audit.js";
 import { analyzeCU } from "../api/src/emitter/cu-analyzer.js";
 import { buildProjectScaffold } from "../api/src/emitter/project-scaffold.js";
 import { resolveLocalSource } from "../api/src/parser/local-source.js";
@@ -915,10 +916,12 @@ async function cmdCompile(args: CliArgs): Promise<void> {
 
   // 5. Strict-mode gate (--strict)
   // Don't write output if the user asked for "deploy-grade" semantics and
-  // either (a) the validator found errors, or (b) the emit carries known-
-  // broken stub markers. Errors are already enumerated above; we re-scan
-  // for the stub patterns here because the validator catches them but
-  // some users only see this exit-code signal.
+  // either (a) the validator found errors, (b) the emit carries known-
+  // broken stub markers, or (c) the IR's pass_through statements still
+  // hold Anchor-only constructs that would land verbatim in target Rust.
+  // Errors are already enumerated above; we re-scan for the stub patterns
+  // here because the validator catches them but some users only see this
+  // exit-code signal.
   if (args.strict) {
     const allText = (output.files.length > 0 ? output.files.map((f) => f.content) : [output.singleFile]).join("\n");
     const stubMarkers = [
@@ -928,7 +931,9 @@ async function cmdCompile(args: CliArgs): Promise<void> {
       /\b0u8\s*\/\*\s*TODO:\s*decimals\b/,
     ];
     const stubHits = stubMarkers.filter((re) => re.test(allText));
-    if (errors.length > 0 || stubHits.length > 0) {
+    const passthroughFindings = auditPassthrough(ir);
+    const passthroughErrors = passthroughFindings.filter((f) => f.severity === "error");
+    if (errors.length > 0 || stubHits.length > 0 || passthroughErrors.length > 0) {
       error(`--strict refusal: emit not deploy-safe.`);
       if (errors.length > 0) {
         console.log(`    ${c.dim}validator errors: ${errors.length}${c.reset}`);
@@ -937,6 +942,18 @@ async function cmdCompile(args: CliArgs): Promise<void> {
         console.log(
           `    ${c.dim}stub markers detected (${stubHits.length} pattern${stubHits.length !== 1 ? "s" : ""}); the emit contains compile-clean placeholders that no-op the original behavior. Re-run without --strict to inspect, or fix the source.${c.reset}`,
         );
+      }
+      if (passthroughErrors.length > 0) {
+        console.log(
+          `    ${c.dim}pass_through audit: ${passthroughErrors.length} statement${passthroughErrors.length !== 1 ? "s" : ""} still carry Anchor constructs that won't compile against the target framework:${c.reset}`,
+        );
+        for (const f of passthroughErrors.slice(0, 8)) {
+          console.log(`      ${c.red}E${c.reset} ${c.dim}${f.path}${c.reset} ${f.message}`);
+          console.log(`         ${c.dim}> ${f.snippet}${c.reset}`);
+        }
+        if (passthroughErrors.length > 8) {
+          console.log(`      ${c.dim}… and ${passthroughErrors.length - 8} more${c.reset}`);
+        }
       }
       process.exit(2);
     }
