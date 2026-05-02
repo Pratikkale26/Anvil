@@ -230,7 +230,12 @@ class PinocchioEmitter extends BaseEmitter {
       i.body.some(s =>
         s.kind === 'sysvar_rent' ||
         (s.kind === 'pass_through' && /\bRent::get\(\)/.test(s.code))
-      )
+      ) ||
+      // Realloc prelude (emitReallocPrelude in emitter-base) calls
+      // Rent::get() to compute the rent delta. Without this account-side
+      // check the import is missed and cargo build fails with E0599
+      // 'no function get found for Rent in this scope.'
+      i.accounts.some(a => a.constraints?.some(c => c.kind === 'realloc'))
     ) || irNeedsTokenAccountInitHelper(_ir);
     if (needsClock) {
       imports.push(`use pinocchio::sysvars::clock::Clock;`);

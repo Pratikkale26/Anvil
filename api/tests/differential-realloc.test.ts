@@ -42,7 +42,10 @@ defineDifferential({
   programIdBase58: PROGRAM_ID,
   anchorSource: readFileSync(SRC, "utf-8"),
   anchorPackageName: "realloc_anchor_diff",
-  anvilTarget: "native",
+  // Pinocchio target — pinocchio 0.9 exposes AccountInfo::realloc and
+  // pinocchio_system::Transfer for the rent top-up. The realloc-grow
+  // sister fixture continues on the Native target so both shapes are
+  // gated.
 
   setup: async () => {
     const owner = Keypair.generate();

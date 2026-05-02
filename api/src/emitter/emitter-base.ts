@@ -1452,6 +1452,13 @@ ${indented}
       predeserialize = lines.join("\n") + "\n";
     }
 
+    // Detect realloc::zero — Anchor's flag for whether to zero-fill the
+    // newly-grown region. Defaults to false (matches Anchor's default).
+    const reallocZero = accountRef.constraints.some(
+      (c) => c.kind === "realloc" && false, // realloc::zero is parsed as a separate flag; check the IR carrier
+    );
+    void reallocZero; // not yet wired to a constraint kind; default to false matches Anchor
+
     if (this.frameworkName === "Native") {
       return `    // realloc — resize ${accountName} to ${sizeExpr}
     {
@@ -1474,14 +1481,39 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
     }`;
     }
 
-    // Pinocchio / Quasar: leave a warning so the user wires realloc manually
-    // using the framework-native API (pinocchio::account_info::realloc is
-    // gated behind a nightly feature as of 0.9).
+    if (this.frameworkName === "Pinocchio") {
+      // Pinocchio 0.9 exposes AccountInfo::realloc(new_len, zero_init) →
+      // Result<(), ProgramError>. We previously assumed it wasn't stable
+      // and emitted a TODO(manual). Now we emit the same shape as Native:
+      // compute new size (with optional state-field deserialize), top up
+      // rent via system_program transfer, then realloc the buffer.
+      //
+      // Rent top-up is via pinocchio_system::Transfer{from, to, lamports}.
+      // Both signers (payer + account) are from the instruction's account
+      // slice — Pinocchio's Transfer takes &AccountInfo refs directly.
+      return `    // realloc — resize ${accountName} to ${sizeExpr}
+    {
+${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
+        let __rent = pinocchio::sysvars::rent::Rent::get()?;
+        let __new_lamports = __rent.minimum_balance(__new_size);
+        let __delta = __new_lamports.saturating_sub(${accountName}.lamports());
+        if __delta > 0 {
+            pinocchio_system::instructions::Transfer {
+                from: ${payer},
+                to: ${accountName},
+                lamports: __delta,
+            }.invoke()?;
+        }
+        ${accountName}.realloc(__new_size, false)?;
+    }`;
+    }
+
+    // Quasar: still no stable API; leave the warning marker.
     return `    // ⚠️ Anvil: \`realloc = ${sizeExpr}\` on \`${accountName}\`
-    //   Pinocchio/Quasar don't expose AccountInfo::realloc in the stable API.
+    //   Quasar doesn't expose AccountInfo::realloc in the stable API.
     //   After porting, wire the resize manually (e.g., split into
-    //   close-and-recreate, or target the native backend which emits realloc
-    //   + rent top-up automatically).`;
+    //   close-and-recreate, or target the native/pinocchio backend
+    //   which emits realloc + rent top-up automatically).`;
   }
 
   protected normalizeInitSeedExpr(seed: string): string {
