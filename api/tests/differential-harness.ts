@@ -33,6 +33,7 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
+import { emitNativeFull } from "../src/emitter/native-emitter.ts";
 import { buildProjectScaffold } from "../src/emitter/project-scaffold.ts";
 
 const CACHE_ROOT =
@@ -172,6 +173,13 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    * different program mid-scenario AND the divergence is benign.
    */
   compareOwner?: boolean;
+  /**
+   * Which Anvil target to build the differential .so against. Default
+   * pinocchio (the production target). Set "native" for fixtures that
+   * exercise emit shapes Pinocchio doesn't support yet (e.g. realloc —
+   * Pinocchio's AccountInfo doesn't expose realloc in the stable API).
+   */
+  anvilTarget?: "pinocchio" | "native";
   /**
    * Pin Clock::get().unix_timestamp before the first instruction.
    * Default: 1_700_000_000 (a fixed Unix timestamp in 2023). Programs
@@ -386,8 +394,9 @@ async function buildAnvilSo<S extends DifferentialSetup>(
   if (!parsed.ok) {
     throw new Error(`parseAnchor failed for ${fixture.fixtureName}: ${parsed.error}`);
   }
-  const out = emitPinocchioFull(parsed.ir);
-  const scaffoldMeta = buildProjectScaffold(parsed.ir, "pinocchio");
+  const target = fixture.anvilTarget ?? "pinocchio";
+  const out = target === "native" ? emitNativeFull(parsed.ir) : emitPinocchioFull(parsed.ir);
+  const scaffoldMeta = buildProjectScaffold(parsed.ir, target);
   const scratch = join(CACHE_ROOT, `_build_${fixture.fixtureName}_anvil`);
   rmSync(scratch, { recursive: true, force: true });
   for (const f of scaffoldMeta) {
