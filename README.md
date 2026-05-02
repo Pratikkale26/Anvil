@@ -211,7 +211,7 @@ docs/   Architecture, differential testing, feature matrix, migration guide
 
 ## Status
 
-v0.3.4. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). 118+ tests passing, 10 byte-equal differential fixtures, 36+ real-world cargo regressions, hardened sandbox.
+v0.3.4. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). 183 passing tests across 30 files (10 byte-equal differential fixtures + 36+ real-world cargo regressions). Source of truth: `bun scripts/count-tests.ts`.
 
 Working notes for grant + migration: [docs/migration-guide.md](docs/migration-guide.md).
 
