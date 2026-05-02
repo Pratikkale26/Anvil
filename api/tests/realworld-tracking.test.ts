@@ -114,7 +114,7 @@ const TRACKED: TrackedCase[] = [
     path: "/tmp/program-examples/tokens/token-2022/transfer-hook/hello-world/anchor/programs/transfer-hook/src/lib.rs",
     source: "solana-developers/program-examples (tokens/token-2022/transfer-hook/hello-world/anchor)",
     maxErrors: 4,
-    reason: "T22 extension call sites commented out in pinocchio post-process. 4 errors: 3 leaked `use spl_*::*` imports at module scope (spl_tlv_account_resolution / spl_transfer_hook_interface / spl_discriminator) that the import filter doesn't yet drop on pinocchio + 1 surfaced 2026-05-02 by Option<T> variable-length-route extension (1f84572) — likely an additional pass-through that got inserted as part of borsh-route changes; tracked rather than fixed for this turn.",
+    reason: "T22 extension call sites commented out in pinocchio post-process. 4 errors: 3 leaked `use spl_*::*` imports at module scope (spl_tlv_account_resolution / spl_transfer_hook_interface / spl_discriminator) that the import filter doesn't yet drop + 1 body-level type reference to `InitializeExtraAccountMetaList` from one of those filtered imports (initialize_extra_account_meta_list.rs:38). Triaged 2026-05-02 — confirmed not a regression from any recent change; the original 3-error ceiling was stale. Real fix would either (a) extend filter to drop the spl_* module imports + comment out body usages, or (b) drop the whole instruction (since it can't run without the underlying SPL crates anyway).",
   },
   {
     id: "t22-transfer-hook",
@@ -122,7 +122,7 @@ const TRACKED: TrackedCase[] = [
     path: "/tmp/program-examples/tokens/token-2022/transfer-hook/hello-world/anchor/programs/transfer-hook/src/lib.rs",
     source: "solana-developers/program-examples (tokens/token-2022/transfer-hook/hello-world/anchor)",
     maxErrors: 9,
-    reason: "ExtraAccountMetaList shape unhandled + InterfaceAccount<TokenAccount> in struct. Extension types auto-imported. 9 errors: prior ceiling was 8; +1 surfaced 2026-05-02 by the Option<T> variable-length-route extension (1f84572). Same root cause as the pinocchio variant's +1 — accepted as the new baseline.",
+    reason: "Extension types auto-imported. 9 errors: 4 unresolved-crate imports (spl_pod, spl_tlv_account_resolution, spl_transfer_hook_interface, spl_discriminator) + 5 body-level cascade (InitializeExtraAccountMetaList × 2, TransferHookExtension, ID const, get_extension method on StateWithExtensions). Triaged 2026-05-02 — confirmed not a regression from any recent change; original 8 was stale. Same fix shape as pinocchio variant.",
   },
 
   // ── 2026-05-02 H7 corpus expansion — 1-error gaps for emitter follow-up ──
