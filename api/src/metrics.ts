@@ -7,6 +7,7 @@
  */
 
 import { spendSnapshot, spendSnapshotAsync } from "./ai/spend-tracker.js";
+import { cacheStats } from "./ai/cache.js";
 
 type Counter = Record<string, number>;
 
@@ -38,6 +39,42 @@ export interface MetricsSnapshot {
       patchesRejected: number;
       acceptRate: number;
     }>;
+    /**
+     * Over-edit visibility: aggregate |Δlines| across every refine call
+     * (rejected + accepted) + total patches rejected by the line-delta
+     * gate. Surfaces model drift toward larger patches even when the
+     * gate is doing its job and rejecting before validation.
+     */
+    overEdit: {
+      totalDeltaLines: number;
+      rejectionsByLineDelta: number;
+      rejectionsByItemCount: number;
+    };
+  };
+  /**
+   * Auto-fix loop telemetry. /build/auto-fix runs cargo build → AI refine
+   * → cargo build until green or budget-exhausted; these counters surface
+   * the loop's effectiveness as a single number (mean iters-to-green) +
+   * its termination distribution (success vs no_progress vs revert vs
+   * cost cap).
+   */
+  autoFix: {
+    runs: number;
+    /** Reached green build → arithmetic mean of iters-to-green for those. */
+    greenRuns: number;
+    meanItersToGreen: number;
+    /** Termination distribution; sums to runs. */
+    stoppedByReason: Counter;
+    /** Patches the revert-on-regression path threw out. Indicator that
+     *  AI is making things worse on subsequent iterations. */
+    regressionReverts: number;
+  };
+  /** AI-refine cache state: entry count + bytes vs caps. */
+  cache: {
+    entries: number;
+    totalBytes: number;
+    maxEntries: number;
+    maxBytes: number;
   };
   emit: {
     total: number;
@@ -119,6 +156,27 @@ const refineByVersion: Record<string, {
   patchesRejected: number;
 }> = {};
 
+// Over-edit aggregates. totalDeltaLines is summed across all returned
+// patches (rejected + accepted) — a rising aggregate signals model drift
+// toward larger patches even when the gate is doing its job.
+const refineOverEdit = {
+  totalDeltaLines: 0,
+  rejectionsByLineDelta: 0,
+  rejectionsByItemCount: 0,
+};
+
+// Auto-fix loop counters. iters-to-green tracked as a list so we can
+// compute mean cleanly; bounded the same way as build durations to keep
+// memory finite.
+const AUTO_FIX_WINDOW = 50;
+const autoFix = {
+  runs: 0,
+  greenRuns: 0,
+  itersToGreenSamples: [] as number[],
+  stoppedByReason: {} as Counter,
+  regressionReverts: 0,
+};
+
 export const metrics = {
   recordRefineCall(opts: { cached: boolean; accepted: number; rejected: number; promptVersion?: string }): void {
     refineCalls.total++;
@@ -145,6 +203,44 @@ export const metrics = {
 
   recordRefineError(category: string): void {
     refineErrorsByCategory[category] = (refineErrorsByCategory[category] ?? 0) + 1;
+  },
+
+  /**
+   * Record over-edit signal from a single refine call. Called from
+   * refine.ts alongside recordRefineCall so the same call increments
+   * both buckets atomically.
+   */
+  recordRefineOverEdit(opts: {
+    totalDeltaLines: number;
+    rejectionsByLineDelta: number;
+    rejectionsByItemCount: number;
+  }): void {
+    refineOverEdit.totalDeltaLines += opts.totalDeltaLines;
+    refineOverEdit.rejectionsByLineDelta += opts.rejectionsByLineDelta;
+    refineOverEdit.rejectionsByItemCount += opts.rejectionsByItemCount;
+  },
+
+  /**
+   * Record an auto-fix loop completion. Routes/build.ts calls this
+   * once per /build/auto-fix request with the loop outcome.
+   */
+  recordAutoFixRun(opts: {
+    stoppedReason: string;
+    iterations: number;
+    reverted: boolean;
+    reachedGreen: boolean;
+  }): void {
+    autoFix.runs++;
+    autoFix.stoppedByReason[opts.stoppedReason] =
+      (autoFix.stoppedByReason[opts.stoppedReason] ?? 0) + 1;
+    if (opts.reverted) autoFix.regressionReverts++;
+    if (opts.reachedGreen) {
+      autoFix.greenRuns++;
+      autoFix.itersToGreenSamples.push(opts.iterations);
+      if (autoFix.itersToGreenSamples.length > AUTO_FIX_WINDOW) {
+        autoFix.itersToGreenSamples.shift();
+      }
+    }
   },
 
   recordEmit(target: string, validationErrors: number): void {
@@ -196,7 +292,18 @@ export const metrics = {
             acceptRate: safeDiv(b.patchesAccepted, b.patchesAccepted + b.patchesRejected),
           }]),
         ),
+        overEdit: { ...refineOverEdit },
       },
+      autoFix: {
+        runs: autoFix.runs,
+        greenRuns: autoFix.greenRuns,
+        meanItersToGreen: autoFix.itersToGreenSamples.length === 0
+          ? 0
+          : autoFix.itersToGreenSamples.reduce((a, b) => a + b, 0) / autoFix.itersToGreenSamples.length,
+        stoppedByReason: { ...autoFix.stoppedByReason },
+        regressionReverts: autoFix.regressionReverts,
+      },
+      cache: { entries: 0, totalBytes: 0, maxEntries: 0, maxBytes: 0 },
       emit: {
         total: emitCounters.total,
         validationErrorsByTarget: { ...emitCounters.validationErrorsByTarget },
@@ -221,11 +328,15 @@ export const metrics = {
   /**
    * Multi-instance-aware snapshot. Identical to snapshot() but uses
    * spendSnapshotAsync, which scans Redis for cross-instance spend
-   * data. Use this from /metrics in horizontal-scale deploys; the
-   * sync variant is fine for single-instance dev/local.
+   * data. Also includes the AI cache state (one stat() per call —
+   * keeps the sync variant cheap by skipping disk).
    */
   async snapshotAsync(): Promise<MetricsSnapshot> {
     const sync = this.snapshot();
-    return { ...sync, spend: await spendSnapshotAsync() };
+    const [spend, cache] = await Promise.all([
+      spendSnapshotAsync(),
+      cacheStats().catch(() => ({ entries: 0, totalBytes: 0, maxEntries: 0, maxBytes: 0 })),
+    ]);
+    return { ...sync, spend, cache };
   },
 };

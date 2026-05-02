@@ -476,6 +476,17 @@ buildRoute.post("/auto-fix", async (req, res) => {
   const finalOk = !!lastIter?.buildResult.ok;
   const totalDurationMs = Date.now() - t0;
 
+  // Telemetry: surface the loop outcome to /metrics. iterations.length is
+  // the number of cargo+refine cycles run (1-based for display; the
+  // counter itself is run-count, not iters-to-green directly — for green
+  // runs that's the same number).
+  metrics.recordAutoFixRun({
+    stoppedReason,
+    iterations: iterations.length,
+    reverted: stoppedReason === "regression_reverted",
+    reachedGreen: stoppedReason === "green",
+  });
+
   // Hand back the lowest-error state we observed, not the live currentFiles.
   // On a clean green run these are identical. On regression_reverted they
   // differ — currentFiles was already reverted above, so this is a no-op

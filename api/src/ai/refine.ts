@@ -322,6 +322,25 @@ export async function refineOutput(
   const overEditRejections = patches.filter(
     (p) => !p.accepted && p.acceptanceReason.startsWith("Patch over-edits"),
   ).length;
+  const itemCountRejections = patches.filter(
+    (p) => !p.accepted && p.acceptanceReason.startsWith("Patch dropped"),
+  ).length;
+  // Surface to /metrics via metrics.recordRefineOverEdit. Lazy-import to
+  // avoid a circular dep (refine -> metrics -> nothing, but metrics is
+  // imported by routes that import refine; the dynamic import here keeps
+  // the module graph clean).
+  void (async () => {
+    try {
+      const { metrics } = await import("../metrics.js");
+      metrics.recordRefineOverEdit({
+        totalDeltaLines,
+        rejectionsByLineDelta: overEditRejections,
+        rejectionsByItemCount: itemCountRejections,
+      });
+    } catch {
+      // best-effort; metrics is optional
+    }
+  })();
 
   // Final global count — runningFiles already has every accepted patch applied
   // in order, so this is just one validate on the final state.
