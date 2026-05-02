@@ -84,6 +84,34 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     w.lines.push(signerSeedsPrelude);
   }
 
+  // Mutation tracking on state-bound locals. A pass_through statement that
+  // does `<local>.<field> = X`, `<local>.<field>.<method>(…)`, or
+  // `<local>.<field>[idx] = X` against a state_read'd local var (e.g.
+  // `p.approved[idx] = true` where `p = ctx.accounts.proposal`) is an
+  // in-memory mutation that must round-trip back to the account data via
+  // emitPendingSaves. Pre-fix the typed state_field_assign IR kind handled
+  // direct field assignment, but indexed/method-mutating assignments fall
+  // through to this handler and were silently dropped — the in-memory
+  // change never made it back to the account.
+  //
+  // Detection: scan the original rawCode (before transforms) for any of the
+  // mutation shapes against state-bound locals. For each match, find the
+  // canonical account name and add to mutatedAccounts.
+  for (const [accountName, localVar] of w.stateVars.entries()) {
+    // Match: `<local>.<rest>` followed by `=` (not `==`), `+=`, `-=`, etc,
+    // OR `<local>[idx] = X` form, OR a Vec/HashMap mutating method call.
+    const localEsc = localVar.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const mutationPatterns = [
+      // p.field = ... / p.field += ... / p.field.push(...) / p.field[idx] = ...
+      new RegExp(`\\b${localEsc}\\.\\w+\\s*(?:=[^=]|\\[)`),
+      new RegExp(`\\b${localEsc}\\.\\w+\\s*[+\\-*/%]=`),
+      new RegExp(`\\b${localEsc}\\.\\w+(?:\\.\\w+)*\\.(?:push|insert|remove|pop|clear|truncate|extend|swap_remove)\\b`),
+    ];
+    if (mutationPatterns.some((re) => re.test(rawCode))) {
+      w.mutatedAccounts.add(accountName);
+    }
+  }
+
   // Strip .to_account_info() on all targets. Anchor's Account<'info, T>
   // exposes the method; once we've resolved to bare solana_program /
   // pinocchio AccountInfo (which IS AccountInfo by definition — no-op on
