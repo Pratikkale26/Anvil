@@ -1525,6 +1525,21 @@ ${indented}
   // BodyEmitterCallbacks interface (init_if_needed branch). Default impl
   // composes existing read + init helpers; targets with cheaper paths
   // can override.
+  //
+  // Match-on-Result vs data_is_empty: the upstream prelude calls
+  // `create_program_account` on an empty account, which allocates `space`
+  // bytes (all zeros) — leaving data_is_empty() returning FALSE. If we
+  // gated the read-or-init on data_is_empty(), the post-allocation path
+  // would try to deserialize a discriminator-less zero buffer and fail
+  // with InvalidAccountData.
+  //
+  // The cleaner cross-target fix: try `from_account_info` first, and if
+  // it errors (discriminator absent, length-too-short, etc.), fall back
+  // to default-init. Works on Pinocchio (borrow_data_unchecked under the
+  // hood) and Native (account.data.borrow()) without target-specific
+  // code here. The Err branch also handles a future `init_if_needed`
+  // semantic Anchor adds — anything that makes from_account_info fail
+  // gets treated as "first call, default-init."
   emitStateReadOrInit(
     accountInfoVar: string,
     typeName: string,
@@ -1537,10 +1552,9 @@ ${indented}
           .map((field) => `            ${snakeCase(field.name)}: ${this.defaultValueForType(field.type)},`)
           .join("\n")}\n        }`
       : `${typeName}::default()`;
-    return `    let mut ${localVar} = if ${accountInfoVar}.data_is_empty() {
-        ${initStruct}
-    } else {
-        ${typeName}::from_account_info(${accountInfoVar})?
+    return `    let mut ${localVar} = match ${typeName}::from_account_info(${accountInfoVar}) {
+        Ok(__existing) => __existing,
+        Err(_) => ${initStruct},
     };`;
   }
 
