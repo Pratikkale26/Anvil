@@ -316,7 +316,7 @@ pub fn release(
         ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → beneficiary_token_account
-    spl_token_transfer_signed(vault, beneficiary_token_account, vault, releasable, &[seeds])?;
+    spl_token_transfer_signed(vault, beneficiary_token_account, vault, releasable, signer_seeds)?;
     // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio
     pinocchio::log::sol_log("Released {} tokens to beneficiary");
     Vesting::save(vesting_account, &vesting)?;

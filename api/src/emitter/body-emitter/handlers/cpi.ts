@@ -30,6 +30,36 @@ function shouldEmitSignerSeedsPrelude(w: BodyWalker, signerSeeds: string | undef
   return !(isLegacyDefault && w.signerSeedsInScope);
 }
 
+/**
+ * Resolve the actual signer-seeds expression to pass to the framework's CPI
+ * builder.
+ *
+ * The IR captures the source-level identifier (e.g. `&[vault_seeds]` from
+ * Anchor's `CpiContext::new_with_signer(_, _, &[vault_seeds])`). But the
+ * source's `let vault_seeds = &[...]` binding is consumed by the CPI
+ * consolidator pre-pass and never makes it to the emitted body — meanwhile
+ * the typed `pda_signer_seeds` handler emits a fresh
+ * `let seeds = ...; let signer_seeds = ...` block with hardcoded names.
+ * Result: the user-defined identifier is dangling at the CPI call site
+ * (E0425 cannot find value `vault_seeds`).
+ *
+ * Fix: when the typed pda_signer_seeds block has fired (signerSeedsInScope),
+ * override the IR's source-level name with the prelude's `signer_seeds`
+ * variable. The legacy default `signer_seeds` already maps to itself.
+ */
+function resolveSignerSeedsExpr(w: BodyWalker, signerSeeds: string | undefined): string | undefined {
+  if (!signerSeeds) return signerSeeds;
+  // Already the canonical name — pass through.
+  if (signerSeeds === "signer_seeds") return signerSeeds;
+  // The typed pda_signer_seeds handler has emitted `let signer_seeds = ...`
+  // already; rewrite the IR's source-level reference (e.g. `&[vault_seeds]`,
+  // `&[fee_vault_seeds]`) to point at it.
+  if (w.signerSeedsInScope) return "signer_seeds";
+  // No prelude in scope and a non-default name — leave it alone. This is the
+  // case the original prelude-skip logic was protecting.
+  return signerSeeds;
+}
+
 export function handleCpiSystemTransfer(w: BodyWalker, stmt: CpiSystemTransfer): void {
   w.ctx.transformedCount++;
   w.ctx.details.push(`Transformed: system_program::transfer(${stmt.from} → ${stmt.to})`);
@@ -43,7 +73,7 @@ export function handleCpiSystemTransfer(w: BodyWalker, stmt: CpiSystemTransfer):
       snakeCase(stmt.from),
       snakeCase(stmt.to),
       w.resolveAmountExpr(stmt.amount),
-      stmt.signerSeeds,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ),
   );
 }
@@ -65,7 +95,7 @@ export function handleCpiSplTransfer(w: BodyWalker, stmt: CpiSplTransfer): void 
       snakeCase(stmt.to),
       authority,
       w.resolveAmountExpr(stmt.amount),
-      stmt.signerSeeds,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
       {
         tokenProgram: stmt.tokenProgram,
         ...(stmt.mint ? { mint: snakeCase(stmt.mint) } : {}),
@@ -91,7 +121,7 @@ export function handleCpiSplMintTo(w: BodyWalker, stmt: CpiSplMintTo): void {
       snakeCase(stmt.to),
       authority,
       w.resolveAmountExpr(stmt.amount),
-      stmt.signerSeeds,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
       {
         tokenProgram: stmt.tokenProgram,
         ...(stmt.decimals ? { decimals: stmt.decimals } : {}),
@@ -116,7 +146,7 @@ export function handleCpiSplBurn(w: BodyWalker, stmt: CpiSplBurn): void {
       snakeCase(stmt.mint),
       authority,
       w.resolveAmountExpr(stmt.amount),
-      stmt.signerSeeds,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
       {
         tokenProgram: stmt.tokenProgram,
         ...(stmt.decimals ? { decimals: stmt.decimals } : {}),
@@ -140,7 +170,7 @@ export function handleCpiSplCloseAccount(w: BodyWalker, stmt: CpiSplCloseAccount
       snakeCase(stmt.account),
       snakeCase(stmt.destination),
       authority,
-      stmt.signerSeeds,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
       { tokenProgram: stmt.tokenProgram },
     ),
   );
@@ -165,7 +195,7 @@ export function handleCpiSplSetAuthority(w: BodyWalker, stmt: CpiSplSetAuthority
       currentAuthority,
       stmt.authorityType,
       stmt.newAuthority,
-      stmt.signerSeeds,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
       { tokenProgram: stmt.tokenProgram },
     ),
   );
@@ -185,7 +215,7 @@ export function handleCpiAtaCreate(w: BodyWalker, stmt: CpiAtaCreate): void {
       snakeCase(stmt.payer),
       snakeCase(stmt.mint),
       snakeCase(stmt.authority),
-      stmt.signerSeeds,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ),
   );
 }

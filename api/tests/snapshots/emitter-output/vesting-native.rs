@@ -328,7 +328,7 @@ pub fn release(
     invoke_signed(
         &transfer_ix,
         &[vault.clone(), beneficiary_token_account.clone(), vault.clone()],
-        &[seeds],
+        signer_seeds,
     )?;
     msg!("Released {} tokens to beneficiary", releasable);
     Vesting::write(&mut vesting_account.data.borrow_mut(), &vesting)?;
