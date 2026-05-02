@@ -2,7 +2,7 @@
  * On-disk AI refine response cache.
  *
  * Pre-fix this module was unbounded: every (model × prompt × inputs) tuple
- * landed as a JSON file in ANVIL_AI_CACHE_DIR with no size cap, no entry
+ * landed as a JSON file in ANVIL_aiCacheDir() with no size cap, no entry
  * cap, and no eviction. A long-running process or a busy public API would
  * accumulate gigabytes of cached responses indefinitely. Disk fill →
  * everything else on the host (sandbox writes, Sentry buffer, Express
@@ -31,10 +31,18 @@ import { createHash } from "crypto";
 import { dirname, join } from "path";
 import type { RefineResponse } from "./refine-schemas.js";
 
-const AI_CACHE_DIR = process.env.ANVIL_AI_CACHE_DIR ?? join(process.cwd(), ".anvil-data", "ai-cache");
-
-const MAX_ENTRIES = parseInt(process.env.ANVIL_AI_CACHE_MAX_ENTRIES ?? "10000", 10);
-const MAX_BYTES = parseInt(process.env.ANVIL_AI_CACHE_MAX_BYTES ?? `${1024 * 1024 * 1024}`, 10);
+// Resolved lazily per call so tests that mutate env between imports get
+// their override honored. The cost — a process.env.X read + path.join per
+// cache touch — is negligible vs the disk I/O that follows.
+function aiCacheDir(): string {
+  return process.env.ANVIL_AI_CACHE_DIR ?? join(process.cwd(), ".anvil-data", "ai-cache");
+}
+function maxEntries(): number {
+  return parseInt(process.env.ANVIL_AI_CACHE_MAX_ENTRIES ?? "10000", 10);
+}
+function maxBytes(): number {
+  return parseInt(process.env.ANVIL_AI_CACHE_MAX_BYTES ?? `${1024 * 1024 * 1024}`, 10);
+}
 
 export function createAICacheKey(parts: Record<string, unknown>): string {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
@@ -42,7 +50,7 @@ export function createAICacheKey(parts: Record<string, unknown>): string {
 
 export async function readAICache(key: string): Promise<RefineResponse | null> {
   try {
-    const path = join(AI_CACHE_DIR, `${key}.json`);
+    const path = join(aiCacheDir(), `${key}.json`);
     const raw = await readFile(path, "utf8");
     return JSON.parse(raw) as RefineResponse;
   } catch {
@@ -51,7 +59,7 @@ export async function readAICache(key: string): Promise<RefineResponse | null> {
 }
 
 export async function writeAICache(key: string, value: RefineResponse): Promise<void> {
-  const path = join(AI_CACHE_DIR, `${key}.json`);
+  const path = join(aiCacheDir(), `${key}.json`);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(value, null, 2), "utf8");
   // Best-effort eviction. If it fails for any reason (race with another
@@ -74,7 +82,7 @@ export async function writeAICache(key: string, value: RefineResponse): Promise<
 export async function evictIfNeeded(): Promise<{ evicted: number; bytesAfter: number; entriesAfter: number }> {
   let names: string[];
   try {
-    names = await readdir(AI_CACHE_DIR);
+    names = await readdir(aiCacheDir());
   } catch {
     return { evicted: 0, bytesAfter: 0, entriesAfter: 0 };
   }
@@ -84,7 +92,7 @@ export async function evictIfNeeded(): Promise<{ evicted: number; bytesAfter: nu
       .filter((n) => n.endsWith(".json"))
       .map(async (name) => {
         try {
-          const full = join(AI_CACHE_DIR, name);
+          const full = join(aiCacheDir(), name);
           const s = await stat(full);
           return { path: full, mtimeMs: s.mtimeMs, size: s.size };
         } catch {
@@ -95,14 +103,14 @@ export async function evictIfNeeded(): Promise<{ evicted: number; bytesAfter: nu
   const valid = entries.filter((e): e is { path: string; mtimeMs: number; size: number } => e !== null);
   let totalBytes = valid.reduce((s, e) => s + e.size, 0);
   let totalEntries = valid.length;
-  if (totalEntries <= MAX_ENTRIES && totalBytes <= MAX_BYTES) {
+  if (totalEntries <= maxEntries() && totalBytes <= maxBytes()) {
     return { evicted: 0, bytesAfter: totalBytes, entriesAfter: totalEntries };
   }
   // Oldest first.
   valid.sort((a, b) => a.mtimeMs - b.mtimeMs);
   let evicted = 0;
   for (const entry of valid) {
-    if (totalEntries <= MAX_ENTRIES && totalBytes <= MAX_BYTES) break;
+    if (totalEntries <= maxEntries() && totalBytes <= maxBytes()) break;
     try {
       await unlink(entry.path);
       totalBytes -= entry.size;
@@ -119,16 +127,16 @@ export async function evictIfNeeded(): Promise<{ evicted: number; bytesAfter: nu
 export async function cacheStats(): Promise<{ entries: number; totalBytes: number; maxEntries: number; maxBytes: number }> {
   let names: string[];
   try {
-    names = await readdir(AI_CACHE_DIR);
+    names = await readdir(aiCacheDir());
   } catch {
-    return { entries: 0, totalBytes: 0, maxEntries: MAX_ENTRIES, maxBytes: MAX_BYTES };
+    return { entries: 0, totalBytes: 0, maxEntries: maxEntries(), maxBytes: maxBytes() };
   }
   const sizes = await Promise.all(
     names
       .filter((n) => n.endsWith(".json"))
       .map(async (name) => {
         try {
-          const s = await stat(join(AI_CACHE_DIR, name));
+          const s = await stat(join(aiCacheDir(), name));
           return s.size;
         } catch {
           return 0;
@@ -138,7 +146,7 @@ export async function cacheStats(): Promise<{ entries: number; totalBytes: numbe
   return {
     entries: sizes.length,
     totalBytes: sizes.reduce((a, b) => a + b, 0),
-    maxEntries: MAX_ENTRIES,
-    maxBytes: MAX_BYTES,
+    maxEntries: maxEntries(),
+    maxBytes: maxBytes(),
   };
 }
