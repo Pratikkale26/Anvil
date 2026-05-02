@@ -72,6 +72,18 @@ export interface BuildResult {
   stderrTail: string;
   /** Set when cargo could not be invoked, hit the timeout, or returned no JSON. */
   unsupported?: { reason: string };
+  /**
+   * Queue snapshot at the moment THIS build started its cargo run (after
+   * waiting in the per-target queue, before cargo invoked). Lets clients
+   * render "you waited Xs in queue, N still queued behind you" without
+   * a separate /metrics roundtrip.
+   */
+  queue?: {
+    /** Depth observed when the build started cargo (excludes this build). */
+    depthAtStart: number;
+    /** ms spent waiting in the queue before cargo started. */
+    waitMs: number;
+  };
 }
 
 // Same dependency lists as `tests/cargo-build.test.ts:11-37`. Duplicated on
@@ -198,6 +210,76 @@ function safeRelativePath(p: string): string {
  */
 const targetQueues: Map<BuildTarget, Promise<unknown>> = new Map();
 const targetDepth: Map<BuildTarget, number> = new Map();
+
+/**
+ * Bounded ring buffer of recent build durations per (target, mode). Used
+ * to compute an ETA for queued requests: queueDepth × meanDurationMs.
+ *
+ * Window size 20 is enough that a single cold-cache build can't permanently
+ * skew the median. (target, mode) keying is important — `cargo check` is
+ * ~3s while `cargo build-sbf` is 30s-2min. Mixing them in the same window
+ * would give wildly wrong ETAs for both.
+ */
+const RECENT_DURATIONS_WINDOW = 20;
+const recentDurations: Map<string, number[]> = new Map();
+function durationKey(target: BuildTarget, mode: BuildMode): string {
+  return `${target}:${mode}`;
+}
+function recordDuration(target: BuildTarget, mode: BuildMode, ms: number): void {
+  const key = durationKey(target, mode);
+  const arr = recentDurations.get(key) ?? [];
+  arr.push(ms);
+  if (arr.length > RECENT_DURATIONS_WINDOW) arr.shift();
+  recentDurations.set(key, arr);
+}
+function meanDuration(target: BuildTarget, mode: BuildMode): number {
+  const arr = recentDurations.get(durationKey(target, mode));
+  if (!arr || arr.length === 0) return 0;
+  return Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+}
+
+/**
+ * Queue snapshot for /build queue-status responses. Returns current depth
+ * + recent-mean duration so a client about to enqueue can render an ETA
+ * before paying the wait. Per-(target, mode) granularity matches the
+ * way work actually serializes — `cargo check` and `cargo build-sbf`
+ * have very different durations and shouldn't share an ETA.
+ */
+export interface QueueStats {
+  depthByTarget: Record<BuildTarget, number>;
+  capacity: number;
+  /** target:mode → recent mean duration ms. 0 if no samples yet. */
+  meanDurationMsByMode: Record<string, number>;
+  /**
+   * ETA per (target, mode) for a hypothetical NEW request joining the
+   * queue right now: depth × mean. 0 when no samples or empty queue.
+   */
+  etaSecByMode: Record<string, number>;
+}
+
+export function queueStats(): QueueStats {
+  const depthByTarget: Record<BuildTarget, number> = {
+    pinocchio: targetDepth.get("pinocchio") ?? 0,
+    native: targetDepth.get("native") ?? 0,
+    quasar: targetDepth.get("quasar") ?? 0,
+  };
+  const meanDurationMsByMode: Record<string, number> = {};
+  const etaSecByMode: Record<string, number> = {};
+  for (const target of ["pinocchio", "native", "quasar"] as const) {
+    for (const mode of ["check", "build", "build-sbf"] as const) {
+      const key = `${target}:${mode}`;
+      const mean = meanDuration(target, mode);
+      meanDurationMsByMode[key] = mean;
+      etaSecByMode[key] = mean > 0 ? Math.round((depthByTarget[target] * mean) / 1000) : 0;
+    }
+  }
+  return {
+    depthByTarget,
+    capacity: MAX_QUEUE_DEPTH,
+    meanDurationMsByMode,
+    etaSecByMode,
+  };
+}
 
 const MAX_QUEUE_DEPTH = (() => {
   const raw = process.env.ANVIL_BUILD_MAX_QUEUE_DEPTH;
@@ -770,9 +852,15 @@ async function runBuildInternal(
   }
 
   const scratchDir = scratchDirFor(target);
+  // Capture queue stats from the moment runBuild was called. enqueue()
+  // chains on the previous promise; the time gap between enqueueAt and
+  // started inside the fn measures actual wait time.
+  const enqueuedAt = Date.now();
+  const depthAtEnqueue = targetDepth.get(target) ?? 0;
 
   return enqueue(target, async () => {
     const started = Date.now();
+    const waitMs = started - enqueuedAt;
     await ensureScratchProject(target, scratchDir);
     await writeSrcFiles(scratchDir, files);
 
@@ -849,12 +937,17 @@ async function runBuildInternal(
       });
     }
 
+    // Record duration for the ETA estimator (target,mode-keyed window).
+    // Only count green/red builds, not infra-error early-returns above.
+    recordDuration(target, mode, durationMs);
+
     return {
       ok: errors.length === 0,
       durationMs,
       errors,
       warnings,
       stderrTail,
+      queue: { depthAtStart: Math.max(0, depthAtEnqueue - 1), waitMs },
     };
   }, { mode, callerIp: options.callerIp });
 }

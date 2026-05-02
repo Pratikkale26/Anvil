@@ -6,6 +6,7 @@ import {
   QueueFullError,
   QueueWaitTimeoutError,
   PerIpQueueFullError,
+  queueStats,
   type BuildTarget,
   type BuildMode,
   type BuildFile,
@@ -81,6 +82,19 @@ const AutoFixRequestSchema = z.object({
  * Quasar builds are unsupported (quasar-lang 0.0 is too early); the route
  * returns 422 with a clear message rather than attempting to spawn cargo.
  */
+/**
+ * GET /build/queue — current depth + ETA for each (target, mode) pair.
+ *
+ * A client about to enqueue a build can call this first to render the
+ * expected wait time before paying it. Same data is also embedded in the
+ * BuildResult.queue field on every successful build response, so the
+ * common case (single-shot build) doesn't need a separate roundtrip;
+ * this endpoint is for pre-flight UX.
+ */
+buildRoute.get("/queue", (_req, res) => {
+  res.json(queueStats());
+});
+
 buildRoute.post("/", async (req, res) => {
   const parsed = BuildRequestSchema.safeParse(req.body);
   if (!parsed.success) {
