@@ -127,19 +127,11 @@ const TRACKED: TrackedCase[] = [
 
   // ── 2026-05-02 H7 corpus expansion — 1-error gaps for emitter follow-up ──
   //
-  // favorites/native: 1 × E0599 — the Native emit doesn't generate
-  // `Favorites::from_account_info` for a state struct that has only a
-  // ::read() helper. Pinocchio variant is green because its emit auto-
-  // generates from_account_info wrapping borrow_data_unchecked. Tracked
-  // so the regression-guard catches the day this works → promote.
-  {
-    id: "favorites",
-    target: "native",
-    path: "/tmp/program-examples/basics/favorites/anchor/programs/favorites/src/lib.rs",
-    source: "solana-developers/program-examples (basics/favorites/anchor)",
-    maxErrors: 1,
-    reason: "Native emit missing `from_account_info` helper for state with only ::read(). Pinocchio variant is green in MUST_PASS.",
-  },
+  // NOTE: favorites/native promoted to MUST_PASS in realworld-cargo.test.ts
+  // after Native emit gained from_account_info wrapper. Pinocchio already
+  // generated this; Native was relying on inline ::read() calls only. Now
+  // both targets expose the same surface — emitter call sites that go
+  // through `<Type>::from_account_info(account)?` work cross-target.
 
   // coral-events: uses Anchor's `emit_cpi!` macro (event log via CPI to
   // self). Anvil has typed `emit` IR for the simple `emit!()` form but

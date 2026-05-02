@@ -174,6 +174,10 @@ const MUST_PASS: Case[] = [
   // emitter follow-ups, not regression-guard targets.
   { id: "favorites", target: "pinocchio", path: "basics/favorites/anchor/programs/favorites/src/lib.rs",
     maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
+  // favorites/native promoted 2026-05-02 after Native emit gained
+  // from_account_info wrapper to match Pinocchio (commit pending).
+  { id: "favorites", target: "native", path: "basics/favorites/anchor/programs/favorites/src/lib.rs",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
   { id: "hello-solana", target: "pinocchio", path: "basics/hello-solana/anchor/programs/hello-solana/src/lib.rs",
     maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
   { id: "hello-solana", target: "native", path: "basics/hello-solana/anchor/programs/hello-solana/src/lib.rs",

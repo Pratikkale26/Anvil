@@ -760,6 +760,18 @@ impl StakingPool {
         let mut data = account.try_borrow_mut_data()?;
         Self::write(&mut data, value)
     }
+
+    /// Mirror of Pinocchio's from_account_info — the body emitter calls
+    /// `<Type>::from_account_info(account)?` cross-target, so Native
+    /// must expose the same signature even though it could equivalently
+    /// borrow + read inline. Without this, programs whose handlers don't
+    /// directly call `::read(...)` (most non-trivial Anchor sources)
+    /// fail Native cargo build with E0599 'no associated item named
+    /// from_account_info'.
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = account.try_borrow_data()?;
+        Self::read(&data)
+    }
 }
 
 #[repr(C)]
@@ -842,6 +854,18 @@ impl UserStake {
     pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
         let mut data = account.try_borrow_mut_data()?;
         Self::write(&mut data, value)
+    }
+
+    /// Mirror of Pinocchio's from_account_info — the body emitter calls
+    /// `<Type>::from_account_info(account)?` cross-target, so Native
+    /// must expose the same signature even though it could equivalently
+    /// borrow + read inline. Without this, programs whose handlers don't
+    /// directly call `::read(...)` (most non-trivial Anchor sources)
+    /// fail Native cargo build with E0599 'no associated item named
+    /// from_account_info'.
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = account.try_borrow_data()?;
+        Self::read(&data)
     }
 }
 
