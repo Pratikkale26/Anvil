@@ -60,7 +60,7 @@ const CACHE_ROOT =
   process.env.ANVIL_DIFF_CACHE ??
   join(process.env.HOME ?? "/tmp", ".anvil-diff-cache");
 
-const HAS_AI_KEY = !!(process.env.ANTHROPIC_API_KEY || process.env.GEMINI_API_KEY);
+const HAS_AI_KEY = !!process.env.ANTHROPIC_API_KEY;
 
 function bytesToHex(b: Uint8Array): string {
   return Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");

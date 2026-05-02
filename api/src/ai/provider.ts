@@ -24,6 +24,6 @@ export type ProviderResult<T> = {
 };
 
 export interface LLMProvider {
-  readonly name: "anthropic" | "gemini";
+  readonly name: "anthropic";
   generateStructured<T>(params: StructuredGenerationParams): Promise<ProviderResult<T>>;
 }

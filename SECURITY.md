@@ -48,7 +48,7 @@ The dangerous surface is `POST /build` (and `POST /build/auto-fix`, which calls 
 
 - **Compromise of `platform-tools` download.** `cargo-build-sbf` downloads `platform-tools` on first run from `release.anza.xyz`. We trust the Anza release infrastructure for this download. The download happens during scratch-project warm-up, outside the sandbox.
 
-- **AI provider compromise.** AI repair calls go to Anthropic / Gemini APIs. Their TLS termination + auth is the trust boundary; we don't independently verify response integrity.
+- **AI provider compromise.** AI repair calls go to Anthropic's API. Its TLS termination + auth is the trust boundary; we don't independently verify response integrity.
 
 - **DoS at the network layer.** No CDN, no per-region anycast, no HTTP-flood mitigation. Cloudflare / similar in front is recommended for production deploys.
 

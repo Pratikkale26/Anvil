@@ -7,7 +7,7 @@
  * configured model isn't in the table — better to under-warn than crash on
  * a fresh model ID nobody updated the table for.
  *
- * Updated 2026-04-29 against published Anthropic + Google prices. Keep in
+ * Updated 2026-05-02 against published Anthropic prices. Keep in
  * sync with the model IDs documented in `api/src/ai/config.ts`.
  */
 
@@ -39,9 +39,6 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
   "claude-opus-4-7":          { inputPerM: 15, outputPerM: 75, cacheWritePerM: 18.75, cacheReadPerM: 1.5 },
   // Anthropic — Haiku family
   "claude-haiku-4-5-20251001": { inputPerM: 1, outputPerM: 5, cacheWritePerM: 1.25, cacheReadPerM: 0.1 },
-  // Google — Gemini
-  "gemini-2.5-flash":         { inputPerM: 0.3, outputPerM: 2.5, cacheWritePerM: 0.3, cacheReadPerM: 0.075 },
-  "gemini-2.5-pro":           { inputPerM: 1.25, outputPerM: 10, cacheWritePerM: 1.25, cacheReadPerM: 0.31 },
 };
 
 /**

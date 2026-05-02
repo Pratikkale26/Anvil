@@ -36,7 +36,7 @@ export enum ErrorCode {
   VALIDATION_FAILED = 2003,
 
   // AI errors (3xxx)
-  /** AI provider (Anthropic, Gemini) returned an error */
+  /** AI provider (Anthropic) returned an error */
   AI_PROVIDER_ERROR = 3000,
   /** AI refine pipeline failed */
   AI_REFINE_FAILED = 3001,
