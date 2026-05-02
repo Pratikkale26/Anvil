@@ -24,8 +24,72 @@ export { REFINE_PROMPT_VERSION };
  *
  * v1: tree-sitter syntax pre-check + validator no-new-errors clause
  * v2: line-delta cap (max(5, 2 × issuesAddressed)) added before validator
+ * v3: item-count structural pre-check (drop > 1 top-level pub item rejects)
  */
-const REFINE_EVALUATOR_VERSION = "evaluator.v2";
+const REFINE_EVALUATOR_VERSION = "evaluator.v3";
+
+/**
+ * Top-level Rust item counter — used by the accept gate's structural
+ * pre-check. Counts pub fn / pub struct / pub enum / pub trait /
+ * pub const / impl / use at the start of a line. Nested items inside
+ * fn bodies are excluded by anchoring on /^/m.
+ *
+ * Exported for unit testing.
+ */
+const TOP_LEVEL_ITEM_REGEX = /^[\s]*(?:pub(?:\s*\([^)]+\))?\s+)?(?:fn|struct|enum|trait|const|impl|use)\b/gm;
+export function countTopLevelItems(src: string): number {
+  const m = src.match(TOP_LEVEL_ITEM_REGEX);
+  return m ? m.length : 0;
+}
+
+/**
+ * Decide accept/reject for a single patch via the deterministic gates.
+ * Returns null when the gates pass (patch falls through to the validator
+ * stage) or a rejection reason when the patch should be rejected.
+ *
+ * Gate order:
+ *   1. file-not-found    → patch references an unknown file
+ *   2. tree-sitter parse → patch isn't valid Rust syntax
+ *   3. item-count        → patch dropped > 1 top-level pub item
+ *   4. line-delta cap    → |Δlines| > max(5, 2 × issuesAddressed)
+ *
+ * Pure function — no I/O, deterministic per input. Easy to unit-test.
+ */
+export function evaluatePatchGates(input: {
+  patchedContent: string;
+  originalContent: string | null;
+  issuesAddressed: number;
+  parseHasError: boolean;
+}): { reject: false } | { reject: true; reason: string } {
+  if (input.originalContent === null) {
+    return { reject: true, reason: "File not found in original output." };
+  }
+  if (input.parseHasError) {
+    return {
+      reject: true,
+      reason: "Patch contains invalid Rust syntax (unbalanced delimiters or malformed expression).",
+    };
+  }
+  const origItems = countTopLevelItems(input.originalContent);
+  const patchedItems = countTopLevelItems(input.patchedContent);
+  if (origItems - patchedItems > 1) {
+    return {
+      reject: true,
+      reason: `Patch dropped ${origItems - patchedItems} top-level item(s) (was ${origItems}, now ${patchedItems}). The model removed pub fn / pub struct / impl / use that the validation issues didn't reference. Tree-sitter accepts this as legal Rust — but those items are likely referenced by sibling files, and the dropped surface is almost always over-edit, not a fix.`,
+    };
+  }
+  const origLines = input.originalContent.split("\n").length;
+  const patchedLines = input.patchedContent.split("\n").length;
+  const deltaLines = Math.abs(patchedLines - origLines);
+  const maxAllowedDelta = Math.max(5, 2 * input.issuesAddressed);
+  if (deltaLines > maxAllowedDelta) {
+    return {
+      reject: true,
+      reason: `Patch over-edits: |Δlines|=${deltaLines} exceeds cap of ${maxAllowedDelta} (max(5, 2 × ${input.issuesAddressed} issues addressed)). The prompt asks for a minimal edit; this patch rewrites more than the listed issues require.`,
+    };
+  }
+  return { reject: false };
+}
 
 export type RefineInput = {
   target: "pinocchio" | "quasar" | "native";
@@ -159,64 +223,32 @@ export async function refineOutput(
     issuesByPath.set(k, (issuesByPath.get(k) ?? 0) + 1);
   }
 
-  // Evaluate each patch
+  // Evaluate each patch — first the deterministic gates (file-not-found,
+  // tree-sitter parse, item-count, line-delta), then the validator's
+  // no-new-errors clause for what falls through.
   const patches: RefineResponse["patches"] = [];
   for (const patch of sortedPatches) {
     const originalFile = input.files.find((f) => f.path === patch.filePath);
-    if (!originalFile) {
+    const tree = originalFile ? tsParser.parse(patch.patchedContent) : null;
+    const gateResult = evaluatePatchGates({
+      patchedContent: patch.patchedContent,
+      originalContent: originalFile?.content ?? null,
+      issuesAddressed: issuesByPath.get(patch.filePath) ?? 0,
+      parseHasError: !!tree?.rootNode.hasError,
+    });
+    if (gateResult.reject) {
       patches.push({
         filePath: patch.filePath,
-        originalContent: "",
+        originalContent: originalFile?.content ?? "",
         patchedContent: patch.patchedContent,
         accepted: false,
-        acceptanceReason: `File '${patch.filePath}' not found in original output.`,
+        acceptanceReason: gateResult.reason,
       });
       continue;
     }
-
-    // Structural pre-check: reject before re-validation if the patched content
-    // doesn't parse as syntactically valid Rust. hasError covers both ERROR
-    // nodes (malformed productions) and MISSING nodes (unclosed delimiters).
-    const tree = tsParser.parse(patch.patchedContent);
-    if (tree && tree.rootNode.hasError) {
-      patches.push({
-        filePath: patch.filePath,
-        originalContent: originalFile.content,
-        patchedContent: patch.patchedContent,
-        accepted: false,
-        acceptanceReason: "Patch contains invalid Rust syntax (unbalanced delimiters or malformed expression).",
-      });
-      continue;
-    }
-
-    // Line-delta accept gate. The model's prompt asks for "minimal edit"
-    // (~2× line-delta per issue addressed); empirically Sonnet 4.6 ignores
-    // this and over-edits — counter test showed Δlines=-40 fixing a 1-line
-    // corruption, with 4 collateral validator errors. The validator's
-    // no-new-errors clause was catching this AFTER the fact, but with a
-    // generic 'introduced N new errors' rejection that doesn't tell the
-    // user the patch was structurally too large.
-    //
-    // Now: enforce the line-delta cap deterministically — same threshold
-    // the prompt asks for (max(5, 2 * issuesAddressed)). Patches over the
-    // cap are rejected here with a clearer reason BEFORE the validator
-    // runs. Future model upgrades that DO honor minimal-edit fall through
-    // unchanged; the cap only fires on actual over-edit.
-    const issuesAddressed = issuesByPath.get(patch.filePath) ?? 0;
-    const origLineCount = originalFile.content.split("\n").length;
-    const patchedLineCount = patch.patchedContent.split("\n").length;
-    const deltaLines = Math.abs(patchedLineCount - origLineCount);
-    const maxAllowedDelta = Math.max(5, 2 * issuesAddressed);
-    if (deltaLines > maxAllowedDelta) {
-      patches.push({
-        filePath: patch.filePath,
-        originalContent: originalFile.content,
-        patchedContent: patch.patchedContent,
-        accepted: false,
-        acceptanceReason: `Patch over-edits: |Δlines|=${deltaLines} exceeds cap of ${maxAllowedDelta} (max(5, 2 × ${issuesAddressed} issues addressed)). The prompt asks for a minimal edit; this patch rewrites more than the listed issues require.`,
-      });
-      continue;
-    }
+    // After this point originalFile is guaranteed defined (gate would have
+    // rejected otherwise) — but TS doesn't know, so re-derive.
+    if (!originalFile) continue;
 
     // Validate globally — applying this patch to the running state and checking
     // the full output, not just this one file. Catches cross-file breakage
