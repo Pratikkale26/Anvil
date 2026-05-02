@@ -1126,7 +1126,7 @@ ${fields}
     // cursor for any field that came after. Fix: pass an open-ended slice
     // to Borsh, let it consume length-prefix + content, and advance offset
     // by exactly what Borsh read.
-    if (typeName === "String" || /^Vec<.+>$/.test(typeName)) {
+    if (typeName === "String" || /^Vec<.+>$/.test(typeName) || /^Option<.+>$/.test(typeName)) {
       return `        let mut ${fieldName}_bytes: &[u8] = &data[offset..];
         let __${fieldName}_before = ${fieldName}_bytes.len();
         let ${fieldName}: ${typeName} = BorshDeserialize::deserialize(&mut ${fieldName}_bytes)
@@ -1175,7 +1175,7 @@ ${fields}
     // re-validate here because the caller (handler) is responsible for
     // the size budget. Slice-OOB on copy_from_slice will surface as a
     // panic at runtime if it's wrong, exactly like Anchor's behavior.
-    if (typeName === "String" || /^Vec<.+>$/.test(typeName)) {
+    if (typeName === "String" || /^Vec<.+>$/.test(typeName) || /^Option<.+>$/.test(typeName)) {
       return `        let __${fieldName}_serialized = ::borsh::to_vec(&value.${fieldName})
             .map_err(|_| ProgramError::InvalidAccountData)?;
         data[offset..offset + __${fieldName}_serialized.len()].copy_from_slice(&__${fieldName}_serialized);
