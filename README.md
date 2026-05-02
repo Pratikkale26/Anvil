@@ -1,6 +1,6 @@
 # Anvil
 
-> **Anchor → Pinocchio, with proof.** Paste an Anchor program in, get a cargo-buildable Pinocchio project out — verified byte-equal to the original by running both inside a real VM.
+> **Anchor → Pinocchio, with proof.** Paste an Anchor program in, get a cargo-buildable Pinocchio project out — verified byte-equal on `data + lamports + owner` against the Anchor original by running both inside a real VM.
 
 [anvilsol.xyz](https://anvilsol.xyz) · [npm](https://www.npmjs.com/package/anvil-sol) · [docs](docs/) · [security](SECURITY.md) · [audit trust model](docs/audit-trust-model.md)
 
@@ -17,7 +17,7 @@ anvil-sol differential ./my-anchor-program --scenario scenario.json
 #   ✓ BYTE-EQUAL — all N compared account(s) match.
 ```
 
-Step 2 is the part nobody else ships. It builds your Anchor source AND the Anvil-emitted Pinocchio version into separate `.so` files, runs the same instruction sequence against both inside [LiteSVM](https://github.com/litesvm/litesvm), and asserts every byte of every account matches at the end. Anything else — wrong CPI account order, missing bump, off-by-one Borsh layout — fails the gate loudly.
+Step 2 is the part nobody else ships. It builds your Anchor source AND the Anvil-emitted Pinocchio version into separate `.so` files, runs the same instruction sequence against both inside [LiteSVM](https://github.com/litesvm/litesvm), and asserts every account's `data`, `lamports`, AND `owner` byte-equal at the end. Anything else — wrong CPI account order, missing bump, off-by-one Borsh layout, account left assigned to the wrong program — fails the gate loudly. Event log payloads (`emit!`) are not compared today; see [docs/audit-trust-model.md](docs/audit-trust-model.md).
 
 Cargo green is necessary but not sufficient. This is the actual correctness signal.
 
