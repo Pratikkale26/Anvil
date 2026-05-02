@@ -39,6 +39,16 @@ interface Case {
   id: string;
   target: Target;
   path: string;
+  /**
+   * Optional ownership metadata. Populated as cases are promoted into
+   * MUST_PASS so a regression has a clear contact + the recency signal
+   * is queryable. `lastPassedDate` is updated by hand on promotion or
+   * after a deliberate re-validation; it is NOT auto-bumped on every
+   * green CI run (that would defeat the staleness signal).
+   */
+  maintainer?: string;
+  /** ISO yyyy-mm-dd; when this case last passed by deliberate verification. */
+  lastPassedDate?: string;
 }
 
 /**
@@ -153,6 +163,25 @@ const MUST_PASS: Case[] = [
   // with TODO(manual). Same threshold as pda-mint-authority.
   { id: "cpi-hand", target: "pinocchio", path: "basics/cross-program-invocation/anchor/programs/hand/src/lib.rs" },
   { id: "cpi-hand", target: "native",    path: "basics/cross-program-invocation/anchor/programs/hand/src/lib.rs" },
+
+  // ── 2026-05-02 H7 corpus expansion — promoted from probe sweep ──
+  //
+  // Each entry below was verified green via runBuild on /tmp/program-examples
+  // at lastPassedDate. Maintainer = "anvil-core" until a specific contributor
+  // owns a fixture's edge case. Cases that surfaced 1-error gaps (favorites/
+  // native missing from_account_info, events/* uses emit_cpi macro) are
+  // tracked in realworld-tracking.test.ts instead of here — those are
+  // emitter follow-ups, not regression-guard targets.
+  { id: "favorites", target: "pinocchio", path: "basics/favorites/anchor/programs/favorites/src/lib.rs",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
+  { id: "hello-solana", target: "pinocchio", path: "basics/hello-solana/anchor/programs/hello-solana/src/lib.rs",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
+  { id: "hello-solana", target: "native", path: "basics/hello-solana/anchor/programs/hello-solana/src/lib.rs",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
+  { id: "account-data", target: "pinocchio", path: "basics/account-data/anchor/programs/anchor-program-example/src/lib.rs",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
+  { id: "account-data", target: "native", path: "basics/account-data/anchor/programs/anchor-program-example/src/lib.rs",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
 ];
 
 interface ExternalCase {
@@ -164,6 +193,9 @@ interface ExternalCase {
   repo: string;
   /** Local clone target for the repo. */
   cloneRoot: string;
+  /** Same ownership metadata as MUST_PASS Case. */
+  maintainer?: string;
+  lastPassedDate?: string;
 }
 
 /**
@@ -229,6 +261,28 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     id: "coral-multisig",
     target: "native",
     path: "/tmp/coral-anchor/tests/multisig/programs/multisig/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor",
+    cloneRoot: "/tmp/coral-anchor",
+  },
+
+  // ── 2026-05-02 H7 corpus expansion — coral-anchor probe sweep ──
+  //
+  // coral-sysvars: tests/sysvars exercises Clock/Rent/EpochSchedule
+  // sysvar reads from Anchor handlers. Both targets land green because
+  // the Sysvar IR kinds were already wired (clock/rent), and Anvil's
+  // emit qualifies them per target (Clock::get for native,
+  // pinocchio::sysvars::clock::Clock for pinocchio).
+  {
+    id: "coral-sysvars",
+    target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/sysvars/programs/sysvars/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor",
+    cloneRoot: "/tmp/coral-anchor",
+  },
+  {
+    id: "coral-sysvars",
+    target: "native",
+    path: "/tmp/coral-anchor/tests/sysvars/programs/sysvars/src/lib.rs",
     repo: "https://github.com/coral-xyz/anchor",
     cloneRoot: "/tmp/coral-anchor",
   },

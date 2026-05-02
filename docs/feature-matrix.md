@@ -49,7 +49,7 @@ Deferred stubs (file headers in `api/tests/differential-*.test.ts` document the 
 
 ## Real-world cargo-build coverage
 
-`api/tests/realworld-cargo.test.ts` regression-gates 36+ fixtures from the [`solana-developers/program-examples`](https://github.com/solana-developers/program-examples) corpus across both targets. Auto-clones to `/tmp/program-examples` on first run; set `ANVIL_NO_CLONE=1` to opt out. Plus 7 external programs (escrow2025, coral cohort, Token-2022 transfer-fee) with regression-guard ceilings tracked in `realworld-tracking.test.ts`.
+`api/tests/realworld-cargo.test.ts` regression-gates 50+ fixtures from the [`solana-developers/program-examples`](https://github.com/solana-developers/program-examples) corpus + [`coral-xyz/anchor`](https://github.com/coral-xyz/anchor) test programs, across both targets. Auto-clones to `/tmp/program-examples` and `/tmp/coral-anchor` on first run; set `ANVIL_NO_CLONE=1` to opt out. Each MUST_PASS case carries a `maintainer` + `lastPassedDate` so a regression has a clear contact + recency signal. Promoted cases include: counter, checking-accounts, processing-instructions, cpi-lever, create-account, close-account, realloc, program-derived-addresses, transfer-tokens, spl-token-minter, create-token, token-2022-basics, t22-transfer-fee, transfer-sol, rent, pda-rent-payer, carnival, pda-mint-authority, cpi-hand, favorites, hello-solana, account-data, escrow2025, coral-escrow, coral-multisig, coral-sysvars. Tracking layer (`realworld-tracking.test.ts`) holds ~9 cases with non-blocking ceilings for fixtures still on emit follow-ups (coral-swap, t22-transfer-hook, coral-events, favorites/native).
 
 ## Quasar status
 

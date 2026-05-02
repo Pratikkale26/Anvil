@@ -40,7 +40,7 @@ Cargo green is necessary but not sufficient. This is the actual correctness sign
 | `set-authority` | Hand-rolled raw SPL `set_authority` on Pinocchio |
 | `escrow` | PDA init + non-ATA token init (`init token::*` vault) + `token::transfer` |
 
-`bun test api/tests/differential-*.test.ts` runs all 10 + the AI-under-differential framework smoke. Plus 36+ deterministic real-world cargo-build regression gates from `solana-developers/program-examples`.
+`bun test api/tests/differential-*.test.ts` runs all 13 + the AI-under-differential framework smoke. Plus 50+ deterministic real-world cargo-build regression gates from `solana-developers/program-examples` and the `coral-xyz/anchor` test corpus.
 
 ### Measured CU savings on bundled demos
 
@@ -211,7 +211,7 @@ docs/   Architecture, differential testing, feature matrix, migration guide
 
 ## Status
 
-v0.3.4. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). 183 passing tests across 30 files (10 byte-equal differential fixtures + 36+ real-world cargo regressions). Source of truth: `bun scripts/count-tests.ts`.
+v0.3.4. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). 183 passing tests across 30 files (13 byte-equal differential fixtures + 50+ real-world cargo regressions). Source of truth: `bun scripts/count-tests.ts`.
 
 Working notes for grant + migration: [docs/migration-guide.md](docs/migration-guide.md).
 
