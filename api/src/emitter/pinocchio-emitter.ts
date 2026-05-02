@@ -928,31 +928,30 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
   }
 
   override emitEmit(event: string, fields: string): string {
-    // Anchor's `emit!(Event { … })` expands to a sol_log_data CPI with
-    // the borsh-encoded event preceded by an 8-byte event discriminator
-    // (sha256("event:<EventName>")[..8]). Off-chain indexers parse that
-    // shape. Pinocchio has no `emit!` macro — we keep a sol_log
-    // text-log fallback (always works, doesn't need BorshSerialize on
-    // the event struct) and document the divergence inline so users
-    // know to wire sol_log_data themselves if they need indexer-
-    // compatible event output.
-    //
-    // Why not auto-emit sol_log_data: requires the user's event types
-    // to derive BorshSerialize, which Anchor adds via `#[event]` but
-    // Anvil's emitted state structs don't currently. Switching the
-    // derive across all targets is a bigger change than this
-    // divergence note; the differential corpus byte-equality is on
-    // ACCOUNT STATE, not on logs, so this gap doesn't break the
-    // tested fixtures. Tracked as a separate roadmap item.
+    // Anchor's `emit!(Event { … })` emits an 8-byte event discriminator +
+    // borsh-encoded payload via sol_log_data. Anvil now mirrors the same
+    // shape: build the event struct (defined in events.rs with
+    // BorshSerialize derive), serialize via borsh::to_vec, then call
+    // sol_log_data with [&discriminator, &payload]. Off-chain indexers
+    // see byte-identical Program data: lines vs Anchor's expansion.
     if (!fields.trim()) {
-      return `    pinocchio::log::sol_log("event:${event}");`;
+      return `    pinocchio::log::sol_log_data(&[&${event}::DISCRIMINATOR]);`;
     }
-    return `    // ⚠️ Anvil: Anchor emit!(${event}) → text log only on Pinocchio.
-    //   For indexer-compatible borsh-encoded events, replace with
-    //   sol_log_data(&[disc, borsh_bytes]) once your event type derives
-    //   BorshSerialize.
-    pinocchio::log::sol_log("event:${event}");
-    // Event data: ${fields.replace(/\n/g, " ")}`;
+    // Concatenate discriminator + borsh payload into ONE slice. Anchor's
+    // macro emits sol_log_data(&[&combined]) where combined is the
+    // disc-prefixed payload — the runtime base64-encodes the slice
+    // verbatim, surfacing as a SINGLE base64 string in the
+    // 'Program data: <b64>' log line. Emitting &[&disc, &payload]
+    // renders as TWO space-separated base64 strings, which differs at
+    // the log-line level even though byte content matches. Concatenate
+    // to byte-equal Anchor's format.
+    return `    {
+        let __evt = ${event} { ${fields} };
+        let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+        let mut __evt_payload = ${event}::DISCRIMINATOR.to_vec();
+        __evt_payload.extend_from_slice(&__evt_bytes);
+        pinocchio::log::sol_log_data(&[&__evt_payload]);
+    }`;
   }
 
   override emitClockGet(localVar: string): string {

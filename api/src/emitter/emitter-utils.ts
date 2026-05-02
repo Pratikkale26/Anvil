@@ -17,6 +17,11 @@ export function accountDiscriminator(name: string): string {
   return formatByteArray(discriminatorBytes(`account:${name}`));
 }
 
+/** Anchor's #[event] discriminator: sha256("event:<EventName>")[..8]. */
+export function eventDiscriminator(name: string): string {
+  return formatByteArray(discriminatorBytes(`event:${name}`));
+}
+
 export function discriminatorBytes(namespace: string): number[] {
   return [...createHash("sha256").update(namespace).digest().subarray(0, 8)];
 }

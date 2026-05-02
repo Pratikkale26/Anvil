@@ -21,31 +21,6 @@ use solana_program::{
 };
 use solana_program::sysvar::rent::Rent;
 
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
-pub struct LiquidityAdded {
-    pub user: Pubkey,
-    pub amount_a: u64,
-    pub amount_b: u64,
-    pub lp_tokens: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
-pub struct LiquidityRemoved {
-    pub user: Pubkey,
-    pub amount_a: u64,
-    pub amount_b: u64,
-    pub lp_tokens: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
-pub struct Swapped {
-    pub user: Pubkey,
-    pub amount_in: u64,
-    pub amount_out: u64,
-    pub fee_amount: u64,
-    pub a_to_b: bool,
-}
-
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
@@ -417,9 +392,16 @@ pub fn add_liquidity(
     pool.reserve_a = pool.reserve_a.checked_add(amount_a).ok_or(AmmError::Overflow)?;
     pool.reserve_b = pool.reserve_b.checked_add(amount_b).ok_or(AmmError::Overflow)?;
     pool.lp_supply = pool.lp_supply.checked_add(lp_tokens).ok_or(AmmError::Overflow)?;
-    // Event: LiquidityAdded
-    msg!("event:LiquidityAdded");
-    // Event data: user: ctx.accounts.user.key(),             amount_a,             amount_b,             lp_tokens,
+    {
+        let __evt = LiquidityAdded { user: ctx.accounts.user.key(),
+            amount_a,
+            amount_b,
+            lp_tokens, };
+        let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+        let mut __evt_payload = LiquidityAdded::DISCRIMINATOR.to_vec();
+        __evt_payload.extend_from_slice(&__evt_bytes);
+        solana_program::log::sol_log_data(&[&__evt_payload]);
+    }
     AmmPool::write(&mut pool_account.data.borrow_mut(), &pool)?;
     Ok(())
 
@@ -569,9 +551,16 @@ pub fn remove_liquidity(
     pool.reserve_a = pool.reserve_a.checked_sub(amount_a).ok_or(AmmError::Underflow)?;
     pool.reserve_b = pool.reserve_b.checked_sub(amount_b).ok_or(AmmError::Underflow)?;
     pool.lp_supply = pool.lp_supply.checked_sub(lp_amount).ok_or(AmmError::Underflow)?;
-    // Event: LiquidityRemoved
-    msg!("event:LiquidityRemoved");
-    // Event data: user: ctx.accounts.user.key(),             amount_a,             amount_b,             lp_tokens: lp_amount,
+    {
+        let __evt = LiquidityRemoved { user: ctx.accounts.user.key(),
+            amount_a,
+            amount_b,
+            lp_tokens: lp_amount, };
+        let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+        let mut __evt_payload = LiquidityRemoved::DISCRIMINATOR.to_vec();
+        __evt_payload.extend_from_slice(&__evt_bytes);
+        solana_program::log::sol_log_data(&[&__evt_payload]);
+    }
     AmmPool::write(&mut pool_account.data.borrow_mut(), &pool)?;
     Ok(())
 
@@ -731,9 +720,17 @@ pub fn swap(
             pool.reserve_a = pool.reserve_a.checked_sub(amount_out).ok_or(AmmError::Underflow)?;
             pool.total_fees_b = pool.total_fees_b.checked_add(lp_fee).ok_or(AmmError::Overflow)?;
         }
-    // Event: Swapped
-    msg!("event:Swapped");
-    // Event data: user: ctx.accounts.user.key(),             amount_in,             amount_out,             fee_amount,             a_to_b,
+    {
+        let __evt = Swapped { user: ctx.accounts.user.key(),
+            amount_in,
+            amount_out,
+            fee_amount,
+            a_to_b, };
+        let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+        let mut __evt_payload = Swapped::DISCRIMINATOR.to_vec();
+        __evt_payload.extend_from_slice(&__evt_bytes);
+        solana_program::log::sol_log_data(&[&__evt_payload]);
+    }
     AmmPool::write(&mut pool_account.data.borrow_mut(), &pool)?;
     Ok(())
 

@@ -22,28 +22,6 @@ use solana_program::{
 use solana_program::sysvar::clock::Clock;
 use solana_program::sysvar::rent::Rent;
 
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
-pub struct StakeEvent {
-    pub user: Pubkey,
-    pub amount: u64,
-    pub timestamp: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
-pub struct RewardEvent {
-    pub user: Pubkey,
-    pub rewards: u64,
-    pub timestamp: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
-pub struct UnstakeEvent {
-    pub user: Pubkey,
-    pub amount: u64,
-    pub rewards: u64,
-    pub timestamp: i64,
-}
-
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
@@ -305,9 +283,15 @@ pub fn stake(
         &transfer_ix,
         &[user_stake_ata.clone(), stake_vault.clone(), user.clone()],
     )?;
-    // Event: StakeEvent
-    msg!("event:StakeEvent");
-    // Event data: user: ctx.accounts.user.key(),             amount,             timestamp: now,
+    {
+        let __evt = StakeEvent { user: ctx.accounts.user.key(),
+            amount,
+            timestamp: now, };
+        let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+        let mut __evt_payload = StakeEvent::DISCRIMINATOR.to_vec();
+        __evt_payload.extend_from_slice(&__evt_bytes);
+        solana_program::log::sol_log_data(&[&__evt_payload]);
+    }
     UserStake::write(&mut user_stake_account.data.borrow_mut(), &user_stake)?;
     StakingPool::write(&mut pool_account.data.borrow_mut(), &pool)?;
     Ok(())
@@ -397,9 +381,15 @@ pub fn claim_rewards(
         signer_seeds,
     )?;
     user_stake.last_claim = now;
-    // Event: RewardEvent
-    msg!("event:RewardEvent");
-    // Event data: user: ctx.accounts.user.key(),             rewards,             timestamp: now,
+    {
+        let __evt = RewardEvent { user: ctx.accounts.user.key(),
+            rewards,
+            timestamp: now, };
+        let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+        let mut __evt_payload = RewardEvent::DISCRIMINATOR.to_vec();
+        __evt_payload.extend_from_slice(&__evt_bytes);
+        solana_program::log::sol_log_data(&[&__evt_payload]);
+    }
     UserStake::write(&mut user_stake_account.data.borrow_mut(), &user_stake)?;
     Ok(())
 
@@ -495,9 +485,16 @@ pub fn unstake(
             spl_token_mint_to_signed(reward_mint, user_reward_ata, pool_account, pending_rewards, signer_seeds)?;
         }
     pool.total_staked = pool.total_staked.checked_sub(user_stake.amount).ok_or(StakingError::Underflow)?;
-    // Event: UnstakeEvent
-    msg!("event:UnstakeEvent");
-    // Event data: user: ctx.accounts.user.key(),             amount: user_stake.amount,             rewards: pending_rewards,             timestamp: now,
+    {
+        let __evt = UnstakeEvent { user: ctx.accounts.user.key(),
+            amount: user_stake.amount,
+            rewards: pending_rewards,
+            timestamp: now, };
+        let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+        let mut __evt_payload = UnstakeEvent::DISCRIMINATOR.to_vec();
+        __evt_payload.extend_from_slice(&__evt_bytes);
+        solana_program::log::sol_log_data(&[&__evt_payload]);
+    }
     close_program_account(user_stake_account, user)?;
     StakingPool::write(&mut pool_account.data.borrow_mut(), &pool)?;
     Ok(())

@@ -181,6 +181,14 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    */
   anvilTarget?: "pinocchio" | "native";
   /**
+   * If true, ALSO byte-compare event log payloads (sol_log_data lines
+   * surfaced as `Program data: <base64>` in transaction logs). Default
+   * false for back-compat — most fixtures don't emit events. Set true
+   * for fixtures that exercise emit!() / emit_cpi!() so the gate
+   * verifies events are byte-identical to Anchor's macro expansion.
+   */
+  compareEventLogs?: boolean;
+  /**
    * Pin Clock::get().unix_timestamp before the first instruction.
    * Default: 1_700_000_000 (a fixed Unix timestamp in 2023). Programs
    * reading the clock see this exact value in both Anchor and Anvil
@@ -252,8 +260,11 @@ export function defineDifferential<S extends DifferentialSetup>(
         // Setup runs ONCE — both scenarios share the same keypairs/PDAs.
         const ctx = await fixture.setup();
 
-        const anchorState = await runScenario(fixture, anchorSo, ctx, programId);
-        const anvilState = await runScenario(fixture, anvilSo, ctx, programId);
+        const compareEventLogs = fixture.compareEventLogs ?? false;
+        const anchorEventLogs: string[] = [];
+        const anvilEventLogs: string[] = [];
+        const anchorState = await runScenario(fixture, anchorSo, ctx, programId, compareEventLogs ? anchorEventLogs : undefined);
+        const anvilState = await runScenario(fixture, anvilSo, ctx, programId, compareEventLogs ? anvilEventLogs : undefined);
 
         const accounts = fixture.accountsToCompare(ctx);
         const compareLamports = fixture.compareLamports ?? true;
@@ -262,7 +273,8 @@ export function defineDifferential<S extends DifferentialSetup>(
           | { kind: "data"; label: string; anchor: Buffer; anvil: Buffer }
           | { kind: "lamports"; label: string; anchor: bigint; anvil: bigint }
           | { kind: "owner"; label: string; anchor: string; anvil: string }
-          | { kind: "presence"; label: string; anchorPresent: boolean; anvilPresent: boolean };
+          | { kind: "presence"; label: string; anchorPresent: boolean; anvilPresent: boolean }
+          | { kind: "events"; anchor: string[]; anvil: string[] };
         let firstMismatch: Mismatch | null = null;
 
         for (const { pubkey, label } of accounts) {
@@ -306,6 +318,18 @@ export function defineDifferential<S extends DifferentialSetup>(
           }
         }
 
+        // Event log compare. Each `Program data: <base64>` line is one
+        // sol_log_data invocation. Order-significant: Anchor + Anvil
+        // must emit the same events in the same order. Mismatch shows
+        // the full lists side-by-side so a divergence (different
+        // discriminator, different payload, missing event) is obvious.
+        if (compareEventLogs) {
+          if (anchorEventLogs.length !== anvilEventLogs.length ||
+              anchorEventLogs.some((l, i) => l !== anvilEventLogs[i])) {
+            firstMismatch ??= { kind: "events", anchor: anchorEventLogs, anvil: anvilEventLogs };
+          }
+        }
+
         if (firstMismatch) {
           if (firstMismatch.kind === "data") {
             console.log(`\n[differential-${fixture.fixtureName}] DATA MISMATCH on '${firstMismatch.label}':`);
@@ -329,7 +353,13 @@ export function defineDifferential<S extends DifferentialSetup>(
             console.log(`  anchor owner: ${firstMismatch.anchor}`);
             console.log(`  anvil  owner: ${firstMismatch.anvil}`);
             console.log(`  one side reassigned the account; the other did not.`);
-          } else {
+          } else if (firstMismatch.kind === "events") {
+            console.log(`\n[differential-${fixture.fixtureName}] EVENT LOG MISMATCH:`);
+            console.log(`  anchor (${firstMismatch.anchor.length} events):`);
+            for (const l of firstMismatch.anchor) console.log(`    ${l}`);
+            console.log(`  anvil  (${firstMismatch.anvil.length} events):`);
+            for (const l of firstMismatch.anvil) console.log(`    ${l}`);
+          } else if (firstMismatch.kind === "presence") {
             console.log(`\n[differential-${fixture.fixtureName}] PRESENCE MISMATCH on '${firstMismatch.label}':`);
             console.log(`  anchor present: ${firstMismatch.anchorPresent}`);
             console.log(`  anvil  present: ${firstMismatch.anvilPresent}`);
@@ -533,6 +563,7 @@ async function runScenario<S extends DifferentialSetup>(
   programSo: Buffer,
   ctx: S,
   programId: PublicKey,
+  collectedEventLogs?: string[],
 ): Promise<Map<string, AccountSnapshot>> {
   const svm = new LiteSVM();
   svm.addProgram(programId, programSo);
@@ -554,6 +585,35 @@ async function runScenario<S extends DifferentialSetup>(
         .warpToSlot(BigInt(fixture.pinClockSlot ?? 1));
     } catch { /* same */ }
   }
+  // Optional event-log capture. When the fixture has compareEventLogs=true
+  // we wrap svm.sendTransaction so every Program data: line lands in
+  // collectedEventLogs. Anchor's emit!() lowers to sol_log_data which
+  // surfaces as Program data: <base64-payload> in tx logs; capturing
+  // these across both Anchor + Anvil runs gives us a byte-level event
+  // log diff via the standard log surface (no LiteSVM internals leaked).
+  if (collectedEventLogs) {
+    const origSend = svm.sendTransaction.bind(svm);
+    (svm as unknown as { sendTransaction: (tx: unknown) => unknown }).sendTransaction = (tx: unknown) => {
+      const r = origSend(tx as never);
+      try {
+        // Both TransactionMetadata and FailedTransactionMetadata expose
+        // .logs() / .meta().logs() respectively.
+        const ctorName = (r as { constructor?: { name?: string } })?.constructor?.name ?? "";
+        let logs: string[] = [];
+        if (ctorName === "TransactionMetadata" && typeof (r as { logs?: () => string[] }).logs === "function") {
+          logs = (r as { logs: () => string[] }).logs();
+        } else if (ctorName === "FailedTransactionMetadata") {
+          const meta = (r as { meta?: () => { logs: () => string[] } }).meta?.();
+          logs = meta?.logs?.() ?? [];
+        }
+        for (const l of logs) {
+          if (l.startsWith("Program data: ")) collectedEventLogs.push(l);
+        }
+      } catch { /* best-effort */ }
+      return r;
+    };
+  }
+
   await fixture.callScript(svm, ctx, programId);
   // Snapshot every account named in accountsToCompare. Use a Map so the
   // caller can index by base58 — comparing across scenarios.

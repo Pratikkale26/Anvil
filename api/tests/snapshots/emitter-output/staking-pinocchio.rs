@@ -23,28 +23,6 @@ use pinocchio::sysvars::clock::Clock;
 use pinocchio::sysvars::rent::Rent;
 use pinocchio::sysvars::Sysvar;
 
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
-pub struct StakeEvent {
-    pub user: [u8; 32],
-    pub amount: u64,
-    pub timestamp: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
-pub struct RewardEvent {
-    pub user: [u8; 32],
-    pub rewards: u64,
-    pub timestamp: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
-pub struct UnstakeEvent {
-    pub user: [u8; 32],
-    pub amount: u64,
-    pub rewards: u64,
-    pub timestamp: i64,
-}
-
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
@@ -304,12 +282,15 @@ pub fn stake(
     pool.total_staked = pool.total_staked.checked_add(amount).ok_or(StakingError::Overflow)?;
     // SPL Token transfer — user_stake_ata → stake_vault
     spl_token_transfer(user_stake_ata, stake_vault, user, amount)?;
-    // ⚠️ Anvil: Anchor emit!(StakeEvent) → text log only on Pinocchio.
-    //   For indexer-compatible borsh-encoded events, replace with
-    //   sol_log_data(&[disc, borsh_bytes]) once your event type derives
-    //   BorshSerialize.
-    pinocchio::log::sol_log("event:StakeEvent");
-    // Event data: user: ctx.accounts.user.key(),             amount,             timestamp: now,
+    {
+        let __evt = StakeEvent { user: ctx.accounts.user.key(),
+            amount,
+            timestamp: now, };
+        let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+        let mut __evt_payload = StakeEvent::DISCRIMINATOR.to_vec();
+        __evt_payload.extend_from_slice(&__evt_bytes);
+        pinocchio::log::sol_log_data(&[&__evt_payload]);
+    }
     UserStake::save(user_stake_account, &user_stake)?;
     StakingPool::save(pool_account, &pool)?;
     Ok(())
@@ -381,12 +362,15 @@ pub fn claim_rewards(
     // SPL Token mint_to — reward_mint → user_reward_ata
     spl_token_mint_to_signed(reward_mint, user_reward_ata, pool_account, rewards, signer_seeds)?;
     user_stake.last_claim = now;
-    // ⚠️ Anvil: Anchor emit!(RewardEvent) → text log only on Pinocchio.
-    //   For indexer-compatible borsh-encoded events, replace with
-    //   sol_log_data(&[disc, borsh_bytes]) once your event type derives
-    //   BorshSerialize.
-    pinocchio::log::sol_log("event:RewardEvent");
-    // Event data: user: ctx.accounts.user.key(),             rewards,             timestamp: now,
+    {
+        let __evt = RewardEvent { user: ctx.accounts.user.key(),
+            rewards,
+            timestamp: now, };
+        let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+        let mut __evt_payload = RewardEvent::DISCRIMINATOR.to_vec();
+        __evt_payload.extend_from_slice(&__evt_bytes);
+        pinocchio::log::sol_log_data(&[&__evt_payload]);
+    }
     UserStake::save(user_stake_account, &user_stake)?;
     Ok(())
 
@@ -464,12 +448,16 @@ pub fn unstake(
             spl_token_mint_to_signed(reward_mint, user_reward_ata, pool_account, pending_rewards, signer_seeds)?;
         }
     pool.total_staked = pool.total_staked.checked_sub(user_stake.amount).ok_or(StakingError::Underflow)?;
-    // ⚠️ Anvil: Anchor emit!(UnstakeEvent) → text log only on Pinocchio.
-    //   For indexer-compatible borsh-encoded events, replace with
-    //   sol_log_data(&[disc, borsh_bytes]) once your event type derives
-    //   BorshSerialize.
-    pinocchio::log::sol_log("event:UnstakeEvent");
-    // Event data: user: ctx.accounts.user.key(),             amount: user_stake.amount,             rewards: pending_rewards,             timestamp: now,
+    {
+        let __evt = UnstakeEvent { user: ctx.accounts.user.key(),
+            amount: user_stake.amount,
+            rewards: pending_rewards,
+            timestamp: now, };
+        let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+        let mut __evt_payload = UnstakeEvent::DISCRIMINATOR.to_vec();
+        __evt_payload.extend_from_slice(&__evt_bytes);
+        pinocchio::log::sol_log_data(&[&__evt_payload]);
+    }
     close_program_account(user_stake_account, user)?;
     StakingPool::save(pool_account, &pool)?;
     Ok(())

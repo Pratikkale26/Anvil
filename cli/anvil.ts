@@ -1928,19 +1928,20 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
         s.kind === "emit" || (s.kind === "pass_through" && /\bemit!\s*\(/.test(s.code)),
       ),
     );
+  // emit!() is now byte-equal-supported via sol_log_data with deterministic
+  // borsh payloads (commit landed 2026-05-02). The TS-fixture harness
+  // sets `compareEventLogs: true` to opt the comparison in. The
+  // JSON-scenario CLI path doesn't have that opt-in yet — events are
+  // emitted on both sides and byte-equal in the program output, but
+  // the CLI's harness doesn't compare log lines. Without --ignore-events
+  // the CLI still refuses, with a softened message reflecting reality.
   if (usesEmitMacro && !args.ignoreEvents) {
-    error(`EVENT_LOG_NOT_SUPPORTED: source uses Anchor's emit!() macro.`);
-    console.log();
-    console.log(`    ${c.dim}The differential harness compares data, lamports, and owner — but NOT event log payloads.${c.reset}`);
-    console.log(`    ${c.dim}A program that emits events behind identical state can still byte-equal but be runtime-divergent.${c.reset}`);
-    console.log();
-    console.log(`    Re-run with ${c.bold}--ignore-events${c.reset} to acknowledge the gap and run the gate anyway.`);
-    console.log(`    ${c.dim}See docs/audit-trust-model.md for the full unchecked-surface list.${c.reset}`);
+    warn(`emit!() detected. Pass --ignore-events to acknowledge the JSON-scenario CLI doesn't compare event log lines yet (use the TS fixture harness with compareEventLogs:true for byte-equal event verification).`);
     console.log();
     process.exit(1);
   }
   if (usesEmitMacro && args.ignoreEvents) {
-    warn(`emit!() detected — running with --ignore-events. Event log divergence is NOT checked by this gate.`);
+    warn(`emit!() detected — running with --ignore-events on the JSON-scenario path. The TS fixture harness compares events byte-equal; this CLI path doesn't yet.`);
     console.log();
   }
   success(`Parsed: ${ir.instructions.length} instruction${ir.instructions.length !== 1 ? "s" : ""}, ${ir.accounts.length} account${ir.accounts.length !== 1 ? "s" : ""}`);

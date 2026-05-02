@@ -380,6 +380,21 @@ export const AccountDefSchema = z.object({
 
 export type AccountDef = z.infer<typeof AccountDefSchema>;
 
+// ─── Event definition ───────────────────────────────────────────────────────
+//
+// Anchor's #[event] structs. Each emit!(EventName { ... }) call serializes
+// the named struct's fields via borsh and prepends an 8-byte discriminator
+// (sha256("event:<EventName>")[..8]); emitter targets reproduce the same
+// payload via sol_log_data so off-chain indexers see byte-identical events.
+
+export const EventDefSchema = z.object({
+  name: z.string(),
+  fields: z.array(AccountFieldSchema),
+  docs: z.string().optional(),
+});
+
+export type EventDef = z.infer<typeof EventDefSchema>;
+
 // ─── Custom type / enum definition ──────────────────────────────────────────
 
 export const TypeDefSchema = z.object({
@@ -498,6 +513,8 @@ export const SolanaIRSchema = z.object({
   errors: z.array(ErrorDefSchema).default([]),
   /** Helper functions defined outside #[program] mod (carried to output) */
   helperFns: z.array(HelperFnSchema).default([]),
+  /** #[event] structs harvested from the source for sol_log_data emit. */
+  events: z.array(EventDefSchema).default([]),
   /** use statements from the source (helps emitters determine imports) */
   imports: z.array(z.string()).default([]),
   /**

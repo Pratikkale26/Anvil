@@ -784,13 +784,23 @@ ${maybeRead}    let seeds = &[
   }
 
   override emitEmit(event: string, fields: string): string {
+    // Mirror Pinocchio: serialize the event struct (defined in events.rs
+    // with BorshSerialize derive) and call sol_log_data with a single
+    // concatenated [discriminator, payload] slice. Anchor's macro emits
+    // sol_log_data(&[&combined]) which surfaces as a single base64-
+    // encoded string in 'Program data: <b64>'. Emitting &[&disc, &payload]
+    // would render as two space-separated base64 strings — same byte
+    // content but different log-line format. Concatenate to byte-equal.
     if (!fields.trim()) {
-      return `    msg!("event:${event}");`;
+      return `    solana_program::log::sol_log_data(&[&${event}::DISCRIMINATOR]);`;
     }
-    // Preserve event field data as comments so the developer can add proper serialization
-    return `    // Event: ${event}
-    msg!("event:${event}");
-    // Event data: ${fields.replace(/\n/g, " ")}`;
+    return `    {
+        let __evt = ${event} { ${fields} };
+        let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+        let mut __evt_payload = ${event}::DISCRIMINATOR.to_vec();
+        __evt_payload.extend_from_slice(&__evt_bytes);
+        solana_program::log::sol_log_data(&[&__evt_payload]);
+    }`;
   }
 
   override emitClockGet(localVar: string): string {

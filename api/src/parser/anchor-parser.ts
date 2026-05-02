@@ -147,6 +147,16 @@ export async function parseAnchor(
     // ── Parse errors ──
     const errors = topLevel.errorEnums.flatMap((e) => parseErrorEnum(e.node, e.attrs));
 
+    // ── Parse #[event] structs ──
+    // Reuse parseAccountDataStruct's field walker since #[event] structs are
+    // structurally identical to #[account] structs minus the discriminator
+    // (which we synthesize at emit time from sha256("event:Name")). The
+    // resulting AccountDef's `space` and `implItems` are unused for events.
+    const events = topLevel.eventStructs.map((s) => {
+      const def = parseAccountDataStruct(s.node, s.attrs);
+      return { name: def.name, fields: def.fields };
+    });
+
     // ── Parse helper functions ──
     const helperFns = topLevel.helperFns.map((h) => parseHelperFn(h.node));
 
@@ -182,6 +192,7 @@ export async function parseAnchor(
       constants,
       errors,
       helperFns,
+      events,
       imports,
       userTraitImpls,
       metadata: {
@@ -227,6 +238,7 @@ interface TopLevelItems {
   accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[]; instructionArgs: string[] }[];
   accountDataStructs: { node: SyntaxNode; attrs: SyntaxNode[] }[];
   errorEnums: { node: SyntaxNode; attrs: SyntaxNode[] }[];
+  eventStructs: { node: SyntaxNode; attrs: SyntaxNode[] }[];
   helperFns: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[];
   implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[];
   /**
@@ -255,6 +267,7 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
     accountsStructs: [],
     accountDataStructs: [],
     errorEnums: [],
+    eventStructs: [],
     helperFns: [],
     implMethods: [],
     implItems: [],
@@ -320,6 +333,12 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
             }
           } else if (hasAttribute(attrs, "account")) {
             items.accountDataStructs.push({ node: child, attrs });
+          } else if (hasAttribute(attrs, "event")) {
+            // #[event] structs are payload schemas for emit!() / emit_cpi!().
+            // Captured here so the emitter can reproduce sol_log_data with
+            // a byte-identical borsh payload + Anchor-style 8-byte
+            // sha256("event:<EventName>")[..8] discriminator.
+            items.eventStructs.push({ node: child, attrs });
           } else {
             items.customTypes.push({ node: child, attrs, kind: "struct" });
           }
