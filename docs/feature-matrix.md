@@ -18,6 +18,7 @@
 | Associated Token Account `create` | Y (hand-rolled vs SPL ATA program ID) | Y (`spl_associated_token_account::instruction::create`) |
 | SPL Memo CPI | Y (hand-rolled vs MEMO program ID) | Y (`spl_memo`) |
 | Token-2022 `_checked` variants | Y (runtime pass-through via `pinocchio_token`) | Y (`spl_token_2022::*_checked`) |
+| Token-2022 extensions (TransferFee, MintCloseAuthority, …) | partial — see [token-2022-extensions.md](token-2022-extensions.md) | partial — see [token-2022-extensions.md](token-2022-extensions.md) |
 | AI Refine (validator-driven) | Y (shared) | Y (shared) |
 | Verify Build + Auto-fix loop | Y (shared) | Y (shared) |
 | Zero-copy account layouts (`#[account(zero_copy)]`) | — | — |
