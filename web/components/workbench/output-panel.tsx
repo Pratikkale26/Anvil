@@ -1,7 +1,7 @@
 "use client";
 
 import Editor, { DiffEditor } from "@monaco-editor/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   C,
   MONACO_OPTS,
@@ -26,6 +26,65 @@ import {
 } from "lucide-react";
 import { PipelineStrip } from "./pipeline-strip";
 import { IconBtn, Panel, PaneTab } from "./panel";
+
+/**
+ * Scroll-sync hook for two side-by-side Monaco editors. When the user
+ * scrolls one, the other follows at the same proportional position
+ * (current_top / max_top). Bidirectional with re-entry guarding so the
+ * follower's scroll-update doesn't trigger another sync round-trip.
+ *
+ * The "visual moat" the pitch wants: paste an Anchor program, see the
+ * Pinocchio emit scroll alongside it. Without sync, the two columns
+ * drift after the first scroll and the user has to manually align —
+ * which kills the side-by-side as a comprehension aid.
+ *
+ * Returns onMount handlers — pass to the `onMount` prop of two
+ * <Editor> instances. Editor refs and re-entry flag are scoped per
+ * caller via local closure variables, NOT React state, because Monaco
+ * scroll events fire many times per frame and a state-update would
+ * tank perf.
+ */
+type MonacoEditor = {
+  onDidScrollChange: (cb: () => void) => { dispose: () => void };
+  setScrollTop: (top: number) => void;
+  getScrollTop: () => number;
+  getScrollHeight: () => number;
+  getLayoutInfo: () => { height: number };
+};
+
+function useScrollSyncPair() {
+  const leftRef = useRef<MonacoEditor | null>(null);
+  const rightRef = useRef<MonacoEditor | null>(null);
+  // Re-entry guard — when we set scrollTop on the follower, that fires
+  // its onDidScrollChange. Without the flag, that triggers a sync back
+  // to the leader → infinite ping-pong. Flag cleared on next microtask
+  // so the follower's scroll event has fired by the time we re-enable.
+  const syncing = useRef(false);
+
+  function syncFromTo(source: MonacoEditor, target: MonacoEditor) {
+    if (syncing.current) return;
+    const sourceMax = Math.max(1, source.getScrollHeight() - source.getLayoutInfo().height);
+    const targetMax = Math.max(1, target.getScrollHeight() - target.getLayoutInfo().height);
+    const ratio = source.getScrollTop() / sourceMax;
+    syncing.current = true;
+    target.setScrollTop(ratio * targetMax);
+    setTimeout(() => { syncing.current = false; }, 0);
+  }
+
+  const onLeftMount = (editor: MonacoEditor) => {
+    leftRef.current = editor;
+    editor.onDidScrollChange(() => {
+      if (rightRef.current) syncFromTo(editor, rightRef.current);
+    });
+  };
+  const onRightMount = (editor: MonacoEditor) => {
+    rightRef.current = editor;
+    editor.onDidScrollChange(() => {
+      if (leftRef.current) syncFromTo(editor, leftRef.current);
+    });
+  };
+  return { onLeftMount, onRightMount };
+}
 
 export function OutputPanel({ state }: { state: AnvilPipelineState }) {
   const {
@@ -97,6 +156,13 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     if (lower.endsWith(".gitignore")) return "ignore";
     return "plaintext";
   };
+
+  // One scroll-sync pair per side-by-side view. The diff tab (Anchor source
+  // ↔ generated emit) and the compare-targets tab (current target ↔ other
+  // target) are independent — each gets its own pair so switching tabs
+  // doesn't cross-wire scroll positions across them.
+  const diffSync = useScrollSyncPair();
+  const compareTargetSync = useScrollSyncPair();
 
   // Line-level delta powering the header "+N / -M" glance. Uses a real LCS
   // on the line array so reordered-but-identical lines aren't counted as
@@ -576,6 +642,7 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                     value={resolvedSource}
                     theme="vs-dark"
                     options={MONACO_OPTS}
+                    onMount={!isMobile ? diffSync.onLeftMount : undefined}
                   />
                 </div>
                 <div>
@@ -591,6 +658,7 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                     value={singleFileCode}
                     theme="vs-dark"
                     options={MONACO_OPTS}
+                    onMount={!isMobile ? diffSync.onRightMount : undefined}
                   />
                 </div>
               </div>
@@ -634,6 +702,7 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                     value={singleFileCode}
                     theme="vs-dark"
                     options={MONACO_OPTS}
+                    onMount={!isMobile ? compareTargetSync.onLeftMount : undefined}
                   />
                 </div>
                 <div>
@@ -651,6 +720,7 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                       value={compareTargetCode}
                       theme="vs-dark"
                       options={{ ...MONACO_OPTS, readOnly: true }}
+                      onMount={!isMobile ? compareTargetSync.onRightMount : undefined}
                     />
                   )}
                 </div>
