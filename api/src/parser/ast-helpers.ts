@@ -222,10 +222,26 @@ export function hasDeriveAttribute(attrs: SyntaxNode[], target: string): boolean
 /**
  * Extract the inner text of an #[account(...)] attribute.
  * Returns the content inside the parentheses, or null.
+ *
+ * Comments inside the attribute body MUST be stripped before depth-scanning
+ * for the matching close-paren. A line comment containing an apostrophe
+ * ("// Anchor's account size assumptions") would otherwise enter a "string"
+ * state at the apostrophe, never close, and depth would never reach 0 —
+ * silently dropping every constraint on the field. Symptom: `init`,
+ * `payer`, `space`, etc. all parsed as if absent → emit produces an
+ * account read instead of a create_program_account, cargo build fails on
+ * `bump_X` reference. Discovered while writing the optional-state
+ * differential fixture (see api/src/demo-programs/optional-state.rs).
  */
 export function extractAccountAttrInner(attrs: SyntaxNode[]): string | null {
   for (const attr of attrs) {
-    const text = attr.text;
+    // Strip block + line comments so apostrophes/quotes inside them can't
+    // confuse the inString lookahead below. Replace with same-length
+    // whitespace so byte offsets stay aligned (we don't use them, but the
+    // safer choice).
+    const text = attr.text
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => " ".repeat(m.length))
+      .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
     const prefix = "#[account(";
     const start = text.indexOf(prefix);
     if (start === -1) continue;
@@ -254,9 +270,37 @@ export function extractAccountAttrInner(attrs: SyntaxNode[]): string | null {
         continue;
       }
 
-      if (ch === '"' || ch === "'") {
+      if (ch === '"') {
         inString = true;
         quote = ch;
+        continue;
+      }
+      // Distinguish Rust char literals ('a', '\\n') and lifetimes ('info,
+      // 'static) from string-quote apostrophes. A char literal is exactly
+      // one logical char between two `'`s; a lifetime is `'` followed by
+      // an ident-start. Both are short and bounded — neither should be
+      // scanned char-by-char as a "string". We just skip the next char
+      // if it forms a char literal, otherwise leave the `'` alone (the
+      // lifetime path) so depth tracking keeps working.
+      if (ch === "'") {
+        const next = text[i + 1] ?? "";
+        const after = text[i + 2] ?? "";
+        // Char literal: 'a', '\n', '\'', '\xff' etc. — close-quote within
+        // a few chars. Conservative: skip ahead to the next `'` if it's
+        // within 4 chars (max length of an escape sequence char literal).
+        if (next === "\\") {
+          // \-escaped — find the closing quote up to 5 chars ahead.
+          for (let j = i + 2; j < Math.min(text.length, i + 8); j++) {
+            if (text[j] === "'") { i = j; break; }
+          }
+          continue;
+        }
+        if (after === "'") {
+          // Plain 'x' char literal.
+          i += 2;
+          continue;
+        }
+        // Otherwise treat as lifetime — leave depth tracking unaffected.
         continue;
       }
 

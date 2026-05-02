@@ -46,6 +46,9 @@ pub struct Init<'info> {
     #[account(
         init,
         payer = owner,
+        // Max in-memory OptVault: 8 disc + 32 owner + 33 Option<Pubkey>
+        // + 16 Option<i64> (alignment-padded) + 8 balance + 8 bump-w-padding.
+        // Note Anchor's space assumptions vs the borsh-encoded max.
         space = 256,
         seeds = [b"opt-vault", owner.key().as_ref()],
         bump
