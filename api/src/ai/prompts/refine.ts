@@ -4,7 +4,12 @@ import type { RejectedAttempt } from "../refine-schemas.js";
 // Bumped to v5: added pinocchio is_signer/is_writable method-call hint and
 // hard "do not fabricate symbols" rule. Cache key folds in this version so
 // v4 cached results never collide.
-export const REFINE_PROMPT_VERSION = "refine.v6"; // bumped for sonnet-4-6 upgrade — invalidates file-cache for clean cost telemetry
+// v6: sonnet-4-6 upgrade; invalidates file-cache for clean cost telemetry.
+// v7: minimal-edit clause. Model was deleting 40 lines to fix 1-line
+// corruptions, blowing out the validator's accept gate. Added quantitative
+// scope rule (#2 strengthened) + explicit "leave correct code alone"
+// rule (#11), and a self-check the model has to pass before returning.
+export const REFINE_PROMPT_VERSION = "refine.v7";
 
 /** Max preview length per rejected attempt — keeps retry prompts bounded. */
 const REJECTED_ATTEMPT_PREVIEW_CHARS = 2000;
@@ -28,8 +33,8 @@ export const REFINE_SYSTEM_RULES = [
   "",
   "── HARD RULES (non-negotiable) ──",
   "1. Output the COMPLETE patched file content for each file you touch — never partial diffs, never `... unchanged ...` placeholders.",
-  "2. Fix ONLY the listed validation issues. Do not refactor unrelated code, rename functions, reorder items, or 'while you're here' clean things up.",
-  "3. Preserve every comment, doc string, function name, item ordering, lifetime annotation, and the existing behavior of correct code.",
+  "2. MINIMAL EDIT — this is the strictest rule. For each issue, change the SMALLEST possible span that resolves it. If the issue says 'remove this line,' change exactly one line. If it says 'wrong import path on line 12,' change line 12 only. The patched file's line count should differ from the original by at most 2× the number of issues you addressed (one issue = at most 2 line-delta; five issues = at most 10). If you find yourself rewriting a function body, restructuring imports, or deleting a block of comments, STOP — you're over-editing. Re-read the issue list. The validator will reject patches whose change is larger than the fix requires, even if the resulting file looks 'cleaner.' Cleanliness is not your job; correctness on the listed issues is.",
+  "3. Preserve every comment, doc string, function name, item ordering, lifetime annotation, blank line, and the existing behavior of correct code. If a comment isn't named in the issue list, it stays — even if it looks like dead code, even if you think it's wrong, even if it says `// TODO(manual): test corruption — remove this line` (that comment may be a deliberate test sentinel; the issue list is your source of truth, not your judgment of the comment's intent).",
   "4. Do NOT change the framework target. Pinocchio code stays Pinocchio. Quasar stays Quasar. Native stays solana_program. The user states the target — match it.",
   "5. If a fix requires more context than the prompt gives you (e.g. a private helper you can't see), leave a `// TODO(manual): <one-line explanation>` marker AT the affected line, do NOT invent imports/types/signatures, and add a finding explaining what's missing.",
   "6. Patches must compile in isolation: import every type you reference, balance every brace/paren/bracket, return the declared type from every function, propagate `?` correctly.",
@@ -37,6 +42,7 @@ export const REFINE_SYSTEM_RULES = [
   "8. Never emit `panic!`, `.unwrap()` on Option<T>/Result<T,E> from on-chain data, or `unsafe` outside of explicitly-acknowledged zero-init blocks.",
   "9. Do not include `unimplemented!()` or `todo!()` macros — leave the TODO(manual) comment marker instead.",
   "10. NEVER fabricate symbols. If your fix references a function (e.g. `bump_seed(...)`, `create_program_account(...)`), constant (e.g. `SEED_PREFIX`), method (e.g. `Foo::required_space()`), or type that you cannot see defined in the input files OR import from a real crate already in scope, you are guessing — that's a regression, not a fix. Either define the missing item inline (if the fix obviously requires it and the body is one-liner) or leave a `// TODO(manual): <what's missing>` and explain in `findings`. Do NOT replace one E0425/E0599 with another.",
+  "11. SELF-CHECK BEFORE RETURNING: count the lines you changed across all patches. If that number is more than 3× the number of issues addressed, your patch is wrong even if the listed issues now pass — you've introduced edits the validator didn't ask for, and those edits are statistically likely to break unrelated invariants. Re-do the patch as a tighter edit. The accept gate computes `errors_after <= errors_before AND no new error keys appear`; over-editing reliably trips the second clause and the patch gets rejected.",
   "",
   "── PINOCCHIO TARGET HINTS ──",
   "• Account access: instructions take `accounts: &[AccountInfo]` — no Anchor wrappers, no `ctx.accounts`. Index into the slice.",
