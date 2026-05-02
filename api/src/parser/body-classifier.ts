@@ -541,7 +541,15 @@ function classifyMacroInvocation(node: SyntaxNode): BodyStatement {
     case "msg":
       return { kind: "msg", message: argsText };
 
-    case "emit": {
+    case "emit":
+    case "emit_cpi": {
+      // Anchor's emit! emits via sol_log_data; emit_cpi! does the same
+      // payload via a CPI to self. For non-Anchor targets (Pinocchio /
+      // Native) neither has a stable event surface today — both reduce
+      // to the same comment-only emit + `--ignore-events` gate on the
+      // differential CLI. Treat them as the same IR kind so coral-events
+      // and similar fixtures cargo-build cleanly. The audit-trust-model
+      // already calls out event log payloads as unverified.
       const braceIdx = argsText.indexOf("{");
       if (braceIdx !== -1) {
         const event = argsText.slice(0, braceIdx).trim();

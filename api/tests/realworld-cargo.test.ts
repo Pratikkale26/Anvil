@@ -269,6 +269,33 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     cloneRoot: "/tmp/coral-anchor",
   },
 
+  // ── 2026-05-02 emit_cpi! recognized by classifier ──
+  //
+  // coral-events: uses both emit!() and emit_cpi!(). Pre-fix the
+  // classifier only recognized emit!; emit_cpi! fell through to
+  // pass_through, leaving an unresolved macro at cargo build. Adding
+  // emit_cpi as an alias of emit (both lower to comment-only on
+  // non-Anchor targets, both subject to --ignore-events on the
+  // differential CLI) unlocks both targets.
+  {
+    id: "coral-events",
+    target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/events/programs/events/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor",
+    cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core",
+    lastPassedDate: "2026-05-02",
+  },
+  {
+    id: "coral-events",
+    target: "native",
+    path: "/tmp/coral-anchor/tests/events/programs/events/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor",
+    cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core",
+    lastPassedDate: "2026-05-02",
+  },
+
   // ── 2026-05-02 H7 corpus expansion — coral-anchor probe sweep ──
   //
   // coral-sysvars: tests/sysvars exercises Clock/Rent/EpochSchedule

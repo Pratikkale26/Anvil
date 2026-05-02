@@ -133,28 +133,10 @@ const TRACKED: TrackedCase[] = [
   // both targets expose the same surface — emitter call sites that go
   // through `<Type>::from_account_info(account)?` work cross-target.
 
-  // coral-events: uses Anchor's `emit_cpi!` macro (event log via CPI to
-  // self). Anvil has typed `emit` IR for the simple `emit!()` form but
-  // doesn't recognize `emit_cpi!()` yet — lands as pass_through with the
-  // macro name unresolved. Differential-path implication: programs using
-  // emit_cpi for event logs are subject to the same `--ignore-events`
-  // gate as plain `emit!`. Tracked here for cargo-build regression.
-  {
-    id: "coral-events",
-    target: "pinocchio",
-    path: "/tmp/coral-anchor/tests/events/programs/events/src/lib.rs",
-    source: "https://github.com/coral-xyz/anchor (tests/events)",
-    maxErrors: 1,
-    reason: "emit_cpi!() macro unrecognized — pass_through. Plain emit!() works; emit_cpi adds CPI-to-self semantics.",
-  },
-  {
-    id: "coral-events",
-    target: "native",
-    path: "/tmp/coral-anchor/tests/events/programs/events/src/lib.rs",
-    source: "https://github.com/coral-xyz/anchor (tests/events)",
-    maxErrors: 1,
-    reason: "Same as pinocchio — emit_cpi!() unrecognized.",
-  },
+  // NOTE: coral-events/{pinocchio,native} promoted to MUST_PASS in
+  // realworld-cargo.test.ts after emit_cpi! was added as an alias of
+  // emit! in body-classifier.ts. Both lower to comment-only on non-Anchor
+  // targets and are subject to --ignore-events on the differential CLI.
 ];
 
 const anyExist = TRACKED.some((c) => existsSync(c.path));
