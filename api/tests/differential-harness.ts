@@ -163,6 +163,16 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    */
   compareLamports?: boolean;
   /**
+   * If true (default), also compare account owner across scenarios.
+   * An account whose data + lamports byte-equal can still be silently
+   * wrong if Anvil's emit transferred ownership to a different program
+   * (e.g. forgot to assign back to the program after CPI). Without
+   * comparing owner, that class of divergence passes the gate. Set
+   * false only when the fixture intentionally hands ownership to a
+   * different program mid-scenario AND the divergence is benign.
+   */
+  compareOwner?: boolean;
+  /**
    * Pin Clock::get().unix_timestamp before the first instruction.
    * Default: 1_700_000_000 (a fixed Unix timestamp in 2023). Programs
    * reading the clock see this exact value in both Anchor and Anvil
@@ -239,9 +249,11 @@ export function defineDifferential<S extends DifferentialSetup>(
 
         const accounts = fixture.accountsToCompare(ctx);
         const compareLamports = fixture.compareLamports ?? true;
+        const compareOwner = fixture.compareOwner ?? true;
         type Mismatch =
           | { kind: "data"; label: string; anchor: Buffer; anvil: Buffer }
           | { kind: "lamports"; label: string; anchor: bigint; anvil: bigint }
+          | { kind: "owner"; label: string; anchor: string; anvil: string }
           | { kind: "presence"; label: string; anchorPresent: boolean; anvilPresent: boolean };
         let firstMismatch: Mismatch | null = null;
 
@@ -281,6 +293,9 @@ export function defineDifferential<S extends DifferentialSetup>(
           if (compareLamports && aSnap.lamports !== vSnap.lamports) {
             firstMismatch ??= { kind: "lamports", label, anchor: aSnap.lamports, anvil: vSnap.lamports };
           }
+          if (compareOwner && aSnap.owner !== vSnap.owner) {
+            firstMismatch ??= { kind: "owner", label, anchor: aSnap.owner, anvil: vSnap.owner };
+          }
         }
 
         if (firstMismatch) {
@@ -301,6 +316,11 @@ export function defineDifferential<S extends DifferentialSetup>(
             console.log(`  anchor lamports: ${firstMismatch.anchor}`);
             console.log(`  anvil  lamports: ${firstMismatch.anvil}`);
             console.log(`  delta:           ${firstMismatch.anvil - firstMismatch.anchor}`);
+          } else if (firstMismatch.kind === "owner") {
+            console.log(`\n[differential-${fixture.fixtureName}] OWNER MISMATCH on '${firstMismatch.label}':`);
+            console.log(`  anchor owner: ${firstMismatch.anchor}`);
+            console.log(`  anvil  owner: ${firstMismatch.anvil}`);
+            console.log(`  one side reassigned the account; the other did not.`);
           } else {
             console.log(`\n[differential-${fixture.fixtureName}] PRESENCE MISMATCH on '${firstMismatch.label}':`);
             console.log(`  anchor present: ${firstMismatch.anchorPresent}`);
@@ -403,7 +423,8 @@ async function buildAnvilSo<S extends DifferentialSetup>(
  */
 export type CompareMismatch =
   | { kind: "data"; label: string; anchor: Buffer; anvil: Buffer; firstDiffByte: number }
-  | { kind: "lamports"; label: string; anchor: bigint; anvil: bigint };
+  | { kind: "lamports"; label: string; anchor: bigint; anvil: bigint }
+  | { kind: "owner"; label: string; anchor: string; anvil: string };
 
 export async function runDifferentialCompare<S extends DifferentialSetup>(
   fixture: DifferentialFixture<S>,
@@ -414,6 +435,7 @@ export async function runDifferentialCompare<S extends DifferentialSetup>(
 ): Promise<CompareMismatch | null> {
   const stripDisc = fixture.stripDiscriminator ?? true;
   const compareLamports = fixture.compareLamports ?? true;
+  const compareOwner = fixture.compareOwner ?? true;
 
   const anchorState = await runScenario(fixture, anchorSo, ctx, programId);
   const anvilState = await runScenario(fixture, anvilSo, ctx, programId);
@@ -446,6 +468,9 @@ export async function runDifferentialCompare<S extends DifferentialSetup>(
     }
     if (compareLamports && aSnap.lamports !== vSnap.lamports) {
       return { kind: "lamports", label, anchor: aSnap.lamports, anvil: vSnap.lamports };
+    }
+    if (compareOwner && aSnap.owner !== vSnap.owner) {
+      return { kind: "owner", label, anchor: aSnap.owner, anvil: vSnap.owner };
     }
   }
   return null;

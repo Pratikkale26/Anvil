@@ -29,10 +29,10 @@ Every emitted target compiles via `cargo-build-sbf` against the SBF toolchain.
 
 ### Byte-equal differential gate
 
-For every scenario the auditor (or you) provides, Anvil runs both the Anchor reference `.so` and the Anvil-emitted `.so` inside [LiteSVM](https://github.com/litesvm/litesvm) with **identical keypairs, identical instruction data, identical clock + slot pinning**. The post-state of every named account is byte-compared. Lamport balances are compared. Any divergence fails the gate loudly with the offset of the first differing byte.
+For every scenario the auditor (or you) provides, Anvil runs both the Anchor reference `.so` and the Anvil-emitted `.so` inside [LiteSVM](https://github.com/litesvm/litesvm) with **identical keypairs, identical instruction data, identical clock + slot pinning**. The post-state of every named account is byte-compared on three dimensions: **`data`, `lamports`, and `owner`**. Any divergence fails the gate loudly with the offset of the first differing byte (or the diverging field).
 
-- **What this proves**: for the **scenarios actually run**, the Anvil emit produces output state that's bit-for-bit identical to Anchor's. This is much stronger than equivalent test-on-validator behavior because it covers the byte layout of Borsh-serialized state, the lamport balances, and the *absence* of unexpected side effects (e.g., Anchor wrote 8 bytes you didn't, or the discriminator differs).
-- **What it doesn't prove**: that *all reachable inputs* produce identical output. A finite test suite is finite. Inputs your scenarios don't exercise are not gated by this.
+- **What this proves**: for the **scenarios actually run**, the Anvil emit produces output state that's bit-for-bit identical to Anchor's on data, lamports, AND owner. The owner check catches a class of bug — emit forgets to assign the account back to the program after a CPI, or transfers ownership to the wrong program — that data + lamports comparison alone misses.
+- **What it doesn't prove**: that *all reachable inputs* produce identical output. A finite test suite is finite. Inputs your scenarios don't exercise are not gated by this. Event log payloads (`emit!`) are also not compared today — see "What we don't claim" below.
 
 ### Real-world cargo regression layer
 
