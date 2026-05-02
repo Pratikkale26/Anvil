@@ -9,7 +9,13 @@ import type { RejectedAttempt } from "../refine-schemas.js";
 // corruptions, blowing out the validator's accept gate. Added quantitative
 // scope rule (#2 strengthened) + explicit "leave correct code alone"
 // rule (#11), and a self-check the model has to pass before returning.
-export const REFINE_PROMPT_VERSION = "refine.v7";
+// v8: prompt-windowing rewrite. Pre-fix the model received only ±20 lines
+// around each issue and never saw the rest of the file — making the
+// "minimal edit / leave correct code alone" rules unenforceable from
+// the model's view (it can't avoid touching what it can't see). Now:
+// whole file under 12KB, structural-skeleton + windowed bodies for
+// larger files. Material change to prompt shape → new version.
+export const REFINE_PROMPT_VERSION = "refine.v8";
 
 /** Max preview length per rejected attempt — keeps retry prompts bounded. */
 const REJECTED_ATTEMPT_PREVIEW_CHARS = 2000;
@@ -139,20 +145,56 @@ export function buildRefinePrompt(input: {
     issuePaths.add(input.files[0].path);
   }
 
-  // Extract only the problematic sections from each file.
-  // For each issue with a line number, extract a ~40-line window around it.
-  // If no line numbers, include the full file but truncated.
+  // Extract problematic sections from each file.
+  //
+  // Pre-fix the windowing pulled ±20 lines around each issue line and sent
+  // ONLY those windows. For a TODO at line 1 of a 100-line file, the model
+  // saw lines 1-21 and never lines 22-100. When asked to fix the TODO and
+  // implicitly told (by the prompt's "minimal edit" rule) not to touch
+  // anything else, the model has no view of "anything else" — so it
+  // restructures whatever it can see, which is the over-edit pattern we
+  // observed in production (Δlines=-40 on a 1-line corruption).
+  //
+  // New windowing rules, in order of preference:
+  //
+  //   1. File ≤ FULL_FILE_THRESHOLD (12KB) → send the whole file. Eliminates
+  //      the "model can't see the rest" problem entirely. Most emitted files
+  //      are well under this — counter/vault/escrow lib.rs are ~3-6KB.
+  //   2. File > 12KB → send the file's structural skeleton (use block + all
+  //      top-level pub fn/struct/impl signatures, no bodies) PLUS the
+  //      issue-windowed bodies. The skeleton tells the model what NOT to
+  //      touch; the windows give it what to fix. Roughly the shape a Rust
+  //      reviewer would scan before editing.
+  //   3. No line numbers (validator-source issue with no specific line) →
+  //      truncate at 6000 chars (unchanged — pathological case, low traffic).
   const sections: string[] = [];
+  const FULL_FILE_THRESHOLD = 12_000;
 
   for (const filePath of issuePaths) {
     const file = input.files.find((f) => f.path === filePath);
     if (!file) continue;
 
+    if (file.content.length <= FULL_FILE_THRESHOLD) {
+      // Whole-file path — model sees everything, no risk of touching code
+      // it can't see.
+      sections.push(`--- ${filePath} (full, ${file.content.length} bytes) ---\n${file.content}`);
+      continue;
+    }
+
     const fileIssues = input.validationIssues.filter((i) => i.path === filePath);
     const linesWithNumbers = fileIssues.filter((i) => i.line !== undefined);
 
     if (linesWithNumbers.length > 0) {
-      // Extract windows around each issue line
+      // Skeleton + windows path. Skeleton gives the model structural context
+      // for "what's in this file"; windows give it the bodies to actually
+      // edit. Skeleton is cheap — typically <500 bytes for a 12KB file —
+      // and dramatically reduces over-edit because the model can SEE what
+      // exists outside its windows and respect the minimal-edit rule.
+      const skeleton = extractFileSkeleton(file.content);
+      if (skeleton) {
+        sections.push(`--- ${filePath} (skeleton — what NOT to delete) ---\n${skeleton}`);
+      }
+
       const allLines = file.content.split("\n");
       const ranges: Array<[number, number]> = [];
       for (const issue of linesWithNumbers) {
@@ -161,14 +203,12 @@ export function buildRefinePrompt(input: {
         const end = Math.min(allLines.length, line + 20);
         ranges.push([start, end]);
       }
-      // Merge overlapping ranges
       const merged = mergeRanges(ranges);
       for (const [start, end] of merged) {
         const snippet = allLines.slice(start, end).join("\n");
-        sections.push(`--- ${filePath}:${start + 1}-${end} ---\n${snippet}`);
+        sections.push(`--- ${filePath}:${start + 1}-${end} (issue window) ---\n${snippet}`);
       }
     } else {
-      // No line numbers — include full file but truncate to 6000 chars
       const truncated = file.content.length > 6000
         ? `${file.content.slice(0, 6000)}\n... [truncated ${file.content.length - 6000} chars]`
         : file.content;
@@ -270,6 +310,81 @@ export const REFINE_RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
   },
   required: ["rationale", "findings", "patches"],
 };
+
+/**
+ * Produce a structural skeleton of a Rust file: every `use` statement +
+ * every top-level item's signature line (no body). The model sees this as
+ * "what's in this file" so it can respect the minimal-edit rule even when
+ * it only gets windowed bodies for the actual fixes.
+ *
+ * Strategy: a hand-rolled scanner that matches signature-start tokens at
+ * column 0 (`use`, `pub`, `fn`, `struct`, `enum`, `trait`, `impl`, `mod`,
+ * `const`, `static`, `type`, `#[`) and emits the line up to the opening
+ * brace or trailing semicolon. Cheap, deterministic, doesn't require
+ * tree-sitter parsing inside this hot path.
+ *
+ * Tree-sitter would be more accurate (especially for items split across
+ * multiple lines like long generic where-clauses) but the cost — bringing
+ * a tree-sitter dep into this prompt-build path — isn't justified given
+ * that 99% of emitted Rust signatures fit on one line.
+ *
+ * Exported for unit testing.
+ */
+export function extractFileSkeleton(src: string): string {
+  const lines = src.split("\n");
+  const out: string[] = [];
+  const SIG_START = /^(?:pub\b|fn\b|struct\b|enum\b|trait\b|impl\b|mod\b|const\b|static\b|type\b|use\b|#\[)/;
+  const isAttribute = (s: string) => /^#\[/.test(s);
+  let buffered: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const trimmed = line.replace(/\s+$/, "");
+    if (SIG_START.test(trimmed)) {
+      if (isAttribute(trimmed)) {
+        // Attributes attach to the next item; buffer them.
+        buffered.push(trimmed);
+        continue;
+      }
+      // Pull lines until we hit `{` or `;` to capture multi-line signatures.
+      let sigLines = [trimmed];
+      let depth = 0;
+      const openIdx = trimmed.indexOf("{");
+      const semiIdx = trimmed.indexOf(";");
+      if (openIdx === -1 && semiIdx === -1) {
+        // Continue scanning lines until we find one — capped at 8 to bound
+        // pathological multi-line generics.
+        for (let j = i + 1; j < Math.min(lines.length, i + 8); j++) {
+          const next = lines[j] ?? "";
+          sigLines.push(next.replace(/\s+$/, ""));
+          if (next.includes("{") || next.includes(";")) {
+            i = j;
+            break;
+          }
+          i = j;
+        }
+      } else if (openIdx >= 0) {
+        // Truncate at the opening brace — we only want the signature.
+        sigLines = [trimmed.slice(0, openIdx) + "{ … }"];
+        depth = 1;
+      } else {
+        // Statement form (use, const, etc.) — keep as-is up through `;`.
+        sigLines = [trimmed];
+      }
+      void depth;
+      out.push(...buffered);
+      out.push(...sigLines);
+      buffered = [];
+    } else {
+      // Discard buffered attributes if no item followed within ~3 lines.
+      if (buffered.length > 0 && trimmed === "") continue;
+      if (buffered.length > 0 && !isAttribute(trimmed) && !SIG_START.test(trimmed)) {
+        buffered = [];
+      }
+    }
+  }
+  return out.join("\n");
+}
 
 function mergeRanges(ranges: Array<[number, number]>): Array<[number, number]> {
   if (ranges.length === 0) return [];
