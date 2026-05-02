@@ -15,6 +15,18 @@ import { estimateCostUsd } from "./model-pricing.js";
 
 export { REFINE_PROMPT_VERSION };
 
+/**
+ * Bumped when the post-AI patch evaluation logic changes (accept gate,
+ * structural pre-check, line-delta cap). Folded into the cache key so a
+ * logic change invalidates entries even when the prompt didn't change —
+ * otherwise stale cached responses re-surface old accept/reject decisions
+ * that the new logic would compute differently.
+ *
+ * v1: tree-sitter syntax pre-check + validator no-new-errors clause
+ * v2: line-delta cap (max(5, 2 × issuesAddressed)) added before validator
+ */
+const REFINE_EVALUATOR_VERSION = "evaluator.v2";
+
 export type RefineInput = {
   target: "pinocchio" | "quasar" | "native";
   ir: SolanaIR;
@@ -63,6 +75,7 @@ export async function refineOutput(
 
   const cacheKey = createAICacheKey({
     version: REFINE_PROMPT_VERSION,
+    evaluator: REFINE_EVALUATOR_VERSION,
     provider: provider.name,
     model: repairModel,
     target: input.target,
@@ -134,6 +147,18 @@ export async function refineOutput(
     `${issue.severity}:${issue.path ?? ""}:${issue.message}`;
   const beforeErrors = input.validationIssues.filter((i) => i.severity === "error").length;
 
+  // Per-file count of issues actually addressed by the model. Used for the
+  // line-delta accept gate: a patch should only need ~2× the issue count in
+  // line-delta to fix what was asked. Anything larger is the model rewriting
+  // unrelated code, which has empirically tripped the validator's no-new-
+  // errors clause far more than it has helped.
+  const issuesByPath = new Map<string, number>();
+  for (const issue of input.validationIssues) {
+    if (issue.severity !== "error") continue;
+    const k = issue.path ?? "";
+    issuesByPath.set(k, (issuesByPath.get(k) ?? 0) + 1);
+  }
+
   // Evaluate each patch
   const patches: RefineResponse["patches"] = [];
   for (const patch of sortedPatches) {
@@ -160,6 +185,35 @@ export async function refineOutput(
         patchedContent: patch.patchedContent,
         accepted: false,
         acceptanceReason: "Patch contains invalid Rust syntax (unbalanced delimiters or malformed expression).",
+      });
+      continue;
+    }
+
+    // Line-delta accept gate. The model's prompt asks for "minimal edit"
+    // (~2× line-delta per issue addressed); empirically Sonnet 4.6 ignores
+    // this and over-edits — counter test showed Δlines=-40 fixing a 1-line
+    // corruption, with 4 collateral validator errors. The validator's
+    // no-new-errors clause was catching this AFTER the fact, but with a
+    // generic 'introduced N new errors' rejection that doesn't tell the
+    // user the patch was structurally too large.
+    //
+    // Now: enforce the line-delta cap deterministically — same threshold
+    // the prompt asks for (max(5, 2 * issuesAddressed)). Patches over the
+    // cap are rejected here with a clearer reason BEFORE the validator
+    // runs. Future model upgrades that DO honor minimal-edit fall through
+    // unchanged; the cap only fires on actual over-edit.
+    const issuesAddressed = issuesByPath.get(patch.filePath) ?? 0;
+    const origLineCount = originalFile.content.split("\n").length;
+    const patchedLineCount = patch.patchedContent.split("\n").length;
+    const deltaLines = Math.abs(patchedLineCount - origLineCount);
+    const maxAllowedDelta = Math.max(5, 2 * issuesAddressed);
+    if (deltaLines > maxAllowedDelta) {
+      patches.push({
+        filePath: patch.filePath,
+        originalContent: originalFile.content,
+        patchedContent: patch.patchedContent,
+        accepted: false,
+        acceptanceReason: `Patch over-edits: |Δlines|=${deltaLines} exceeds cap of ${maxAllowedDelta} (max(5, 2 × ${issuesAddressed} issues addressed)). The prompt asks for a minimal edit; this patch rewrites more than the listed issues require.`,
       });
       continue;
     }
@@ -224,6 +278,18 @@ export async function refineOutput(
 
   const accepted = patches.filter((p) => p.accepted).length;
   const total = patches.length;
+  // Aggregate over-edit signal: total |Δlines| across all returned patches
+  // (rejected + accepted). Used for production telemetry — model drift
+  // toward over-editing is visible as a rising aggregate even when the
+  // cap is doing its job and rejecting before validation.
+  const totalDeltaLines = sortedPatches.reduce((sum, p) => {
+    const orig = input.files.find((f) => f.path === p.filePath);
+    if (!orig) return sum;
+    return sum + Math.abs(p.patchedContent.split("\n").length - orig.content.split("\n").length);
+  }, 0);
+  const overEditRejections = patches.filter(
+    (p) => !p.accepted && p.acceptanceReason.startsWith("Patch over-edits"),
+  ).length;
 
   // Final global count — runningFiles already has every accepted patch applied
   // in order, so this is just one validate on the final state.
@@ -266,6 +332,12 @@ export async function refineOutput(
           outputTokens: usage?.outputTokens,
           cacheReadTokens: usage?.cacheReadTokens,
           estimatedCostUsd,
+          // Over-edit signal — track at telemetry level so model drift toward
+          // larger patches is visible even when the line-delta gate rejects
+          // them. Promoted from the differential-with-ai diagnostic log so
+          // production refines surface this without re-instrumenting.
+          totalDeltaLines,
+          overEditRejections,
         },
       });
     } catch { /* breadcrumb is best-effort; never fail the refine on it */ }
