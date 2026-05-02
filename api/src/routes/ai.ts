@@ -39,14 +39,35 @@ aiRoute.post("/refine", async (req, res) => {
     return;
   }
 
-  // IR is optional for the refine endpoint — used for acceptance re-validation
-  let ir: SolanaIR | undefined;
-  if (body.ir) {
-    const irParsed = SolanaIRSchema.safeParse(body.ir);
-    if (irParsed.success) {
-      ir = irParsed.data;
-    }
+  // IR is REQUIRED for the refine endpoint.
+  //
+  // Pre-fix this route accepted requests without an `ir` field and built
+  // a fake empty SolanaIR shell. refineOutput then re-ran the validator
+  // against that shell, so cross-file checks were vacuous: a patch that
+  // breaks instructions/foo.rs by removing a `pub use` from lib.rs passed
+  // silently. The endpoint claimed "validated" while the gate had degraded
+  // to "structural pre-check + same-file content check."
+  //
+  // Now: missing or malformed `ir` returns 422 with a clear explanation.
+  // Callers that want a structural-only check can use a different code
+  // path (or build a minimal IR themselves and own the trade-off).
+  if (!body.ir) {
+    res.status(422).json({
+      error: "Missing required field: ir",
+      details:
+        "POST /ai/refine requires the SolanaIR for cross-file accept-gate validation. Without it the validator can only check the patched file in isolation — a patch that breaks an unrelated file would pass silently. Send the IR returned by /parse or /emit alongside files + validationIssues.",
+    });
+    return;
   }
+  const irParsed = SolanaIRSchema.safeParse(body.ir);
+  if (!irParsed.success) {
+    res.status(422).json({
+      error: "Invalid IR",
+      details: irParsed.error.message,
+    });
+    return;
+  }
+  const ir: SolanaIR = irParsed.data;
 
   const { requestId, log } = createProgressLogger("refine");
   const stream = req.query.stream === "1";
@@ -84,28 +105,10 @@ aiRoute.post("/refine", async (req, res) => {
   try {
     log("start", `Starting AI refine for ${refineData.data.validationIssues.length} issue(s).`);
 
-    // Build a minimal IR for acceptance checks if not provided
-    const fallbackIR: SolanaIR = ir ?? {
-      name: "unknown",
-      instructions: [],
-      accounts: [],
-      errors: [],
-      types: [],
-      helperFns: [],
-      constants: [],
-      imports: [],
-      userTraitImpls: [],
-      metadata: {
-        sourceFramework: "anchor" as const,
-        anvilVersion: "0.2.0",
-        parsedAt: new Date().toISOString(),
-      },
-    };
-
     const result = await refineOutput(
       {
         target: refineData.data.target,
-        ir: fallbackIR,
+        ir,
         files: refineData.data.files,
         validationIssues: refineData.data.validationIssues,
       },
