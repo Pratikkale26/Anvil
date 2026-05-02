@@ -255,6 +255,20 @@ if (!TOOLCHAIN_OK) {
         // with the corruption AND at least one patch survived the validator's
         // accept gate. The byte-equal compare below then proves the surviving
         // patch didn't introduce semantic divergence.
+        // Diagnostic: print acceptance reasons + a content-diff summary on
+        // rejection so CI surfaces *why* a patch was rejected. Without this,
+        // "0 patches accepted" gives no signal about whether the model
+        // regressed, the validator tightened, or the structural pre-check
+        // rejected the patch as malformed Rust. The diff-line-delta is the
+        // single most useful number — model over-editing (changing >10 lines
+        // when 1 was needed) is the most common reject cause we've seen.
+        console.log(`[ai-differential] refine returned ${refineResult.patches.length} patch(es):`);
+        for (const p of refineResult.patches) {
+          const origLines = p.originalContent.split("\n").length;
+          const patchedLines = p.patchedContent.split("\n").length;
+          const deltaLines = patchedLines - origLines;
+          console.log(`  - ${p.filePath}: ${p.accepted ? "ACCEPTED" : "REJECTED"} (Δlines=${deltaLines >= 0 ? "+" : ""}${deltaLines}) — ${p.acceptanceReason ?? "(no reason)"}`);
+        }
         expect(refineResult.patches.length).toBeGreaterThan(0);
         const acceptedCount = refineResult.patches.filter((p) => p.accepted).length;
         expect(acceptedCount).toBeGreaterThan(0);
