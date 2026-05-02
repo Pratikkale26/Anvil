@@ -1115,13 +1115,23 @@ ${fields}
       return `        let ${fieldName}: i8 = data[offset] as i8;
         offset += 1;`;
     }
-    // Dynamically-sized / borsh-native types — String and Vec<T> don't have
-    // `::from_le_bytes` and must round-trip through borsh like structs do.
+    // Dynamically-sized / borsh-native types — String and Vec<T> are
+    // length-prefixed (4-byte u32 length + content). The account layout
+    // does NOT pad them to a fixed size: subsequent fields start right
+    // after the variable-length tail, exactly like Anchor's borsh derive.
+    //
+    // Pre-fix the harness used a hardcoded `size` and read a fixed slice,
+    // which truncated long values, panicked on slice-OOB when the on-chain
+    // String was shorter than `size`, AND silently desynced the offset
+    // cursor for any field that came after. Fix: pass an open-ended slice
+    // to Borsh, let it consume length-prefix + content, and advance offset
+    // by exactly what Borsh read.
     if (typeName === "String" || /^Vec<.+>$/.test(typeName)) {
-      return `        let mut ${fieldName}_bytes = &data[offset..offset + ${size}];
+      return `        let mut ${fieldName}_bytes: &[u8] = &data[offset..];
+        let __${fieldName}_before = ${fieldName}_bytes.len();
         let ${fieldName}: ${typeName} = BorshDeserialize::deserialize(&mut ${fieldName}_bytes)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        offset += ${size};`;
+        offset += __${fieldName}_before - ${fieldName}_bytes.len();`;
     }
     return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(
             data[offset..offset + ${size}].try_into().map_err(|_| ProgramError::InvalidAccountData)?
@@ -1158,14 +1168,18 @@ ${fields}
       return `        data[offset] = value.${fieldName} as u8;
         offset += 1;`;
     }
-    // Dynamically-sized / borsh-native types — mirror the buildReadLine branch.
+    // Dynamically-sized / borsh-native types — mirror the buildReadLine
+    // branch. Serialize through a Vec, then copy into the account slot
+    // and advance offset by the actual byte count. The account must have
+    // been sized to hold this at init (Anchor's `space = ...`); we don't
+    // re-validate here because the caller (handler) is responsible for
+    // the size budget. Slice-OOB on copy_from_slice will surface as a
+    // panic at runtime if it's wrong, exactly like Anchor's behavior.
     if (typeName === "String" || /^Vec<.+>$/.test(typeName)) {
-      return `        {
-            let mut ${fieldName}_bytes = &mut data[offset..offset + ${size}];
-            BorshSerialize::serialize(&value.${fieldName}, &mut ${fieldName}_bytes)
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-        }
-        offset += ${size};`;
+      return `        let __${fieldName}_serialized = ::borsh::to_vec(&value.${fieldName})
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        data[offset..offset + __${fieldName}_serialized.len()].copy_from_slice(&__${fieldName}_serialized);
+        offset += __${fieldName}_serialized.len();`;
     }
     return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName}.to_le_bytes());
         offset += ${size};`;
