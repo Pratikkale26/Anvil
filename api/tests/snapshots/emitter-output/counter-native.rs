@@ -93,8 +93,6 @@ pub fn initialize(
         ];
     let init_counter_signer_seeds = &[&init_counter_seeds[..]];
     create_program_account(counter, authority, (8 + CounterAccount::INIT_SPACE) as u64, program_id, init_counter_signer_seeds)?;
-
-
     let counter_account = counter;
     let mut counter = CounterAccount {
         authority: Pubkey::default(),
@@ -144,7 +142,6 @@ pub fn increment(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let (expected_key, _bump_counter) = Pubkey::find_program_address(&[b"counter", authority.key.as_ref()], program_id);
     if expected_key != *counter.key {
@@ -197,7 +194,6 @@ pub fn decrement(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let (expected_key, _bump_counter) = Pubkey::find_program_address(&[b"counter", authority.key.as_ref()], program_id);
     if expected_key != *counter.key {
         return Err(ProgramError::InvalidSeeds);
@@ -238,7 +234,6 @@ pub fn reset(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let (expected_key, _bump_counter) = Pubkey::find_program_address(&[b"counter", authority.key.as_ref()], program_id);
     if expected_key != *counter.key {

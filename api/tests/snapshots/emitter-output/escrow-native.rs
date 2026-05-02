@@ -136,8 +136,6 @@ pub fn create_escrow(
         escrow.key,
     )?;
     invoke(&__ta_init, &[vault.clone(), mint_a.clone()])?;
-
-
     let escrow_account = escrow;
     let mut escrow = Escrow {
         maker: Pubkey::default(),
@@ -229,8 +227,6 @@ pub fn accept_escrow(
         &create_ata_ix,
         &[taker.clone(), maker_ata_b.clone(), maker.clone(), mint_b.clone()],
     )?;
-
-
     let escrow_account = escrow;
     let escrow = Escrow::read(&escrow_account.data.borrow())?;
     if escrow.maker != *maker.key {
@@ -341,7 +337,6 @@ pub fn cancel_escrow(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let escrow_account = escrow;
     let escrow = Escrow::read(&escrow_account.data.borrow())?;

@@ -81,8 +81,6 @@ pub fn initialize(
         ];
     let init_vault_state_signer_seeds = &[&init_vault_state_seeds[..]];
     create_program_account(vault_state, authority, (8 + VaultState::INIT_SPACE) as usize, program_id, init_vault_state_signer_seeds)?;
-
-
     let bump_vault = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
     let vault_state_account = vault_state;
     let mut vault_state = VaultState {
@@ -138,7 +136,6 @@ pub fn deposit(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let _bump_vault_state = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
     let _bump_vault = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
     if !(amount > 0) {
@@ -193,7 +190,6 @@ pub fn withdraw(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let _bump_vault_state = bump_seed(program_id, &[b"vault_state", authority.key().as_ref()], vault_state.key())?;
     let _bump_vault = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;

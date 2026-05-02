@@ -185,8 +185,6 @@ pub fn initialize_pool(
         };
         pinocchio::cpi::invoke(&__ta_init_ix, &[reward_vault, reward_mint])?;
     }
-
-
     if !(reward_rate > 0) {
         return Err(StakingError::InvalidRewardRate.into());
     }
@@ -274,8 +272,6 @@ pub fn stake(
         ];
     let init_user_stake_signer_seeds = &[&init_user_stake_seeds[..]];
     create_program_account(user_stake, user, (8 + UserStake::LEN) as usize, program_id, init_user_stake_signer_seeds)?;
-
-
     let pool_account = pool;
     let mut pool = StakingPool::from_account_info(pool_account)?;
     let _bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;
@@ -352,7 +348,6 @@ pub fn claim_rewards(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let _bump_user_stake = bump_seed(program_id, &[b"user_stake", user.key().as_ref(), pool.key().as_ref()], user_stake.key())?;
     let pool_account = pool;
@@ -433,7 +428,6 @@ pub fn unstake(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let _bump_user_stake = bump_seed(program_id, &[b"user_stake", user.key().as_ref(), pool.key().as_ref()], user_stake.key())?;
     let pool_account = pool;
     let mut pool = StakingPool::from_account_info(pool_account)?;
@@ -508,7 +502,6 @@ pub fn pause_pool(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let pool_account = pool;
     let mut pool = StakingPool::from_account_info(pool_account)?;
     if pool.admin != *admin.key() {
@@ -546,7 +539,6 @@ pub fn resume_pool(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let pool_account = pool;
     let mut pool = StakingPool::from_account_info(pool_account)?;
@@ -595,7 +587,6 @@ pub fn update_reward_rate(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let pool_account = pool;
     let mut pool = StakingPool::from_account_info(pool_account)?;

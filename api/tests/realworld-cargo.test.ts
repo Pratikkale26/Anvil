@@ -110,6 +110,16 @@ const MUST_PASS: Case[] = [
   // InterfaceAccount<TokenAccount> in account structs still leaks.
   { id: "t22-transfer-fee", target: "pinocchio", path: "tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs" },
 
+  // t22-transfer-hook/pinocchio: promoted 2026-05-02 after extending the
+  // import filter to drop spl_tlv_account_resolution / spl_transfer_hook_
+  // interface / spl_discriminator / spl_pod, AND running the T22
+  // commentout pass over the init/realloc preludes (not just the handler
+  // body) so unresolvable types in `space = ...` expressions get
+  // commented out. Native variant still in tracking — Native doesn't have
+  // a T22 commentout pass yet.
+  { id: "t22-transfer-hook", target: "pinocchio", path: "tokens/token-2022/transfer-hook/hello-world/anchor/programs/transfer-hook/src/lib.rs",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
+
   // create-account/native: locked in by pass-through-aware import scan
   // (`(transfer|create_account|...)\\(\\s*CpiContext::new` triggers the
   // invoke + system_instruction imports the rewriter needs).

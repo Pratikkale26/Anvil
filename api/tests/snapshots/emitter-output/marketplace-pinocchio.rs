@@ -97,8 +97,6 @@ pub fn initialize(
         ];
     let init_marketplace_signer_seeds = &[&init_marketplace_seeds[..]];
     create_program_account(marketplace, admin, (8 + Marketplace::LEN) as usize, program_id, init_marketplace_signer_seeds)?;
-
-
     if !(fee_bps <= 10000) {
         return Err(MarketplaceError::InvalidFeeBps.into());
     }
@@ -212,8 +210,6 @@ pub fn list(
         };
         pinocchio::cpi::invoke(&__ta_init_ix, &[vault, nft_mint])?;
     }
-
-
     let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
     if !(price > 0) {
         return Err(MarketplaceError::InvalidPrice.into());
@@ -283,7 +279,6 @@ pub fn delist(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let listing_account = listing;
     let listing = Listing::from_account_info(listing_account)?;
@@ -386,8 +381,6 @@ pub fn purchase(
             &[buyer, buyer_ata, buyer, nft_mint, system_program, token_program],
         )?;
     }
-
-
     let listing_account = listing;
     let listing = Listing::from_account_info(listing_account)?;
     if listing.marketplace != *marketplace.key() {
@@ -467,7 +460,6 @@ pub fn update_fee(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
     let marketplace_account = marketplace;

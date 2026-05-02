@@ -84,8 +84,6 @@ pub fn initialize(
         ];
     let init_vault_state_signer_seeds = &[&init_vault_state_seeds[..]];
     create_program_account(vault_state, authority, (8 + VaultState::INIT_SPACE) as u64, program_id, init_vault_state_signer_seeds)?;
-
-
     let (expected_key, bump_vault) = Pubkey::find_program_address(&[b"vault", authority.key.as_ref()], program_id);
     if expected_key != *vault.key {
         return Err(ProgramError::InvalidSeeds);
@@ -143,7 +141,6 @@ pub fn deposit(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let (expected_key, _bump_vault_state) = Pubkey::find_program_address(&[b"vault_state", authority.key.as_ref()], program_id);
     if expected_key != *vault_state.key {
@@ -210,7 +207,6 @@ pub fn withdraw(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let (expected_key, _bump_vault_state) = Pubkey::find_program_address(&[b"vault_state", authority.key.as_ref()], program_id);
     if expected_key != *vault_state.key {

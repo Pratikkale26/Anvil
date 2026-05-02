@@ -228,8 +228,6 @@ pub fn initialize_pool(
         };
         pinocchio::cpi::invoke(&__ta_init_ix, &[vault_b, token_mint_b])?;
     }
-
-
     if !(fee_rate <= 10000) {
         return Err(AmmError::InvalidFeeRate.into());
     }
@@ -343,7 +341,6 @@ pub fn add_liquidity(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
@@ -482,7 +479,6 @@ pub fn remove_liquidity(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
     let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
@@ -594,7 +590,6 @@ pub fn swap(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
     let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
@@ -695,7 +690,6 @@ pub fn freeze_pool(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
     let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
@@ -733,7 +727,6 @@ pub fn unfreeze_pool(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
@@ -782,7 +775,6 @@ pub fn update_fee_rate(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;

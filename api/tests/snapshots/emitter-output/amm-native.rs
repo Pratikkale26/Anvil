@@ -193,8 +193,6 @@ pub fn initialize_pool(
         pool.key,
     )?;
     invoke(&__ta_init, &[vault_b.clone(), token_mint_b.clone()])?;
-
-
     if !(fee_rate <= 10000) {
         return Err(AmmError::InvalidFeeRate.into());
     }
@@ -308,7 +306,6 @@ pub fn add_liquidity(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let pool_account = pool;
     let mut pool = AmmPool::read(&pool_account.data.borrow())?;
@@ -487,7 +484,6 @@ pub fn remove_liquidity(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let pool_account = pool;
     let mut pool = AmmPool::read(&pool_account.data.borrow())?;
     let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], program_id);
@@ -640,7 +636,6 @@ pub fn swap(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let pool_account = pool;
     let mut pool = AmmPool::read(&pool_account.data.borrow())?;
     let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], program_id);
@@ -770,7 +765,6 @@ pub fn freeze_pool(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let pool_account = pool;
     let mut pool = AmmPool::read(&pool_account.data.borrow())?;
     let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], program_id);
@@ -811,7 +805,6 @@ pub fn unfreeze_pool(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let pool_account = pool;
     let mut pool = AmmPool::read(&pool_account.data.borrow())?;
@@ -863,7 +856,6 @@ pub fn update_fee_rate(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let pool_account = pool;
     let mut pool = AmmPool::read(&pool_account.data.borrow())?;

@@ -330,6 +330,19 @@ export abstract class BaseEmitter {
           if (/\bsolana_sha256_hasher\b/.test(statement)) return false;
           if (/\bsha2_const_stable\b/.test(statement)) return false;
         }
+        // Token-2022 transfer-hook helper crates. These are SBF-only crates
+        // not in the Pinocchio OR Native scaffold (Native ships
+        // spl_token_2022 + spl_pod, but not the transfer-hook-specific
+        // helpers). The body-level usages of types from these imports are
+        // commented out by commentOutT22ExtensionCallSites on Pinocchio;
+        // dropping the imports themselves keeps lib.rs from cascading
+        // E0432/E0433 errors at module scope.
+        if (/\bspl_tlv_account_resolution\b/.test(statement)) return false;
+        if (/\bspl_transfer_hook_interface\b/.test(statement)) return false;
+        if (/\bspl_discriminator\b/.test(statement)) return false;
+        // spl_pod isn't in any scaffold — neither Pinocchio nor Native
+        // ship it. Drop on both targets.
+        if (/\bspl_pod\b/.test(statement)) return false;
         return true;
       });
   }
@@ -700,11 +713,19 @@ export abstract class BaseEmitter {
 
     // Body emission — the main event
     const rawBodyCode = this.emitBodyStatements(instr.body, instr, ir, preEmittedBumps);
-    // Hook: lets target emitters post-process the assembled body (e.g. inject
-    // `Mint::unpack` preludes when bare `<account>.decimals` survives from
-    // Anchor source code, since neither native AccountInfo nor pinocchio
-    // AccountInfo expose a `.decimals` field).
-    const bodyCode = this.postProcessInstructionBody(rawBodyCode, instr, ir);
+    // Hook: lets target emitters post-process the assembled body. Preludes
+    // (init create_program_account, realloc CPI) are concatenated INTO the
+    // string we hand to the post-process so target-specific commentout
+    // passes (e.g. Pinocchio's T22 extension call-site commentout) can also
+    // strip unresolvable references inside size expressions like
+    // `space = ExtraAccountMetaList::size_of(...)`. Without this, prelude-
+    // emitted lines bypassed the commentout pass and surfaced cargo errors.
+    const preBodyContent = `${initPreludes}${initPreludes && reallocPreludes ? "\n" : ""}${reallocPreludes}${(initPreludes || reallocPreludes) ? "\n" : ""}${rawBodyCode}`;
+    const processedContent = this.postProcessInstructionBody(preBodyContent, instr, ir);
+    // Re-split: the post-process may have rewritten the concatenated string
+    // arbitrarily; we just take it as the final body. The function signature
+    // below references `bodyCode` not the separate preludes anymore.
+    const bodyCode = processedContent;
 
     // Check if body already ends with Ok(()) — no `return_ok` in body means we add one
     const bodyHasReturnOk = instr.body.some(s => s.kind === "return_ok");
@@ -730,7 +751,6 @@ export abstract class BaseEmitter {
 ${bindings}
 ${preChecks ? `\n${preChecks}\n` : ""}
 ${argsBlock}
-${initPreludes ? `\n${initPreludes}\n` : ""}${reallocPreludes ? `\n${reallocPreludes}\n` : ""}
 
 ${bodyCode}
 ${needsOkReturn ? "\n    Ok(())" : ""}

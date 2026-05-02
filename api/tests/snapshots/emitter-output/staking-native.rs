@@ -169,8 +169,6 @@ pub fn initialize_pool(
         pool.key,
     )?;
     invoke(&__ta_init, &[reward_vault.clone(), reward_mint.clone()])?;
-
-
     if !(reward_rate > 0) {
         return Err(StakingError::InvalidRewardRate.into());
     }
@@ -261,8 +259,6 @@ pub fn stake(
         ];
     let init_user_stake_signer_seeds = &[&init_user_stake_seeds[..]];
     create_program_account(user_stake, user, (8 + UserStake::LEN) as u64, program_id, init_user_stake_signer_seeds)?;
-
-
     let pool_account = pool;
     let mut pool = StakingPool::read(&pool_account.data.borrow())?;
     let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
@@ -350,7 +346,6 @@ pub fn claim_rewards(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let (expected_key, _bump_user_stake) = Pubkey::find_program_address(&[b"user_stake", user.key.as_ref(), pool.key.as_ref()], program_id);
     if expected_key != *user_stake.key {
@@ -446,7 +441,6 @@ pub fn unstake(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let (expected_key, _bump_user_stake) = Pubkey::find_program_address(&[b"user_stake", user.key.as_ref(), pool.key.as_ref()], program_id);
     if expected_key != *user_stake.key {
         return Err(ProgramError::InvalidSeeds);
@@ -536,7 +530,6 @@ pub fn pause_pool(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let pool_account = pool;
     let mut pool = StakingPool::read(&pool_account.data.borrow())?;
     if pool.admin != *admin.key {
@@ -577,7 +570,6 @@ pub fn resume_pool(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let pool_account = pool;
     let mut pool = StakingPool::read(&pool_account.data.borrow())?;
@@ -629,7 +621,6 @@ pub fn update_reward_rate(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let pool_account = pool;
     let mut pool = StakingPool::read(&pool_account.data.borrow())?;

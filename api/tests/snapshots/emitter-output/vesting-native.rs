@@ -176,8 +176,6 @@ pub fn create_vesting(
         vault.key,
     )?;
     invoke(&__ta_init, &[vault.clone(), mint.clone()])?;
-
-
     if !(total_amount > 0) {
         return Err(VestingError::InvalidAmount.into());
     }
@@ -273,7 +271,6 @@ pub fn release(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let vesting_account = vesting;
     let mut vesting = Vesting::read(&vesting_account.data.borrow())?;
     if vesting.beneficiary != *beneficiary.key {
@@ -365,7 +362,6 @@ pub fn revoke(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-
     let vesting_account = vesting;
     let mut vesting = Vesting::read(&vesting_account.data.borrow())?;
     if vesting.grantor != *grantor.key {
@@ -437,7 +433,6 @@ pub fn close(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let vesting_account = vesting;
     let vesting = Vesting::read(&vesting_account.data.borrow())?;

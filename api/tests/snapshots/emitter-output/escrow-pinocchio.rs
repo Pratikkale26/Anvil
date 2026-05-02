@@ -149,8 +149,6 @@ pub fn create_escrow(
         };
         pinocchio::cpi::invoke(&__ta_init_ix, &[vault, mint_a])?;
     }
-
-
     let escrow_account = escrow;
     let mut escrow = Escrow {
         maker: [0u8; 32],
@@ -257,8 +255,6 @@ pub fn accept_escrow(
             &[taker, maker_ata_b, maker, mint_b, system_program, token_program],
         )?;
     }
-
-
     let escrow_account = escrow;
     let escrow = Escrow::from_account_info(escrow_account)?;
     if escrow.maker != *maker.key() {
@@ -323,7 +319,6 @@ pub fn cancel_escrow(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let escrow_account = escrow;
     let escrow = Escrow::from_account_info(escrow_account)?;

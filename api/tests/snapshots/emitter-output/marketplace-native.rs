@@ -97,8 +97,6 @@ pub fn initialize(
         ];
     let init_marketplace_signer_seeds = &[&init_marketplace_seeds[..]];
     create_program_account(marketplace, admin, (8 + Marketplace::LEN) as u64, program_id, init_marketplace_signer_seeds)?;
-
-
     if !(fee_bps <= 10000) {
         return Err(MarketplaceError::InvalidFeeBps.into());
     }
@@ -201,8 +199,6 @@ pub fn list(
         listing.key,
     )?;
     invoke(&__ta_init, &[vault.clone(), nft_mint.clone()])?;
-
-
     let (expected_key, _bump_marketplace) = Pubkey::find_program_address(&[b"marketplace"], program_id);
     if expected_key != *marketplace.key {
         return Err(ProgramError::InvalidSeeds);
@@ -286,7 +282,6 @@ pub fn delist(
     if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let listing_account = listing;
     let listing = Listing::read(&listing_account.data.borrow())?;
@@ -403,8 +398,6 @@ pub fn purchase(
         &create_ata_ix,
         &[buyer.clone(), buyer_ata.clone(), buyer.clone(), nft_mint.clone()],
     )?;
-
-
     let listing_account = listing;
     let listing = Listing::read(&listing_account.data.borrow())?;
     if listing.marketplace != *marketplace.key {
@@ -521,7 +514,6 @@ pub fn update_fee(
     if !remaining.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
-
 
     let (expected_key, _bump_marketplace) = Pubkey::find_program_address(&[b"marketplace"], program_id);
     if expected_key != *marketplace.key {
