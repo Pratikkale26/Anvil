@@ -178,7 +178,7 @@ export interface ScenarioRunResult {
   /** Per-account compare result, in the same order as scenario.compare. */
   results: Array<
     | { name: string; ok: true }
-    | { name: string; ok: false; kind: "data" | "lamports" | "missing"; details: string }
+    | { name: string; ok: false; kind: "data" | "lamports" | "missing" | "events" | "returnData" | "msgLogs"; details: string }
   >;
   durationMs: number;
 }
@@ -188,6 +188,12 @@ export async function runScenarioDifferential(args: {
   anchorSo: Buffer;
   anvilSo: Buffer;
   ir: SolanaIR;
+  /** When true, capture + byte-compare `Program data:` lines (sol_log_data). */
+  compareEventLogs?: boolean;
+  /** When true, capture + byte-compare set_return_data() bytes per tx. */
+  compareReturnData?: boolean;
+  /** When true, capture + byte-compare user msg!() lines (Anchor framing stripped). */
+  compareMsgLogs?: boolean;
 }): Promise<ScenarioRunResult> {
   const t0 = Date.now();
   const deps = await loadRuntimeDeps();
@@ -199,8 +205,27 @@ export async function runScenarioDifferential(args: {
   // — this is what makes byte-equal compare meaningful.
   const ctx = buildScenarioContext(args.scenario, programId, deps);
 
-  const anchorState = await runOneScenario(args.scenario, args.anchorSo, programId, ctx, args.ir, deps);
-  const anvilState = await runOneScenario(args.scenario, args.anvilSo, programId, ctx, args.ir, deps);
+  const captureEvents = args.compareEventLogs ?? false;
+  const captureReturn = args.compareReturnData ?? false;
+  const captureMsg = args.compareMsgLogs ?? false;
+  const anchorEvents: string[] = [];
+  const anvilEvents: string[] = [];
+  const anchorReturn: Array<string | null> = [];
+  const anvilReturn: Array<string | null> = [];
+  const anchorMsg: string[] = [];
+  const anvilMsg: string[] = [];
+  const anchorState = await runOneScenario(
+    args.scenario, args.anchorSo, programId, ctx, args.ir, deps,
+    captureEvents ? anchorEvents : undefined,
+    captureReturn ? anchorReturn : undefined,
+    captureMsg ? anchorMsg : undefined,
+  );
+  const anvilState = await runOneScenario(
+    args.scenario, args.anvilSo, programId, ctx, args.ir, deps,
+    captureEvents ? anvilEvents : undefined,
+    captureReturn ? anvilReturn : undefined,
+    captureMsg ? anvilMsg : undefined,
+  );
 
   const results: ScenarioRunResult["results"] = [];
   for (const spec of args.scenario.compare) {
@@ -256,6 +281,43 @@ export async function runScenarioDifferential(args: {
       continue;
     }
     results.push({ name: spec.name, ok: true });
+  }
+
+  // Per-tx surface compares. Each surface lives outside per-account state
+  // — events, return data, msg!() lines all flow through tx metadata.
+  // Surface a single result entry per surface so the report stays terse.
+  if (captureEvents) {
+    if (anchorEvents.length !== anvilEvents.length ||
+        anchorEvents.some((l, i) => l !== anvilEvents[i])) {
+      results.push({
+        name: "<event-logs>", ok: false, kind: "events",
+        details: `event log lines diverge — anchor=${anchorEvents.length}, anvil=${anvilEvents.length}; first diff at idx ${anchorEvents.findIndex((l, i) => l !== anvilEvents[i])}`,
+      });
+    } else {
+      results.push({ name: `<event-logs> (${anchorEvents.length})`, ok: true });
+    }
+  }
+  if (captureReturn) {
+    if (anchorReturn.length !== anvilReturn.length ||
+        anchorReturn.some((d, i) => d !== anvilReturn[i])) {
+      results.push({
+        name: "<return-data>", ok: false, kind: "returnData",
+        details: `set_return_data diverges across ${anchorReturn.length}/${anvilReturn.length} txs`,
+      });
+    } else {
+      results.push({ name: `<return-data> (${anchorReturn.length} txs)`, ok: true });
+    }
+  }
+  if (captureMsg) {
+    if (anchorMsg.length !== anvilMsg.length ||
+        anchorMsg.some((l, i) => l !== anvilMsg[i])) {
+      results.push({
+        name: "<msg-logs>", ok: false, kind: "msgLogs",
+        details: `user msg!() lines diverge — anchor=${anchorMsg.length}, anvil=${anvilMsg.length}; first diff at idx ${anchorMsg.findIndex((l, i) => l !== anvilMsg[i])}`,
+      });
+    } else {
+      results.push({ name: `<msg-logs> (${anchorMsg.length} lines)`, ok: true });
+    }
   }
 
   return {
@@ -335,6 +397,9 @@ async function runOneScenario(
   ctx: ScenarioContext,
   ir: SolanaIR,
   deps: RuntimeDeps,
+  collectedEventLogs?: string[],
+  collectedReturnData?: Array<string | null>,
+  collectedMsgLogs?: string[],
 ): Promise<Map<string, AccountSnapshot>> {
   const svm = new deps.LiteSVM();
   svm.addProgram(programId, programSo);
@@ -417,6 +482,35 @@ async function runOneScenario(
         } catch { /* ignore */ }
       }
       throw new Error(`scenario instruction '${ix.ix}' failed: ${errStr}${logsStr}`);
+    }
+    // Success — capture surfaces from tx metadata when collectors set.
+    if (collectedEventLogs || collectedReturnData || collectedMsgLogs) {
+      try {
+        const ctorName = (r as any)?.constructor?.name ?? "";
+        let logs: string[] = [];
+        let returnData: { data: () => Uint8Array } | null = null;
+        if (ctorName === "TransactionMetadata") {
+          const md = r as any;
+          logs = typeof md.logs === "function" ? md.logs() : [];
+          returnData = typeof md.returnData === "function" ? md.returnData() ?? null : null;
+        }
+        for (const l of logs) {
+          if (collectedEventLogs && l.startsWith("Program data: ")) {
+            collectedEventLogs.push(l);
+          }
+          if (collectedMsgLogs && l.startsWith("Program log: ")) {
+            const body = l.slice("Program log: ".length);
+            // Strip Anchor framing — see api/tests/differential-harness.ts.
+            if (body.startsWith("Instruction: ")) continue;
+            if (body.startsWith("AnchorError occurred")) continue;
+            if (body === "Left:" || body === "Right:") continue;
+            collectedMsgLogs.push(l);
+          }
+        }
+        if (collectedReturnData) {
+          collectedReturnData.push(returnData ? Buffer.from(returnData.data()).toString("base64") : null);
+        }
+      } catch { /* best-effort */ }
     }
   }
 
@@ -722,6 +816,10 @@ export async function runFuzzDifferential(args: {
   seed?: string;
   /** Called once per iteration with (i, total) for progress reporting. */
   onProgress?: (iteration: number, total: number) => void;
+  /** Forwarded to each iteration's runScenarioDifferential call. */
+  compareEventLogs?: boolean;
+  compareReturnData?: boolean;
+  compareMsgLogs?: boolean;
 }): Promise<FuzzRunResult> {
   const t0 = Date.now();
   const masterSeed = args.seed ?? Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, "0");
@@ -739,6 +837,9 @@ export async function runFuzzDifferential(args: {
       anchorSo: args.anchorSo,
       anvilSo: args.anvilSo,
       ir: args.ir,
+      compareEventLogs: args.compareEventLogs,
+      compareReturnData: args.compareReturnData,
+      compareMsgLogs: args.compareMsgLogs,
     });
     if (!result.ok) {
       return {

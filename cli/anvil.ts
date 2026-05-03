@@ -206,6 +206,29 @@ interface CliArgs {
    * and prints a banner that event divergence is unchecked.
    */
   ignoreEvents: boolean;
+  /**
+   * `differential --compare-events` — turn on the 4th surface: byte-equal
+   * compare `Program data:` log lines (sol_log_data output). When set,
+   * --ignore-events is no longer needed for emit!()-using sources — the
+   * gate IS comparing events. Off by default for back-compat with older
+   * scenarios that pre-date this feature.
+   */
+  compareEvents: boolean;
+  /**
+   * `differential --compare-return-data` — turn on the 5th surface:
+   * byte-equal compare set_return_data() bytes per tx. Catches CPI
+   * return-value divergence (callers reading via get_return_data see
+   * different bytes). Default off.
+   */
+  compareReturnData: boolean;
+  /**
+   * `differential --compare-msg-logs` — turn on the 6th surface:
+   * byte-equal compare user-emitted msg!() lines. Anchor's automatic
+   * framing ("Instruction:", "AnchorError occurred.", "Left:" / "Right:")
+   * is stripped before compare so only program-author msg!() output
+   * contributes. Default off.
+   */
+  compareMsgLogs: boolean;
   help: boolean;
 }
 
@@ -235,6 +258,9 @@ function parseArgs(argv: string[]): CliArgs {
     anchorExtraDepsFile: null,
     skipCache: false,
     ignoreEvents: false,
+    compareEvents: false,
+    compareReturnData: false,
+    compareMsgLogs: false,
     help: false,
   };
 
@@ -364,6 +390,24 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--ignore-events") {
       args.ignoreEvents = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--compare-events") {
+      args.compareEvents = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--compare-return-data") {
+      args.compareReturnData = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--compare-msg-logs") {
+      args.compareMsgLogs = true;
       i++;
       continue;
     }
@@ -1850,13 +1894,22 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     --fuzz-seed <hex>       Pin the RNG seed for reproducibility. Defaults to
                             a fresh 32-bit seed each run; pass the seed printed
                             at a divergence to re-run the exact mutation.
-    --ignore-events         Source uses Anchor's emit!() macro? The harness
-                            does NOT compare event log payloads — only data,
-                            lamports, and owner. Without this flag the CLI
-                            refuses to run on emit!()-using sources, to stop
-                            users from getting a silent green on a partial
-                            check. With this flag, runs anyway and prints a
-                            banner that event divergence is unchecked.
+    --ignore-events         Source uses Anchor's emit!() macro? Skip event
+                            log comparison and run anyway. Use --compare-events
+                            instead to get full byte-equal verification on
+                            event payloads.
+    --compare-events        Turn on the 4th comparison surface: byte-equal
+                            compare 'Program data:' log lines (sol_log_data
+                            output). Required when the source contains
+                            emit!() / emit_cpi!() and you want full event
+                            parity in the gate.
+    --compare-return-data   Turn on the 5th surface: byte-equal compare
+                            set_return_data() bytes per tx. Catches CPI
+                            return-value divergence.
+    --compare-msg-logs      Turn on the 6th surface: byte-equal compare
+                            user-emitted msg!() lines (Anchor framing
+                            stripped). Catches user-log drift between the
+                            two runtimes.
 
   ${c.bold}WHAT IT DOES (with --scenario)${c.reset}
 
@@ -1975,20 +2028,17 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
         s.kind === "emit" || (s.kind === "pass_through" && /\bemit!\s*\(/.test(s.code)),
       ),
     );
-  // emit!() is now byte-equal-supported via sol_log_data with deterministic
-  // borsh payloads (commit landed 2026-05-02). The TS-fixture harness
-  // sets `compareEventLogs: true` to opt the comparison in. The
-  // JSON-scenario CLI path doesn't have that opt-in yet — events are
-  // emitted on both sides and byte-equal in the program output, but
-  // the CLI's harness doesn't compare log lines. Without --ignore-events
-  // the CLI still refuses, with a softened message reflecting reality.
-  if (usesEmitMacro && !args.ignoreEvents) {
-    warn(`emit!() detected. Pass --ignore-events to acknowledge the JSON-scenario CLI doesn't compare event log lines yet (use the TS fixture harness with compareEventLogs:true for byte-equal event verification).`);
+  // emit!() is byte-equal-supported via sol_log_data with deterministic
+  // borsh payloads. The CLI now exposes --compare-events to turn on the
+  // comparison; without it (or --ignore-events) we still refuse on
+  // emit!()-using sources to stop silent partial checks.
+  if (usesEmitMacro && !args.ignoreEvents && !args.compareEvents) {
+    warn(`emit!() detected. Pass --compare-events to byte-equal compare the event log payloads, or --ignore-events to skip event comparison.`);
     console.log();
     process.exit(1);
   }
-  if (usesEmitMacro && args.ignoreEvents) {
-    warn(`emit!() detected — running with --ignore-events on the JSON-scenario path. The TS fixture harness compares events byte-equal; this CLI path doesn't yet.`);
+  if (usesEmitMacro && args.ignoreEvents && !args.compareEvents) {
+    warn(`emit!() detected — running with --ignore-events. Event log payloads will NOT be compared. Re-run with --compare-events for byte-equal event verification.`);
     console.log();
   }
   success(`Parsed: ${ir.instructions.length} instruction${ir.instructions.length !== 1 ? "s" : ""}, ${ir.accounts.length} account${ir.accounts.length !== 1 ? "s" : ""}`);
@@ -2174,6 +2224,9 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
         ir,
         iterations: args.fuzz,
         seed: args.fuzzSeed ?? undefined,
+        compareEventLogs: args.compareEvents,
+        compareReturnData: args.compareReturnData,
+        compareMsgLogs: args.compareMsgLogs,
         // Progress every 10% (or every iteration if N < 10).
         onProgress: (i, total) => {
           const tick = Math.max(1, Math.floor(total / 10));
@@ -2229,6 +2282,9 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
       anchorSo: anchorSoBytes,
       anvilSo: anvilSoBytes,
       ir,
+      compareEventLogs: args.compareEvents,
+      compareReturnData: args.compareReturnData,
+      compareMsgLogs: args.compareMsgLogs,
     });
   } catch (err) {
     error(`scenario run failed: ${err instanceof Error ? err.message : String(err)}`);
