@@ -2,16 +2,25 @@
  * Multisig n-of-m differential.
  *
  * Exercises Vec<Pubkey> + Vec<bool> account fields (variable-length Borsh
- * serialization), has_one constraint enforcement, and runtime quorum
- * checks. The 2-of-3 scenario in this test creates a multisig, proposes
- * a transaction, has owners 1 + 2 approve, then byte-compares the
- * proposal's `approved: Vec<bool>` ending up [true, true, false] across
- * Anchor and Anvil-Pinocchio.
+ * serialization), has_one constraint enforcement, owner-membership check
+ * via `.iter().position()`, AND threshold gating via the `execute()`
+ * instruction. The 2-of-3 scenario:
  *
- * This is the first fixture that depends on the variable-length emit
- * fix from earlier this session — Vec<Pubkey> for owners, Vec<bool>
- * for approval bitmap. If either round-trips wrong, the proposal's
- * post-state diverges and the gate fires loudly.
+ *   1. create(2-of-3) — Vec<Pubkey> serialization
+ *   2. propose(amount) — initializes Vec<bool> approval bitmap
+ *   3. approve(owner0)  — flips approved[0] = true
+ *   4. approve(owner1)  — flips approved[1] = true
+ *   5. execute()        — counts approvals, requires >= threshold,
+ *                         flips executed = true
+ *
+ * Post-state byte-compares:
+ *   - multisig: Vec<Pubkey> owners + threshold + proposal_count
+ *   - proposal: approved = [true, true, false], executed = true
+ *
+ * If Vec<Pubkey> or Vec<bool> round-trip wrong (length prefix, item
+ * order, byte width), the gate fires. If execute()'s threshold check
+ * gates differently between runtimes (e.g. Anvil counts approvals
+ * differently), the executed flag diverges.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -138,6 +147,22 @@ defineDifferential({
     sendIx(proposeIx, [ctx.owner0]);
     sendIx(approveIx(ctx.owner0), [ctx.owner0]);
     sendIx(approveIx(ctx.owner1), [ctx.owner1]);
+
+    // 4. Execute (triggers the threshold check). 2 approvals out of 2
+    // required ≥ threshold, so this succeeds and flips executed=true.
+    // Either side mis-counting approvals would diverge the executed
+    // flag in the proposal's post-state.
+    const executeIx = new TransactionInstruction({
+      programId,
+      keys: [
+        { pubkey: ctx.multisigPda, isSigner: false, isWritable: false },
+        { pubkey: ctx.owner0.publicKey, isSigner: false, isWritable: false }, // multisig_payer
+        { pubkey: ctx.proposalPda, isSigner: false, isWritable: true },
+        { pubkey: ctx.owner0.publicKey, isSigner: true, isWritable: true },
+      ],
+      data: Buffer.from(anchorIxDiscriminator("execute")),
+    });
+    sendIx(executeIx, [ctx.owner0]);
   },
 
   accountsToCompare: (ctx) => [

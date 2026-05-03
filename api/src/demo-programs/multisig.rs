@@ -53,6 +53,16 @@ pub mod multisig_demo {
         p.approved[idx] = true;
         Ok(())
     }
+
+    pub fn execute(ctx: Context<Execute>) -> Result<()> {
+        let m = &ctx.accounts.multisig;
+        let p = &mut ctx.accounts.proposal;
+        require!(!p.executed, MultisigError::AlreadyExecuted);
+        let approval_count: u8 = p.approved.iter().filter(|&&a| a).count() as u8;
+        require!(approval_count >= m.threshold, MultisigError::NotEnoughApprovals);
+        p.executed = true;
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -60,7 +70,7 @@ pub struct Create<'info> {
     #[account(
         init,
         payer = payer,
-        space = 1024,
+        space = 8 + 32 + 4 + 32 * 8 + 1 + 8 + 1,
         seeds = [b"multisig", payer.key().as_ref()],
         bump
     )]
@@ -101,6 +111,17 @@ pub struct Approve<'info> {
     pub signer: Signer<'info>,
 }
 
+#[derive(Accounts)]
+pub struct Execute<'info> {
+    #[account(seeds = [b"multisig", multisig_payer.key().as_ref()], bump = multisig.bump)]
+    pub multisig: Account<'info, MultisigAccount>,
+    /// CHECK: seed source
+    pub multisig_payer: AccountInfo<'info>,
+    #[account(mut, has_one = multisig)]
+    pub proposal: Account<'info, ProposalAccount>,
+    pub executor: Signer<'info>,
+}
+
 #[account]
 pub struct MultisigAccount {
     pub owners: Vec<Pubkey>,
@@ -128,4 +149,6 @@ pub enum MultisigError {
     NotAnOwner,
     #[msg("Proposal already executed")]
     AlreadyExecuted,
+    #[msg("Not enough approvals to reach threshold")]
+    NotEnoughApprovals,
 }
