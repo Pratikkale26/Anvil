@@ -55,11 +55,13 @@ defineDifferential({
   pinClockTimestamp: PIN_T0,
   pinClockSlot: 1,
   compareEventLogs: true,
-  // Smoke-test the new opt-in surfaces. simple-staking.rs has no
-  // msg!() calls and no set_return_data, so both surfaces should
-  // observe empty/null on both sides — the assertion proves the
-  // capture path doesn't false-positive when there's nothing to
-  // capture.
+  // 6-surface byte-equal: data + lamports + owner (always-on) +
+  // events + returnData + msgLogs (opt-in). simple-staking.rs has
+  // msg!() calls in all 3 handlers and no set_return_data — so
+  // compareMsgLogs validates the user-log strip-and-compare path
+  // (4 lines: "stake initialized", 2× "deposit recorded",
+  // "rewards claimed"), and compareReturnData confirms no false-
+  // positive when neither side calls set_return_data.
   compareReturnData: true,
   compareMsgLogs: true,
 

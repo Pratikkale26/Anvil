@@ -16,6 +16,7 @@ pub mod simple_staking {
         stake.amount = 0;
         stake.last_claim = now;
         stake.accumulated_rewards = 0;
+        msg!("stake initialized");
         Ok(())
     }
 
@@ -36,6 +37,7 @@ pub mod simple_staking {
             earned_this_period: earned,
             timestamp: now,
         });
+        msg!("deposit recorded");
         Ok(())
     }
 
@@ -55,6 +57,7 @@ pub mod simple_staking {
             amount: total,
             timestamp: now,
         });
+        msg!("rewards claimed");
         Ok(())
     }
 }
