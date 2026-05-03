@@ -32,7 +32,13 @@ export function handleMsg(w: BodyWalker, stmt: MsgStmt): void {
 
 export function handleEmit(w: BodyWalker, stmt: EmitStmt): void {
   w.ctx.transformedCount++;
-  w.lines.push(w.emitter.emitEmit(stmt.event, stmt.fields));
+  // Field expressions can reference ctx.accounts.X.key() — without rewrite
+  // they leak into the emitted struct literal and don't compile against
+  // the local AccountInfo bindings emitted at handler entry.
+  const transformedFields = w.transformAccountReferences(
+    w.transformCtxAccountsReferences(stmt.fields),
+  );
+  w.lines.push(w.emitter.emitEmit(stmt.event, transformedFields));
 }
 
 export function handleReturnOk(w: BodyWalker): void {

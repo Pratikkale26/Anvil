@@ -1291,8 +1291,16 @@ export class BodyWalker {
     );
     transformed = transformed.replace(
       /emit!\(\s*(\w+)\s*\{\s*([\s\S]*?)\s*\}\s*\);/g,
-      (_full, event: string, fields: string) =>
-        this.emitter.emitEmit(event, fields).replace(/^    /gm, ""),
+      (_full, event: string, fields: string) => {
+        // Field expressions can reference ctx.accounts.X — those need to
+        // be rewritten to the local AccountInfo bindings emitted at the
+        // top of the handler. Without this, the lowered struct literal
+        // contains raw `ctx.accounts.user.key()` which doesn't compile.
+        const transformedFields = this.transformAccountReferences(
+          this.transformCtxAccountsReferences(fields),
+        );
+        return this.emitter.emitEmit(event, transformedFields).replace(/^    /gm, "");
+      },
     );
     transformed = transformed.replace(
       /(^|[^\w:])msg!\(([\s\S]*?)\);/g,

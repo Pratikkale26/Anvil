@@ -634,6 +634,22 @@ export abstract class BaseEmitter {
     if (types.length > 0) sections.push(this.emitCustomTypes({ ...ir, types }));
     const userTraitImplsSingle = this.emitUserTraitImpls(ir);
     if (userTraitImplsSingle) sections.push(userTraitImplsSingle);
+    // Inline event struct definitions when the source has #[event] structs.
+    // Multi-file emit puts these in events.rs; for single-file builds they
+    // need to live alongside the rest. emit!() lowering references the
+    // typename + ::DISCRIMINATOR const, so the definitions must be in scope.
+    if ((ir.events ?? []).length > 0) {
+      // Strip `//!` inner-doc comments (only valid at file-top) and the
+      // `use borsh::...` line (already emitted by emitUseStatements when
+      // events are present, so the inlined re-import would cause E0252).
+      const eventsContent = this.emitEventsFile(ir)
+        .split("\n")
+        .filter((line) => !line.startsWith("//!") && !/^use borsh::/.test(line.trim()))
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      if (eventsContent) sections.push(eventsContent);
+    }
     sections.push(this.emitEntrypoint(ir));
     sections.push(this.emitRouter(ir));
 

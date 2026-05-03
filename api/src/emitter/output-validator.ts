@@ -287,7 +287,7 @@ function checkAllInstructionsEmitted(content: string, ir: SolanaIR, path: string
     return issues;
   }
 
-  if (!path.includes("/") && path !== "lib.rs" && path !== "state.rs" && path !== "errors.rs" && path !== "helpers.rs") {
+  if (!path.includes("/") && path !== "lib.rs" && path !== "state.rs" && path !== "errors.rs" && path !== "helpers.rs" && path !== "events.rs") {
     for (const instr of ir.instructions) {
       const fnName = snakeCase(instr.name);
       if (!content.includes(`fn ${fnName}(`)) {
