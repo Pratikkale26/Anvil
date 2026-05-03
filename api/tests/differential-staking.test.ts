@@ -55,6 +55,13 @@ defineDifferential({
   pinClockTimestamp: PIN_T0,
   pinClockSlot: 1,
   compareEventLogs: true,
+  // Smoke-test the new opt-in surfaces. simple-staking.rs has no
+  // msg!() calls and no set_return_data, so both surfaces should
+  // observe empty/null on both sides — the assertion proves the
+  // capture path doesn't false-positive when there's nothing to
+  // capture.
+  compareReturnData: true,
+  compareMsgLogs: true,
 
   setup: async () => {
     const user = Keypair.generate();

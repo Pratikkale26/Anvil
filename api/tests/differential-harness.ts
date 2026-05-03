@@ -189,6 +189,26 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    */
   compareEventLogs?: boolean;
   /**
+   * If true, ALSO byte-compare set_return_data() output across runs.
+   * The fifth opt-in surface. set_return_data is the cross-program
+   * return-value channel; if Anchor's program returns `Result<T>` (or
+   * explicitly calls set_return_data) and Anvil's emit drops or
+   * re-shapes the payload, callers reading via get_return_data see
+   * different bytes — this catches that. Default false; turning it on
+   * for ix returning unit is harmless (both runs see no return data).
+   */
+  compareReturnData?: boolean;
+  /**
+   * If true, ALSO byte-compare user-emitted `msg!()` text logs. The
+   * sixth opt-in surface. We drop the framing/CU lines that diverge
+   * by design (Pinocchio uses fewer compute units, Anchor adds
+   * "Program log: Instruction:" automatically), keeping only the
+   * lines a program author wrote via msg!(). Catches msg!() drift
+   * (a program logging different state under the same inputs).
+   * Default false — most fixtures don't rely on msg!() parity.
+   */
+  compareMsgLogs?: boolean;
+  /**
    * Pin Clock::get().unix_timestamp before the first instruction.
    * Default: 1_700_000_000 (a fixed Unix timestamp in 2023). Programs
    * reading the clock see this exact value in both Anchor and Anvil
@@ -261,10 +281,26 @@ export function defineDifferential<S extends DifferentialSetup>(
         const ctx = await fixture.setup();
 
         const compareEventLogs = fixture.compareEventLogs ?? false;
+        const compareReturnData = fixture.compareReturnData ?? false;
+        const compareMsgLogs = fixture.compareMsgLogs ?? false;
         const anchorEventLogs: string[] = [];
         const anvilEventLogs: string[] = [];
-        const anchorState = await runScenario(fixture, anchorSo, ctx, programId, compareEventLogs ? anchorEventLogs : undefined);
-        const anvilState = await runScenario(fixture, anvilSo, ctx, programId, compareEventLogs ? anvilEventLogs : undefined);
+        const anchorReturnData: Array<string | null> = [];
+        const anvilReturnData: Array<string | null> = [];
+        const anchorMsgLogs: string[] = [];
+        const anvilMsgLogs: string[] = [];
+        const anchorState = await runScenario(
+          fixture, anchorSo, ctx, programId,
+          compareEventLogs ? anchorEventLogs : undefined,
+          compareReturnData ? anchorReturnData : undefined,
+          compareMsgLogs ? anchorMsgLogs : undefined,
+        );
+        const anvilState = await runScenario(
+          fixture, anvilSo, ctx, programId,
+          compareEventLogs ? anvilEventLogs : undefined,
+          compareReturnData ? anvilReturnData : undefined,
+          compareMsgLogs ? anvilMsgLogs : undefined,
+        );
 
         const accounts = fixture.accountsToCompare(ctx);
         const compareLamports = fixture.compareLamports ?? true;
@@ -274,7 +310,9 @@ export function defineDifferential<S extends DifferentialSetup>(
           | { kind: "lamports"; label: string; anchor: bigint; anvil: bigint }
           | { kind: "owner"; label: string; anchor: string; anvil: string }
           | { kind: "presence"; label: string; anchorPresent: boolean; anvilPresent: boolean }
-          | { kind: "events"; anchor: string[]; anvil: string[] };
+          | { kind: "events"; anchor: string[]; anvil: string[] }
+          | { kind: "returnData"; anchor: Array<string | null>; anvil: Array<string | null> }
+          | { kind: "msgLogs"; anchor: string[]; anvil: string[] };
         let firstMismatch: Mismatch | null = null;
 
         for (const { pubkey, label } of accounts) {
@@ -330,6 +368,31 @@ export function defineDifferential<S extends DifferentialSetup>(
           }
         }
 
+        // set_return_data compare. The cross-program return-value
+        // channel — callers reading via get_return_data observe these
+        // bytes. A handler returning Result<()> produces no return
+        // data (null in the collector); Result<T> for non-unit T (or
+        // an explicit set_return_data() call) produces base64'd bytes.
+        // Order-significant: one entry per tx in scenario order.
+        if (compareReturnData) {
+          if (anchorReturnData.length !== anvilReturnData.length ||
+              anchorReturnData.some((d, i) => d !== anvilReturnData[i])) {
+            firstMismatch ??= { kind: "returnData", anchor: anchorReturnData, anvil: anvilReturnData };
+          }
+        }
+
+        // User-emitted msg!() compare. Already-stripped of Anchor
+        // framing (Instruction:/AnchorError) and Pinocchio CU/program-
+        // header lines, so what remains is what a program author
+        // wrote. Order-significant; a divergence means one runtime
+        // logged something the other didn't.
+        if (compareMsgLogs) {
+          if (anchorMsgLogs.length !== anvilMsgLogs.length ||
+              anchorMsgLogs.some((l, i) => l !== anvilMsgLogs[i])) {
+            firstMismatch ??= { kind: "msgLogs", anchor: anchorMsgLogs, anvil: anvilMsgLogs };
+          }
+        }
+
         if (firstMismatch) {
           if (firstMismatch.kind === "data") {
             console.log(`\n[differential-${fixture.fixtureName}] DATA MISMATCH on '${firstMismatch.label}':`);
@@ -359,6 +422,20 @@ export function defineDifferential<S extends DifferentialSetup>(
             for (const l of firstMismatch.anchor) console.log(`    ${l}`);
             console.log(`  anvil  (${firstMismatch.anvil.length} events):`);
             for (const l of firstMismatch.anvil) console.log(`    ${l}`);
+          } else if (firstMismatch.kind === "returnData") {
+            console.log(`\n[differential-${fixture.fixtureName}] RETURN DATA MISMATCH:`);
+            console.log(`  anchor (${firstMismatch.anchor.length} txs):`);
+            for (const d of firstMismatch.anchor) console.log(`    ${d ?? "<no return data>"}`);
+            console.log(`  anvil  (${firstMismatch.anvil.length} txs):`);
+            for (const d of firstMismatch.anvil) console.log(`    ${d ?? "<no return data>"}`);
+            console.log(`  one runtime called set_return_data (or returned Result<T> non-unit); the other didn't, or the bytes differ.`);
+          } else if (firstMismatch.kind === "msgLogs") {
+            console.log(`\n[differential-${fixture.fixtureName}] MSG LOG MISMATCH:`);
+            console.log(`  anchor (${firstMismatch.anchor.length} lines):`);
+            for (const l of firstMismatch.anchor) console.log(`    ${l}`);
+            console.log(`  anvil  (${firstMismatch.anvil.length} lines):`);
+            for (const l of firstMismatch.anvil) console.log(`    ${l}`);
+            console.log(`  user-emitted msg!() text diverges (Anchor framing already stripped).`);
           } else if (firstMismatch.kind === "presence") {
             console.log(`\n[differential-${fixture.fixtureName}] PRESENCE MISMATCH on '${firstMismatch.label}':`);
             console.log(`  anchor present: ${firstMismatch.anchorPresent}`);
@@ -564,6 +641,8 @@ async function runScenario<S extends DifferentialSetup>(
   ctx: S,
   programId: PublicKey,
   collectedEventLogs?: string[],
+  collectedReturnData?: Array<string | null>,
+  collectedMsgLogs?: string[],
 ): Promise<Map<string, AccountSnapshot>> {
   const svm = new LiteSVM();
   svm.addProgram(programId, programSo);
@@ -585,29 +664,59 @@ async function runScenario<S extends DifferentialSetup>(
         .warpToSlot(BigInt(fixture.pinClockSlot ?? 1));
     } catch { /* same */ }
   }
-  // Optional event-log capture. When the fixture has compareEventLogs=true
-  // we wrap svm.sendTransaction so every Program data: line lands in
-  // collectedEventLogs. Anchor's emit!() lowers to sol_log_data which
-  // surfaces as Program data: <base64-payload> in tx logs; capturing
-  // these across both Anchor + Anvil runs gives us a byte-level event
-  // log diff via the standard log surface (no LiteSVM internals leaked).
-  if (collectedEventLogs) {
+  // Optional log + return-data capture. When ANY of compareEventLogs /
+  // compareMsgLogs / compareReturnData is set on the fixture, we wrap
+  // svm.sendTransaction so every tx flows through one extraction pass.
+  // Each surface is captured into its own collector; defineDifferential
+  // decides per-surface whether to actually compare. Surfaces are
+  // captured from the standard tx-metadata API (logs() + returnData())
+  // — no LiteSVM internals leaked.
+  const needsTxCapture = !!collectedEventLogs || !!collectedReturnData || !!collectedMsgLogs;
+  if (needsTxCapture) {
     const origSend = svm.sendTransaction.bind(svm);
     (svm as unknown as { sendTransaction: (tx: unknown) => unknown }).sendTransaction = (tx: unknown) => {
       const r = origSend(tx as never);
       try {
-        // Both TransactionMetadata and FailedTransactionMetadata expose
-        // .logs() / .meta().logs() respectively.
         const ctorName = (r as { constructor?: { name?: string } })?.constructor?.name ?? "";
         let logs: string[] = [];
-        if (ctorName === "TransactionMetadata" && typeof (r as { logs?: () => string[] }).logs === "function") {
-          logs = (r as { logs: () => string[] }).logs();
+        let returnData: { data: () => Uint8Array; programId?: () => unknown } | null = null;
+        if (ctorName === "TransactionMetadata") {
+          const md = r as {
+            logs?: () => string[];
+            returnData?: () => { data: () => Uint8Array; programId?: () => unknown } | null;
+          };
+          logs = typeof md.logs === "function" ? md.logs() : [];
+          returnData = typeof md.returnData === "function" ? md.returnData() ?? null : null;
         } else if (ctorName === "FailedTransactionMetadata") {
           const meta = (r as { meta?: () => { logs: () => string[] } }).meta?.();
           logs = meta?.logs?.() ?? [];
         }
         for (const l of logs) {
-          if (l.startsWith("Program data: ")) collectedEventLogs.push(l);
+          if (collectedEventLogs && l.startsWith("Program data: ")) {
+            collectedEventLogs.push(l);
+          }
+          if (collectedMsgLogs && l.startsWith("Program log: ")) {
+            // Filter Anchor framing so user-emitted msg!() text is what
+            // we compare. Pinocchio doesn't emit "Instruction:" header
+            // or "AnchorError occurred." framing automatically; without
+            // these filters Anchor + Anvil would diverge on framing
+            // alone, regardless of user intent.
+            const body = l.slice("Program log: ".length);
+            if (body.startsWith("Instruction: ")) continue;
+            if (body.startsWith("AnchorError occurred")) continue;
+            if (body === "Left:" || body === "Right:") continue;
+            collectedMsgLogs.push(l);
+          }
+        }
+        if (collectedReturnData) {
+          if (returnData) {
+            const bytes = returnData.data();
+            // base64 the bytes so the collected string is hashable +
+            // diffable. base64 is reversible and identity-preserving.
+            collectedReturnData.push(Buffer.from(bytes).toString("base64"));
+          } else {
+            collectedReturnData.push(null);
+          }
         }
       } catch { /* best-effort */ }
       return r;
