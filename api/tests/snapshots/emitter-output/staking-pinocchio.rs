@@ -23,6 +23,40 @@ use pinocchio::sysvars::clock::Clock;
 use pinocchio::sysvars::rent::Rent;
 use pinocchio::sysvars::Sysvar;
 
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
+pub struct StakeEvent {
+    pub user: [u8; 32],
+    pub amount: u64,
+    pub timestamp: i64,
+}
+
+impl StakeEvent {
+    pub const DISCRIMINATOR: [u8; 8] = [226, 134, 188, 173, 19, 33, 75, 175];
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
+pub struct RewardEvent {
+    pub user: [u8; 32],
+    pub rewards: u64,
+    pub timestamp: i64,
+}
+
+impl RewardEvent {
+    pub const DISCRIMINATOR: [u8; 8] = [9, 66, 81, 127, 29, 14, 62, 86];
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
+pub struct UnstakeEvent {
+    pub user: [u8; 32],
+    pub amount: u64,
+    pub rewards: u64,
+    pub timestamp: i64,
+}
+
+impl UnstakeEvent {
+    pub const DISCRIMINATOR: [u8; 8] = [162, 104, 137, 228, 81, 3, 79, 197];
+}
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
@@ -283,7 +317,7 @@ pub fn stake(
     // SPL Token transfer — user_stake_ata → stake_vault
     spl_token_transfer(user_stake_ata, stake_vault, user, amount)?;
     {
-        let __evt = StakeEvent { user: ctx.accounts.user.key(),
+        let __evt = StakeEvent { user: *user.key(),
             amount,
             timestamp: now, };
         let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
@@ -363,7 +397,7 @@ pub fn claim_rewards(
     spl_token_mint_to_signed(reward_mint, user_reward_ata, pool_account, rewards, signer_seeds)?;
     user_stake.last_claim = now;
     {
-        let __evt = RewardEvent { user: ctx.accounts.user.key(),
+        let __evt = RewardEvent { user: *user.key(),
             rewards,
             timestamp: now, };
         let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
@@ -449,7 +483,7 @@ pub fn unstake(
         }
     pool.total_staked = pool.total_staked.checked_sub(user_stake.amount).ok_or(StakingError::Underflow)?;
     {
-        let __evt = UnstakeEvent { user: ctx.accounts.user.key(),
+        let __evt = UnstakeEvent { user: *user.key(),
             amount: user_stake.amount,
             rewards: pending_rewards,
             timestamp: now, };

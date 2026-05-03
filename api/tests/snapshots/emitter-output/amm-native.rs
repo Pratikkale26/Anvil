@@ -21,6 +21,43 @@ use solana_program::{
 };
 use solana_program::sysvar::rent::Rent;
 
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
+pub struct LiquidityAdded {
+    pub user: Pubkey,
+    pub amount_a: u64,
+    pub amount_b: u64,
+    pub lp_tokens: u64,
+}
+
+impl LiquidityAdded {
+    pub const DISCRIMINATOR: [u8; 8] = [154, 26, 221, 108, 238, 64, 217, 161];
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
+pub struct LiquidityRemoved {
+    pub user: Pubkey,
+    pub amount_a: u64,
+    pub amount_b: u64,
+    pub lp_tokens: u64,
+}
+
+impl LiquidityRemoved {
+    pub const DISCRIMINATOR: [u8; 8] = [225, 105, 216, 39, 124, 116, 169, 189];
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
+pub struct Swapped {
+    pub user: Pubkey,
+    pub amount_in: u64,
+    pub amount_out: u64,
+    pub fee_amount: u64,
+    pub a_to_b: bool,
+}
+
+impl Swapped {
+    pub const DISCRIMINATOR: [u8; 8] = [217, 52, 52, 83, 147, 135, 96, 109];
+}
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
@@ -393,7 +430,7 @@ pub fn add_liquidity(
     pool.reserve_b = pool.reserve_b.checked_add(amount_b).ok_or(AmmError::Overflow)?;
     pool.lp_supply = pool.lp_supply.checked_add(lp_tokens).ok_or(AmmError::Overflow)?;
     {
-        let __evt = LiquidityAdded { user: ctx.accounts.user.key(),
+        let __evt = LiquidityAdded { user: *user.key,
             amount_a,
             amount_b,
             lp_tokens, };
@@ -552,7 +589,7 @@ pub fn remove_liquidity(
     pool.reserve_b = pool.reserve_b.checked_sub(amount_b).ok_or(AmmError::Underflow)?;
     pool.lp_supply = pool.lp_supply.checked_sub(lp_amount).ok_or(AmmError::Underflow)?;
     {
-        let __evt = LiquidityRemoved { user: ctx.accounts.user.key(),
+        let __evt = LiquidityRemoved { user: *user.key,
             amount_a,
             amount_b,
             lp_tokens: lp_amount, };
@@ -721,7 +758,7 @@ pub fn swap(
             pool.total_fees_b = pool.total_fees_b.checked_add(lp_fee).ok_or(AmmError::Overflow)?;
         }
     {
-        let __evt = Swapped { user: ctx.accounts.user.key(),
+        let __evt = Swapped { user: *user.key,
             amount_in,
             amount_out,
             fee_amount,

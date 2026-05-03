@@ -709,6 +709,7 @@
   "constants": [],
   "errors": [],
   "helperFns": [],
+  "events": [],
   "imports": [
     "use anchor_lang::prelude::*",
     "use super::*"
