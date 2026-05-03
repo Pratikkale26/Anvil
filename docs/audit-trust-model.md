@@ -29,21 +29,21 @@ Every emitted target compiles via `cargo-build-sbf` against the SBF toolchain.
 
 ### Byte-equal differential gate
 
-For every scenario the auditor (or you) provides, Anvil runs both the Anchor reference `.so` and the Anvil-emitted `.so` inside [LiteSVM](https://github.com/litesvm/litesvm) with **identical keypairs, identical instruction data, identical clock + slot pinning**. The post-state of every named account is byte-compared on three dimensions: **`data`, `lamports`, and `owner`**. Any divergence fails the gate loudly with the offset of the first differing byte (or the diverging field).
+For every scenario the auditor (or you) provides, Anvil runs both the Anchor reference `.so` and the Anvil-emitted `.so` inside [LiteSVM](https://github.com/litesvm/litesvm) with **identical keypairs, identical instruction data, identical clock + slot pinning**. The post-state of every named account is byte-compared on three dimensions: **`data`, `lamports`, and `owner`**. The TS fixture harness adds an opt-in fourth dimension — `Program data:` log payloads from `emit!()` / `sol_log_data` — gated by `compareEventLogs: true` per fixture. Any divergence fails the gate loudly with the offset of the first differing byte (or the diverging field).
 
-- **What this proves**: for the **scenarios actually run**, the Anvil emit produces output state that's bit-for-bit identical to Anchor's on data, lamports, AND owner. The owner check catches a class of bug — emit forgets to assign the account back to the program after a CPI, or transfers ownership to the wrong program — that data + lamports comparison alone misses.
-- **What it doesn't prove**: that *all reachable inputs* produce identical output. A finite test suite is finite. Inputs your scenarios don't exercise are not gated by this. Event log payloads (`emit!`) are also not compared today — see "What we don't claim" below.
+- **What this proves**: for the **scenarios actually run**, the Anvil emit produces output state that's bit-for-bit identical to Anchor's on data, lamports, AND owner — and on event log payloads when the fixture opts in. The owner check catches a class of bug — emit forgets to assign the account back to the program after a CPI, or transfers ownership to the wrong program — that data + lamports comparison alone misses. The event-log check catches a class of bug specific to off-chain indexer parity: `emit!()` lowering to a different discriminator or borsh layout than Anchor's macro expansion.
+- **What it doesn't prove**: that *all reachable inputs* produce identical output. A finite test suite is finite. Inputs your scenarios don't exercise are not gated by this. The JSON-scenario CLI path doesn't compare event logs yet — it warns when `emit!()` is present and requires `--ignore-events` to proceed; for full event coverage use the TS fixture harness. See "What we don't claim" below.
 
 ### Real-world cargo regression layer
 
-36+ Anchor programs from `solana-developers/program-examples` plus 7 external (escrow2025, coral cohort, Token-2022 transfer-fee) are gated to compile under both targets on every commit. The CI fails if any previously-green program breaks.
+44 (program, target) pairs from `solana-developers/program-examples` plus 10 external (escrow2025, coral cohort including coral-events / coral-sysvars, Token-2022 transfer-fee + transfer-hook) are gated to compile under both targets on every commit. The CI fails if any previously-green program breaks.
 
 - **What this proves**: the emitter doesn't regress on a diverse population of real programs. New emit bugs are caught here, not in your code.
 - **What it doesn't prove**: any of those programs is *runtime-correct* under their own scenarios — only that they cargo-build.
 
 ### Per-IR-kind fixture coverage
 
-10 byte-equal differential fixtures (counter, vault, has-one, ata-mint, spl-transfer, spl-burn, t22-transfer, close-account, set-authority, escrow) collectively exercise the IR kinds Anvil supports. Each fixture exists because an emit divergence on that pattern is caught here, not in user code.
+17 byte-equal differential fixtures (counter, vault, has-one, ata-mint, spl-transfer, spl-burn, t22-transfer, close-account, set-authority, escrow, multisig, optional-state, init-if-needed, realloc, realloc-grow, event-emit, staking) collectively exercise the IR kinds Anvil supports. Each fixture exists because an emit divergence on that pattern is caught here, not in user code. `event-emit` and `staking` exercise opt-in event-log byte-equality (`compareEventLogs: true`) — the fourth comparison surface; `staking` additionally exercises clock-pinned state math (Clock::get + reward accrual via saturating_mul + integer division) across multiple transactions, with 4 events emitted that must byte-equal Anchor's macro expansion.
 
 - **What this proves**: Anvil's emit-level correctness for each common Anchor pattern is verified on at least one real program, with byte-equality.
 - **What it doesn't prove**: a *specific* user program's reachable states all map cleanly to fixtures we've already gated. Combinations of patterns can still surface emit bugs not covered by any individual fixture.
@@ -104,7 +104,7 @@ This is the strongest claim — it reduces re-audit need to "verify the IR captu
 
 Defensible and shippable today:
 
-> Anvil emits Pinocchio code that's byte-equal to Anchor on every scenario in the differential gate. The 10-fixture corpus + 36+ real-world cargo regressions cover the emit patterns; scenarios you bring via `anvil-sol differential --scenario` cover your specific program's reachable states. Bring the scenarios your audit cares about and run them through the gate.
+> Anvil emits Pinocchio code that's byte-equal to Anchor on every scenario in the differential gate. The 17-fixture corpus + 54 real-world cargo regressions cover the emit patterns; scenarios you bring via `anvil-sol differential --scenario` cover your specific program's reachable states. Bring the scenarios your audit cares about and run them through the gate.
 >
 > What we don't ask you to take on faith: program semantics still need a source-level audit (Anvil consumes the same Rust your auditor reads). What we *do* ask you to skip: separate review of the translation step, on the conditions that (a) cargo-green, (b) byte-equal under your scenarios, and (c) you accept the published limits below.
 
@@ -156,3 +156,4 @@ This document moves with the gate. Trust-relevant changes (new IR kinds, new fix
 | Date | Change |
 |---|---|
 | 2026-04-30 | Initial trust model: cargo-green + 10-fixture differential gate + 36+ cargo regressions + `--fuzz` starter (scalar args only). |
+| 2026-05-02 | Differential corpus 10 → 17 fixtures (added multisig, optional-state, init-if-needed, realloc, realloc-grow, event-emit, staking). Event log byte-equality added as opt-in **fourth comparison surface** via TS fixture harness (`compareEventLogs: true`); `emit!()` / `emit_cpi!()` lower to deterministic borsh + sha256-derived discriminator via `sol_log_data`. `staking` fixture exercises clock-pinned reward math + heterogeneous emit!() payload (Pubkey + u64 + i64) — both surfaces byte-equal to Anchor across 4 transactions. Cargo regression layer expanded to 44 program-examples pairs + 10 external (added coral-events, coral-sysvars, t22-transfer-hook/pinocchio promotions). |
