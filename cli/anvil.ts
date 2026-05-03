@@ -149,6 +149,21 @@ interface CliArgs {
    */
   anchorSo: string | null;
   /**
+   * `differential --anvil-so path.so` — pre-built "candidate" .so, skips
+   * the emit + cargo-build-sbf step. Pair with --anchor-so to use Anvil
+   * as a generic byte-equal gate on any two pre-built Solana programs:
+   *
+   *     anvil differential src.rs --anchor-so old.so --anvil-so new.so \
+   *         --scenario s.json
+   *
+   * Source positional + --scenario are still required: the source supplies
+   * the IR (instruction discriminators, arg types, account flags) used to
+   * encode scenario instructions. Build steps are skipped — useful for
+   * before/after compares, audited-vs-unaudited binary verification, or
+   * any case where the binaries already exist.
+   */
+  anvilSo: string | null;
+  /**
    * `differential --anchor-extra-deps "anchor-spl = \"0.31\""` — extra
    * lines appended verbatim under [dependencies] in the Anchor reference
    * Cargo.toml. Each line a TOML dep entry. Without this, the reference
@@ -213,6 +228,7 @@ function parseArgs(argv: string[]): CliArgs {
     strict: false,
     scenario: null,
     anchorSo: null,
+    anvilSo: null,
     anchorExtraDeps: [],
     fuzz: null,
     fuzzSeed: null,
@@ -317,6 +333,12 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--anchor-so") {
       args.anchorSo = rest[i + 1] ?? null;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--anvil-so") {
+      args.anvilSo = rest[i + 1] ?? null;
       i += 2;
       continue;
     }
@@ -1794,6 +1816,15 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     --anchor-so <path>      Pre-built Anchor reference .so. If unset, the
                             runner builds one from the same source via
                             cargo-build-sbf.
+    --anvil-so <path>       Pre-built candidate .so. Skips the emit +
+                            cargo-build-sbf for the Anvil side. Pair with
+                            --anchor-so to use this command as a generic
+                            byte-equal gate on any two pre-built Solana
+                            programs (before/after compares, audited-vs-
+                            new binary verification, etc.). Source is
+                            still parsed for IR (instruction names, arg
+                            types, account flags); only the build is
+                            skipped.
     --anchor-extra-deps <toml-line>
                             Extra TOML lines to append under [dependencies]
                             in the Anchor reference Cargo.toml. Repeatable.
@@ -1843,6 +1874,22 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
   you at a TS template fixture for hand-written scenarios. Useful when
   your program uses arg shapes the JSON scenario can't safely encode
   (Vec<u8>, custom structs, etc.).
+
+  ${c.bold}PRE-BUILT MODE (--anchor-so + --anvil-so)${c.reset}
+
+  Use Anvil as a generic byte-equal gate on any two pre-built Solana
+  programs — not just Anvil-emitted ones. Both builds are skipped; the
+  source is still parsed for IR (instruction discriminators, arg types,
+  account flags) so the JSON scenario can encode instructions correctly.
+
+    anvil differential src.rs \\
+        --anchor-so old.so --anvil-so new.so \\
+        --scenario s.json
+
+  Useful for: before/after refactor verification, audited-vs-new binary
+  parity checks, comparing two CI builds, or any case where two .so
+  files exist and you want to assert they produce byte-identical state
+  on the scenarios you bring.
 
   ${c.bold}SCENARIO FORMAT${c.reset}
 
@@ -1947,47 +1994,67 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
   success(`Parsed: ${ir.instructions.length} instruction${ir.instructions.length !== 1 ? "s" : ""}, ${ir.accounts.length} account${ir.accounts.length !== 1 ? "s" : ""}`);
   console.log();
 
-  progress("Emitting Pinocchio project...");
-  const output = emitPinocchioFull(ir);
   const outputDir = args.output ?? "./anvil-output";
-  const anvilProjDir = join(outputDir, "anvil");
-  mkdirSync(anvilProjDir, { recursive: true });
+  let anvilSoDir: string | null = null;
 
-  const scaffold = buildProjectScaffold(ir, "pinocchio");
-  const sourceFiles = output.files.length > 0
-    ? output.files.map((f) => ({ path: join("src", f.path), content: f.content }))
-    : [{ path: join("src", "lib.rs"), content: output.singleFile }];
-  for (const f of [...scaffold, ...sourceFiles]) {
-    const fp = join(anvilProjDir, f.path);
-    mkdirSync(dirname(fp), { recursive: true });
-    writeFileSync(fp, f.content, "utf8");
-  }
-  success(`Wrote Anvil project to ${anvilProjDir}/`);
-  console.log();
+  if (args.anvilSo) {
+    // Pre-built Anvil/candidate .so supplied — skip emit + build entirely.
+    // The source file is still parsed (for IR) but no .so is produced from
+    // it. Lets users compare any two pre-built Solana programs.
+    progress(`Using pre-built candidate .so: ${args.anvilSo}`);
+    if (!existsSync(args.anvilSo)) {
+      error(`--anvil-so file not found: ${args.anvilSo}`);
+      process.exit(1);
+    }
+    success(`Skipping Anvil emit + build (--anvil-so provided)`);
+    console.log();
+  } else {
+    progress("Emitting Pinocchio project...");
+    const output = emitPinocchioFull(ir);
+    const anvilProjDir = join(outputDir, "anvil");
+    mkdirSync(anvilProjDir, { recursive: true });
 
-  // Step 2: cargo-build-sbf the Anvil .so
-  progress("Building Pinocchio .so via cargo-build-sbf...");
-  const { spawnSync } = await import("node:child_process");
-  const anvilSoDir = join(anvilProjDir, "target", "deploy");
-  if (args.skipCache && existsSync(anvilSoDir)) {
-    const { rmSync } = await import("node:fs");
-    rmSync(anvilSoDir, { recursive: true, force: true });
+    const scaffold = buildProjectScaffold(ir, "pinocchio");
+    const sourceFiles = output.files.length > 0
+      ? output.files.map((f) => ({ path: join("src", f.path), content: f.content }))
+      : [{ path: join("src", "lib.rs"), content: output.singleFile }];
+    for (const f of [...scaffold, ...sourceFiles]) {
+      const fp = join(anvilProjDir, f.path);
+      mkdirSync(dirname(fp), { recursive: true });
+      writeFileSync(fp, f.content, "utf8");
+    }
+    success(`Wrote Anvil project to ${anvilProjDir}/`);
+    console.log();
+
+    progress("Building Pinocchio .so via cargo-build-sbf...");
+    const { spawnSync } = await import("node:child_process");
+    anvilSoDir = join(anvilProjDir, "target", "deploy");
+    if (args.skipCache && existsSync(anvilSoDir)) {
+      const { rmSync } = await import("node:fs");
+      rmSync(anvilSoDir, { recursive: true, force: true });
+    }
+    const r = spawnSync("cargo-build-sbf", ["--manifest-path", join(anvilProjDir, "Cargo.toml")], {
+      stdio: "inherit",
+      timeout: 600_000,
+      env: { ...process.env, RUSTFLAGS: "" },
+    });
+    if (r.status !== 0) {
+      error(`cargo-build-sbf failed (exit ${r.status}). The emitted code may have a target compatibility gap; run 'anvil compile' first to inspect.`);
+      process.exit(1);
+    }
+    success(`Pinocchio .so ready in ${anvilSoDir}/`);
+    console.log();
   }
-  const r = spawnSync("cargo-build-sbf", ["--manifest-path", join(anvilProjDir, "Cargo.toml")], {
-    stdio: "inherit",
-    timeout: 600_000,
-    env: { ...process.env, RUSTFLAGS: "" },
-  });
-  if (r.status !== 0) {
-    error(`cargo-build-sbf failed (exit ${r.status}). The emitted code may have a target compatibility gap; run 'anvil compile' first to inspect.`);
-    process.exit(1);
-  }
-  success(`Pinocchio .so ready in ${anvilSoDir}/`);
-  console.log();
 
   // Build-only mode — print the next-steps and exit. User opted out of the
   // scenario-driven compare (or hasn't written a scenario yet).
   if (!args.scenario) {
+    if (args.anvilSo) {
+      // No-build mode + no scenario = no work to do. Tell the user.
+      warn(`Both --anvil-so provided and --scenario absent — nothing to compare. Add --scenario to run the byte-equal gate.`);
+      console.log();
+      return;
+    }
     console.log(`  ${c.bold}Next step${c.reset}`);
     console.log();
     console.log(`  ${c.dim}# write a scenario.json (see 'anvil differential --help' for the shape)${c.reset}`);
@@ -2078,12 +2145,20 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
 
   // Load Anvil .so + (single run | fuzz N runs).
   let anvilSoBytes: Buffer;
-  try {
-    const { findBuiltSo } = await import("./scenario-runner.js");
-    anvilSoBytes = findBuiltSo(anvilSoDir);
-  } catch (err) {
-    error(`could not locate Anvil .so: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+  if (args.anvilSo) {
+    anvilSoBytes = readFileSync(args.anvilSo);
+  } else {
+    if (!anvilSoDir) {
+      error(`internal: anvilSoDir unset despite no --anvil-so override`);
+      process.exit(1);
+    }
+    try {
+      const { findBuiltSo } = await import("./scenario-runner.js");
+      anvilSoBytes = findBuiltSo(anvilSoDir);
+    } catch (err) {
+      error(`could not locate Anvil .so: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
   }
 
   if (args.fuzz && args.fuzz > 0) {
