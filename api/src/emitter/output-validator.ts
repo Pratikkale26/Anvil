@@ -865,6 +865,46 @@ function collectDefinedTypes(files: EmitterOutput["files"]): Set<string> {
   return names;
 }
 
+/**
+ * Well-known external types whose associated constants come from third-party
+ * crates (not from anything Anvil emits). When the validator sees
+ * `Type::CONST` for a type in this catalog, the const is treated as defined
+ * regardless of whether Anvil's collectDefinedAssociatedConsts found it.
+ *
+ * Without this, the corpus sweep flagged 30+ false-positive errors per
+ * heavyweight program -- I80F48 (from `fixed`) on Mango/MarginFi/Drift,
+ * BorshDeserialize / AnchorDeserialize trait consts, etc.
+ *
+ * "*" as the const set means "any const access on this type is ok"
+ * (catch-all when documenting the full surface isn't worth it).
+ */
+const EXTERNAL_TYPE_CONST_CATALOG: Record<string, "*" | Set<string>> = {
+  // fixed::types — extensively used in Mango v4, MarginFi, Drift
+  I80F48: new Set([
+    "ZERO", "ONE", "MAX", "MIN", "DELTA",
+    "NEG_ONE", "FRAC_PI_2", "PI", "E", "LN_2", "LN_10",
+  ]),
+  U64F64: new Set(["ZERO", "ONE", "MAX", "MIN", "DELTA"]),
+  I64F64: new Set(["ZERO", "ONE", "MAX", "MIN", "DELTA"]),
+  // Anchor + borsh trait constants the source can carry over verbatim
+  BorshDeserialize: new Set(["DISCRIMINATOR"]),
+  AnchorDeserialize: new Set(["DISCRIMINATOR"]),
+  AnchorSerialize: new Set(["DISCRIMINATOR"]),
+  // Solana primitives
+  Pubkey: new Set(["LEN", "MAX_BASE58_LEN"]),
+  // Common Rust std numeric types — their MAX/MIN/etc. are valid
+  u8: "*", u16: "*", u32: "*", u64: "*", u128: "*", usize: "*",
+  i8: "*", i16: "*", i32: "*", i64: "*", i128: "*", isize: "*",
+  f32: "*", f64: "*",
+};
+
+function isExternalCatalogConst(typeName: string, constName: string): boolean {
+  const entry = EXTERNAL_TYPE_CONST_CATALOG[typeName];
+  if (!entry) return false;
+  if (entry === "*") return true;
+  return entry.has(constName);
+}
+
 function collectDefinedAssociatedConsts(files: EmitterOutput["files"]): Map<string, Set<string>> {
   const defs = new Map<string, Set<string>>();
   for (const file of files) {
@@ -879,6 +919,38 @@ function collectDefinedAssociatedConsts(files: EmitterOutput["files"]): Map<stri
       }
       defs.set(typeName, consts);
     }
+
+    // Enum variants are referenced with the same `Type::Name` syntax as
+    // associated constants. Without harvesting them, every `Version::V1`,
+    // `ContractTier::B`, `AuthorityType::AccountOwner` reference looks
+    // undefined. Walk `enum X { … }` bodies and add the variant idents.
+    const enumMatches = [...file.content.matchAll(/(?:pub\s+)?enum\s+([A-Z][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\s*\{([\s\S]*?)\n\}/g)];
+    for (const match of enumMatches) {
+      const typeName = match[1];
+      const body = match[2];
+      if (!typeName || !body) continue;
+      const consts = defs.get(typeName) ?? new Set<string>();
+      // Variants: `Name`, `Name(...)`, `Name { ... }`, `Name = N`. Strip
+      // the body's nested matching delimiters first so a struct-style
+      // variant's inner fields don't get treated as siblings.
+      const flatBody = body
+        .replace(/\([^)]*\)/g, "()")
+        .replace(/\{[^}]*\}/g, "{}");
+      // Variant terminators: `()` `{}` `=` `,` end-of-line `$`, and end-of-body
+      // `\s*$` — the last unit variant before the enum's closing `}` may
+      // have nothing after it but whitespace + the closing brace (which
+      // we've already stripped from `body`).
+      for (const variantMatch of flatBody.matchAll(/\b([A-Z][A-Za-z0-9_]*)\s*(?:\(\)|\{\}|=|,|\s*$)/gm)) {
+        if (variantMatch[1]) consts.add(variantMatch[1]);
+      }
+      // Catch-all: also harvest every leading-uppercase ident in the
+      // (flattened) body. Variants are the only such tokens after we
+      // strip nested fields/types via the flatten above.
+      for (const ident of flatBody.matchAll(/\b([A-Z][A-Za-z0-9_]*)\b/g)) {
+        if (ident[1]) consts.add(ident[1]);
+      }
+      defs.set(typeName, consts);
+    }
   }
   return defs;
 }
@@ -889,10 +961,20 @@ function checkUndefinedAssociatedConsts(files: EmitterOutput["files"]): Validati
   const definedConsts = collectDefinedAssociatedConsts(files);
 
   for (const file of files) {
-    for (const match of file.content.matchAll(/\b([A-Z][A-Za-z0-9_]*)::([A-Z][A-Z0-9_]*)\b/g)) {
+    // Match Type::CONST AND Type::Variant (the regex used to require the
+    // RHS to be ALL_CAPS; that missed enum variants like `Version::V1`).
+    // Now match any leading-uppercase RHS; the catalog + enum-variant
+    // collection handle the disambiguation.
+    for (const match of file.content.matchAll(/\b([A-Z][A-Za-z0-9_]*)::([A-Z][A-Za-z0-9_]*)\b/g)) {
       const typeName = match[1];
       const constName = match[2];
       if (!typeName || !constName) continue;
+      // External-type catalog skip BEFORE the definedTypes check —
+      // I80F48 etc. come from third-party crates and won't be in
+      // definedTypes anyway, but the catalog also covers cases where
+      // an emit happens to define a same-named local type (false-positive
+      // would over-trigger).
+      if (isExternalCatalogConst(typeName, constName)) continue;
       if (!definedTypes.has(typeName)) continue;
       if (definedConsts.get(typeName)?.has(constName)) continue;
       const line = file.content.slice(0, match.index ?? 0).split("\n").length;
