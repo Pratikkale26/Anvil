@@ -77,11 +77,34 @@ export interface ParseError {
  * }
  * ```
  */
+/**
+ * Default parse deadline (ms). Bumped to 60s when the source is unusually
+ * large (>30k LoC) since tree-sitter's incremental parser scales roughly
+ * linearly but mega-programs like Whirlpool (49k LoC), MarginFi v2 (27k),
+ * and Drift (67k) push the warm-cache parse into the multi-second range
+ * even on fast hardware. The corpus sweep at reports/realworld-sweep-
+ * 2026-05-04.md surfaces these as parse-timeouts under the 10s default.
+ *
+ * Threshold tuned per that sweep: the largest file that fits in 10s
+ * comfortably is auction-house (2.2k LoC); the gap is a cliff so 30k is
+ * a safe boundary. Operators can override either via opts.timeoutMs.
+ */
+const DEFAULT_PARSE_TIMEOUT_MS = 10_000;
+const LARGE_FILE_PARSE_TIMEOUT_MS = 60_000;
+const LARGE_FILE_LINE_THRESHOLD = 30_000;
+
 export async function parseAnchor(
   source: string,
   opts?: { timeoutMs?: number },
 ): Promise<ParseResult | ParseError> {
-  const timeoutMs = opts?.timeoutMs ?? 10_000;
+  // Auto-bump deadline for large sources unless caller explicitly set one.
+  const lineCount = source.length > 100_000 // cheap pre-check before split
+    ? source.split("\n").length
+    : 0;
+  const autoTimeout = lineCount > LARGE_FILE_LINE_THRESHOLD
+    ? LARGE_FILE_PARSE_TIMEOUT_MS
+    : DEFAULT_PARSE_TIMEOUT_MS;
+  const timeoutMs = opts?.timeoutMs ?? autoTimeout;
   try {
     return await withParseDeadline(timeoutMs, async () => {
       const parser = await getParser();
@@ -320,9 +343,16 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
           // Skip cfg(test)-gated modules entirely. Their imports + functions
           // are test-only (typically litesvm/solana-kite test harnesses) and
           // walking into them leaks `use solana_kite::…`-style imports into
-          // the emitted lib.rs. The #[program] module itself is never
-          // cfg(test)-gated, so this can't drop real instructions.
-          if (hasCfgTestAttribute(attrs)) break;
+          // the emitted lib.rs.
+          //
+          // EXCEPTION: when both #[cfg(test)] AND #[program] are in scope,
+          // the #[cfg(test)] is almost certainly orphaned -- the source had
+          // `#[cfg(test)] mod tests;` followed by `#[program] pub mod foo`,
+          // the project flattener stripped the `mod tests;` but left the
+          // attribute, and the buffer carried it forward. The #[program]
+          // attribute is the strong signal; trust it. Surfaced by the
+          // corpus sweep on Whirlpool which had this exact shape.
+          if (hasCfgTestAttribute(attrs) && !isProgramModule) break;
           if (isProgramModule) {
             items.programModule = { node: child, attrs };
           }
