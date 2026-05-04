@@ -286,7 +286,27 @@ function AccountDiffCard({ diff }: { diff: AccountDiff }) {
                 <tbody>
                   {diff.fieldDiffs.map((f, i) => (
                     <tr key={i} className={cn("border-b border-white/[0.04] last:border-0", !f.equal && "bg-[rgba(224,90,90,0.04)]")}>
-                      <td className="px-2 py-1 text-anvil-text-sub">{f.field}</td>
+                      <td className="px-2 py-1 text-anvil-text-sub">
+                        {f.sourceLink ? (
+                          <button
+                            onClick={() => {
+                              // Source-jump dispatch: post a custom event the
+                              // workbench's source-pane listener picks up. The
+                              // event payload includes instruction + line so
+                              // the receiver can switch tabs + scroll Monaco.
+                              window.dispatchEvent(new CustomEvent("anvil-jump-to-source", {
+                                detail: { line: f.sourceLink!.line, instruction: f.sourceLink!.instruction },
+                              }));
+                            }}
+                            className="text-anvil-teal hover:text-anvil-teal-light underline cursor-pointer"
+                            title={`Jump to ${f.sourceLink.instruction} (line ${f.sourceLink.line})`}
+                          >
+                            {f.field}
+                          </button>
+                        ) : (
+                          f.field
+                        )}
+                      </td>
                       <td className="px-2 py-1 text-anvil-text">{stringifyValue(f.anchor)}</td>
                       <td className="px-2 py-1 text-anvil-text">{stringifyValue(f.anvil)}</td>
                       <td className="px-2 py-1 text-center">

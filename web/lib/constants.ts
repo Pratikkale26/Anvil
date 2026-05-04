@@ -272,7 +272,13 @@ export interface AccountDiff {
   firstDiffByte?: number;
   lamportsDiff?: { anchor: string; anvil: string };
   ownerDiff?: { anchor: string; anvil: string };
-  fieldDiffs?: Array<{ field: string; anchor: unknown; anvil: unknown; equal: boolean }>;
+  fieldDiffs?: Array<{
+    field: string;
+    anchor: unknown;
+    anvil: unknown;
+    equal: boolean;
+    sourceLink?: { instruction: string; line: number; column: number };
+  }>;
   anchorHex?: string;
   anvilHex?: string;
 }

@@ -94,6 +94,13 @@ export function resolveScenarioContext(
  *   - `u8:42` / `u16:N` / `u32:N` / `u64:N` / `i8:-N` / `i16:-N` / `i32:-N` / `i64:-N`
  *     → little-endian encoded integer of the right width
  *   - `bytes:0xDEADBEEF` → raw hex bytes
+ *
+ * NOTE: state-dependent ($state:account.field) and arg-dependent ($arg:name)
+ * tags are NOT resolved here -- they require runtime context. The PDA
+ * declaration walker (in resolveScenarioContext) skips PDAs containing those
+ * tags and defers their derivation to per-step resolution at execution
+ * time. Future runtime resolver TBD; for now, scenarios with state/arg
+ * seed deps fall through to the manual JSON-edit path.
  */
 export function resolveSeedExpression(
   seed: string,
@@ -498,7 +505,17 @@ export interface AccountDiff {
   /** Owner divergence. */
   ownerDiff?: { anchor: string; anvil: string };
   /** Per-field deserialized diff when AccountDef is known. */
-  fieldDiffs?: Array<{ field: string; anchor: unknown; anvil: unknown; equal: boolean }>;
+  fieldDiffs?: Array<{
+    field: string;
+    anchor: unknown;
+    anvil: unknown;
+    equal: boolean;
+    /** Source-link to the IR statement that emitted the diverging code,
+     *  populated via M1's bodyLocs lookup. Lets the workbench's diff card
+     *  jump-to-source on click. Empty when no matching state_field_assign
+     *  was found in the IR. */
+    sourceLink?: { instruction: string; line: number; column: number };
+  }>;
   /** Hex preview of the diverging slice (for diff visualization). */
   anchorHex?: string;
   anvilHex?: string;
@@ -738,7 +755,39 @@ function tryFieldDiff(
     anchor: aFields[f.name],
     anvil: vFields[f.name],
     equal: jsonEqual(aFields[f.name], vFields[f.name]),
+    sourceLink: findSourceLinkForField(accName, f.name, ir),
   }));
+}
+
+/**
+ * Look up the IR statement that mutates `accName.fieldName`. Returns the
+ * source position of the FIRST matching state_field_assign, or undefined
+ * when no handler writes that field. Used by the diff card to jump-to-
+ * source when the user clicks a diverging field.
+ *
+ * The lookup is best-effort: if a handler mutates `<account>.<field>`
+ * indirectly (via a helper, via pass_through code), this won't catch it.
+ * For the dominant case (typed state_field_assign emit) it works.
+ */
+function findSourceLinkForField(
+  accName: string,
+  fieldName: string,
+  ir: SolanaIR,
+): { instruction: string; line: number; column: number } | undefined {
+  for (const ix of ir.instructions) {
+    for (let i = 0; i < ix.body.length; i++) {
+      const stmt = ix.body[i];
+      if (!stmt) continue;
+      if (stmt.kind !== "state_field_assign") continue;
+      if (stmt.account === accName && stmt.field === fieldName) {
+        const loc = ix.bodyLocs?.[i];
+        if (loc) {
+          return { instruction: ix.name, line: loc.line, column: loc.column };
+        }
+      }
+    }
+  }
+  return undefined;
 }
 
 /**
