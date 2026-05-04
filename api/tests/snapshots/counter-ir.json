@@ -1,5 +1,6 @@
 {
   "name": "counter",
+  "programId": "Counter111111111111111111111111111111111111",
   "instructions": [
     {
       "name": "initialize",

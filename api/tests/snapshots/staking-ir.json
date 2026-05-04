@@ -1,5 +1,6 @@
 {
   "name": "staking",
+  "programId": "Stak1ng111111111111111111111111111111111111",
   "instructions": [
     {
       "name": "initialize_pool",

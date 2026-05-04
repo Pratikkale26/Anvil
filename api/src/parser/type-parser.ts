@@ -150,17 +150,31 @@ export function extractImports(root: SyntaxNode): string[] {
 // ─── Program ID extraction ──────────────────────────────────────────────────
 
 export function extractProgramId(root: SyntaxNode): string | undefined {
-  // Look for declare_id!("...") macro invocation
+  // tree-sitter-rust parses `declare_id!("...");` as an expression_statement
+  // wrapping a macro_invocation, NOT a bare macro_invocation. The previous
+  // implementation only checked for the bare form, so every Anchor source
+  // file with the canonical trailing-semicolon shape returned undefined.
+  // Walk root children + their first-child macro_invocation grandchildren.
+  const tryMacro = (node: SyntaxNode): string | undefined => {
+    if (node.type !== "macro_invocation") return undefined;
+    const macroName = node.namedChild(0)?.text;
+    if (macroName !== "declare_id" && macroName !== "declare_program") return undefined;
+    const tokenTree = node.children.find((c: { type: string }) => c.type === "token_tree");
+    if (!tokenTree) return undefined;
+    const idMatch = tokenTree.text.match(/"([^"]+)"/);
+    return idMatch?.[1];
+  };
+
   for (let i = 0; i < root.namedChildCount; i++) {
     const child = root.namedChild(i);
-    if (!child || child.type !== "macro_invocation") continue;
-
-    const macroName = child.namedChild(0)?.text;
-    if (macroName === "declare_id" || macroName === "declare_program") {
-      const tokenTree = child.children.find((c: { type: string }) => c.type === "token_tree");
-      if (tokenTree) {
-        const idMatch = tokenTree.text.match(/"([^"]+)"/);
-        if (idMatch?.[1]) return idMatch[1];
+    if (!child) continue;
+    const direct = tryMacro(child);
+    if (direct) return direct;
+    if (child.type === "expression_statement") {
+      const inner = child.namedChild(0);
+      if (inner) {
+        const wrapped = tryMacro(inner);
+        if (wrapped) return wrapped;
       }
     }
   }
