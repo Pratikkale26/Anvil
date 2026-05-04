@@ -395,10 +395,21 @@ function extractMemoCpi(callNode: SyntaxNode, collector?: WarningCollector): Bod
     return fallbackPassThrough(callNode);
   }
   const args = getArguments(argsNode);
-  // build_memo(data, signers): data is arg[0]; signers (slice) is arg[1].
-  // We carry data as its raw expression text — the emitter quotes/passes
-  // through depending on shape (string literal vs slice expr vs Vec<u8>).
-  const data = args[0]?.text.trim() ?? "&[]";
+  // Two call shapes in the wild:
+  //   anchor_spl::memo::build_memo(ctx: CpiContext<...>, memo: &[u8])
+  //     -> data at arg[1] when arg[0] is a CpiContext binding/expr
+  //   spl_memo::build_memo(memo_bytes, signers: &[&[u8]])
+  //     -> data at arg[0] (no CpiContext)
+  // Detect by inspecting arg[0]: `cpi_ctx` (the consolidator's canonical
+  // binding name) or a literal `CpiContext::` expression marks the
+  // Anchor-wrapper form.
+  const firstText = args[0]?.text.trim() ?? "";
+  const isAnchorWrapper =
+    firstText === "cpi_ctx" ||
+    firstText.startsWith("CpiContext::") ||
+    /^cpi_ctx\b|\bCpiContext\b/.test(firstText);
+  const dataIdx = isAnchorWrapper ? 1 : 0;
+  const data = args[dataIdx]?.text.trim() ?? "&[]";
   return {
     kind: "cpi_memo",
     data,
