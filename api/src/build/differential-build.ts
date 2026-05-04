@@ -110,6 +110,13 @@ async function buildAnchor(opts: DifferentialBuildOptions, outPath: string): Pro
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(join(scratch, "src"), { recursive: true });
   opts.onLog?.(`[anchor] scratch=${scratch}`);
+  // Workbench callers don't send anchorExtraDeps -- they paste source and
+  // expect the build to "just work". Sniff anchor-spl / anchor-spl-feature
+  // usage out of the source so the Anchor reference Cargo.toml gets the
+  // crates rustc actually needs. Fixture-based tests still pass an
+  // explicit anchorExtraDeps and override this.
+  const sniffed = sniffAnchorExtraDeps(opts.anchorSource);
+  const extraDeps = opts.anchorExtraDeps ?? sniffed;
   const cargoToml = `[package]
 name = "${opts.programName}"
 version = "0.1.0"
@@ -127,12 +134,38 @@ default = []
 ${opts.anchorLangFeatures && opts.anchorLangFeatures.length > 0
   ? `anchor-lang = { version = "0.31", features = ["${opts.anchorLangFeatures.join('", "')}"] }`
   : `anchor-lang = "0.31"`}
-${opts.anchorExtraDeps ?? ""}
+${extraDeps}
 `;
   writeFileSync(join(scratch, "Cargo.toml"), cargoToml);
   writeFileSync(join(scratch, "src/lib.rs"), opts.anchorSource);
   await runSandboxedSbf(scratch, opts);
   copySoFromTarget(scratch, outPath);
+}
+
+/**
+ * Best-effort detection of anchor-spl + cargo features from raw Anchor
+ * source. Returns Cargo.toml [dependencies] lines (or "" if none needed).
+ *
+ * Mirrors the explicit anchorExtraDeps strings the fixture-based tests
+ * declare -- workbench callers don't author those, so we infer from the
+ * `use anchor_spl::*;` / `use anchor_lang::system_program;` shapes in the
+ * pasted source. Adds anchor-spl features only when their submodule path
+ * is referenced (token_2022, memo, associated_token, metadata) so we
+ * don't pull in unnecessary feature flags + their deps.
+ */
+function sniffAnchorExtraDeps(source: string): string {
+  if (!/\banchor_spl\b/.test(source)) return "";
+  const features: string[] = [];
+  if (/\banchor_spl::associated_token\b/.test(source)) features.push("associated_token");
+  if (/\banchor_spl::memo\b/.test(source)) features.push("memo");
+  if (/\banchor_spl::metadata\b/.test(source)) features.push("metadata");
+  if (/\banchor_spl::token_2022\b/.test(source) || /\btoken_interface\b/.test(source)) {
+    features.push("token_2022");
+  }
+  if (features.length === 0) {
+    return `anchor-spl = "0.31"`;
+  }
+  return `anchor-spl = { version = "0.31", features = ["${features.join('", "')}"] }`;
 }
 
 async function buildAnvil(opts: DifferentialBuildOptions, outPath: string): Promise<void> {
