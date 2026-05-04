@@ -44,6 +44,15 @@ describe("API", () => {
     const data = (await res.json()) as any;
     expect(data.status).toBe("ok");
     expect(data.service).toBe("Anvil API");
+    // /health surfaces AI cache state for prod observability (#32).
+    expect(data.aiCache).toBeDefined();
+    if (!("error" in data.aiCache)) {
+      expect(typeof data.aiCache.entries).toBe("number");
+      expect(typeof data.aiCache.totalBytes).toBe("number");
+      expect(typeof data.aiCache.maxEntries).toBe("number");
+      expect(typeof data.aiCache.maxAgeMs).toBe("number");
+      expect(typeof data.aiCache.utilizationPct).toBe("number");
+    }
   });
 
   test("/whoami returns caller-scoped state (spend + rate-limit + queue)", async () => {

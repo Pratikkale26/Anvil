@@ -239,7 +239,36 @@ const TOOLCHAIN = (() => {
   };
 })();
 
-const healthHandler: express.RequestHandler = (_req, res) => {
+const healthHandler: express.RequestHandler = async (_req, res) => {
+  // Surface AI cache state inline so a quick `curl /health` reveals
+  // eviction misconfiguration in prod (e.g. cache filling up, TTL
+  // wrong) without SSHing in. cacheStats() is one readdir + parallel
+  // stats; cheap enough for /health.
+  let aiCache: {
+    entries: number;
+    totalBytes: number;
+    maxEntries: number;
+    maxBytes: number;
+    maxAgeMs: number;
+    utilizationPct: number;
+  } | { error: string };
+  try {
+    const { cacheStats } = await import("./ai/cache.js");
+    const s = await cacheStats();
+    aiCache = {
+      entries: s.entries,
+      totalBytes: s.totalBytes,
+      maxEntries: s.maxEntries,
+      maxBytes: s.maxBytes,
+      maxAgeMs: s.maxAgeMs,
+      utilizationPct: Math.round(
+        Math.max(s.entries / s.maxEntries, s.totalBytes / s.maxBytes) * 100,
+      ),
+    };
+  } catch (err) {
+    aiCache = { error: err instanceof Error ? err.message : String(err) };
+  }
+
   res.json({
     service: "Anvil API",
     version: "0.3.4",
@@ -251,6 +280,7 @@ const healthHandler: express.RequestHandler = (_req, res) => {
     redis: !!process.env.REDIS_URL,
     sentry: !!process.env.SENTRY_DSN,
     toolchain: TOOLCHAIN,
+    aiCache,
     endpoints: [
       "POST /parse  — Anchor source|file|project → Solana IR",
       "POST /emit   — Solana IR → target framework code (?refine=1 for AI polish)",
