@@ -57,6 +57,20 @@ ENV PATH=/root/.local/share/solana/install/active_release/bin:$PATH
 RUN sh -c "$(curl --proto '=https' --tlsv1.2 -sSf https://release.anza.xyz/v3.1.13/install)" \
   && cargo-build-sbf --version
 
+# Anchor CLI — used by the workbench's byte-equal differential endpoint
+# (POST /build/differential) to build the Anchor reference .so. Without
+# it, /health.differentialAvailable is false and the workbench's
+# Verify byte-equal panel renders the "use the CLI locally" fallback.
+#
+# avm (Anchor Version Manager) installs + pins anchor 0.31.0 to match
+# what the differential test corpus and api/tests/differential-harness.ts
+# build against. Cargo install caches the avm + anchor binaries into
+# CARGO_HOME so subsequent layers can reuse them.
+RUN cargo install --git https://github.com/coral-xyz/anchor avm --locked \
+  && avm install 0.31.0 \
+  && avm use 0.31.0 \
+  && anchor --version
+
 # Pre-fetch (download only, no compile) the cargo registry tarballs for the
 # Pinocchio + Native dep trees. cargo check at runtime reuses these,
 # eliminating the network round-trip from the first /build request. We do
