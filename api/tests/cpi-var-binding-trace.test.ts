@@ -70,6 +70,46 @@ ${ACCOUNTS}
     expect(lostWarnings).toEqual([]);
   });
 
+  test("CHAINED: let cpi_accounts = Transfer{}; let cpi_ctx = CpiContext::new(prog, cpi_accounts); transfer(cpi_ctx, ...) — H2-followup #35", async () => {
+    // The H2 commit's known limitation: extractCpiContextInfo only saw
+    // inline-struct CpiContext lets. The chained let-binding shape produced
+    // signer_seeds_lost_variable_binding even though the data was right
+    // there in the surrounding scope. #35 wires a parallel cpiAccountsByVar
+    // map so the chain resolves end-to-end.
+    const src = `${HEADER}
+#[program]
+pub mod prog {
+    use super::*;
+    pub fn run(ctx: Context<Move>, amount: u64) -> Result<()> {
+        let seeds: &[&[&[u8]]] = &[&[b"vault", &[1u8]]];
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.from.to_account_info(),
+            to: ctx.accounts.to.to_account_info(),
+            authority: ctx.accounts.authority.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, seeds);
+        token::transfer(cpi_ctx, amount)?;
+        Ok(())
+    }
+}
+
+${ACCOUNTS}
+`;
+    const r = await parseAnchor(src);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const transfer = r.ir.instructions[0]!.body.find((s) => s.kind === "cpi_spl_transfer");
+    expect(transfer).toBeDefined();
+    if (transfer?.kind === "cpi_spl_transfer") {
+      expect(transfer.from).toBe("from");
+      expect(transfer.to).toBe("to");
+      expect(transfer.signerSeeds).toBeDefined();
+    }
+    const lostWarnings = r.ir.warnings.filter((w) => w.code === "signer_seeds_lost_variable_binding");
+    expect(lostWarnings).toEqual([]);
+  });
+
   test("warning still fires when binding genuinely isn't tracked", async () => {
     // Source where the cpi_ctx came from an extern (let cpi_ctx = some_helper();)
     // — the body-classifier's cpiContexts map never sees the binding, so the

@@ -122,6 +122,11 @@ export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector)
 
   // Track CPI context variables: varName → {from, to, authority, signerSeeds}
   const cpiContexts = new Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>();
+  // H2-followup (#35): chained-binding map. `let cpi_accounts = Transfer{...}`
+  // bindings live here; extractCpiContextInfo looks them up when the
+  // CpiContext::new accounts arg is a variable reference instead of an
+  // inline struct.
+  const cpiAccountsByVar = new Map<string, CpiAccountsBinding>();
 
   // Flatten one level of synthetic wrapper blocks the impl-method inliner
   // produces: `{<inlined body>}?;` becomes an expression_statement wrapping
@@ -155,7 +160,7 @@ export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector)
     // Skip comment nodes
     if (child.type === "line_comment" || child.type === "block_comment") continue;
 
-    const classified = classifyStatement(child, pendingSeeds, cpiContexts, hasUserSeedsManagement, collector);
+    const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector);
     const childLoc = locFromNode(child);
 
     // Track seeds for PDA signer seeds grouping
@@ -174,6 +179,19 @@ export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector)
     if (classified._cpiContext) {
       cpiContexts.set(classified._cpiContext.varName, classified._cpiContext);
       continue;
+    }
+
+    // Track CPI accounts struct bindings (H2-followup). These are pure
+    // text bindings (`let X = Transfer{...};`) that downstream
+    // CpiContext::new(prog, X) calls reference; once tracked, the
+    // chain resolves at extractCpiContextInfo time. We still emit the
+    // let-stmt as pass_through because the emitter rewrites its content
+    // when the surrounding CPI consolidates; but its IR fields drive
+    // signer_seeds rescue at the call site.
+    if (classified._cpiAccountsBinding) {
+      cpiAccountsByVar.set(classified._cpiAccountsBinding.varName, classified._cpiAccountsBinding);
+      // Don't `continue` -- we still want the let statement in the IR
+      // (emitter consolidator will collapse it together with the CPI).
     }
 
     if (
@@ -233,12 +251,35 @@ interface CpiContextInfo {
   signerSeeds?: string;
 }
 
+interface CpiAccountsBinding {
+  /** SPL struct name (e.g. "Transfer", "MintTo", "Burn"). */
+  struct: string;
+  /** Original local variable bound to the struct literal. */
+  varName: string;
+  from?: string;
+  to?: string;
+  authority?: string;
+  mint?: string;
+}
+
 interface ClassifyResult {
   stmt: BodyStatement;
   _seedsData?: { seeds: string[]; bumpField?: string; rawCode: string };
   _signerSeedsConsumed?: boolean;
   _cpiContext?: CpiContextInfo;
+  /** H2-followup (#35): `let X = Transfer{...}`-style binding tracked
+   *  separately so a downstream `let cpi_ctx = CpiContext::new(prog, X)`
+   *  can resolve fields through the chain. */
+  _cpiAccountsBinding?: CpiAccountsBinding;
 }
+
+const SPL_CPI_STRUCT_NAMES = new Set([
+  "Transfer", "TransferChecked",
+  "MintTo", "MintToChecked",
+  "Burn", "BurnChecked",
+  "CloseAccount", "SetAuthority",
+  "Approve", "Revoke",
+]);
 
 // ─── Main dispatcher ────────────────────────────────────────────────────────
 
@@ -246,6 +287,7 @@ function classifyStatement(
   node: SyntaxNode,
   pendingSeeds: { seeds: string[]; bumpField?: string; rawCode: string } | null,
   cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
+  cpiAccountsByVar: Map<string, CpiAccountsBinding>,
   hasUserSeedsManagement = false,
   collector?: WarningCollector,
 ): ClassifyResult {
@@ -253,7 +295,7 @@ function classifyStatement(
 
   switch (node.type) {
     case "let_declaration":
-      return classifyLetDeclaration(node, pendingSeeds, hasUserSeedsManagement);
+      return classifyLetDeclaration(node, pendingSeeds, cpiAccountsByVar, hasUserSeedsManagement);
 
     case "expression_statement":
       return classifyExpressionStatement(node, cpiContexts, collector);
@@ -294,6 +336,7 @@ function classifyStatement(
 function classifyLetDeclaration(
   node: SyntaxNode,
   pendingSeeds: { seeds: string[]; bumpField?: string; rawCode: string } | null,
+  cpiAccountsByVar: Map<string, CpiAccountsBinding>,
   hasUserSeedsManagement = false,
 ): ClassifyResult {
   const text = node.text;
@@ -304,11 +347,53 @@ function classifyLetDeclaration(
   // ── CpiContext::new(...) — Extract CPI details, don't emit ──
   // MUST check this BEFORE ctx.accounts, because CpiContext contains ctx.accounts references
   if (valueNode && text.includes("CpiContext::")) {
-    const cpiInfo = extractCpiContextInfo(valueNode, localVar, text);
+    const cpiInfo = extractCpiContextInfo(valueNode, localVar, text, cpiAccountsByVar);
     if (cpiInfo) {
       return {
         stmt: { kind: "pass_through", code: "", needsReview: false }, // placeholder, won't be emitted
         _cpiContext: cpiInfo,
+      };
+    }
+  }
+
+  // ── CPI accounts struct binding (H2-followup, #35) ──
+  // Detect `let X = Transfer { from: …, to: …, authority: … };` and capture
+  // its fields keyed by varName. A subsequent `let cpi_ctx =
+  // CpiContext::new(prog, X);` (or call-site `transfer(cpi_ctx, …)`) can
+  // resolve through the chain to recover the underlying account names +
+  // signer_seeds (the latter via cpi-detector's CpiContextLookup).
+  if (valueNode && localVar) {
+    const m = valueNode.text.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*\{/);
+    if (m?.[1] && SPL_CPI_STRUCT_NAMES.has(m[1])) {
+      // Pull the obvious fields by name; missing ones stay undefined and
+      // the rescue at the call site falls back to the existing placeholder.
+      const fieldText = valueNode.text;
+      const grab = (field: string) => {
+        const fm = fieldText.match(new RegExp(`\\b${field}\\s*:\\s*([^,}]+)`));
+        if (!fm?.[1]) return undefined;
+        // Strip ctx.accounts. prefix + .to_account_info() / .clone() suffixes
+        // so the IR carries the bare account name like inline-extract does.
+        return fm[1].trim()
+          .replace(/^ctx\s*\.\s*accounts\s*\.\s*/, "")
+          .replace(/\.\s*to_account_info\s*\(\s*\)\s*$/, "")
+          .replace(/\.\s*clone\s*\(\s*\)\s*$/, "")
+          .trim();
+      };
+      const binding: CpiAccountsBinding = {
+        struct: m[1],
+        varName: localVar,
+        from: grab("from"),
+        to: grab("to"),
+        authority: grab("authority"),
+        mint: grab("mint"),
+      };
+      // Emit the let statement as pass_through (the consolidator may
+      // later collapse it with the CPI call, but if not, the source
+      // line stays in the body and the chain-resolution side-channel
+      // hands the rescue data to the CPI detector.
+      return {
+        stmt: { kind: "pass_through", code: text, needsReview: false },
+        _cpiAccountsBinding: binding,
       };
     }
   }
@@ -830,6 +915,7 @@ function extractCpiContextInfo(
   valueNode: SyntaxNode,
   varName: string,
   fullText: string,
+  cpiAccountsByVar?: Map<string, CpiAccountsBinding>,
 ): CpiContextInfo | null {
   // Check for CpiContext::new_with_signer → has signer_seeds
   const hasSigner = fullText.includes("new_with_signer");
@@ -839,6 +925,40 @@ function extractCpiContextInfo(
   const fromMatch = fullText.match(/from:\s*ctx\.accounts\.(\w+)/);
   const toMatch = fullText.match(/to:\s*ctx\.accounts\.(\w+)/);
   const authorityMatch = fullText.match(/authority:\s*ctx\.accounts\.(\w+)/);
+
+  // H2-followup (#35): inline-struct match failed. Try the chain rescue:
+  // CpiContext::new(prog, X) where X was bound earlier as
+  // `let X = Transfer{...}`. cpiAccountsByVar carries those bindings.
+  if ((!fromMatch?.[1] || !toMatch?.[1]) && cpiAccountsByVar) {
+    // Pull the second arg of CpiContext::new(_, X) — the one after the
+    // first comma at depth 0 within the parentheses.
+    const cpiNewMatch = fullText.match(/CpiContext::new(?:_with_signer)?\s*\(([\s\S]*)\)/);
+    if (cpiNewMatch?.[1]) {
+      const inner = cpiNewMatch[1];
+      let depth = 0;
+      const splits: number[] = [0];
+      for (let i = 0; i < inner.length; i++) {
+        const ch = inner[i];
+        if (ch === "(" || ch === "[" || ch === "{" || ch === "<") depth++;
+        else if (ch === ")" || ch === "]" || ch === "}" || ch === ">") depth--;
+        else if (ch === "," && depth === 0) splits.push(i + 1);
+      }
+      const accountsArgRaw = splits.length >= 2
+        ? inner.slice(splits[1]!, splits.length >= 3 ? splits[2]! - 1 : inner.length).trim()
+        : "";
+      const candidateVar = accountsArgRaw.replace(/[,\s]+$/, "").trim();
+      const tracked = cpiAccountsByVar.get(candidateVar);
+      if (tracked && tracked.from && tracked.to) {
+        return {
+          varName,
+          from: tracked.from,
+          to: tracked.to,
+          authority: tracked.authority,
+          signerSeeds: hasSigner ? "signer_seeds" : undefined,
+        };
+      }
+    }
+  }
 
   if (!fromMatch?.[1] || !toMatch?.[1]) return null;
 
