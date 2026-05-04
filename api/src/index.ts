@@ -7,6 +7,8 @@ import { demoRoute } from "./routes/demo.js";
 import { aiRoute } from "./routes/ai.js";
 import { lintRoute } from "./routes/lint.js";
 import { buildRoute } from "./routes/build.js";
+import { differentialRoute } from "./routes/differential.js";
+import { differentialAvailable } from "./build/differential-build.js";
 import { metricsDashboardHandler } from "./routes/metrics-dashboard.js";
 import { AnvilError, ErrorCode } from "./errors.js";
 import { metrics } from "./metrics.js";
@@ -280,12 +282,19 @@ const healthHandler: express.RequestHandler = async (_req, res) => {
     redis: !!process.env.REDIS_URL,
     sentry: !!process.env.SENTRY_DSN,
     toolchain: TOOLCHAIN,
+    /** Whether the workbench differential endpoint can run on this deploy.
+     *  Requires cargo-build-sbf + anchor CLI installed; computed once at
+     *  request time so a toolchain install after startup is reflected
+     *  without restart. */
+    differentialAvailable: differentialAvailable(),
     aiCache,
     endpoints: [
       "POST /parse  — Anchor source|file|project → Solana IR",
       "POST /emit   — Solana IR → target framework code (?refine=1 for AI polish)",
       "POST /lint   — portability scorecard (ready/review/blocker findings)",
       "POST /build  — cargo check on emitted Rust → structured rustc diagnostics",
+      "POST /build/differential — byte-equal verification (Anchor reference vs Anvil emit, in-browser)",
+      "GET  /build/differential/quota — caller's remaining differential quota for the day",
       "POST /ai/refine — AI-powered fix for validation issues",
       "GET  /demo      — list demo names",
       "GET  /demo/:name — pre-loaded demo IR",
@@ -446,6 +455,7 @@ app.use("/parse", parseRoute);
 app.use("/emit", emitRoute);
 app.use("/lint", lintRoute);
 app.use("/build", buildRoute);
+app.use("/build/differential", differentialRoute);
 app.use("/demo", demoRoute);
 app.use("/ai", aiRoute);
 
