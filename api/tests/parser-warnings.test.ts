@@ -117,6 +117,45 @@ describe("parser warnings — loud degradation signal", () => {
     expect(warnIssues[0]!.message).toContain("instruction 'run'");
   });
 
+  test("warnings carry source loc; ValidationIssue exposes line", async () => {
+    const src = shellAround(`
+    use anchor_lang::solana_program::program::invoke;
+    pub fn run(ctx: Context<Demo>) -> Result<()> {
+        let ix = anchor_lang::solana_program::system_instruction::transfer(
+            ctx.accounts.vault.key,
+            ctx.accounts.recipient.key,
+            100,
+        );
+        invoke(&ix, &[])?;
+        Ok(())
+    }
+`);
+    const r = await parseAnchor(src);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const w = r.ir.warnings.find((w) => w.code === "cpi_custom_emitted")!;
+    expect(w.loc).toBeDefined();
+    expect(w.loc!.line).toBeGreaterThan(0);
+    expect(w.loc!.column).toBeGreaterThanOrEqual(0);
+
+    // AccountRef locs land on the underlying field declarations.
+    const acc = r.ir.instructions[0]!.accounts[0]!;
+    expect(acc.loc).toBeDefined();
+    expect(acc.loc!.line).toBeGreaterThan(0);
+
+    // bodyLocs is parallel to body[].
+    const instr = r.ir.instructions[0]!;
+    expect(instr.bodyLocs.length).toBe(instr.body.length);
+    expect(instr.bodyLocs.some((l) => l !== undefined)).toBe(true);
+
+    // Validator surfaces the line so users see "lib.rs:42" not just "lib.rs".
+    const out = emitPinocchioFull(r.ir);
+    const issues = validateEmitterOutput(r.ir, out);
+    const warnIssue = issues.find((i) => i.message.includes("[parser:cpi_custom_emitted]"));
+    expect(warnIssue).toBeDefined();
+    expect(warnIssue!.line).toBeGreaterThan(0);
+  });
+
   test("clean source emits zero parser warnings", async () => {
     const src = shellAround(`
     pub fn run(_ctx: Context<Demo>) -> Result<()> {

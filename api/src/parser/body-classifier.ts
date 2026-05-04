@@ -27,7 +27,16 @@ import {
   containsAnchorPatterns,
 } from "./ast-helpers.js";
 import { detectCpi } from "./cpi-detector.js";
-import type { WarningCollector } from "./warning-collector.js";
+import { type WarningCollector, locFromNode } from "./warning-collector.js";
+import type { SourceLoc } from "../ir/schema.js";
+
+export interface ClassifiedBody {
+  /** Classified body statements, in source order. */
+  statements: BodyStatement[];
+  /** Source locations parallel to `statements`. May be undefined for
+   *  synthesised statements (e.g. spliced seed re-inserts). */
+  locs: Array<SourceLoc | undefined>;
+}
 
 /**
  * Classify all statements in a function body block.
@@ -35,8 +44,14 @@ import type { WarningCollector } from "./warning-collector.js";
  * @param bodyNode — the `block` node of the function body (including { })
  * @returns array of classified BodyStatements
  */
-export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector): BodyStatement[] {
+export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector): ClassifiedBody {
   const statements: BodyStatement[] = [];
+  const locs: Array<SourceLoc | undefined> = [];
+  /** Push a (statement, loc) pair, keeping the parallel arrays in sync. */
+  const push = (stmt: BodyStatement, loc: SourceLoc | undefined) => {
+    statements.push(stmt);
+    locs.push(loc);
+  };
 
   // If the body already has a user-defined `let signers_seeds = [&seeds[..]]`
   // (anchor-escrow / vault-manager impl-method shape), the user is managing
@@ -89,6 +104,7 @@ export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector)
     if (child.type === "line_comment" || child.type === "block_comment") continue;
 
     const classified = classifyStatement(child, pendingSeeds, cpiContexts, hasUserSeedsManagement, collector);
+    const childLoc = locFromNode(child);
 
     // Track seeds for PDA signer seeds grouping
     if (classified._seedsData) {
@@ -117,17 +133,20 @@ export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector)
         || classified.stmt.kind === "cpi_spl_close_account")
       && classified.stmt.signerSeeds
     ) {
-      statements.push({
+      // pda_signer_seeds is synthesised from the pendingSeeds let — its loc
+      // is best understood as the upcoming CPI site, since that's where it
+      // takes effect.
+      push({
         kind: "pda_signer_seeds",
         account: detectSeedAccount(pendingSeeds.seeds),
         seeds: pendingSeeds.seeds,
         bumpField: pendingSeeds.bumpField,
         rawCode: pendingSeeds.rawCode,
-      });
+      }, childLoc);
       pendingSeeds = null;
     }
 
-    statements.push(classified.stmt);
+    push(classified.stmt, childLoc);
   }
 
   // If `pendingSeeds` survived the whole body without being consumed by a
@@ -146,9 +165,12 @@ export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector)
       code: pendingSeeds.rawCode,
       needsReview: false,
     });
+    // Splice loc as undefined — the synthesised re-insert has no single
+    // source line; the user will see it as "unknown" in the validator.
+    locs.splice(pendingSeedsIndex, 0, undefined);
   }
 
-  return statements;
+  return { statements, locs };
 }
 
 interface CpiContextInfo {
@@ -198,6 +220,7 @@ function classifyStatement(
           code: "anchor_pattern_in_passthrough",
           message: "Pass-through control-flow statement contains an Anchor-specific pattern (ctx.accounts / require! / emit! / CpiContext / anchor_spl). Won't transform on Pinocchio/Quasar; manual port required.",
           snippet: text,
+          loc: locFromNode(node),
         });
       }
       return {

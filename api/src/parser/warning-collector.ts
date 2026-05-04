@@ -12,7 +12,8 @@
  * Truncation: snippets are capped at 280 chars (one tweet) so a giant
  * pass_through block doesn't blow up the IR or the validator output.
  */
-import type { ParserWarning, ParserWarningCode } from "../ir/schema.js";
+import type { ParserWarning, ParserWarningCode, SourceLoc } from "../ir/schema.js";
+import type { SyntaxNode } from "./ts-init.js";
 
 const SNIPPET_MAX = 280;
 
@@ -23,11 +24,30 @@ export interface WarningCollector {
     message: string;
     instruction?: string;
     snippet?: string;
+    loc?: SourceLoc;
   }): void;
   /** Drain the collected warnings; collector remains usable. */
   drain(): ParserWarning[];
   /** Return a child collector that pre-fills `instruction` on every add. */
   forInstruction(instruction: string): WarningCollector;
+}
+
+/**
+ * Convert a tree-sitter node's startPosition/endPosition into a SourceLoc.
+ * Tree-sitter rows are 0-indexed; we convert to 1-indexed lines (the
+ * convention rustc + every editor uses) so the validator's per-issue
+ * line field is human-readable without further rewriting.
+ */
+export function locFromNode(node: SyntaxNode | null | undefined): SourceLoc | undefined {
+  if (!node) return undefined;
+  const start = node.startPosition;
+  const end = node.endPosition;
+  return {
+    line: start.row + 1,
+    column: start.column,
+    endLine: end.row + 1,
+    endColumn: end.column,
+  };
 }
 
 export function createWarningCollector(): WarningCollector {
@@ -48,6 +68,7 @@ export function createWarningCollector(): WarningCollector {
         message: input.message,
         ...(input.instruction ? { instruction: input.instruction } : {}),
         ...(input.snippet ? { snippet: snippetClean(input.snippet) ?? "" } : {}),
+        ...(input.loc ? { loc: input.loc } : {}),
       });
     },
     drain() {

@@ -29,7 +29,13 @@
             {
               "kind": "bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 77,
+            "column": 4,
+            "endLine": 77,
+            "endColumn": 47
+          }
         },
         {
           "name": "vault",
@@ -54,7 +60,13 @@
             {
               "kind": "bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 84,
+            "column": 4,
+            "endLine": 84,
+            "endColumn": 38
+          }
         },
         {
           "name": "authority",
@@ -69,7 +81,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 86,
+            "column": 4,
+            "endLine": 86,
+            "endColumn": 32
+          }
         },
         {
           "name": "system_program",
@@ -80,7 +98,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 87,
+            "column": 4,
+            "endLine": 87,
+            "endColumn": 46
+          }
         }
       ],
       "args": [],
@@ -122,6 +146,44 @@
           "needsReview": false
         }
       ],
+      "bodyLocs": [
+        {
+          "line": 10,
+          "column": 8,
+          "endLine": 10,
+          "endColumn": 56
+        },
+        {
+          "line": 11,
+          "column": 8,
+          "endLine": 11,
+          "endColumn": 61
+        },
+        {
+          "line": 12,
+          "column": 8,
+          "endLine": 12,
+          "endColumn": 40
+        },
+        {
+          "line": 13,
+          "column": 8,
+          "endLine": 13,
+          "endColumn": 49
+        },
+        {
+          "line": 14,
+          "column": 8,
+          "endLine": 14,
+          "endColumn": 49
+        },
+        {
+          "line": 15,
+          "column": 8,
+          "endLine": 15,
+          "endColumn": 14
+        }
+      ],
       "rawBody": "{\n        let vault_state = &mut ctx.accounts.vault_state;\n        vault_state.authority = ctx.accounts.authority.key();\n        vault_state.total_deposited = 0;\n        vault_state.bump = ctx.bumps.vault_state;\n        vault_state.vault_bump = ctx.bumps.vault;\n        Ok(())\n    }"
     },
     {
@@ -155,7 +217,13 @@
               "kind": "bump",
               "value": "vault_state.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 98,
+            "column": 4,
+            "endLine": 98,
+            "endColumn": 47
+          }
         },
         {
           "name": "vault",
@@ -181,7 +249,13 @@
               "kind": "bump",
               "value": "vault_state.vault_bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 105,
+            "column": 4,
+            "endLine": 105,
+            "endColumn": 38
+          }
         },
         {
           "name": "authority",
@@ -196,7 +270,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 107,
+            "column": 4,
+            "endLine": 107,
+            "endColumn": 32
+          }
         },
         {
           "name": "system_program",
@@ -207,7 +287,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 108,
+            "column": 4,
+            "endLine": 108,
+            "endColumn": 46
+          }
         }
       ],
       "args": [
@@ -247,6 +333,38 @@
           "needsReview": false
         }
       ],
+      "bodyLocs": [
+        {
+          "line": 19,
+          "column": 8,
+          "endLine": 19,
+          "endColumn": 56
+        },
+        {
+          "line": 20,
+          "column": 8,
+          "endLine": 20,
+          "endColumn": 56
+        },
+        {
+          "line": 29,
+          "column": 8,
+          "endLine": 29,
+          "endColumn": 64
+        },
+        {
+          "line": 31,
+          "column": 8,
+          "endLine": 32,
+          "endColumn": 42
+        },
+        {
+          "line": 33,
+          "column": 8,
+          "endLine": 33,
+          "endColumn": 14
+        }
+      ],
       "rawBody": "{\n        require!(amount > 0, VaultError::InvalidAmount);\n        let vault_state = &mut ctx.accounts.vault_state;\n\n        let cpi_ctx = CpiContext::new(\n            ctx.accounts.system_program.to_account_info(),\n            anchor_lang::system_program::Transfer {\n                from: ctx.accounts.authority.to_account_info(),\n                to: ctx.accounts.vault.to_account_info(),\n            },\n        );\n        anchor_lang::system_program::transfer(cpi_ctx, amount)?;\n\n        vault_state.total_deposited = vault_state.total_deposited.checked_add(amount)\n            .ok_or(VaultError::Overflow)?;\n        Ok(())\n    }"
     },
     {
@@ -280,7 +398,13 @@
               "kind": "bump",
               "value": "vault_state.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 98,
+            "column": 4,
+            "endLine": 98,
+            "endColumn": 47
+          }
         },
         {
           "name": "vault",
@@ -306,7 +430,13 @@
               "kind": "bump",
               "value": "vault_state.vault_bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 105,
+            "column": 4,
+            "endLine": 105,
+            "endColumn": 38
+          }
         },
         {
           "name": "authority",
@@ -321,7 +451,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 107,
+            "column": 4,
+            "endLine": 107,
+            "endColumn": 32
+          }
         },
         {
           "name": "system_program",
@@ -332,7 +468,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 108,
+            "column": 4,
+            "endLine": 108,
+            "endColumn": 46
+          }
         }
       ],
       "args": [
@@ -393,6 +535,56 @@
           "kind": "pass_through",
           "code": "Ok(())",
           "needsReview": false
+        }
+      ],
+      "bodyLocs": [
+        {
+          "line": 37,
+          "column": 8,
+          "endLine": 37,
+          "endColumn": 56
+        },
+        {
+          "line": 38,
+          "column": 8,
+          "endLine": 38,
+          "endColumn": 52
+        },
+        {
+          "line": 39,
+          "column": 8,
+          "endLine": 42,
+          "endColumn": 10
+        },
+        {
+          "line": 49,
+          "column": 8,
+          "endLine": 49,
+          "endColumn": 41
+        },
+        {
+          "line": 59,
+          "column": 8,
+          "endLine": 59,
+          "endColumn": 64
+        },
+        {
+          "line": 61,
+          "column": 8,
+          "endLine": 61,
+          "endColumn": 56
+        },
+        {
+          "line": 62,
+          "column": 8,
+          "endLine": 63,
+          "endColumn": 43
+        },
+        {
+          "line": 64,
+          "column": 8,
+          "endLine": 64,
+          "endColumn": 14
         }
       ],
       "rawBody": "{\n        require!(amount > 0, VaultError::InvalidAmount);\n        let vault_state = &ctx.accounts.vault_state;\n        require!(\n            ctx.accounts.vault.lamports() >= amount,\n            VaultError::InsufficientFunds\n        );\n\n        let seeds = &[\n            b\"vault\",\n            vault_state.authority.as_ref(),\n            &[vault_state.vault_bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        let cpi_ctx = CpiContext::new_with_signer(\n            ctx.accounts.system_program.to_account_info(),\n            anchor_lang::system_program::Transfer {\n                from: ctx.accounts.vault.to_account_info(),\n                to: ctx.accounts.authority.to_account_info(),\n            },\n            signer_seeds,\n        );\n        anchor_lang::system_program::transfer(cpi_ctx, amount)?;\n\n        let vault_state = &mut ctx.accounts.vault_state;\n        vault_state.total_deposited = vault_state.total_deposited.checked_sub(amount)\n            .ok_or(VaultError::Underflow)?;\n        Ok(())\n    }"

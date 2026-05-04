@@ -13,6 +13,7 @@ import type { SyntaxNode } from "./ts-init.js";
 import { extractAccountAttrInner } from "./ast-helpers.js";
 import { parseConstraints, parseInitMetadata } from "./constraint-parser.js";
 import { normalizeSolanaType } from "./utils.js";
+import { locFromNode } from "./warning-collector.js";
 
 // ─── Accounts context struct parsing ────────────────────────────────────────
 
@@ -145,6 +146,7 @@ function parseAccountField(
     initPayer,
     initSpace,
     constraints,
+    loc: locFromNode(fieldNode),
   };
 }
 

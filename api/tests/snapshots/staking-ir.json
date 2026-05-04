@@ -29,7 +29,13 @@
             {
               "kind": "bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 250,
+            "column": 4,
+            "endLine": 250,
+            "endColumn": 41
+          }
         },
         {
           "name": "reward_vault",
@@ -63,7 +69,13 @@
             {
               "kind": "bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 260,
+            "column": 4,
+            "endLine": 260,
+            "endColumn": 50
+          }
         },
         {
           "name": "stake_mint",
@@ -74,7 +86,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 262,
+            "column": 4,
+            "endLine": 262,
+            "endColumn": 40
+          }
         },
         {
           "name": "reward_mint",
@@ -85,7 +103,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 263,
+            "column": 4,
+            "endLine": 263,
+            "endColumn": 41
+          }
         },
         {
           "name": "admin",
@@ -100,7 +124,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 266,
+            "column": 4,
+            "endLine": 266,
+            "endColumn": 28
+          }
         },
         {
           "name": "token_program",
@@ -111,7 +141,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 268,
+            "column": 4,
+            "endLine": 268,
+            "endColumn": 44
+          }
         },
         {
           "name": "system_program",
@@ -122,7 +158,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 269,
+            "column": 4,
+            "endLine": 269,
+            "endColumn": 46
+          }
         }
       ],
       "args": [
@@ -228,6 +270,98 @@
           "needsReview": false
         }
       ],
+      "bodyLocs": [
+        {
+          "line": 17,
+          "column": 8,
+          "endLine": 17,
+          "endColumn": 67
+        },
+        {
+          "line": 18,
+          "column": 8,
+          "endLine": 18,
+          "endColumn": 71
+        },
+        {
+          "line": 19,
+          "column": 8,
+          "endLine": 19,
+          "endColumn": 63
+        },
+        {
+          "line": 21,
+          "column": 8,
+          "endLine": 21,
+          "endColumn": 42
+        },
+        {
+          "line": 22,
+          "column": 8,
+          "endLine": 22,
+          "endColumn": 46
+        },
+        {
+          "line": 23,
+          "column": 8,
+          "endLine": 23,
+          "endColumn": 56
+        },
+        {
+          "line": 24,
+          "column": 8,
+          "endLine": 24,
+          "endColumn": 58
+        },
+        {
+          "line": 25,
+          "column": 8,
+          "endLine": 25,
+          "endColumn": 39
+        },
+        {
+          "line": 26,
+          "column": 8,
+          "endLine": 26,
+          "endColumn": 43
+        },
+        {
+          "line": 27,
+          "column": 8,
+          "endLine": 27,
+          "endColumn": 35
+        },
+        {
+          "line": 28,
+          "column": 8,
+          "endLine": 28,
+          "endColumn": 30
+        },
+        {
+          "line": 29,
+          "column": 8,
+          "endLine": 29,
+          "endColumn": 35
+        },
+        {
+          "line": 30,
+          "column": 8,
+          "endLine": 30,
+          "endColumn": 56
+        },
+        {
+          "line": 31,
+          "column": 8,
+          "endLine": 31,
+          "endColumn": 31
+        },
+        {
+          "line": 33,
+          "column": 8,
+          "endLine": 33,
+          "endColumn": 14
+        }
+      ],
       "rawBody": "{\n        require!(reward_rate > 0, StakingError::InvalidRewardRate);\n        require!(lock_duration > 0, StakingError::InvalidLockDuration);\n        require!(max_stake > 0, StakingError::InvalidMaxStake);\n\n        let pool = &mut ctx.accounts.pool;\n        pool.admin = ctx.accounts.admin.key();\n        pool.stake_mint = ctx.accounts.stake_mint.key();\n        pool.reward_mint = ctx.accounts.reward_mint.key();\n        pool.reward_rate = reward_rate;\n        pool.lock_duration = lock_duration;\n        pool.max_stake = max_stake;\n        pool.total_staked = 0;\n        pool.bump = ctx.bumps.pool;\n        pool.reward_vault_bump = ctx.bumps.reward_vault;\n        pool.is_paused = false;\n\n        Ok(())\n    }"
     },
     {
@@ -246,7 +380,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 275,
+            "column": 4,
+            "endLine": 275,
+            "endColumn": 27
+          }
         },
         {
           "name": "user_stake",
@@ -274,7 +414,13 @@
             {
               "kind": "bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 284,
+            "column": 4,
+            "endLine": 284,
+            "endColumn": 45
+          }
         },
         {
           "name": "pool",
@@ -300,7 +446,13 @@
               "kind": "bump",
               "value": "pool.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 291,
+            "column": 4,
+            "endLine": 291,
+            "endColumn": 41
+          }
         },
         {
           "name": "user_stake_ata",
@@ -323,7 +475,13 @@
               "kind": "associated_token::authority",
               "value": "user"
             }
-          ]
+          ],
+          "loc": {
+            "line": 298,
+            "column": 4,
+            "endLine": 298,
+            "endColumn": 52
+          }
         },
         {
           "name": "stake_vault",
@@ -346,7 +504,13 @@
               "kind": "token::authority",
               "value": "pool"
             }
-          ]
+          ],
+          "loc": {
+            "line": 305,
+            "column": 4,
+            "endLine": 305,
+            "endColumn": 49
+          }
         },
         {
           "name": "token_program",
@@ -357,7 +521,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 307,
+            "column": 4,
+            "endLine": 307,
+            "endColumn": 44
+          }
         },
         {
           "name": "system_program",
@@ -368,7 +538,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 308,
+            "column": 4,
+            "endLine": 308,
+            "endColumn": 46
+          }
         }
       ],
       "args": [
@@ -485,6 +661,116 @@
           "needsReview": false
         }
       ],
+      "bodyLocs": [
+        {
+          "line": 37,
+          "column": 8,
+          "endLine": 37,
+          "endColumn": 73
+        },
+        {
+          "line": 38,
+          "column": 8,
+          "endLine": 38,
+          "endColumn": 58
+        },
+        {
+          "line": 40,
+          "column": 8,
+          "endLine": 40,
+          "endColumn": 38
+        },
+        {
+          "line": 42,
+          "column": 8,
+          "endLine": 45,
+          "endColumn": 10
+        },
+        {
+          "line": 47,
+          "column": 8,
+          "endLine": 47,
+          "endColumn": 34
+        },
+        {
+          "line": 48,
+          "column": 8,
+          "endLine": 48,
+          "endColumn": 39
+        },
+        {
+          "line": 50,
+          "column": 8,
+          "endLine": 50,
+          "endColumn": 54
+        },
+        {
+          "line": 51,
+          "column": 8,
+          "endLine": 51,
+          "endColumn": 51
+        },
+        {
+          "line": 52,
+          "column": 8,
+          "endLine": 52,
+          "endColumn": 50
+        },
+        {
+          "line": 53,
+          "column": 8,
+          "endLine": 53,
+          "endColumn": 35
+        },
+        {
+          "line": 54,
+          "column": 8,
+          "endLine": 54,
+          "endColumn": 35
+        },
+        {
+          "line": 55,
+          "column": 8,
+          "endLine": 55,
+          "endColumn": 36
+        },
+        {
+          "line": 56,
+          "column": 8,
+          "endLine": 56,
+          "endColumn": 47
+        },
+        {
+          "line": 58,
+          "column": 8,
+          "endLine": 58,
+          "endColumn": 42
+        },
+        {
+          "line": 59,
+          "column": 8,
+          "endLine": 61,
+          "endColumn": 44
+        },
+        {
+          "line": 63,
+          "column": 8,
+          "endLine": 73,
+          "endColumn": 11
+        },
+        {
+          "line": 75,
+          "column": 8,
+          "endLine": 79,
+          "endColumn": 11
+        },
+        {
+          "line": 81,
+          "column": 8,
+          "endLine": 81,
+          "endColumn": 14
+        }
+      ],
       "rawBody": "{\n        require!(!ctx.accounts.pool.is_paused, StakingError::PoolPaused);\n        require!(amount > 0, StakingError::InvalidAmount);\n\n        let pool = &ctx.accounts.pool;\n\n        require!(\n            ctx.accounts.pool.total_staked.checked_add(amount).ok_or(StakingError::Overflow)? <= pool.max_stake,\n            StakingError::MaxStakeExceeded\n        );\n\n        let clock = Clock::get()?;\n        let now = clock.unix_timestamp;\n\n        let user_stake = &mut ctx.accounts.user_stake;\n        user_stake.owner = ctx.accounts.user.key();\n        user_stake.pool = ctx.accounts.pool.key();\n        user_stake.amount = amount;\n        user_stake.staked_at = now;\n        user_stake.last_claim = now;\n        user_stake.bump = ctx.bumps.user_stake;\n\n        let pool = &mut ctx.accounts.pool;\n        pool.total_staked = pool.total_staked\n            .checked_add(amount)\n            .ok_or(StakingError::Overflow)?;\n\n        token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.user_stake_ata.to_account_info(),\n                    to: ctx.accounts.stake_vault.to_account_info(),\n                    authority: ctx.accounts.user.to_account_info(),\n                },\n            ),\n            amount,\n        )?;\n\n        emit!(StakeEvent {\n            user: ctx.accounts.user.key(),\n            amount,\n            timestamp: now,\n        });\n\n        Ok(())\n    }"
     },
     {
@@ -499,7 +785,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 313,
+            "column": 4,
+            "endLine": 313,
+            "endColumn": 27
+          }
         },
         {
           "name": "user_stake",
@@ -530,7 +822,13 @@
               "kind": "constraint",
               "value": "user_stake.owner == user.key()"
             }
-          ]
+          ],
+          "loc": {
+            "line": 321,
+            "column": 4,
+            "endLine": 321,
+            "endColumn": 45
+          }
         },
         {
           "name": "pool",
@@ -556,7 +854,13 @@
               "kind": "bump",
               "value": "pool.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 328,
+            "column": 4,
+            "endLine": 328,
+            "endColumn": 41
+          }
         },
         {
           "name": "reward_mint",
@@ -571,7 +875,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 331,
+            "column": 4,
+            "endLine": 331,
+            "endColumn": 41
+          }
         },
         {
           "name": "user_reward_ata",
@@ -594,7 +904,13 @@
               "kind": "associated_token::authority",
               "value": "user"
             }
-          ]
+          ],
+          "loc": {
+            "line": 338,
+            "column": 4,
+            "endLine": 338,
+            "endColumn": 53
+          }
         },
         {
           "name": "token_program",
@@ -605,7 +921,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 340,
+            "column": 4,
+            "endLine": 340,
+            "endColumn": 44
+          }
         }
       ],
       "args": [],
@@ -699,6 +1021,92 @@
           "needsReview": false
         }
       ],
+      "bodyLocs": [
+        {
+          "line": 85,
+          "column": 8,
+          "endLine": 85,
+          "endColumn": 73
+        },
+        {
+          "line": 87,
+          "column": 8,
+          "endLine": 87,
+          "endColumn": 34
+        },
+        {
+          "line": 88,
+          "column": 8,
+          "endLine": 88,
+          "endColumn": 39
+        },
+        {
+          "line": 90,
+          "column": 8,
+          "endLine": 90,
+          "endColumn": 50
+        },
+        {
+          "line": 91,
+          "column": 8,
+          "endLine": 91,
+          "endColumn": 38
+        },
+        {
+          "line": 93,
+          "column": 8,
+          "endLine": 95,
+          "endColumn": 52
+        },
+        {
+          "line": 97,
+          "column": 8,
+          "endLine": 105,
+          "endColumn": 58
+        },
+        {
+          "line": 107,
+          "column": 8,
+          "endLine": 107,
+          "endColumn": 55
+        },
+        {
+          "line": 114,
+          "column": 8,
+          "endLine": 114,
+          "endColumn": 46
+        },
+        {
+          "line": 116,
+          "column": 8,
+          "endLine": 127,
+          "endColumn": 11
+        },
+        {
+          "line": 129,
+          "column": 8,
+          "endLine": 129,
+          "endColumn": 54
+        },
+        {
+          "line": 130,
+          "column": 8,
+          "endLine": 130,
+          "endColumn": 36
+        },
+        {
+          "line": 132,
+          "column": 8,
+          "endLine": 136,
+          "endColumn": 11
+        },
+        {
+          "line": 138,
+          "column": 8,
+          "endLine": 138,
+          "endColumn": 14
+        }
+      ],
       "rawBody": "{\n        require!(!ctx.accounts.pool.is_paused, StakingError::PoolPaused);\n\n        let clock = Clock::get()?;\n        let now = clock.unix_timestamp;\n\n        let user_stake = &ctx.accounts.user_stake;\n        let pool = &ctx.accounts.pool;\n\n        let elapsed = now\n            .checked_sub(user_stake.last_claim)\n            .ok_or(StakingError::Underflow)? as u64;\n\n        let rewards: u64 = (user_stake.amount as u128)\n            .checked_mul(elapsed as u128)\n            .ok_or(StakingError::Overflow)?\n            .checked_mul(pool.reward_rate as u128)\n            .ok_or(StakingError::Overflow)?\n            .checked_div(1_000_000)\n            .ok_or(StakingError::Overflow)?\n            .try_into()\n            .map_err(|_| error!(StakingError::Overflow))?;\n\n        require!(rewards > 0, StakingError::NoRewards);\n\n        let pool_seeds = &[\n            b\"pool\",\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\n        let signer_seeds = &[&pool_seeds[..]];\n\n        token::mint_to(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                MintTo {\n                    mint: ctx.accounts.reward_mint.to_account_info(),\n                    to: ctx.accounts.user_reward_ata.to_account_info(),\n                    authority: ctx.accounts.pool.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            rewards,\n        )?;\n\n        let user_stake = &mut ctx.accounts.user_stake;\n        user_stake.last_claim = now;\n\n        emit!(RewardEvent {\n            user: ctx.accounts.user.key(),\n            rewards,\n            timestamp: now,\n        });\n\n        Ok(())\n    }"
     },
     {
@@ -717,7 +1125,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 346,
+            "column": 4,
+            "endLine": 346,
+            "endColumn": 27
+          }
         },
         {
           "name": "user_stake",
@@ -752,7 +1166,13 @@
               "kind": "close",
               "value": "user"
             }
-          ]
+          ],
+          "loc": {
+            "line": 355,
+            "column": 4,
+            "endLine": 355,
+            "endColumn": 45
+          }
         },
         {
           "name": "pool",
@@ -778,7 +1198,13 @@
               "kind": "bump",
               "value": "pool.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 362,
+            "column": 4,
+            "endLine": 362,
+            "endColumn": 41
+          }
         },
         {
           "name": "reward_mint",
@@ -793,7 +1219,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 365,
+            "column": 4,
+            "endLine": 365,
+            "endColumn": 41
+          }
         },
         {
           "name": "user_stake_ata",
@@ -816,7 +1248,13 @@
               "kind": "associated_token::authority",
               "value": "user"
             }
-          ]
+          ],
+          "loc": {
+            "line": 372,
+            "column": 4,
+            "endLine": 372,
+            "endColumn": 52
+          }
         },
         {
           "name": "stake_vault",
@@ -839,7 +1277,13 @@
               "kind": "token::authority",
               "value": "pool"
             }
-          ]
+          ],
+          "loc": {
+            "line": 379,
+            "column": 4,
+            "endLine": 379,
+            "endColumn": 49
+          }
         },
         {
           "name": "user_reward_ata",
@@ -862,7 +1306,13 @@
               "kind": "associated_token::authority",
               "value": "user"
             }
-          ]
+          ],
+          "loc": {
+            "line": 386,
+            "column": 4,
+            "endLine": 386,
+            "endColumn": 53
+          }
         },
         {
           "name": "token_program",
@@ -873,7 +1323,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 388,
+            "column": 4,
+            "endLine": 388,
+            "endColumn": 44
+          }
         },
         {
           "name": "system_program",
@@ -884,7 +1340,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 389,
+            "column": 4,
+            "endLine": 389,
+            "endColumn": 46
+          }
         }
       ],
       "args": [],
@@ -989,6 +1451,104 @@
           "needsReview": false
         }
       ],
+      "bodyLocs": [
+        {
+          "line": 142,
+          "column": 8,
+          "endLine": 142,
+          "endColumn": 73
+        },
+        {
+          "line": 144,
+          "column": 8,
+          "endLine": 144,
+          "endColumn": 34
+        },
+        {
+          "line": 145,
+          "column": 8,
+          "endLine": 145,
+          "endColumn": 39
+        },
+        {
+          "line": 147,
+          "column": 8,
+          "endLine": 147,
+          "endColumn": 50
+        },
+        {
+          "line": 148,
+          "column": 8,
+          "endLine": 148,
+          "endColumn": 38
+        },
+        {
+          "line": 150,
+          "column": 8,
+          "endLine": 152,
+          "endColumn": 44
+        },
+        {
+          "line": 154,
+          "column": 8,
+          "endLine": 154,
+          "endColumn": 64
+        },
+        {
+          "line": 156,
+          "column": 8,
+          "endLine": 158,
+          "endColumn": 52
+        },
+        {
+          "line": 160,
+          "column": 8,
+          "endLine": 168,
+          "endColumn": 58
+        },
+        {
+          "line": 175,
+          "column": 8,
+          "endLine": 175,
+          "endColumn": 47
+        },
+        {
+          "line": 178,
+          "column": 8,
+          "endLine": 189,
+          "endColumn": 11
+        },
+        {
+          "line": 192,
+          "column": 8,
+          "endLine": 205,
+          "endColumn": 9
+        },
+        {
+          "line": 207,
+          "column": 8,
+          "endLine": 207,
+          "endColumn": 42
+        },
+        {
+          "line": 208,
+          "column": 8,
+          "endLine": 210,
+          "endColumn": 45
+        },
+        {
+          "line": 212,
+          "column": 8,
+          "endLine": 217,
+          "endColumn": 11
+        },
+        {
+          "line": 219,
+          "column": 8,
+          "endLine": 219,
+          "endColumn": 14
+        }
+      ],
       "rawBody": "{\n        require!(!ctx.accounts.pool.is_paused, StakingError::PoolPaused);\n\n        let clock = Clock::get()?;\n        let now = clock.unix_timestamp;\n\n        let user_stake = &ctx.accounts.user_stake;\n        let pool = &ctx.accounts.pool;\n\n        let unlock_time = user_stake.staked_at\n            .checked_add(pool.lock_duration)\n            .ok_or(StakingError::Overflow)?;\n\n        require!(now >= unlock_time, StakingError::StillLocked);\n\n        let elapsed = now\n            .checked_sub(user_stake.last_claim)\n            .ok_or(StakingError::Underflow)? as u64;\n\n        let pending_rewards: u64 = (user_stake.amount as u128)\n            .checked_mul(elapsed as u128)\n            .ok_or(StakingError::Overflow)?\n            .checked_mul(pool.reward_rate as u128)\n            .ok_or(StakingError::Overflow)?\n            .checked_div(1_000_000)\n            .ok_or(StakingError::Overflow)?\n            .try_into()\n            .map_err(|_| error!(StakingError::Overflow))?;\n\n        let stake_seeds = &[\n            b\"pool\",\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\n        let signer_seeds = &[&stake_seeds[..]];\n\n        // Transfer staked tokens back\n        token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                Transfer {\n                    from: ctx.accounts.stake_vault.to_account_info(),\n                    to: ctx.accounts.user_stake_ata.to_account_info(),\n                    authority: ctx.accounts.pool.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            user_stake.amount,\n        )?;\n\n        // Mint pending rewards if any\n        if pending_rewards > 0 {\n            token::mint_to(\n                CpiContext::new_with_signer(\n                    ctx.accounts.token_program.to_account_info(),\n                    MintTo {\n                        mint: ctx.accounts.reward_mint.to_account_info(),\n                        to: ctx.accounts.user_reward_ata.to_account_info(),\n                        authority: ctx.accounts.pool.to_account_info(),\n                    },\n                    signer_seeds,\n                ),\n                pending_rewards,\n            )?;\n        }\n\n        let pool = &mut ctx.accounts.pool;\n        pool.total_staked = pool.total_staked\n            .checked_sub(user_stake.amount)\n            .ok_or(StakingError::Underflow)?;\n\n        emit!(UnstakeEvent {\n            user: ctx.accounts.user.key(),\n            amount: user_stake.amount,\n            rewards: pending_rewards,\n            timestamp: now,\n        });\n\n        Ok(())\n    }"
     },
     {
@@ -1022,7 +1582,13 @@
               "kind": "bump",
               "value": "pool.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 400,
+            "column": 4,
+            "endLine": 400,
+            "endColumn": 41
+          }
         },
         {
           "name": "admin",
@@ -1033,7 +1599,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 402,
+            "column": 4,
+            "endLine": 402,
+            "endColumn": 28
+          }
         }
       ],
       "args": [],
@@ -1048,6 +1620,20 @@
           "kind": "pass_through",
           "code": "Ok(())",
           "needsReview": false
+        }
+      ],
+      "bodyLocs": [
+        {
+          "line": 223,
+          "column": 8,
+          "endLine": 223,
+          "endColumn": 43
+        },
+        {
+          "line": 224,
+          "column": 8,
+          "endLine": 224,
+          "endColumn": 14
         }
       ],
       "rawBody": "{\n        ctx.accounts.pool.is_paused = true;\n        Ok(())\n    }"
@@ -1083,7 +1669,13 @@
               "kind": "bump",
               "value": "pool.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 400,
+            "column": 4,
+            "endLine": 400,
+            "endColumn": 41
+          }
         },
         {
           "name": "admin",
@@ -1094,7 +1686,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 402,
+            "column": 4,
+            "endLine": 402,
+            "endColumn": 28
+          }
         }
       ],
       "args": [],
@@ -1109,6 +1707,20 @@
           "kind": "pass_through",
           "code": "Ok(())",
           "needsReview": false
+        }
+      ],
+      "bodyLocs": [
+        {
+          "line": 228,
+          "column": 8,
+          "endLine": 228,
+          "endColumn": 44
+        },
+        {
+          "line": 229,
+          "column": 8,
+          "endLine": 229,
+          "endColumn": 14
         }
       ],
       "rawBody": "{\n        ctx.accounts.pool.is_paused = false;\n        Ok(())\n    }"
@@ -1144,7 +1756,13 @@
               "kind": "bump",
               "value": "pool.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 400,
+            "column": 4,
+            "endLine": 400,
+            "endColumn": 41
+          }
         },
         {
           "name": "admin",
@@ -1155,7 +1773,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 402,
+            "column": 4,
+            "endLine": 402,
+            "endColumn": 28
+          }
         }
       ],
       "args": [
@@ -1180,6 +1804,26 @@
           "kind": "pass_through",
           "code": "Ok(())",
           "needsReview": false
+        }
+      ],
+      "bodyLocs": [
+        {
+          "line": 233,
+          "column": 8,
+          "endLine": 233,
+          "endColumn": 64
+        },
+        {
+          "line": 234,
+          "column": 8,
+          "endLine": 234,
+          "endColumn": 49
+        },
+        {
+          "line": 235,
+          "column": 8,
+          "endLine": 235,
+          "endColumn": 14
         }
       ],
       "rawBody": "{\n        require!(new_rate > 0, StakingError::InvalidRewardRate);\n        ctx.accounts.pool.reward_rate = new_rate;\n        Ok(())\n    }"

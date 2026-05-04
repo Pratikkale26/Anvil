@@ -23,7 +23,7 @@ import {
   cleanAccountRef,
   cleanAmountExpr,
 } from "./ast-helpers.js";
-import type { WarningCollector } from "./warning-collector.js";
+import { type WarningCollector, locFromNode } from "./warning-collector.js";
 
 /**
  * Add a `cpi_classification_lost` warning to the collector when a CPI was
@@ -40,6 +40,7 @@ function warnClassificationLost(
     code: "cpi_classification_lost",
     message: `CPI '${kind}' recognised but could not extract details (carried as pass_through). Manual verification required.`,
     snippet: node.text,
+    loc: locFromNode(node),
   });
 }
 
@@ -331,6 +332,7 @@ function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector):
       code: "signer_seeds_lost_variable_binding",
       message: "SPL transfer's CpiContext was variable-bound (not inline); signer_seeds on that binding are not carried into emit. PDA-signed transfer may revert at runtime. Hand-verify the signer setup.",
       snippet: callNode.text,
+      loc: locFromNode(callNode),
     });
   }
 
@@ -651,6 +653,7 @@ function extractCustomCpi(callNode: SyntaxNode, collector?: WarningCollector): B
     code: "cpi_custom_emitted",
     message: `Custom ${funcText}() CPI emitted as cpi_custom — manual review required to confirm account meta + instruction data carry over to the target framework.`,
     snippet: callNode.text,
+    loc: locFromNode(callNode),
   });
 
   return {

@@ -33,6 +33,30 @@ export const SolanaTypeSchema = z.union([
 
 export type SolanaType = z.infer<typeof SolanaTypeSchema>;
 
+// ─── Source location ────────────────────────────────────────────────────────
+//
+// 1-indexed line + 0-indexed column, mirroring how editors / rustc render
+// locations. `path` is set when the IR comes from a multi-file project parse;
+// single-source parses leave it undefined and downstream consumers fall back
+// to whatever virtual filename they assigned. `endLine` / `endColumn` are
+// the inclusive end of the source span (matches tree-sitter's endPosition);
+// optional because some derivations only have a point, not a range.
+
+export const SourceLocSchema = z.object({
+  /** Project-relative file path, when the IR came from a multi-file parse. */
+  path: z.string().optional(),
+  /** 1-indexed line number. */
+  line: z.number().int().min(1),
+  /** 0-indexed column. */
+  column: z.number().int().min(0),
+  /** Inclusive end line, when the warning covers a span. */
+  endLine: z.number().int().min(1).optional(),
+  /** End column. */
+  endColumn: z.number().int().min(0).optional(),
+});
+
+export type SourceLoc = z.infer<typeof SourceLocSchema>;
+
 // ─── Constraint ─────────────────────────────────────────────────────────────
 
 export const ConstraintKindSchema = z.enum([
@@ -86,6 +110,8 @@ export const AccountRefSchema = z.object({
   initSpace: z.string().optional(),
   constraints: z.array(ConstraintSchema).default([]),
   docs: z.string().optional(),
+  /** Source location of the field declaration in the originating Accounts struct. */
+  loc: SourceLocSchema.optional(),
 });
 
 export type AccountRef = z.infer<typeof AccountRefSchema>;
@@ -342,6 +368,13 @@ export const InstructionSchema = z.object({
   args: z.array(ArgSchema),
   /** Classified body statements for generic emission */
   body: z.array(BodyStatementSchema).default([]),
+  /**
+   * Source locations parallel to `body[]`. `bodyLocs[i]` is the location of
+   * the source statement that produced `body[i]`. May be undefined for
+   * synthetic statements (e.g. helpers re-inserted by the classifier when
+   * `let seeds = …` survives unconsumed). Length matches body when populated.
+   */
+  bodyLocs: z.array(SourceLocSchema.optional()).default([]),
   /** Original Rust function body text (for debugging & fallback) */
   rawBody: z.string().optional(),
   /** Access control expression from #[access_control(...)] attribute */
@@ -526,6 +559,8 @@ export const ParserWarningSchema = z.object({
   instruction: z.string().optional(),
   /** Snippet of the original source (truncated) — surfaced in error output. */
   snippet: z.string().optional(),
+  /** Source location of the offending node — surfaced as `path:line:col` in the validator. */
+  loc: SourceLocSchema.optional(),
 });
 
 export type ParserWarning = z.infer<typeof ParserWarningSchema>;

@@ -17,7 +17,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 136,
+            "column": 4,
+            "endLine": 136,
+            "endColumn": 28
+          }
         },
         {
           "name": "mint_a",
@@ -28,7 +34,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 137,
+            "column": 4,
+            "endLine": 137,
+            "endColumn": 55
+          }
         },
         {
           "name": "mint_b",
@@ -39,7 +51,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 138,
+            "column": 4,
+            "endLine": 138,
+            "endColumn": 55
+          }
         },
         {
           "name": "maker_ata_a",
@@ -62,7 +80,13 @@
               "kind": "associated_token::authority",
               "value": "maker"
             }
-          ]
+          ],
+          "loc": {
+            "line": 144,
+            "column": 4,
+            "endLine": 144,
+            "endColumn": 68
+          }
         },
         {
           "name": "escrow",
@@ -90,7 +114,13 @@
             {
               "kind": "bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 152,
+            "column": 4,
+            "endLine": 152,
+            "endColumn": 38
+          }
         },
         {
           "name": "vault",
@@ -114,7 +144,13 @@
               "kind": "token::authority",
               "value": "escrow"
             }
-          ]
+          ],
+          "loc": {
+            "line": 159,
+            "column": 4,
+            "endLine": 159,
+            "endColumn": 62
+          }
         },
         {
           "name": "system_program",
@@ -125,7 +161,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 160,
+            "column": 4,
+            "endLine": 160,
+            "endColumn": 46
+          }
         },
         {
           "name": "token_program",
@@ -136,7 +178,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 161,
+            "column": 4,
+            "endLine": 161,
+            "endColumn": 63
+          }
         },
         {
           "name": "associated_token_program",
@@ -147,7 +195,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 162,
+            "column": 4,
+            "endLine": 162,
+            "endColumn": 95
+          }
         }
       ],
       "args": [
@@ -222,6 +276,62 @@
           "needsReview": false
         }
       ],
+      "bodyLocs": [
+        {
+          "line": 15,
+          "column": 8,
+          "endLine": 15,
+          "endColumn": 46
+        },
+        {
+          "line": 16,
+          "column": 8,
+          "endLine": 16,
+          "endColumn": 48
+        },
+        {
+          "line": 17,
+          "column": 8,
+          "endLine": 17,
+          "endColumn": 50
+        },
+        {
+          "line": 18,
+          "column": 8,
+          "endLine": 18,
+          "endColumn": 50
+        },
+        {
+          "line": 19,
+          "column": 8,
+          "endLine": 19,
+          "endColumn": 47
+        },
+        {
+          "line": 20,
+          "column": 8,
+          "endLine": 20,
+          "endColumn": 27
+        },
+        {
+          "line": 21,
+          "column": 8,
+          "endLine": 21,
+          "endColumn": 39
+        },
+        {
+          "line": 24,
+          "column": 8,
+          "endLine": 34,
+          "endColumn": 11
+        },
+        {
+          "line": 35,
+          "column": 8,
+          "endLine": 35,
+          "endColumn": 14
+        }
+      ],
       "rawBody": "{\n        let escrow = &mut ctx.accounts.escrow;\n        escrow.maker = ctx.accounts.maker.key();\n        escrow.mint_a = ctx.accounts.mint_a.key();\n        escrow.mint_b = ctx.accounts.mint_b.key();\n        escrow.receive_amount = receive_amount;\n        escrow.seed = seed;\n        escrow.bump = ctx.bumps.escrow;\n\n        // Transfer tokens from maker to vault\n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.maker_ata_a.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.maker.to_account_info(),\n                },\n            ),\n            deposit_amount,\n        )?;\n        Ok(())\n    }"
     },
     {
@@ -240,7 +350,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 168,
+            "column": 4,
+            "endLine": 168,
+            "endColumn": 28
+          }
         },
         {
           "name": "maker",
@@ -251,7 +367,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 169,
+            "column": 4,
+            "endLine": 169,
+            "endColumn": 35
+          }
         },
         {
           "name": "mint_a",
@@ -262,7 +384,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 170,
+            "column": 4,
+            "endLine": 170,
+            "endColumn": 55
+          }
         },
         {
           "name": "mint_b",
@@ -273,7 +401,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 171,
+            "column": 4,
+            "endLine": 171,
+            "endColumn": 55
+          }
         },
         {
           "name": "taker_ata_b",
@@ -296,7 +430,13 @@
               "kind": "associated_token::authority",
               "value": "taker"
             }
-          ]
+          ],
+          "loc": {
+            "line": 177,
+            "column": 4,
+            "endLine": 177,
+            "endColumn": 68
+          }
         },
         {
           "name": "taker_ata_a",
@@ -320,7 +460,13 @@
               "kind": "associated_token::authority",
               "value": "taker"
             }
-          ]
+          ],
+          "loc": {
+            "line": 184,
+            "column": 4,
+            "endLine": 184,
+            "endColumn": 68
+          }
         },
         {
           "name": "maker_ata_b",
@@ -344,7 +490,13 @@
               "kind": "associated_token::authority",
               "value": "maker"
             }
-          ]
+          ],
+          "loc": {
+            "line": 191,
+            "column": 4,
+            "endLine": 191,
+            "endColumn": 68
+          }
         },
         {
           "name": "escrow",
@@ -387,7 +539,13 @@
               "kind": "bump",
               "value": "escrow.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 201,
+            "column": 4,
+            "endLine": 201,
+            "endColumn": 38
+          }
         },
         {
           "name": "vault",
@@ -410,7 +568,13 @@
               "kind": "token::authority",
               "value": "escrow"
             }
-          ]
+          ],
+          "loc": {
+            "line": 207,
+            "column": 4,
+            "endLine": 207,
+            "endColumn": 62
+          }
         },
         {
           "name": "system_program",
@@ -421,7 +585,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 208,
+            "column": 4,
+            "endLine": 208,
+            "endColumn": 46
+          }
         },
         {
           "name": "token_program",
@@ -432,7 +602,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 209,
+            "column": 4,
+            "endLine": 209,
+            "endColumn": 63
+          }
         },
         {
           "name": "associated_token_program",
@@ -443,7 +619,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 210,
+            "column": 4,
+            "endLine": 210,
+            "endColumn": 95
+          }
         }
       ],
       "args": [],
@@ -498,6 +680,44 @@
           "needsReview": false
         }
       ],
+      "bodyLocs": [
+        {
+          "line": 39,
+          "column": 8,
+          "endLine": 39,
+          "endColumn": 42
+        },
+        {
+          "line": 46,
+          "column": 8,
+          "endLine": 46,
+          "endColumn": 41
+        },
+        {
+          "line": 49,
+          "column": 8,
+          "endLine": 59,
+          "endColumn": 11
+        },
+        {
+          "line": 62,
+          "column": 8,
+          "endLine": 73,
+          "endColumn": 11
+        },
+        {
+          "line": 76,
+          "column": 8,
+          "endLine": 86,
+          "endColumn": 11
+        },
+        {
+          "line": 88,
+          "column": 8,
+          "endLine": 88,
+          "endColumn": 14
+        }
+      ],
       "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        // Send mint_b from taker to maker\n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.taker_ata_b.to_account_info(),\n                    to: ctx.accounts.maker_ata_b.to_account_info(),\n                    authority: ctx.accounts.taker.to_account_info(),\n                },\n            ),\n            escrow.receive_amount,\n        )?;\n\n        // Send mint_a from vault to taker\n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.taker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?;\n\n        // Close the vault token account and return rent to maker\n        anchor_spl::token::close_account(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::CloseAccount {\n                    account: ctx.accounts.vault.to_account_info(),\n                    destination: ctx.accounts.maker.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n        )?;\n\n        Ok(())\n    }"
     },
     {
@@ -516,7 +736,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 216,
+            "column": 4,
+            "endLine": 216,
+            "endColumn": 28
+          }
         },
         {
           "name": "mint_a",
@@ -527,7 +753,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 217,
+            "column": 4,
+            "endLine": 217,
+            "endColumn": 55
+          }
         },
         {
           "name": "maker_ata_a",
@@ -550,7 +782,13 @@
               "kind": "associated_token::authority",
               "value": "maker"
             }
-          ]
+          ],
+          "loc": {
+            "line": 223,
+            "column": 4,
+            "endLine": 223,
+            "endColumn": 68
+          }
         },
         {
           "name": "escrow",
@@ -589,7 +827,13 @@
               "kind": "bump",
               "value": "escrow.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 232,
+            "column": 4,
+            "endLine": 232,
+            "endColumn": 38
+          }
         },
         {
           "name": "vault",
@@ -612,7 +856,13 @@
               "kind": "token::authority",
               "value": "escrow"
             }
-          ]
+          ],
+          "loc": {
+            "line": 238,
+            "column": 4,
+            "endLine": 238,
+            "endColumn": 62
+          }
         },
         {
           "name": "token_program",
@@ -623,7 +873,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 239,
+            "column": 4,
+            "endLine": 239,
+            "endColumn": 63
+          }
         }
       ],
       "args": [],
@@ -668,6 +924,38 @@
           "kind": "pass_through",
           "code": "Ok(())",
           "needsReview": false
+        }
+      ],
+      "bodyLocs": [
+        {
+          "line": 92,
+          "column": 8,
+          "endLine": 92,
+          "endColumn": 42
+        },
+        {
+          "line": 99,
+          "column": 8,
+          "endLine": 99,
+          "endColumn": 41
+        },
+        {
+          "line": 102,
+          "column": 8,
+          "endLine": 113,
+          "endColumn": 11
+        },
+        {
+          "line": 116,
+          "column": 8,
+          "endLine": 126,
+          "endColumn": 11
+        },
+        {
+          "line": 128,
+          "column": 8,
+          "endLine": 128,
+          "endColumn": 14
         }
       ],
       "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        // Return tokens to maker\n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.maker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?;\n\n        // Close the vault token account and return rent to maker\n        anchor_spl::token::close_account(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::CloseAccount {\n                    account: ctx.accounts.vault.to_account_info(),\n                    destination: ctx.accounts.maker.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n        )?;\n\n        Ok(())\n    }"

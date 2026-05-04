@@ -29,7 +29,13 @@
             {
               "kind": "bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 45,
+            "column": 4,
+            "endLine": 45,
+            "endColumn": 47
+          }
         },
         {
           "name": "authority",
@@ -44,7 +50,13 @@
             {
               "kind": "mut"
             }
-          ]
+          ],
+          "loc": {
+            "line": 47,
+            "column": 4,
+            "endLine": 47,
+            "endColumn": 32
+          }
         },
         {
           "name": "system_program",
@@ -55,7 +67,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 48,
+            "column": 4,
+            "endLine": 48,
+            "endColumn": 46
+          }
         }
       ],
       "args": [
@@ -96,6 +114,38 @@
           "needsReview": false
         }
       ],
+      "bodyLocs": [
+        {
+          "line": 10,
+          "column": 8,
+          "endLine": 10,
+          "endColumn": 48
+        },
+        {
+          "line": 11,
+          "column": 8,
+          "endLine": 11,
+          "endColumn": 57
+        },
+        {
+          "line": 12,
+          "column": 8,
+          "endLine": 12,
+          "endColumn": 36
+        },
+        {
+          "line": 13,
+          "column": 8,
+          "endLine": 13,
+          "endColumn": 41
+        },
+        {
+          "line": 14,
+          "column": 8,
+          "endLine": 14,
+          "endColumn": 14
+        }
+      ],
       "rawBody": "{\n        let counter = &mut ctx.accounts.counter;\n        counter.authority = ctx.accounts.authority.key();\n        counter.count = start_value;\n        counter.bump = ctx.bumps.counter;\n        Ok(())\n    }"
     },
     {
@@ -129,7 +179,13 @@
               "kind": "bump",
               "value": "counter.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 59,
+            "column": 4,
+            "endLine": 59,
+            "endColumn": 47
+          }
         },
         {
           "name": "authority",
@@ -140,7 +196,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 60,
+            "column": 4,
+            "endLine": 60,
+            "endColumn": 32
+          }
         }
       ],
       "args": [
@@ -167,6 +229,26 @@
           "kind": "pass_through",
           "code": "Ok(())",
           "needsReview": false
+        }
+      ],
+      "bodyLocs": [
+        {
+          "line": 18,
+          "column": 8,
+          "endLine": 18,
+          "endColumn": 48
+        },
+        {
+          "line": 19,
+          "column": 8,
+          "endLine": 19,
+          "endColumn": 89
+        },
+        {
+          "line": 20,
+          "column": 8,
+          "endLine": 20,
+          "endColumn": 14
         }
       ],
       "rawBody": "{\n        let counter = &mut ctx.accounts.counter;\n        counter.count = counter.count.checked_add(amount).ok_or(CounterError::Overflow)?;\n        Ok(())\n    }"
@@ -202,7 +284,13 @@
               "kind": "bump",
               "value": "counter.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 59,
+            "column": 4,
+            "endLine": 59,
+            "endColumn": 47
+          }
         },
         {
           "name": "authority",
@@ -213,7 +301,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 60,
+            "column": 4,
+            "endLine": 60,
+            "endColumn": 32
+          }
         }
       ],
       "args": [
@@ -240,6 +334,26 @@
           "kind": "pass_through",
           "code": "Ok(())",
           "needsReview": false
+        }
+      ],
+      "bodyLocs": [
+        {
+          "line": 24,
+          "column": 8,
+          "endLine": 24,
+          "endColumn": 48
+        },
+        {
+          "line": 25,
+          "column": 8,
+          "endLine": 25,
+          "endColumn": 90
+        },
+        {
+          "line": 26,
+          "column": 8,
+          "endLine": 26,
+          "endColumn": 14
         }
       ],
       "rawBody": "{\n        let counter = &mut ctx.accounts.counter;\n        counter.count = counter.count.checked_sub(amount).ok_or(CounterError::Underflow)?;\n        Ok(())\n    }"
@@ -275,7 +389,13 @@
               "kind": "bump",
               "value": "counter.bump"
             }
-          ]
+          ],
+          "loc": {
+            "line": 59,
+            "column": 4,
+            "endLine": 59,
+            "endColumn": 47
+          }
         },
         {
           "name": "authority",
@@ -286,7 +406,13 @@
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": []
+          "constraints": [],
+          "loc": {
+            "line": 60,
+            "column": 4,
+            "endLine": 60,
+            "endColumn": 32
+          }
         }
       ],
       "args": [],
@@ -308,6 +434,26 @@
           "kind": "pass_through",
           "code": "Ok(())",
           "needsReview": false
+        }
+      ],
+      "bodyLocs": [
+        {
+          "line": 30,
+          "column": 8,
+          "endLine": 30,
+          "endColumn": 48
+        },
+        {
+          "line": 31,
+          "column": 8,
+          "endLine": 31,
+          "endColumn": 26
+        },
+        {
+          "line": 32,
+          "column": 8,
+          "endLine": 32,
+          "endColumn": 14
         }
       ],
       "rawBody": "{\n        let counter = &mut ctx.accounts.counter;\n        counter.count = 0;\n        Ok(())\n    }"

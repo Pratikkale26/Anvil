@@ -173,7 +173,9 @@ function parseInstructionFn(
   // see "instruction `foo`: SPL transfer carried as pass_through" rather
   // than a context-free message.
   const instrCollector = collector?.forInstruction(fnName);
-  const bodyStatements: BodyStatement[] = bodyNode ? classifyBody(bodyNode, instrCollector) : [];
+  const classified = bodyNode ? classifyBody(bodyNode, instrCollector) : { statements: [], locs: [] };
+  const bodyStatements: BodyStatement[] = classified.statements;
+  const bodyLocs = classified.locs;
 
   // ── Enrich state_read with account types from context struct ──
   for (const stmt of bodyStatements) {
@@ -193,6 +195,7 @@ function parseInstructionFn(
     accounts,
     args,
     body: bodyStatements,
+    bodyLocs,
     rawBody,
     ...(accessControl ? { accessControl } : {}),
   };

@@ -746,9 +746,15 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
   // schema sets `warnings: [].default()` but a hand-rolled IR may omit it.
   for (const w of ir.warnings ?? []) {
     const where = w.instruction ? `instruction '${w.instruction}': ` : "";
+    // path defaults to the source path the warning carries; the validator's
+    // ValidationIssue carries `path` per emitted file, but parser warnings
+    // pre-date emit so they reference the source file (or undefined for a
+    // single-source parse — the consumer falls back to the input filename).
     issues.push({
       severity: "warning",
       message: `${where}[parser:${w.code}] ${w.message}`,
+      ...(w.loc?.path ? { path: w.loc.path } : {}),
+      ...(w.loc?.line ? { line: w.loc.line } : {}),
     });
   }
 
