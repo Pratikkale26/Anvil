@@ -109,8 +109,19 @@ export function handleStateRead(w: BodyWalker, stmt: StateRead): void {
 
 export function handleBumpsAccess(w: BodyWalker, stmt: BumpsAccess): void {
   w.ctx.transformedCount++;
-  // In non-Anchor frameworks, bumps are computed at runtime.
-  w.lines.push(`    // Bump for ${stmt.account} — computed via PDA derivation at runtime`);
+  // In non-Anchor frameworks, bumps are computed at runtime via bump_seed().
+  // Emit (or reuse) the canonical `bump_<account>` derivation, then alias
+  // the user's local var name (`let bump = ctx.bumps.state` -> stmt.localVar
+  // = "bump") to it so subsequent statements like `state.bump = bump;`
+  // compile.
+  const accountName = snakeCase(stmt.account);
+  const bumpLine = w.normalizedBumpLine(accountName);
+  if (bumpLine) w.lines.push(bumpLine);
+  const localVar = snakeCase(stmt.localVar);
+  const bumpVar = `bump_${accountName}`;
+  if (localVar !== bumpVar) {
+    w.lines.push(`    let ${localVar} = ${bumpVar};`);
+  }
 }
 
 export function handleStateFieldAssign(w: BodyWalker, stmt: StateFieldAssign): void {
