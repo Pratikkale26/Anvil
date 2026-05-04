@@ -38,36 +38,94 @@ export function ValidationPanel({ state }: { state: AnvilPipelineState }) {
         </Panel>
       )}
 
-      {/* Validation issues */}
-      {validationIssues.length > 0 && (
-        <Panel>
-          <div className="px-5 py-3.5">
-            <div
-              className="text-[13px] font-bold mb-2.5 flex items-center gap-2"
-              style={{ color: strictValidated ? C.teal : C.red }}
-            >
-              <CheckCircle2 size={13} /> Validation issues (
-              {validationIssues.length})
-            </div>
-            {validationIssues.map((issue, index) => (
+      {/* Validation issues — split parser warnings (M1/M2 loud parser
+          degradation signal) from validator output so users see clearly that
+          a warning came from the parser's classification fallback (silently
+          dropping signer_seeds, unrecognised CPI shape, etc.) versus the
+          emit-time validator. Both render in the same panel; visual
+          distinction is via a small tag + grouping headers. */}
+      {validationIssues.length > 0 && (() => {
+        const PARSER_PREFIX_RE = /^\[parser:([a-z_]+)\]\s+/i;
+        const split = validationIssues.map((issue) => {
+          const m = issue.message.match(PARSER_PREFIX_RE);
+          return {
+            issue,
+            isParserWarning: !!m,
+            parserCode: m?.[1] ?? null,
+            cleanMessage: m ? issue.message.slice(m[0].length) : issue.message,
+          };
+        });
+        const validatorIssues = split.filter((s) => !s.isParserWarning);
+        const parserIssues = split.filter((s) => s.isParserWarning);
+        return (
+          <Panel>
+            <div className="px-5 py-3.5">
               <div
-                key={`${issue.path ?? "root"}-${index}`}
-                className="text-xs mb-1.5 pl-1.5 leading-relaxed"
-                style={{
-                  color:
-                    issue.severity === "error"
-                      ? "#ffb0b0"
-                      : "#e8d68a",
-                  borderLeft: `2px solid ${issue.severity === "error" ? C.red : C.amber}`,
-                }}
+                className="text-[13px] font-bold mb-2.5 flex items-center gap-2"
+                style={{ color: strictValidated ? C.teal : C.red }}
               >
-                {issue.path ? `${issue.path}: ` : ""}
-                {issue.message}
+                <CheckCircle2 size={13} /> Validation issues (
+                {validationIssues.length})
               </div>
-            ))}
-          </div>
-        </Panel>
-      )}
+              {/* Validator output first — these gate compile / deploy. */}
+              {validatorIssues.length > 0 && (
+                <div className="mb-3">
+                  {validatorIssues.map(({ issue, cleanMessage }, index) => (
+                    <div
+                      key={`v-${issue.path ?? "root"}-${index}`}
+                      className="text-xs mb-1.5 pl-1.5 leading-relaxed"
+                      style={{
+                        color:
+                          issue.severity === "error"
+                            ? "#ffb0b0"
+                            : "#e8d68a",
+                        borderLeft: `2px solid ${issue.severity === "error" ? C.red : C.amber}`,
+                      }}
+                    >
+                      {issue.path
+                        ? `${issue.path}${issue.line ? `:${issue.line}` : ""}: `
+                        : ""}
+                      {cleanMessage}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Parser warnings second — silent-degradation signal. */}
+              {parserIssues.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-semibold tracking-wide text-anvil-text-dim mb-1.5 uppercase">
+                    From parser ({parserIssues.length})
+                  </div>
+                  {parserIssues.map(({ issue, parserCode, cleanMessage }, index) => (
+                    <div
+                      key={`p-${issue.path ?? "root"}-${index}`}
+                      className="text-xs mb-1.5 pl-1.5 leading-relaxed"
+                      style={{
+                        color: "#e8d68a",
+                        borderLeft: `2px dashed ${C.amber}`,
+                      }}
+                    >
+                      <span
+                        className="inline-block text-[10px] font-mono px-1.5 py-[1px] mr-1.5 rounded"
+                        style={{
+                          backgroundColor: "rgba(245,166,35,0.12)",
+                          color: C.amberLight,
+                        }}
+                      >
+                        {parserCode}
+                      </span>
+                      {issue.path
+                        ? `${issue.path}${issue.line ? `:${issue.line}` : ""}: `
+                        : ""}
+                      {cleanMessage}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Panel>
+        );
+      })()}
 
       {/* Review report */}
       {reviewReport && (

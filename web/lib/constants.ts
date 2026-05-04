@@ -201,6 +201,10 @@ export type ValidationIssue = {
   severity: "error" | "warning";
   message: string;
   path?: string;
+  /** 1-indexed line number of the offending span (parser warnings carry this
+   *  via M1 source-position tracking; validator-emitted issues may include
+   *  it when the underlying check captured a line). */
+  line?: number;
 };
 
 // ─── Color palette ────────────────────────────────────────────────────────────
