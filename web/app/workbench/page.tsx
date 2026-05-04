@@ -18,14 +18,20 @@ export default function Workbench() {
   const { apiOk, isMobile, isTablet, runPipeline, isRunning, spendTodayUsd, spendCapUsd } = state;
 
   // Wire differential to the current pipeline state. Splits emitted files
-  // into the src/-prefixed sources vs scaffold (Cargo.toml + friends) the
-  // way the API endpoint expects.
+  // into Rust sources vs scaffold (Cargo.toml + friends) the way the API
+  // endpoint expects: anvilEmittedFiles are paths relative to src/ (so
+  // lib.rs, instructions/*.rs, etc. — the API drops them under src/ on
+  // its scratch project), anvilScaffoldFiles are everything else.
+  // Emitter writes flat `lib.rs` / `instructions/foo.rs` paths (no src/
+  // prefix); accept both shapes for forward-compat.
   const { anvilEmittedFiles, anvilScaffoldFiles } = useMemo(() => {
     const emitted: Array<{ path: string; content: string }> = [];
     const scaffold: Array<{ path: string; content: string }> = [];
     for (const f of state.outputFiles) {
       if (f.path.startsWith("src/")) {
         emitted.push({ path: f.path.slice("src/".length), content: f.content });
+      } else if (f.path.endsWith(".rs")) {
+        emitted.push(f);
       } else {
         scaffold.push(f);
       }
