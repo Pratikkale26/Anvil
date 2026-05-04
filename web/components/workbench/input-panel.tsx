@@ -653,6 +653,13 @@ function VerifyBuildBody(props: {
   // Per-mode metadata — label, hint, button text, duration estimate. Centralized
   // so the segmented picker, the run button, and the result banner all read from
   // the same source of truth instead of branching on string literals.
+  //
+  // Note: "check" mode is kept for backwards compat with cached results from
+  // earlier sessions, but it's no longer in the segmented picker -- cargo
+  // check fires automatically on every emit (see autoCheckBusy / autoCheck in
+  // use-anvil-pipeline.ts). The two manual modes are Build (cargo build) and
+  // build-sbf (cargo build-sbf, the only mode that proves the program will
+  // load into a validator).
   const MODE_META: Record<BuildModeKey, { label: string; hint: string; runLabel: string; runHint: string; durationHint: string }> = {
     check: {
       label: "Check",
@@ -663,15 +670,15 @@ function VerifyBuildBody(props: {
     },
     build: {
       label: "Build",
-      hint: "cargo build — full compile (~10–15s on cached deps).",
-      runLabel: "Run Build",
+      hint: "cargo build — full compile (~10–15s on cached deps). Catches linker + codegen errors cargo check misses.",
+      runLabel: "Run cargo build",
       runHint: "cargo build. Catches linker and codegen errors that cargo check misses.",
       durationHint: "~10–15s",
     },
     "build-sbf": {
-      label: "Deploy",
-      hint: "cargo build-sbf — produces a deployable Solana .so (~30s–2 min).",
-      runLabel: "Run Deploy",
+      label: "build-sbf",
+      hint: "cargo build-sbf — produces a deployable Solana .so (~30s–2 min). Required for mainnet deploys.",
+      runLabel: "Run cargo build-sbf",
       runHint: "cargo build-sbf. Slow but the only mode that proves your program will load into a validator. Use before mainnet.",
       durationHint: "~30s–2 min",
     },
@@ -727,9 +734,14 @@ function VerifyBuildBody(props: {
         value={selectedBuildMode}
         onChange={(m) => setSelectedBuildMode(m)}
         options={[
-          { value: "check", label: "Check", hint: MODE_META.check.hint, disabled: anyCargoBusy },
+          // "Check" mode dropped from the segmented picker -- cargo check
+          // already fires automatically on every emit. The two explicit
+          // verify modes are cargo build (medium) and cargo build-sbf
+          // (slow, but produces the deployable .so). Renamed "Deploy"
+          // -> "build-sbf" for clarity: "Deploy" implied the workbench
+          // would deploy to a chain, which it doesn't.
           { value: "build", label: "Build", hint: MODE_META.build.hint, disabled: anyCargoBusy },
-          { value: "build-sbf", label: "Deploy", hint: MODE_META["build-sbf"].hint, disabled: anyCargoBusy },
+          { value: "build-sbf", label: "build-sbf", hint: MODE_META["build-sbf"].hint, disabled: anyCargoBusy },
         ]}
       />
 

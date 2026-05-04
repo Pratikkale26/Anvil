@@ -117,7 +117,11 @@ export function useAnvilPipeline() {
   // or "build-sbf" (deployable .so, ~30s-2min) when they want stronger
   // signal. Each step up the ladder is also a step up in latency, surfaced
   // in the segmented control's hover hints.
-  const [selectedBuildMode, setSelectedBuildMode] = useState<BuildMode>("check");
+  // Default to "build" -- "check" was the old default but we removed it
+  // from the segmented picker since cargo check fires automatically on
+  // every emit. The cached check-result still shows in the auto-banner;
+  // the manual segmented picker only chooses between Build / build-sbf.
+  const [selectedBuildMode, setSelectedBuildMode] = useState<BuildMode>("build");
   const [buildMessages, setBuildMessages] = useState<string[]>([]);
   // Auto-cargo-check state — fingerprint of last cached check is tracked
   // separately so the effect knows when to re-fire, but the result itself
@@ -1062,12 +1066,14 @@ export function useAnvilPipeline() {
     // Manual cargo check — wire through the auto-check abort ref so a
     // background auto-check doesn't double-fire while we're explicitly
     // re-running. Result still lands in buildResults.check, which the
-    // header signal + segmented "Check" tab read from.
+    // auto-check banner reads from. Do NOT switch the segmented picker
+    // to "check" mode -- the segmented control no longer exposes
+    // "Check" (cargo check is automatic on every emit). Manual check
+    // re-runs only refresh the auto-banner state.
     if (mode === "check") {
       setAutoCheckBusy(true);
       setBuildErrorFor("check", null);
       setBuildResultFor("check", null);
-      setSelectedBuildMode("check");
       const { result, error } = await runCargoStreaming("check", autoCheckAbortRef);
       if (error) setBuildErrorFor("check", error);
       else if (result) setBuildResultFor("check", result);
