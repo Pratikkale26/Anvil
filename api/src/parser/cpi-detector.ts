@@ -280,7 +280,112 @@ export function detectCpi(
     return extractCustomCpi(callNode, collector);
   }
 
+  // ── Metaplex Token Metadata CPIs (#29) ──
+  // First-class IR slot for the most common Metaplex calls. Detection is
+  // the structural step; the emit handlers still go through the existing
+  // walker.ts text-regex stubs until grant-M3 wires real emit per target.
+  if (
+    funcText.includes("create_metadata_accounts_v3") ||
+    funcText.endsWith("::create_metadata_accounts_v3")
+  ) {
+    return extractMplCreateMetadataV3(callNode, collector);
+  }
+  if (
+    funcText.includes("create_master_edition_v3") ||
+    funcText.endsWith("::create_master_edition_v3")
+  ) {
+    return extractMplCreateMasterEditionV3(callNode, collector);
+  }
+
   return null;
+}
+
+/**
+ * Extract cpi_mpl_create_metadata_v3. The Anchor call shape is:
+ *   create_metadata_accounts_v3(
+ *     CpiContext::new_with_signer(prog, CreateMetadataAccountsV3 {
+ *       metadata, mint, mint_authority, payer, update_authority,
+ *       system_program, rent,
+ *     }, signers),
+ *     DataV2 { name, symbol, uri, seller_fee_basis_points, ... },
+ *     is_mutable, update_authority_is_signer, collection_details,
+ *   )?;
+ *
+ * Conservative: only fires when the first arg carries an inline CpiContext
+ * and the second is a recognisable DataV2 literal. Otherwise falls back
+ * to cpi_custom (which surfaces the cpi_custom_emitted warning).
+ */
+function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+
+  const grab = (field: string) =>
+    extractStructField(accountsStruct, field) ?? field;
+  const dataText = args[1]?.text ?? "";
+  const dataField = (field: string): string => {
+    const m = dataText.match(new RegExp(`\\b${field}\\s*:\\s*([^,}]+)`));
+    return m?.[1]?.trim() ?? "";
+  };
+
+  return {
+    kind: "cpi_mpl_create_metadata_v3",
+    metadata: cleanAccountRef(grab("metadata")),
+    mint: cleanAccountRef(grab("mint")),
+    mintAuthority: cleanAccountRef(grab("mint_authority")),
+    payer: cleanAccountRef(grab("payer")),
+    updateAuthority: cleanAccountRef(grab("update_authority")),
+    name: dataField("name") || `"unknown"`,
+    symbol: dataField("symbol") || `"UNK"`,
+    uri: dataField("uri") || `""`,
+    sellerFeeBasisPoints: dataField("seller_fee_basis_points") || "0",
+    isMutable: args[2]?.text.trim() ?? "true",
+    updateAuthorityIsSigner: args[3]?.text.trim() ?? "true",
+    signerSeeds: firstArg.text.includes("new_with_signer") ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
+}
+
+/**
+ * Extract cpi_mpl_create_master_edition_v3. Anchor call shape:
+ *   create_master_edition_v3(
+ *     CpiContext::new_with_signer(prog, CreateMasterEditionV3 {
+ *       edition, mint, update_authority, mint_authority, payer,
+ *       metadata, token_program, system_program, rent,
+ *     }, signers),
+ *     max_supply,
+ *   )?;
+ */
+function extractMplCreateMasterEditionV3(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+
+  const grab = (field: string) =>
+    extractStructField(accountsStruct, field) ?? field;
+
+  return {
+    kind: "cpi_mpl_create_master_edition_v3",
+    edition: cleanAccountRef(grab("edition")),
+    mint: cleanAccountRef(grab("mint")),
+    mintAuthority: cleanAccountRef(grab("mint_authority")),
+    payer: cleanAccountRef(grab("payer")),
+    metadata: cleanAccountRef(grab("metadata")),
+    updateAuthority: cleanAccountRef(grab("update_authority")),
+    maxSupply: args[1]?.text.trim() ?? "None",
+    signerSeeds: firstArg.text.includes("new_with_signer") ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
 }
 
 function extractMemoCpi(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {

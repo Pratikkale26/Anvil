@@ -41,6 +41,8 @@ import {
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
+  handleCpiMplCreateMetadataV3,
+  handleCpiMplCreateMasterEditionV3,
 } from "./handlers/cpi.js";
 import { handleSysvarClock, handleSysvarRent } from "./handlers/sysvar.js";
 import {
@@ -208,6 +210,8 @@ export class BodyWalker {
         case "cpi_ata_create": handleCpiAtaCreate(this, stmt); break;
         case "cpi_memo": handleCpiMemo(this, stmt); break;
         case "cpi_custom": handleCpiCustom(this, stmt); break;
+        case "cpi_mpl_create_metadata_v3": handleCpiMplCreateMetadataV3(this, stmt); break;
+        case "cpi_mpl_create_master_edition_v3": handleCpiMplCreateMasterEditionV3(this, stmt); break;
         case "sysvar_clock": handleSysvarClock(this, stmt); break;
         case "sysvar_rent": handleSysvarRent(this, stmt); break;
         case "pda_signer_seeds": handlePdaSignerSeeds(this, stmt); break;

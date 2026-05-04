@@ -16,6 +16,8 @@ type CpiSplSetAuthority = Extract<BodyStatement, { kind: "cpi_spl_set_authority"
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
+type CpiMplCreateMetadataV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_metadata_v3" }>;
+type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 
 function shouldEmitSignerSeedsPrelude(w: BodyWalker, signerSeeds: string | undefined): boolean {
   if (!signerSeeds) return false;
@@ -224,6 +226,68 @@ export function handleCpiMemo(w: BodyWalker, stmt: CpiMemo): void {
   w.ctx.transformedCount++;
   w.ctx.details.push(`Transformed: spl_memo::build_memo`);
   w.lines.push(w.emitter.emitMemo(stmt.data));
+}
+
+/**
+ * Metaplex create_metadata_accounts_v3 — typed stub emit (#29).
+ *
+ * The full Metaplex catalog (12 instructions + per-target real CPI emit
+ * + 4 differential fixtures) is grant-M3 / ~5-week scope. Until then,
+ * this handler emits a STRUCTURED stub: the user sees every account
+ * binding + DataV2 field broken out by name, ready to wire into a
+ * hand-rolled mpl_token_metadata::cpi:: call. Strictly better than the
+ * old text-regex stub: the IR carried the parsed fields, so the comment
+ * uses the user's actual variable names rather than placeholders.
+ */
+export function handleCpiMplCreateMetadataV3(w: BodyWalker, stmt: CpiMplCreateMetadataV3): void {
+  w.ctx.transformedCount++;
+  w.ctx.warnings.push(
+    `Metaplex create_metadata_accounts_v3 emitted as structured stub — see TODO(manual) in output for the field map.`,
+  );
+  const lines = [
+    `    // ⚠️ Anvil: Metaplex create_metadata_accounts_v3 CPI — manual rebuild required`,
+    `    // Anvil parsed the call into these typed fields:`,
+    `    //   metadata          = ${stmt.metadata}`,
+    `    //   mint              = ${stmt.mint}`,
+    `    //   mint_authority    = ${stmt.mintAuthority}`,
+    `    //   payer             = ${stmt.payer}`,
+    `    //   update_authority  = ${stmt.updateAuthority}`,
+    `    //   name              = ${stmt.name}`,
+    `    //   symbol            = ${stmt.symbol}`,
+    `    //   uri               = ${stmt.uri}`,
+    `    //   seller_fee_bps    = ${stmt.sellerFeeBasisPoints}`,
+    `    //   is_mutable        = ${stmt.isMutable}`,
+    `    //   update_auth_signer= ${stmt.updateAuthorityIsSigner}`,
+    `    // TODO(manual): rebuild against mpl_token_metadata for ${w.emitter.frameworkName}.`,
+    `    //   Add 'mpl-token-metadata' to Cargo.toml on Native; pinocchio + quasar`,
+    `    //   need a hand-rolled invoke against the Token Metadata program ID.`,
+    `    //   See N1-DEDUP-DESIGN-NOTE for the per-target vocab pattern.`,
+  ];
+  for (const line of lines) w.lines.push(line);
+}
+
+/**
+ * Metaplex create_master_edition_v3 — typed stub emit (#29).
+ * Same shape as the create_metadata_v3 handler; field map differs.
+ */
+export function handleCpiMplCreateMasterEditionV3(w: BodyWalker, stmt: CpiMplCreateMasterEditionV3): void {
+  w.ctx.transformedCount++;
+  w.ctx.warnings.push(
+    `Metaplex create_master_edition_v3 emitted as structured stub — see TODO(manual) in output for the field map.`,
+  );
+  const lines = [
+    `    // ⚠️ Anvil: Metaplex create_master_edition_v3 CPI — manual rebuild required`,
+    `    // Anvil parsed the call into these typed fields:`,
+    `    //   edition           = ${stmt.edition}`,
+    `    //   mint              = ${stmt.mint}`,
+    `    //   mint_authority    = ${stmt.mintAuthority}`,
+    `    //   payer             = ${stmt.payer}`,
+    `    //   metadata          = ${stmt.metadata}`,
+    `    //   update_authority  = ${stmt.updateAuthority}`,
+    `    //   max_supply        = ${stmt.maxSupply}`,
+    `    // TODO(manual): rebuild against mpl_token_metadata for ${w.emitter.frameworkName}.`,
+  ];
+  for (const line of lines) w.lines.push(line);
 }
 
 export function handleCpiCustom(w: BodyWalker, stmt: CpiCustom): void {

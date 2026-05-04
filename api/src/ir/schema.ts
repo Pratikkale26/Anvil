@@ -315,6 +315,55 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     needsReview: z.boolean().default(true),
   }),
 
+  // Metaplex Token Metadata: create_metadata_accounts_v3.
+  // First-class IR slot for the Metaplex CPI catalog (#29). Today the
+  // emitter still falls back to the walker.ts regex stub for actual
+  // emission — wiring this kind through the body emitters lands in a
+  // follow-up grant-M3 batch (12-instruction Metaplex catalog + 4
+  // fixtures, ~5 weeks per the Tier 2 roadmap). Establishing the IR
+  // slot now means the future emitter changes are a typed switch case
+  // rather than a regex post-process.
+  z.object({
+    kind: z.literal("cpi_mpl_create_metadata_v3"),
+    /** AccountInfo bound to the metadata PDA. */
+    metadata: z.string(),
+    /** Mint of the token whose metadata is being created. */
+    mint: z.string(),
+    /** Mint authority signer. */
+    mintAuthority: z.string(),
+    /** Payer of the metadata account rent. */
+    payer: z.string(),
+    /** Update authority for the metadata. May equal payer. */
+    updateAuthority: z.string(),
+    /** Token name -- raw text expression (literal or variable). */
+    name: z.string(),
+    /** Token symbol -- raw text expression. */
+    symbol: z.string(),
+    /** URI for off-chain metadata -- raw text expression. */
+    uri: z.string(),
+    /** Seller fee basis points (0-10000). */
+    sellerFeeBasisPoints: z.string().default("0"),
+    /** Whether the metadata is mutable after creation. */
+    isMutable: z.string().default("true"),
+    /** Update authority is a signer. */
+    updateAuthorityIsSigner: z.string().default("true"),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // Metaplex Token Metadata: create_master_edition_v3.
+  z.object({
+    kind: z.literal("cpi_mpl_create_master_edition_v3"),
+    edition: z.string(),
+    mint: z.string(),
+    mintAuthority: z.string(),
+    payer: z.string(),
+    metadata: z.string(),
+    updateAuthority: z.string(),
+    /** Max supply -- raw expression (`Some(N)` or `None`). */
+    maxSupply: z.string().default("None"),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Clock::get() sysvar access
   z.object({
     kind: z.literal("sysvar_clock"),
