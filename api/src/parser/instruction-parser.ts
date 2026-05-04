@@ -201,6 +201,60 @@ function parseInstructionFn(
   };
 }
 
+/**
+ * Strip outer `{ … }` from a block body, normalize whitespace, and return
+ * the inside. Returns null when the input isn't a single brace-delimited
+ * block (e.g. the parser handed us an empty body or something already
+ * unwrapped). Used by resolveHandlerWrapper to operate on the call text
+ * without four parallel regexes that all start with `^\{` and end with `\}$`.
+ */
+function unwrapBlock(bodyText: string): string | null {
+  const trimmed = bodyText.trim();
+  if (trimmed.length < 2 || trimmed[0] !== "{" || trimmed[trimmed.length - 1] !== "}") {
+    return null;
+  }
+  return trimmed.slice(1, -1).trim();
+}
+
+/**
+ * Parse a single delegating call expression — `<path>(<args>)?;` — using
+ * paren-balanced scan instead of the prior `[^)]*` regexes. Replaces four
+ * near-identical wrapper-match regexes with one structural matcher.
+ *
+ * Returns the call's qualifier path (the namespace before the function
+ * name, dropping `::`-separated segments) and the function name itself.
+ * Args are not returned — the wrapper resolver only needs the callee.
+ *
+ * Returns null when the body isn't a single bare delegating call (e.g.
+ * the handler does real work inline, multiple statements, etc.).
+ */
+function parseSingleDelegatingCall(
+  innerText: string,
+): { qualifier: string[]; fnName: string } | null {
+  // Path identifier:  segment ( :: segment )*    where segment = ident.
+  // Match from the start of the (already-trimmed) inner block.
+  const pathMatch = innerText.match(/^([A-Za-z_][A-Za-z0-9_:]*)\s*\(/);
+  if (!pathMatch?.[1]) return null;
+  const fullPath = pathMatch[1];
+  const openParen = pathMatch[0].length - 1;
+
+  // Paren-balanced scan over the args. Replaces `[^)]*` which would
+  // truncate on a closing paren inside `vec![x, y]` or default-arg parens.
+  const closeParen = findMatchingClose(innerText, openParen);
+  if (closeParen === -1) return null;
+
+  // After `)`, accept optional `?`, optional `;`, optional whitespace, then EOF.
+  const tail = innerText.slice(closeParen + 1).trim();
+  if (tail !== "" && tail !== ";" && tail !== "?" && tail !== "?;") return null;
+
+  // Split path at the last `::` so we get the qualifier vs. the bare fn name.
+  const segments = fullPath.split("::").filter(Boolean);
+  if (segments.length === 0) return null;
+  const fnName = segments[segments.length - 1]!;
+  const qualifier = segments.slice(0, -1);
+  return { qualifier, fnName };
+}
+
 function resolveHandlerWrapper(
   fnNode: SyntaxNode,
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
@@ -208,61 +262,59 @@ function resolveHandlerWrapper(
   const bodyNode = fnNode.childForFieldName("body");
   if (!bodyNode) return null;
 
-  const bodyText = bodyNode.text.trim();
+  const inner = unwrapBlock(bodyNode.text);
+  if (inner === null) return null;
+  const call = parseSingleDelegatingCall(inner);
+  if (!call) return null;
 
-  // Pattern 1: Module-qualified handler — `instructions::initialize::handler(ctx, ...)`
-  const qualifiedMatch = bodyText.match(/^\{\s*([A-Za-z_][A-Za-z0-9_:]*)::handler\s*\([^)]*\)\s*;?\s*\}$/s);
-  if (qualifiedMatch?.[1]) {
-    const targetPath = qualifiedMatch[1].split("::").filter(Boolean);
-    const found = functionIndex.find((entry) => {
-      const name = entry.node.childForFieldName("name")?.text;
-      return name === "handler" && entry.modulePath.join("::") === targetPath.join("::");
-    });
+  const { qualifier, fnName } = call;
+
+  // Pattern 1: Module-qualified handler — `instructions::initialize::handler(...)`
+  if (qualifier.length > 0 && fnName === "handler") {
+    const found = functionIndex.find((entry) =>
+      entry.node.childForFieldName("name")?.text === "handler" &&
+      entry.modulePath.join("::") === qualifier.join("::"),
+    );
     if (found) return found;
+    // Fall through — modulePath may have been lost during multi-file flattening.
   }
 
-  // Pattern 1b: Module-qualified non-handler — `create::create_address_info(ctx, ...)`.
+  // Pattern 1b: Module-qualified non-handler — `create::create_address_info(...)`.
   // solana-developers/program-examples uses this convention: each instruction
   // lives in its own module and the wrapper at lib.rs delegates by full path.
-  // The function name in the called path matches the wrapper's own name.
-  const qualifiedFnMatch = bodyText.match(/^\{\s*([A-Za-z_][A-Za-z0-9_:]*)::(\w+)\s*\([^)]*\)\s*;?\s*\}$/s);
-  if (qualifiedFnMatch?.[1] && qualifiedFnMatch?.[2] && qualifiedFnMatch[2] !== "handler") {
-    const targetModule = qualifiedFnMatch[1].split("::").filter(Boolean);
-    const targetFn = qualifiedFnMatch[2];
-    const found = functionIndex.find((entry) => {
-      const name = entry.node.childForFieldName("name")?.text;
-      return name === targetFn && entry.modulePath.join("::") === targetModule.join("::");
-    }) ?? functionIndex.find((entry) => {
+  if (qualifier.length > 0 && fnName !== "handler") {
+    const found = functionIndex.find((entry) =>
+      entry.node.childForFieldName("name")?.text === fnName &&
+      entry.modulePath.join("::") === qualifier.join("::"),
+    ) ?? functionIndex.find((entry) =>
       // Fallback: same fn name anywhere in the index (handles flattened
       // multi-file projects where the module path was lost during flatten).
-      return entry.node.childForFieldName("name")?.text === targetFn;
-    });
+      entry.node.childForFieldName("name")?.text === fnName,
+    );
     if (found) return found;
   }
 
-  // Pattern 2: Direct `handler(ctx, ...)` — handler at top level (flattened multi-file)
-  const directHandlerMatch = bodyText.match(/^\{\s*handler\s*\([^)]*\)\s*;?\s*\}$/s);
-  if (directHandlerMatch) {
-    const found = functionIndex.find((entry) => {
-      const name = entry.node.childForFieldName("name")?.text;
-      return name === "handler" && entry.modulePath.length === 0;
-    });
+  // Pattern 2: Direct `handler(...)` — handler at top level (flattened multi-file)
+  if (qualifier.length === 0 && fnName === "handler") {
+    const found = functionIndex.find((entry) =>
+      entry.node.childForFieldName("name")?.text === "handler" &&
+      entry.modulePath.length === 0,
+    );
     if (found) return found;
   }
 
-  // Pattern 3: Direct function call — `some_fn(ctx, ...)` delegating to a
-  // top-level or module-level function (common in flattened multi-file
-  // programs where the handler was renamed, e.g. `initialize_handler`).
-  const directFnMatch = bodyText.match(/^\{\s*([a-z_]\w*)\s*\([^)]*\)\s*;?\s*\}$/s);
-  if (directFnMatch?.[1] && directFnMatch[1] !== "handler") {
-    const targetName = directFnMatch[1];
-    const found = functionIndex.find((entry) => {
-      const name = entry.node.childForFieldName("name")?.text;
-      return name === targetName && entry.modulePath.length === 0;
-    }) ?? functionIndex.find((entry) => {
-      const name = entry.node.childForFieldName("name")?.text;
-      return name === targetName;
-    });
+  // Pattern 3: Direct function call — `some_fn(...)` delegating to a top-level
+  // or module-level function (common in flattened multi-file programs where
+  // the handler was renamed, e.g. `initialize_handler`). The lowercase-start
+  // gate filters out type-associated calls (`SomeType::new(...)`) which the
+  // dedicated impl-method inliner handles separately.
+  if (qualifier.length === 0 && fnName !== "handler" && /^[a-z_]/.test(fnName)) {
+    const found = functionIndex.find((entry) =>
+      entry.node.childForFieldName("name")?.text === fnName &&
+      entry.modulePath.length === 0,
+    ) ?? functionIndex.find((entry) =>
+      entry.node.childForFieldName("name")?.text === fnName,
+    );
     if (found) return found;
   }
 
