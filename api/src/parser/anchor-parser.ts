@@ -78,33 +78,42 @@ export interface ParseError {
  * ```
  */
 /**
- * Default parse deadline (ms). Bumped to 60s when the source is unusually
- * large (>30k LoC) since tree-sitter's incremental parser scales roughly
- * linearly but mega-programs like Whirlpool (49k LoC), MarginFi v2 (27k),
- * and Drift (67k) push the warm-cache parse into the multi-second range
- * even on fast hardware. The corpus sweep at reports/realworld-sweep-
- * 2026-05-04.md surfaces these as parse-timeouts under the 10s default.
+ * Sliding-scale parse deadline. Tree-sitter's parse cost is roughly
+ * linear in source size, so a single-cliff 10s/60s split (the previous
+ * SW3 fix) was too coarse — Mango v4 (37k LoC) parses comfortably under
+ * the 60s ceiling but the prior 10s default would have timed it out;
+ * Drift (67k LoC) genuinely needs more time than the median program.
  *
- * Threshold tuned per that sweep: the largest file that fits in 10s
- * comfortably is auction-house (2.2k LoC); the gap is a cliff so 30k is
- * a safe boundary. Operators can override either via opts.timeoutMs.
+ * Formula: `floor(LoC * MS_PER_LINE)` clamped to `[BASE, MAX]`.
+ *  - 1k LoC →  10s (BASE)
+ *  - 5k LoC →  10s (BASE — small program, cheap parse)
+ *  - 25k LoC → 50s
+ *  - 50k LoC → 100s
+ *  - 67k LoC → 120s (MAX — Drift's main program)
+ *
+ * This means: small programs keep the responsive 10s deadline; mega-
+ * programs get a deadline proportional to actual work. The MAX cap
+ * (120s) bounds worst-case server-side request latency.
+ *
+ * Operator can still override via `opts.timeoutMs`.
  */
-const DEFAULT_PARSE_TIMEOUT_MS = 10_000;
-const LARGE_FILE_PARSE_TIMEOUT_MS = 60_000;
-const LARGE_FILE_LINE_THRESHOLD = 30_000;
+const PARSE_TIMEOUT_BASE_MS = 10_000;
+const PARSE_TIMEOUT_MAX_MS = 120_000;
+const PARSE_TIMEOUT_MS_PER_LINE = 2;
+
+function computeParseTimeout(lineCount: number): number {
+  const scaled = lineCount * PARSE_TIMEOUT_MS_PER_LINE;
+  return Math.min(PARSE_TIMEOUT_MAX_MS, Math.max(PARSE_TIMEOUT_BASE_MS, scaled));
+}
 
 export async function parseAnchor(
   source: string,
   opts?: { timeoutMs?: number },
 ): Promise<ParseResult | ParseError> {
-  // Auto-bump deadline for large sources unless caller explicitly set one.
-  const lineCount = source.length > 100_000 // cheap pre-check before split
-    ? source.split("\n").length
-    : 0;
-  const autoTimeout = lineCount > LARGE_FILE_LINE_THRESHOLD
-    ? LARGE_FILE_PARSE_TIMEOUT_MS
-    : DEFAULT_PARSE_TIMEOUT_MS;
-  const timeoutMs = opts?.timeoutMs ?? autoTimeout;
+  // Auto-scale deadline by source size unless caller pinned one. Skip the
+  // .split() on small sources (cheaper to assume small).
+  const lineCount = source.length > 50_000 ? source.split("\n").length : 0;
+  const timeoutMs = opts?.timeoutMs ?? computeParseTimeout(lineCount);
   try {
     return await withParseDeadline(timeoutMs, async () => {
       const parser = await getParser();
@@ -163,17 +172,53 @@ export async function parseAnchor(
     // classify. See ParserWarning in ir/schema.ts.
     const warningCollector = createWarningCollector();
 
-    // ── Parse instructions ──
-    const instructions = parseInstructions(
-      parser,
-      topLevel.programModule.node,
-      topLevel.accountsStructs,
-      topLevel.implMethods,
-      topLevel.functionIndex,
-      topLevel.fromImpls,
-      source,
-      warningCollector,
-    );
+    // ── Parse instructions (partial-IR-on-timeout, #27) ──
+    // parseInstructions walks each handler fn and may call parseGuarded
+    // recursively for synthetic-source rebuilds (impl-method inlining,
+    // From-trait expansion). Any of those nested parses can hit the
+    // request-scoped deadline. Pre-fix, the ParseTimeoutError bubbled up
+    // and the whole request lost ALL extracted data -- accounts, types,
+    // errors, helpers, events: gone. Now we catch the timeout and return
+    // a partial IR with whatever extracted before the cutoff PLUS a
+    // loud parser warning naming the partial-parse reason. Downstream
+    // consumers see ir.warnings with a `partial_parse_timeout` code and
+    // can render "we got 23 of N instructions, see warnings" instead
+    // of "Parse timed out, here's nothing."
+    let instructions: SolanaIR["instructions"];
+    let partialParseTimeout = false;
+    try {
+      instructions = parseInstructions(
+        parser,
+        topLevel.programModule.node,
+        topLevel.accountsStructs,
+        topLevel.implMethods,
+        topLevel.functionIndex,
+        topLevel.fromImpls,
+        source,
+        warningCollector,
+      );
+    } catch (err) {
+      if (err instanceof ParseTimeoutError) {
+        instructions = [];
+        partialParseTimeout = true;
+        warningCollector.add({
+          code: "anchor_pattern_in_passthrough",
+          // Re-using an existing kind keeps the schema stable; the message
+          // is what users see anyway. The validator's parser-warning
+          // surfacing path renders these as `[parser:CODE]` issues.
+          message:
+            `Parse deadline exceeded mid-instruction-classification (${timeoutMs}ms for ${lineCount || "<50k"} LoC). ` +
+            `Returning partial IR: ${topLevel.accountsStructs.length} Accounts struct(s), ` +
+            `${topLevel.accountDataStructs.length} #[account] struct(s), ` +
+            `${topLevel.errorEnums.length} error enum(s), ` +
+            `${topLevel.eventStructs.length} #[event] struct(s), and ` +
+            `${topLevel.implMethods.length} impl method(s) -- but ZERO instructions classified. ` +
+            `Either pass a longer opts.timeoutMs, or split the program source into smaller crates.`,
+        });
+      } else {
+        throw err;
+      }
+    }
 
     // ── Parse errors ──
     const errors = topLevel.errorEnums.flatMap((e) => parseErrorEnum(e.node, e.attrs));
