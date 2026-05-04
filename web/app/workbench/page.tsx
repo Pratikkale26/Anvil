@@ -50,6 +50,10 @@ export default function Workbench() {
     anvilEmittedFiles: anvilEmittedFiles.length > 0 ? anvilEmittedFiles : null,
     anvilScaffoldFiles: anvilScaffoldFiles.length > 0 ? anvilScaffoldFiles : null,
     programName: state.programName,
+    // Differential only supports pinocchio + native (no quasar runtime). Fall
+    // back to pinocchio when user is on quasar -- the verify button is hidden
+    // in that case anyway.
+    target: state.target === "native" ? "native" : "pinocchio",
   });
 
   // Keyboard shortcut: Cmd+Enter / Ctrl+Enter runs the pipeline from

@@ -32,6 +32,9 @@ import { AnvilError, ErrorCode } from "../errors.js";
 import { ScenarioSchema, lintScenario } from "../ir/scenario.js";
 import { SolanaIRSchema } from "../ir/schema.js";
 import { buildBothSos, differentialAvailable } from "../build/differential-build.js";
+import { buildProjectScaffold } from "../emitter/project-scaffold.js";
+
+type ScaffoldTarget = "pinocchio" | "native";
 import {
   resolveScenarioContext,
   runScenarioOnSo,
@@ -49,7 +52,11 @@ const FileSchema = z.object({
 const RequestSchema = z.object({
   anchorSource: z.string().min(1).max(5_000_000),
   anvilEmittedFiles: z.array(FileSchema).min(1).max(64),
-  anvilScaffoldFiles: z.array(FileSchema).min(1).max(64),
+  // Optional: workbench /emit doesn't return scaffold (Cargo.toml etc.) by
+  // default. When omitted or empty, the server synthesises scaffold from IR
+  // using `target` (defaults to pinocchio).
+  anvilScaffoldFiles: z.array(FileSchema).max(64).optional(),
+  target: z.enum(["pinocchio", "native"]).optional(),
   ir: z.unknown(),
   scenario: z.unknown(),
   programName: z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_-]{0,127}$/),
@@ -205,6 +212,18 @@ differentialRoute.post("/", async (req, res) => {
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
   };
 
+  // (6.5) Resolve scaffold. Workbench /emit only returns .rs source files,
+  // so the client can either omit `anvilScaffoldFiles` or send `[]`. In that
+  // case synthesise a Cargo.toml + project scaffold from the IR using the
+  // requested `target` (defaults to pinocchio, matching the workbench's
+  // default emit target).
+  const sentScaffold = parsed.data.anvilScaffoldFiles ?? [];
+  const scaffoldTarget: ScaffoldTarget = parsed.data.target ?? "pinocchio";
+  const anvilScaffoldFiles =
+    sentScaffold.length > 0
+      ? sentScaffold
+      : buildProjectScaffold(ir, scaffoldTarget);
+
   const t0 = Date.now();
   try {
     // (7) Build both .so files.
@@ -212,7 +231,7 @@ differentialRoute.post("/", async (req, res) => {
     const artifacts = await buildBothSos({
       anchorSource: parsed.data.anchorSource,
       anvilEmittedFiles: parsed.data.anvilEmittedFiles,
-      anvilScaffoldFiles: parsed.data.anvilScaffoldFiles,
+      anvilScaffoldFiles,
       anchorExtraDeps: parsed.data.anchorExtraDeps,
       anchorLangFeatures: parsed.data.anchorLangFeatures,
       programName: parsed.data.programName,

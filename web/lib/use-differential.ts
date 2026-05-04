@@ -45,6 +45,7 @@ export function useDifferential(args: {
   anvilScaffoldFiles: Array<{ path: string; content: string }> | null;
   programName: string;
   programIdBase58?: string;
+  target?: "pinocchio" | "native";
 }) {
   const [phase, setPhase] = useState<DifferentialPhase>("idle");
   const [scenario, setScenario] = useState<ScenarioShape | null>(null);
@@ -122,7 +123,7 @@ export function useDifferential(args: {
       setError("Generate or paste a scenario first.");
       return;
     }
-    if (!args.ir || !args.anchorSource || !args.anvilEmittedFiles || !args.anvilScaffoldFiles) {
+    if (!args.ir || !args.anchorSource || !args.anvilEmittedFiles) {
       setError("Missing source / emitted files / IR -- compile first.");
       return;
     }
@@ -147,7 +148,11 @@ export function useDifferential(args: {
         body: JSON.stringify({
           anchorSource: args.anchorSource,
           anvilEmittedFiles: args.anvilEmittedFiles,
-          anvilScaffoldFiles: args.anvilScaffoldFiles,
+          // API synthesises scaffold from IR + target when omitted/empty.
+          ...(args.anvilScaffoldFiles && args.anvilScaffoldFiles.length > 0
+            ? { anvilScaffoldFiles: args.anvilScaffoldFiles }
+            : {}),
+          target: args.target ?? "pinocchio",
           ir: args.ir,
           scenario,
           programName: args.programName,
@@ -194,7 +199,7 @@ export function useDifferential(args: {
     } finally {
       void refreshQuota();
     }
-  }, [scenario, args.ir, args.anchorSource, args.anvilEmittedFiles, args.anvilScaffoldFiles, args.programName, args.programIdBase58, quota, refreshQuota]);
+  }, [scenario, args.ir, args.anchorSource, args.anvilEmittedFiles, args.anvilScaffoldFiles, args.programName, args.programIdBase58, args.target, quota, refreshQuota]);
 
   function dispatchSseEvent(event: string, payload: unknown) {
     if (event === "build-start") {

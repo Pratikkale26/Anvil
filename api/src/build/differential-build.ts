@@ -27,7 +27,7 @@ import {
   statSync,
 } from "node:fs";
 import { join } from "node:path";
-import { sha256 } from "@noble/hashes/sha2.js";
+import { createHash } from "node:crypto";
 import type { SolanaIR } from "../ir/schema.js";
 import { spawnSandboxed, sandboxedEnv } from "./sandbox.js";
 
@@ -209,7 +209,7 @@ function copySoFromTarget(scratch: string, outPath: string): void {
 }
 
 function hashOf(s: string): string {
-  return Buffer.from(sha256(new TextEncoder().encode(s))).toString("hex").slice(0, 16);
+  return createHash("sha256").update(s).digest("hex").slice(0, 16);
 }
 
 /**

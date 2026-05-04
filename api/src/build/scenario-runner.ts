@@ -27,7 +27,7 @@ import {
   TransactionInstruction,
   SystemProgram,
 } from "@solana/web3.js";
-import { sha256 } from "@noble/hashes/sha2.js";
+import { createHash } from "node:crypto";
 import type { Scenario, ScenarioStep, ScenarioAssertion } from "../ir/scenario.js";
 import type { SolanaIR } from "../ir/schema.js";
 
@@ -281,7 +281,7 @@ function serializeOne(value: unknown, type: string, fieldName: string): Buffer {
 // ─── Step → TransactionInstruction ──────────────────────────────────────────
 
 export function anchorDiscriminator(ixName: string): Buffer {
-  return Buffer.from(sha256(new TextEncoder().encode(`global:${ixName}`)).slice(0, 8));
+  return createHash("sha256").update(`global:${ixName}`).digest().subarray(0, 8);
 }
 
 export function buildStepInstruction(
