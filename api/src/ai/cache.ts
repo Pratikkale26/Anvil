@@ -43,6 +43,19 @@ function maxEntries(): number {
 function maxBytes(): number {
   return parseInt(process.env.ANVIL_AI_CACHE_MAX_BYTES ?? `${1024 * 1024 * 1024}`, 10);
 }
+/**
+ * Max age of a cache entry, in ms. Defaults to 30 days. Entries older than
+ * this are evicted regardless of size/count caps so stale entries from
+ * prior prompt versions (post REFINE_PROMPT_VERSION bump, the cached key
+ * is invalid but the file lingers until an unrelated eviction sweep would
+ * have evicted it by mtime). 0 disables the TTL pass.
+ */
+function maxAgeMs(): number {
+  const raw = process.env.ANVIL_AI_CACHE_MAX_AGE_MS;
+  if (raw === undefined) return 30 * 24 * 60 * 60 * 1000;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 30 * 24 * 60 * 60 * 1000;
+}
 
 export function createAICacheKey(parts: Record<string, unknown>): string {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
@@ -79,15 +92,21 @@ export async function writeAICache(key: string, value: RefineResponse): Promise<
  *
  * Exported for tests; production callers should use writeAICache.
  */
-export async function evictIfNeeded(): Promise<{ evicted: number; bytesAfter: number; entriesAfter: number }> {
+export async function evictIfNeeded(): Promise<{
+  evicted: number;
+  bytesAfter: number;
+  entriesAfter: number;
+  /** Entries dropped by TTL (older than maxAgeMs). Counted into `evicted`. */
+  evictedByAge: number;
+}> {
   let names: string[];
   try {
     names = await readdir(aiCacheDir());
   } catch {
-    return { evicted: 0, bytesAfter: 0, entriesAfter: 0 };
+    return { evicted: 0, bytesAfter: 0, entriesAfter: 0, evictedByAge: 0 };
   }
   // Stat in parallel; tolerant of ENOENT for files unlinked mid-scan.
-  const entries = await Promise.all(
+  let entries = await Promise.all(
     names
       .filter((n) => n.endsWith(".json"))
       .map(async (name) => {
@@ -100,15 +119,39 @@ export async function evictIfNeeded(): Promise<{ evicted: number; bytesAfter: nu
         }
       }),
   );
-  const valid = entries.filter((e): e is { path: string; mtimeMs: number; size: number } => e !== null);
+  let valid = entries.filter((e): e is { path: string; mtimeMs: number; size: number } => e !== null);
+
+  // ── TTL pass: drop entries older than maxAgeMs regardless of caps. ──
+  // Useful for clearing stale entries from prior prompt versions (their
+  // keys are dead but the files would otherwise sit until an LRU sweep
+  // gets to them).
+  let evictedByAge = 0;
+  const ttl = maxAgeMs();
+  if (ttl > 0) {
+    const cutoff = Date.now() - ttl;
+    const expired = valid.filter((e) => e.mtimeMs < cutoff);
+    for (const entry of expired) {
+      try {
+        await unlink(entry.path);
+        evictedByAge += 1;
+      } catch {
+        // ENOENT — keep going.
+      }
+    }
+    if (expired.length > 0) {
+      const expiredSet = new Set(expired.map((e) => e.path));
+      valid = valid.filter((e) => !expiredSet.has(e.path));
+    }
+  }
+
   let totalBytes = valid.reduce((s, e) => s + e.size, 0);
   let totalEntries = valid.length;
   if (totalEntries <= maxEntries() && totalBytes <= maxBytes()) {
-    return { evicted: 0, bytesAfter: totalBytes, entriesAfter: totalEntries };
+    return { evicted: evictedByAge, bytesAfter: totalBytes, entriesAfter: totalEntries, evictedByAge };
   }
   // Oldest first.
   valid.sort((a, b) => a.mtimeMs - b.mtimeMs);
-  let evicted = 0;
+  let evicted = evictedByAge;
   for (const entry of valid) {
     if (totalEntries <= maxEntries() && totalBytes <= maxBytes()) break;
     try {
@@ -120,16 +163,22 @@ export async function evictIfNeeded(): Promise<{ evicted: number; bytesAfter: nu
       // ENOENT (someone else deleted it) — keep going.
     }
   }
-  return { evicted, bytesAfter: totalBytes, entriesAfter: totalEntries };
+  return { evicted, bytesAfter: totalBytes, entriesAfter: totalEntries, evictedByAge };
 }
 
 /** Inspect the current cache state. Test/metrics use only. */
-export async function cacheStats(): Promise<{ entries: number; totalBytes: number; maxEntries: number; maxBytes: number }> {
+export async function cacheStats(): Promise<{
+  entries: number;
+  totalBytes: number;
+  maxEntries: number;
+  maxBytes: number;
+  maxAgeMs: number;
+}> {
   let names: string[];
   try {
     names = await readdir(aiCacheDir());
   } catch {
-    return { entries: 0, totalBytes: 0, maxEntries: maxEntries(), maxBytes: maxBytes() };
+    return { entries: 0, totalBytes: 0, maxEntries: maxEntries(), maxBytes: maxBytes(), maxAgeMs: maxAgeMs() };
   }
   const sizes = await Promise.all(
     names
@@ -148,5 +197,6 @@ export async function cacheStats(): Promise<{ entries: number; totalBytes: numbe
     totalBytes: sizes.reduce((a, b) => a + b, 0),
     maxEntries: maxEntries(),
     maxBytes: maxBytes(),
+    maxAgeMs: maxAgeMs(),
   };
 }

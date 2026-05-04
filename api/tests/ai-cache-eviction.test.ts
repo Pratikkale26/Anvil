@@ -114,6 +114,51 @@ describe("AI cache eviction", () => {
     expect(second.evicted).toBe(0);
   });
 
+  test("TTL pass evicts entries older than maxAgeMs regardless of caps", async () => {
+    // Pre-seed two entries, then artificially backdate one's mtime past the
+    // TTL cutoff. evictIfNeeded() should drop the backdated one even though
+    // we're well under both caps.
+    process.env.ANVIL_AI_CACHE_MAX_AGE_MS = "60000"; // 60s TTL for the test
+    const { evictIfNeeded: evictForTtl, cacheStats: statsForTtl } = await import("../src/ai/cache.ts?ttl-test");
+    void evictForTtl; void statsForTtl;
+    // Re-use the standard re-imports (env is read lazily per call).
+    await writeAICache("recent", minimalResponse("recent"));
+    const stalePath = join(SCRATCH, "stale.json");
+    writeFileSync(stalePath, JSON.stringify({ rationale: "stale", findings: [], patches: [], summary: "stale", aiCallMade: true }));
+    // Backdate the stale file by 2 minutes (past the 60s TTL).
+    const { utimesSync } = await import("node:fs");
+    const past = (Date.now() - 2 * 60 * 1000) / 1000;
+    utimesSync(stalePath, past, past);
+
+    const result = await evictIfNeeded();
+    expect(result.evictedByAge).toBeGreaterThanOrEqual(1);
+    // 'recent' must survive.
+    const recent = await readAICache("recent");
+    expect(recent).not.toBeNull();
+    // Reset env so other tests aren't affected.
+    delete process.env.ANVIL_AI_CACHE_MAX_AGE_MS;
+  });
+
+  test("TTL=0 disables age-based eviction", async () => {
+    process.env.ANVIL_AI_CACHE_MAX_AGE_MS = "0";
+    const stalePath = join(SCRATCH, "ancient.json");
+    writeFileSync(stalePath, JSON.stringify({ rationale: "ancient", findings: [], patches: [], summary: "ancient", aiCallMade: true }));
+    const { utimesSync } = await import("node:fs");
+    const ancient = (Date.now() - 365 * 24 * 60 * 60 * 1000) / 1000; // 1 year ago
+    utimesSync(stalePath, ancient, ancient);
+
+    const result = await evictIfNeeded();
+    expect(result.evictedByAge).toBe(0);
+    delete process.env.ANVIL_AI_CACHE_MAX_AGE_MS;
+  });
+
+  test("cacheStats exposes maxAgeMs", async () => {
+    process.env.ANVIL_AI_CACHE_MAX_AGE_MS = "12345";
+    const stats = await cacheStats();
+    expect(stats.maxAgeMs).toBe(12345);
+    delete process.env.ANVIL_AI_CACHE_MAX_AGE_MS;
+  });
+
   test("readAICache returns null for evicted key (no stale read)", async () => {
     await writeAICache("key1", minimalResponse("1"));
     await new Promise((r) => setTimeout(r, 20));
