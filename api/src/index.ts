@@ -290,8 +290,9 @@ const healthHandler: express.RequestHandler = async (_req, res) => {
       "GET  /demo      — list demo names",
       "GET  /demo/:name — pre-loaded demo IR",
       "GET  /health    — this response",
-      "GET  /metrics   — in-memory counters (refine cache hit rate, accept/reject, etc.)",
-      "GET  /metrics/dashboard — public HTML view of the same counters",
+      "GET  /metrics/public — public aggregate counters (cache hit rate, accept/reject, totals)",
+      "GET  /metrics   — full snapshot incl. top-IP-prefix spend (gated by ANVIL_METRICS_TOKEN when set)",
+      "GET  /metrics/dashboard — public HTML view of aggregate counters",
       "GET  /whoami    — caller-scoped: spend remaining, rate-limit headroom, build queue depth",
     ],
   });
@@ -300,10 +301,64 @@ app.get("/", healthHandler);
 app.get("/health", healthHandler);
 
 // ─── Metrics snapshot ────────────────────────────────────────────────────────
-// In-memory counters — resets on restart. Snapshot is read-only; callers use
-// it to see refine cache hit rate, accept/reject ratio, and per-target
-// validation error load since the process started.
-app.get("/metrics", async (_req, res) => {
+//
+// Two surfaces:
+//
+//   /metrics/public   — high-level aggregates safe to expose on the public
+//                       internet: cache hit rate, accept-rate, build counts,
+//                       p50/p95/p99 latencies, total spend today. NO per-IP
+//                       data, NO top-spenders breakdown.
+//
+//   /metrics          — full snapshot incl. top-IP-prefix spend list. Gated
+//                       behind ANVIL_METRICS_TOKEN when set; without the
+//                       token, only `/metrics/public` is reachable.
+//
+// /metrics/dashboard is a public HTML view of the public subset (no IP data).
+//
+// Why: per-SECURITY.md, the unauthenticated /metrics today leaks aggregate
+// per-IP-prefix spend behavior even though IPs are /24-masked. Splitting
+// keeps the high-level health view public for operators / status pages
+// while restricting the per-caller view to internal traffic.
+
+const METRICS_TOKEN = process.env.ANVIL_METRICS_TOKEN;
+
+function publicSubset(snap: Awaited<ReturnType<typeof metrics.snapshotAsync>>) {
+  // Keep aggregate counters; strip per-IP detail.
+  const out = { ...snap } as Record<string, unknown>;
+  if (out.spend && typeof out.spend === "object" && out.spend !== null) {
+    const s = out.spend as Record<string, unknown>;
+    out.spend = {
+      capUsd: s.capUsd,
+      todayTotalUsd: s.todayTotalUsd,
+      todayCallCount: s.todayCallCount,
+      // Drop topSpendersToday — that's the per-IP-prefix list.
+    };
+  }
+  return out;
+}
+
+app.get("/metrics/public", async (_req, res) => {
+  // Always reachable. Aggregate-only view.
+  res.json(publicSubset(await metrics.snapshotAsync()));
+});
+
+app.get("/metrics", async (req, res) => {
+  // Internal-detail view. When ANVIL_METRICS_TOKEN is set, require either
+  // `Authorization: Bearer <token>` or `?token=<token>`. When unset, the
+  // route stays open (back-compat for single-tenant local-dev deploys);
+  // a startup warning ought to nudge operators to set the token.
+  if (METRICS_TOKEN) {
+    const headerToken = req.headers.authorization?.replace(/^Bearer\s+/i, "");
+    const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
+    const supplied = headerToken ?? queryToken;
+    if (supplied !== METRICS_TOKEN) {
+      res.status(401).json({
+        error: "ANVIL_METRICS_TOKEN required for /metrics; use /metrics/public for the aggregate-only view.",
+        code: ErrorCode.VALIDATION_FAILED,
+      });
+      return;
+    }
+  }
   // Async variant scans Redis for cross-instance spend data when
   // REDIS_URL is set; falls through to the local in-memory view in
   // single-instance deploys.

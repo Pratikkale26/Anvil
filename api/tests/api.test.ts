@@ -55,6 +55,23 @@ describe("API", () => {
     }
   });
 
+  test("/metrics/public returns aggregate-only data (no per-IP detail)", async () => {
+    const res = await fetch(`${API}/metrics/public`);
+    expect(res.ok).toBe(true);
+    const data = (await res.json()) as { spend?: { topSpendersToday?: unknown } };
+    // Per-IP-prefix list MUST NOT be in /metrics/public.
+    expect(data.spend?.topSpendersToday).toBeUndefined();
+  });
+
+  test("/metrics is reachable without token when ANVIL_METRICS_TOKEN is unset", async () => {
+    // beforeAll spawns the server without the env var, so the gate is open.
+    const res = await fetch(`${API}/metrics`);
+    expect(res.ok).toBe(true);
+    const data = (await res.json()) as { spend?: { topSpendersToday?: unknown[] } };
+    // Full snapshot includes the topSpendersToday list (may be empty array).
+    expect(Array.isArray(data.spend?.topSpendersToday)).toBe(true);
+  });
+
   test("/whoami returns caller-scoped state (spend + rate-limit + queue)", async () => {
     const res = await fetch(`${API}/whoami`);
     expect(res.ok).toBe(true);
