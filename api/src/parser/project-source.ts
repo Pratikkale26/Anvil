@@ -106,12 +106,25 @@ function extractExternalModuleDecls(source: string): ExternalModuleDecl[] {
   return decls;
 }
 
-/** Remove `mod X;` / `pub mod X;` declarations for the given names. */
+/** Remove `mod X;` / `pub mod X;` declarations for the given names, INCLUDING
+ *  the attribute lines (#[cfg(test)], #[doc(hidden)], #[cfg(...)]) that
+ *  immediately precede them. Without this, stripping a `pub mod tests;`
+ *  preceded by `#[cfg(test)]` orphans the attribute -- which then attaches
+ *  to the next real item (the `#[program] pub mod foo { ... }`) and
+ *  classifyTopLevel skips the program because hasCfgTestAttribute fires.
+ *  Surfaced by the corpus sweep on Whirlpool which had 12 consecutive
+ *  `#[doc(hidden)]\npub mod X;` decls before its `#[program]` mod. */
 function stripExternalModuleDeclarations(source: string, names: string[]): string {
   if (names.length === 0) return source;
   let s = source;
   for (const name of names) {
-    const re = new RegExp(`^[ \\t]*(?:pub\\s+)?mod\\s+${name}\\s*;[ \\t]*\\r?\\n?`, "gm");
+    // Match optional preceding attribute lines (one or more, each followed by
+    // a newline) glued to the `mod X;` line. `(?:^[ \t]*#\[[^\n]*\][ \t]*\r?\n)*`
+    // gobbles them as a prefix so the strip removes the whole decoration block.
+    const re = new RegExp(
+      `(?:^[ \\t]*#\\[[^\\n]*\\][ \\t]*\\r?\\n)*^[ \\t]*(?:pub\\s+)?mod\\s+${name}\\s*;[ \\t]*\\r?\\n?`,
+      "gm",
+    );
     s = s.replace(re, "");
   }
   return s;
@@ -454,7 +467,17 @@ function rewriteProgramModuleBody(
     },
   );
 
-  return source.replace(programModuleRe, `${progMatch[1]}${body}${progMatch[3]}`);
+  // CRITICAL: escape `$` in the replacement so JS's `.replace()` doesn't
+  // interpret `$1` / `$&` / `$$` patterns inside doc comments as
+  // backreferences. The corpus sweep at reports/realworld-sweep-...
+  // surfaced this on marginfi: a doc comment `/// Example: $10M` got
+  // `$10` interpreted as `progMatch[1]+'0'`, splicing the entire
+  // `#[program] pub mod marginfi {` into the comment and corrupting
+  // the source so tree-sitter parsed it as ERROR. Same bug class
+  // would silently corrupt any source whose comments / strings contain
+  // dollar-anchored text. Escape via `$$$$` -> literal `$$` -> literal `$`.
+  const replacement = `${progMatch[1]}${body}${progMatch[3]}`.replace(/\$/g, "$$$$");
+  return source.replace(programModuleRe, replacement);
 }
 
 // ─── Flattened source builder ────────────────────────────────────────────────
