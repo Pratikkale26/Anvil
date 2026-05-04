@@ -46,6 +46,28 @@ describe("API", () => {
     expect(data.service).toBe("Anvil API");
   });
 
+  test("/whoami returns caller-scoped state (spend + rate-limit + queue)", async () => {
+    const res = await fetch(`${API}/whoami`);
+    expect(res.ok).toBe(true);
+    const data = (await res.json()) as {
+      ip: string;
+      spend: { todayUsd: number; capUsd: number; remainingUsd: number; retryAfterSec: number };
+      rateLimit: { limit: number; window: string; usedThisWindow: number; remaining: number };
+      buildQueue: unknown;
+    };
+    expect(data.ip).toBeDefined();
+    // IP must be /24-masked (or "unknown") -- the response shouldn't echo
+    // the full client address back. Acceptable shapes: a.b.c.0/24, x:y:z:w::/64,
+    // or "unknown".
+    expect(data.ip === "unknown" || data.ip.endsWith("/24") || data.ip.endsWith("/64")).toBe(true);
+    expect(typeof data.spend.todayUsd).toBe("number");
+    expect(typeof data.spend.capUsd).toBe("number");
+    expect(data.spend.remainingUsd).toBe(Math.max(0, data.spend.capUsd - data.spend.todayUsd));
+    expect(data.rateLimit.window).toBe("1m");
+    expect(data.rateLimit.remaining).toBe(Math.max(0, data.rateLimit.limit - data.rateLimit.usedThisWindow));
+    expect(data.buildQueue).toBeDefined();
+  });
+
   test("demo endpoint returns IR", async () => {
     const res = await fetch(`${API}/demo/counter`);
     expect(res.ok).toBe(true);

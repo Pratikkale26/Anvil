@@ -262,6 +262,7 @@ const healthHandler: express.RequestHandler = (_req, res) => {
       "GET  /health    — this response",
       "GET  /metrics   — in-memory counters (refine cache hit rate, accept/reject, etc.)",
       "GET  /metrics/dashboard — public HTML view of the same counters",
+      "GET  /whoami    — caller-scoped: spend remaining, rate-limit headroom, build queue depth",
     ],
   });
 };
@@ -283,6 +284,77 @@ app.get("/metrics", async (_req, res) => {
 // sits beside `/metrics` rather than under it (Express would otherwise route
 // `/metrics/dashboard` to the JSON handler if both were mounted on the prefix).
 app.get("/metrics/dashboard", metricsDashboardHandler);
+
+// ─── /whoami — caller-scoped status ──────────────────────────────────────────
+// Returns the requesting IP's spend remaining, current rate-limit headroom,
+// and current queue depth. Lets the workbench show "$X left today / N
+// builds queued behind you" inline without a /metrics roundtrip (which is
+// global) or a separate per-call lookup. Cheap: one Redis read for spend +
+// one Map lookup for rate-limit + one in-process queueStats call.
+import { checkSpendCap } from "./ai/spend-tracker.js";
+import { queueStats } from "./build/build-runner.js";
+
+app.get("/whoami", async (req, res) => {
+  const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+
+  // Spend (Redis-aware async path).
+  const spend = await checkSpendCap(ip);
+
+  // Per-minute rate limit. We don't increment here -- this is a read-only
+  // probe -- so we just look up whatever the prior windows show. When
+  // Redis is on, read the same key the rate-limit middleware writes; when
+  // off, fall back to the in-memory Map snapshot. Either way the response
+  // includes `limit` so the caller can compute remaining locally.
+  let usedThisWindow = 0;
+  if (isRedisEnabled()) {
+    try {
+      const redis = getRedis();
+      if (redis) {
+        const v = await redis.get(`anvil:ratelimit:${ip}`);
+        if (v) usedThisWindow = parseInt(v, 10) || 0;
+      }
+    } catch { /* fall through */ }
+  } else {
+    const entry = rateLimitMap.get(ip);
+    if (entry && Date.now() < entry.resetAt) usedThisWindow = entry.count;
+  }
+
+  res.json({
+    ip: maskIpForResponse(ip),
+    spend: {
+      todayUsd: round4(spend.todayUsd),
+      capUsd: round4(spend.capUsd),
+      remainingUsd: round4(Math.max(0, spend.capUsd - spend.todayUsd)),
+      retryAfterSec: spend.retryAfterSec,
+    },
+    rateLimit: {
+      limit: RATE_LIMIT,
+      window: "1m",
+      usedThisWindow,
+      remaining: Math.max(0, RATE_LIMIT - usedThisWindow),
+    },
+    buildQueue: queueStats(),
+  });
+});
+
+function maskIpForResponse(ip: string): string {
+  // Same /24 (v4) / /64 (v6) shape spend-tracker uses on /metrics so we
+  // never echo a full client IP back to the caller -- defence-in-depth
+  // against accidental leakage when /whoami responses get logged.
+  if (ip === "unknown") return ip;
+  const v4mapped = ip.match(/^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/i);
+  if (v4mapped) return `${v4mapped[1]}.${v4mapped[2]}.${v4mapped[3]}.0/24`;
+  if (ip.includes(".") && !ip.includes(":")) {
+    const parts = ip.split(".");
+    if (parts.length === 4) return `${parts[0]}.${parts[1]}.${parts[2]}.0/24`;
+  }
+  if (ip.includes(":")) return `${ip.split(":").slice(0, 4).join(":")}::/64`;
+  return ip;
+}
+
+function round4(n: number): number {
+  return Math.round(n * 10000) / 10000;
+}
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 app.use("/parse", parseRoute);
