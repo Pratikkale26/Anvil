@@ -458,6 +458,16 @@ function classifyExpressionStatement(
     return { stmt: classifyMacroInvocation(expr) };
   }
 
+  // ── return Err(...) / return Ok(()) wrapped in expression_statement ──
+  // The top-level switch in classifyStatement has a `return_expression` case,
+  // but tree-sitter wraps return expressions in expression_statement when they
+  // appear with a trailing `;` (the common case). Without this branch the
+  // return falls through to pass_through, dropping the typed return_err /
+  // return_ok IR kind on the floor.
+  if (expr.type === "return_expression") {
+    return { stmt: classifyReturn(expr) };
+  }
+
   // ── Assignment: state.field = value ──
   if (expr.type === "assignment_expression") {
     const assignResult = classifyAssignment(expr);
