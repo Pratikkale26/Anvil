@@ -1,19 +1,50 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { ArrowLeft, Sparkles, Zap } from "lucide-react";
 import { useAnvilPipeline } from "@/lib/use-anvil-pipeline";
+import { useDifferential } from "@/lib/use-differential";
 import { C } from "@/lib/constants";
 import { InputPanel } from "@/components/workbench/input-panel";
 import { OutputPanel } from "@/components/workbench/output-panel";
 import { ValidationPanel } from "@/components/workbench/validation-panel";
 import { LintPanel } from "@/components/workbench/lint-panel";
+import { DifferentialPanel } from "@/components/workbench/differential-panel";
 import { cn } from "@/lib/utils";
 
 export default function Workbench() {
   const state = useAnvilPipeline();
   const { apiOk, isMobile, isTablet, runPipeline, isRunning, spendTodayUsd, spendCapUsd } = state;
+
+  // Wire differential to the current pipeline state. Splits emitted files
+  // into the src/-prefixed sources vs scaffold (Cargo.toml + friends) the
+  // way the API endpoint expects.
+  const { anvilEmittedFiles, anvilScaffoldFiles } = useMemo(() => {
+    const emitted: Array<{ path: string; content: string }> = [];
+    const scaffold: Array<{ path: string; content: string }> = [];
+    for (const f of state.outputFiles) {
+      if (f.path.startsWith("src/")) {
+        emitted.push({ path: f.path.slice("src/".length), content: f.content });
+      } else {
+        scaffold.push(f);
+      }
+    }
+    return { anvilEmittedFiles: emitted, anvilScaffoldFiles: scaffold };
+  }, [state.outputFiles]);
+
+  const irObject = useMemo(() => {
+    if (!state.irText) return null;
+    try { return JSON.parse(state.irText) as unknown; } catch { return null; }
+  }, [state.irText]);
+
+  const differential = useDifferential({
+    ir: irObject,
+    anchorSource: state.resolvedSource ?? state.sourceText ?? null,
+    anvilEmittedFiles: anvilEmittedFiles.length > 0 ? anvilEmittedFiles : null,
+    anvilScaffoldFiles: anvilScaffoldFiles.length > 0 ? anvilScaffoldFiles : null,
+    programName: state.programName,
+  });
 
   // Keyboard shortcut: Cmd+Enter / Ctrl+Enter runs the pipeline from
   // anywhere in the workbench. Avoids the reach for the mouse on every
@@ -123,6 +154,7 @@ export default function Workbench() {
           <InputPanel state={state} />
           <div className="flex flex-col gap-4">
             <OutputPanel state={state} />
+            <DifferentialPanel state={differential} />
             <LintPanel state={state} />
             <ValidationPanel state={state} />
           </div>

@@ -207,6 +207,113 @@ export type ValidationIssue = {
   line?: number;
 };
 
+// ─── Differential / byte-equal verification (Track B Stage 1+2+5) ────────────
+
+/** Scenario shape mirrors the API's Zod ScenarioSchema (api/src/ir/scenario.ts).
+ *  Kept untyped at the workbench level (ad-hoc Record<string, unknown>) since
+ *  the schema is the source of truth -- the API validates on receipt. */
+export interface ScenarioShape {
+  version: number;
+  programId?: string;
+  signers: Array<{ name: string; airdrop?: number }>;
+  pdas: Array<{ name: string; seeds: string[]; bump?: number }>;
+  steps: Array<{
+    ix: string;
+    args: Record<string, unknown>;
+    accounts: string[];
+    expectFail?: boolean;
+    label?: string;
+  }>;
+  compare: {
+    accounts: string[];
+    lamports: boolean;
+    owner: boolean;
+    eventLogs: boolean;
+    msgLogs: boolean;
+    returnData: boolean;
+  };
+  assertions: Array<{
+    afterStep: number;
+    account: string;
+    field: string;
+    expectedValue: unknown;
+    label?: string;
+  }>;
+  clock: { timestamp?: number; slot?: number };
+}
+
+export interface AutoScenarioBlocker {
+  message: string;
+  context?: { instruction?: string; account?: string; arg?: string };
+}
+
+export interface AutoScenarioNote {
+  message: string;
+  context?: { instruction?: string; account?: string; arg?: string };
+}
+
+export type AutoScenarioResponse =
+  | { ok: true; scenario: ScenarioShape; notes: AutoScenarioNote[] }
+  | { ok: false; blockers: AutoScenarioBlocker[] };
+
+export interface DifferentialQuota {
+  available: boolean;
+  allowed: boolean;
+  used: number;
+  cap: number;
+  resetInSec: number;
+  reason?: string;
+  authMode: "anonymous" | "github";
+}
+
+export interface AccountDiff {
+  name: string;
+  status: "equal" | "diverged" | "missing";
+  firstDiffByte?: number;
+  lamportsDiff?: { anchor: string; anvil: string };
+  ownerDiff?: { anchor: string; anvil: string };
+  fieldDiffs?: Array<{ field: string; anchor: unknown; anvil: unknown; equal: boolean }>;
+  anchorHex?: string;
+  anvilHex?: string;
+}
+
+export interface AssertionResult {
+  assertion: { afterStep: number; account: string; field: string; expectedValue: unknown; label?: string };
+  passed: boolean;
+  actualAnvil?: unknown;
+  actualAnchor?: unknown;
+  message?: string;
+}
+
+export interface SanityWarning {
+  kind: "all_steps_reverted" | "zero_mutation" | "no_compare_targets";
+  message: string;
+}
+
+export interface StepOutcome {
+  index: number;
+  ix: string;
+  label?: string;
+  ok: boolean;
+  error?: string;
+  logs: string[];
+  expectedFail: boolean;
+}
+
+export interface DifferentialVerdict {
+  verdict: "BYTE_EQUAL" | "DIVERGED" | "SCENARIO_FAILED";
+  durationMs: number;
+  steps: { anchor: StepOutcome[]; anvil: StepOutcome[] };
+  accountDiffs: AccountDiff[];
+  assertions: AssertionResult[];
+  sanityWarnings: SanityWarning[];
+  eventLogDiff?: { anchor: string[]; anvil: string[]; diverged: boolean };
+  msgLogDiff?: { anchor: string[]; anvil: string[]; diverged: boolean };
+  cacheState?: { anchor: "hit" | "miss"; anvil: "hit" | "miss" };
+  lintWarnings?: Array<{ severity: "error" | "warning"; message: string }>;
+  quota?: DifferentialQuota;
+}
+
 // ─── Color palette ────────────────────────────────────────────────────────────
 
 export const C = {
