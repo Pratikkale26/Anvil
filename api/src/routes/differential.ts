@@ -67,6 +67,34 @@ differentialRoute.get("/quota", (req, res) => {
   });
 });
 
+/**
+ * POST /build/differential/auto-scenario
+ *   body: { ir: SolanaIR }
+ *   returns: { ok: true, scenario, notes[] } | { ok: false, blockers[] }
+ *
+ * Pure synthesis -- no toolchain, no quota consumption. Workbench
+ * pre-fetches this when the user clicks "Generate scenario" so they
+ * see the synthesised form before paying compute on a real verify run.
+ */
+import { synthesizeAutoScenario } from "../cli/auto-scenario.js";
+
+const AutoScenarioRequest = z.object({ ir: z.unknown() });
+
+differentialRoute.post("/auto-scenario", (req, res) => {
+  const parsed = AutoScenarioRequest.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json(new AnvilError(ErrorCode.VALIDATION_FAILED, "Invalid auto-scenario request", parsed.error.message, 400).toJSON());
+    return;
+  }
+  const irParsed = SolanaIRSchema.safeParse(parsed.data.ir);
+  if (!irParsed.success) {
+    res.status(422).json(new AnvilError(ErrorCode.INVALID_IR, "Invalid IR", irParsed.error.message, 422).toJSON());
+    return;
+  }
+  const result = synthesizeAutoScenario(irParsed.data);
+  res.json(result);
+});
+
 differentialRoute.post("/", async (req, res) => {
   const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
 
