@@ -180,8 +180,8 @@ Same byte-equal gates, no auth, no quota. Requires `cargo-build-sbf` +
 
 ## Quota
 
-Default: **2 verifications/IP/day** on the public deploy
-(`ANVIL_DIFFERENTIAL_DAILY_CAP=2`). Each verification consumes 1–5
+Default: **3 verifications/IP/day** on the public deploy
+(`ANVIL_DIFFERENTIAL_DAILY_CAP=3`). Each verification consumes 1–5
 minutes of server CPU on cache-miss; the cap exists to prevent
 scripted abuse.
 
@@ -193,7 +193,7 @@ CLI locally.
 | Env var | Default | What it does |
 |---|---|---|
 | `ANVIL_DIFFERENTIAL_AUTH` | `anonymous` | `anonymous` = per-IP cap; `github` = stub for OAuth (not yet wired) |
-| `ANVIL_DIFFERENTIAL_DAILY_CAP` | `2` | Verifications per IP per UTC day |
+| `ANVIL_DIFFERENTIAL_DAILY_CAP` | `3` | Verifications per IP per UTC day |
 | `ANVIL_DIFF_CACHE` | `~/.anvil-diff-cache` | Where source-hashed `.so` files live |
 
 ## Deploy requirements

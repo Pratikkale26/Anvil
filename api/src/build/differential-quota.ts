@@ -1,7 +1,5 @@
 /**
- * Per-IP daily quota for /build/differential. Configurable via
- * `ANVIL_DIFFERENTIAL_AUTH` (anonymous | github -- only anonymous wired
- * today; github stub returns true unconditionally pending OAuth flow).
+ * Per-IP daily quota for /build/differential.
  *
  * Why a separate gate from the existing rate limit + AI spend tracker:
  * differential is the heaviest workload on the server (2x cargo build-sbf,
@@ -10,13 +8,20 @@
  * permit (60 differentials/min would melt the box) or wrongly deny
  * (a user paying for AI shouldn't lose differential capacity).
  *
- * State: in-memory daily counter per /24-masked IP. Resets at UTC
- * midnight. Single-instance only -- multi-instance deploys will
- * silently allow `cap * N_replicas` per day until we wire Redis
- * (mirror of the spend-tracker pattern).
+ * State: per-IP daily counter, /24-masked, resets at UTC midnight.
+ * Two backing stores:
+ *   - default: in-memory Map (single-instance deploys only)
+ *   - REDIS_URL set: Redis INCR + EXPIRE with the in-memory map as
+ *     a read-side fast path. Mirrors the spend-tracker pattern so
+ *     multi-replica deploys converge on the same per-IP cap.
+ *
+ * Auth modes:
+ *   - ANVIL_DIFFERENTIAL_AUTH=anonymous (default) — per-IP cap.
+ *   - ANVIL_DIFFERENTIAL_AUTH=github — stub for OAuth (not yet wired).
  */
+import { getRedis, isRedisEnabled } from "../redis-store.js";
 
-const DEFAULT_DAILY_CAP = 2;
+const DEFAULT_DAILY_CAP = 3;
 
 interface DayBucket {
   count: number;
@@ -61,7 +66,51 @@ export interface QuotaCheck {
   authMode: "anonymous" | "github";
 }
 
-/** Read-only inspection. Used by /whoami + the workbench's pre-flight UI. */
+function dayKey(now: number): string {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+function redisKey(masked: string, now: number): string {
+  return `anvil:diff-quota:${dayKey(now)}:${masked}`;
+}
+
+/** Read-only inspection. Used by /whoami + the workbench's pre-flight UI.
+ *  Redis-aware -- when configured, reads the cross-instance counter and
+ *  takes the max of (local, redis) so a stale local view doesn't
+ *  underreport another instance's consumption. */
+export async function quotaSnapshotAsync(ip: string): Promise<QuotaCheck> {
+  const masked = maskIp(ip);
+  const now = Date.now();
+  const cap = dailyCap();
+  const localBucket = counter.get(masked);
+  const localCount = (localBucket && now < localBucket.resetAt) ? localBucket.count : 0;
+  const resetIn = Math.ceil((nextUtcMidnight(now) - now) / 1000);
+
+  let used = localCount;
+  if (isRedisEnabled()) {
+    const redis = getRedis();
+    if (redis) {
+      try {
+        const v = await redis.get(redisKey(masked, now));
+        if (v) used = Math.max(used, parseInt(v, 10) || 0);
+      } catch { /* fall through to local view */ }
+    }
+  }
+
+  return {
+    allowed: used < cap,
+    used,
+    cap,
+    resetInSec: resetIn,
+    reason: used >= cap
+      ? `Differential quota exhausted (${used}/${cap} today). Resets at 00:00 UTC.`
+      : undefined,
+    authMode: authMode(),
+  };
+}
+
+/** Sync convenience -- reads in-memory only. Prefer quotaSnapshotAsync()
+ *  for accurate cross-instance counts. */
 export function quotaSnapshot(ip: string): QuotaCheck {
   const masked = maskIp(ip);
   const now = Date.now();
@@ -82,11 +131,56 @@ export function quotaSnapshot(ip: string): QuotaCheck {
   };
 }
 
-/** Record one verification + check the new state in one atomic op. */
-export function consumeQuota(ip: string): QuotaCheck {
+/** Record one verification + check the new state. Uses Redis INCR atomically
+ *  when configured so two replicas sharing the same IP can't both pass
+ *  the cap check on the same race. Falls back to the in-memory counter
+ *  when Redis is unset OR a transient error blocks the round trip. */
+export async function consumeQuota(ip: string): Promise<QuotaCheck> {
   const masked = maskIp(ip);
   const now = Date.now();
   const cap = dailyCap();
+
+  // Redis path: atomic INCR + EXPIRE NX so the TTL is set on the first
+  // request of the day and inherited by every later one. A transient
+  // failure (network blip) falls through to the in-memory map; under
+  // sustained Redis outage the cap effectively becomes per-instance.
+  if (isRedisEnabled()) {
+    const redis = getRedis();
+    if (redis) {
+      try {
+        const ttlSec = Math.ceil((nextUtcMidnight(now) - now) / 1000);
+        const results = await redis
+          .multi()
+          .incr(redisKey(masked, now))
+          .expire(redisKey(masked, now), ttlSec, "NX")
+          .exec();
+        const used = (results?.[0]?.[1] as number | undefined) ?? 1;
+        // Mirror to local map so quotaSnapshot() (sync path) reflects.
+        let bucket = counter.get(masked);
+        if (!bucket || now >= bucket.resetAt) {
+          bucket = { count: used, resetAt: nextUtcMidnight(now) };
+          counter.set(masked, bucket);
+        } else {
+          bucket.count = Math.max(bucket.count, used);
+        }
+        if (used > cap) {
+          return {
+            allowed: false,
+            used,
+            cap,
+            resetInSec: ttlSec,
+            reason: `Differential quota exhausted (${used}/${cap} today). Resets at 00:00 UTC.`,
+            authMode: authMode(),
+          };
+        }
+        return { allowed: true, used, cap, resetInSec: ttlSec, authMode: authMode() };
+      } catch {
+        // Fall through to in-memory.
+      }
+    }
+  }
+
+  // In-memory fallback (single-instance default).
   let bucket = counter.get(masked);
   if (!bucket || now >= bucket.resetAt) {
     bucket = { count: 0, resetAt: nextUtcMidnight(now) };

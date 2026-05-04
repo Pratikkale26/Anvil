@@ -37,7 +37,7 @@ import {
   runScenarioOnSo,
   compareScenarioRuns,
 } from "../build/scenario-runner.js";
-import { consumeQuota, quotaSnapshot } from "../build/differential-quota.js";
+import { consumeQuota, quotaSnapshotAsync } from "../build/differential-quota.js";
 
 export const differentialRoute = Router();
 
@@ -59,11 +59,13 @@ const RequestSchema = z.object({
 });
 
 /** GET /build/differential/quota — caller's remaining quota. */
-differentialRoute.get("/quota", (req, res) => {
+differentialRoute.get("/quota", async (req, res) => {
   const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+  // Async snapshot for accurate cross-instance counts via Redis.
+  const snap = await quotaSnapshotAsync(ip);
   res.json({
     available: differentialAvailable(),
-    ...quotaSnapshot(ip),
+    ...snap,
   });
 });
 
@@ -150,8 +152,9 @@ differentialRoute.post("/", async (req, res) => {
     return;
   }
 
-  // (4) Quota check + consume.
-  const quota = consumeQuota(ip);
+  // (4) Quota check + consume. Async for Redis path -- multi-instance
+  // deploys converge on the same per-IP counter via Redis INCR.
+  const quota = await consumeQuota(ip);
   if (!quota.allowed) {
     res.status(429).setHeader("Retry-After", String(quota.resetInSec)).json({
       error: quota.reason ?? "Differential quota exhausted.",
