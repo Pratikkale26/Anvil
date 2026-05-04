@@ -42,7 +42,7 @@ import { z } from "zod";
 // before the request fires.
 
 const AccountRefSchema = z.string().regex(
-  /^(?:\$signer:[a-zA-Z_][a-zA-Z0-9_]*|\$pda:[a-zA-Z_][a-zA-Z0-9_]*|\$program:(?:system|token|token_2022|associated_token|memo|rent|clock)|\$keypair:[a-zA-Z_][a-zA-Z0-9_]*|[1-9A-HJ-NP-Za-km-z]{32,44})$/,
+  /^(?:\$signer:[a-zA-Z_][a-zA-Z0-9_]*|\$pda:[a-zA-Z_][a-zA-Z0-9_]*|\$program:(?:system|token|token_2022|associated_token|memo|rent|clock)|\$keypair:[a-zA-Z_][a-zA-Z0-9_]*|\$state:[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*|\$arg:[a-zA-Z_][a-zA-Z0-9_]*|[1-9A-HJ-NP-Za-km-z]{32,44})$/,
 );
 
 // ─── Signer declaration ─────────────────────────────────────────────────────

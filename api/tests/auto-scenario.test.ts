@@ -66,19 +66,62 @@ describe("auto-scenario: achievable demos synthesise cleanly", () => {
     expect(r.notes.some((n) => n.message.includes("emit!"))).toBe(true);
   });
 
-  test("vesting -> blocked on state-field seeds (4b scope) but with actionable message", async () => {
-    // Vesting uses `beneficiary.as_ref()` (Pubkey arg) AND
-    // `vesting.grantor.as_ref()` (state-field reference) in seeds. Both
-    // need 4b-scope synthesis (state-dependent seed evaluator). For V1
-    // we expect the blocker to fire with a clear message pointing at
-    // "Edit as JSON" so the user knows the workaround.
+  test("vesting -> synthesises via Stage 4b state/arg seed tags", async () => {
+    // Vesting uses `beneficiary.as_ref()` (Pubkey arg in seeds) AND
+    // `vesting.grantor.as_ref()` (state-field reference). Stage 4b adds
+    // $arg:beneficiary and $state:vesting.grantor seed tags so both
+    // resolve at runtime instead of blocking at synthesis.
     const ir = await parseDemo("vesting.rs");
     const r = synthesizeAutoScenario(ir);
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    const seedBlocker = r.blockers.find((b) => b.message.includes("seed expression"));
-    expect(seedBlocker).toBeDefined();
-    expect(seedBlocker?.message).toContain("Edit as JSON");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scenario.steps.length).toBeGreaterThan(0);
+    // At least one PDA's seeds should reference $state: or $arg:.
+    const usesNewTags = r.scenario.pdas.some((p) =>
+      p.seeds.some((s) => s.startsWith("$state:") || s.startsWith("$arg:")),
+    );
+    expect(usesNewTags).toBe(true);
+  });
+
+  test("custom struct args -> synthesised by walking TypeDef.fields (Stage 4b)", () => {
+    // Synthetic IR: instruction with custom-struct arg, type defined
+    // in IR.types. Pre-4b this blocked; post-4b synthesizeCustomTypeDefault
+    // walks the TypeDef and produces an object with each field defaulted.
+    const ir = {
+      name: "p",
+      instructions: [{
+        name: "place_order",
+        accounts: [],
+        args: [{ name: "params", type: "OrderParams" }],
+        body: [],
+      }],
+      accounts: [],
+      types: [{
+        name: "OrderParams",
+        kind: "struct" as const,
+        fields: [
+          { name: "amount", type: "u64" },
+          { name: "is_bid", type: "bool" },
+          { name: "limit_price", type: "u64" },
+        ],
+      }],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor" as const, anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const params = r.scenario.steps[0]!.args.params as Record<string, unknown>;
+    expect(params).toBeDefined();
+    expect(params.amount).toBe(1);
+    expect(params.is_bid).toBe(true);
+    expect(params.limit_price).toBe(1);
   });
 });
 

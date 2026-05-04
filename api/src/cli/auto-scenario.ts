@@ -73,6 +73,55 @@ const DEFAULT_VALUES: Record<string, unknown> = {
   Pubkey: "11111111111111111111111111111111", // System program ID -- harmless placeholder
 };
 
+/**
+ * Recursively synthesise a default value for a custom struct / enum arg
+ * by walking its TypeDef.fields. Returns undefined when the type isn't
+ * in the IR types catalog or when its fields contain unsupported shapes.
+ *
+ * Stage 4b: previously custom structs were a hard blocker. Now we look
+ * up the TypeDef, walk each field, and recurse for nested types. Enums
+ * default to the first variant (best-effort heuristic).
+ */
+function synthesizeCustomTypeDefault(
+  typeName: string,
+  ir: SolanaIR,
+  visited: Set<string> = new Set(),
+): unknown | undefined {
+  // Recursion guard for self-referential types.
+  if (visited.has(typeName)) return null;
+  const next = new Set(visited).add(typeName);
+
+  const typeDef = ir.types.find((t) => t.name === typeName);
+  if (!typeDef) return undefined;
+
+  if (typeDef.kind === "enum") {
+    // Default to the first variant by name. Tagged-union with payload
+    // is too rich to default; fall back to the variant name string.
+    const firstVariant = typeDef.variants?.[0];
+    return firstVariant ?? null;
+  }
+
+  // Struct: synthesise each field
+  const out: Record<string, unknown> = {};
+  for (const f of typeDef.fields ?? []) {
+    if (DEFAULT_VALUES[f.type] !== undefined) {
+      out[f.name] = DEFAULT_VALUES[f.type];
+    } else if (/^([ui])(8|16|32|64|128)$/.test(f.type)) {
+      out[f.name] = 1;
+    } else {
+      // Recurse for nested custom type
+      const nested = synthesizeCustomTypeDefault(f.type, ir, next);
+      if (nested !== undefined) {
+        out[f.name] = nested;
+      } else {
+        // Unknown field type -- bail with a sentinel the user can replace.
+        out[f.name] = null;
+      }
+    }
+  }
+  return out;
+}
+
 /** Well-known program-account types that resolve to $program:<X>. */
 const KNOWN_PROGRAM_TYPES: Record<string, string> = {
   System: "system",
@@ -101,11 +150,23 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   }
 
   // ── (1) Args check: bail early if any instruction has args we can't default ──
+  // Stage 4b: custom struct args are now synthesisable when their TypeDef is
+  // in the IR (the workbench user can edit the defaulted values via the
+  // form). Truly-unsynthesisable shapes (external types not in IR.types)
+  // still block.
   for (const ix of ir.instructions) {
     for (const arg of ix.args) {
-      if (!isPrimitiveType(arg.type)) {
+      if (isPrimitiveType(arg.type)) continue;
+      // Custom type — does the IR have a TypeDef for it?
+      const synthesized = synthesizeCustomTypeDefault(arg.type, ir);
+      if (synthesized === undefined) {
         blockers.push({
-          message: `Instruction \`${ix.name}\` has arg \`${arg.name}\` of type \`${arg.type}\` -- auto-scenario can only default primitive types (u*, i*, bool, String, Vec<u8>). Provide a value via "Edit as JSON" or via the form input once we render it.`,
+          message: `Instruction \`${ix.name}\` has arg \`${arg.name}\` of type \`${arg.type}\` which isn't in the IR's types catalog. External types aren't synthesisable; use "Edit as JSON" to provide a value.`,
+          context: { instruction: ix.name, arg: arg.name },
+        });
+      } else {
+        notes.push({
+          message: `Defaulted custom-type arg \`${ix.name}.${arg.name}\` (\`${arg.type}\`) by walking its TypeDef fields. Edit the values inline if your test needs different ones.`,
           context: { instruction: ix.name, arg: arg.name },
         });
       }
@@ -180,7 +241,18 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   const steps: ScenarioStep[] = orderedInstructions.map((ix) => {
     const args: Record<string, unknown> = {};
     for (const arg of ix.args) {
-      args[arg.name] = DEFAULT_VALUES[arg.type] ?? 1;
+      if (DEFAULT_VALUES[arg.type] !== undefined) {
+        args[arg.name] = DEFAULT_VALUES[arg.type];
+      } else if (/^([ui])(8|16|32|64|128)$/.test(arg.type)) {
+        args[arg.name] = 1;
+      } else {
+        // Custom type -- attempt to walk the TypeDef. synthesizeCustomTypeDefault
+        // returns undefined when the type isn't in IR.types; the (1) blocker
+        // pass above already filtered those, so this should always succeed
+        // here. Fall back to null as a sentinel the user can replace.
+        const synthesized = synthesizeCustomTypeDefault(arg.type, ir);
+        args[arg.name] = synthesized ?? null;
+      }
       notes.push({
         message: `Auto-defaulted \`${ix.name}.${arg.name}\` (${arg.type}) to ${JSON.stringify(args[arg.name])}. Edit if your test needs a different value.`,
         context: { instruction: ix.name, arg: arg.name },
@@ -348,11 +420,29 @@ function synthesizeSeeds(
       // Skip -- find_program_address will derive the canonical bump.
       continue;
     }
+    // <state>.field.as_ref() / <state>.field.to_le_bytes() -- state-dependent
+    // seed reference. Stage 4b: produce a $state:<account>.<field> tag that
+    // the runtime resolves AFTER the prior step has init'd the account.
+    // Documented as a known limitation: only works when the referenced state
+    // account was init'd by an earlier step in the scenario; the runtime
+    // resolver looks up the field by deserializing the live account.
+    const stateFieldMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\.(as_ref\(\)|to_le_bytes\(\)|to_le_bytes\(\)\.as_ref\(\))$/);
+    if (stateFieldMatch?.[1] && stateFieldMatch[2]) {
+      out.push(`$state:${stateFieldMatch[1]}.${stateFieldMatch[2]}`);
+      continue;
+    }
+    // <arg>.as_ref() — the arg pubkey provided in the same step. Resolved at
+    // runtime by reading the step's args. Tag form: $arg:<argname>
+    const argRefMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.(as_ref\(\)|to_le_bytes\(\))$/);
+    if (argRefMatch?.[1]) {
+      out.push(`$arg:${argRefMatch[1]}`);
+      continue;
+    }
     // Unrecognised shape.
     return {
       ok: false,
       seeds: [],
-      reason: `unsupported seed expression \`${trimmed}\` -- V1 supports b"literal", <signer>.key().as_ref(). For other shapes use "Edit as JSON".`,
+      reason: `unsupported seed expression \`${trimmed}\` -- supported: b"literal", <signer>.key().as_ref(), <state>.<field>.as_ref(), <arg>.as_ref(). Use "Edit as JSON" for other shapes.`,
     };
   }
   return { ok: true, seeds: out };
