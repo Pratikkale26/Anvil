@@ -27,6 +27,7 @@ import {
   containsAnchorPatterns,
 } from "./ast-helpers.js";
 import { detectCpi } from "./cpi-detector.js";
+import type { WarningCollector } from "./warning-collector.js";
 
 /**
  * Classify all statements in a function body block.
@@ -34,7 +35,7 @@ import { detectCpi } from "./cpi-detector.js";
  * @param bodyNode — the `block` node of the function body (including { })
  * @returns array of classified BodyStatements
  */
-export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
+export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector): BodyStatement[] {
   const statements: BodyStatement[] = [];
 
   // If the body already has a user-defined `let signers_seeds = [&seeds[..]]`
@@ -87,7 +88,7 @@ export function classifyBody(bodyNode: SyntaxNode): BodyStatement[] {
     // Skip comment nodes
     if (child.type === "line_comment" || child.type === "block_comment") continue;
 
-    const classified = classifyStatement(child, pendingSeeds, cpiContexts, hasUserSeedsManagement);
+    const classified = classifyStatement(child, pendingSeeds, cpiContexts, hasUserSeedsManagement, collector);
 
     // Track seeds for PDA signer seeds grouping
     if (classified._seedsData) {
@@ -172,6 +173,7 @@ function classifyStatement(
   pendingSeeds: { seeds: string[]; bumpField?: string; rawCode: string } | null,
   cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
   hasUserSeedsManagement = false,
+  collector?: WarningCollector,
 ): ClassifyResult {
   const text = node.text;
 
@@ -180,7 +182,7 @@ function classifyStatement(
       return classifyLetDeclaration(node, pendingSeeds, hasUserSeedsManagement);
 
     case "expression_statement":
-      return classifyExpressionStatement(node, cpiContexts);
+      return classifyExpressionStatement(node, cpiContexts, collector);
 
     case "macro_invocation":
       return { stmt: classifyMacroInvocation(node) };
@@ -188,18 +190,27 @@ function classifyStatement(
     case "return_expression":
       return { stmt: classifyReturn(node) };
 
-    default:
+    default: {
       // if/for/while/match/block — pure Rust, pass through
+      const hasAnchor = containsAnchorPatterns(text);
+      if (hasAnchor) {
+        collector?.add({
+          code: "anchor_pattern_in_passthrough",
+          message: "Pass-through control-flow statement contains an Anchor-specific pattern (ctx.accounts / require! / emit! / CpiContext / anchor_spl). Won't transform on Pinocchio/Quasar; manual port required.",
+          snippet: text,
+        });
+      }
       return {
         stmt: {
           kind: "pass_through",
           code: text,
-          needsReview: containsAnchorPatterns(text),
-          reviewReason: containsAnchorPatterns(text)
+          needsReview: hasAnchor,
+          reviewReason: hasAnchor
             ? "Contains possible Anchor-specific pattern"
             : undefined,
         },
       };
+    }
   }
 }
 
@@ -366,6 +377,7 @@ function classifyLetDeclaration(
 function classifyExpressionStatement(
   node: SyntaxNode,
   cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
+  collector?: WarningCollector,
 ): ClassifyResult {
   const text = node.text;
   const expr = node.namedChild(0);
@@ -391,7 +403,7 @@ function classifyExpressionStatement(
 
   // ── Try expression: something()? ──
   if (expr.type === "try_expression") {
-    const cpi = detectCpi(expr);
+    const cpi = detectCpi(expr, collector);
     if (cpi) {
       // Resolve from/to using CPI context if they're unresolved
       return { stmt: resolveCpiFields(cpi, cpiContexts) };
@@ -400,7 +412,7 @@ function classifyExpressionStatement(
 
   // ── Direct call expression ──
   if (expr.type === "call_expression") {
-    const cpi = detectCpi(expr);
+    const cpi = detectCpi(expr, collector);
     if (cpi) {
       return { stmt: resolveCpiFields(cpi, cpiContexts) };
     }

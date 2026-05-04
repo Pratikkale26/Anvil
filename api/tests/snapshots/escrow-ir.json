@@ -715,6 +715,7 @@
     "use super::*"
   ],
   "userTraitImpls": [],
+  "warnings": [],
   "metadata": {
     "sourceFramework": "anchor",
     "sourceVersion": "0.30.0",

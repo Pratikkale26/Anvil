@@ -23,14 +23,41 @@ import {
   cleanAccountRef,
   cleanAmountExpr,
 } from "./ast-helpers.js";
+import type { WarningCollector } from "./warning-collector.js";
+
+/**
+ * Add a `cpi_classification_lost` warning to the collector when a CPI was
+ * recognised by name but the detector couldn't extract its struct fields.
+ * `kind` describes the CPI surface (e.g. "SPL transfer", "set_authority"),
+ * which becomes part of the user-facing message.
+ */
+function warnClassificationLost(
+  collector: WarningCollector | undefined,
+  kind: string,
+  node: SyntaxNode,
+): void {
+  collector?.add({
+    code: "cpi_classification_lost",
+    message: `CPI '${kind}' recognised but could not extract details (carried as pass_through). Manual verification required.`,
+    snippet: node.text,
+  });
+}
 
 /**
  * Try to detect a CPI call in an expression node.
  * Returns a classified BodyStatement if it's a known CPI, or null.
  *
  * Works on both call_expression and try_expression nodes.
+ *
+ * `collector`, when supplied, receives `cpi_classification_lost`,
+ * `cpi_custom_emitted`, and `signer_seeds_lost_variable_binding` warnings
+ * each time the detector falls back to pass_through, emits a custom CPI
+ * stub, or drops signer_seeds because the CpiContext was variable-bound.
  */
-export function detectCpi(node: SyntaxNode): BodyStatement | null {
+export function detectCpi(
+  node: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement | null {
   // Unwrap try_expression (expr?) to get the inner call
   let callNode = node;
   if (callNode.type === "try_expression") {
@@ -49,35 +76,35 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
   // These mirror token::* but use the Token-2022 program
   if (funcText.includes("token_2022::") || funcText.includes("token_interface::")) {
     if (funcText.includes("transfer_checked") || funcText.includes("transfer")) {
-      const result = extractSplTransfer(callNode);
+      const result = extractSplTransfer(callNode, collector);
       if (result.kind === "cpi_spl_transfer") {
         return { ...result, tokenProgram: "token_2022" as const };
       }
       return result;
     }
     if (funcText.includes("mint_to")) {
-      const result = extractSplMintTo(callNode);
+      const result = extractSplMintTo(callNode, collector);
       if (result.kind === "cpi_spl_mint_to") {
         return { ...result, tokenProgram: "token_2022" as const };
       }
       return result;
     }
     if (funcText.includes("burn")) {
-      const result = extractSplBurn(callNode);
+      const result = extractSplBurn(callNode, collector);
       if (result.kind === "cpi_spl_burn") {
         return { ...result, tokenProgram: "token_2022" as const };
       }
       return result;
     }
     if (funcText.includes("close_account") || funcText.includes("CloseAccount")) {
-      const result = extractSplCloseAccount(callNode);
+      const result = extractSplCloseAccount(callNode, collector);
       if (result.kind === "cpi_spl_close_account") {
         return { ...result, tokenProgram: "token_2022" as const };
       }
       return result;
     }
     if (funcText.includes("set_authority") || funcText.includes("SetAuthority")) {
-      const result = extractSplSetAuthority(callNode);
+      const result = extractSplSetAuthority(callNode, collector);
       if (result.kind === "cpi_spl_set_authority") {
         return { ...result, tokenProgram: "token_2022" as const };
       }
@@ -87,17 +114,17 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
 
   // ── SPL Token transfer ──
   if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
-    return extractSplTransfer(callNode);
+    return extractSplTransfer(callNode, collector);
   }
 
   // ── SPL Token mint_to ──
   if (funcText.includes("token::mint_to") || funcText.includes("token::MintTo")) {
-    return extractSplMintTo(callNode);
+    return extractSplMintTo(callNode, collector);
   }
 
   // ── SPL Token burn ──
   if (funcText.includes("token::burn") || funcText.includes("token::Burn")) {
-    return extractSplBurn(callNode);
+    return extractSplBurn(callNode, collector);
   }
 
   // ── Unqualified legacy SPL Token CPI calls (post-consolidation) ──
@@ -115,7 +142,7 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
       !!firstArg &&
       firstArg.text.includes("Transfer") &&
       /\bauthority\s*:/.test(firstArg.text);
-    if (isSplShape) return extractSplTransfer(callNode);
+    if (isSplShape) return extractSplTransfer(callNode, collector);
     // Fall through — likely system_program::transfer; the system branch
     // below handles namespaced forms.
   }
@@ -124,10 +151,10 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
     const args = argsNode ? getArguments(argsNode) : [];
     const firstArg = args[0];
     if (firstArg && firstArg.text.includes("CpiContext::")) {
-      if (funcText === "mint_to") return extractSplMintTo(callNode);
-      if (funcText === "burn") return extractSplBurn(callNode);
-      if (funcText === "close_account") return extractSplCloseAccount(callNode);
-      if (funcText === "set_authority") return extractSplSetAuthority(callNode);
+      if (funcText === "mint_to") return extractSplMintTo(callNode, collector);
+      if (funcText === "burn") return extractSplBurn(callNode, collector);
+      if (funcText === "close_account") return extractSplCloseAccount(callNode, collector);
+      if (funcText === "set_authority") return extractSplSetAuthority(callNode, collector);
     }
   }
 
@@ -141,21 +168,21 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
   // arrive via `token_interface` and are routed to Token-2022 at runtime),
   // so we infer tokenProgram = "token_2022".
   if (/^transfer_checked$|::transfer_checked$/.test(funcText)) {
-    const result = extractSplTransfer(callNode);
+    const result = extractSplTransfer(callNode, collector);
     if (result.kind === "cpi_spl_transfer") {
       return { ...result, tokenProgram: "token_2022" as const };
     }
     return result;
   }
   if (/^mint_to_checked$|::mint_to_checked$/.test(funcText)) {
-    const result = extractSplMintTo(callNode);
+    const result = extractSplMintTo(callNode, collector);
     if (result.kind === "cpi_spl_mint_to") {
       return { ...result, tokenProgram: "token_2022" as const };
     }
     return result;
   }
   if (/^burn_checked$|::burn_checked$/.test(funcText)) {
-    const result = extractSplBurn(callNode);
+    const result = extractSplBurn(callNode, collector);
     if (result.kind === "cpi_spl_burn") {
       return { ...result, tokenProgram: "token_2022" as const };
     }
@@ -164,7 +191,7 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
 
   // ── SPL Token close_account ──
   if (funcText.includes("close_account") || funcText.includes("CloseAccount")) {
-    return extractSplCloseAccount(callNode);
+    return extractSplCloseAccount(callNode, collector);
   }
 
   // ── SPL Token set_authority ──
@@ -178,7 +205,7 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
     funcText.includes("token::set_authority") ||
     funcText.includes("::set_authority")
   ) {
-    return extractSplSetAuthority(callNode);
+    return extractSplSetAuthority(callNode, collector);
   }
 
   // ── Associated Token Account create ──
@@ -190,12 +217,12 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
     funcText.includes("AssociatedToken::create") ||
     funcText.includes("create_associated_token_account")
   ) {
-    return extractAtaCreate(callNode);
+    return extractAtaCreate(callNode, collector);
   }
 
   // ── System program transfer ──
   if (funcText.includes("system_program::transfer") || funcText.includes("system_instruction::transfer")) {
-    return extractSystemTransfer(callNode);
+    return extractSystemTransfer(callNode, collector);
   }
 
   // ── Free-function `transfer(cpi_ctx, amount)` ──
@@ -212,7 +239,7 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
       /\bsystem_program\b/.test(firstArgText) &&
       /\bTransfer\s*\{/.test(firstArgText) &&
       !/\bauthority\s*:/.test(firstArgText);
-    if (looksSystem) return extractSystemTransfer(callNode);
+    if (looksSystem) return extractSystemTransfer(callNode, collector);
   }
 
   // ── SPL Memo CPI ──
@@ -227,20 +254,23 @@ export function detectCpi(node: SyntaxNode): BodyStatement | null {
     funcText.includes("memo::build_memo") ||
     funcText === "build_memo"
   ) {
-    return extractMemoCpi(callNode);
+    return extractMemoCpi(callNode, collector);
   }
 
   // ── Generic invoke / invoke_signed ──
   if (funcText === "invoke" || funcText === "invoke_signed") {
-    return extractCustomCpi(callNode);
+    return extractCustomCpi(callNode, collector);
   }
 
   return null;
 }
 
-function extractMemoCpi(callNode: SyntaxNode): BodyStatement {
+function extractMemoCpi(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
-  if (!argsNode) return fallbackPassThrough(callNode);
+  if (!argsNode) {
+    warnClassificationLost(collector, "spl_memo build_memo", callNode);
+    return fallbackPassThrough(callNode);
+  }
   const args = getArguments(argsNode);
   // build_memo(data, signers): data is arg[0]; signers (slice) is arg[1].
   // We carry data as its raw expression text — the emitter quotes/passes
@@ -254,9 +284,12 @@ function extractMemoCpi(callNode: SyntaxNode): BodyStatement {
 
 // ─── SPL Token Transfer ─────────────────────────────────────────────────────
 
-function extractSplTransfer(callNode: SyntaxNode): BodyStatement {
+function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
-  if (!argsNode) return fallbackPassThrough(callNode);
+  if (!argsNode) {
+    warnClassificationLost(collector, "SPL token::transfer", callNode);
+    return fallbackPassThrough(callNode);
+  }
 
   const args = getArguments(argsNode);
   const firstArg = args[0];
@@ -289,7 +322,16 @@ function extractSplTransfer(callNode: SyntaxNode): BodyStatement {
     }
     signerSeeds = firstArg.text.includes("new_with_signer") ? extractSignerSeedsExpr(firstArg.text) : undefined;
   } else if (firstArg) {
-    signerSeeds = undefined; // TODO: could trace variable
+    signerSeeds = undefined;
+    // Variable-bound CpiContext (the user wrote `let cpi_ctx = CpiContext::new(…);
+    // transfer(cpi_ctx, amount)?;`). We don't trace the binding back to its
+    // source today, so any signer_seeds set on that binding are dropped.
+    // H2 will resolve this; until then, surface as a loud warning.
+    collector?.add({
+      code: "signer_seeds_lost_variable_binding",
+      message: "SPL transfer's CpiContext was variable-bound (not inline); signer_seeds on that binding are not carried into emit. PDA-signed transfer may revert at runtime. Hand-verify the signer setup.",
+      snippet: callNode.text,
+    });
   }
 
   if (isChecked && args.length >= 3) {
@@ -314,9 +356,12 @@ function extractSplTransfer(callNode: SyntaxNode): BodyStatement {
 
 // ─── SPL Token Mint To ──────────────────────────────────────────────────────
 
-function extractSplMintTo(callNode: SyntaxNode): BodyStatement {
+function extractSplMintTo(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
-  if (!argsNode) return fallbackPassThrough(callNode);
+  if (!argsNode) {
+    warnClassificationLost(collector, "SPL token::mint_to", callNode);
+    return fallbackPassThrough(callNode);
+  }
 
   const args = getArguments(argsNode);
   const firstArg = args[0];
@@ -362,9 +407,12 @@ function extractSplMintTo(callNode: SyntaxNode): BodyStatement {
 
 // ─── SPL Token Burn ─────────────────────────────────────────────────────────
 
-function extractSplBurn(callNode: SyntaxNode): BodyStatement {
+function extractSplBurn(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
-  if (!argsNode) return fallbackPassThrough(callNode);
+  if (!argsNode) {
+    warnClassificationLost(collector, "SPL token::burn", callNode);
+    return fallbackPassThrough(callNode);
+  }
 
   const args = getArguments(argsNode);
   const firstArg = args[0];
@@ -410,9 +458,12 @@ function extractSplBurn(callNode: SyntaxNode): BodyStatement {
 
 // ─── SPL Token Set Authority ────────────────────────────────────────────────
 
-function extractSplSetAuthority(callNode: SyntaxNode): BodyStatement {
+function extractSplSetAuthority(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
-  if (!argsNode) return fallbackPassThrough(callNode);
+  if (!argsNode) {
+    warnClassificationLost(collector, "SPL token::set_authority", callNode);
+    return fallbackPassThrough(callNode);
+  }
 
   const args = getArguments(argsNode);
   const firstArg = args[0];
@@ -424,6 +475,7 @@ function extractSplSetAuthority(callNode: SyntaxNode): BodyStatement {
   // back to pass_through so the source survives verbatim. (#3 — From-trait
   // inlining — would later promote those sites into the typed IR.)
   if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(collector, "SPL token::set_authority (variable-bound CpiContext)", callNode);
     return fallbackPassThrough(callNode);
   }
 
@@ -431,12 +483,18 @@ function extractSplSetAuthority(callNode: SyntaxNode): BodyStatement {
   // name is `account_or_mint`, but we model both as `account` in the IR
   // since the SPL instruction takes a single AccountInfo for the target.
   const setAuthStruct = findDescendant(firstArg, "struct_expression");
-  if (!setAuthStruct) return fallbackPassThrough(callNode);
+  if (!setAuthStruct) {
+    warnClassificationLost(collector, "SPL token::set_authority (no inline accounts struct)", callNode);
+    return fallbackPassThrough(callNode);
+  }
 
   const accountRaw = extractStructField(setAuthStruct, "account_or_mint")
     ?? extractStructField(setAuthStruct, "account");
   const currentAuthorityRaw = extractStructField(setAuthStruct, "current_authority");
-  if (!accountRaw || !currentAuthorityRaw) return fallbackPassThrough(callNode);
+  if (!accountRaw || !currentAuthorityRaw) {
+    warnClassificationLost(collector, "SPL token::set_authority (missing required struct fields)", callNode);
+    return fallbackPassThrough(callNode);
+  }
 
   const signerSeeds = firstArg.text.includes("new_with_signer")
     ? extractSignerSeedsExpr(firstArg.text)
@@ -462,9 +520,12 @@ function extractSplSetAuthority(callNode: SyntaxNode): BodyStatement {
 
 // ─── SPL Token Close Account ────────────────────────────────────────────────
 
-function extractSplCloseAccount(callNode: SyntaxNode): BodyStatement {
+function extractSplCloseAccount(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
-  if (!argsNode) return fallbackPassThrough(callNode);
+  if (!argsNode) {
+    warnClassificationLost(collector, "SPL token::close_account", callNode);
+    return fallbackPassThrough(callNode);
+  }
 
   const args = getArguments(argsNode);
   const firstArg = args[0];
@@ -495,9 +556,12 @@ function extractSplCloseAccount(callNode: SyntaxNode): BodyStatement {
 
 // ─── Associated Token Account Create ────────────────────────────────────────
 
-function extractAtaCreate(callNode: SyntaxNode): BodyStatement {
+function extractAtaCreate(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
-  if (!argsNode) return fallbackPassThrough(callNode);
+  if (!argsNode) {
+    warnClassificationLost(collector, "associated_token::create", callNode);
+    return fallbackPassThrough(callNode);
+  }
 
   const args = getArguments(argsNode);
   const firstArg = args[0];
@@ -521,6 +585,7 @@ function extractAtaCreate(callNode: SyntaxNode): BodyStatement {
     // Raw native call: create_associated_token_account(payer, owner, mint, token_program)
     // — positional args, no Create struct to extract from. Bail to pass-through so
     // the user sees the original call rather than a broken stub.
+    warnClassificationLost(collector, "associated_token::create (raw native positional form)", callNode);
     return fallbackPassThrough(callNode);
   }
 
@@ -536,9 +601,12 @@ function extractAtaCreate(callNode: SyntaxNode): BodyStatement {
 
 // ─── System Program Transfer ────────────────────────────────────────────────
 
-function extractSystemTransfer(callNode: SyntaxNode): BodyStatement {
+function extractSystemTransfer(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
-  if (!argsNode) return fallbackPassThrough(callNode);
+  if (!argsNode) {
+    warnClassificationLost(collector, "system_program::transfer", callNode);
+    return fallbackPassThrough(callNode);
+  }
 
   const args = getArguments(argsNode);
   const firstArg = args[0];
@@ -575,9 +643,15 @@ function extractSystemTransfer(callNode: SyntaxNode): BodyStatement {
 
 // ─── Custom CPI ─────────────────────────────────────────────────────────────
 
-function extractCustomCpi(callNode: SyntaxNode): BodyStatement {
+function extractCustomCpi(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
   const funcText = callNode.childForFieldName("function")?.text ?? "";
   const signerSeeds = funcText === "invoke_signed" ? "signer_seeds" : undefined;
+
+  collector?.add({
+    code: "cpi_custom_emitted",
+    message: `Custom ${funcText}() CPI emitted as cpi_custom — manual review required to confirm account meta + instruction data carry over to the target framework.`,
+    snippet: callNode.text,
+  });
 
   return {
     kind: "cpi_custom",

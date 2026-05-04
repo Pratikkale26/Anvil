@@ -736,6 +736,22 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     });
   }
 
+  // Parser-degradation warnings (loud signal). Each was emitted at a fallback
+  // site in cpi-detector / body-classifier when the parser couldn't fully
+  // classify a pattern. Surface as warnings (not errors) — the emit is still
+  // valid pass-through code, just less typed than ideal. A user looking at
+  // `// ⚠️ Anvil` markers in the emit output already gets the same hint;
+  // this is the structural sibling.
+  // Test fixtures sometimes hand-build IRs that bypass Zod's defaults — the
+  // schema sets `warnings: [].default()` but a hand-rolled IR may omit it.
+  for (const w of ir.warnings ?? []) {
+    const where = w.instruction ? `instruction '${w.instruction}': ` : "";
+    issues.push({
+      severity: "warning",
+      message: `${where}[parser:${w.code}] ${w.message}`,
+    });
+  }
+
   // Defensive: validator only reasons about Rust sources. If callers later
   // include Cargo.toml / README.md in `files` (project scaffold), those are
   // stripped here so the Rust-specific regex patterns never fire on them.

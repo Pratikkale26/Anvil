@@ -17,6 +17,7 @@ import type { Parser, SyntaxNode } from "./ts-init.js";
 import { findDescendant, findTopLevelComma } from "./ast-helpers.js";
 import { normalizeSolanaType } from "./utils.js";
 import { classifyBody } from "./body-classifier.js";
+import type { WarningCollector } from "./warning-collector.js";
 import { parseAccountsStructFields } from "./account-parser.js";
 
 // ─── Instruction parsing ────────────────────────────────────────────────────
@@ -29,6 +30,7 @@ export function parseInstructions(
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
   fromImpls: FromImplCatalogEntry[],
   source: string,
+  collector?: WarningCollector,
 ): SolanaIR["instructions"] {
   const body = programModNode.childForFieldName("body");
   if (!body) return [];
@@ -46,7 +48,7 @@ export function parseInstructions(
     }
 
     if (child.type === "function_item") {
-      const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, fromImpls, source);
+      const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, fromImpls, source, collector);
       if (instr) instructions.push(instr);
     }
 
@@ -65,6 +67,7 @@ function parseInstructionFn(
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
   fromImpls: FromImplCatalogEntry[],
   source: string,
+  collector?: WarningCollector,
 ): SolanaIR["instructions"][0] | null {
   const fnName = fnNode.childForFieldName("name")?.text;
   if (!fnName) return null;
@@ -166,7 +169,11 @@ function parseInstructionFn(
       if (synBody) bodyNode = synBody;
     }
   }
-  const bodyStatements: BodyStatement[] = bodyNode ? classifyBody(bodyNode) : [];
+  // Tag every classification warning with this instruction name so users
+  // see "instruction `foo`: SPL transfer carried as pass_through" rather
+  // than a context-free message.
+  const instrCollector = collector?.forInstruction(fnName);
+  const bodyStatements: BodyStatement[] = bodyNode ? classifyBody(bodyNode, instrCollector) : [];
 
   // ── Enrich state_read with account types from context struct ──
   for (const stmt of bodyStatements) {

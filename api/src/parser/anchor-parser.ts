@@ -37,6 +37,7 @@ import {
 import { parseInstructions, extractImplTargetName, parseFromImplDeclaration, type FromImplCatalogEntry } from "./instruction-parser.js";
 import { parseAccountDataStruct } from "./account-parser.js";
 import { parseErrorEnum, parseHelperFn, parseCustomType, extractImports, extractProgramId } from "./type-parser.js";
+import { createWarningCollector } from "./warning-collector.js";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -133,6 +134,12 @@ export async function parseAnchor(
       return def;
     });
 
+    // ── Per-parse warning collector (loud parser-degradation signal) ──
+    // Drained into `irRaw.warnings` after instruction classification so the
+    // validator (and downstream consumers) see what the parser couldn't fully
+    // classify. See ParserWarning in ir/schema.ts.
+    const warningCollector = createWarningCollector();
+
     // ── Parse instructions ──
     const instructions = parseInstructions(
       parser,
@@ -142,6 +149,7 @@ export async function parseAnchor(
       topLevel.functionIndex,
       topLevel.fromImpls,
       source,
+      warningCollector,
     );
 
     // ── Parse errors ──
@@ -195,6 +203,7 @@ export async function parseAnchor(
       events,
       imports,
       userTraitImpls,
+      warnings: warningCollector.drain(),
       metadata: {
         sourceFramework: "anchor",
         sourceVersion: detectAnchorVersion(source),

@@ -492,6 +492,44 @@ export const EmitterOutputSchema = z.object({
 
 export type EmitterOutput = z.infer<typeof EmitterOutputSchema>;
 
+// ─── Parser warnings (loud degradation signal) ───────────────────────────────
+//
+// When the parser can't fully classify a pattern (e.g. a CPI whose shape
+// the detector doesn't recognize, a `From`-trait CpiContext we couldn't
+// trace back to its source binding), it falls back to `pass_through` /
+// `cpi_custom` and emits a ParserWarning here. The output validator
+// surfaces these so users see the silent miss in the workbench / CLI
+// instead of finding out at deploy time.
+//
+// `code` is a stable machine-readable category (e.g. `cpi_classification_lost`,
+// `signer_seeds_lost_variable_binding`). UI / CLI consumers may render
+// per-code hints. `instruction` is set when the warning came from
+// classification of an instruction body; `null` for whole-source warnings.
+
+export const ParserWarningCodeSchema = z.enum([
+  /** CPI call recognised by name but struct fields couldn't be extracted; carrying as pass_through. */
+  "cpi_classification_lost",
+  /** invoke / invoke_signed call: emitted as cpi_custom and needs manual review. */
+  "cpi_custom_emitted",
+  /** signer_seeds dropped because CpiContext was variable-bound and we didn't trace it back. */
+  "signer_seeds_lost_variable_binding",
+  /** Pass-through statement detected as containing Anchor patterns that won't carry. */
+  "anchor_pattern_in_passthrough",
+]);
+
+export type ParserWarningCode = z.infer<typeof ParserWarningCodeSchema>;
+
+export const ParserWarningSchema = z.object({
+  code: ParserWarningCodeSchema,
+  message: z.string(),
+  /** Instruction name the warning came from, when known. */
+  instruction: z.string().optional(),
+  /** Snippet of the original source (truncated) — surfaced in error output. */
+  snippet: z.string().optional(),
+});
+
+export type ParserWarning = z.infer<typeof ParserWarningSchema>;
+
 // ─── Root: Solana IR ─────────────────────────────────────────────────────────
 
 /**
@@ -526,6 +564,13 @@ export const SolanaIRSchema = z.object({
    * inside instruction bodies resolve correctly.
    */
   userTraitImpls: z.array(z.string()).default([]),
+  /**
+   * Parser-emitted warnings (loud degradation signal). Populated when the
+   * parser falls back to pass_through / cpi_custom on patterns it couldn't
+   * fully classify, or drops information (e.g. variable-bound CpiContext
+   * signer_seeds). Surfaced as ValidationIssues by the output validator.
+   */
+  warnings: z.array(ParserWarningSchema).default([]),
   metadata: IRMetadataSchema,
 });
 
