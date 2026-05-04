@@ -15,7 +15,7 @@ import { describe, test, expect } from "bun:test";
 import { buildRefinePrompt, extractFileSkeleton } from "../src/ai/prompts/refine.ts";
 
 describe("extractFileSkeleton", () => {
-  test("keeps every use statement", () => {
+  test("keeps every use statement", async () => {
     const src = `use anchor_lang::prelude::*;
 use std::collections::HashMap;
 
@@ -28,7 +28,7 @@ pub fn x() {
     expect(skel).toContain("use std::collections::HashMap;");
   });
 
-  test("truncates fn body to ' { … }'", () => {
+  test("truncates fn body to ' { … }'", async () => {
     const src = `pub fn long_function() {
     let a = 1;
     let b = 2;
@@ -42,7 +42,7 @@ pub fn x() {
     expect(skel).not.toContain("let a = 1");
   });
 
-  test("preserves attributes attached to items", () => {
+  test("preserves attributes attached to items", async () => {
     const src = `#[derive(Debug)]
 pub struct Foo {
     field: u64,
@@ -53,7 +53,7 @@ pub struct Foo {
     expect(skel).toContain("pub struct Foo");
   });
 
-  test("preserves multi-line signature within 8-line cap", () => {
+  test("preserves multi-line signature within 8-line cap", async () => {
     const src = `pub fn signed_with_lifetimes<'a, 'info>(
     x: &'a u8,
     y: &'info Bar,
@@ -67,7 +67,7 @@ pub struct Foo {
     expect(skel).not.toContain("Ok(())");
   });
 
-  test("preserves impl blocks", () => {
+  test("preserves impl blocks", async () => {
     const src = `impl Foo {
     pub fn bar(&self) {}
 }
@@ -76,7 +76,7 @@ pub struct Foo {
     expect(skel).toContain("impl Foo");
   });
 
-  test("ignores fn-body-internal items even though they shouldn't be flagged", () => {
+  test("ignores fn-body-internal items even though they shouldn't be flagged", async () => {
     // Hard case — nested items at col 0 inside multi-line strings would
     // confuse a regex scanner. The skeleton is allowed to be lenient here
     // because the over-edit signal is what we're after, not perfect AST
@@ -105,8 +105,8 @@ pub fn y() {}
     line: 2,
   }];
 
-  test("file ≤ 12KB → prompt includes the WHOLE file marker", () => {
-    const prompt = buildRefinePrompt({
+  test("file ≤ 12KB → prompt includes the WHOLE file marker", async () => {
+    const prompt = await buildRefinePrompt({
       target: "pinocchio",
       validationIssues: ISSUES,
       files: [{ path: "lib.rs", content: SMALL_FILE }],
@@ -118,7 +118,7 @@ pub fn y() {}
     expect(prompt).not.toContain("(issue window)");
   });
 
-  test("file > 12KB → prompt includes skeleton + issue window", () => {
+  test("file > 12KB → prompt includes skeleton + issue window", async () => {
     // Build a 15KB file with one issue near the top.
     const padding = Array.from({ length: 400 }, (_, i) => `pub fn padding_${i}() { let _ = ${i}; }`).join("\n");
     const big = `use anchor_lang::prelude::*;
@@ -127,7 +127,7 @@ ${padding}
 `;
     expect(big.length).toBeGreaterThan(12_000);
 
-    const prompt = buildRefinePrompt({
+    const prompt = await buildRefinePrompt({
       target: "pinocchio",
       validationIssues: ISSUES,
       files: [{ path: "lib.rs", content: big }],
@@ -148,9 +148,9 @@ ${padding}
     // covered by the unit test above.)
   });
 
-  test("file > 12KB without issue line numbers → falls back to 6KB truncation", () => {
+  test("file > 12KB without issue line numbers → falls back to 6KB truncation", async () => {
     const big = "// pad\n".repeat(3000); // 21KB of comments
-    const prompt = buildRefinePrompt({
+    const prompt = await buildRefinePrompt({
       target: "pinocchio",
       validationIssues: [{ severity: "error", message: "test", path: "lib.rs" }],
       files: [{ path: "lib.rs", content: big }],

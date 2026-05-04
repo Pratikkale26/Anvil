@@ -55,8 +55,8 @@ const VALIDATOR_HEURISTIC_ISSUE = [{
 }];
 
 describe("refine prompt: cargo-source path", () => {
-  test("cargo issueSource prepends the rustc trust block", () => {
-    const prompt = buildRefinePrompt({
+  test("cargo issueSource prepends the rustc trust block", async () => {
+    const prompt = await buildRefinePrompt({
       target: "pinocchio",
       validationIssues: CARGO_DIAGNOSTIC_ISSUE,
       files: SAMPLE_FILES,
@@ -68,8 +68,8 @@ describe("refine prompt: cargo-source path", () => {
     expect(prompt).toContain("E0425");
   });
 
-  test("default (validator) issueSource omits the rustc trust block", () => {
-    const prompt = buildRefinePrompt({
+  test("default (validator) issueSource omits the rustc trust block", async () => {
+    const prompt = await buildRefinePrompt({
       target: "pinocchio",
       validationIssues: VALIDATOR_HEURISTIC_ISSUE,
       files: SAMPLE_FILES,
@@ -79,11 +79,11 @@ describe("refine prompt: cargo-source path", () => {
     expect(prompt).not.toContain("rustc diagnostics");
   });
 
-  test("cargo issueSource uses the same windowing rules as validator", () => {
+  test("cargo issueSource uses the same windowing rules as validator", async () => {
     // File is ~280 bytes — well under the 12KB whole-file threshold.
     // Both source variants should send the full file, not the windowed
     // path that's harder for the model to disambiguate.
-    const cargoPrompt = buildRefinePrompt({
+    const cargoPrompt = await buildRefinePrompt({
       target: "pinocchio",
       validationIssues: CARGO_DIAGNOSTIC_ISSUE,
       files: SAMPLE_FILES,
@@ -109,7 +109,7 @@ describe("refine cache key: cargo vs validator path isolation", () => {
     });
   }
 
-  test("cargo and validator paths produce DIFFERENT cache keys for the same input", () => {
+  test("cargo and validator paths produce DIFFERENT cache keys for the same input", async () => {
     const cargoKey = key("cargo");
     const validatorKey = key("validator");
     expect(cargoKey).not.toBe(validatorKey);
@@ -118,7 +118,7 @@ describe("refine cache key: cargo vs validator path isolation", () => {
     expect(validatorKey).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  test("same source path produces stable cache key across calls", () => {
+  test("same source path produces stable cache key across calls", async () => {
     expect(key("cargo")).toBe(key("cargo"));
     expect(key("validator")).toBe(key("validator"));
   });

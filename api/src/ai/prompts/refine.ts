@@ -1,5 +1,6 @@
 import type { ValidationIssue } from "../../emitter/output-validator.js";
 import type { RejectedAttempt } from "../refine-schemas.js";
+import { getParser } from "../../parser/ts-init.js";
 
 // Bumped to v5: added pinocchio is_signer/is_writable method-call hint and
 // hard "do not fabricate symbols" rule. Cache key folds in this version so
@@ -120,7 +121,7 @@ export const REFINE_SYSTEM_RULES = [
  * the rejected patches + reasons are prepended so the model sees what went wrong
  * and can pick a different approach.
  */
-export function buildRefinePrompt(input: {
+export async function buildRefinePrompt(input: {
   target: string;
   validationIssues: ValidationIssue[];
   files: Array<{ path: string; content: string }>;
@@ -132,7 +133,7 @@ export function buildRefinePrompt(input: {
    * the file/line/code as ground truth — they're not heuristics.
    */
   issueSource?: "validator" | "cargo";
-}): string {
+}): Promise<string> {
   // Collect unique files that have issues
   const issuePaths = new Set(
     input.validationIssues
@@ -190,7 +191,8 @@ export function buildRefinePrompt(input: {
       // edit. Skeleton is cheap — typically <500 bytes for a 12KB file —
       // and dramatically reduces over-edit because the model can SEE what
       // exists outside its windows and respect the minimal-edit rule.
-      const skeleton = extractFileSkeleton(file.content);
+      // Use the tree-sitter path; falls back to the text scanner on error.
+      const skeleton = await extractFileSkeletonAst(file.content);
       if (skeleton) {
         sections.push(`--- ${filePath} (skeleton — what NOT to delete) ---\n${skeleton}`);
       }
@@ -312,6 +314,86 @@ export const REFINE_RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
 };
 
 /**
+ * Tree-sitter-based variant of extractFileSkeleton. Walks the AST, picks
+ * top-level use_declaration / function_item / struct_item / enum_item /
+ * trait_item / impl_item / mod_item / const_item / static_item / type_item
+ * and emits the signature span (start of node up to first `{` or trailing
+ * `;`). Multi-line generic where-clauses, comment-interleaved attributes,
+ * and other shapes the text scanner truncates incorrectly all survive.
+ *
+ * Falls back to the text-based extractFileSkeleton on any error so a
+ * tree-sitter init failure (or pathological input that times out) still
+ * returns a usable skeleton — the model will get a slightly less accurate
+ * structural context but the prompt build doesn't fail.
+ *
+ * Exported for unit testing.
+ */
+export async function extractFileSkeletonAst(src: string): Promise<string> {
+  try {
+    const parser = await getParser();
+    const tree = parser.parse(src);
+    if (!tree) return extractFileSkeleton(src);
+    const root = tree.rootNode;
+    const out: string[] = [];
+
+    type Node = { type: string; namedChildCount: number; namedChild(i: number): Node | null; startIndex: number; endIndex: number; childForFieldName(name: string): Node | null };
+    const KEEP = new Set([
+      "use_declaration",
+      "function_item",
+      "function_signature_item",
+      "struct_item",
+      "enum_item",
+      "trait_item",
+      "impl_item",
+      "mod_item",
+      "const_item",
+      "static_item",
+      "type_item",
+    ]);
+
+    function signatureFor(node: Node): string {
+      const fullText = src.slice(node.startIndex, node.endIndex);
+      // For items that have a body, truncate at the first `{`. For statement
+      // forms (`use`, `const`, `static`, `type`) keep the entire statement
+      // up to and including the trailing `;`.
+      const body = node.childForFieldName("body");
+      if (body) {
+        const sig = src.slice(node.startIndex, body.startIndex).trimEnd();
+        return sig + " { … }";
+      }
+      // Statement form: include the trailing `;`. fullText already does.
+      return fullText.trimEnd();
+    }
+
+    // Walk only the top level — nested items inside fn bodies aren't
+    // part of "what's in this file" at the structural level.
+    for (let i = 0; i < (root as unknown as Node).namedChildCount; i++) {
+      const child = (root as unknown as Node).namedChild(i);
+      if (!child) continue;
+      // Hoist preceding attributes that decorate the next item. Tree-sitter
+      // surfaces them as separate `attribute_item` siblings; we want them
+      // glued to their target so the skeleton reads as the source does.
+      if (child.type === "attribute_item") {
+        out.push(src.slice(child.startIndex, child.endIndex).trimEnd());
+        continue;
+      }
+      if (KEEP.has(child.type)) {
+        out.push(signatureFor(child));
+      }
+      // Other top-level items (extern_crate_declaration, line_comment, etc.)
+      // are intentionally skipped — they're not part of the structural
+      // context the model needs to respect minimal-edit.
+    }
+
+    return out.join("\n");
+  } catch {
+    // Tree-sitter init failed or input wedged the parser. Fall back to the
+    // text-based scanner so prompt building stays reliable.
+    return extractFileSkeleton(src);
+  }
+}
+
+/**
  * Produce a structural skeleton of a Rust file: every `use` statement +
  * every top-level item's signature line (no body). The model sees this as
  * "what's in this file" so it can respect the minimal-edit rule even when
@@ -320,13 +402,12 @@ export const REFINE_RESPONSE_JSON_SCHEMA: Record<string, unknown> = {
  * Strategy: a hand-rolled scanner that matches signature-start tokens at
  * column 0 (`use`, `pub`, `fn`, `struct`, `enum`, `trait`, `impl`, `mod`,
  * `const`, `static`, `type`, `#[`) and emits the line up to the opening
- * brace or trailing semicolon. Cheap, deterministic, doesn't require
- * tree-sitter parsing inside this hot path.
+ * brace or trailing semicolon. Cheap, deterministic.
  *
- * Tree-sitter would be more accurate (especially for items split across
- * multiple lines like long generic where-clauses) but the cost — bringing
- * a tree-sitter dep into this prompt-build path — isn't justified given
- * that 99% of emitted Rust signatures fit on one line.
+ * Kept as a synchronous fallback for extractFileSkeletonAst (which is the
+ * primary path used by buildRefinePrompt). The async variant uses
+ * tree-sitter for accuracy on multi-line signatures, generic where-clauses,
+ * and comment-interleaved attributes that this scanner truncates.
  *
  * Exported for unit testing.
  */

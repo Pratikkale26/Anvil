@@ -129,7 +129,7 @@ export async function refineOutput(
   const issueSource = input.issueSource ?? "validator";
 
   onProgress?.("build_prompt", "Building focused refine prompt.");
-  const prompt = buildRefinePrompt({
+  const prompt = await buildRefinePrompt({
     target: input.target,
     validationIssues: input.validationIssues,
     files: input.files,
