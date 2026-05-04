@@ -694,6 +694,54 @@ function rewriteErrMacroToExplicit(source: string): string {
 // a struct literal is used for something other than a CPI context.
 const SPL_CPI_STRUCTS = ["MintTo", "Transfer", "TransferChecked", "Burn", "CloseAccount"];
 
+/**
+ * Sentinel markers wrapping every consolidated CPI region so subsequent
+ * consolidator passes can't re-match them. Without this, a pass that
+ * collapses `let X = STRUCT{}; let prog = …; let ctx = CpiContext::new(prog,X);
+ * fn(ctx, …)?;` into a single call leaves the source shape that COULD match
+ * a different consolidator (e.g. inlineCpiStmt). In practice today's six
+ * consolidators don't actually overlap on the same input, but the guarantee
+ * is structural via these sentinels rather than positional via "we happen
+ * to know they don't" -- safer as new consolidators are added.
+ *
+ * The sentinels are valid Rust block comments so an accidental leak past
+ * stripCpiSentinels() is at worst cosmetic noise in the source, never a
+ * compile error.
+ */
+const CPI_BEGIN = "/*<<ANVIL_CPI_BEGIN>>*/";
+const CPI_END = "/*<<ANVIL_CPI_END>>*/";
+const CPI_REGION_RE = /\/\*<<ANVIL_CPI_BEGIN>>\*\/[\s\S]*?\/\*<<ANVIL_CPI_END>>\*\//g;
+
+/**
+ * Run `regex.replace(replace)` only on the regions of `source` that are NOT
+ * already wrapped by CPI_BEGIN/CPI_END markers. Preserves consumed regions
+ * verbatim. Wraps each new replacement in markers so the next pass leaves
+ * it alone.
+ */
+function applyCpiConsolidator(
+  source: string,
+  regex: RegExp,
+  replace: (...args: unknown[]) => string,
+): string {
+  const parts = source.split(CPI_REGION_RE);
+  // Re-extract the consumed regions in order so we can interleave them back.
+  const consumedRegions = source.match(CPI_REGION_RE) ?? [];
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const region = parts[i]!;
+    out.push(
+      region.replace(regex, (...args: unknown[]) => `${CPI_BEGIN}${replace(...args)}${CPI_END}`),
+    );
+    if (i < consumedRegions.length) out.push(consumedRegions[i]!);
+  }
+  return out.join("");
+}
+
+/** Strip every CPI_BEGIN/CPI_END marker, leaving the consolidated text intact. */
+function stripCpiSentinels(source: string): string {
+  return source.split(CPI_BEGIN).join("").split(CPI_END).join("");
+}
+
 function consolidateMultiStatementCpi(source: string): string {
   // Allow whitespace and line comments between the consolidated statements.
   // Anchor source code routinely interleaves explanatory comments inside the
@@ -720,7 +768,10 @@ function consolidateMultiStatementCpi(source: string): string {
     String.raw`((?:\w+::)*)(\w+)\(\s*\6\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
     "g",
   );
-  out = out.replace(fourStmt, (_full, _accVar: string, struct: string, fields: string, _progVar: string, programExpr: string, _ctxVar: string, signerSeeds: string | undefined, nsPrefix: string, fnName: string, args: string | undefined, q: string | undefined) => {
+  out = applyCpiConsolidator(out, fourStmt, (..._args: unknown[]) => {
+    const [, , struct, fields, , programExpr, , signerSeeds, nsPrefix, fnName, args, q] = _args as [
+      string, string, string, string, string, string, string, string | undefined, string, string, string | undefined, string | undefined,
+    ];
     const ctx = signerSeeds
       ? `CpiContext::new_with_signer(${programExpr.trim()}, ${struct} {${fields}}, ${signerSeeds.trim()})`
       : `CpiContext::new(${programExpr.trim()}, ${struct} {${fields}})`;
@@ -749,7 +800,10 @@ function consolidateMultiStatementCpi(source: string): string {
     String.raw`((?:\w+::)*)(\w+)\(\s*\6\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
     "g",
   );
-  out = out.replace(fourStmtProgFirst, (_full, _progVar: string, programExpr: string, _accVar: string, struct: string, fields: string, _ctxVar: string, signerSeeds: string | undefined, nsPrefix: string, fnName: string, args: string | undefined, q: string | undefined) => {
+  out = applyCpiConsolidator(out, fourStmtProgFirst, (..._args: unknown[]) => {
+    const [, , programExpr, , struct, fields, , signerSeeds, nsPrefix, fnName, args, q] = _args as [
+      string, string, string, string, string, string, string, string | undefined, string, string, string | undefined, string | undefined,
+    ];
     const ctx = signerSeeds
       ? `CpiContext::new_with_signer(${programExpr.trim()}, ${struct} {${fields}}, ${signerSeeds.trim()})`
       : `CpiContext::new(${programExpr.trim()}, ${struct} {${fields}})`;
@@ -773,7 +827,10 @@ function consolidateMultiStatementCpi(source: string): string {
     "g",
   );
 
-  out = out.replace(threeStmt, (_full, _accVar: string, struct: string, fields: string, _ctxVar: string, programExpr: string, signerSeeds: string | undefined, nsPrefix: string, fnName: string, args: string | undefined, q: string | undefined) => {
+  out = applyCpiConsolidator(out, threeStmt, (..._args: unknown[]) => {
+    const [, , struct, fields, , programExpr, signerSeeds, nsPrefix, fnName, args, q] = _args as [
+      string, string, string, string, string, string, string | undefined, string, string, string | undefined, string | undefined,
+    ];
     const ctx = signerSeeds
       ? `CpiContext::new_with_signer(${programExpr.trim()}, ${struct} {${fields}}, ${signerSeeds.trim()})`
       : `CpiContext::new(${programExpr.trim()}, ${struct} {${fields}})`;
@@ -803,7 +860,10 @@ function consolidateMultiStatementCpi(source: string): string {
     String.raw`((?:\w+::)*)(\w+)\(\s*\5\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
     "g",
   );
-  out = out.replace(newWithSignerStmt, (_full, _accVar: string, struct: string, fields: string, intermediate: string, _ctxVar: string, programExpr: string, signerSeeds: string, nsPrefix: string, fnName: string, args: string | undefined, q: string | undefined) => {
+  out = applyCpiConsolidator(out, newWithSignerStmt, (..._args: unknown[]) => {
+    const [, , struct, fields, intermediate, , programExpr, signerSeeds, nsPrefix, fnName, args, q] = _args as [
+      string, string, string, string, string, string, string, string, string, string, string | undefined, string | undefined,
+    ];
     const ctx = `CpiContext::new_with_signer(${programExpr.trim()}, ${struct} {${fields}}, ${signerSeeds.trim()})`;
     const argsPart = args && args.trim() ? `, ${args.trim()}` : "";
     const tryOp = q ?? "";
@@ -828,7 +888,10 @@ function consolidateMultiStatementCpi(source: string): string {
     String.raw`((?:\w+::)*)(\w+)\(\s*CpiContext::new_with_signer\(\s*([\s\S]+?)\s*,\s*\1\s*,\s*([\s\S]+?)\s*,?\s*\)\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
     "g",
   );
-  out = out.replace(inlineCpiStmt, (_full, _accVar: string, struct: string, fields: string, intermediate: string, nsPrefix: string, fnName: string, programExpr: string, signerSeeds: string, args: string | undefined, q: string | undefined) => {
+  out = applyCpiConsolidator(out, inlineCpiStmt, (..._args: unknown[]) => {
+    const [, , struct, fields, intermediate, nsPrefix, fnName, programExpr, signerSeeds, args, q] = _args as [
+      string, string, string, string, string, string, string, string, string, string | undefined, string | undefined,
+    ];
     const ctx = `CpiContext::new_with_signer(${programExpr.trim()}, ${struct} {${fields}}, ${signerSeeds.trim()})`;
     const argsPart = args && args.trim() ? `, ${args.trim()}` : "";
     const tryOp = q ?? "";
@@ -842,7 +905,10 @@ function consolidateMultiStatementCpi(source: string): string {
     String.raw`((?:\w+::)*)(\w+)\(\s*CpiContext::new\(\s*([\s\S]+?)\s*,\s*\1\s*,?\s*\)\s*(?:,\s*([\s\S]*?))?\s*\)(\?)?;`,
     "g",
   );
-  out = out.replace(inlineCpiUnsignedStmt, (_full, _accVar: string, struct: string, fields: string, intermediate: string, nsPrefix: string, fnName: string, programExpr: string, args: string | undefined, q: string | undefined) => {
+  out = applyCpiConsolidator(out, inlineCpiUnsignedStmt, (..._args: unknown[]) => {
+    const [, , struct, fields, intermediate, nsPrefix, fnName, programExpr, args, q] = _args as [
+      string, string, string, string, string, string, string, string, string | undefined, string | undefined,
+    ];
     const ctx = `CpiContext::new(${programExpr.trim()}, ${struct} {${fields}})`;
     const argsPart = args && args.trim() ? `, ${args.trim()}` : "";
     const tryOp = q ?? "";
@@ -861,12 +927,16 @@ function consolidateMultiStatementCpi(source: string): string {
     String.raw`((?:\w+::)*)build_memo\(\s*\1\s*,\s*([\s\S]*?)\s*\)(\?)?;`,
     "g",
   );
-  out = out.replace(memoStmt, (_full, _ctxVar: string, _programExpr: string, _signerSeeds: string | undefined, nsPrefix: string, data: string, q: string | undefined) => {
+  out = applyCpiConsolidator(out, memoStmt, (..._args: unknown[]) => {
+    const [, , , , nsPrefix, data, q] = _args as [
+      string, string, string, string | undefined, string, string, string | undefined,
+    ];
     const tryOp = q ?? "";
     return `${nsPrefix}build_memo(${data.trim()})${tryOp};`;
   });
 
-  return out;
+  // Final pass: strip the ANVIL_CPI sentinels so emit / cargo never see them.
+  return stripCpiSentinels(out);
 }
 
 
