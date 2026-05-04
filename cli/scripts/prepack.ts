@@ -45,8 +45,16 @@ function copyTree(src: string, dst: string): number {
       mkdirSync(d, { recursive: true });
       for (const entry of readdirSync(s)) {
         // Skip test fixtures + ai providers that bring in network-only deps
-        // we don't need at CLI runtime.
+        // we don't need at CLI runtime. Also drop tests/ + snapshots/ —
+        // they ship dead bytes to npm and confuse contributors looking at
+        // the cli/ tree (they're stale copies frozen at the prior publish).
         if (entry === "fixtures") continue;
+        if (entry === "tests") continue;
+        if (entry === "snapshots") continue;
+        if (entry === "__tests__") continue;
+        if (entry.endsWith(".test.ts")) continue;
+        if (entry.endsWith(".test.js")) continue;
+        if (entry.endsWith(".spec.ts")) continue;
         stack.push([join(s, entry), join(d, entry)]);
       }
     } else if (stats.isFile()) {
