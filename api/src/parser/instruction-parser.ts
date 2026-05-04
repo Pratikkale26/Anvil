@@ -651,7 +651,7 @@ function expandAccountsMethodCalls(
       const argsRaw = match[2] ?? "";
       const hasQuestion = !!match[3];
       const argExprs = splitTopLevelArgs(argsRaw);
-      const expandedBody = expandImplMethod(methodName, argExprs, scopedMethods, accounts, new Set());
+      const expandedBody = expandImplMethod(methodName, argExprs, scopedMethods, accounts, new Set(), contextType);
       if (expandedBody) {
         // Wrap as a statement-form block. The block evaluates to its tail
         // expression so a `?` on the wrapper still propagates correctly.
@@ -925,7 +925,9 @@ function inlineAsFactoryExpression(
   const argExprs = splitTopLevelArgs(argsRaw);
   // expandImplMethod handles parameter substitution, recursive `self.X` →
   // `ctx.accounts.X`, and inlines nested impl calls. Returns `{ ... }`.
-  const expandedBlock = expandImplMethod(target.name, argExprs, scopedMethods, accounts, new Set());
+  // target.implName is the resolved impl owner -- pass through as
+  // preferImplName so nested calls disambiguate to the same impl.
+  const expandedBlock = expandImplMethod(target.name, argExprs, scopedMethods, accounts, new Set(), target.implName);
   if (!expandedBlock) return null;
   const inner = stripOuterBraces(expandedBlock).trim();
 
@@ -1259,6 +1261,7 @@ function expandAccountsMethodWrapper(
     scopedMethods,
     accounts,
     new Set(),
+    contextType, // disambiguate same-named methods to this context's impl
   );
   if (!expandedBody) return null;
 
@@ -1275,18 +1278,49 @@ function expandAccountsMethodWrapper(
   };
 }
 
+/**
+ * Hard cap on how deep impl-method inlining can recurse. The Set-based
+ * stack prevents true cycles, but mutual chains across many distinct
+ * (impl, method) pairs could still expand to pathological depths on
+ * malicious or pathological input. 32 is comfortably more than any
+ * realistic Anchor handler nests its impl methods (real codebases sit
+ * at 1-3 levels) while bounding the worst case.
+ */
+const MAX_INLINE_DEPTH = 32;
+
 function expandImplMethod(
   methodName: string,
   argExprs: string[],
   implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
   accounts: AccountRef[],
   stack: Set<string>,
+  /**
+   * Hint for impl-name disambiguation when the same method name exists on
+   * multiple impl blocks (e.g. `impl X { fn foo() {} }` AND
+   * `impl Y { fn foo() {} }`). When set, prefer the entry whose implName
+   * matches; otherwise fall back to first-found. Without this, mutual
+   * recursion `X::foo() ↔ Y::foo()` silently inlined the WRONG body
+   * (always X's, since `find` returns the first match) — the Set-based
+   * cycle gate then aborted before either body's true content was
+   * resolved through the chain.
+   */
+  preferImplName?: string,
 ): string | null {
-  const target = implMethods.find((entry) => entry.name === methodName);
+  // Prefer same-impl match when the caller knows which impl owns the
+  // call site. Falls back to the first-found behaviour for ambiguous
+  // calls (legacy paths without context, or when no impl owns it).
+  const target = (preferImplName
+    ? implMethods.find((entry) => entry.implName === preferImplName && entry.name === methodName)
+    : undefined)
+    ?? implMethods.find((entry) => entry.name === methodName);
   if (!target) return null;
 
   const stackKey = `${target.implName}::${methodName}`;
   if (stack.has(stackKey)) return target.node.childForFieldName("body")?.text ?? null;
+  // Depth-bound safety net for mutual chains across many distinct keys.
+  // Set-based cycle detection alone allows 32+ deep paths to expand
+  // unbounded if every key is unique; this caps that.
+  if (stack.size >= MAX_INLINE_DEPTH) return target.node.childForFieldName("body")?.text ?? null;
 
   const paramsNode = target.node.childForFieldName("parameters");
   const paramNames = paramsNode ? parseMethodParameterNames(paramsNode) : [];
@@ -1300,7 +1334,12 @@ function expandImplMethod(
   }
 
   stack.add(stackKey);
-  inner = inlineSelfMethodCalls(inner, implMethods, accounts, stack);
+  // Recurse with the resolved impl as the new preferImplName so nested
+  // self.X() calls disambiguate to the same impl by default. Y::X()
+  // qualified calls still override via inlineSelfMethodCalls' own dispatch
+  // (it doesn't see qualified call paths today; if it adds them later
+  // the qualifier becomes the preferImplName for that descent).
+  inner = inlineSelfMethodCalls(inner, implMethods, accounts, stack, target.implName);
   stack.delete(stackKey);
 
   for (const account of accounts) {
@@ -1324,6 +1363,9 @@ function inlineSelfMethodCalls(
   implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
   accounts: AccountRef[],
   stack: Set<string>,
+  /** Impl-name hint for disambiguating same-named methods across impls.
+   *  See expandImplMethod's preferImplName comment. */
+  preferImplName?: string,
 ): string {
   let result = "";
   let cursor = 0;
@@ -1369,7 +1411,7 @@ function inlineSelfMethodCalls(
     }
 
     const calleeArgs = splitTopLevelArgs(source.slice(openParenIdx + 1, closeParenIdx));
-    const expanded = expandImplMethod(methodName, calleeArgs, implMethods, accounts, stack);
+    const expanded = expandImplMethod(methodName, calleeArgs, implMethods, accounts, stack, preferImplName);
     if (!expanded) {
       result += source.slice(selfIdx, closeParenIdx + 1);
       cursor = closeParenIdx + 1;
