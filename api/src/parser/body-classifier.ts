@@ -30,6 +30,60 @@ import { detectCpi } from "./cpi-detector.js";
 import { type WarningCollector, locFromNode } from "./warning-collector.js";
 import type { SourceLoc } from "../ir/schema.js";
 
+// ─── Hardcoded pattern lists (extracted for property testing) ──────────────
+//
+// The classifier's seed-binding distinction has two heuristic layers and a
+// single source-text gate. Bugs here produce silent misclassification: an
+// outer signer_seeds wrapper consumed as if it were an inner seed list,
+// or vice versa, leaving the emit referencing an undefined identifier.
+// Pulled into named exports so tests/parser-pattern-lists.test.ts can
+// enumerate every shape we care about + every edge case the parser-agent
+// review flagged.
+
+/**
+ * `localVar` names that hold the OUTER signer-seeds wrapper (`[&seeds[..]]`
+ * shape) rather than an inner seed list. Returns true when a binding by
+ * this name should NOT be consumed as a seed-list source.
+ */
+export function isOuterSignerSeedsBinding(localVar: string): boolean {
+  return (
+    localVar === "signer_seeds" ||
+    localVar.endsWith("_signer_seeds") ||
+    localVar === "signers_seeds" ||
+    localVar.endsWith("_signers_seeds")
+  );
+}
+
+/**
+ * `localVar` names that look like an inner seed-list binding the classifier
+ * should consume into a `pda_signer_seeds` IR node — `seeds`, `vault_seeds`,
+ * `pool_seeds`, etc., excluding the outer-wrapper names above.
+ */
+export function isInnerSeedsBinding(localVar: string): boolean {
+  if (isOuterSignerSeedsBinding(localVar)) return false;
+  return localVar === "seeds" || localVar.endsWith("_seeds");
+}
+
+/**
+ * Detects whether the function body already has a user-defined
+ * `let signers_seeds = [&seeds[..]]` (or similarly-named) binding. When
+ * present, the classifier disables its auto-consumption pass to preserve
+ * the user's seed-prep ordering verbatim.
+ *
+ * The two regexes used here are intentionally narrow — they anchor on the
+ * exact `[&seeds[..]]` shape and on `*signers_seeds` suffixes. Property
+ * tests in tests/parser-pattern-lists.test.ts enumerate the obvious
+ * variations and document which ones do NOT match (a known false-negative
+ * surface; each miss falls back to the auto-consumption pass which works
+ * correctly for the in-corpus shapes).
+ */
+export function hasUserSeedsManagementSignal(bodyText: string): boolean {
+  return (
+    /\blet\s+signers_seeds\s*=\s*\[\s*&\s*seeds\s*\[\s*\.\.\s*\]\s*\]/.test(bodyText) ||
+    /\blet\s+\w*signers_seeds\s*=\s*\[\s*&/.test(bodyText)
+  );
+}
+
 export interface ClassifiedBody {
   /** Classified body statements, in source order. */
   statements: BodyStatement[];
@@ -61,9 +115,7 @@ export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector)
   // preserve the original ordering (seeds → signers_seeds → CPI), which
   // is what `&signers_seeds` references at the call site.
   const bodyText = bodyNode.text;
-  const hasUserSeedsManagement =
-    /\blet\s+signers_seeds\s*=\s*\[\s*&\s*seeds\s*\[\s*\.\.\s*\]\s*\]/.test(bodyText) ||
-    /\blet\s+\w*signers_seeds\s*=\s*\[\s*&/.test(bodyText);
+  const hasUserSeedsManagement = hasUserSeedsManagementSignal(bodyText);
 
   // Track seeds definitions for PDA signer seeds grouping
   let pendingSeeds: { seeds: string[]; bumpField?: string; rawCode: string } | null = null;
@@ -309,16 +361,12 @@ function classifyLetDeclaration(
   // and the outer `let signers_seeds = …` at the wrapper-body level.
   // Consuming the outer would replace the let with an empty placeholder,
   // and the subsequent CPI emit would reference an undefined
-  // `signers_seeds`. Pass it through verbatim instead.
-  const isOuterSignerSeedsBinding =
-    localVar === "signer_seeds" ||
-    localVar.endsWith("_signer_seeds") ||
-    localVar === "signers_seeds" ||
-    localVar.endsWith("_signers_seeds");
+  // `signers_seeds`. Pass it through verbatim instead. Helpers in the
+  // module-level "Hardcoded pattern lists" section.
   if (
     valueNode &&
     !hasUserSeedsManagement &&
-    (localVar === "seeds" || (localVar.endsWith("_seeds") && !isOuterSignerSeedsBinding))
+    isInnerSeedsBinding(localVar)
   ) {
     const seedsData = extractPdaSeeds(valueNode);
     if (seedsData) {
@@ -366,12 +414,7 @@ function classifyLetDeclaration(
   // — those embed the bump inside a `&[&[...seeds..., &[ctx.bumps.X]]]`
   // expression and need to pass through verbatim, not be reduced to a
   // single bumps_access IR node that drops the surrounding seed literals.
-  const isSignerSeedsLocal =
-    localVar === "signer_seeds" ||
-    localVar.endsWith("_signer_seeds") ||
-    localVar === "signers_seeds" ||
-    localVar.endsWith("_signers_seeds");
-  if (valueNode && !isSignerSeedsLocal) {
+  if (valueNode && !isOuterSignerSeedsBinding(localVar)) {
     const bumpName = findCtxBumpsAccess(valueNode);
     if (bumpName) {
       return {
