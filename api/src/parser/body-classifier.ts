@@ -402,6 +402,10 @@ function classifyExpressionStatement(
   cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
   collector?: WarningCollector,
 ): ClassifyResult {
+  // Lookup callback passed into the CPI detector so the variable-bound
+  // CpiContext branch can recover signer_seeds (and unresolved struct
+  // fields) from previously-tracked `let X = CpiContext::new(...)` lets.
+  const cpiCtxLookup = (name: string) => cpiContexts.get(name);
   const text = node.text;
   const expr = node.namedChild(0);
   if (!expr) return { stmt: { kind: "pass_through", code: text, needsReview: false } };
@@ -426,7 +430,7 @@ function classifyExpressionStatement(
 
   // ── Try expression: something()? ──
   if (expr.type === "try_expression") {
-    const cpi = detectCpi(expr, collector);
+    const cpi = detectCpi(expr, collector, cpiCtxLookup);
     if (cpi) {
       // Resolve from/to using CPI context if they're unresolved
       return { stmt: resolveCpiFields(cpi, cpiContexts) };
@@ -435,7 +439,7 @@ function classifyExpressionStatement(
 
   // ── Direct call expression ──
   if (expr.type === "call_expression") {
-    const cpi = detectCpi(expr, collector);
+    const cpi = detectCpi(expr, collector, cpiCtxLookup);
     if (cpi) {
       return { stmt: resolveCpiFields(cpi, cpiContexts) };
     }

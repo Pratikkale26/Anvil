@@ -26,6 +26,22 @@ import {
 import { type WarningCollector, locFromNode } from "./warning-collector.js";
 
 /**
+ * Lookup of a previously-tracked variable-bound CpiContext. body-classifier
+ * tracks `let X = CpiContext::new(...);` bindings in a Map<varName, info>
+ * and supplies this lookup so the detector can recover signer_seeds (and
+ * struct field names) when the CPI call references the variable instead
+ * of inlining the CpiContext literal — the H2 fix path.
+ */
+export interface CpiContextLookup {
+  (varName: string): {
+    from?: string;
+    to?: string;
+    authority?: string;
+    signerSeeds?: string;
+  } | undefined;
+}
+
+/**
  * Add a `cpi_classification_lost` warning to the collector when a CPI was
  * recognised by name but the detector couldn't extract its struct fields.
  * `kind` describes the CPI surface (e.g. "SPL transfer", "set_authority"),
@@ -58,6 +74,7 @@ function warnClassificationLost(
 export function detectCpi(
   node: SyntaxNode,
   collector?: WarningCollector,
+  cpiCtxLookup?: CpiContextLookup,
 ): BodyStatement | null {
   // Unwrap try_expression (expr?) to get the inner call
   let callNode = node;
@@ -77,7 +94,7 @@ export function detectCpi(
   // These mirror token::* but use the Token-2022 program
   if (funcText.includes("token_2022::") || funcText.includes("token_interface::")) {
     if (funcText.includes("transfer_checked") || funcText.includes("transfer")) {
-      const result = extractSplTransfer(callNode, collector);
+      const result = extractSplTransfer(callNode, collector, cpiCtxLookup);
       if (result.kind === "cpi_spl_transfer") {
         return { ...result, tokenProgram: "token_2022" as const };
       }
@@ -115,7 +132,7 @@ export function detectCpi(
 
   // ── SPL Token transfer ──
   if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
-    return extractSplTransfer(callNode, collector);
+    return extractSplTransfer(callNode, collector, cpiCtxLookup);
   }
 
   // ── SPL Token mint_to ──
@@ -143,7 +160,7 @@ export function detectCpi(
       !!firstArg &&
       firstArg.text.includes("Transfer") &&
       /\bauthority\s*:/.test(firstArg.text);
-    if (isSplShape) return extractSplTransfer(callNode, collector);
+    if (isSplShape) return extractSplTransfer(callNode, collector, cpiCtxLookup);
     // Fall through — likely system_program::transfer; the system branch
     // below handles namespaced forms.
   }
@@ -169,7 +186,7 @@ export function detectCpi(
   // arrive via `token_interface` and are routed to Token-2022 at runtime),
   // so we infer tokenProgram = "token_2022".
   if (/^transfer_checked$|::transfer_checked$/.test(funcText)) {
-    const result = extractSplTransfer(callNode, collector);
+    const result = extractSplTransfer(callNode, collector, cpiCtxLookup);
     if (result.kind === "cpi_spl_transfer") {
       return { ...result, tokenProgram: "token_2022" as const };
     }
@@ -285,7 +302,7 @@ function extractMemoCpi(callNode: SyntaxNode, collector?: WarningCollector): Bod
 
 // ─── SPL Token Transfer ─────────────────────────────────────────────────────
 
-function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector, cpiCtxLookup?: CpiContextLookup): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
   if (!argsNode) {
     warnClassificationLost(collector, "SPL token::transfer", callNode);
@@ -323,17 +340,27 @@ function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector):
     }
     signerSeeds = firstArg.text.includes("new_with_signer") ? extractSignerSeedsExpr(firstArg.text) : undefined;
   } else if (firstArg) {
-    signerSeeds = undefined;
-    // Variable-bound CpiContext (the user wrote `let cpi_ctx = CpiContext::new(…);
-    // transfer(cpi_ctx, amount)?;`). We don't trace the binding back to its
-    // source today, so any signer_seeds set on that binding are dropped.
-    // H2 will resolve this; until then, surface as a loud warning.
-    collector?.add({
-      code: "signer_seeds_lost_variable_binding",
-      message: "SPL transfer's CpiContext was variable-bound (not inline); signer_seeds on that binding are not carried into emit. PDA-signed transfer may revert at runtime. Hand-verify the signer setup.",
-      snippet: callNode.text,
-      loc: locFromNode(callNode),
-    });
+    // Variable-bound CpiContext (`let cpi_ctx = CpiContext::new(...);
+    // transfer(cpi_ctx, amount)?;`). Look up the binding via the
+    // body-classifier-supplied lookup; on hit we recover signer_seeds and
+    // any unresolved struct fields. On miss we emit the loud warning so
+    // the user knows signer_seeds was dropped.
+    const varName = firstArg.text.trim().replace(/^&\s*/, "");
+    const ctx = cpiCtxLookup?.(varName);
+    if (ctx) {
+      signerSeeds = ctx.signerSeeds;
+      if (ctx.from) from = ctx.from;
+      if (ctx.to) to = ctx.to;
+      if (ctx.authority) authority = ctx.authority;
+    } else {
+      signerSeeds = undefined;
+      collector?.add({
+        code: "signer_seeds_lost_variable_binding",
+        message: `SPL transfer's CpiContext was variable-bound to '${varName}' and the binding wasn't tracked; signer_seeds on that binding are not carried into emit. PDA-signed transfer may revert at runtime.`,
+        snippet: callNode.text,
+        loc: locFromNode(callNode),
+      });
+    }
   }
 
   if (isChecked && args.length >= 3) {
