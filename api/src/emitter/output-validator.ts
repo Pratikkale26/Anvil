@@ -226,9 +226,15 @@ function checkOwnerChecks(content: string, ir: SolanaIR, path: string): Validati
         fnBody.includes(`${accountName}.owner`) ||
         fnBody.includes(`${accountName}.owner()`);
       if (!hasOwnerCheck) {
+        // Promoted warning -> error: a mutable state account whose
+        // accountType is in ir.accounts (i.e. a program-owned struct, not
+        // a system account) MUST verify owner before mutating, otherwise
+        // an attacker can pass an account owned by a different program
+        // and bypass authorization. This is a hard security gate; refuse
+        // to deploy without it.
         issues.push({
-          severity: "warning",
-          message: `'${fnName}': mutable state account '${accountName}' (${acc.accountType}) has no owner check.`,
+          severity: "error",
+          message: `'${fnName}': mutable program-owned state account '${accountName}' (${acc.accountType}) has no owner check. Add an explicit '${accountName}.owner == program_id' (or '${accountName}.owner() == program_id') guard before mutation, or attackers can pass accounts owned by other programs and bypass authorization.`,
           path,
         });
       }
