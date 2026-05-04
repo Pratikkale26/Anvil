@@ -26,7 +26,7 @@ import {
   readdirSync,
   statSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, dirname as nodeDirname } from "node:path";
 import { createHash } from "node:crypto";
 import type { SolanaIR } from "../ir/schema.js";
 import { spawnSandboxed, sandboxedEnv } from "./sandbox.js";
@@ -109,6 +109,7 @@ async function buildAnchor(opts: DifferentialBuildOptions, outPath: string): Pro
   const scratch = join(CACHE_ROOT, `_workbench_build_${opts.programName}_anchor`);
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(join(scratch, "src"), { recursive: true });
+  opts.onLog?.(`[anchor] scratch=${scratch}`);
   const cargoToml = `[package]
 name = "${opts.programName}"
 version = "0.1.0"
@@ -139,14 +140,19 @@ async function buildAnvil(opts: DifferentialBuildOptions, outPath: string): Prom
   rmSync(scratch, { recursive: true, force: true });
   for (const f of opts.anvilScaffoldFiles) {
     const p = join(scratch, f.path);
-    mkdirSync(join(p, "..").replace(/\/[^/]+$/, ""), { recursive: true });
+    // The previous regex-based parent-dir computation incorrectly stripped
+    // a directory segment for paths like `Cargo.toml` (no slash) -- it
+    // returned an empty string, then mkdirSync({recursive:true}) on "" is
+    // a no-op silently. Use node:path.dirname for both cases.
+    mkdirSync(nodeDirname(p), { recursive: true });
     writeFileSync(p, f.content, "utf-8");
   }
   for (const f of opts.anvilEmittedFiles) {
     const p = join(scratch, "src", f.path);
-    mkdirSync(join(p, "..").replace(/\/[^/]+$/, ""), { recursive: true });
+    mkdirSync(nodeDirname(p), { recursive: true });
     writeFileSync(p, f.content, "utf-8");
   }
+  opts.onLog?.(`[anvil] scratch=${scratch}`);
   await runSandboxedSbf(scratch, opts);
   copySoFromTarget(scratch, outPath);
 }
@@ -154,12 +160,24 @@ async function buildAnvil(opts: DifferentialBuildOptions, outPath: string): Prom
 function runSandboxedSbf(cwd: string, opts: DifferentialBuildOptions): Promise<void> {
   return new Promise((resolve, reject) => {
     const env = sandboxedEnv();
-    // cargo-build-sbf needs the platform-tools download path -- don't
-    // strip RUSTUP_HOME / CARGO_HOME (sandboxedEnv already keeps those).
+    // Cap cargo's parallel job count. cargo-build-sbf spawns rustc + cc +
+    // rust-lld concurrently across crates -- on WSL2 (and small VMs) the
+    // host fork()s start returning EAGAIN once thread/process slots fill,
+    // which surfaces as cryptic linker aborts ("ld terminated with signal
+    // 6", "Resource temporarily unavailable"). ANVIL_DIFF_JOBS overrides;
+    // default is conservative because the workbench is a shared instance.
+    const jobs = process.env.ANVIL_DIFF_JOBS ?? "2";
     const child: ChildProcess = spawnSandboxed(
       "cargo-build-sbf",
-      ["--manifest-path", join(cwd, "Cargo.toml")],
-      { cwd, env: { ...env, RUSTFLAGS: "" } },
+      ["--jobs", jobs, "--manifest-path", join(cwd, "Cargo.toml")],
+      {
+        cwd,
+        env: {
+          ...env,
+          RUSTFLAGS: "",
+          CARGO_BUILD_JOBS: jobs,
+        },
+      },
     );
     if (opts.cancelHandle) {
       opts.cancelHandle.current = {
@@ -168,6 +186,10 @@ function runSandboxedSbf(cwd: string, opts: DifferentialBuildOptions): Promise<v
         },
       };
     }
+    // Tail buffer of recent stdout/stderr -- on non-zero exit we surface
+    // the last ~50 lines in the rejected error so the SSE error event
+    // shows the actual cargo failure instead of just "exited with code 1".
+    const tail: string[] = [];
     let lineBuf = "";
     const onChunk = (chunk: Buffer) => {
       lineBuf += chunk.toString("utf-8");
@@ -175,7 +197,11 @@ function runSandboxedSbf(cwd: string, opts: DifferentialBuildOptions): Promise<v
       while ((nl = lineBuf.indexOf("\n")) >= 0) {
         const line = lineBuf.slice(0, nl);
         lineBuf = lineBuf.slice(nl + 1);
-        if (line.length > 0) opts.onLog?.(line);
+        if (line.length > 0) {
+          opts.onLog?.(line);
+          tail.push(line);
+          if (tail.length > 80) tail.shift();
+        }
       }
     };
     child.stdout?.on("data", onChunk);
@@ -185,8 +211,21 @@ function runSandboxedSbf(cwd: string, opts: DifferentialBuildOptions): Promise<v
     }, 10 * 60 * 1000);
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`cargo-build-sbf exited with code ${code}`));
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      // Trim tail to the lines cargo most likely emitted as errors. Keep
+      // the bottom of the buffer -- that's where rustc prints the failure.
+      const trimmed = tail
+        .filter((l) => l.trim().length > 0)
+        .slice(-30)
+        .join("\n");
+      reject(
+        new Error(
+          `cargo-build-sbf exited with code ${code} (cwd=${cwd})\n--- last build output ---\n${trimmed || "(no output captured)"}`,
+        ),
+      );
     });
     child.on("error", (err) => {
       clearTimeout(timer);
