@@ -1141,6 +1141,14 @@ export class BodyWalker {
             return match?.[2] ? snakeCase(match[2]) : null;
           })
           .filter(Boolean);
+        // Fieldless accounts struct (e.g. spl_memo's BuildMemo {}) -> the
+        // generated `let cpi_accounts = &[]` would have inferable-only type
+        // `&[_; 0]`, which rustc rejects (E0282). The downstream cpi_memo
+        // emit hand-rolls its own Instruction { accounts: &[], data: ... }
+        // anyway, so these vars are dead. Drop the let-block entirely.
+        if (accountVars.length === 0) {
+          return `// CPI: invoke external program (no-account form -- accounts are inlined below)`;
+        }
         const programVarName = snakeCase(programVar);
         return `// CPI: invoke external program\n    let cpi_accounts = &[${accountVars.map((v) => `${v}.clone()`).join(", ")}];\n    let cpi_program = ${programVarName};`;
       },
