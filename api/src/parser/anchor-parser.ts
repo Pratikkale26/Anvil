@@ -38,6 +38,7 @@ import { parseInstructions, extractImplTargetName, parseFromImplDeclaration, typ
 import { parseAccountDataStruct } from "./account-parser.js";
 import { parseErrorEnum, parseHelperFn, parseCustomType, extractImports, extractProgramId } from "./type-parser.js";
 import { createWarningCollector } from "./warning-collector.js";
+import { buildHelperCpiCatalog } from "./helper-cpi-catalog.js";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -184,6 +185,15 @@ export async function parseAnchor(
     // consumers see ir.warnings with a `partial_parse_timeout` code and
     // can render "we got 23 of N instructions, see warnings" instead
     // of "Parse timed out, here's nothing."
+    // Helper-CPI catalog (Path 2). Parsed BEFORE instructions so the
+    // body classifier can substitute call sites into typed cpi_spl_*
+    // statements. parseHelperFn is text-only, no AST traversal cost
+    // beyond the one we'd do later anyway. Only fns whose body shape
+    // matches a recognized SPL CPI wrapper land in the catalog; the rest
+    // stay as carried-over helperFns for emit.
+    const earlyHelperFns = topLevel.helperFns.map((h) => parseHelperFn(h.node));
+    const helperCpiCatalog = buildHelperCpiCatalog(earlyHelperFns);
+
     let instructions: SolanaIR["instructions"];
     let partialParseTimeout = false;
     try {
@@ -196,6 +206,7 @@ export async function parseAnchor(
         topLevel.fromImpls,
         source,
         warningCollector,
+        helperCpiCatalog,
       );
     } catch (err) {
       if (err instanceof ParseTimeoutError) {
@@ -234,7 +245,8 @@ export async function parseAnchor(
     });
 
     // ── Parse helper functions ──
-    const helperFns = topLevel.helperFns.map((h) => parseHelperFn(h.node));
+    // Reuse the catalog-pass result so we don't text-parse the same fn twice.
+    const helperFns = earlyHelperFns;
 
     // ── Parse custom types ──
     const types = topLevel.customTypes.map((t) => {

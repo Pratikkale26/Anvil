@@ -28,6 +28,7 @@ import {
 } from "./ast-helpers.js";
 import { detectCpi } from "./cpi-detector.js";
 import { type WarningCollector, locFromNode } from "./warning-collector.js";
+import { type HelperCpiCatalogEntry, stripLeadingAmp } from "./helper-cpi-catalog.js";
 import type { SourceLoc } from "../ir/schema.js";
 
 // ─── Hardcoded pattern lists (extracted for property testing) ──────────────
@@ -98,7 +99,11 @@ export interface ClassifiedBody {
  * @param bodyNode — the `block` node of the function body (including { })
  * @returns array of classified BodyStatements
  */
-export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector): ClassifiedBody {
+export function classifyBody(
+  bodyNode: SyntaxNode,
+  collector?: WarningCollector,
+  helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
+): ClassifiedBody {
   const statements: BodyStatement[] = [];
   const locs: Array<SourceLoc | undefined> = [];
   /** Push a (statement, loc) pair, keeping the parallel arrays in sync. */
@@ -160,7 +165,7 @@ export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector)
     // Skip comment nodes
     if (child.type === "line_comment" || child.type === "block_comment") continue;
 
-    const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector);
+    const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog);
     const childLoc = locFromNode(child);
 
     // Track seeds for PDA signer seeds grouping
@@ -305,6 +310,7 @@ function classifyStatement(
   cpiAccountsByVar: Map<string, CpiAccountsBinding>,
   hasUserSeedsManagement = false,
   collector?: WarningCollector,
+  helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
 ): ClassifyResult {
   const text = node.text;
 
@@ -313,7 +319,7 @@ function classifyStatement(
       return classifyLetDeclaration(node, pendingSeeds, cpiAccountsByVar, hasUserSeedsManagement);
 
     case "expression_statement":
-      return classifyExpressionStatement(node, cpiContexts, collector);
+      return classifyExpressionStatement(node, cpiContexts, collector, helperCpiCatalog);
 
     case "macro_invocation":
       return { stmt: classifyMacroInvocation(node) };
@@ -544,6 +550,7 @@ function classifyExpressionStatement(
   node: SyntaxNode,
   cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
   collector?: WarningCollector,
+  helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
 ): ClassifyResult {
   // Lookup callback passed into the CPI detector so the variable-bound
   // CpiContext branch can recover signer_seeds (and unresolved struct
@@ -588,6 +595,14 @@ function classifyExpressionStatement(
       // Resolve from/to using CPI context if they're unresolved
       return { stmt: resolveCpiFields(cpi, cpiContexts) };
     }
+    // User-helper SPL-CPI wrapper recognition (Path 2). The try_expression
+    // form covers the canonical `transfer_tokens(...)?` / `transfer_tokens
+    // (...).map_err(|_| ErrorCode::X)?` shape. Substitute call args and
+    // emit cpi_spl_*.
+    if (helperCpiCatalog && helperCpiCatalog.length > 0) {
+      const helperStmt = classifyHelperCpiCall(expr, helperCpiCatalog);
+      if (helperStmt) return { stmt: helperStmt };
+    }
   }
 
   // ── Direct call expression ──
@@ -595,6 +610,11 @@ function classifyExpressionStatement(
     const cpi = detectCpi(expr, collector, cpiCtxLookup);
     if (cpi) {
       return { stmt: resolveCpiFields(cpi, cpiContexts) };
+    }
+    // Helper-CPI recognition for the bare-call form (no `?`, no .map_err).
+    if (helperCpiCatalog && helperCpiCatalog.length > 0) {
+      const helperStmt = classifyHelperCpiCall(expr, helperCpiCatalog);
+      if (helperStmt) return { stmt: helperStmt };
     }
     // ── `<X>.set_inner(<Type> { f1: v1, f2: v2, … })` expansion ──
     // Anchor's Account<T>::set_inner replaces every field of the wrapped
@@ -623,6 +643,152 @@ function classifyExpressionStatement(
       reviewReason: containsAnchorPatterns(text) ? "Contains possible Anchor-specific pattern" : undefined,
     },
   };
+}
+
+// ─── Helper-CPI call recognition (Path 2) ──────────────────────────────────
+//
+// User helpers that wrap a single SPL CPI (transfer_checked / mint_to /
+// burn / close_account) get registered in helperCpiCatalog at parse time
+// (api/src/parser/helper-cpi-catalog.ts). When an instruction body calls
+// one of those helpers, classify the call as the typed cpi_spl_* IR
+// statement instead of falling through to pass_through. Without this,
+// modern Anchor programs (anchor-escrow-2025, Squads, Streamflow) that
+// factor SPL CPIs into helper functions land in pass_through, and on
+// Pinocchio the post-process strips the call as Anchor-only — leaving
+// the on-chain tokens un-transferred.
+//
+// Walks through `try_expression` (`helper(...)?`), method-call wrappers
+// (`helper(...).map_err(|e| ...)?`), and the bare call form to find the
+// underlying call_expression. Then matches the function name against
+// the catalog, substitutes call-site args into IR fields, and emits.
+
+function classifyHelperCpiCall(
+  exprNode: SyntaxNode,
+  catalog: ReadonlyArray<HelperCpiCatalogEntry>,
+): BodyStatement | null {
+  // Unwrap try_expression (`<expr>?`) → call_expression / method-call
+  // chain. Recurse once: real Anchor source has at most one level of
+  // try_expression (the trailing `?`).
+  let inner: SyntaxNode | null = exprNode;
+  if (inner.type === "try_expression") {
+    inner = inner.namedChild(0);
+  }
+  if (!inner) return null;
+
+  // Unwrap method-call chains. `.map_err(|e| Error::X)?.something()` and
+  // similar transformations sit between the helper call and the `?`.
+  // Walk through method_calls until we land on the underlying
+  // call_expression.
+  while (inner && inner.type === "call_expression") {
+    const fnNode = inner.childForFieldName("function");
+    if (!fnNode) break;
+    if (fnNode.type === "field_expression") {
+      // method-call shape: `<receiver>.<method_name>(args)`. The
+      // receiver of the method call is the value we want to keep
+      // walking on (e.g. the `helper(...)` in `helper(...).map_err(...)`).
+      const receiver = fnNode.childForFieldName("value");
+      if (!receiver) break;
+      inner = receiver;
+      continue;
+    }
+    // Plain call_expression — fnNode is an identifier or scoped-identifier.
+    break;
+  }
+  if (!inner || inner.type !== "call_expression") return null;
+
+  // Function name. Match the bare identifier — module-prefixed calls
+  // (e.g. `crate::shared::transfer_tokens(...)`) carry the path through
+  // scoped_identifier; the catalog only registered bare names so we
+  // strip the prefix.
+  const fnNode = inner.childForFieldName("function");
+  if (!fnNode) return null;
+  let fnName: string | null = null;
+  if (fnNode.type === "identifier") {
+    fnName = fnNode.text;
+  } else if (fnNode.type === "scoped_identifier") {
+    const tail = fnNode.childForFieldName("name");
+    fnName = tail?.text ?? null;
+  }
+  if (!fnName) return null;
+
+  const entry = catalog.find((e) => e.helperName === fnName);
+  if (!entry) return null;
+
+  // Walk the helper's positional args. Each arg is a separate named
+  // child of the `arguments` node. Strip a leading `&` per arg so the
+  // IR statement holds the bare expression form (the emitter doesn't
+  // want a redundant `&` in `let from = &foo;`).
+  const argsNode = inner.childForFieldName("arguments");
+  if (!argsNode) return null;
+  const args: string[] = [];
+  for (let i = 0; i < argsNode.namedChildCount; i++) {
+    const a = argsNode.namedChild(i);
+    if (!a) continue;
+    args.push(stripLeadingAmp(a.text));
+  }
+  // Sanity: at least as many args as the catalog entry references.
+  const maxRequiredIdx = Math.max(
+    entry.argMap.from ?? -1,
+    entry.argMap.to ?? -1,
+    entry.argMap.amount ?? -1,
+    entry.argMap.mint ?? -1,
+    entry.argMap.authority ?? -1,
+    entry.argMap.tokenProgram,
+    entry.argMap.signerSeeds ?? -1,
+    entry.argMap.destination ?? -1,
+    entry.argMap.account ?? -1,
+  );
+  if (args.length <= maxRequiredIdx) return null;
+
+  if (entry.kind === "cpi_spl_transfer") {
+    if (entry.argMap.from === undefined || entry.argMap.to === undefined
+      || entry.argMap.amount === undefined || entry.argMap.authority === undefined) {
+      return null;
+    }
+    const mintExpr = entry.argMap.mint !== undefined ? args[entry.argMap.mint]! : undefined;
+    // For Token-Interface / Token-2022 transfers the IR wants `decimals`
+    // expressed as an inline access (`<mint>.decimals`). The emitter
+    // already injects a Mint::unpack prelude when this shape lands.
+    const decimalsExpr = mintExpr ? `${mintExpr}.decimals` : undefined;
+    let signerSeedsExpr: string | undefined;
+    if (entry.argMap.signerSeeds !== undefined) {
+      const raw = args[entry.argMap.signerSeeds]!;
+      // Helper signature is Option<&[&[u8]]>. Three observed shapes at
+      // call sites:
+      //   1. `None` — no signer; the no-signer-seeds CPI path. Substitute.
+      //   2. `Some(<inline-expr>)` — explicit signer seeds inline. We
+      //      could substitute the inner expr, but inline expressions
+      //      pulling from `state.bump` etc. don't resolve cleanly on
+      //      pinocchio without state-bind preludes. Refuse for now.
+      //   3. local-var name (e.g. `signers_seeds`) — caller built the
+      //      Option<...> in earlier let-statements. Substituting the var
+      //      name into the IR's signerSeeds field breaks downstream
+      //      because the let-statements that defined it are pass_through
+      //      and may get stripped on pinocchio (anchor-escrow-2025's
+      //      take_offer + refund_offer had this exact shape, breaking
+      //      the build). Refuse.
+      //
+      // Conservative gate: only substitute when raw === "None". For the
+      // other two shapes, return null so the caller falls back to
+      // pass_through (which is what worked pre-Path 2). When state-bind
+      // preludes for signer-seeds land, expand this gate.
+      if (raw !== "None") return null;
+    }
+    return {
+      kind: "cpi_spl_transfer",
+      from: args[entry.argMap.from]!,
+      to: args[entry.argMap.to]!,
+      authority: args[entry.argMap.authority]!,
+      amount: args[entry.argMap.amount]!,
+      tokenProgram: entry.tokenProgram,
+      mint: mintExpr,
+      decimals: decimalsExpr,
+      signerSeeds: signerSeedsExpr,
+    };
+  }
+
+  // Future kinds — mint_to / burn / close_account — register here.
+  return null;
 }
 
 // ─── set_inner expansion ───────────────────────────────────────────────────

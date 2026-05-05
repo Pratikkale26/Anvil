@@ -19,6 +19,7 @@ import { normalizeSolanaType } from "./utils.js";
 import { classifyBody } from "./body-classifier.js";
 import type { WarningCollector } from "./warning-collector.js";
 import { parseAccountsStructFields } from "./account-parser.js";
+import type { HelperCpiCatalogEntry } from "./helper-cpi-catalog.js";
 
 // ─── Instruction parsing ────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ export function parseInstructions(
   fromImpls: FromImplCatalogEntry[],
   source: string,
   collector?: WarningCollector,
+  helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
 ): SolanaIR["instructions"] {
   const body = programModNode.childForFieldName("body");
   if (!body) return [];
@@ -48,7 +50,7 @@ export function parseInstructions(
     }
 
     if (child.type === "function_item") {
-      const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, fromImpls, source, collector);
+      const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog);
       if (instr) instructions.push(instr);
     }
 
@@ -68,6 +70,7 @@ function parseInstructionFn(
   fromImpls: FromImplCatalogEntry[],
   source: string,
   collector?: WarningCollector,
+  helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
 ): SolanaIR["instructions"][0] | null {
   const fnName = fnNode.childForFieldName("name")?.text;
   if (!fnName) return null;
@@ -173,7 +176,7 @@ function parseInstructionFn(
   // see "instruction `foo`: SPL transfer carried as pass_through" rather
   // than a context-free message.
   const instrCollector = collector?.forInstruction(fnName);
-  const classified = bodyNode ? classifyBody(bodyNode, instrCollector) : { statements: [], locs: [] };
+  const classified = bodyNode ? classifyBody(bodyNode, instrCollector, helperCpiCatalog) : { statements: [], locs: [] };
   const bodyStatements: BodyStatement[] = classified.statements;
   const bodyLocs = classified.locs;
 
