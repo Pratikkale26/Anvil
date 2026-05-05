@@ -249,6 +249,85 @@ describe("compareScenarioRuns: discriminator-aware stripping (A4)", () => {
     expect(verdict.sanityWarnings.find((w) => w.kind === "partial_compare_scope")).toBeUndefined();
   });
 
+  test("assertions[] surface — declared field-value invariant flows through verdict (M1.2)", () => {
+    // The verdict's assertions[] surface is the user's hedge against
+    // silent-pass-on-revert: even if both targets succeed byte-equal,
+    // an assertion that doesn't hold flips the verdict to DIVERGED.
+    // M1.2 proves this surface works end-to-end via compareScenarioRuns.
+    //
+    // Scenario: one Counter PDA with field `n: u64` set to 7 on both sides.
+    //   - Assertion expecting n=7 → passed=true
+    //   - Assertion expecting n=99 → passed=false → verdict DIVERGED
+    const ir: SolanaIR = {
+      name: "test",
+      instructions: [{
+        name: "noop",
+        accounts: [{ name: "counter", accountType: "Counter", isSigner: false, isMut: false, isInit: false, isOptional: false, isPda: true, pdaSeeds: [], constraints: [] }],
+        args: [],
+        body: [],
+        bodyLocs: [],
+      }],
+      accounts: [{ name: "Counter", fields: [{ name: "n", type: "u64" as const }] }],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor", anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+
+    const disc = discriminatorFor("Counter");
+    const fields = Buffer.alloc(8);
+    fields.writeBigUInt64LE(7n, 0);
+    const data = Buffer.concat([disc, fields]);
+
+    const a = emptyRun();
+    a.snapshots.set("counter", { data, lamports: 100n, owner: "11111111111111111111111111111111" });
+    const v = emptyRun();
+    v.snapshots.set("counter", { data: Buffer.from(data), lamports: 100n, owner: "11111111111111111111111111111111" });
+
+    // Assertion that PASSES (n=7). u64 fields deserialize as strings
+    // (tryDeserializeFields uses string-form for >32-bit ints to dodge
+    // JSON-number precision loss); expectedValue must match string form.
+    const passingScenario = ScenarioSchema.parse({
+      version: 1,
+      signers: [{ name: "u" }],
+      pdas: [],
+      steps: [{ ix: "noop", args: {}, accounts: ["$pda:counter"], expectFail: false }],
+      compare: { accounts: ["counter"], lamports: false, owner: false, eventLogs: false, msgLogs: false, returnData: false },
+      assertions: [{ afterStep: 0, account: "counter", field: "n", expectedValue: "7" }],
+      clock: {},
+    });
+    const passingVerdict = compareScenarioRuns(passingScenario, ir, a, v, 0);
+    expect(passingVerdict.verdict).toBe("BYTE_EQUAL");
+    expect(passingVerdict.assertions.length).toBe(1);
+    expect(passingVerdict.assertions[0]?.passed).toBe(true);
+    expect(passingVerdict.assertions[0]?.actualAnvil).toBe("7");
+    expect(passingVerdict.assertions[0]?.actualAnchor).toBe("7");
+
+    // Assertion that FAILS (expected "99", actual "7") → verdict flips to
+    // DIVERGED even though the byte compare itself succeeded. This is
+    // the silent-pass-on-revert hedge working correctly.
+    const failingScenario = ScenarioSchema.parse({
+      version: 1,
+      signers: [{ name: "u" }],
+      pdas: [],
+      steps: [{ ix: "noop", args: {}, accounts: ["$pda:counter"], expectFail: false }],
+      compare: { accounts: ["counter"], lamports: false, owner: false, eventLogs: false, msgLogs: false, returnData: false },
+      assertions: [{ afterStep: 0, account: "counter", field: "n", expectedValue: "99" }],
+      clock: {},
+    });
+    const failingVerdict = compareScenarioRuns(failingScenario, ir, a, v, 0);
+    expect(failingVerdict.verdict).toBe("DIVERGED");
+    expect(failingVerdict.assertions.length).toBe(1);
+    expect(failingVerdict.assertions[0]?.passed).toBe(false);
+    expect(failingVerdict.assertions[0]?.actualAnvil).toBe("7");
+    expect(failingVerdict.assertions[0]?.message).toContain("counter.n");
+  });
+
   test("zero-data accounts (closed PDA) are equal regardless of discriminator", () => {
     const ir = makeIr("Counter", [{ name: "count", type: "u64" }]);
     const a = emptyRun();

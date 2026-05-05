@@ -247,6 +247,34 @@ class PinocchioEmitter extends BaseEmitter {
       imports.push(`use pinocchio::sysvars::Sysvar;`);
     }
 
+    // Auto-import set_return_data / get_return_data when any instruction
+    // references either. Source code typically uses
+    // `anchor_lang::solana_program::program::set_return_data` (filtered
+    // out by the use-import scrubber on Pinocchio); the postProcess
+    // rewrite collapses qualified call sites to `pinocchio::program::*`,
+    // but BARE call sites (where the source had `use … set_return_data;`
+    // and called the bare name) need this import to compile. Cheap +
+    // idempotent: detect by scanning instruction bodies for the names.
+    const usesSetReturnData = _ir.instructions.some((i) =>
+      i.body.some((s) =>
+        (s.kind === "pass_through" && /\bset_return_data\s*\(/.test(s.code))
+        || (s.kind === "state_field_assign" && /\bset_return_data\s*\(/.test(s.value))
+      ),
+    );
+    const usesGetReturnData = _ir.instructions.some((i) =>
+      i.body.some((s) =>
+        (s.kind === "pass_through" && /\bget_return_data\s*\(/.test(s.code))
+        || (s.kind === "state_field_assign" && /\bget_return_data\s*\(/.test(s.value))
+      ),
+    );
+    if (usesSetReturnData && usesGetReturnData) {
+      imports.push(`use pinocchio::program::{get_return_data, set_return_data};`);
+    } else if (usesSetReturnData) {
+      imports.push(`use pinocchio::program::set_return_data;`);
+    } else if (usesGetReturnData) {
+      imports.push(`use pinocchio::program::get_return_data;`);
+    }
+
     imports.push(...this.filteredSourceImports(_ir));
 
     return imports.join("\n");
@@ -1092,6 +1120,18 @@ ${writeLines}
     out = out.replace(
       /(?:solana_program\s*::\s*pubkey\s*::\s*)?Pubkey\s*::\s*(find_program_address|create_program_address)\b/g,
       "pinocchio::pubkey::$1",
+    );
+    // set_return_data: pinocchio exposes pinocchio::program::set_return_data
+    // with a compatible signature. Rewrite both bare `set_return_data(`
+    // (when the source had `use anchor_lang::solana_program::program::
+    // set_return_data;`) and `solana_program::program::set_return_data(`
+    // qualified call sites. get_return_data follows the same pattern.
+    // The use-import filter already drops the upstream import on
+    // pinocchio; this rewrite gives the call-site the local pinocchio
+    // path so the body compiles.
+    out = out.replace(
+      /(?:anchor_lang\s*::\s*)?solana_program\s*::\s*program\s*::\s*(set_return_data|get_return_data)\b/g,
+      "pinocchio::program::$1",
     );
     // Comment out `solana_program::program::invoke{,_signed}` direct calls
     // and the typed `let X: Instruction` setup that feeds them. pinocchio
