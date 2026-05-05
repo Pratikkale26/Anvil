@@ -97,7 +97,13 @@ app.use(cors({
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-app.use(express.json({ limit: "2mb" }));
+// Body limit covers the largest request shape: /build/differential's
+// anchorSource (capped at 5 MB by Zod) + emitted files + IR. The previous
+// 2 MB cap silently 413'd real Anchor programs (Drift main is 1.2 MB, plus
+// IR + emitted files routinely push the same body past 2 MB). Set the
+// global cap above the per-route schema cap so 4xx responses come from the
+// route's structured Zod error, not an opaque body-parser failure.
+app.use(express.json({ limit: "8mb" }));
 
 // Per-IP rate limiter. Two backing stores:
 //   - default: in-memory Map (single instance only — sufficient for the
