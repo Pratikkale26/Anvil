@@ -8,6 +8,7 @@ import { splitConstraintTokens, stripComments } from "./utils.js";
 const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
   init:             "init",
   init_if_needed:   "init_if_needed",
+  zero:             "zero",
   mut:              "mut",
   signer:           "signer",
   has_one:          "has_one",

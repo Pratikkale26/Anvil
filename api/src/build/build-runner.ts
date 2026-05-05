@@ -100,6 +100,29 @@ export interface BuildResult {
 // uploading a custom Cargo.toml), the network-namespace cut is
 // circumvented and a malicious crate can run code with the API
 // process's credentials. See SECURITY.md.
+// FUTURE: Emit-side blocker (b) — solana_program::hash::hashv on Pinocchio.
+// jito-tip-distribution + merkle-proof-using programs reference
+// `solana_program::hash::hashv`. Pinocchio 0.9 doesn't ship a high-level
+// hashv API; raw SBF syscalls (sol_keccak256, sol_sha256) are exposed
+// via pinocchio::syscalls but require manual wrapping. Fix has TWO
+// implementation choices; both need iterative crate-compat probing
+// to land safely:
+//
+//   Option 1: add `solana-hash` (or split `solana-sha256-hasher`) as a
+//             Pinocchio scaffold dep, filter the use-import on
+//             pinocchio (anchor-spl path), keep call sites bare.
+//             Risk: dep version conflict with pinocchio's own deps.
+//
+//   Option 2: emit a hand-rolled `anvil_hashv` helper in the Pinocchio
+//             scaffold that wraps pinocchio::syscalls::sol_sha256, then
+//             post-process rewrite `solana_program::hash::hashv` →
+//             `anvil_hashv` at every call site.
+//             Risk: shape of call args (`&[&[u8]]` vs `&[&[u8; N]]`)
+//             needs to match across all real call sites.
+//
+// Either lands cleanly only with a working toolchain to iterate on. Not
+// shipped here — see project-byte-equal-pipeline-review-arc.md for the
+// blocker hierarchy and which fixtures unlock when.
 const PINOCCHIO_CARGO_TOML = `[package]
 name = "anvil-build"
 version = "0.1.0"
@@ -114,6 +137,13 @@ pinocchio-token = "0.4"
 pinocchio-associated-token-account = "0.4"
 `;
 
+// FUTURE: Emit-side blocker (c) — solana-vote-program scaffold dep.
+// jito-tip-distribution references `VoteState::deserialize_node_pubkey`
+// from `solana-vote-program` (re-exported as `solana_vote_program`).
+// Native target could carry it cleanly (solana-program is already a
+// dep, vote-program is a sibling crate), but version pinning needs
+// validation against the host SBF toolchain. NOT added here — see
+// project-byte-equal-pipeline-review-arc.md.
 const NATIVE_CARGO_TOML = `[package]
 name = "anvil-build"
 version = "0.1.0"

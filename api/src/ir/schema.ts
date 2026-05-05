@@ -62,6 +62,17 @@ export type SourceLoc = z.infer<typeof SourceLocSchema>;
 export const ConstraintKindSchema = z.enum([
   "init",
   "init_if_needed",
+  // `#[account(zero)]`: account must be zero-initialized + owned by the
+  // program at handler entry. coral-multisig's create_multisig is the
+  // canonical case. Older Anchor versions (pre-0.28) implicitly added a
+  // `rent: SYSVAR_RENT_PUBKEY` slot to the IDL accounts list when ANY
+  // account in the struct used `init` or `zero`; modern Anchor doesn't.
+  // Anvil's IR currently models only explicit declarations; emit + the
+  // scenario runner don't insert the implicit rent slot. This means
+  // older Anchor programs using `zero` get stuck at runtime constraint
+  // validation. Closing this gap is its own emit-side item — see
+  // project-byte-equal-pipeline-review-arc.md.
+  "zero",
   "mut",
   "signer",
   "has_one",
