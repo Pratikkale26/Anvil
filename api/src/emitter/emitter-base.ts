@@ -988,10 +988,20 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
   protected sourceErrorEnumName(ir: SolanaIR): string {
     const variantNames = new Set(ir.errors.map((error) => error.name));
     const prefixes = new Map<string, number>();
+    // Escape regex metacharacters in variant names before interpolation —
+    // production programs (MarginFi v2 has 416 variants) may include names
+    // that don't fit the [A-Za-z_][A-Za-z0-9_]* shape after parser quirks
+    // (e.g. duplicate-stripped names, nested types). Without this, a single
+    // weird variant crashes the whole emit with "Invalid regular expression".
+    const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const recordPrefixes = (text: string | undefined): void => {
       if (!text) return;
       for (const variant of variantNames) {
-        const matches = [...text.matchAll(new RegExp(`\\b([A-Za-z_][A-Za-z0-9_]*)::${variant}\\b`, "g"))];
+        // Skip variants that aren't valid Rust identifiers — they can't
+        // appear as `Prefix::Variant` in source anyway, so the lookup is
+        // a no-op. Catches edge cases the regex would otherwise mishandle.
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(variant)) continue;
+        const matches = [...text.matchAll(new RegExp(`\\b([A-Za-z_][A-Za-z0-9_]*)::${escapeRe(variant)}\\b`, "g"))];
         for (const match of matches) {
           const prefix = match[1];
           if (!prefix) continue;
