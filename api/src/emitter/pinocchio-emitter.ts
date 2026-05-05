@@ -432,10 +432,22 @@ ${invokeCall}
       const mint = opts.mint;
       const { decimalsExpr, prelude } = resolveT22DecimalsPinocchio(mint, opts?.decimals);
       const invokeCall = emitT22Invoke(`${from}, ${mint}, ${to}, ${authority}`, signerSeeds);
+      // Runtime program-ID dispatch (TokenInterface). When tokenProgramArg
+      // is set, the program ID comes from the AccountInfo at runtime
+      // instead of a compile-time const. SPL Token + SPL Token-2022
+      // share the transfer_checked discriminator (12) + account layout
+      // ([from, mint, to, authority]) + data shape, so the SAME body
+      // shape works for either runtime — only the program_id source
+      // changes. Drops the TOKEN_2022_PROGRAM_ID const declaration when
+      // we don't need it.
+      const useRuntimeDispatch = !!opts?.tokenProgramArg;
+      const programIdConstBlock = useRuntimeDispatch ? "" : `${TOKEN_2022_PROGRAM_ID_CONST}\n`;
+      const programIdRef = useRuntimeDispatch
+        ? `${opts!.tokenProgramArg}.key()`
+        : `&TOKEN_2022_PROGRAM_ID`;
       return `    // Token-2022 transfer_checked — ${from} → ${to}
 ${prelude}    {
-${TOKEN_2022_PROGRAM_ID_CONST}
-        let __t22_amount = (${amount}).to_le_bytes();
+${programIdConstBlock}        let __t22_amount = (${amount}).to_le_bytes();
         let __t22_data: [u8; 10] = [
             12,
             __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
@@ -449,7 +461,7 @@ ${TOKEN_2022_PROGRAM_ID_CONST}
             pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
         ];
         let __t22_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_2022_PROGRAM_ID,
+            program_id: ${programIdRef},
             accounts: &__t22_metas,
             data: &__t22_data,
         };

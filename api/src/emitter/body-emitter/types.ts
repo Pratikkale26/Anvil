@@ -30,6 +30,21 @@ export interface Token2022Opts {
   mint?: string;
   /** Mint decimals expression — only meaningful when tokenProgram === "token_2022". */
   decimals?: string;
+  /**
+   * AccountInfo binding name for runtime program-ID dispatch. Set when the
+   * source uses Anchor's `Interface<TokenInterface>` (or anchor_spl::
+   * token_interface::*) — Anchor's reference dispatches the SPL CPI to
+   * whichever token program the runtime AccountInfo owns at call time.
+   * When set, the emit reads `<tokenProgramArg>.key()` instead of
+   * a hardcoded const program ID. Discriminator + account layout are
+   * SHARED between SPL Token and SPL Token-2022 for transfer_checked /
+   * mint_to_checked / burn_checked / close_account, so the same code
+   * shape works for either at runtime — only the program-id source
+   * differs. tokenProgram should be set to "token_2022" alongside this
+   * to pick the *_checked variant; the dispatch is what makes it work
+   * for legacy Token too.
+   */
+  tokenProgramArg?: string;
 }
 
 export interface BodyEmitterCallbacks {

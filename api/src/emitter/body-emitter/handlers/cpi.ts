@@ -102,6 +102,10 @@ export function handleCpiSplTransfer(w: BodyWalker, stmt: CpiSplTransfer): void 
         tokenProgram: stmt.tokenProgram,
         ...(stmt.mint ? { mint: snakeCase(stmt.mint) } : {}),
         ...(stmt.decimals ? { decimals: stmt.decimals } : {}),
+        // Runtime program-ID dispatch (TokenInterface). When set, the
+        // emit reads <tokenProgramArg>.key() instead of a hardcoded
+        // const program ID at the invoke site.
+        ...(stmt.tokenProgramArg ? { tokenProgramArg: snakeCase(stmt.tokenProgramArg) } : {}),
       },
     ),
   );

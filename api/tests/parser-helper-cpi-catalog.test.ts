@@ -111,7 +111,7 @@ describe("helper-cpi-catalog: recognize transfer_checked wrappers", () => {
     expect(transfer.signerSeeds).toBeUndefined();
   });
 
-  test("Interface<TokenInterface> helper is NOT recognized (dynamic program ID gate)", async () => {
+  test("Interface<TokenInterface> helper IS recognized with isInterface flag (runtime dispatch — N1)", async () => {
     const TOKEN_INTERFACE_HELPER = LEGACY_TOKEN_HELPER
       .replace("&Account<'info, TokenAccount>", "&InterfaceAccount<'info, TokenAccount>")
       .replace("&Account<'info, TokenAccount>", "&InterfaceAccount<'info, TokenAccount>")
@@ -124,8 +124,35 @@ describe("helper-cpi-catalog: recognize transfer_checked wrappers", () => {
     if (!r.ok) return;
     const tt = r.ir.helperFns.find((h) => h.name === "move_tokens")!;
     const entry = recognizeTransferCheckedHelper(tt);
-    // Dynamic program ID isn't supported yet — refuse gracefully.
-    expect(entry).toBeNull();
+    // N1 flipped this from "reject" to "accept with isInterface=true."
+    // Catalog flags TokenInterface so the body-classifier populates
+    // cpi_spl_transfer.tokenProgramArg, and the emit reads program_id
+    // from the runtime AccountInfo. tokenProgram="token_2022" picks
+    // the *_checked variant (wire format shared with legacy Token).
+    expect(entry).toBeDefined();
+    expect(entry?.isInterface).toBe(true);
+    expect(entry?.tokenProgram).toBe("token_2022");
+  });
+
+  test("Interface helper call site populates tokenProgramArg (runtime dispatch — N1)", async () => {
+    const TOKEN_INTERFACE_HELPER = LEGACY_TOKEN_HELPER
+      .replace("&Account<'info, TokenAccount>", "&InterfaceAccount<'info, TokenAccount>")
+      .replace("&Account<'info, TokenAccount>", "&InterfaceAccount<'info, TokenAccount>")
+      .replace("&Account<'info, anchor_spl::token::Mint>", "&InterfaceAccount<'info, Mint>")
+      .replace("&Account<'info, anchor_spl::token::Mint>", "&InterfaceAccount<'info, Mint>")
+      .replace("&Program<'info, Token>", "&Interface<'info, TokenInterface>")
+      .replace("&Program<'info, Token>", "&Interface<'info, TokenInterface>");
+    const r = await parseAnchor(TOKEN_INTERFACE_HELPER);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const ix = r.ir.instructions.find((i) => i.name === "run")!;
+    const transfer = ix.body.find((s) => s.kind === "cpi_spl_transfer");
+    expect(transfer).toBeDefined();
+    if (!transfer || transfer.kind !== "cpi_spl_transfer") return;
+    expect(transfer.tokenProgram).toBe("token_2022");
+    // The call-site `&ctx.accounts.token_program` arg lands here as the
+    // AccountInfo binding name (& and ctx.accounts. stripped).
+    expect(transfer.tokenProgramArg).toBe("token_program");
   });
 
   test("non-wrapper helper (different body) is rejected", async () => {

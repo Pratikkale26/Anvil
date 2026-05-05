@@ -80,21 +80,23 @@ const TRACKED: Array<TrackedDifferential<MakeOfferCtx>> = [
     fixture: ESCROW_FIXTURE,
     pathProbe: ESCROW_LIB_RS,
     source: "https://github.com/mikemaccana/anchor-escrow-2025",
-    // Today's known divergences (recorded 2026-05-05):
-    //   1. vault_ata — PRESENCE mismatch. Anvil doesn't emit the ATA-create
-    //      CPI for the `init, associated_token::*` constraint shape; vault
-    //      account never gets created on the Anvil side.
-    //   2. maker_ata_a — DATA mismatch. The upstream `transfer_tokens`
-    //      helper in handlers/shared.rs wraps `transfer_checked(...)` and
-    //      is classified as pass_through (user-helper SPL-CPI inlining is
-    //      Path 2 deferred work). Maker's pre-transfer balance is unchanged
-    //      on the Anvil side; debited on the Anchor side.
+    // Promoted 2026-05-05 — ceiling at 0 mismatches. The fixture was a
+    // tracker of the path from "offer_pda byte-equal only" to "full
+    // compare byte-equal." Got there via:
     //
-    // offer_pda is byte-equal post-A6 (set_inner expansion lands the
-    // struct fields). When either Path 2 (helper-inline) or the ATA-init
-    // constraint emit closes, ceiling drops; promote when it hits 0.
-    maxMismatches: 2,
-    reason: "vault_ata presence (ATA-init constraint emit gap) + maker_ata_a data (helper-fn inline gap, Path 2). offer_pda byte-equals.",
+    //   - offer_pda: A6 set_inner expansion (41da298, 2026-05-05)
+    //   - vault_ata + maker_ata_a: Path 2 helper-fn inlining (4f43320)
+    //     + N1 TokenInterface runtime-dispatch — both gaps closed in
+    //     one shot when the dispatch flipped, because the SAME CPI
+    //     emit produces both the vault-ATA write AND the maker-ATA
+    //     debit identical to Anchor's reference.
+    //
+    // The binary fixture (differential-anchor-escrow-2025.test.ts) now
+    // gates CI on the full compare. This entry stays at ceiling=0 as a
+    // regression-guard — if a future commit re-introduces a divergence,
+    // CI catches it here AND in the binary fixture.
+    maxMismatches: 0,
+    reason: "All three accounts byte-equal post-N1. Tracking entry stays as regression guard; promotion to MUST_PASS already happened in the binary fixture.",
   },
 ];
 

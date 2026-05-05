@@ -220,6 +220,20 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     mint: z.string().optional(),
     /** Mint decimals expression — required when tokenProgram is "token_2022". */
     decimals: z.string().optional(),
+    /**
+     * AccountInfo binding name for runtime program-ID dispatch. Set when
+     * the source uses `Interface<TokenInterface>` (or anchor_spl::
+     * token_interface) — the program ID dispatches at runtime to whichever
+     * token program owns the AccountInfo at the given slot. Same wire
+     * format works for SPL Token and SPL Token-2022 transfer_checked,
+     * so the only thing that varies is program_id source.
+     *
+     * When set, `tokenProgram` should be "token_2022" (picks the
+     * *_checked variant — works for both runtimes); the emit reads
+     * `<tokenProgramArg>.key()` instead of a const program ID at the
+     * invoke site.
+     */
+    tokenProgramArg: z.string().optional(),
   }),
 
   // SPL Token mint_to CPI

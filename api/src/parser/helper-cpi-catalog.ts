@@ -49,6 +49,15 @@ export interface HelperCpiCatalogEntry {
   /** "token" (legacy SPL Token) or "token_2022" (Token-Interface variants). */
   tokenProgram: "token" | "token_2022";
   /**
+   * Set when the helper signature uses Anchor's `Interface<TokenInterface>`
+   * — the SPL CPI dispatches to whichever token program owns the runtime
+   * AccountInfo. The catalog substitution carries this flag through so
+   * the body classifier can populate cpi_spl_*.tokenProgramArg with the
+   * call-site arg, and the emitter reads program_id from that AccountInfo
+   * at runtime instead of using a compile-time const program ID.
+   */
+  isInterface?: boolean;
+  /**
    * Positional indices of the helper's parameters mapping onto the
    * SPL CPI's fields. Each entry is the ordinal of the param in
    * the helper's parameter list. -1 = field not provided by this helper
@@ -190,25 +199,21 @@ export function recognizeTransferCheckedHelper(
   if (!/\btransfer_checked\s*\(/.test(helper.body)) return null;
   if (!/\bTransferChecked\s*\{/.test(helper.body)) return null;
 
-  // Reject TokenInterface (dynamic program ID) for now. anchor-escrow-2025
-  // uses `Interface<TokenInterface>` which Anchor's reference dispatches to
-  // the runtime program ID of the passed `token_program` AccountInfo. Our
-  // emit hardcodes TOKEN_2022_PROGRAM_ID at compile time, so a test using
-  // legacy SPL Token (TokenkegQ...) ends up invoking the wrong program and
-  // the tx reverts at runtime. Until we ship a runtime-dispatch emit path
-  // (cpi_spl_transfer reads `token_program.key()` instead of a hardcoded
-  // const), only classify helpers that explicitly use `Program<Token>`
-  // (legacy SPL Token, single program ID). When dynamic-dispatch lands,
-  // remove this gate.
+  // Two valid shapes for the token_program param:
+  //   1. `Interface<TokenInterface>` — runtime dispatch. Catalog flags
+  //      isInterface so call-site classification fills tokenProgramArg
+  //      and the emit reads program_id from the AccountInfo at runtime.
+  //      tokenProgram is set to "token_2022" so the *_checked variant
+  //      (shared wire format with legacy SPL Token) gets emitted.
+  //   2. `Program<Token>` — single legacy program ID. tokenProgram="token",
+  //      isInterface unset, emit uses the spl_token / pinocchio_token
+  //      compile-time paths.
   const isInterfaceTokenProgram = /\bInterface\s*<.*\bTokenInterface\b.*>/s.test(params[5]!.type);
-  if (isInterfaceTokenProgram) return null;
-
-  // Legacy SPL Token: single program ID. Map to "token" so the emitter
-  // uses spl_token / pinocchio_token paths.
   return {
     helperName: helper.name,
     kind: "cpi_spl_transfer",
-    tokenProgram: "token",
+    tokenProgram: isInterfaceTokenProgram ? "token_2022" : "token",
+    isInterface: isInterfaceTokenProgram,
     argMap: {
       from: 0,
       to: 1,

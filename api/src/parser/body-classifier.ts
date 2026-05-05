@@ -774,6 +774,13 @@ function classifyHelperCpiCall(
       // preludes for signer-seeds land, expand this gate.
       if (raw !== "None") return null;
     }
+    // Runtime program-ID dispatch (TokenInterface). When the helper's
+    // signature uses `Interface<TokenInterface>`, the catalog set
+    // isInterface=true; the call-site arg at the tokenProgram slot is
+    // the AccountInfo binding name to read program_id from at runtime.
+    const tokenProgramArg = entry.isInterface
+      ? args[entry.argMap.tokenProgram]
+      : undefined;
     return {
       kind: "cpi_spl_transfer",
       from: args[entry.argMap.from]!,
@@ -784,6 +791,7 @@ function classifyHelperCpiCall(
       mint: mintExpr,
       decimals: decimalsExpr,
       signerSeeds: signerSeedsExpr,
+      tokenProgramArg,
     };
   }
 
