@@ -531,10 +531,8 @@ export const CUEstimateSchema = z.object({
   instruction: z.string(),
   anchor: z.number(),
   pinocchio: z.number(),
-  quasar: z.number(),
   native: z.number(),
   savingsPinocchio: z.string(), // e.g. "74%"
-  savingsQuasar: z.string(),
 });
 
 export type CUEstimate = z.infer<typeof CUEstimateSchema>;
@@ -542,7 +540,7 @@ export type CUEstimate = z.infer<typeof CUEstimateSchema>;
 // ─── IR Metadata ─────────────────────────────────────────────────────────────
 
 export const IRMetadataSchema = z.object({
-  sourceFramework: z.enum(["anchor", "pinocchio", "quasar", "native"]),
+  sourceFramework: z.enum(["anchor", "pinocchio", "native"]),
   sourceVersion: z.string().optional(), // e.g. "0.30.0"
   anvilVersion: z.string().default("0.2.0"),
   parsedAt: z.string(), // ISO timestamp
@@ -623,7 +621,7 @@ export type ParserWarning = z.infer<typeof ParserWarningSchema>;
  * Contains all instructions, account definitions, custom types, constants,
  * error enums, helper functions, imports, and metadata. This is the single
  * object that flows from `parseAnchor()` to any emitter (`emitPinocchioFull`,
- * `emitQuasarFull`, `emitNativeFull`).
+ * `emitNativeFull`).
  */
 export const SolanaIRSchema = z.object({
   name: z.string(),

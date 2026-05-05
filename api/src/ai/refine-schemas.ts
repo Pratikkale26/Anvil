@@ -4,7 +4,7 @@ import { z } from "zod";
  * Refine request: emitter output + deterministic validation issues to fix.
  */
 export const RefineRequestSchema = z.object({
-  target: z.enum(["pinocchio", "quasar", "native"]),
+  target: z.enum(["pinocchio", "native"]),
   files: z.array(z.object({ path: z.string(), content: z.string() })).min(1),
   validationIssues: z.array(z.object({
     severity: z.enum(["error", "warning"]),

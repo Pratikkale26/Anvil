@@ -8,7 +8,7 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type Target = "pinocchio" | "quasar" | "native";
+export type Target = "pinocchio" | "native";
 export type InputMode = "demo" | "source" | "file" | "folder" | "repo";
 export type PipelineStage =
   | "idle"
@@ -44,7 +44,7 @@ export type LintFinding = {
 export type LintReport = {
   program: string;
   /** Target the report was computed against — affects external-crate verdicts. */
-  target: "pinocchio" | "native" | "quasar";
+  target: "pinocchio" | "native";
   counts: { ready: number; review: number; blocker: number };
   readinessScore: number;
   verdict: "ready" | "reviewable" | "blocked";
@@ -55,10 +55,8 @@ export type CUEstimate = {
   instruction: string;
   anchor: number;
   pinocchio: number;
-  quasar: number;
   native: number;
   savingsPinocchio: string;
-  savingsQuasar: string;
 };
 
 export type EmitResponse = {
@@ -350,15 +348,6 @@ export const TARGET_META: Record<
     label: "Pinocchio",
     tagline: "Zero-copy by Anza",
   },
-  quasar: {
-    color: C.teal,
-    label: "Quasar",
-    tagline: "Zero-alloc by Blueshift",
-    // No cargo-build coverage on the Quasar target. Emitter runs and
-    // produces output; producing-genuinely-buildable Rust is not yet
-    // gated by tests. Treat output as a starting point that needs review.
-    experimental: true,
-  },
   native: {
     color: C.indigo,
     label: "Native",
@@ -380,7 +369,7 @@ export const MODE_META: Record<
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
-export const TARGETS: Target[] = ["pinocchio", "quasar", "native"];
+export const TARGETS: Target[] = ["pinocchio", "native"];
 
 export const STAGES: {
   id: PipelineStage;

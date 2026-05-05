@@ -282,30 +282,17 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
         <PanelHead icon={Rocket} title="Target framework" />
         <div className="p-3 flex flex-col gap-1.5">
           {TARGETS.map((t) => {
-            const { color, label, tagline, experimental } = TARGET_META[t];
+            const { color, label, tagline } = TARGET_META[t];
             const active = target === t;
-            // Experimental targets are visually present (so reviewers see
-            // the surface area) but not clickable — no cargo-green coverage,
-            // no differential test, no claim of correctness. Power users
-            // can still emit via the CLI.
-            const disabled = experimental === true;
             return (
               <button
                 key={t}
-                onClick={() => { if (!disabled) setTarget(t); }}
-                disabled={disabled}
-                aria-disabled={disabled}
-                title={
-                  disabled
-                    ? "Experimental target. Not exposed in the workbench yet — emit via the CLI: anvil compile --target quasar"
-                    : undefined
-                }
+                onClick={() => setTarget(t)}
                 className="flex items-center gap-3 py-[11px] px-3.5 rounded-xl border text-left transition-colors"
                 style={{
                   background: active ? `${color}12` : "transparent",
                   borderColor: active ? `${color}45` : C.cardBorder,
-                  cursor: disabled ? "not-allowed" : "pointer",
-                  opacity: disabled ? 0.55 : 1,
+                  cursor: "pointer",
                 }}
               >
                 <div
@@ -316,25 +303,12 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                 />
                 <div className="flex-1 min-w-0">
                   <div
-                    className="font-bold text-sm flex items-center gap-2"
+                    className="font-bold text-sm"
                     style={{
                       color: active ? C.text : C.textSub,
                     }}
                   >
                     {label}
-                    {experimental && (
-                      <span
-                        className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded font-semibold"
-                        style={{
-                          color: C.amber,
-                          background: `${C.amber}18`,
-                          border: `1px solid ${C.amber}40`,
-                        }}
-                        title="Experimental — emitter runs but not cargo-green or differential-tested. Use the CLI if you want to inspect output."
-                      >
-                        Experimental
-                      </span>
-                    )}
                   </div>
                   <div className="text-[11px] text-anvil-text-muted mt-px">
                     {tagline}

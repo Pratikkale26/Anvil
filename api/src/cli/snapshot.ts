@@ -21,7 +21,7 @@ export type SnapshotFile = {
   /** Same shape as BenchReport.rows but keyed by instruction name for stable diffing. */
   rows: Record<
     string,
-    { anchor: number; pinocchio: number; native: number; quasar: number }
+    { anchor: number; pinocchio: number; native: number }
   >;
 };
 
@@ -29,7 +29,7 @@ export type SnapshotComparison = {
   /** Instructions with CUs higher than baseline by more than the threshold. */
   regressions: Array<{
     instruction: string;
-    target: "pinocchio" | "native" | "quasar";
+    target: "pinocchio" | "native";
     before: number;
     after: number;
     deltaAbs: number;
@@ -38,7 +38,7 @@ export type SnapshotComparison = {
   /** Instructions with CUs lower than baseline (improvements). */
   improvements: Array<{
     instruction: string;
-    target: "pinocchio" | "native" | "quasar";
+    target: "pinocchio" | "native";
     before: number;
     after: number;
     deltaAbs: number;
@@ -60,7 +60,6 @@ export function buildSnapshotFromBench(report: BenchReport, anvilVersion: string
       anchor: r.anchor,
       pinocchio: r.pinocchio,
       native: r.native,
-      quasar: r.quasar,
     };
   }
   return {
@@ -110,7 +109,7 @@ export function compareToSnapshot(
     }
     const base = baseline.rows[row.instruction]!;
     let anyChange = false;
-    for (const target of ["pinocchio", "native", "quasar"] as const) {
+    for (const target of ["pinocchio", "native"] as const) {
       const before = base[target];
       const after = row[target];
       if (before === after) continue;

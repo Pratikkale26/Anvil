@@ -1,10 +1,10 @@
 import type { SolanaIR } from "../ir/schema.js";
 
 export type TargetRecommendation = {
-  preferredTarget: "native" | "pinocchio" | "quasar";
+  preferredTarget: "native" | "pinocchio";
   reason: string;
   confidence: "high" | "medium";
-  unsupportedTargets?: Array<"native" | "pinocchio" | "quasar">;
+  unsupportedTargets?: Array<"native" | "pinocchio">;
   externalSdkImports?: string[];
   thirdPartyCpiDensity?: number;
 };
@@ -44,9 +44,9 @@ export function analyzeTargetSuitability(ir: SolanaIR): TargetRecommendation | n
   if (thirdPartyBuilderInstructions > 0 && externalSdkImports.length > 0) {
     return {
       preferredTarget: "native",
-      reason: `Detected third-party fluent CPI builders in ${thirdPartyBuilderInstructions}/${instructionCount} instruction(s) with external SDK imports (${externalSdkImports.join(", ")}). These builder APIs are typically Anchor/Solana-native and should not be carried into Pinocchio or Quasar.`,
+      reason: `Detected third-party fluent CPI builders in ${thirdPartyBuilderInstructions}/${instructionCount} instruction(s) with external SDK imports (${externalSdkImports.join(", ")}). These builder APIs are typically Anchor/Solana-native and should not be carried into Pinocchio.`,
       confidence: thirdPartyCpiDensity >= 0.5 ? "high" : "medium",
-      unsupportedTargets: ["pinocchio", "quasar"],
+      unsupportedTargets: ["pinocchio"],
       externalSdkImports,
       thirdPartyCpiDensity,
     };

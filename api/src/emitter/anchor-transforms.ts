@@ -4,7 +4,7 @@
  *
  * These are regex-heavy transformation functions that strip Anchor API
  * usage (Account<T>, CpiContext, require!, emit!, msg!, error!) and
- * rewrite them for native/pinocchio/quasar targets.
+ * rewrite them for native/pinocchio targets.
  */
 
 import {

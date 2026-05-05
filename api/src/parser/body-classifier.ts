@@ -312,7 +312,7 @@ function classifyStatement(
       if (hasAnchor) {
         collector?.add({
           code: "anchor_pattern_in_passthrough",
-          message: "Pass-through control-flow statement contains an Anchor-specific pattern (ctx.accounts / require! / emit! / CpiContext / anchor_spl). Won't transform on Pinocchio/Quasar; manual port required.",
+          message: "Pass-through control-flow statement contains an Anchor-specific pattern (ctx.accounts / require! / emit! / CpiContext / anchor_spl). Won't transform on Pinocchio; manual port required.",
           snippet: text,
           loc: locFromNode(node),
         });

@@ -797,7 +797,7 @@ export class BodyWalker {
       .replace(/\bcontext\.remaining_accounts\b/g, "ctx.remaining_accounts");
     // Strip `.to_account_info()` universally — Anchor's Account<'info, T>
     // method that's a noop on bare AccountInfo (native) and unresolvable
-    // on pinocchio/quasar. Constraint-check emit + helper bodies + impl-
+    // on pinocchio. Constraint-check emit + helper bodies + impl-
     // method inlinings all flow through this transformer, so a single
     // strip here covers them all. seed-expression normalizer has its
     // own equivalent strip; both paths converge to the same shape.

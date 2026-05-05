@@ -220,7 +220,7 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     let anchor = 0, after = 0;
     for (const est of cuEstimates) {
       anchor += est.anchor;
-      after += target === "pinocchio" ? est.pinocchio : target === "native" ? est.native : est.quasar;
+      after += target === "pinocchio" ? est.pinocchio : est.native;
     }
     if (anchor <= 0) return null;
     const pct = Math.round(((anchor - after) / anchor) * 100);
@@ -882,25 +882,21 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                       <th className="py-2 px-3 text-right font-semibold">Anchor</th>
                       <th className="py-2 px-3 text-right font-semibold">Pinocchio</th>
                       <th className="py-2 px-3 text-right font-semibold">Native</th>
-                      <th className="py-2 px-3 text-right font-semibold">Quasar</th>
                       <th className="py-2 pl-3 text-right font-semibold">Save ({tm.label})</th>
                     </tr>
                   </thead>
                   <tbody>
                     {[...cuEstimates]
                       .sort((a, b) => {
-                        const key = target === "native" ? "native" : target === "quasar" ? "quasar" : "pinocchio";
+                        const key = target === "native" ? "native" : "pinocchio";
                         return b[key] - a[key];
                       })
                       .map((r) => {
-                        const targetCu =
-                          target === "native" ? r.native : target === "quasar" ? r.quasar : r.pinocchio;
+                        const targetCu = target === "native" ? r.native : r.pinocchio;
                         const savings =
                           target === "native"
                             ? `-${Math.round(((r.anchor - r.native) / r.anchor) * 100)}%`
-                            : target === "quasar"
-                              ? r.savingsQuasar.startsWith("-") ? r.savingsQuasar : `-${r.savingsQuasar}`
-                              : r.savingsPinocchio.startsWith("-") ? r.savingsPinocchio : `-${r.savingsPinocchio}`;
+                            : r.savingsPinocchio.startsWith("-") ? r.savingsPinocchio : `-${r.savingsPinocchio}`;
                         return (
                           <tr key={r.instruction} className="border-b border-anvil-line/40">
                             <td className="py-2 pr-3 text-anvil-text">{r.instruction}</td>
@@ -916,12 +912,6 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                               style={{ color: target === "native" ? tm.color : C.textSub }}
                             >
                               {r.native.toLocaleString()}
-                            </td>
-                            <td
-                              className="py-2 px-3 text-right"
-                              style={{ color: target === "quasar" ? tm.color : C.textSub }}
-                            >
-                              {r.quasar.toLocaleString()}
                             </td>
                             <td
                               className="py-2 pl-3 text-right font-bold"
@@ -940,12 +930,10 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                             anchor: a.anchor + r.anchor,
                             pinocchio: a.pinocchio + r.pinocchio,
                             native: a.native + r.native,
-                            quasar: a.quasar + r.quasar,
                           }),
-                          { anchor: 0, pinocchio: 0, native: 0, quasar: 0 },
+                          { anchor: 0, pinocchio: 0, native: 0 },
                         );
-                        const targetTotal =
-                          target === "native" ? totals.native : target === "quasar" ? totals.quasar : totals.pinocchio;
+                        const targetTotal = target === "native" ? totals.native : totals.pinocchio;
                         const savePct = totals.anchor
                           ? Math.round(((totals.anchor - targetTotal) / totals.anchor) * 100)
                           : 0;
@@ -954,7 +942,6 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                             <td className="py-2.5 px-3 text-right">{totals.anchor.toLocaleString()}</td>
                             <td className="py-2.5 px-3 text-right" style={{ color: target === "pinocchio" ? tm.color : C.textSub }}>{totals.pinocchio.toLocaleString()}</td>
                             <td className="py-2.5 px-3 text-right" style={{ color: target === "native" ? tm.color : C.textSub }}>{totals.native.toLocaleString()}</td>
-                            <td className="py-2.5 px-3 text-right" style={{ color: target === "quasar" ? tm.color : C.textSub }}>{totals.quasar.toLocaleString()}</td>
                             <td className="py-2.5 pl-3 text-right" style={{ color: tm.color }}>
                               -{savePct}% ({(totals.anchor - targetTotal).toLocaleString()} CU)
                             </td>

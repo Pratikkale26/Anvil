@@ -33,7 +33,7 @@ function escape(s: string): string {
 }
 
 function renderDashboard(s: ReturnType<typeof metrics.snapshot>): string {
-  const targets = ["pinocchio", "native", "quasar"] as const;
+  const targets = ["pinocchio", "native"] as const;
   const errs = targets.map((t) => s.emit.validationErrorsByTarget[t] ?? 0);
   const maxErr = Math.max(1, ...errs);
   const buildRate = s.build.total > 0 ? s.build.success / s.build.total : 0;
@@ -127,7 +127,7 @@ async function tick(){
     set('rcalls',fmtN(s.refine.calls));
     set('ratio',rat(s.refine.patchesAccepted,s.refine.patchesRejected));
     set('acceptrate',pctN(s.refine.acceptRate,s.refine.patchesAccepted+s.refine.patchesRejected));
-    const ts=['pinocchio','native','quasar'];
+    const ts=['pinocchio','native'];
     const es=ts.map(t=>s.emit.validationErrorsByTarget[t]||0);
     const mx=Math.max(1,...es);
     ts.forEach((t,i)=>{const n=document.querySelector('[data-num="'+t+'"]');const f=document.querySelector('[data-fill="'+t+'"]');if(n)n.textContent=fmtN(es[i]);if(f)f.style.height=((es[i]/mx)*100).toFixed(0)+'%'});

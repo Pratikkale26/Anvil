@@ -29,7 +29,7 @@ const BuildFileSchema = z.object({
 });
 
 const BuildRequestSchema = z.object({
-  target: z.enum(["pinocchio", "native", "quasar"]),
+  target: z.enum(["pinocchio", "native"]),
   files: z.array(BuildFileSchema).min(1).max(64),
   programName: z.string().min(1).max(128),
   // 3-tier UX:
@@ -40,7 +40,7 @@ const BuildRequestSchema = z.object({
 });
 
 const AutoFixRequestSchema = z.object({
-  target: z.enum(["pinocchio", "native", "quasar"]),
+  target: z.enum(["pinocchio", "native"]),
   files: z.array(BuildFileSchema).min(1).max(64),
   programName: z.string().min(1).max(128),
   ir: z.unknown(), // validated below with SolanaIRSchema
@@ -53,7 +53,7 @@ const AutoFixRequestSchema = z.object({
  *
  * Body:
  *   {
- *     target: "pinocchio" | "native" | "quasar",
+ *     target: "pinocchio" | "native",
  *     files: [{ path: "lib.rs", content: "..." }, ...],
  *     programName: "my_program"
  *   }
@@ -78,9 +78,6 @@ const AutoFixRequestSchema = z.object({
  * `cargo build-sbf` to produce an actual Solana .so — the only thing that
  * proves the program will load into a validator. ~10x slower than default;
  * use sparingly (CLI `--strict`, pre-deploy verification).
- *
- * Quasar builds are unsupported (quasar-lang 0.0 is too early); the route
- * returns 422 with a clear message rather than attempting to spawn cargo.
  */
 /**
  * GET /build/queue — current depth + ETA for each (target, mode) pair.
@@ -130,8 +127,9 @@ buildRoute.post("/", async (req, res) => {
     const result = await runBuild(target as BuildTarget, files, programName, mode, { callerIp });
 
     if (result.unsupported) {
-      // Quasar today. 422 = the request was well-formed but the target
-      // can't be acted on right now.
+      // The runner can still surface an `unsupported` result for things like
+      // a missing cargo / cargo-build-sbf toolchain on the host. 422 = the
+      // request was well-formed but the build couldn't run.
       metrics.recordBuild({ target, ok: false, durationMs: result.durationMs });
       res.status(422).json({
         ok: false,
@@ -256,34 +254,6 @@ buildRoute.post("/auto-fix", async (req, res) => {
   // refine-result/refine-error, done). Detected here AFTER body validation
   // so a bad payload still gets a clean 400/422 JSON.
   const wantsStream = req.query.stream === "1" || req.query.stream === "true";
-
-  if (target === "quasar") {
-    // Symmetric across both modes — quasar is unsupported either way. For
-    // the stream path we still emit a `done` event so clients have a clean
-    // terminator, and use 422 in both cases.
-    const payload = {
-      ok: false,
-      stoppedReason: "unsupported_target" as const,
-      iterations: [],
-      finalFiles: initialFiles,
-      finalOk: false,
-      totalDurationMs: 0,
-      totalCostUsd: 0,
-      message: "Quasar auto-fix is not supported; quasar-lang is too early for cargo build.",
-    };
-    if (wantsStream) {
-      res.status(422);
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.flushHeaders();
-      res.write(`event: done\ndata: ${JSON.stringify(payload)}\n\n`);
-      res.end();
-    } else {
-      res.status(422).json(payload);
-    }
-    return;
-  }
 
   // SSE writer when streaming, no-op otherwise. emit() runs after each
   // distinct phase so the client can render iteration cards in real time.

@@ -3,21 +3,20 @@ import { CheckCircle2, ChevronRight, Rocket } from "lucide-react";
 const WORKING = [
   "100% parse rate on 27 real-world Anchor programs",
   "Pinocchio + Native output passes cargo build on all 8 demo programs",
-  "Quasar emitter rewritten for real quasar-lang API (46 example reference)",
+  "Byte-equal differential testing — Anchor reference vs Anvil emit in LiteSVM",
   "Parser supports Anchor 1.0.0, Token-2022, Box<Account>, InterfaceAccount",
   "8 demo programs: counter, vault, escrow, staking, AMM, marketplace, vesting, perp-funding",
   "GitHub repo ingestion — paste any public repo URL and compile",
   "Full multi-file project output (lib.rs, state.rs, instructions/)",
-  "53 automated tests (parser snapshots + emitter validation + cargo builds + API)",
+  "AI-powered code refinement for validation errors (Sonnet 4.6, cost-capped)",
 ];
 
 const ROADMAP = [
   "On-chain deployment verification (devnet transaction testing)",
-  "Quasar target cargo build verification",
   "Token-2022 end-to-end emission",
   "IDE plugin for inline CU previews",
   "Automated regression testing with 50+ real-world repos",
-  "AI-powered code refinement for validation errors",
+  "Real-world program byte-equal corpus expansion (Squads, Streamflow, Phoenix)",
 ];
 
 export function Readiness({ isTablet }: { isTablet: boolean }) {

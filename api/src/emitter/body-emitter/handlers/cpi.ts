@@ -259,7 +259,7 @@ export function handleCpiMplCreateMetadataV3(w: BodyWalker, stmt: CpiMplCreateMe
     `    //   is_mutable        = ${stmt.isMutable}`,
     `    //   update_auth_signer= ${stmt.updateAuthorityIsSigner}`,
     `    // TODO(manual): rebuild against mpl_token_metadata for ${w.emitter.frameworkName}.`,
-    `    //   Add 'mpl-token-metadata' to Cargo.toml on Native; pinocchio + quasar`,
+    `    //   Add 'mpl-token-metadata' to Cargo.toml on Native; pinocchio`,
     `    //   need a hand-rolled invoke against the Token Metadata program ID.`,
     `    //   See N1-DEDUP-DESIGN-NOTE for the per-target vocab pattern.`,
   ];

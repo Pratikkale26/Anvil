@@ -1,6 +1,5 @@
 import type { EmitterOutput, SolanaIR } from "../ir/schema.js";
 import { snakeCase } from "./emitter-utils.js";
-import { validateQuasarOutput } from "./quasar-validator.js";
 
 export type ValidationSeverity = "error" | "warning";
 
@@ -96,7 +95,7 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<
   {
     pattern: /\b[A-Z][A-Za-z0-9_]*CpiBuilder::new\s*\(/,
     message: "Third-party Anchor CPI builder leaked into a non-native target; this target cannot safely carry external Anchor-style builder CPIs.",
-    targets: ["pinocchio", "quasar"],
+    targets: ["pinocchio"],
   },
   {
     pattern: /unsafe\s*\{\s*core::mem::zeroed::<[^>]+>\(\)\s*\}/,
@@ -119,7 +118,7 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<
     // msg!() only exists in Anchor / native SDK — Pinocchio/Quasar use sol_log
     pattern: /\bmsg!\s*\(/,
     message: "msg!() macro is not available in the target framework — use pinocchio::log::sol_log() or framework equivalent.",
-    targets: ["pinocchio", "quasar"],
+    targets: ["pinocchio"],
   },
 ];
 
@@ -727,12 +726,6 @@ function checkAnchorTypedAccounts(content: string, path: string, target: Detecte
  * fixer stage (human, deterministic re-emitter changes, or a single AI pass).
  */
 export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): ValidationIssue[] {
-  // Detect target from output content — route quasar to dedicated validator
-  const allContent = output.files.map(f => f.content).join("\n") || output.singleFile;
-  if (allContent.includes("quasar_lang::") || allContent.includes("quasar_spl::") || detectTarget(allContent) === "quasar") {
-    return validateQuasarOutput(ir, output);
-  }
-
   const issues: ValidationIssue[] = [];
 
   for (const warning of output.warnings) {
@@ -829,11 +822,10 @@ function dedupeIssues(issues: ValidationIssue[]): ValidationIssue[] {
   });
 }
 
-type DetectedTarget = "pinocchio" | "quasar" | "native";
+type DetectedTarget = "pinocchio" | "native";
 
 function detectTarget(content: string): DetectedTarget | null {
   if (content.includes("pinocchio::")) return "pinocchio";
-  if (content.includes("quasar::") || content.includes("quasar_lang::") || content.includes("quasar_spl::")) return "quasar";
   if (content.includes("solana_program::")) return "native";
   return null;
 }
@@ -1006,10 +998,6 @@ function checkExternalCrateDependencies(files: EmitterOutput["files"]): Validati
     "pinocchio",
     "pinocchio_system",
     "pinocchio_token",
-    "quasar",
-    "quasar_lang",
-    "quasar_spl",
-    "quasar_token",
     "u8",
     "u16",
     "u32",

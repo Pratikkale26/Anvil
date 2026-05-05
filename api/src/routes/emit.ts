@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { SolanaIRSchema, type SolanaIR } from "../ir/schema.js";
 import { emitPinocchio, emitPinocchioFull } from "../emitter/pinocchio-emitter.js";
-import { emitQuasar, emitQuasarFull } from "../emitter/quasar-emitter.js";
 import { emitNative, emitNativeFull } from "../emitter/native-emitter.js";
 import { analyzeCU } from "../emitter/cu-analyzer.js";
 import { validateEmitterOutput } from "../emitter/output-validator.js";
@@ -20,7 +19,7 @@ export const emitRoute = Router();
 /**
  * POST /emit — Emit target-framework Rust from SolanaIR
  *
- * Body: `{ ir: SolanaIR, target: "pinocchio" | "quasar" | "native", multiFile?: boolean, strict?: boolean }`
+ * Body: `{ ir: SolanaIR, target: "pinocchio" | "native", multiFile?: boolean, strict?: boolean }`
  * Query: `?refine=1` — run a single AI refine pass if the validator finds issues
  *
  * @returns
@@ -88,7 +87,7 @@ emitRoute.post("/", async (req, res) => {
     return;
   }
 
-  const validTargets = ["pinocchio", "quasar", "native"] as const;
+  const validTargets = ["pinocchio", "native"] as const;
   type Target = (typeof validTargets)[number];
 
   if (!target || !validTargets.includes(target as Target)) {
@@ -119,7 +118,6 @@ emitRoute.post("/", async (req, res) => {
   try {
     const emitters = {
       pinocchio: emitPinocchioFull,
-      quasar: emitQuasarFull,
       native: emitNativeFull,
     } as const;
 

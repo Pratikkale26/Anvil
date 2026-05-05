@@ -37,7 +37,7 @@ import { mkdir, rm, writeFile, readFile, stat } from "node:fs/promises";
 import { dirname, join, isAbsolute, normalize } from "node:path";
 import { spawnSandboxed, sandboxedEnv } from "./sandbox.js";
 
-export type BuildTarget = "pinocchio" | "native" | "quasar";
+export type BuildTarget = "pinocchio" | "native";
 
 /**
  * "check" = cargo check (fastest, ~3-5s, type-check only — used for the
@@ -128,19 +128,12 @@ spl-token-2022 = { version = "6", features = ["no-entrypoint"] }
 spl-associated-token-account = { version = "6", features = ["no-entrypoint"] }
 `;
 
-// TODO: quasar deps when stable. quasar-lang 0.0 / quasar-spl 0.0 are too
-// early to compile against reliably; the route returns an "unsupported"
-// error before reaching this runner.
-const QUASAR_CARGO_TOML = "";
-
 function cargoTomlFor(target: BuildTarget): string {
   switch (target) {
     case "pinocchio":
       return PINOCCHIO_CARGO_TOML;
     case "native":
       return NATIVE_CARGO_TOML;
-    case "quasar":
-      return QUASAR_CARGO_TOML;
   }
 }
 
@@ -261,11 +254,10 @@ export function queueStats(): QueueStats {
   const depthByTarget: Record<BuildTarget, number> = {
     pinocchio: targetDepth.get("pinocchio") ?? 0,
     native: targetDepth.get("native") ?? 0,
-    quasar: targetDepth.get("quasar") ?? 0,
   };
   const meanDurationMsByMode: Record<string, number> = {};
   const etaSecByMode: Record<string, number> = {};
-  for (const target of ["pinocchio", "native", "quasar"] as const) {
+  for (const target of ["pinocchio", "native"] as const) {
     for (const mode of ["check", "build", "build-sbf"] as const) {
       const key = `${target}:${mode}`;
       const mean = meanDuration(target, mode);
@@ -770,27 +762,6 @@ async function runBuildInternal(
   // up the unused-param lint AND documents that programName is intentional
   // call-site context, not just dead weight.
   void programName;
-  if (target === "quasar") {
-    return {
-      ok: false,
-      durationMs: 0,
-      errors: [
-        {
-          filePath: "",
-          line: 0,
-          column: 0,
-          code: null,
-          message:
-            "Quasar build is not supported yet. quasar-lang 0.0 is too early to compile against reliably.",
-          spanText: "",
-        },
-      ],
-      warnings: [],
-      stderrTail: "",
-      unsupported: { reason: "quasar build not yet supported" },
-    };
-  }
-
   if (!Array.isArray(files) || files.length === 0) {
     throw new Error("at least one file is required");
   }

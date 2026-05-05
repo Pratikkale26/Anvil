@@ -50,9 +50,8 @@ export default function Workbench() {
     anvilEmittedFiles: anvilEmittedFiles.length > 0 ? anvilEmittedFiles : null,
     anvilScaffoldFiles: anvilScaffoldFiles.length > 0 ? anvilScaffoldFiles : null,
     programName: state.programName,
-    // Differential only supports pinocchio + native (no quasar runtime). Fall
-    // back to pinocchio when user is on quasar -- the verify button is hidden
-    // in that case anyway.
+    // Differential supports both Anvil targets (pinocchio + native) — the
+    // workbench enum already only contains those, so this is a direct map.
     target: state.target === "native" ? "native" : "pinocchio",
   });
 

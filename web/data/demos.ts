@@ -11,7 +11,6 @@ export type CuRow = {
   instruction: string;
   anchor: number;
   pinocchio: number;
-  quasar: number;
   native: number;
 };
 
@@ -30,10 +29,10 @@ export const DEMOS: Record<DemoName, Demo> = {
     description: "PDA state, signer checks, overflow-safe arithmetic.",
     available: true,
     cuSummary: [
-      { instruction: "initialize", anchor: 520, pinocchio: 108, quasar: 95, native: 130 },
-      { instruction: "increment", anchor: 290, pinocchio: 62, quasar: 55, native: 75 },
-      { instruction: "decrement", anchor: 290, pinocchio: 62, quasar: 55, native: 75 },
-      { instruction: "reset", anchor: 265, pinocchio: 55, quasar: 48, native: 68 },
+      { instruction: "initialize", anchor: 520, pinocchio: 108, native: 130 },
+      { instruction: "increment", anchor: 290, pinocchio: 62, native: 75 },
+      { instruction: "decrement", anchor: 290, pinocchio: 62, native: 75 },
+      { instruction: "reset", anchor: 265, pinocchio: 55, native: 68 },
     ],
   },
   vault: {
@@ -42,9 +41,9 @@ export const DEMOS: Record<DemoName, Demo> = {
     description: "Multi-PDA lamport management. Deposit, withdraw, vault state.",
     available: true,
     cuSummary: [
-      { instruction: "initialize", anchor: 580, pinocchio: 120, quasar: 105, native: 145 },
-      { instruction: "deposit", anchor: 620, pinocchio: 145, quasar: 128, native: 165 },
-      { instruction: "withdraw", anchor: 670, pinocchio: 158, quasar: 140, native: 180 },
+      { instruction: "initialize", anchor: 580, pinocchio: 120, native: 145 },
+      { instruction: "deposit", anchor: 620, pinocchio: 145, native: 165 },
+      { instruction: "withdraw", anchor: 670, pinocchio: 158, native: 180 },
     ],
   },
   escrow: {
@@ -53,9 +52,9 @@ export const DEMOS: Record<DemoName, Demo> = {
     description: "Token escrow with SPL transfers. Create, accept, cancel.",
     available: true,
     cuSummary: [
-      { instruction: "create_escrow", anchor: 1150, pinocchio: 270, quasar: 240, native: 310 },
-      { instruction: "accept_escrow", anchor: 1480, pinocchio: 345, quasar: 305, native: 390 },
-      { instruction: "cancel_escrow", anchor: 980, pinocchio: 220, quasar: 195, native: 255 },
+      { instruction: "create_escrow", anchor: 1150, pinocchio: 270, native: 310 },
+      { instruction: "accept_escrow", anchor: 1480, pinocchio: 345, native: 390 },
+      { instruction: "cancel_escrow", anchor: 980, pinocchio: 220, native: 255 },
     ],
   },
   staking: {
@@ -64,10 +63,10 @@ export const DEMOS: Record<DemoName, Demo> = {
     description: "Pool init, token staking, unstaking, time-based rewards.",
     available: true,
     cuSummary: [
-      { instruction: "initialize_pool", anchor: 620, pinocchio: 142, quasar: 126, native: 168 },
-      { instruction: "stake", anchor: 890, pinocchio: 205, quasar: 182, native: 238 },
-      { instruction: "unstake", anchor: 840, pinocchio: 195, quasar: 172, native: 225 },
-      { instruction: "claim_rewards", anchor: 920, pinocchio: 215, quasar: 190, native: 248 },
+      { instruction: "initialize_pool", anchor: 620, pinocchio: 142, native: 168 },
+      { instruction: "stake", anchor: 890, pinocchio: 205, native: 238 },
+      { instruction: "unstake", anchor: 840, pinocchio: 195, native: 225 },
+      { instruction: "claim_rewards", anchor: 920, pinocchio: 215, native: 248 },
     ],
   },
 };
@@ -82,10 +81,6 @@ export type LandingTarget = {
 
 export const LANDING_TARGETS: LandingTarget[] = [
   { id: "pinocchio", label: "Pinocchio", color: "#e8820a", tagline: "Zero-copy, zero-dependency by Anza", available: true },
-  // Quasar is wired into the pipeline but not test-gated — keeping it
-  // selectable here would imply a confidence the suite doesn't back. Mark
-  // unavailable so the playground falls back to one of the verified targets.
-  { id: "quasar", label: "Quasar", color: "#0ea880", tagline: "Zero-allocation by Blueshift (experimental — CLI only)", available: false },
   { id: "native", label: "Native", color: "#6b7bff", tagline: "Raw solana_program + borsh", available: true },
 ];
 

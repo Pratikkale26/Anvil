@@ -119,7 +119,7 @@ export function DifferentialPanel({ state }: { state: DifferentialState }) {
             via the CLI.
           </div>
           <div className="space-y-1.5 mb-3">
-            {state.autoBlockers.map((b, i) => (
+            {(state.autoBlockers ?? []).map((b, i) => (
               <div key={i} className="text-[11px] text-[#ffb5b5] pl-1.5 border-l-2 border-l-[rgba(224,90,90,0.32)] leading-relaxed">
                 {b.message}
               </div>

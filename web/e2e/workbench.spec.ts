@@ -74,8 +74,7 @@ test.describe("workbench: high-coverage demo programs", () => {
   test("target picker switches between Pinocchio and Native", async ({ page }) => {
     await expect(page.getByText(/API live|API offline/)).toBeVisible();
     // Pinocchio is the default — verify a Native option exists in the
-    // target picker. Quasar is intentionally hidden in the workbench
-    // picker (per the M4 deferral) so we don't assert on it here.
+    // target picker. Pinocchio + Native are the only supported targets.
     const nativeOpt = page.getByRole("button", { name: /native/i }).or(
       page.locator("text=/native/i"),
     ).first();

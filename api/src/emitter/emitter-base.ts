@@ -212,8 +212,7 @@ export abstract class BaseEmitter {
    * Default: identity. Native + pinocchio override to inject a `Mint::unpack`-style
    * prelude when bare `<account>.decimals` references survive from the Anchor
    * source — neither target's `AccountInfo` exposes a `.decimals` field, so the
-   * pass-through emit produces E0609 without intervention. Quasar leaves it
-   * unchanged because Quasar's `Account<Mint>` wrapper still has the field.
+   * pass-through emit produces E0609 without intervention.
    */
   protected postProcessInstructionBody(
     bodyCode: string,
@@ -260,8 +259,8 @@ export abstract class BaseEmitter {
     // project-scaffold's NATIVE_OPTIONAL_DEPS. So `mpl_core`, `pyth_*` etc.
     // are kept; only Anchor-internals (which we replaced with hand-written
     // emit) and project-internal modules (`crate::`, `self::`, ...) are
-    // stripped. Pinocchio/Quasar still drop external-Solana crates because
-    // their Cargo.toml doesn't ship those deps.
+    // stripped. Pinocchio still drops external-Solana crates because its
+    // Cargo.toml doesn't ship those deps.
     const isNative = this.frameworkName === "Native";
     return (ir.imports ?? [])
       .map((statement) => {
@@ -319,14 +318,14 @@ export abstract class BaseEmitter {
         // cpi-hand → cpi-lever.
         if (/^use\s+\w+::(?:cpi|accounts|program)(?:::|;)/.test(statement)) return false;
         // solana_program imports are valid on native (which deps it) but
-        // not on pinocchio/quasar (which use their own crate). Drop on
+        // not on pinocchio (which uses its own crate). Drop on
         // non-native. The anchor_lang::solana_program rewrite above means
         // a source `use anchor_lang::solana_program::X;` lands here as
         // `use solana_program::X;` and gets correctly stripped on those
         // targets while surviving on native.
         if (!isNative && /^use\s+solana_program(?:::|;)/.test(statement)) return false;
         // External crates: native carries them through (project-scaffold adds
-        // matching deps to Cargo.toml). Pinocchio/Quasar filter them out
+        // matching deps to Cargo.toml). Pinocchio filters them out
         // because there's no compatible dep in their Cargo.toml.
         if (!isNative) {
           if (/\bnum_derive\b/.test(statement)) return false;
@@ -769,7 +768,7 @@ export abstract class BaseEmitter {
     // resize the account data buffer at instruction time. Anvil emits the
     // resize call + a best-effort rent-delta top-up from the signer; if the
     // rent delta is more complex (split payer, escrow, etc.) the user can
-    // review the generated block. Pinocchio/quasar don't expose realloc
+    // review the generated block. Pinocchio doesn't expose realloc
     // directly — we emit a warning block so at least the requirement is
     // visible in the generated code.
     const reallocPreludes = instr.accounts
@@ -1134,7 +1133,7 @@ ${fields}
   // ─── Shared byte-layout serialization helpers ──────────────────────────────
   // These power the read()/write() impls emitted for every account struct.
   // Subclasses inherit them; override rustTypeForFramework() to adapt the Pubkey
-  // representation ([u8;32] in Pinocchio, Pubkey in Native/Quasar).
+  // representation ([u8;32] in Pinocchio, Pubkey in Native).
 
   protected accountDiscriminatorExpr(name: string): string {
     return accountDiscriminator(name);
@@ -1485,7 +1484,7 @@ ${indented}
    * Emit realloc prelude — resize the account buffer to the expression
    * given by `#[account(realloc = <expr>)]`. Native emits the real call
    * (`account.realloc`) plus a rent-delta top-up via a system transfer
-   * from the first signer. Pinocchio / Quasar don't expose realloc at the
+   * from the first signer. Pinocchio doesn't expose realloc at the
    * account-info level the same way; they get a warning block so the
    * requirement stays visible in the generated code.
    */
@@ -1594,12 +1593,12 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
     }`;
     }
 
-    // Quasar: still no stable API; leave the warning marker.
-    return `    // ⚠️ Anvil: \`realloc = ${sizeExpr}\` on \`${accountName}\`
-    //   Quasar doesn't expose AccountInfo::realloc in the stable API.
-    //   After porting, wire the resize manually (e.g., split into
-    //   close-and-recreate, or target the native/pinocchio backend
-    //   which emits realloc + rent top-up automatically).`;
+    // Both supported frameworks return above; the fallthrough was historically
+    // for Quasar, which has been removed. Surface as an explicit assertion in
+    // case a new framework is added later without updating the realloc emit.
+    throw new Error(
+      `emitReallocPrelude: unhandled frameworkName='${this.frameworkName}'. Add a branch for this target.`,
+    );
   }
 
   protected normalizeInitSeedExpr(seed: string): string {

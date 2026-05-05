@@ -114,7 +114,7 @@ function suggestedFixForIssue(issue: ValidationIssue): string {
 export function buildDeterministicReviewReport(
   validationIssues: ValidationIssue[],
   ir?: SolanaIR,
-  target?: "native" | "pinocchio" | "quasar",
+  target?: "native" | "pinocchio",
 ): DeterministicReviewReport {
   const findings = validationIssues.map((issue) => ({
     severity: issue.severity,

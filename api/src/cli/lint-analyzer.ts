@@ -16,7 +16,7 @@ import type { SolanaIR, Instruction } from "../ir/schema.js";
  *  pinocchio port are often fine on native (project-scaffold ships the deps),
  *  so lint verdicts have to be target-aware — a one-size-fits-all score
  *  under-sells the native path. */
-export type LintTarget = "pinocchio" | "native" | "quasar";
+export type LintTarget = "pinocchio" | "native";
 
 export type LintLevel = "ready" | "review" | "blocker";
 
@@ -40,8 +40,8 @@ export type LintReport = {
   findings: LintFinding[];
 };
 
-// Crates the source may import that have no pinocchio/quasar equivalent.
-// Native keeps them via project-scaffold, but pinocchio/quasar don't ship
+// Crates the source may import that have no pinocchio equivalent.
+// Native keeps them via project-scaffold, but pinocchio doesn't ship
 // deps that would resolve these imports, so they block the port.
 //
 // The Metaplex / oracle / DEX / scheduler imports are owned by
@@ -49,8 +49,8 @@ export type LintReport = {
 // (e.g. mpl_core blocks all targets, not just non-native). Don't add
 // them here or you'll fire duplicate findings.
 const EXTERNAL_BLOCKER_CRATES: Array<{ crate: string; reason: string }> = [
-  { crate: "solana_sha256_hasher",     reason: "Native-only hash crate; Pinocchio/Quasar don't ship it." },
-  { crate: "solana_keccak_hasher",     reason: "Native-only hash crate; Pinocchio/Quasar don't ship it." },
+  { crate: "solana_sha256_hasher",     reason: "Native-only hash crate; Pinocchio doesn't ship it." },
+  { crate: "solana_keccak_hasher",     reason: "Native-only hash crate; Pinocchio doesn't ship it." },
 ];
 
 // ─── Unsupported imports / patterns ─────────────────────────────────────────
@@ -86,7 +86,7 @@ const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
     detail: (t) =>
       t === "native"
         ? "Native carries the mpl-core dep, but Anvil doesn't structurally rewrite Metaplex Core CPIs yet. Suggested fix: keep the call site verbatim and verify against the mpl-core crate after emit."
-        : "No pinocchio_mpl_core / quasar equivalent — the emit will carry imports but stub the CPI. Suggested fix: rewrite Metaplex Core CPIs manually, or run `anvil compile --target native` for crate support.",
+        : "No pinocchio_mpl_core equivalent — the emit will carry imports but stub the CPI. Suggested fix: rewrite Metaplex Core CPIs manually, or run `anvil compile --target native` for crate support.",
     verdict: () => "blocker",
   },
   {
@@ -96,7 +96,7 @@ const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
     detail: (t) =>
       t === "native"
         ? "Native carries the mpl-core dep, but Anvil doesn't structurally rewrite Metaplex Core CPIs yet. Suggested fix: keep the call site verbatim and verify against the mpl-core crate after emit."
-        : "No pinocchio_mpl_core / quasar equivalent — the emit will carry imports but stub the CPI. Suggested fix: rewrite Metaplex Core CPIs manually, or run `anvil compile --target native` for crate support.",
+        : "No pinocchio_mpl_core equivalent — the emit will carry imports but stub the CPI. Suggested fix: rewrite Metaplex Core CPIs manually, or run `anvil compile --target native` for crate support.",
     verdict: () => "blocker",
   },
   // ── Metaplex Token Metadata ────────────────────────────────────────────
@@ -276,7 +276,7 @@ export function analyzePortability(ir: SolanaIR, target: LintTarget = "pinocchio
 function analyzeImports(ir: SolanaIR, findings: LintFinding[], target: LintTarget): void {
   // Native's project-scaffold auto-adds deps for the external blocker crates
   // (sha-256, keccak hashers), so they're genuinely fine on native. Pinocchio
-  // /Quasar have no equivalent deps, so the same imports block those targets.
+  // has no equivalent deps, so the same imports block that target.
   const externalCratesBlock = target !== "native";
 
   const seen = new Set<string>();
@@ -371,8 +371,8 @@ function analyzeAccounts(ir: SolanaIR, findings: LintFinding[]): void {
         });
       }
       // realloc — we emit it fully on native (resize + rent delta top-up)
-      // and leave a warning block on pinocchio/quasar (stable realloc isn't
-      // available there). So it's ready on native, review elsewhere.
+      // and leave a warning block on pinocchio (stable realloc isn't
+      // available there). So it's ready on native, review on pinocchio.
       if (accRef.constraints.some((c) => c.kind === "realloc")) {
         findings.push({
           level: "ready",
@@ -536,7 +536,7 @@ function analyzeHelperFunctions(ir: SolanaIR, findings: LintFinding[], target: L
       continue;
     }
     // A carried helper that references solana_program:: is fine on native
-    // (the dep ships) but needs review on pinocchio/quasar (they don't).
+    // (the dep ships) but needs review on pinocchio (the dep doesn't ship).
     const usesSolanaProgram = /\bsolana_program\b/.test(code);
     if (target === "native" && !usesSolanaProgram) {
       // Pure helper — no framework-specific calls. Ready on native.
@@ -559,9 +559,9 @@ function analyzeHelperFunctions(ir: SolanaIR, findings: LintFinding[], target: L
       });
       continue;
     }
-    // pinocchio / quasar: the helper carries a solana-program reference, so
-    // flag for manual review. If it doesn't (pure math helper), it'll compile
-    // fine — pinocchio's prelude is enough.
+    // pinocchio: the helper carries a solana-program reference, so flag for
+    // manual review. If it doesn't (pure math helper), it'll compile fine —
+    // pinocchio's prelude is enough.
     const usesAccountInfo = /\bAccountInfo\b/.test(code);
     const usesPubkey = /\bPubkey\b/.test(code);
     const usesProgramResult = /\bProgramResult\b/.test(code);

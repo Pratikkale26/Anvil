@@ -35,10 +35,10 @@ export function loadWorkbenchState(): Partial<PersistedWorkbench> | null {
     const p = parsed as Record<string, unknown>;
     const out: Partial<PersistedWorkbench> = {};
     if (isInputMode(p.mode)) out.mode = p.mode;
-    // Drop stored experimental targets at hydration so a previous selection
-    // of (now-disabled) quasar doesn't leave the workbench stuck on a
-    // target the user can no longer toggle off via the disabled button.
-    if (isTarget(p.target) && p.target !== "quasar") out.target = p.target;
+    // Drop stored values that no longer match the supported Target union
+    // (e.g. an old "quasar" selection from before that target was removed)
+    // so hydration can't leave the workbench wedged on an unsupported value.
+    if (isTarget(p.target)) out.target = p.target;
     if (typeof p.demoName === "string") out.demoName = p.demoName;
     if (typeof p.sourceText === "string") out.sourceText = p.sourceText;
     if (typeof p.repoUrl === "string") out.repoUrl = p.repoUrl;
@@ -74,5 +74,5 @@ function isInputMode(v: unknown): v is InputMode {
   return v === "demo" || v === "source" || v === "file" || v === "folder" || v === "repo";
 }
 function isTarget(v: unknown): v is Target {
-  return v === "pinocchio" || v === "native" || v === "quasar";
+  return v === "pinocchio" || v === "native";
 }

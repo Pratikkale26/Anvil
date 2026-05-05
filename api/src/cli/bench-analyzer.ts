@@ -11,26 +11,24 @@
 import type { SolanaIR, CUEstimate } from "../ir/schema.js";
 import { analyzeCU } from "../emitter/cu-analyzer.js";
 
-export type BenchTarget = "pinocchio" | "native" | "quasar";
+export type BenchTarget = "pinocchio" | "native";
 
 export type BenchRow = {
   instruction: string;
   anchor: number;
   pinocchio: number;
   native: number;
-  quasar: number;
   /** e.g. "-73%" meaning Pinocchio uses 73% fewer CUs. */
   savingsPinocchio: string;
   savingsNative: string;
-  savingsQuasar: string;
 };
 
 export type BenchReport = {
   program: string;
   rows: BenchRow[];
-  totals: { anchor: number; pinocchio: number; native: number; quasar: number };
+  totals: { anchor: number; pinocchio: number; native: number };
   /** Overall percent savings per target vs the Anchor baseline. */
-  overallSavings: { pinocchio: string; native: string; quasar: string };
+  overallSavings: { pinocchio: string; native: string };
 };
 
 function pct(baseline: number, actual: number): string {
@@ -47,10 +45,8 @@ export function runBench(ir: SolanaIR): BenchReport {
     anchor: e.anchor,
     pinocchio: e.pinocchio,
     native: e.native,
-    quasar: e.quasar,
     savingsPinocchio: e.savingsPinocchio.startsWith("-") ? e.savingsPinocchio : `-${e.savingsPinocchio}`,
     savingsNative: pct(e.anchor, e.native),
-    savingsQuasar: e.savingsQuasar.startsWith("-") ? e.savingsQuasar : `-${e.savingsQuasar}`,
   }));
 
   const totals = rows.reduce(
@@ -58,9 +54,8 @@ export function runBench(ir: SolanaIR): BenchReport {
       anchor:    acc.anchor    + r.anchor,
       pinocchio: acc.pinocchio + r.pinocchio,
       native:    acc.native    + r.native,
-      quasar:    acc.quasar    + r.quasar,
     }),
-    { anchor: 0, pinocchio: 0, native: 0, quasar: 0 },
+    { anchor: 0, pinocchio: 0, native: 0 },
   );
 
   return {
@@ -70,7 +65,6 @@ export function runBench(ir: SolanaIR): BenchReport {
     overallSavings: {
       pinocchio: pct(totals.anchor, totals.pinocchio),
       native:    pct(totals.anchor, totals.native),
-      quasar:    pct(totals.anchor, totals.quasar),
     },
   };
 }
@@ -84,20 +78,19 @@ export function renderBenchMarkdown(report: BenchReport): string {
     `Per-instruction compute-unit estimate vs the Anchor baseline.`,
   );
   lines.push("");
-  lines.push(`| Instruction | Anchor | Pinocchio | Native | Quasar | Save (Pinocchio) |`);
-  lines.push(`| :---------- | -----: | --------: | -----: | -----: | :--------------- |`);
+  lines.push(`| Instruction | Anchor | Pinocchio | Native | Save (Pinocchio) |`);
+  lines.push(`| :---------- | -----: | --------: | -----: | :--------------- |`);
   // Sort by pinocchio CU count (hotspots first).
   const sorted = [...report.rows].sort((a, b) => b.pinocchio - a.pinocchio);
   for (const r of sorted) {
     lines.push(
-      `| \`${r.instruction}\` | ${r.anchor.toLocaleString()} | ${r.pinocchio.toLocaleString()} | ${r.native.toLocaleString()} | ${r.quasar.toLocaleString()} | **${r.savingsPinocchio}** |`,
+      `| \`${r.instruction}\` | ${r.anchor.toLocaleString()} | ${r.pinocchio.toLocaleString()} | ${r.native.toLocaleString()} | **${r.savingsPinocchio}** |`,
     );
   }
-  lines.push(`| **TOTAL** | **${report.totals.anchor.toLocaleString()}** | **${report.totals.pinocchio.toLocaleString()}** | **${report.totals.native.toLocaleString()}** | **${report.totals.quasar.toLocaleString()}** | **${report.overallSavings.pinocchio}** |`);
+  lines.push(`| **TOTAL** | **${report.totals.anchor.toLocaleString()}** | **${report.totals.pinocchio.toLocaleString()}** | **${report.totals.native.toLocaleString()}** | **${report.overallSavings.pinocchio}** |`);
   lines.push("");
   lines.push(`**Overall savings**`);
   lines.push(`- Pinocchio: ${report.overallSavings.pinocchio}`);
   lines.push(`- Native: ${report.overallSavings.native}`);
-  lines.push(`- Quasar: ${report.overallSavings.quasar}`);
   return lines.join("\n");
 }

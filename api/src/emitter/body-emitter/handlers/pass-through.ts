@@ -115,7 +115,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // Strip .to_account_info() on all targets. Anchor's Account<'info, T>
   // exposes the method; once we've resolved to bare solana_program /
   // pinocchio AccountInfo (which IS AccountInfo by definition — no-op on
-  // native, doesn't exist on pinocchio/quasar), the method call is
+  // native, doesn't exist on pinocchio), the method call is
   // either redundant or unresolvable. Strip universally.
   transformedRawCode = transformedRawCode.replace(/\.to_account_info\(\)/g, "");
 

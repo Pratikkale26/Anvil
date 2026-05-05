@@ -92,7 +92,7 @@ export function evaluatePatchGates(input: {
 }
 
 export type RefineInput = {
-  target: "pinocchio" | "quasar" | "native";
+  target: "pinocchio" | "native";
   ir: SolanaIR;
   files: EmitterFile[];
   validationIssues: ValidationIssue[];

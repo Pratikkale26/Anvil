@@ -17,7 +17,7 @@ const STEPS = [
     icon: Blocks,
     step: "03",
     title: "Target Emit",
-    desc: "Transpile the IR into idiomatic Pinocchio, Quasar, or Native Rust with full multi-file support.",
+    desc: "Transpile the IR into idiomatic Pinocchio or Native Rust with full multi-file support.",
   },
   {
     icon: Cpu,

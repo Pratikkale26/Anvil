@@ -30,13 +30,13 @@ export function Hero({ overallSavings }: { overallSavings: string }) {
         </span>{" "}
         <span className="text-anvil-text-sub">or </span>
         <span className="bg-linear-to-r from-[#6b7bff] to-[#9baeff] bg-clip-text text-transparent">
-          Quasar.
+          Native.
         </span>
       </h1>
 
       <p className="text-lead mx-auto max-w-150 mt-6">
         Anvil parses Anchor programs into a framework-agnostic IR, then emits optimized
-        Pinocchio or Quasar Rust with live CU analysis.
+        Pinocchio or Native Rust with byte-equal verification + live CU analysis.
       </p>
 
       <div className="mt-10 flex items-center justify-center gap-3 flex-wrap">

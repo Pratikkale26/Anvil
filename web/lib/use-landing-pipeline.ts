@@ -81,10 +81,9 @@ export function useLandingPipeline() {
         (acc, r) => ({
           anchor: acc.anchor + r.anchor,
           pinocchio: acc.pinocchio + r.pinocchio,
-          quasar: acc.quasar + r.quasar,
           native: acc.native + r.native,
         }),
-        { anchor: 0, pinocchio: 0, quasar: 0, native: 0 },
+        { anchor: 0, pinocchio: 0, native: 0 },
       ),
     [cuData],
   );

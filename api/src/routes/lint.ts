@@ -34,8 +34,8 @@ lintRoute.post("/", async (req, res) => {
 
   // Target defaults to pinocchio (strictest lens). Web/CLI explicitly pass
   // the user's actual port target when they want the matching verdict.
-  const normalizedTarget: "pinocchio" | "native" | "quasar" =
-    target === "native" || target === "quasar" ? target : "pinocchio";
+  const normalizedTarget: "pinocchio" | "native" =
+    target === "native" ? target : "pinocchio";
 
   try {
     let ir: any;

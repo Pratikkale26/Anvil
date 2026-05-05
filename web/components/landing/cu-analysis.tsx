@@ -4,7 +4,7 @@ import { DEMOS, type CuRow as CuRowType, type DemoName } from "@/data/demos";
 
 const pct = (a: number, b: number) => `${Math.round(((a - b) / a) * 100)}%`;
 
-type Totals = { anchor: number; pinocchio: number; quasar: number; native: number };
+type Totals = { anchor: number; pinocchio: number; native: number };
 
 export function CuAnalysis({
   demo,
@@ -39,28 +39,27 @@ export function CuAnalysis({
       <div className="overflow-hidden rounded-2xl border border-anvil-card-border bg-anvil-card">
         <div className={`overflow-x-auto ${isMobile ? "px-4 py-5" : "px-7 py-6"}`}>
           <div
-            className="grid mb-4 px-1 min-w-[760px]"
-            style={{ gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", columnGap: "20px" }}
+            className="grid mb-4 px-1 min-w-[640px]"
+            style={{ gridTemplateColumns: "140px 1fr 1fr 1fr", columnGap: "20px" }}
           >
-            {["INSTRUCTION", "ANCHOR", "PINOCCHIO", "QUASAR", "NATIVE"].map((h) => (
+            {["INSTRUCTION", "ANCHOR", "PINOCCHIO", "NATIVE"].map((h) => (
               <div key={h} className="text-[11px] font-bold tracking-widest text-anvil-text-muted">
                 {h}
               </div>
             ))}
           </div>
-          <div className="min-w-[760px]">
+          <div className="min-w-[640px]">
             {cuData.map((row) => (
               <CuRow key={row.instruction} row={row} />
             ))}
           </div>
           <div
-            className="grid mt-5 pt-4 border-t border-anvil-line min-w-[760px]"
-            style={{ gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", columnGap: "20px" }}
+            className="grid mt-5 pt-4 border-t border-anvil-line min-w-[640px]"
+            style={{ gridTemplateColumns: "140px 1fr 1fr 1fr", columnGap: "20px" }}
           >
             <div className="text-[13px] font-bold text-anvil-text-sub self-center">TOTAL</div>
             <TotalCell value={totals.anchor} />
             <TotalCell value={totals.pinocchio} color="#e8820a" savings={pct(totals.anchor, totals.pinocchio)} />
-            <TotalCell value={totals.quasar} color="var(--anvil-teal)" savings={pct(totals.anchor, totals.quasar)} />
             <TotalCell value={totals.native} color="var(--anvil-indigo)" savings={pct(totals.anchor, totals.native)} />
           </div>
         </div>
@@ -74,24 +73,22 @@ function CuRow({ row }: { row: CuRowType }) {
   const cells = [
     { val: row.anchor, color: "#3a4260" },
     { val: row.pinocchio, color: "#e8820a" },
-    { val: row.quasar, color: "var(--anvil-teal)" },
     { val: row.native, color: "var(--anvil-indigo)" },
   ];
   return (
     <div className="px-1 py-3.5 border-b border-anvil-line">
       <div
         className="grid items-center mb-2.5"
-        style={{ gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", columnGap: "20px" }}
+        style={{ gridTemplateColumns: "140px 1fr 1fr 1fr", columnGap: "20px" }}
       >
         <div className="text-[13px] font-semibold text-anvil-text font-mono">{row.instruction}</div>
         <div />
         <div className="text-[12px] font-bold text-anvil-amber">{pct(row.anchor, row.pinocchio)} saved</div>
-        <div className="text-[12px] font-bold text-anvil-teal">{pct(row.anchor, row.quasar)} saved</div>
         <div className="text-[12px] font-bold text-anvil-indigo">{pct(row.anchor, row.native)} saved</div>
       </div>
       <div
         className="grid items-center"
-        style={{ gridTemplateColumns: "140px 1fr 1fr 1fr 1fr", columnGap: "20px" }}
+        style={{ gridTemplateColumns: "140px 1fr 1fr 1fr", columnGap: "20px" }}
       >
         <div />
         {cells.map(({ val, color }, i) => (

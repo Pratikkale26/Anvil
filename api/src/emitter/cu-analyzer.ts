@@ -6,7 +6,6 @@ import type { SolanaIR, CUEstimate, Instruction } from "../ir/schema.js";
  * References:
  *  - https://helius.dev/blog/the-complete-guide-to-solana-development-for-ethereum-developers
  *  - https://anza.xyz/blog/pinocchio
- *  - https://blueshift.gg/quasar
  */
 
 const ANCHOR_CU = {
@@ -39,21 +38,6 @@ const PINOCCHIO_CU = {
   tokenConstraint: 15,
 } as const;
 
-const QUASAR_CU = {
-  base: 12,
-  accountZeroCopy: 10,      // zero-allocation read
-  signerCheck: 12,
-  mutCheck: 4,
-  initAccount: 70,
-  initIfNeeded: 58,
-  hasOne: 10,
-  ownerCheck: 8,
-  seedsCheck: 25,
-  bumpCheck: 6,
-  closeAccount: 18,
-  tokenConstraint: 12,
-} as const;
-
 const NATIVE_CU = {
   base: 20,
   accountZeroCopy: 18,      // manual deserialization (less overhead than borsh)
@@ -71,7 +55,7 @@ const NATIVE_CU = {
 
 function estimateInstructionCU(
   instr: Instruction,
-  costs: typeof ANCHOR_CU | typeof PINOCCHIO_CU | typeof QUASAR_CU | typeof NATIVE_CU
+  costs: typeof ANCHOR_CU | typeof PINOCCHIO_CU | typeof NATIVE_CU
 ): number {
   let cu = costs.base;
 
@@ -123,17 +107,14 @@ export function analyzeCU(ir: SolanaIR): CUEstimate[] {
   return ir.instructions.map((instr) => {
     const anchor     = estimateInstructionCU(instr, ANCHOR_CU);
     const pinocchio  = estimateInstructionCU(instr, PINOCCHIO_CU);
-    const quasar     = estimateInstructionCU(instr, QUASAR_CU);
     const native     = estimateInstructionCU(instr, NATIVE_CU);
 
     return {
       instruction:        instr.name,
       anchor,
       pinocchio,
-      quasar,
       native,
       savingsPinocchio:   pct(anchor, pinocchio),
-      savingsQuasar:      pct(anchor, quasar),
     };
   });
 }

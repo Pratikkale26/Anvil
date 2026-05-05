@@ -8,13 +8,13 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Anvil | Anchor to Pinocchio and Quasar",
+  title: "Anvil | Anchor to Pinocchio and Native, byte-equal verified",
   description:
-    "Compile familiar Anchor source into leaner Solana runtime references with live demos and CU comparisons.",
+    "Compile Anchor source into Pinocchio or Native Rust with byte-equal differential verification, live CU comparisons, and runtime previews.",
   openGraph: {
     title: "Anvil",
     description:
-      "Anchor to Pinocchio and Quasar with a cleaner compute story, supported demos, and live runtime output previews.",
+      "Anchor to Pinocchio and Native Rust with byte-equal differential verification, supported demos, and live runtime output previews.",
   },
 };
 
