@@ -96,8 +96,16 @@ export function DifferentialPanel({ state }: { state: DifferentialState }) {
     );
   }
 
-  // ── Idle: scenario-blocked: blockers list ───────────────────────────────
   if (state.phase === "scenario-blocked") {
+    const starter = state.scenarioJson || JSON.stringify({
+      version: 1,
+      signers: [{ name: "user", airdrop: 2_000_000_000 }],
+      pdas: [],
+      steps: [{ ix: "<instruction_name>", args: {}, accounts: ["$signer:user"], expectFail: false }],
+      compare: { accounts: [], lamports: true, owner: true, eventLogs: false, msgLogs: false, returnData: false },
+      assertions: [],
+      clock: {},
+    }, null, 2);
     return (
       <Panel>
         <div className="px-5 py-4">
@@ -106,8 +114,7 @@ export function DifferentialPanel({ state }: { state: DifferentialState }) {
             Auto-scenario can’t synthesize this program
           </div>
           <div className="text-[12px] text-anvil-text-sub mb-3 leading-relaxed">
-            Your program uses patterns Anvil can auto-generate scenarios for. Either
-            edit a JSON scenario manually below, or use{" "}
+            Edit the JSON scenario below and hit Run, or use{" "}
             <code className="px-1.5 py-0.5 rounded bg-white/[0.04] text-anvil-amber-light text-[11px]">anvil-sol differential</code>{" "}
             via the CLI.
           </div>
@@ -118,12 +125,34 @@ export function DifferentialPanel({ state }: { state: DifferentialState }) {
               </div>
             ))}
           </div>
-          <button
-            onClick={() => state.generateAutoScenario()}
-            className="text-[11px] text-anvil-text-sub hover:text-anvil-text underline cursor-pointer"
-          >
-            Try again
-          </button>
+          <textarea
+            value={state.scenarioJson || starter}
+            onChange={(e) => state.setScenarioJson(e.target.value)}
+            className="w-full h-64 rounded-lg bg-black/50 border border-white/[0.08] p-3 text-[11px] font-mono text-anvil-text leading-relaxed focus:outline-none focus:border-anvil-amber/50 resize-y"
+          />
+          {state.error && (
+            <div className="mt-2 text-[11px] text-[#ffb5b5] leading-relaxed">{state.error}</div>
+          )}
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={() => state.runVerify()}
+              disabled={!state.scenario || !state.quota?.allowed}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border font-bold text-[12px] transition-colors",
+                state.scenario && state.quota?.allowed
+                  ? "bg-[rgba(14,168,128,0.10)] border-[rgba(14,168,128,0.32)] text-anvil-teal hover:bg-[rgba(14,168,128,0.16)] cursor-pointer"
+                  : "bg-white/[0.04] border-white/[0.08] text-anvil-text-dim cursor-not-allowed",
+              )}
+            >
+              <Play size={13} /> Run verification
+            </button>
+            <button
+              onClick={() => state.generateAutoScenario()}
+              className="px-3 py-2.5 rounded-xl border border-white/[0.08] hover:border-white/[0.16] text-anvil-text-sub hover:text-anvil-text transition-colors cursor-pointer text-[11px]"
+            >
+              Retry auto
+            </button>
+          </div>
         </div>
       </Panel>
     );
