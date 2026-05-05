@@ -217,6 +217,12 @@ export function classifyBody(bodyNode: SyntaxNode, collector?: WarningCollector)
     }
 
     push(classified.stmt, childLoc);
+    if (classified.extraStmts) {
+      // Multi-emit (e.g. set_inner expansion): every extra carries the same
+      // source location as the originating statement so source-link click-
+      // through (M1) lands on the right line for every field write.
+      for (const extra of classified.extraStmts) push(extra, childLoc);
+    }
   }
 
   // If `pendingSeeds` survived the whole body without being consumed by a
@@ -264,6 +270,15 @@ interface CpiAccountsBinding {
 
 interface ClassifyResult {
   stmt: BodyStatement;
+  /**
+   * Extra statements emitted by ONE source statement. The dispatcher pushes
+   * `stmt` first, then iterates these in order. Used by `set_inner({…})`
+   * expansion: one Anchor `state.set_inner(Type { f1, f2, … })` call
+   * decomposes into N `state_field_assign` statements so the emit produces
+   * the correct field writes on every target. Locs are reused from the
+   * source statement (single source line covers all expansions).
+   */
+  extraStmts?: BodyStatement[];
   _seedsData?: { seeds: string[]; bumpField?: string; rawCode: string };
   _signerSeedsConsumed?: boolean;
   _cpiContext?: CpiContextInfo;
@@ -581,6 +596,17 @@ function classifyExpressionStatement(
     if (cpi) {
       return { stmt: resolveCpiFields(cpi, cpiContexts) };
     }
+    // ── `<X>.set_inner(<Type> { f1: v1, f2: v2, … })` expansion ──
+    // Anchor's Account<T>::set_inner replaces every field of the wrapped
+    // struct in a single call. Real programs (anchor-escrow-2025,
+    // Streamflow, Squads) use it for init handlers that populate state in
+    // one shot. As a pass_through, the call would emit literal
+    // `ctx.accounts.X.set_inner(...)` text — broken on Pinocchio (no
+    // ctx.accounts) and silently elided in post-process, leaving the
+    // account zero-initialized. Decompose into N state_field_assign
+    // statements so each target's emitter writes the fields correctly.
+    const setInnerExpansion = classifySetInner(expr);
+    if (setInnerExpansion) return setInnerExpansion;
   }
 
   // ── Ok(()) ──
@@ -597,6 +623,104 @@ function classifyExpressionStatement(
       reviewReason: containsAnchorPatterns(text) ? "Contains possible Anchor-specific pattern" : undefined,
     },
   };
+}
+
+// ─── set_inner expansion ───────────────────────────────────────────────────
+//
+// Anchor's `Account<'info, T>::set_inner(T { f1, f2, … })` replaces every
+// field of the wrapped struct in one call. For non-Anchor targets the
+// equivalent is a sequence of field-assigns. Decompose at the parser layer
+// so every emitter sees state_field_assign statements (which they already
+// know how to render correctly per target). Without this, a real Anchor
+// init handler ends up with the entire field-write block in pass_through —
+// stripped by post-process for being Anchor-only — and the on-chain account
+// stays zero-initialized.
+//
+// Recognized shape:
+//
+//   ctx.accounts.<account>.set_inner(<TypeName> { f1: v1, f2: v2, … })
+//   <account_local>.set_inner(<TypeName> { f1: v1, f2: v2, … })
+//
+// Returns null when the call isn't set_inner or when the argument isn't an
+// inline struct literal (e.g. `set_inner(my_var)` where `my_var` is a
+// pre-built struct — that case still needs to compile, but field-by-field
+// is harder to derive without the variable's value flowing through here;
+// fall back to pass_through for now).
+function classifySetInner(callNode: SyntaxNode): ClassifyResult | null {
+  // call_expression has `function` (the X.set_inner part) and `arguments`.
+  const fnNode = callNode.childForFieldName("function");
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!fnNode || !argsNode) return null;
+  if (fnNode.type !== "field_expression") return null;
+  // The method name is the `field` of the outer field_expression.
+  if (fnNode.childForFieldName("field")?.text !== "set_inner") return null;
+
+  // Extract the account name from the receiver (everything left of .set_inner).
+  // Two shapes carry: `ctx.accounts.<name>.set_inner` (nested field_expression
+  // chain) and `<name>.set_inner` (single identifier as receiver). Walk
+  // getFieldChain on the receiver (the `value` field of the field_expression)
+  // and apply the same ctx.accounts.X stripping as classifyAssignment.
+  const receiver = fnNode.childForFieldName("value");
+  if (!receiver) return null;
+  let account: string | null = null;
+  if (receiver.type === "field_expression") {
+    const chain = getFieldChain(receiver);
+    if (chain.length >= 2 && chain[0] === "ctx" && chain[1] === "accounts" && chain[2]) {
+      account = chain[2];
+    } else if (chain.length >= 1) {
+      // `<account_local>.set_inner(...)` — the local IS the account name.
+      account = chain[0] ?? null;
+    }
+  } else if (receiver.type === "identifier") {
+    account = receiver.text;
+  }
+  if (!account) return null;
+
+  // Arguments must be one positional struct literal: `Type { f1: v1, … }`.
+  // The struct literal is the only named child of the arguments node.
+  if (argsNode.namedChildCount !== 1) return null;
+  const arg = argsNode.namedChild(0)!;
+  if (arg.type !== "struct_expression") return null;
+  const bodyNode = arg.childForFieldName("body");
+  if (!bodyNode) return null;
+  if (bodyNode.type !== "field_initializer_list") return null;
+
+  // Walk every named child of the struct body. tree-sitter's Rust grammar
+  // emits `field_initializer` (`name: value`) and `shorthand_field_initializer`
+  // (`name`, value identical to the name) plus `base_field_initializer`
+  // (`..base`) which we refuse — extending an existing struct value would
+  // mean we don't have explicit values for every field, and the shorthand
+  // would silently drop the unmentioned fields.
+  const fields: Array<{ name: string; value: string }> = [];
+  for (let i = 0; i < bodyNode.namedChildCount; i++) {
+    const init = bodyNode.namedChild(i);
+    if (!init) continue;
+    if (init.type === "field_initializer") {
+      const nameNode = init.childForFieldName("field");
+      const valueNode = init.childForFieldName("value");
+      if (!nameNode || !valueNode) continue;
+      fields.push({ name: nameNode.text, value: valueNode.text });
+    } else if (init.type === "shorthand_field_initializer") {
+      // `Foo { id }` → equivalent to `Foo { id: id }`.
+      const name = init.text;
+      fields.push({ name, value: name });
+    } else if (init.type === "base_field_initializer") {
+      // `..base` shape — refuse to expand, fall back to pass_through.
+      return null;
+    }
+    // Other node types (line_comment etc.) are ignored.
+  }
+  if (fields.length === 0) return null;
+
+  // Emit one state_field_assign per field. The first becomes `stmt`, the
+  // rest become `extraStmts` consumed by the dispatcher.
+  const stmts: BodyStatement[] = fields.map((f) => ({
+    kind: "state_field_assign" as const,
+    account: account!,
+    field: f.name,
+    value: f.value,
+  }));
+  return { stmt: stmts[0]!, extraStmts: stmts.slice(1) };
 }
 
 // ─── Assignment classification ──────────────────────────────────────────────
