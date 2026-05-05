@@ -650,7 +650,11 @@ export interface AssertionResult {
 }
 
 export interface SanityWarning {
-  kind: "all_steps_reverted" | "zero_mutation" | "no_compare_targets";
+  kind:
+    | "all_steps_reverted"
+    | "zero_mutation"
+    | "no_compare_targets"
+    | "partial_compare_scope";
   message: string;
 }
 
@@ -851,6 +855,58 @@ export function compareScenarioRuns(
   if (anyScenarioFailure) verdict = "SCENARIO_FAILED";
   else if (anyAccountDiverged || anyEventDiverged || anyMsgDiverged || anyAssertionFailed) verdict = "DIVERGED";
   else verdict = "BYTE_EQUAL";
+
+  // Partial-compare-scope sanity warning (M2). A green BYTE_EQUAL verdict
+  // when scenario.compare.accounts lists fewer accounts than the executed
+  // instructions actually touch is honest about "compared accounts match"
+  // but overstates "your program is verified." Surface what's NOT in the
+  // compare list so the user knows the verdict's scope.
+  //
+  // We compute coverage from the IR's accounts[] list per executed step
+  // (excluding $program: refs which aren't user state and don't carry
+  // verifiable bytes). Compare against scenario.compare.accounts. If
+  // there's daylight AND the verdict is BYTE_EQUAL AND the user didn't
+  // already opt-in to a non-data surface (eventLogs / msgLogs / returnData)
+  // that would carry the missing semantic — fire the warning.
+  if (verdict === "BYTE_EQUAL") {
+    // Names of accounts the executed steps actually touched. Pull from
+    // the scenario steps (which know their own account refs) rather than
+    // the IR's instruction account list — the user's scenario may pass
+    // signers/PDAs the IR doesn't enumerate (e.g. fee-payer).
+    const touchedAccountRefs = new Set<string>();
+    for (const step of scenario.steps) {
+      const irIx = ir.instructions.find((i) => i.name === step.ix);
+      if (!irIx) continue;
+      for (const ref of step.accounts) {
+        // Skip program refs ($program:system / token / etc.) — those are
+        // protocol primitives, not state worth byte-comparing.
+        if (ref.startsWith("$program:")) continue;
+        // For $signer:name / $pda:name / $keypair:name — extract the
+        // bare name (drop the prefix + the optional `.pubkey` suffix).
+        let bareName = ref;
+        if (ref.startsWith("$signer:")) bareName = ref.slice("$signer:".length).split(".")[0]!;
+        else if (ref.startsWith("$pda:")) bareName = ref.slice("$pda:".length).split(".")[0]!;
+        else if (ref.startsWith("$keypair:")) bareName = ref.slice("$keypair:".length);
+        touchedAccountRefs.add(bareName);
+      }
+    }
+    const compared = new Set(scenario.compare.accounts);
+    const uncompared = [...touchedAccountRefs].filter((n) => !compared.has(n));
+    // Also a real warning when NO compare.accounts are listed at all but
+    // the steps did touch state-bearing accounts. (no_compare_targets
+    // already flags zero compares + zero assertions/logs; this is a
+    // narrower "you HAVE compares but they're incomplete" signal.)
+    if (uncompared.length > 0 && scenario.compare.accounts.length > 0) {
+      sanityWarnings.push({
+        kind: "partial_compare_scope",
+        message:
+          `BYTE_EQUAL verdict only covers ${scenario.compare.accounts.length} of ${touchedAccountRefs.size} ` +
+          `account${touchedAccountRefs.size === 1 ? "" : "s"} the scenario touches. ` +
+          `Uncompared: ${uncompared.join(", ")}. ` +
+          `Add to compare.accounts to widen the verifiable claim.`,
+      });
+    }
+  }
 
   return {
     verdict,

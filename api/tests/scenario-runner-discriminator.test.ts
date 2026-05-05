@@ -150,6 +150,105 @@ describe("compareScenarioRuns: discriminator-aware stripping (A4)", () => {
     expect(typeof c.hasWarpToSlot).toBe("boolean");
   });
 
+  test("partial_compare_scope sanity warning fires when BYTE_EQUAL covers fewer accounts than the scenario touched (M2)", () => {
+    // Two accounts in the IR's instruction; scenario only listed one in
+    // compare.accounts. Both compared bytes match → BYTE_EQUAL verdict.
+    // M2 surfaces "you didn't compare the other one" so the verdict
+    // doesn't read as "your whole program is verified."
+    const ir: SolanaIR = {
+      name: "test_program",
+      instructions: [{
+        name: "noop",
+        accounts: [
+          { name: "a", accountType: "Counter", isSigner: false, isMut: false, isInit: false, isOptional: false, isPda: true, pdaSeeds: [], constraints: [] },
+          { name: "b", accountType: "Counter", isSigner: false, isMut: false, isInit: false, isOptional: false, isPda: true, pdaSeeds: [], constraints: [] },
+        ],
+        args: [],
+        body: [],
+        bodyLocs: [],
+      }],
+      accounts: [{ name: "Counter", fields: [{ name: "n", type: "u64" }] as never }],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor", anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    // Scenario lists only `a` in compare.accounts; step touches both `a` and `b`.
+    const scenario = ScenarioSchema.parse({
+      version: 1,
+      signers: [{ name: "u" }],
+      pdas: [],
+      steps: [{ ix: "noop", args: {}, accounts: ["$pda:a", "$pda:b"], expectFail: false }],
+      compare: { accounts: ["a"], lamports: false, owner: false, eventLogs: false, msgLogs: false, returnData: false },
+      assertions: [],
+      clock: {},
+              // need to declare both PDAs so lint passes
+              // (lintScenario isn't called inside compareScenarioRuns, so
+              // skip — pdas not strictly required for the runner.)
+    });
+
+    const sameBytes = Buffer.alloc(8);
+    sameBytes.writeBigUInt64LE(7n, 0);
+    const a = emptyRun();
+    a.snapshots.set("a", { data: sameBytes, lamports: 100n, owner: "11111111111111111111111111111111" });
+    const v = emptyRun();
+    v.snapshots.set("a", { data: Buffer.from(sameBytes), lamports: 100n, owner: "11111111111111111111111111111111" });
+
+    const verdict = compareScenarioRuns(scenario, ir, a, v, 0);
+    expect(verdict.verdict).toBe("BYTE_EQUAL");
+    const w = verdict.sanityWarnings.find((w) => w.kind === "partial_compare_scope");
+    expect(w).toBeDefined();
+    expect(w?.message).toContain("Uncompared:");
+    expect(w?.message).toContain("b");
+  });
+
+  test("partial_compare_scope does NOT fire when scenario lists every touched account", () => {
+    const ir: SolanaIR = {
+      name: "test_program",
+      instructions: [{
+        name: "noop",
+        accounts: [
+          { name: "a", accountType: "Counter", isSigner: false, isMut: false, isInit: false, isOptional: false, isPda: true, pdaSeeds: [], constraints: [] },
+        ],
+        args: [],
+        body: [],
+        bodyLocs: [],
+      }],
+      accounts: [{ name: "Counter", fields: [{ name: "n", type: "u64" }] as never }],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor", anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    const scenario = ScenarioSchema.parse({
+      version: 1,
+      signers: [{ name: "u" }],
+      pdas: [],
+      steps: [{ ix: "noop", args: {}, accounts: ["$pda:a"], expectFail: false }],
+      compare: { accounts: ["a"], lamports: false, owner: false, eventLogs: false, msgLogs: false, returnData: false },
+      assertions: [],
+      clock: {},
+    });
+    const data = Buffer.alloc(8);
+    const a = emptyRun();
+    a.snapshots.set("a", { data, lamports: 100n, owner: "11111111111111111111111111111111" });
+    const v = emptyRun();
+    v.snapshots.set("a", { data: Buffer.from(data), lamports: 100n, owner: "11111111111111111111111111111111" });
+    const verdict = compareScenarioRuns(scenario, ir, a, v, 0);
+    expect(verdict.verdict).toBe("BYTE_EQUAL");
+    expect(verdict.sanityWarnings.find((w) => w.kind === "partial_compare_scope")).toBeUndefined();
+  });
+
   test("zero-data accounts (closed PDA) are equal regardless of discriminator", () => {
     const ir = makeIr("Counter", [{ name: "count", type: "u64" }]);
     const a = emptyRun();

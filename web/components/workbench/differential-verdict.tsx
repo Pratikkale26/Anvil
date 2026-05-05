@@ -8,7 +8,8 @@
  *   - per-step outcome row (success / revert / skipped) so the silent-
  *     pass-on-revert case is impossible to miss
  *   - sanity-warning row at the top when something looks fishy
- *     (all_steps_reverted, zero_mutation, no_compare_targets)
+ *     (all_steps_reverted, zero_mutation, no_compare_targets,
+ *     partial_compare_scope)
  *   - per-account expandable diff cards: per-field deserialized table
  *     when AccountDef known, hex side-by-side fallback
  *   - event/msg log diff side-by-side when enabled

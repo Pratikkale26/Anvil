@@ -290,7 +290,11 @@ export interface AssertionResult {
 }
 
 export interface SanityWarning {
-  kind: "all_steps_reverted" | "zero_mutation" | "no_compare_targets";
+  kind:
+    | "all_steps_reverted"
+    | "zero_mutation"
+    | "no_compare_targets"
+    | "partial_compare_scope";
   message: string;
 }
 
