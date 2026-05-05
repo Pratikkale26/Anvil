@@ -145,6 +145,13 @@ async function buildAnchor(opts: DifferentialBuildOptions, outPath: string): Pro
   // explicit anchorExtraDeps and override this.
   const sniffed = sniffAnchorExtraDeps(opts.anchorSource);
   const extraDeps = opts.anchorExtraDeps ?? sniffed;
+  // B3 — anchor-lang version sniff. Hard-pinning to 0.31 fails for
+  // programs targeting 0.30 / 0.29 with confusing rustc errors
+  // (deprecated APIs, dep resolution drift). Sniff a `// anchor-lang
+  // 0.30` style comment OR an actual version string in source. Fall
+  // back to 0.31 (current) if not found. We use the same version for
+  // both anchor-lang and anchor-spl so they resolve consistently.
+  const anchorLangVersion = sniffAnchorLangVersion(opts.anchorSource);
   const cargoToml = `[package]
 name = "${opts.programName}"
 version = "0.1.0"
@@ -160,9 +167,9 @@ cpi = ["no-entrypoint"]
 default = []
 [dependencies]
 ${opts.anchorLangFeatures && opts.anchorLangFeatures.length > 0
-  ? `anchor-lang = { version = "0.31", features = ["${opts.anchorLangFeatures.join('", "')}"] }`
-  : `anchor-lang = "0.31"`}
-${extraDeps}
+  ? `anchor-lang = { version = "${anchorLangVersion}", features = ["${opts.anchorLangFeatures.join('", "')}"] }`
+  : `anchor-lang = "${anchorLangVersion}"`}
+${extraDeps.replace(/version = "0\.31"/g, `version = "${anchorLangVersion}"`).replace(/anchor-spl = "0\.31"/g, `anchor-spl = "${anchorLangVersion}"`)}
 `;
   writeFileSync(join(scratch, "Cargo.toml"), cargoToml);
   writeFileSync(
@@ -184,6 +191,34 @@ ${extraDeps}
  * is referenced (token_2022, memo, associated_token, metadata) so we
  * don't pull in unnecessary feature flags + their deps.
  */
+/**
+ * Best-effort detection of the anchor-lang version the source targets.
+ * Source can carry the version as:
+ *   1. an explicit Cargo.toml-shape comment in the lib.rs (`// anchor-lang
+ *      = "0.30"`) — common in tutorial copies pasted into the workbench
+ *   2. a doc-comment `//! anchor-lang 0.30` style note
+ *   3. inline reference like `anchor_lang = "0.30"` if the user pasted
+ *      Cargo.toml content into the source by accident
+ *
+ * Returns the matched version (e.g. "0.30") or "0.31" as a default.
+ * Pinned to {0.29, 0.30, 0.31} — anything outside that set falls back
+ * to 0.31. We don't try to resolve symbol-level API differences;
+ * choosing the wrong version usually surfaces a clear rustc error
+ * (deprecated::removed) which is easier to diagnose than the cryptic
+ * dep-resolution failures the previous hard-pin produced.
+ */
+export function sniffAnchorLangVersion(source: string): string {
+  const ALLOWED = new Set(["0.29", "0.30", "0.31"]);
+  const re = /anchor[-_]lang\s*[=:]?\s*['"`]?(0\.(?:29|30|31)(?:\.\d+)?)/;
+  const m = source.match(re);
+  if (m?.[1]) {
+    // Strip patch component if present — Cargo accepts the major.minor form.
+    const minor = m[1].split(".").slice(0, 2).join(".");
+    if (ALLOWED.has(minor)) return minor;
+  }
+  return "0.31";
+}
+
 function sniffAnchorExtraDeps(source: string): string {
   if (!/\banchor_spl\b/.test(source)) return "";
   const features: string[] = [];

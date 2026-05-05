@@ -297,5 +297,23 @@ export function lintScenario(scenario: Scenario): ScenarioLintIssue[] {
     });
   }
 
+  // (6) B2 — warn when a $keypair is used as the apparent fee payer.
+  // The runtime now lazily airdrops $keypair refs (1 SOL each by default),
+  // so the worst case is no longer "tx fails for InsufficientFunds." Still
+  // a usability hint: the user might have meant to declare it as a
+  // $signer (which gets the explicit airdrop config), and using a
+  // throwaway keypair as fee payer makes the scenario harder to reason
+  // about.
+  for (const [i, step] of scenario.steps.entries()) {
+    const firstAccount = step.accounts[0];
+    if (firstAccount?.startsWith("$keypair:") && !step.accounts.some((a) => a.startsWith("$signer:"))) {
+      issues.push({
+        severity: "warning",
+        message: `Step ${i} (${step.ix}) uses an ephemeral $keypair as the apparent fee payer. The runtime will airdrop 1 SOL automatically, but consider declaring this as a $signer in scenario.signers[] for explicit control over the airdrop amount.`,
+        stepIndex: i,
+      });
+    }
+  }
+
   return issues;
 }

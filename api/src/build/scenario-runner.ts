@@ -327,16 +327,31 @@ export function buildStepInstruction(
     serializeArgs(step.args, irIx.args),
   ]);
 
-  const keys = step.accounts.map((ref) => {
+  const keys = step.accounts.map((ref, slotIdx) => {
     const pubkey = resolveAccountRef(ref, ctx);
-    // Mark signers as such; mark non-program accounts as writable when
-    // the IR's AccountRef says so.
     const isProgram = ref.startsWith("$program:");
     const isSigner = ref.startsWith("$signer:");
-    // Default writability: writable for $signer (often payer) and $pda;
-    // read-only for $program. Caller can override by appending `.ro` /
-    // `.rw` to the ref (future).
-    const isWritable = !isProgram;
+    // B5 — consult IR.AccountRef.isMut when the slot index lines up with
+    // the IR's account list AND the slot isn't a program. This closes
+    // the class of "should-have-failed-but-didn't" scenarios — Anchor
+    // would reject a write on a `pub foo: Account<'info, Foo>` (no mut)
+    // at constraint-check time, but with the slot wrongly marked
+    // writable both runs accept the write and byte-equal silently
+    // holds. Now both sides see the IR-correct writability.
+    //
+    // Programs are always read-only. Signers default to writable (most
+    // are fee payers) but yield to the IR when it says otherwise.
+    let isWritable: boolean;
+    if (isProgram) {
+      isWritable = false;
+    } else if (slotIdx < irIx.accounts.length) {
+      const irAcc = irIx.accounts[slotIdx]!;
+      isWritable = irAcc.isMut;
+    } else {
+      // Step has more accounts than IR knows (extra remaining_accounts):
+      // default to writable, the program will choose what to do.
+      isWritable = true;
+    }
     return { pubkey, isSigner, isWritable };
   });
 
@@ -487,6 +502,26 @@ export function runScenarioOnSo(
   for (const decl of scenario.signers) {
     const kp = ctx.signers.get(decl.name)!;
     svm.airdrop(kp.publicKey, BigInt(decl.airdrop ?? 1_000_000_000));
+  }
+
+  // B2 — Pre-scan steps for $keypair refs and airdrop each one.
+  // Without this, a scenario that uses `$keypair:foo` as a payer or
+  // rent-paying account fails with InsufficientFundsForRent at step
+  // execution. Lazy generation in resolveAccountRef gives the keypair
+  // a publicKey but zero lamports. Mirror the signer-airdrop default
+  // (1 SOL each).
+  const keypairRefNames = new Set<string>();
+  for (const step of scenario.steps) {
+    for (const ref of step.accounts) {
+      if (ref.startsWith("$keypair:")) {
+        keypairRefNames.add(ref.slice("$keypair:".length));
+      }
+    }
+  }
+  for (const name of keypairRefNames) {
+    // Force lazy generation by calling resolveAccountRef, then airdrop.
+    const pk = resolveAccountRef(`$keypair:${name}`, ctx);
+    svm.airdrop(pk, BigInt(1_000_000_000));
   }
 
   const stepOutcomes: StepOutcome[] = [];
