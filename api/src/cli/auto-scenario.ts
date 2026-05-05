@@ -444,28 +444,33 @@ function synthesizeSeeds(
       continue;
     }
     // <state>.field.as_ref() / <state>.field.to_le_bytes() -- state-dependent
-    // seed reference. Stage 4b: produce a $state:<account>.<field> tag that
-    // the runtime resolves AFTER the prior step has init'd the account.
-    // Documented as a known limitation: only works when the referenced state
-    // account was init'd by an earlier step in the scenario; the runtime
-    // resolver looks up the field by deserializing the live account.
+    // seed reference. The runtime resolver was authored speculatively but
+    // never landed (resolveSeedExpression refuses these tags). Block here
+    // instead of emitting a tag the runner will reject -- gives the user a
+    // clear "this PDA needs manual seeds" message in the workbench rather
+    // than a runtime error after they hit Run.
     const stateFieldMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\.(as_ref\(\)|to_le_bytes\(\)|to_le_bytes\(\)\.as_ref\(\))$/);
     if (stateFieldMatch?.[1] && stateFieldMatch[2]) {
-      out.push(`$state:${stateFieldMatch[1]}.${stateFieldMatch[2]}`);
-      continue;
+      return {
+        ok: false,
+        seeds: [],
+        reason: `seed \`${trimmed}\` is state-derived (reads field \`${stateFieldMatch[2]}\` of account \`${stateFieldMatch[1]}\` after a prior step). Auto-scenario can't synthesize a stable seed for this — the field's value depends on runtime execution. Author the seed manually via "Edit as JSON" with an explicit \`bytes:0x…\` of the expected post-init value, or use the CLI \`anvil-sol differential\` for direct control.`,
+      };
     }
-    // <arg>.as_ref() — the arg pubkey provided in the same step. Resolved at
-    // runtime by reading the step's args. Tag form: $arg:<argname>
+    // <arg>.as_ref() — the arg pubkey provided in the same step.
     const argRefMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.(as_ref\(\)|to_le_bytes\(\))$/);
     if (argRefMatch?.[1]) {
-      out.push(`$arg:${argRefMatch[1]}`);
-      continue;
+      return {
+        ok: false,
+        seeds: [],
+        reason: `seed \`${trimmed}\` is arg-derived (reads instruction arg \`${argRefMatch[1]}\` at call time). Auto-scenario can't synthesize a stable seed for this — replace with an explicit \`bytes:0x…\` of the arg's bytes via "Edit as JSON", or use the CLI for direct control.`,
+      };
     }
     // Unrecognised shape.
     return {
       ok: false,
       seeds: [],
-      reason: `unsupported seed expression \`${trimmed}\` -- supported: b"literal", <signer>.key().as_ref(), <state>.<field>.as_ref(), <arg>.as_ref(). Use "Edit as JSON" for other shapes.`,
+      reason: `unsupported seed expression \`${trimmed}\` -- supported: b"literal", <signer>.key().as_ref(), <other_pda>.key().as_ref(), bytes:0x<hex>, u<N>:<num>. Use "Edit as JSON" for other shapes.`,
     };
   }
   return { ok: true, seeds: out };

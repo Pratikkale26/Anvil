@@ -66,21 +66,27 @@ describe("auto-scenario: achievable demos synthesise cleanly", () => {
     expect(r.notes.some((n) => n.message.includes("emit!"))).toBe(true);
   });
 
-  test("vesting -> synthesises via Stage 4b state/arg seed tags", async () => {
+  test("vesting -> blocks because state/arg-derived seeds are not yet runtime-resolvable", async () => {
     // Vesting uses `beneficiary.as_ref()` (Pubkey arg in seeds) AND
-    // `vesting.grantor.as_ref()` (state-field reference). Stage 4b adds
-    // $arg:beneficiary and $state:vesting.grantor seed tags so both
-    // resolve at runtime instead of blocking at synthesis.
+    // `vesting.grantor.as_ref()` (state-field reference). Stage 4b previously
+    // emitted $state:/$arg: tags here, but the runtime resolver never
+    // landed — the tags fell through to UTF-8 encoding and produced wrong
+    // PDAs. A1 restores honesty: auto-scenario refuses and the workbench
+    // routes the user to "Edit as JSON" or the CLI.
     const ir = await parseDemo("vesting.rs");
     const r = synthesizeAutoScenario(ir);
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.scenario.steps.length).toBeGreaterThan(0);
-    // At least one PDA's seeds should reference $state: or $arg:.
-    const usesNewTags = r.scenario.pdas.some((p) =>
-      p.seeds.some((s) => s.startsWith("$state:") || s.startsWith("$arg:")),
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    // The blocker must explicitly call out state OR arg derivation, NOT a
+    // generic "unsupported shape" message — that's the actionable hint.
+    const hasDerivedBlocker = r.blockers.some(
+      (b) => b.message.includes("state-derived") || b.message.includes("arg-derived"),
     );
-    expect(usesNewTags).toBe(true);
+    expect(hasDerivedBlocker).toBe(true);
+    // And the (rejected) blocker payload must NEVER contain a literal $state:
+    // or $arg: tag — those were the silent-corruption symptoms.
+    expect(JSON.stringify(r.blockers)).not.toContain("$state:");
+    expect(JSON.stringify(r.blockers)).not.toContain("$arg:");
   });
 
   test("custom struct args -> synthesised by walking TypeDef.fields (Stage 4b)", () => {
@@ -173,5 +179,90 @@ describe("auto-scenario: blockers fire on unsupported shapes", () => {
     const blocker = r.blockers.find((b) => b.message.includes("SwapParams"));
     expect(blocker).toBeDefined();
     expect(blocker?.context?.arg).toBe("params");
+  });
+
+  // A1 regression — state-derived and arg-derived seeds were silently emitted
+  // as $state:/$arg: tags, the runtime resolver fell through to UTF-8 byte
+  // encoding, and the resulting PDA was wrong. Auto-scenario must now block
+  // these shapes so the user sees a clear "edit JSON manually" message rather
+  // than a misleading DIVERGED verdict.
+  test("state-derived seed -> blocker, no $state: tag emitted", () => {
+    const ir = {
+      name: "state_seed_demo",
+      instructions: [{
+        name: "withdraw",
+        accounts: [{
+          name: "vault",
+          accountType: "Vault",
+          isSigner: false,
+          isMut: true,
+          isInit: false,
+          isOptional: false,
+          isPda: true,
+          // The shape that previously got emitted as `$state:counter.bump`.
+          pdaSeeds: ['b"vault"', "counter.bump.as_ref()"],
+          constraints: [],
+        }],
+        args: [],
+        body: [],
+        bodyLocs: [],
+      }],
+      accounts: [{ name: "Vault", fields: [{ name: "amount", type: "u64" as const }] }],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor" as const, anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    const blocker = r.blockers.find((b) => b.message.includes("state-derived"));
+    expect(blocker).toBeDefined();
+    // Critically: no $state: tag leaked.
+    expect(JSON.stringify(r.blockers)).not.toContain("$state:");
+  });
+
+  test("arg-derived seed -> blocker, no $arg: tag emitted", () => {
+    const ir = {
+      name: "arg_seed_demo",
+      instructions: [{
+        name: "init_named",
+        accounts: [{
+          name: "named",
+          accountType: "Named",
+          isSigner: false,
+          isMut: true,
+          isInit: false,
+          isOptional: false,
+          isPda: true,
+          pdaSeeds: ['b"named"', "name_arg.as_ref()"],
+          constraints: [],
+        }],
+        args: [{ name: "name_arg", type: "Pubkey" as const }],
+        body: [],
+        bodyLocs: [],
+      }],
+      accounts: [{ name: "Named", fields: [{ name: "owner", type: "Pubkey" as const }] }],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor" as const, anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    const blocker = r.blockers.find((b) => b.message.includes("arg-derived"));
+    expect(blocker).toBeDefined();
+    expect(JSON.stringify(r.blockers)).not.toContain("$arg:");
   });
 });

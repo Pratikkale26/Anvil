@@ -95,12 +95,14 @@ export function resolveScenarioContext(
  *     → little-endian encoded integer of the right width
  *   - `bytes:0xDEADBEEF` → raw hex bytes
  *
- * NOTE: state-dependent ($state:account.field) and arg-dependent ($arg:name)
- * tags are NOT resolved here -- they require runtime context. The PDA
- * declaration walker (in resolveScenarioContext) skips PDAs containing those
- * tags and defers their derivation to per-step resolution at execution
- * time. Future runtime resolver TBD; for now, scenarios with state/arg
- * seed deps fall through to the manual JSON-edit path.
+ * Tags `$state:account.field` and `$arg:name` are NOT supported. They were
+ * authored speculatively for a future runtime resolver but the resolver
+ * never landed; falling through silently meant the literal tag string got
+ * encoded as UTF-8 bytes and the resulting PDA was wrong, producing a
+ * misleading "DIVERGED at byte 8" verdict that hid the real cause. We now
+ * refuse them loudly so auto-scenario callers get a real error and the
+ * workbench can surface a clear blocker. When the resolver lands, replace
+ * this throw with the actual derivation.
  */
 export function resolveSeedExpression(
   seed: string,
@@ -150,6 +152,32 @@ export function resolveSeedExpression(
   // b"literal" — Rust byte string literal style
   const bMatch = seed.match(/^b"(.+)"$/);
   if (bMatch?.[1]) return Buffer.from(bMatch[1], "utf-8");
+
+  // Refuse the speculatively-authored tags. Falling through to UTF-8 here
+  // would silently encode the literal `$state:counter.bump` tag-string and
+  // produce a wrong PDA in EVERY scenario for state/arg-derived seeds.
+  if (seed.startsWith("$state:")) {
+    throw new Error(
+      `seed '${seed}': state-derived seeds (\`<account>.<field>.as_ref()\` shape) are not yet supported by the runtime resolver. Author the scenario with an explicit \`bytes:0x…\` or typed-int seed for the state value, or use the CLI \`anvil-sol differential\` for full control.`,
+    );
+  }
+  if (seed.startsWith("$arg:")) {
+    throw new Error(
+      `seed '${seed}': arg-derived seeds (\`<arg>.as_ref()\` shape) are not yet supported by the runtime resolver. Replace with an explicit \`bytes:0x…\` of the arg's pubkey/bytes, or use the CLI for full control.`,
+    );
+  }
+  if (seed.startsWith("$keypair:") || seed.startsWith("$program:")) {
+    throw new Error(
+      `seed '${seed}': '$keypair' / '$program' tags are valid as account refs but not as PDA seeds. PDAs derive from signer pubkeys, earlier-declared PDAs, byte literals, or typed ints.`,
+    );
+  }
+  // Reserved sigil that didn't match any known form: refuse rather than
+  // encode the tag-string as bytes.
+  if (seed.startsWith("$")) {
+    throw new Error(
+      `seed '${seed}': unknown seed reference shape. Supported: b"literal", $signer:<name>.pubkey, $pda:<name>.pubkey, u<N>:<num>, i<N>:<num>, bytes:0x<hex>.`,
+    );
+  }
 
   // Plain string literal -- treat as UTF-8 bytes.
   return Buffer.from(seed, "utf-8");
