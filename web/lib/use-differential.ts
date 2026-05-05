@@ -161,10 +161,21 @@ export function useDifferential(args: {
         signal: controller.signal,
       });
 
-      if (!res.ok && !res.body) {
+      // Fast-path errors (toolchain missing, validation, scenario lint, quota
+      // exhausted) come back as JSON before SSE setup. fetch always has a
+      // body, so gating on `!res.body` here used to swallow the JSON and the
+      // SSE reader below would consume it as zero events -- workbench got
+      // stuck on "Starting build..." forever. Always treat non-2xx as JSON.
+      if (!res.ok) {
         const errBody = await res.json().catch(() => ({ error: res.statusText }));
-        setError((errBody as { error?: string }).error ?? `HTTP ${res.status}`);
+        const lintIssues = (errBody as { lintIssues?: Array<{ message: string }> }).lintIssues;
+        const baseMsg = (errBody as { error?: string }).error ?? `HTTP ${res.status}`;
+        const fullMsg = lintIssues && lintIssues.length > 0
+          ? `${baseMsg}: ${lintIssues.map((i) => i.message).join("; ")}`
+          : baseMsg;
+        setError(fullMsg);
         setPhase("idle");
+        setProgress({ phase: null, message: "", buildLogs: [] });
         return;
       }
 

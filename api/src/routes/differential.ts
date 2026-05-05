@@ -171,14 +171,19 @@ differentialRoute.post("/", async (req, res) => {
     return;
   }
 
-  // (5) Resolve programId. Default to scenario.programId; fall back to IR's
-  //     declared id; fall back to a derived placeholder.
+  // (5) Resolve programId. Priority: explicit field > scenario > IR >
+  //     re-extract from anchorSource > placeholder. The anchorSource
+  //     fallback rescues stale workbench state where IR was parsed before
+  //     the declare_id! extraction fix landed (every step would otherwise
+  //     revert against the SystemProgram placeholder).
+  const declareIdMatch = parsed.data.anchorSource.match(/\bdeclare_id!\s*\(\s*"([^"]+)"\s*\)/);
   let programId: PublicKey;
   try {
     programId = new PublicKey(
       parsed.data.programIdBase58
         ?? scenario.programId
         ?? ir.programId
+        ?? declareIdMatch?.[1]
         ?? "11111111111111111111111111111111",
     );
   } catch (err) {
