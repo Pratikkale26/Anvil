@@ -1214,11 +1214,19 @@ ${writeLines}
 
     const enumName = this.sourceErrorEnumName(ir);
 
+    // Re-export variants at the module level so instruction files can
+    // reference them by bare name (Anchor's convention: `Err(Unauthorized
+    // .into())` works because `#[error_code]` macro auto-imports). Without
+    // the `pub use`, every instruction would need an explicit
+    // `use crate::errors::${enumName}::*;` and our emitter can't easily
+    // know which variants each handler references at file-emit time.
     return `#[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
 pub enum ${enumName} {
 ${variants}
 }
+
+pub use ${enumName}::*;
 
 impl From<${enumName}> for ProgramError {
     fn from(error: ${enumName}) -> Self {

@@ -941,11 +941,16 @@ ${writeLines}
 
     const enumName = this.sourceErrorEnumName(ir);
 
+    // Re-export variants at the module level — Anchor source uses bare
+    // variant names (`Err(Unauthorized.into())`); without the `pub use`,
+    // every `use crate::errors::*;` brings the enum but not the variants.
     return `#[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
 pub enum ${enumName} {
 ${variants}
 }
+
+pub use ${enumName}::*;
 
 impl From<${enumName}> for ProgramError {
     fn from(error: ${enumName}) -> Self {
