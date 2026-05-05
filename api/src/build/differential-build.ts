@@ -224,6 +224,13 @@ async function buildAnvil(opts: DifferentialBuildOptions, outPath: string): Prom
  * Returns the input unchanged when programIdBase58 is undefined or when
  * none of the patterns match — both are common cases (file is not the
  * lib.rs / programIdBase58 not overridden) and a no-op rewrite is correct.
+ *
+ * Caveat: shape-tolerant, NOT AST-aware. A `declare_id!("…")` token sitting
+ * inside a doc-comment / `///` example / a string literal would also be
+ * rewritten. In practice declare_id never appears in those positions in
+ * real programs, so the regex is fine. If a real program ever trips this,
+ * the upgrade is to parse with tree-sitter + walk the AST for the macro
+ * invocation node — a non-trivial change for a benign edge case.
  */
 export { rewriteDeclareId as rewriteDeclareIdForTest };
 function rewriteDeclareId(source: string, programIdBase58?: string): string {

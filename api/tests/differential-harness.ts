@@ -25,7 +25,9 @@ import {
   readFileSync,
   rmSync,
   readdirSync,
+  statSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { join, dirname as nodeDirname } from "node:path";
 import { LiteSVM } from "litesvm";
@@ -39,6 +41,50 @@ import { buildProjectScaffold } from "../src/emitter/project-scaffold.ts";
 const CACHE_ROOT =
   process.env.ANVIL_DIFF_CACHE ??
   join(process.env.HOME ?? "/tmp", ".anvil-diff-cache");
+
+/**
+ * Hash of the parser + emitter + IR-schema source trees, computed at module
+ * load. Folded into the per-fixture cache directory name so the cached
+ * Anvil .so is invalidated whenever the code that produces it changes.
+ *
+ * Background: the harness's `buildAnvilSo` parses + emits at run time from
+ * `fixture.anchorSource`. The cache hash used to cover only the source
+ * blob — so a parser change (e.g. set_inner expansion in A6) didn't
+ * invalidate the cached .so, the test ran the OLD emit's bytes against
+ * the NEW reference, and the byte-equal verdict was misleading until the
+ * cache was hand-cleared. This fix removes the manual step.
+ *
+ * `buildBothSos` (in api/src/build/differential-build.ts, the production
+ * /build/differential path) is NOT affected: that path receives the
+ * already-emitted files in its request body and hashes their content.
+ * Parser/emitter changes show up there as different file content → fresh
+ * hash. Only the test harness needed this.
+ *
+ * The walk is depth-first across .ts files in src/parser, src/emitter, and
+ * src/ir/schema.ts. Costs ~50ms at module load; bounds the bug "I forgot to
+ * clear the cache after editing the parser" perfectly.
+ */
+const ANVIL_CODE_VERSION = (() => {
+  const targets = [
+    join(import.meta.dir, "..", "src", "parser"),
+    join(import.meta.dir, "..", "src", "emitter"),
+    join(import.meta.dir, "..", "src", "ir", "schema.ts"),
+  ];
+  const h = createHash("sha256");
+  const walk = (p: string): void => {
+    if (!existsSync(p)) return;
+    const s = statSync(p);
+    if (s.isFile()) {
+      if (p.endsWith(".ts")) h.update(readFileSync(p));
+      return;
+    }
+    for (const e of readdirSync(p, { withFileTypes: true })) {
+      walk(join(p, e.name));
+    }
+  };
+  for (const t of targets) walk(t);
+  return h.digest("hex").slice(0, 8);
+})();
 
 // Toolchain probes — same gates as the original counter test. Skipping with
 // a loud warning is preferred over silently passing; CI on a host without
@@ -276,7 +322,13 @@ export function defineDifferential<S extends DifferentialSetup>(
         const sourceHash = bytesToHex(
           sha256(new TextEncoder().encode(fixture.anchorSource)),
         ).slice(0, 12);
-        const cacheDir = join(CACHE_ROOT, `${fixture.fixtureName}-${sourceHash}`);
+        // Cache dir partitions on (source, parser+emitter+schema). Edits
+        // to any of those produce a new ANVIL_CODE_VERSION → fresh build.
+        // Stale dirs from prior code versions accumulate at CACHE_ROOT;
+        // operators wanting them gone can `find ~/.anvil-diff-cache -mtime
+        // +7 -type d -empty -delete` (no in-process eviction here — tests
+        // shouldn't pay for that on every run).
+        const cacheDir = join(CACHE_ROOT, `${fixture.fixtureName}-${sourceHash}-${ANVIL_CODE_VERSION}`);
         mkdirSync(cacheDir, { recursive: true });
         const anchorSoPath = join(cacheDir, `${fixture.fixtureName}_anchor.so`);
         const anvilSoPath = join(cacheDir, `${fixture.fixtureName}_anvil.so`);
