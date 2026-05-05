@@ -60,6 +60,17 @@ export interface DifferentialBuildOptions {
   cancelHandle?: { current: { cancel: () => void } | null };
   /** IR — used in cache-key derivation so a parser-only change invalidates. */
   ir?: SolanaIR;
+  /**
+   * Base58 program ID the scenario will deploy the .so at. The Anchor source's
+   * `declare_id!()` and the Anvil-emitted source's program-id constant are
+   * both rewritten to this value before building so `crate::ID` matches the
+   * deploy address. When omitted, both builds use whatever ID is in the
+   * source already. CRITICAL for the cache: if a request hits with a
+   * different programIdBase58 than a cached .so was built for, Anchor's
+   * `Account<'info, T>` owner check fails on every step. Folded into the
+   * source-hash so cache entries are partitioned by deploy-id.
+   */
+  programIdBase58?: string;
 }
 
 /**
@@ -68,8 +79,15 @@ export interface DifferentialBuildOptions {
  * sandbox layer.
  */
 export async function buildBothSos(opts: DifferentialBuildOptions): Promise<BuildArtifacts> {
-  const anchorHash = hashOf(opts.anchorSource + (opts.anchorExtraDeps ?? "") + (opts.anchorLangFeatures?.join(",") ?? ""));
-  const anvilHash = hashOf(JSON.stringify(opts.anvilEmittedFiles) + JSON.stringify(opts.anvilScaffoldFiles));
+  // Both hashes include programIdBase58 so a request that overrides the
+  // deploy ID gets a fresh .so rather than a cached one baked with the
+  // source's original `declare_id!()`. Without this, Anchor's owner check
+  // (info.owner == &crate::ID) fails on the second run with a confusing
+  // ConstraintOwner error — looks like a real divergence but is purely
+  // a cache-staleness artifact.
+  const idTag = opts.programIdBase58 ?? "";
+  const anchorHash = hashOf(opts.anchorSource + (opts.anchorExtraDeps ?? "") + (opts.anchorLangFeatures?.join(",") ?? "") + idTag);
+  const anvilHash = hashOf(JSON.stringify(opts.anvilEmittedFiles) + JSON.stringify(opts.anvilScaffoldFiles) + idTag);
 
   const cacheDir = join(CACHE_ROOT, `workbench-${opts.programName}`);
   mkdirSync(cacheDir, { recursive: true });
@@ -137,7 +155,10 @@ ${opts.anchorLangFeatures && opts.anchorLangFeatures.length > 0
 ${extraDeps}
 `;
   writeFileSync(join(scratch, "Cargo.toml"), cargoToml);
-  writeFileSync(join(scratch, "src/lib.rs"), opts.anchorSource);
+  writeFileSync(
+    join(scratch, "src/lib.rs"),
+    rewriteDeclareId(opts.anchorSource, opts.programIdBase58),
+  );
   await runSandboxedSbf(scratch, opts);
   copySoFromTarget(scratch, outPath);
 }
@@ -183,11 +204,42 @@ async function buildAnvil(opts: DifferentialBuildOptions, outPath: string): Prom
   for (const f of opts.anvilEmittedFiles) {
     const p = join(scratch, "src", f.path);
     mkdirSync(nodeDirname(p), { recursive: true });
-    writeFileSync(p, f.content, "utf-8");
+    // Rewrite declare_id! / pinocchio_pubkey! / native ID const so the
+    // emitted .so has crate::ID matching the deploy address. Idempotent +
+    // a no-op when programIdBase58 is unset.
+    writeFileSync(p, rewriteDeclareId(f.content, opts.programIdBase58), "utf-8");
   }
   opts.onLog?.(`[anvil] scratch=${scratch}`);
   await runSandboxedSbf(scratch, opts);
   copySoFromTarget(scratch, outPath);
+}
+
+/**
+ * Rewrite the program-id constant in a Rust source file to match the
+ * scenario's deploy address. Touches three shapes:
+ *   - Anchor:    `declare_id!("XXX...")`
+ *   - Pinocchio: `pinocchio_pubkey::declare_id!("XXX...")`
+ *   - Native:    `pub const ID: Pubkey = pubkey!("XXX...")` /
+ *                `solana_program::declare_id!("XXX...")`
+ * Returns the input unchanged when programIdBase58 is undefined or when
+ * none of the patterns match — both are common cases (file is not the
+ * lib.rs / programIdBase58 not overridden) and a no-op rewrite is correct.
+ */
+export { rewriteDeclareId as rewriteDeclareIdForTest };
+function rewriteDeclareId(source: string, programIdBase58?: string): string {
+  if (!programIdBase58) return source;
+  let out = source;
+  // Most common: bare or pinocchio_pubkey declare_id!("…")
+  out = out.replace(
+    /\b(declare_id!\s*\(\s*")[1-9A-HJ-NP-Za-km-z]{32,44}("\s*\))/g,
+    `$1${programIdBase58}$2`,
+  );
+  // Native shape: `pub const ID: Pubkey = pubkey!("…");`
+  out = out.replace(
+    /(\bpubkey!\s*\(\s*")[1-9A-HJ-NP-Za-km-z]{32,44}("\s*\))/g,
+    `$1${programIdBase58}$2`,
+  );
+  return out;
 }
 
 function runSandboxedSbf(cwd: string, opts: DifferentialBuildOptions): Promise<void> {

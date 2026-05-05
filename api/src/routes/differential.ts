@@ -241,6 +241,10 @@ differentialRoute.post("/", async (req, res) => {
       anchorLangFeatures: parsed.data.anchorLangFeatures,
       programName: parsed.data.programName,
       ir,
+      // Rewrite both .so's declare_id! to the scenario's deploy ID before
+      // building so crate::ID matches what LiteSVM addresses the program
+      // at — without this, Anchor's owner check fails on the second run.
+      programIdBase58: programId.toBase58(),
       onLog: (line) => emit("build-log", { line }),
       cancelHandle,
     });
