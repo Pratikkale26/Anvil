@@ -218,6 +218,20 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
   pinClockTimestamp?: number;
   /** Pin slot height before the first instruction. Default 1. */
   pinClockSlot?: number;
+  /**
+   * Optional path to an existing Anchor crate (the directory containing
+   * Cargo.toml + src/) to build the reference .so from. When set, the
+   * harness `cargo build-sbf`s that directory verbatim instead of writing
+   * `anchorSource` into a scratch lib.rs.
+   *
+   * Required for real-world multi-file Anchor projects where the flattened
+   * source isn't directly buildable (anchor-escrow-2025, anchor's own
+   * test crates). The Anvil emit path still consumes `anchorSource` (the
+   * flattened blob) — only the reference build switches to the directory
+   * path. anchorPackageName / anchorExtraDeps / anchorLangFeatures are
+   * IGNORED when this is set; the upstream Cargo.toml owns those.
+   */
+  anchorReferenceCrateDir?: string;
 }
 
 /** Single account snapshot — captured post-scenario for byte-compare. */
@@ -454,6 +468,48 @@ async function buildAnchorSo<S extends DifferentialSetup>(
   fixture: DifferentialFixture<S>,
   outPath: string,
 ): Promise<void> {
+  // Real-world multi-file project path: build the upstream crate verbatim.
+  // The flattened `anchorSource` blob is good for parser ingestion but
+  // doesn't always cargo-build (use globs are merged across modules,
+  // re-exports collapse, conflicting type names surface as ambiguity).
+  // Hand-written single-file fixtures take the legacy path below.
+  if (fixture.anchorReferenceCrateDir) {
+    const r = spawnSync(
+      "cargo-build-sbf",
+      ["--manifest-path", join(fixture.anchorReferenceCrateDir, "Cargo.toml")],
+      { stdio: "inherit", timeout: 600_000, env: { ...process.env, RUSTFLAGS: "" } },
+    );
+    if (r.status !== 0) {
+      throw new Error(
+        `cargo build-sbf (Anchor reference crate at ${fixture.anchorReferenceCrateDir}, ${fixture.fixtureName}) failed with status ${r.status}`,
+      );
+    }
+    // Multi-program workspaces (most real Anchor projects) emit the .so to
+    // the WORKSPACE root's target/deploy, not the per-crate directory.
+    // Walk up until we find the target/deploy with .so files. Fall back to
+    // the per-crate path so single-crate projects still work.
+    const candidates = [
+      join(fixture.anchorReferenceCrateDir, "target/deploy"),
+      join(fixture.anchorReferenceCrateDir, "../../target/deploy"),
+      join(fixture.anchorReferenceCrateDir, "../target/deploy"),
+    ];
+    let so: Buffer | null = null;
+    for (const c of candidates) {
+      if (!existsSync(c)) continue;
+      try {
+        so = readSoFromDir(c);
+        break;
+      } catch { /* keep looking */ }
+    }
+    if (!so) {
+      throw new Error(
+        `cargo build-sbf reported success but no .so found under any of: ${candidates.join(", ")}`,
+      );
+    }
+    writeFileSync(outPath, so);
+    return;
+  }
+
   const scratch = join(CACHE_ROOT, `_build_${fixture.fixtureName}_anchor`);
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(join(scratch, "src"), { recursive: true });
