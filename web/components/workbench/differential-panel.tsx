@@ -36,6 +36,7 @@ export function DifferentialPanel({ state }: { state: DifferentialState }) {
         <DifferentialVerdict
           verdict={state.verdict}
           scenario={state.scenario}
+          target={state.target}
           onRunAgain={() => state.runVerify()}
           onReset={() => state.reset()}
         />

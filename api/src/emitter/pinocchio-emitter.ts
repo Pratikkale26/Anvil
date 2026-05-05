@@ -1621,6 +1621,9 @@ export function emitPinocchioFull(ir: SolanaIR) {
  * depth 0 and bail mid-statement. We pre-compute all top-level statement
  * spans in one pass and look up the enclosing span for each match.
  */
+export const __testOnlyCommentOutT22ExtensionCallSites = (body: string) =>
+  commentOutT22ExtensionCallSites(body);
+
 function commentOutT22ExtensionCallSites(body: string): string {
   // Direct-blacklist patterns. Each must be a complete word so we don't accidentally
   // strip names that contain these as substrings. `StateWithExtensions` covers both
@@ -1894,9 +1897,79 @@ function commentOutT22Ranges(body: string, ranges: StmtRange[]): string {
       merged.push({ ...r });
     }
   }
+  // Brace-balance extension. computeTopLevelStatementSpans decomposes block
+  // contents into sub-spans; an `if`-let-else inside a `let` binding produces
+  // an OPENING-brace span (`let X = if cond {`) that's matched but the body
+  // sub-spans (`None`, `} else {`, `Some(...)`) are not, so commenting only
+  // the matched range leaves a brace imbalance the rustc compile then catches.
+  //
+  // Fix: if a merged range has unbalanced `{` at the end, extend the range
+  // forward in `body` until the imbalance closes AND we hit the next `;` at
+  // depth 0. The whole multi-line let-with-if-else then becomes a single
+  // commented unit.
+  for (const r of merged) {
+    let depth = 0;
+    let inString = false;
+    let inLine = false;
+    let inBlock = false;
+    for (let j = r.stmtStart; j < r.stmtEnd; j++) {
+      const ch = body[j];
+      const next = body[j + 1];
+      if (inLine) { if (ch === "\n") inLine = false; continue; }
+      if (inBlock) { if (ch === "*" && next === "/") { inBlock = false; j++; } continue; }
+      if (inString) { if (ch === "\\") { j++; continue; } if (ch === '"') inString = false; continue; }
+      if (ch === "/" && next === "/") { inLine = true; j++; continue; }
+      if (ch === "/" && next === "*") { inBlock = true; j++; continue; }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+    }
+    if (depth <= 0) continue;
+    // Walk forward to close the imbalance + reach next `;` at depth 0.
+    let j = r.stmtEnd;
+    while (j < body.length && depth > 0) {
+      const ch = body[j];
+      const next = body[j + 1];
+      if (inLine) { if (ch === "\n") inLine = false; j++; continue; }
+      if (inBlock) { if (ch === "*" && next === "/") { inBlock = false; j += 2; continue; } j++; continue; }
+      if (inString) { if (ch === "\\") { j += 2; continue; } if (ch === '"') inString = false; j++; continue; }
+      if (ch === "/" && next === "/") { inLine = true; j += 2; continue; }
+      if (ch === "/" && next === "*") { inBlock = true; j += 2; continue; }
+      if (ch === '"') { inString = true; j++; continue; }
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      j++;
+    }
+    let trailingDepth = 0;
+    while (j < body.length) {
+      const ch = body[j];
+      const next = body[j + 1];
+      if (inLine) { if (ch === "\n") inLine = false; j++; continue; }
+      if (inBlock) { if (ch === "*" && next === "/") { inBlock = false; j += 2; continue; } j++; continue; }
+      if (inString) { if (ch === "\\") { j += 2; continue; } if (ch === '"') inString = false; j++; continue; }
+      if (ch === "/" && next === "/") { inLine = true; j += 2; continue; }
+      if (ch === "/" && next === "*") { inBlock = true; j += 2; continue; }
+      if (ch === '"') { inString = true; j++; continue; }
+      if (ch === "{") trailingDepth++;
+      else if (ch === "}") trailingDepth--;
+      else if (ch === ";" && trailingDepth === 0) { j++; break; }
+      j++;
+    }
+    r.stmtEnd = j;
+  }
+  // Re-merge overlapping ranges introduced by extension.
+  const remerged: StmtRange[] = [];
+  for (const r of merged.sort((a, b) => a.stmtStart - b.stmtStart)) {
+    const last = remerged[remerged.length - 1];
+    if (last && r.stmtStart <= last.stmtEnd) {
+      last.stmtEnd = Math.max(last.stmtEnd, r.stmtEnd);
+    } else {
+      remerged.push({ ...r });
+    }
+  }
   let outStr = "";
   let cursor = 0;
-  for (const r of merged) {
+  for (const r of remerged) {
     outStr += body.slice(cursor, r.stmtStart);
     const stmt = body.slice(r.stmtStart, r.stmtEnd);
     const commented = stmt

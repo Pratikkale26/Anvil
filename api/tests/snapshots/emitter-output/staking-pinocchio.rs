@@ -987,6 +987,8 @@ pub enum StakingError {
     Underflow = 6010,
 }
 
+pub use StakingError::*;
+
 impl From<StakingError> for ProgramError {
     fn from(error: StakingError) -> Self {
         ProgramError::Custom(error as u32)

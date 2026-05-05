@@ -355,6 +355,8 @@ pub enum CounterError {
     Underflow = 6001,
 }
 
+pub use CounterError::*;
+
 impl From<CounterError> for ProgramError {
     fn from(error: CounterError) -> Self {
         ProgramError::Custom(error as u32)

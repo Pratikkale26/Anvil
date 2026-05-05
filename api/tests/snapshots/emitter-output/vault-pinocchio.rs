@@ -381,6 +381,8 @@ pub enum VaultError {
     Underflow = 6003,
 }
 
+pub use VaultError::*;
+
 impl From<VaultError> for ProgramError {
     fn from(error: VaultError) -> Self {
         ProgramError::Custom(error as u32)

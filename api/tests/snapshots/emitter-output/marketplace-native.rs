@@ -874,6 +874,8 @@ pub enum MarketplaceError {
     InvalidVault = 6006,
 }
 
+pub use MarketplaceError::*;
+
 impl From<MarketplaceError> for ProgramError {
     fn from(error: MarketplaceError) -> Self {
         ProgramError::Custom(error as u32)

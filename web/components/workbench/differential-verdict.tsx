@@ -25,17 +25,34 @@ import {
   ChevronRight,
   Download,
   RotateCw,
+  Sparkles,
 } from "lucide-react";
 import type { ScenarioShape, DifferentialVerdict, AccountDiff, StepOutcome } from "@/lib/constants";
+import { API_BASE } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+
+type DiagnoseResult = {
+  category: "source-pattern" | "anvil-emit-bug" | "wire-format-mismatch" | "clock-or-sysvar-drift";
+  confidence: "high" | "medium" | "low";
+  diagnosis: string;
+  evidenceCited: string;
+  suggestedSourcePatch: null | {
+    filePath: string;
+    originalSnippet: string;
+    patchedSnippet: string;
+    explanation: string;
+  };
+  maintainerNote: string;
+};
 
 export function DifferentialVerdict(props: {
   verdict: DifferentialVerdict;
   scenario: ScenarioShape | null;
+  target: "pinocchio" | "native";
   onRunAgain: () => void;
   onReset: () => void;
 }) {
-  const { verdict, scenario, onRunAgain, onReset } = props;
+  const { verdict, scenario, target, onRunAgain, onReset } = props;
   const isPass = verdict.verdict === "BYTE_EQUAL";
   const isFail = verdict.verdict === "DIVERGED";
   const isErrored = verdict.verdict === "SCENARIO_FAILED";
@@ -104,7 +121,7 @@ export function DifferentialVerdict(props: {
         <Section title={`Account comparison (${verdict.accountDiffs.length})`} defaultOpen={isFail}>
           <div className="space-y-1.5">
             {verdict.accountDiffs.map((diff) => (
-              <AccountDiffCard key={diff.name} diff={diff} />
+              <AccountDiffCard key={diff.name} diff={diff} target={target} />
             ))}
           </div>
         </Section>
@@ -243,8 +260,43 @@ function StepRow({ idx, anchor, anvil }: { idx: number; anchor: StepOutcome; anv
 
 // ─── Account diff card ──────────────────────────────────────────────────────
 
-function AccountDiffCard({ diff }: { diff: AccountDiff }) {
+function AccountDiffCard({ diff, target }: { diff: AccountDiff; target: "pinocchio" | "native" }) {
   const [open, setOpen] = useState(diff.status !== "equal");
+  const [diagnoseBusy, setDiagnoseBusy] = useState(false);
+  const [diagnoseResult, setDiagnoseResult] = useState<DiagnoseResult | null>(null);
+  const [diagnoseError, setDiagnoseError] = useState<string | null>(null);
+
+  async function runDiagnose() {
+    setDiagnoseBusy(true);
+    setDiagnoseError(null);
+    setDiagnoseResult(null);
+    try {
+      const res = await fetch(`${API_BASE}/ai/diagnose-differential`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target,
+          divergence: {
+            accountName: diff.name,
+            fieldDiffs: diff.fieldDiffs,
+            firstDiffByte: diff.firstDiffByte,
+            anchorHex: diff.anchorHex,
+            anvilHex: diff.anvilHex,
+          },
+        }),
+      });
+      if (!res.ok) {
+        const p = await res.json().catch(() => ({ error: "Diagnose failed" }));
+        throw new Error(p.details ?? p.error ?? "Diagnose failed");
+      }
+      const json = await res.json();
+      setDiagnoseResult(json.response);
+    } catch (e) {
+      setDiagnoseError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDiagnoseBusy(false);
+    }
+  }
 
   const tone = diff.status === "equal" ? "green" : diff.status === "missing" ? "amber" : "red";
   const Icon = tone === "green" ? CheckCircle2 : tone === "amber" ? AlertTriangle : XCircle;
@@ -340,6 +392,72 @@ function AccountDiffCard({ diff }: { diff: AccountDiff }) {
               owner: anchor={diff.ownerDiff.anchor.slice(0, 8)}… · anvil={diff.ownerDiff.anvil.slice(0, 8)}…
             </div>
           )}
+
+          {/* Diagnose with AI button + result */}
+          <div className="pt-1.5 border-t border-white/[0.04] space-y-1.5">
+            <button
+              onClick={runDiagnose}
+              disabled={diagnoseBusy}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-white/[0.08] hover:border-white/[0.16] text-anvil-text-sub hover:text-anvil-text transition-colors text-[10px] cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+              title="Ask the model to categorise this divergence"
+            >
+              <Sparkles size={10} className="text-anvil-amber-light" />
+              {diagnoseBusy ? "Diagnosing…" : diagnoseResult ? "Re-diagnose" : "Diagnose with AI"}
+            </button>
+            {diagnoseError && (
+              <div className="text-[10px] text-[#ffb5b5] font-mono">
+                {diagnoseError}
+              </div>
+            )}
+            {diagnoseResult && <DiagnoseResultCard result={diagnoseResult} />}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DiagnoseResultCard({ result }: { result: DiagnoseResult }) {
+  const palette = {
+    "source-pattern":          { fg: "text-[#ffd693]", border: "rgba(245,166,35,0.32)", bg: "rgba(245,166,35,0.06)", label: "SOURCE PATTERN" },
+    "anvil-emit-bug":          { fg: "text-[#ffb5b5]", border: "rgba(224,90,90,0.32)",  bg: "rgba(224,90,90,0.06)",  label: "ANVIL EMIT BUG" },
+    "wire-format-mismatch":    { fg: "text-[#ffd693]", border: "rgba(245,166,35,0.32)", bg: "rgba(245,166,35,0.06)", label: "WIRE FORMAT MISMATCH" },
+    "clock-or-sysvar-drift":   { fg: "text-anvil-teal", border: "rgba(14,168,128,0.32)", bg: "rgba(14,168,128,0.08)", label: "CLOCK / SYSVAR DRIFT" },
+  }[result.category];
+  return (
+    <div
+      className="rounded-md border px-2.5 py-2 space-y-1.5"
+      style={{ borderColor: palette.border, background: palette.bg }}
+    >
+      <div className="flex items-center justify-between">
+        <span className={cn("text-[10px] uppercase tracking-wide font-bold", palette.fg)}>
+          {palette.label}
+        </span>
+        <span className="text-[9px] text-anvil-text-dim uppercase">{result.confidence} conf</span>
+      </div>
+      <div className="text-[10px] text-anvil-text leading-relaxed">{result.diagnosis}</div>
+      <div className="text-[9px] text-anvil-text-dim italic leading-relaxed">
+        Evidence: {result.evidenceCited}
+      </div>
+      {result.suggestedSourcePatch && (
+        <div className="rounded bg-black/40 border border-white/[0.06] p-2 space-y-1">
+          <div className="text-[9px] uppercase tracking-wide text-anvil-text-dim font-bold">
+            Suggested source patch · {result.suggestedSourcePatch.filePath}
+          </div>
+          <pre className="text-[9px] font-mono text-[#ffb5b5] whitespace-pre-wrap break-all">
+            - {result.suggestedSourcePatch.originalSnippet}
+          </pre>
+          <pre className="text-[9px] font-mono text-anvil-teal whitespace-pre-wrap break-all">
+            + {result.suggestedSourcePatch.patchedSnippet}
+          </pre>
+          <div className="text-[9px] text-anvil-text-dim leading-relaxed">
+            {result.suggestedSourcePatch.explanation}
+          </div>
+        </div>
+      )}
+      {result.maintainerNote && result.category === "anvil-emit-bug" && (
+        <div className="text-[9px] text-[#ffb5b5] leading-relaxed">
+          <span className="font-bold uppercase">Maintainer:</span> {result.maintainerNote}
         </div>
       )}
     </div>

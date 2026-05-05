@@ -1,11 +1,13 @@
 import { Router } from "express";
 import type { Response } from "express";
+import { z } from "zod";
 import { RefineRequestSchema } from "../ai/refine-schemas.js";
 import { refineOutput } from "../ai/refine.js";
 import { type SolanaIR, SolanaIRSchema } from "../ir/schema.js";
 import { buildDeterministicReviewReport } from "../ai/review-report.js";
 import { checkSpendCap, recordSpend } from "../ai/spend-tracker.js";
 import { AIError } from "../ai/errors.js";
+import { diagnoseDifferentialFailure } from "../ai/diagnose-differential.js";
 
 export const aiRoute = Router();
 
@@ -163,5 +165,97 @@ aiRoute.post("/refine", async (req, res) => {
       return;
     }
     res.status(status).json(body);
+  }
+});
+
+const DiagnoseDifferentialRequestSchema = z.object({
+  target: z.enum(["pinocchio", "native"]).optional(),
+  divergence: z.object({
+    accountName: z.string(),
+    accountType: z.string().optional(),
+    fieldDiffs: z
+      .array(
+        z.object({
+          field: z.string(),
+          anchor: z.unknown(),
+          anvil: z.unknown(),
+          equal: z.boolean(),
+          sourceLink: z
+            .object({
+              instruction: z.string(),
+              line: z.number(),
+              column: z.number(),
+            })
+            .optional(),
+        }),
+      )
+      .optional(),
+    firstDiffByte: z.number().optional(),
+    anchorHex: z.string().optional(),
+    anvilHex: z.string().optional(),
+  }),
+  sourceSnippet: z.string().optional(),
+  emittedSnippet: z.string().optional(),
+  accountFields: z
+    .array(z.object({ name: z.string(), type: z.string() }))
+    .optional(),
+});
+
+aiRoute.post("/diagnose-differential", async (req, res) => {
+  const body = req.body as Record<string, unknown>;
+  const parsed = DiagnoseDifferentialRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    res.status(422).json({
+      error: "Invalid diagnose-differential request",
+      details: parsed.error.message,
+    });
+    return;
+  }
+
+  const { requestId, log } = createProgressLogger("diagnose-differential");
+  const callerIp = req.ip ?? req.socket.remoteAddress ?? "unknown";
+
+  const spendCheck = await checkSpendCap(callerIp);
+  if (!spendCheck.allowed) {
+    const message =
+      spendCheck.reason ??
+      `Daily AI spend cap of $${spendCheck.capUsd.toFixed(2)} per IP reached.`;
+    console.warn(
+      `[ai/diagnose-differential] daily AI spend cap hit ip=${callerIp} todayUsd=${spendCheck.todayUsd.toFixed(4)} cap=${spendCheck.capUsd.toFixed(2)}`,
+    );
+    res.setHeader("Retry-After", String(spendCheck.retryAfterSec));
+    res.status(429).json({
+      error: "AI spend cap hit",
+      details: message,
+      category: "daily_cap_hit",
+      retryAfterSec: spendCheck.retryAfterSec,
+    });
+    return;
+  }
+
+  try {
+    log("start", `Diagnosing divergence on account ${parsed.data.divergence.accountName}.`);
+    const result = await diagnoseDifferentialFailure(parsed.data);
+    recordSpend(callerIp, result.usage?.estimatedCostUsd ?? 0);
+    log("done", `Category=${result.response.category} confidence=${result.response.confidence}.`);
+    res.json({ requestId, ...result });
+  } catch (error) {
+    log("error", error instanceof Error ? error.message : String(error));
+    const isAI = error instanceof AIError;
+    const status = isAI
+      ? error.category === "missing_key" || error.category === "invalid_key"
+        ? 503
+        : error.category === "rate_limited"
+          ? 429
+          : error.category === "timeout"
+            ? 504
+            : 502
+      : 500;
+    const out: Record<string, unknown> = {
+      error: "AI diagnose-differential failed",
+      details: error instanceof Error ? error.message : String(error),
+    };
+    if (isAI) out.category = error.category;
+    res.status(status).json(out);
   }
 });

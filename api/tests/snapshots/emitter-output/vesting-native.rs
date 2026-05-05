@@ -766,6 +766,8 @@ pub enum VestingError {
     ArithmeticOverflow = 6009,
 }
 
+pub use VestingError::*;
+
 impl From<VestingError> for ProgramError {
     fn from(error: VestingError) -> Self {
         ProgramError::Custom(error as u32)

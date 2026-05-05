@@ -1122,6 +1122,8 @@ pub enum AmmError {
     Underflow = 6008,
 }
 
+pub use AmmError::*;
+
 impl From<AmmError> for ProgramError {
     fn from(error: AmmError) -> Self {
         ProgramError::Custom(error as u32)

@@ -256,6 +256,7 @@ export function useDifferential(args: {
     progress,
     error,
     quota,
+    target: args.target ?? "pinocchio",
     generateAutoScenario,
     runVerify,
     reset: () => {
