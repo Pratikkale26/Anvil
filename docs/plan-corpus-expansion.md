@@ -87,6 +87,60 @@ size estimate.
 - Defer: rank #4 (Jito) until emit fixes from RW2 are addressed.
 - Defer: rank #5 (Marinade), #6 (Drift), #9 (MarginFi) — bigger bodies of work.
 
+## Session results (2026-05-05) — table updated after probes
+
+- **RW3 Squads v4** — DEFERRED. 36 instructions, 12 emit errors after the
+  T22 brace-extension side-fix shipped during the probe. Needs separate
+  emit-fix sweep (5 ranked blockers in `reports/squads-v4-probe-2026-05-05.md`).
+  Don't re-probe until at least Blockers 1-4 close.
+- **RW4 anchor-escrow-2025 take_offer** — DEFERRED. /parse + /emit + /build
+  green on Anvil's side, but the Anchor REFERENCE binary stack-overflows
+  inside litesvm (Access violation in stack frame 5 at 3992 CU, before any
+  CPI). Anchor 0.32.1 + 12-account struct + 3× init_if_needed + multiple
+  has_one/close/seeds constraints exceed SBF stack budget without `Box<Account>`
+  on heavy fields. Upstream's own tests pass against `solana-test-validator`
+  (different stack handling than litesvm). Report:
+  `reports/anchor-escrow-take-offer-deferred-2026-05-05.md`.
+- **RW5 Solana Pay** — DROPPED FROM CANDIDATE LIST. Solana Pay is an
+  off-chain SDK/CLI that builds payment-request URLs and signs transactions
+  client-side. There's no on-chain Anchor program in the repo. Differential
+  testing requires a Solana program; Solana Pay doesn't have one. My
+  ranking was wrong — corrected here.
+
+## Updated candidate prioritisation post-2026-05-05
+
+The CX1 hypothesis "ship 5 real-world byte-equal fixtures" is harder than
+the plan suggested. Production Anchor programs that actually run in litesvm
+are filtered down to a small set:
+
+1. **Small program count** + **doesn't use init_if_needed at scale** +
+   **Box<Account> on large structs** + **standalone (no large CPI tree)**.
+2. Token-2022 extensions are out of differential scope (Anvil comments out
+   the whole call site on pinocchio; would always diverge).
+3. Anchor 0.30+ programs that compile against modern toolchain. Older
+   anchor-lang versions need workspace pinning.
+
+**Better candidates to probe next** (replacing the original list's failed
+entries):
+
+| Program | Why | Risk |
+|---------|-----|------|
+| **anchor-escrow** (the original, github.com/solana-developers/anchor-example-escrow) | Smaller than escrow-2025, uses Box<Account>, known to run in test-validator + litesvm | May be too simple — already covered by Anvil's escrow demo |
+| **gem-farm** (gemworks) | Small, single-program, no Token-2022 | Old Anchor (0.24); pin trouble |
+| **Goki / smart-wallet** (saber-hq/goki-monorepo) | Multisig-shaped but lean | Workspace-style repo; clone size |
+| **mango-v3** specific instruction (handle as standalone Anvil-emit only) | Mango name carries weight | Whole program too big; would need to extract one ix |
+| **anchor-cpi-example** (solana-developers) | Pure CPI-shape | Limited credibility lift |
+
+**Recommended next-session strategy:** instead of chasing more
+externally-authored Anchor programs (high failure rate), shift to:
+- **Curate Anvil's own demo-programs** to mirror real-world shapes
+  byte-for-byte (e.g. an escrow demo that's structurally identical to
+  anchor-escrow-2025 but Box<Account>-using), and stamp those with a
+  "reference shape from <repo>" label. Lower credibility lift per fixture
+  but 5x easier to ship 5 fixtures.
+- **Document the "Anvil-emit green, Anchor-reference broken in litesvm"
+  outcome explicitly** as a Solana-runtime known-issue, not an Anvil gap.
+
 ## Per-fixture template
 
 Each fixture mirrors `api/tests/fixtures/anchor-escrow-2025-fixture.ts`:
