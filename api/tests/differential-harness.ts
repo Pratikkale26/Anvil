@@ -64,6 +64,53 @@ const CACHE_ROOT =
  * src/ir/schema.ts. Costs ~50ms at module load; bounds the bug "I forgot to
  * clear the cache after editing the parser" perfectly.
  */
+/**
+ * Evict per-fixture cache directories older than CACHE_TTL_DAYS at module
+ * load. Without this, parser-version churn (every parser/emitter edit
+ * spawns a new ANVIL_CODE_VERSION → fresh cache dir, old ones stay
+ * forever) accumulates over months. ~150-300 KB per .so × N fixtures × M
+ * code versions adds up to GBs over a year.
+ *
+ * Deletion is best-effort: a stale dir we can't remove (perms, in-use)
+ * is logged once and skipped. Won't fail test boot. Only sweeps the
+ * top-level CACHE_ROOT children — doesn't recurse, so nested temp
+ * scratch dirs (`_build_*_anchor`, `_build_*_anvil_custom`) get caught
+ * by the same age check at their top-level entry.
+ */
+const CACHE_TTL_DAYS = (() => {
+  const raw = process.env.ANVIL_DIFF_CACHE_TTL_DAYS;
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : 7;
+})();
+
+(() => {
+  if (CACHE_TTL_DAYS === 0) return; // Operator opt-out via env=0.
+  if (!existsSync(CACHE_ROOT)) return;
+  const cutoffMs = Date.now() - CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
+  let evicted = 0;
+  let skipped = 0;
+  try {
+    for (const entry of readdirSync(CACHE_ROOT, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const p = join(CACHE_ROOT, entry.name);
+      try {
+        const s = statSync(p);
+        if (s.mtimeMs < cutoffMs) {
+          rmSync(p, { recursive: true, force: true });
+          evicted++;
+        }
+      } catch {
+        skipped++;
+      }
+    }
+    if (evicted > 0) {
+      console.log(`[diff-cache] evicted ${evicted} dir(s) older than ${CACHE_TTL_DAYS}d from ${CACHE_ROOT}${skipped ? ` (${skipped} skipped)` : ""}`);
+    }
+  } catch (err) {
+    console.warn(`[diff-cache] sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+})();
+
 const ANVIL_CODE_VERSION = (() => {
   const targets = [
     join(import.meta.dir, "..", "src", "parser"),
