@@ -1096,7 +1096,7 @@ const DEMO_GROUPS: Array<{ label: string; matchers: RegExp[] }> = [
   { label: "SPL Token", matchers: [/^spl-/, /^ata-mint$/, /^set-authority$/, /^t22-transfer$/] },
   { label: "Sysvars + return data", matchers: [/^sysvar-rent$/, /^return-data$/] },
   { label: "Events + CPIs", matchers: [/^event-emit$/, /^cpi-/] },
-  { label: "Application shapes", matchers: [/^vault$/, /^escrow$/, /^multisig$/, /^vesting$/, /^staking$/, /^simple-staking$/, /^amm$/, /^marketplace$/, /^perp-funding$/] },
+  { label: "Application shapes", matchers: [/^vault$/, /^escrow$/, /^multisig$/, /^vesting$/, /^staking$/, /^simple-staking$/, /^amm$/, /^marketplace$/, /^perp-funding$/, /^program-config$/, /^tip-jar$/] },
 ];
 
 function groupDemos(names: readonly string[]): Array<{ label: string; items: string[] }> {

@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 
-const DEMOS = ["counter", "vault", "escrow", "staking", "amm", "marketplace", "vesting"];
+const DEMOS = ["counter", "vault", "escrow", "staking", "amm", "marketplace", "vesting", "program-config", "tip-jar"];
 
 const PINOCCHIO_CARGO = `[package]
 name = "anvil-test"

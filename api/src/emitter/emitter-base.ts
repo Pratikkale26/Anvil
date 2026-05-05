@@ -1108,13 +1108,46 @@ ${fields}
 
   /** Append `impl <ThisType> { ...rawItems }` for user-authored helpers like
    * `Ride::new(...)` constructors. Mirrors the AccountDef-side
-   * emitInherentImplItems hook in the target emitters. */
+   * emitInherentImplItems hook in the target emitters.
+   *
+   * Auto-synthesizes `pub const INIT_SPACE: usize = <bytes>` when the type's
+   * fields are all fully-sized primitives + Pubkey + nested fixed structs.
+   * Anchor's `#[derive(InitSpace)]` macro generates this constant for the
+   * source program (called via `Member::INIT_SPACE` in `Multisig::size(n)` etc.);
+   * the emitted code references it without it being defined → E0599. We don't
+   * track derive lists in the IR yet, so the heuristic is "if every field
+   * resolves to a known fixed size, emit the constant." Dynamic types
+   * (Vec<T> without #[max_len], String) yield 0/unknown via resolveTypeSize
+   * and we suppress the constant in that case.
+   */
   protected emitTypeInherentImpl(typeDef: TypeDef): string {
-    if (!typeDef.implItems || typeDef.implItems.length === 0) return "";
-    // Mirror the struct's generics on the impl block so methods can use
-    // them. `impl<'info> Foo<'info> { … }` for a `struct Foo<'info>`.
     const gen = typeDef.generics ?? "";
-    return `\n\nimpl${gen} ${typeDef.name}${gen} {\n${typeDef.implItems.map((s) => `    ${s}`).join("\n\n")}\n}`;
+    const userItems = (typeDef.implItems ?? []).map((s) => `    ${s}`);
+
+    // Skip INIT_SPACE for enum-shaped or empty typedefs, and when generics are
+    // present (the size depends on the unbound parameters).
+    let initSpaceLine: string | null = null;
+    if (typeDef.kind !== "enum" && typeDef.fields && typeDef.fields.length > 0 && !gen) {
+      const total = typeDef.fields.reduce((sum, f) => sum + this.resolveTypeSize(f.type), 0);
+      if (total > 0) {
+        initSpaceLine = `    pub const INIT_SPACE: usize = ${total};`;
+      }
+    }
+
+    const items: string[] = [];
+    if (initSpaceLine) items.push(initSpaceLine);
+    // Stub user impl methods that reference Anchor-only patterns (CpiContext,
+    // ctx.accounts/ctx.bumps, require!/require_keys_eq!/require_keys_neq!,
+    // anchor_lang prelude items). These methods can't compile in pinocchio/
+    // native target — replace the body with a compile-clean TODO stub that
+    // returns a generic error. Same fallback shape as the unsalvageable-helper
+    // commentout pass but applied at the impl-item level.
+    for (const raw of (typeDef.implItems ?? [])) {
+      const stubbed = stubAnchorOnlyImplItem(raw);
+      items.push(`    ${stubbed}`);
+    }
+    if (items.length === 0) return "";
+    return `\n\nimpl${gen} ${typeDef.name}${gen} {\n${items.join("\n\n")}\n}`;
   }
 
   // ─── File header ───────────────────────────────────────────────────────────
@@ -1797,4 +1830,73 @@ ${fields}
       stateTypes,
     );
   }
+}
+
+/**
+ * Stub the body of an `impl X { fn foo() {…} }` method when the body
+ * references Anchor-only patterns that don't survive pinocchio/native
+ * transpile. Signature is preserved so callers compile; body becomes
+ * a compile-clean TODO that returns a generic error.
+ *
+ * Patterns that trigger stubbing:
+ *   - CpiContext::, anchor_lang::, anchor_spl::
+ *   - ctx.accounts. / ctx.bumps.
+ *   - require!(, require_keys_eq!(, require_keys_neq!(, require_eq!(
+ *   - Context<Self> in the signature (Anchor handler shape)
+ *
+ * Why: the parser preserves user impl methods as raw text. The Pinocchio
+ * emitter has no equivalent for these macros / wrapper types, so emitting
+ * them verbatim produces uncompilable code. Production Anchor programs
+ * (Squads v4, Drift, Marinade) all have impl methods on state structs
+ * that reference these patterns. Stubbing them lets the surrounding type
+ * compile while flagging the gap for manual port.
+ *
+ * Exported for unit testing.
+ */
+const ANCHOR_ONLY_PATTERNS = [
+  /\bCpiContext\s*::/,
+  /\banchor_lang\s*::/,
+  /\banchor_spl\s*::/,
+  /\bctx\.accounts\./,
+  /\bctx\.bumps\./,
+  /\brequire!\s*\(/,
+  /\brequire_eq!\s*\(/,
+  /\brequire_neq!\s*\(/,
+  /\brequire_keys_eq!\s*\(/,
+  /\brequire_keys_neq!\s*\(/,
+  /Context\s*<\s*Self\s*>/,
+];
+
+export function stubAnchorOnlyImplItem(raw: string): string {
+  if (!ANCHOR_ONLY_PATTERNS.some((re) => re.test(raw))) return raw;
+  // Find the first `{` at depth 0 (in non-string context) — that's the body
+  // start. Replace everything from `{` to the matching `}` with a stub body.
+  let depth = 0;
+  let inString = false;
+  let inLine = false;
+  let inBlock = false;
+  let bodyStart = -1;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    const next = raw[i + 1];
+    if (inLine) { if (ch === "\n") inLine = false; continue; }
+    if (inBlock) { if (ch === "*" && next === "/") { inBlock = false; i++; } continue; }
+    if (inString) { if (ch === "\\") { i++; continue; } if (ch === '"') inString = false; continue; }
+    if (ch === "/" && next === "/") { inLine = true; i++; continue; }
+    if (ch === "/" && next === "*") { inBlock = true; i++; continue; }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === "{") {
+      if (depth === 0 && bodyStart === -1) bodyStart = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && bodyStart !== -1) {
+        const sig = raw.slice(0, bodyStart).trimEnd();
+        const stub = ` {\n        // ⚠️ Anvil TODO: Anchor-only impl method body — manual port required.\n        // Original referenced CpiContext / ctx.accounts / require! macros that\n        // have no pinocchio/native equivalent at this layer.\n        Err(ProgramError::Custom(0))\n    }`;
+        return `${sig}${stub}`;
+      }
+    }
+  }
+  // Body never closed — fall back to leaving raw text alone.
+  return raw;
 }

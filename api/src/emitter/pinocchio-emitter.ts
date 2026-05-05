@@ -8,7 +8,7 @@
 
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
-import { BaseEmitter } from "./emitter-base.js";
+import { BaseEmitter, stubAnchorOnlyImplItem } from "./emitter-base.js";
 import {
   instrDiscriminator,
   accountDiscriminator,
@@ -1195,7 +1195,9 @@ ${writeLines}
   /** See native-emitter.ts:emitInherentImplItems for rationale. */
   private emitInherentImplItems(acc: AccountDef): string {
     if (!acc.implItems || acc.implItems.length === 0) return "";
-    const filtered = acc.implItems.filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw));
+    const filtered = acc.implItems
+      .filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw))
+      .map((raw) => stubAnchorOnlyImplItem(raw));
     if (filtered.length === 0) return "";
     return `\n\nimpl ${acc.name} {\n${filtered.map((s) => `    ${s}`).join("\n\n")}\n}`;
   }
