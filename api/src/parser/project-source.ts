@@ -662,7 +662,7 @@ function buildFlattenedSource(
  * single regex, since a regex with `[\s\S]+?` fails on nested parens like
  * `err!(MyError::Wrap(other_err))` — the lazy match stops at the first `)`.
  */
-function rewriteErrMacroToExplicit(source: string): string {
+export function rewriteErrMacroToExplicit(source: string): string {
   let out = "";
   let i = 0;
   while (i < source.length) {

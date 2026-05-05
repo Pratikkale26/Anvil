@@ -444,11 +444,17 @@ export const InstructionSchema = z.object({
   body: z.array(BodyStatementSchema).default([]),
   /**
    * Source locations parallel to `body[]`. `bodyLocs[i]` is the location of
-   * the source statement that produced `body[i]`. May be undefined for
-   * synthetic statements (e.g. helpers re-inserted by the classifier when
-   * `let seeds = …` survives unconsumed). Length matches body when populated.
+   * the source statement that produced `body[i]`. May be null for synthetic
+   * statements (e.g. helpers re-inserted by the classifier when `let seeds
+   * = …` survives unconsumed). Length matches body when populated.
+   *
+   * `.nullable()` not `.optional()`: when the IR is serialised to JSON +
+   * re-parsed (parse → /emit roundtrip via the workbench), undefined slots
+   * become explicit nulls. Pre-fix, optional() rejected the resulting
+   * null at re-parse, breaking every parse-then-emit flow on programs
+   * with synthetic-statement-bearing instructions.
    */
-  bodyLocs: z.array(SourceLocSchema.optional()).default([]),
+  bodyLocs: z.array(SourceLocSchema.nullish()).default([]),
   /** Original Rust function body text (for debugging & fallback) */
   rawBody: z.string().optional(),
   /** Access control expression from #[access_control(...)] attribute */

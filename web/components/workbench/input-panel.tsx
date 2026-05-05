@@ -155,10 +155,12 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                   onChange={(e) => setDemoName(e.target.value)}
                   className="w-full rounded-xl border border-anvil-card-border bg-anvil-card text-anvil-text px-3 py-2.5 text-[13px] outline-none cursor-pointer"
                 >
-                  {demoNames.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
+                  {groupDemos(demoNames).map((g) => (
+                    <optgroup key={g.label} label={g.label}>
+                      {g.items.map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </div>
@@ -1077,4 +1079,39 @@ function VerifyBuildBody(props: {
       )}
     </div>
   );
+}
+
+// ─── Demo categorization (F1) ──────────────────────────────────────────────
+//
+// Group the flat demo list by user intent — picking by "what do I want to
+// learn / verify" beats scrolling 29 alphabetical items. Native <optgroup>
+// renders the headers without a custom popover.
+//
+// Order within each group: alphabetical (so counter sorts above has_one
+// inside Basics). Order BETWEEN groups: most-common-pick first.
+
+const DEMO_GROUPS: Array<{ label: string; matchers: RegExp[] }> = [
+  { label: "Quick start", matchers: [/^counter$/, /^has-one$/, /^return-err$/, /^msg-emit$/] },
+  { label: "Account lifecycle", matchers: [/^bumps-access$/, /^init-if-needed$/, /^realloc/, /^close-account$/, /^optional-state$/] },
+  { label: "SPL Token", matchers: [/^spl-/, /^ata-mint$/, /^set-authority$/, /^t22-transfer$/] },
+  { label: "Sysvars + return data", matchers: [/^sysvar-rent$/, /^return-data$/] },
+  { label: "Events + CPIs", matchers: [/^event-emit$/, /^cpi-/] },
+  { label: "Application shapes", matchers: [/^vault$/, /^escrow$/, /^multisig$/, /^vesting$/, /^staking$/, /^simple-staking$/, /^amm$/, /^marketplace$/, /^perp-funding$/] },
+];
+
+function groupDemos(names: readonly string[]): Array<{ label: string; items: string[] }> {
+  const groups = DEMO_GROUPS.map((g) => ({ label: g.label, items: [] as string[] }));
+  const other: string[] = [];
+  outer:
+  for (const n of [...names].sort()) {
+    for (let i = 0; i < DEMO_GROUPS.length; i++) {
+      if (DEMO_GROUPS[i]!.matchers.some((m) => m.test(n))) {
+        groups[i]!.items.push(n);
+        continue outer;
+      }
+    }
+    other.push(n);
+  }
+  if (other.length > 0) groups.push({ label: "Other", items: other });
+  return groups.filter((g) => g.items.length > 0);
 }
