@@ -648,7 +648,82 @@ async function buildAnvilSo<S extends DifferentialSetup>(
 export type CompareMismatch =
   | { kind: "data"; label: string; anchor: Buffer; anvil: Buffer; firstDiffByte: number }
   | { kind: "lamports"; label: string; anchor: bigint; anvil: bigint }
-  | { kind: "owner"; label: string; anchor: string; anvil: string };
+  | { kind: "owner"; label: string; anchor: string; anvil: string }
+  | { kind: "presence"; label: string; anchorPresent: boolean; anvilPresent: boolean };
+
+/**
+ * Like `runDifferentialCompare` but collects EVERY mismatch instead of
+ * returning on the first. Used by the tracked-ceiling differential layer
+ * (M3): a fixture's `accountsToCompare` is widened to "every account the
+ * scenario touches," each per-account divergence becomes one entry, and
+ * the test asserts `mismatches.length <= ceiling`. This mirrors the
+ * cargo-tracking pattern from realworld-tracking.test.ts (max errors)
+ * but at the byte-equal compare layer.
+ *
+ * Presence-mismatch (one side has the account, the other doesn't) is
+ * surfaced as its own kind here — the single-mismatch sibling throws on
+ * post-scenario absence, but tracked ceilings WANT to count "absent on
+ * one side" as a divergence rather than crashing.
+ */
+export async function runDifferentialCompareAll<S extends DifferentialSetup>(
+  fixture: DifferentialFixture<S>,
+  anchorSo: Buffer,
+  anvilSo: Buffer,
+  programId: PublicKey,
+  ctx: S,
+): Promise<CompareMismatch[]> {
+  const stripDisc = fixture.stripDiscriminator ?? true;
+  const compareLamports = fixture.compareLamports ?? true;
+  const compareOwner = fixture.compareOwner ?? true;
+
+  const anchorState = await runScenario(fixture, anchorSo, ctx, programId);
+  const anvilState = await runScenario(fixture, anvilSo, ctx, programId);
+
+  const mismatches: CompareMismatch[] = [];
+  const accounts = fixture.accountsToCompare(ctx);
+  for (const { pubkey, label } of accounts) {
+    const aSnap = anchorState.get(pubkey.toBase58());
+    const vSnap = anvilState.get(pubkey.toBase58());
+
+    // Both absent = byte-equal (both runs closed/garbage-collected).
+    if (!aSnap && !vSnap) continue;
+    // One present, one absent = presence divergence; record + advance to
+    // next account (no further compares possible on the missing side).
+    if (!aSnap || !vSnap) {
+      mismatches.push({ kind: "presence", label, anchorPresent: !!aSnap, anvilPresent: !!vSnap });
+      continue;
+    }
+
+    let a = aSnap.data;
+    let v = vSnap.data;
+    if (stripDisc) {
+      a = a.length >= 8 ? a.subarray(8) : a;
+      v = v.length >= 8 ? v.subarray(8) : v;
+    }
+    const masks = fixture.ignoreRanges?.[label];
+    if (masks && masks.length > 0) {
+      a = applyMask(a, masks);
+      v = applyMask(v, masks);
+    }
+    if (!a.equals(v)) {
+      const minLen = Math.min(a.length, v.length);
+      let diffOffset = minLen;
+      for (let i = 0; i < minLen; i++) {
+        if (a[i] !== v[i]) { diffOffset = i; break; }
+      }
+      mismatches.push({ kind: "data", label, anchor: Buffer.from(a), anvil: Buffer.from(v), firstDiffByte: diffOffset });
+      // Don't `continue` — even with a data mismatch, lamports/owner can
+      // diverge separately and the tracker should record both.
+    }
+    if (compareLamports && aSnap.lamports !== vSnap.lamports) {
+      mismatches.push({ kind: "lamports", label, anchor: aSnap.lamports, anvil: vSnap.lamports });
+    }
+    if (compareOwner && aSnap.owner !== vSnap.owner) {
+      mismatches.push({ kind: "owner", label, anchor: aSnap.owner, anvil: vSnap.owner });
+    }
+  }
+  return mismatches;
+}
 
 export async function runDifferentialCompare<S extends DifferentialSetup>(
   fixture: DifferentialFixture<S>,
