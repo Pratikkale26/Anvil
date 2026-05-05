@@ -16,7 +16,7 @@ export enum ErrorCode {
   NO_PROGRAM_MODULE = 1001,
   /** No source input was provided in any supported form */
   NO_SOURCE_PROVIDED = 1002,
-  /** Submitted source exceeds the 1.5 MB size limit */
+  /** Submitted source exceeds the 5 MB size limit */
   SOURCE_TOO_LARGE = 1003,
   /** Source is not valid Rust or contains no Anchor constructs */
   INVALID_RUST_SOURCE = 1004,

@@ -1926,7 +1926,41 @@ function commentOutT22Ranges(body: string, ranges: StmtRange[]): string {
       if (ch === "{") depth++;
       else if (ch === "}") depth--;
     }
-    if (depth <= 0) continue;
+    if (depth < 0) {
+      // Mirror case: range has MORE `}` than `{`. Happens when a struct
+      // literal (Foo { field: x, … }) gets sub-decomposed into per-field
+      // spans, and the regex matches a field-init line whose enclosing
+      // `}` is in the matched range but the opening `{` is in an earlier
+      // unmarked span. Walk BACKWARD to include the enclosing `{` (and
+      // its statement prefix back to the previous `;` at depth 0).
+      let needed = -depth;
+      let k = r.stmtStart - 1;
+      while (k >= 0 && needed > 0) {
+        const ch = body[k];
+        if (ch === "}") needed++;
+        else if (ch === "{") needed--;
+        k--;
+      }
+      if (needed > 0) continue;
+      let depthBack = 0;
+      while (k >= 0) {
+        const ch = body[k];
+        if (ch === "}") depthBack++;
+        else if (ch === "{") depthBack--;
+        else if (ch === ";" && depthBack === 0) { k++; break; }
+        k--;
+      }
+      if (k < 0) k = 0;
+      while (k < r.stmtStart && /\s/.test(body[k] ?? "")) k++;
+      r.stmtStart = k;
+      continue;
+    }
+    if (depth === 0) continue;
+    // Note: depth==0 mid-statement (struct-literal field-init lines)
+    // remains a known-residual gap on Marinade's event-emit blocks. A
+    // generic "snap to enclosing block" fix over-extends into the next
+    // statement. Leaving alone is safer than over-commenting; the brace
+    // imbalance is loud (validator catches it) so the gap is visible.
     // Walk forward to close the imbalance + reach next `;` at depth 0.
     let j = r.stmtEnd;
     while (j < body.length && depth > 0) {

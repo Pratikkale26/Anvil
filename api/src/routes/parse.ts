@@ -115,10 +115,16 @@ parseRoute.post("/", async (req, res) => {
     return;
   }
 
-  if (resolvedSource.length > 1_500_000) {
+  // Source-size cap. Bumped from 1.5 MB → 5 MB (G3, 2026-05-05) to admit
+  // larger real-world programs whose flattened multi-file source exceeds
+  // the prior cap (Orca Whirlpools, Phoenix v1, Drift v2). Cap stays as a
+  // memory-pressure guard: parsing tree-sitter ASTs is roughly O(source
+  // length) in time and memory, so an unbounded cap could OOM the API
+  // worker on adversarial input.
+  if (resolvedSource.length > 5_000_000) {
     const err = new AnvilError(
       ErrorCode.SOURCE_TOO_LARGE,
-      "Source exceeds 1.5 MB limit",
+      "Source exceeds 5 MB limit",
       undefined,
       413,
     );

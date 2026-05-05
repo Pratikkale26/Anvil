@@ -295,6 +295,10 @@ const healthHandler: express.RequestHandler = async (_req, res) => {
      *  request time so a toolchain install after startup is reflected
      *  without restart. */
     differentialAvailable: differentialAvailable(),
+    /** Maximum source-bytes the /parse endpoint will accept. Operators can
+     *  see the limit without inspecting code; users can size-check before
+     *  POSTing 5MB+ flattened multi-file Anchor sources. */
+    parseSourceMaxBytes: 5_000_000,
     /** LiteSVM contract probe — surfaces which clock-pinning surfaces are
      *  available on this litesvm version. A clock-pinning scenario fails
      *  loudly when the corresponding surface is false; surfacing here lets

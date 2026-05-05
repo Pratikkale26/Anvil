@@ -351,6 +351,18 @@ export abstract class BaseEmitter {
         // spl_pod isn't in any scaffold — neither Pinocchio nor Native
         // ship it. Drop on both targets.
         if (/\bspl_pod\b/.test(statement)) return false;
+        // Test/dev-only crates that real-world Anchor programs (Raydium
+        // CLMM, Marinade, MarginFi) sometimes import at file top-level
+        // without #[cfg(test)] gating. Those imports compile in dev
+        // profile (where the crate IS a dependency) but break Anvil's
+        // emit because we don't ship test deps. Always drop these — the
+        // surrounding code that uses them has been stripped by the
+        // cfg(test)-block strip pass anyway, so the imports are dead.
+        if (/\bproptest\b/.test(statement)) return false;
+        if (/\bquickcheck\b/.test(statement)) return false;
+        if (/\barrayref\b/.test(statement)) return false;
+        if (/\buint::construct_uint\b/.test(statement)) return false;
+        if (/^use\s+rand(?:::|;)/.test(statement)) return false;
         return true;
       });
   }

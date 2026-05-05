@@ -90,6 +90,281 @@ function stripCfgTestModuleDecls(source: string): string {
   );
 }
 
+/**
+ * cfg-evaluation context Anvil uses when stripping inactive #[cfg(...)] items.
+ *
+ * Real-world Anchor programs (Raydium CLMM, Squads v4) gate `declare_id!()`
+ * and `pub const ID = pubkey!()` under `#[cfg(feature = "devnet")]` vs
+ * `#[cfg(not(feature = "devnet"))]`. Anvil emits both branches verbatim
+ * (the parser carries the raw text through), which produces E0428 "name
+ * defined multiple times" at cargo time.
+ *
+ * Defaults reflect a "mainnet build, no test features" choice — the most
+ * common deployed configuration:
+ *   - `feature = "<X>"` → false for ALL features (no features enabled)
+ *   - `target_os = "solana"` → true (we're targeting Solana SBF)
+ *   - `target_arch = "bpf"` → true (legacy SBF target)
+ *   - `test` → false (we're not in cfg(test))
+ *
+ * This matches the way `cargo build --release` (no --features flag) on the
+ * Solana SBF target evaluates these attributes on a deployed program.
+ */
+const CFG_DEFAULT_TRUE = new Set<string>(["target_os = \"solana\"", "target_arch = \"bpf\""]);
+
+function evalCfgPredicate(pred: string): boolean {
+  // Top-level dispatch on the cfg expression form. Predicates can be:
+  //   - a bare ident: `test`, `unix`, ...           → only `target_os`/`target_arch` keys are true; bare idents are mostly false
+  //   - `key = "value"`                              → look up in default-true table
+  //   - `not(<inner>)`                              → invert
+  //   - `all(<inner1>, <inner2>, …)`                 → and
+  //   - `any(<inner1>, <inner2>, …)`                 → or
+  const s = pred.trim();
+  if (s.length === 0) return false;
+  // Compound: not / all / any
+  if (s.startsWith("not(") && s.endsWith(")")) {
+    return !evalCfgPredicate(s.slice(4, -1));
+  }
+  if (s.startsWith("all(") && s.endsWith(")")) {
+    return splitTopLevelArgs(s.slice(4, -1)).every(evalCfgPredicate);
+  }
+  if (s.startsWith("any(") && s.endsWith(")")) {
+    return splitTopLevelArgs(s.slice(4, -1)).some(evalCfgPredicate);
+  }
+  // key = "value" form
+  const eq = s.match(/^([a-z_][a-z0-9_]*)\s*=\s*("[^"]*")\s*$/i);
+  if (eq) {
+    const key = eq[1]!;
+    const val = eq[2]!;
+    return CFG_DEFAULT_TRUE.has(`${key} = ${val}`);
+  }
+  // Bare ident form (test, unix, …) — all false under our defaults.
+  return false;
+}
+
+function splitTopLevelArgs(args: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let inString = false;
+  for (let i = 0; i < args.length; i++) {
+    const ch = args[i];
+    if (inString) { if (ch === "\\") { i++; continue; } if (ch === '"') inString = false; continue; }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    else if (ch === "," && depth === 0) {
+      out.push(args.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  const tail = args.slice(start).trim();
+  if (tail.length > 0) out.push(tail);
+  return out;
+}
+
+/**
+ * Strip `#[cfg(...)]`-gated items whose predicate evaluates false under
+ * the default cfg context. Items handled:
+ *   - `#[cfg(...)]` followed by `<macro>!(args);`  (declare_id!, etc.)
+ *   - `#[cfg(...)]` followed by `pub const X = ...;`
+ *   - `#[cfg(...)]` followed by `pub fn X(...) { ... }` (balanced brace)
+ *   - `#[cfg(...)]` followed by `pub mod X { ... }` (balanced brace)
+ *   - `#[cfg(...)]` followed by `pub use X::*;` / `use X;` (semi-terminated)
+ *   - `#[cfg(...)]` followed by `pub struct X { ... }` / `pub enum X { ... }`
+ *
+ * For ACTIVE predicates, just strip the cfg attribute itself (the item stays).
+ * For INACTIVE predicates, strip both the attribute AND the item.
+ *
+ * Pass runs BEFORE module-graph flattening so that #[cfg(feature = "...")]
+ * gates around `pub mod tests;` declarations don't pull in test files.
+ *
+ * Limitations: a comment containing the literal text `#[cfg(...)]` would be
+ * matched. We accept this — the input is real Rust, not adversarial.
+ *
+ * Exported for unit testing.
+ */
+export function stripInactiveCfgItems(source: string): string {
+  let out = "";
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    // Look for the next `#[cfg(...)]` attribute.
+    const attrStart = source.indexOf("#[", i);
+    if (attrStart < 0) {
+      out += source.slice(i);
+      break;
+    }
+    out += source.slice(i, attrStart);
+
+    // Find matching `]` at depth 0.
+    let depth = 0;
+    let attrEnd = -1;
+    for (let j = attrStart; j < n; j++) {
+      const ch = source[j];
+      if (ch === "[") depth++;
+      else if (ch === "]") {
+        depth--;
+        if (depth === 0) { attrEnd = j + 1; break; }
+      }
+    }
+    if (attrEnd < 0) {
+      // Unclosed — bail, copy the rest.
+      out += source.slice(attrStart);
+      break;
+    }
+
+    const attrText = source.slice(attrStart, attrEnd);
+    const cfgMatch = attrText.match(/^#\[\s*cfg\s*\(([\s\S]*)\)\s*\]$/);
+    if (!cfgMatch) {
+      // Not a cfg attribute — keep verbatim, advance past it.
+      out += attrText;
+      i = attrEnd;
+      continue;
+    }
+
+    const predicate = cfgMatch[1]!;
+    // pure cfg(test) gates: strip the gated item entirely. Inline `pub mod X
+    // { ... }` blocks under `#[cfg(test)]` (Raydium CLMM's
+    // `tick_array_bitmap_extension_test` pattern) leak test-only imports
+    // (proptest, quickcheck, rand, arrayref) into the emitted lib.rs
+    // because the existing stripCfgTestModuleDecls only handles decl-form
+    // (`mod X;`). Block-form is handled here.
+    const isPureTestGate = /\btest\b/.test(predicate) && !/\bfeature\b/.test(predicate);
+    const active = isPureTestGate ? false : evalCfgPredicate(predicate);
+
+    // Find item bounds — skip whitespace + leading newline after the attribute.
+    let j = attrEnd;
+    while (j < n && /\s/.test(source[j] ?? "")) j++;
+    const itemStart = j;
+    const itemEnd = findItemEnd(source, itemStart);
+    if (itemEnd < 0) {
+      // Couldn't find item bounds — keep attribute + bail this iteration.
+      out += attrText;
+      i = attrEnd;
+      continue;
+    }
+
+    if (active) {
+      // Strip just the attribute. Item stays, with leading whitespace.
+      out += source.slice(attrEnd, itemEnd);
+    } else {
+      // Strip attribute + item entirely. Drop a single trailing newline so
+      // we don't leave a blank gap.
+      let k = itemEnd;
+      if (source[k] === "\n") k++;
+      i = k;
+      continue;
+    }
+    i = itemEnd;
+  }
+  return out;
+}
+
+/**
+ * Expand inline `pubkey!("Base58String")` macro calls into the constant
+ * byte-array form `Pubkey::new_from_array([..32..])`.
+ *
+ * `pubkey!()` is provided by anchor-lang's prelude (and solana-program) but
+ * not by pinocchio. Anchor source uses it inline:
+ *
+ *   pub const ID: Pubkey = pubkey!("GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ");
+ *
+ * Without expansion the emitted pinocchio file references a macro that
+ * doesn't resolve (E0433 "cannot find macro `pubkey`"). The expanded form
+ * is also accepted by solana-program (Native target), so we always expand
+ * regardless of target — simpler than tracking target-conditional rewrites.
+ *
+ * Skip: malformed inputs (non-base58, wrong length). Pre-existing source
+ * is unchanged on parse failure; cargo will surface the issue.
+ *
+ * Exported for unit testing.
+ */
+export function expandPubkeyMacro(source: string): string {
+  // tolerant of whitespace inside the macro call. Capture the inner literal
+  // so we can decode + re-emit. Match `pubkey!(...)` only — not `Pubkey::`
+  // or other identifier collisions.
+  return source.replace(
+    /\bpubkey!\s*\(\s*"([1-9A-HJ-NP-Za-km-z]+)"\s*\)/g,
+    (whole, base58: string) => {
+      const bytes = decodeBase58(base58);
+      if (!bytes || bytes.length !== 32) return whole; // leave it for cargo to flag
+      return `Pubkey::new_from_array([${bytes.join(", ")}])`;
+    },
+  );
+}
+
+function decodeBase58(s: string): number[] | null {
+  // Inline base58 decode to avoid importing bs58 from a parser module;
+  // 32-byte pubkeys decode to ~44 base58 chars, well under any quadratic
+  // concern. Standard Bitcoin alphabet.
+  const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const map: Record<string, number> = {};
+  for (let i = 0; i < ALPHABET.length; i++) map[ALPHABET[i]!] = i;
+
+  let zeros = 0;
+  while (zeros < s.length && s[zeros] === "1") zeros++;
+
+  const b256: number[] = [];
+  for (let i = zeros; i < s.length; i++) {
+    const c = s[i];
+    if (c === undefined || !(c in map)) return null;
+    let carry = map[c]!;
+    for (let j = 0; j < b256.length; j++) {
+      carry += b256[j]! * 58;
+      b256[j] = carry & 0xff;
+      carry >>>= 8;
+    }
+    while (carry > 0) {
+      b256.push(carry & 0xff);
+      carry >>>= 8;
+    }
+  }
+  const out: number[] = new Array(zeros).fill(0);
+  for (let i = b256.length - 1; i >= 0; i--) out.push(b256[i]!);
+  return out;
+}
+
+function findItemEnd(source: string, start: number): number {
+  // Walk forward from `start` looking for either:
+  //   1. A balanced `{...}` block whose `{` is at depth 0 → return position
+  //      after closing `}` (and any trailing `;`).
+  //   2. A `;` at depth 0 (no preceding `{`) → return position after `;`.
+  // Strings/comments tracked to avoid false delimiter hits.
+  let i = start;
+  const n = source.length;
+  let depth = 0;
+  let inString = false;
+  let inLine = false;
+  let inBlock = false;
+  let firstBraceSeen = false;
+  while (i < n) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (inLine) { if (ch === "\n") inLine = false; i++; continue; }
+    if (inBlock) { if (ch === "*" && next === "/") { inBlock = false; i += 2; continue; } i++; continue; }
+    if (inString) { if (ch === "\\") { i += 2; continue; } if (ch === '"') inString = false; i++; continue; }
+    if (ch === "/" && next === "/") { inLine = true; i += 2; continue; }
+    if (ch === "/" && next === "*") { inBlock = true; i += 2; continue; }
+    if (ch === '"') { inString = true; i++; continue; }
+    if (ch === "{") { depth++; firstBraceSeen = true; i++; continue; }
+    if (ch === "}") {
+      depth--;
+      i++;
+      if (depth === 0 && firstBraceSeen) {
+        // Optional trailing `;` (e.g. `struct X { ... };` is uncommon but legal).
+        let k = i;
+        while (k < n && /\s/.test(source[k] ?? "")) k++;
+        if (source[k] === ";") return k + 1;
+        return i;
+      }
+      continue;
+    }
+    if (ch === ";" && depth === 0 && !firstBraceSeen) return i + 1;
+    i++;
+  }
+  return -1;
+}
+
 /** External module declarations like `mod X;` or `pub mod X;`. */
 function extractExternalModuleDecls(source: string): ExternalModuleDecl[] {
   // Strip cfg(test)-gated declarations first so the resolver never tries to
@@ -649,6 +924,21 @@ function buildFlattenedSource(
   // statements back into one `mint_to(CpiContext::new(...), amount)?;`.
   source = consolidateMultiStatementCpi(source);
 
+  // Strip cfg-feature-gated items whose predicate is inactive under the
+  // default (mainnet, no test features) context. Real-world programs gate
+  // both branches of declare_id! / pub const ID via cfg(feature = "devnet")
+  // and cfg(not(feature = "devnet")); without this pass both branches
+  // emit and cargo fails with E0428 "name defined multiple times."
+  source = stripInactiveCfgItems(source);
+
+  // Expand inline `pubkey!("Base58String")` macro calls into the constant
+  // byte-array form `Pubkey::new_from_array([..32..])`. The macro doesn't
+  // exist in pinocchio/native target framework — it's an Anchor/Solana
+  // helper. Real-world programs (Raydium CLMM `pub mod admin { pub const
+  // ID = pubkey!("...") }`) hit this. The expanded form compiles in any
+  // target framework that exposes a Pubkey type.
+  source = expandPubkeyMacro(source);
+
   return { source, includedFiles, missingModules };
 }
 
@@ -1038,9 +1328,16 @@ export function buildProjectSourceGraph(entryPath: string, files: ProjectFile[])
   // Single file — apply CPI consolidation + err! rewrite. The err! rewrite
   // also runs inside buildFlattenedSource for multi-file projects; this
   // path is for single-file Anchor programs (coral-multisig pattern) where
-  // err! still needs to be neutralized before the AST walk.
+  // err! still needs to be neutralized before the AST walk. cfg-strip +
+  // pubkey!() expansion run last so we never strip a feature-gated decl_id!
+  // BEFORE the err! rewrite would have touched it (no overlap today, but
+  // safe ordering).
   return {
-    source: rewriteErrMacroToExplicit(consolidateMultiStatementCpi(entryFile.content)),
+    source: expandPubkeyMacro(
+      stripInactiveCfgItems(
+        rewriteErrMacroToExplicit(consolidateMultiStatementCpi(entryFile.content)),
+      ),
+    ),
     includedFiles: [normalizedEntry],
     missingModules: [],
   };
