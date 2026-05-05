@@ -457,8 +457,12 @@ function synthesizeSeeds(
         reason: `seed \`${trimmed}\` is state-derived (reads field \`${stateFieldMatch[2]}\` of account \`${stateFieldMatch[1]}\` after a prior step). Auto-scenario can't synthesize a stable seed for this — the field's value depends on runtime execution. Author the seed manually via "Edit as JSON" with an explicit \`bytes:0x…\` of the expected post-init value, or use the CLI \`anvil-sol differential\` for direct control.`,
       };
     }
-    // <arg>.as_ref() — the arg pubkey provided in the same step.
-    const argRefMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.(as_ref\(\)|to_le_bytes\(\))$/);
+    // <arg>.<chain>: single-segment receiver followed by one or two of
+    // {as_ref(), to_le_bytes()}. anchor-escrow-2025's
+    // `id.to_le_bytes().as_ref()` is the chained form (C8); the simpler
+    // `beneficiary.as_ref()` form is also caught here. State-derived
+    // shapes (`<acc>.<field>.<chain>`) are matched ABOVE this branch.
+    const argRefMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.(as_ref\(\)|to_le_bytes\(\)|to_le_bytes\(\)\.as_ref\(\))$/);
     if (argRefMatch?.[1]) {
       return {
         ok: false,

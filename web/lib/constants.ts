@@ -294,7 +294,8 @@ export interface SanityWarning {
     | "all_steps_reverted"
     | "zero_mutation"
     | "no_compare_targets"
-    | "partial_compare_scope";
+    | "partial_compare_scope"
+    | "discriminator_mismatch";
   message: string;
 }
 

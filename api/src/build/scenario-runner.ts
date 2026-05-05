@@ -654,7 +654,8 @@ export interface SanityWarning {
     | "all_steps_reverted"
     | "zero_mutation"
     | "no_compare_targets"
-    | "partial_compare_scope";
+    | "partial_compare_scope"
+    | "discriminator_mismatch";
   message: string;
 }
 
@@ -681,6 +682,12 @@ export function compareScenarioRuns(
   durationMs: number,
 ): ScenarioVerdict {
   const accountDiffs: AccountDiff[] = [];
+  const discriminatorMismatchAccounts: Array<{
+    name: string;
+    accountDef: string;
+    anchorHasDisc: boolean;
+    anvilHasDisc: boolean;
+  }> = [];
 
   for (const accName of scenario.compare.accounts) {
     const a = anchorRun.snapshots.get(accName);
@@ -720,6 +727,24 @@ export function compareScenarioRuns(
       && v.data.length >= 8
       && bufStartsWith(a.data, expectedDisc)
       && bufStartsWith(v.data, expectedDisc);
+    // C7 — discriminator-strip silent fallback warning. When the IR DOES
+    // know an AccountDef for this account (so we expected a disc-prefixed
+    // shape) but the on-chain bytes don't actually start with the
+    // expected sha256("account:<Name>")[..8], we silently fall through
+    // to raw-byte compare. That degrades the verdict UI (no per-field
+    // diffs, no source-link). Surfaces a class of bugs — future parser
+    // refactor renames an AccountDef, emitter strips a disc, on-chain
+    // wire format drifts — that would otherwise stay hidden. Track the
+    // observation here and emit a warning after the loop so
+    // sanityWarnings has all the data once we know the verdict.
+    if (expectedDisc !== null && !shouldStrip && (a.data.length > 0 || v.data.length > 0)) {
+      discriminatorMismatchAccounts.push({
+        name: accName,
+        accountDef: accDef!.name,
+        anchorHasDisc: a.data.length >= 8 && bufStartsWith(a.data, expectedDisc),
+        anvilHasDisc: v.data.length >= 8 && bufStartsWith(v.data, expectedDisc),
+      });
+    }
     const aData = shouldStrip ? a.data.subarray(8) : a.data;
     const vData = shouldStrip ? v.data.subarray(8) : v.data;
 
@@ -826,6 +851,77 @@ export function compareScenarioRuns(
     sanityWarnings.push({
       kind: "zero_mutation",
       message: "Compared accounts are all empty / non-existent in both targets. Either the scenario didn't initialise them or initialisation reverted. Check step outcomes.",
+    });
+  }
+
+  // S4 — "all steps succeeded but zero mutation observed." Different
+  // shape from `zero_mutation` (which fires when the run aborted) and
+  // from `partial_compare_scope` (which fires on UNCOMPARED accounts).
+  // Here every step ran clean AND the compared accounts ARE present on
+  // both sides AND their data is non-empty AND identical between
+  // Anchor and Anvil — but no MUTATION was observed (data identical
+  // before+after the run, suggesting the user's scenario only exercised
+  // read paths). Surfaces a class of "the test trivially passed because
+  // nothing wrote anything" — the user should add steps that actually
+  // mutate state, or use assertions to prove the read returned what was
+  // expected.
+  //
+  // Detection heuristic: every account in compare.accounts deserialised
+  // to all-zero / default fields on BOTH sides. We can't easily compare
+  // pre vs post snapshots without restructuring the runner, so we
+  // approximate via "all fields are zero/empty in the post-state."
+  // False-positive on legitimate "init to zero" scenarios is acceptable
+  // — the warning's text invites the user to confirm with assertions.
+  if (allStepsSucceeded
+    && scenario.compare.accounts.length > 0
+    && scenario.assertions.length === 0) {
+    const allCompareSnapshotsZeroValued = scenario.compare.accounts.every((accName) => {
+      const a = anchorRun.snapshots.get(accName);
+      const v = anvilRun.snapshots.get(accName);
+      if (!a || !v) return false;
+      // Strip disc + check post-disc bytes are all zero.
+      const accDef = findAccountDefForName(accName, ir);
+      const expectedDisc = accDef ? anchorAccountDiscriminator(accDef.name) : null;
+      const stripA = expectedDisc !== null && a.data.length >= 8 && bufStartsWith(a.data, expectedDisc);
+      const stripV = expectedDisc !== null && v.data.length >= 8 && bufStartsWith(v.data, expectedDisc);
+      const aPostDisc = stripA ? a.data.subarray(8) : a.data;
+      const vPostDisc = stripV ? v.data.subarray(8) : v.data;
+      const allZero = (b: Buffer) => b.length === 0 || b.every((x) => x === 0);
+      return allZero(aPostDisc) && allZero(vPostDisc);
+    });
+    if (allCompareSnapshotsZeroValued) {
+      sanityWarnings.push({
+        kind: "zero_mutation",
+        message:
+          "All steps succeeded but every compared account's post-state bytes are zero. " +
+          "Byte-equal trivially holds without proving program correctness. " +
+          "Add steps that actually mutate state, or assertions[] entries " +
+          "that pin specific field values, to make the verdict meaningful.",
+      });
+    }
+  }
+
+  // C7 — discriminator-strip silent fallback. When the IR identifies an
+  // AccountDef for an account but the on-chain bytes don't carry the
+  // expected sha256("account:<Name>")[..8] disc, the per-field diff card
+  // silently falls back to raw bytes (no source-link, no field
+  // breakdown). Surface this as a warning so future bugs (parser
+  // refactor renames an AccountDef, emitter strips the disc, on-chain
+  // wire format drifts) don't stay hidden behind a degraded UI.
+  for (const m of discriminatorMismatchAccounts) {
+    const which = m.anchorHasDisc && !m.anvilHasDisc
+      ? "Anvil emit's"
+      : !m.anchorHasDisc && m.anvilHasDisc
+        ? "Anchor reference's"
+        : "BOTH targets'";
+    sanityWarnings.push({
+      kind: "discriminator_mismatch",
+      message:
+        `Account '${m.name}' (IR type '${m.accountDef}') has ${which} bytes ` +
+        `not starting with the expected Anchor account discriminator. The ` +
+        `per-field diff card is degraded to raw bytes for this account. ` +
+        `Check whether the emitter is dropping the discriminator prefix or ` +
+        `the on-chain account isn't actually an Anchor state struct.`,
     });
   }
 

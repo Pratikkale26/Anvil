@@ -85,6 +85,16 @@ export async function buildBothSos(opts: DifferentialBuildOptions): Promise<Buil
   // (info.owner == &crate::ID) fails on the second run with a confusing
   // ConstraintOwner error — looks like a real divergence but is purely
   // a cache-staleness artifact.
+  //
+  // NOTE — design asymmetry with the test harness (api/tests/differential-
+  // harness.ts). That file folds an ANVIL_CODE_VERSION (hash of
+  // src/parser + src/emitter + src/ir/schema) into its cache dir, because
+  // it parses + emits at run time from `fixture.anchorSource`. Parser
+  // changes there silently invalidate cached .so otherwise. THIS file
+  // does NOT need that — it receives already-emitted files in
+  // `opts.anvilEmittedFiles`, so a parser/emitter change shows up here
+  // as different file content → different hash automatically. The
+  // asymmetry is intentional. Don't add ANVIL_CODE_VERSION here.
   const idTag = opts.programIdBase58 ?? "";
   const anchorHash = hashOf(opts.anchorSource + (opts.anchorExtraDeps ?? "") + (opts.anchorLangFeatures?.join(",") ?? "") + idTag);
   const anvilHash = hashOf(JSON.stringify(opts.anvilEmittedFiles) + JSON.stringify(opts.anvilScaffoldFiles) + idTag);
