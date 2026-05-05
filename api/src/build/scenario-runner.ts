@@ -563,6 +563,14 @@ export function compareScenarioRuns(
   for (const accName of scenario.compare.accounts) {
     const a = anchorRun.snapshots.get(accName);
     const v = anvilRun.snapshots.get(accName);
+    // Both absent post-scenario is byte-equal: e.g. `close = receiver`
+    // legitimately produces an empty/non-existent account on both sides.
+    // Only flag "missing" when ONE side has the account and the other
+    // doesn't -- that's a real divergence in lifecycle behavior.
+    if (!a && !v) {
+      accountDiffs.push({ name: accName, status: "equal" });
+      continue;
+    }
     if (!a || !v) {
       accountDiffs.push({
         name: accName,
@@ -654,8 +662,15 @@ export function compareScenarioRuns(
       message: "No accounts to compare, no assertions, no event/msg/return-data comparison. Verdict is trivially 'equal' but proves nothing.",
     });
   }
-  // zero-mutation: snapshots all empty means accounts never got created
-  if (scenario.compare.accounts.length > 0
+  // zero-mutation: snapshots all empty means accounts never got created.
+  // Suppress when every step succeeded -- if the program ran clean and
+  // accounts still end up empty, that's an intentional close/burn shape
+  // (e.g. `close = receiver`), not a missed initialisation.
+  const allStepsSucceeded =
+    anchorRun.steps.every((s) => s.ok || s.expectedFail) &&
+    anvilRun.steps.every((s) => s.ok || s.expectedFail);
+  if (!allStepsSucceeded
+    && scenario.compare.accounts.length > 0
     && scenario.compare.accounts.every((n) => {
       const a = anchorRun.snapshots.get(n);
       const v = anvilRun.snapshots.get(n);
