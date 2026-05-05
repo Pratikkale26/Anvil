@@ -184,11 +184,25 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   }
 
   // ── (3) Collect every PDA across all instructions, derive seeds ──
+  //
+  // Pre-pass: gather every PDA NAME first so synthesizeSeeds can verify
+  // that `<other>.key().as_ref()` references resolve to a real PDA in the
+  // scenario, not silently route to a non-existent one. Without this,
+  // AMM-style `init_pool` with seeds = [b"pool", token_mint_a.key().as_ref(),
+  // token_mint_b.key().as_ref()] emitted `$pda:token_mint_a.pubkey` even
+  // though token_mint_a is a Mint account (not a PDA), and the resulting
+  // scenario failed lint with a confusing post-hoc error.
+  const allPdaNames = new Set<string>();
+  for (const ix of ir.instructions) {
+    for (const acc of ix.accounts) {
+      if (acc.isPda) allPdaNames.add(acc.name);
+    }
+  }
   const pdaSpecs = new Map<string, { seeds: string[]; sourceIx: string }>();
   for (const ix of ir.instructions) {
     for (const acc of ix.accounts) {
       if (acc.isPda && !pdaSpecs.has(acc.name)) {
-        const seedResult = synthesizeSeeds(acc.pdaSeeds, signerNames, acc.name);
+        const seedResult = synthesizeSeeds(acc.pdaSeeds, signerNames, allPdaNames, acc.name);
         if (!seedResult.ok) {
           blockers.push({
             message: `PDA \`${acc.name}\` (in instruction \`${ix.name}\`) has seeds Anvil can't auto-derive: ${seedResult.reason}. Provide the seeds via "Edit as JSON".`,
@@ -360,6 +374,7 @@ interface SeedSynthesis {
 function synthesizeSeeds(
   rawSeeds: string[],
   signerNames: Set<string>,
+  pdaNames: Set<string>,
   accountName: string,
 ): SeedSynthesis {
   if (rawSeeds.length === 0) {
@@ -399,7 +414,7 @@ function synthesizeSeeds(
       out.push(`b"${literal || trimmed.toLowerCase()}"`);
       continue;
     }
-    // <signer>.key().as_ref() / <signer>.key.as_ref()
+    // <signer>.key().as_ref() / <signer>.key.as_ref() / <pda>.key().as_ref()
     const signerKeyMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.key(?:\(\))?\.as_ref\(\)$/);
     if (signerKeyMatch?.[1]) {
       const name = signerKeyMatch[1];
@@ -407,13 +422,21 @@ function synthesizeSeeds(
         out.push(`$signer:${name}.pubkey`);
         continue;
       }
-      // Could be a PDA reference -- but PDAs aren't fully resolved at this
-      // point. Best-effort: if name matches an account in the scenario's
-      // pdaSpecs, use $pda; otherwise block.
-      // For V1, treat unknown identifier as $signer if it could be one.
-      // Otherwise block.
-      out.push(`$pda:${name}.pubkey`);
-      continue;
+      if (pdaNames.has(name)) {
+        out.push(`$pda:${name}.pubkey`);
+        continue;
+      }
+      // Cross-account seed reference to something that is neither a signer
+      // nor a PDA in this program -- typically an externally-supplied
+      // account like an SPL Mint that the caller must create + initialise
+      // before calling this instruction. Auto-scenario can't synthesise
+      // those (no init-mint preamble step generation today), so block with
+      // a clear pointer to the manual JSON-edit path.
+      return {
+        ok: false,
+        seeds: [],
+        reason: `seed references account \`${name}\` which isn't a signer or PDA in this program (likely an externally-supplied account such as an SPL Mint). Auto-scenario can't pre-create those; author the scenario manually via "Edit as JSON".`,
+      };
     }
     // <X>.bump → embedded bump byte. Defer to runtime PDA derivation.
     if (/\.bump$/.test(trimmed)) {
