@@ -9,6 +9,7 @@ import { lintRoute } from "./routes/lint.js";
 import { buildRoute } from "./routes/build.js";
 import { differentialRoute } from "./routes/differential.js";
 import { differentialAvailable } from "./build/differential-build.js";
+import { liteSvmContract } from "./build/scenario-runner.js";
 import { metricsDashboardHandler } from "./routes/metrics-dashboard.js";
 import { AnvilError, ErrorCode } from "./errors.js";
 import { metrics } from "./metrics.js";
@@ -293,6 +294,11 @@ const healthHandler: express.RequestHandler = async (_req, res) => {
      *  request time so a toolchain install after startup is reflected
      *  without restart. */
     differentialAvailable: differentialAvailable(),
+    /** LiteSVM contract probe — surfaces which clock-pinning surfaces are
+     *  available on this litesvm version. A clock-pinning scenario fails
+     *  loudly when the corresponding surface is false; surfacing here lets
+     *  operators see the regression without re-running a full scenario. */
+    liteSvmContract: liteSvmContract(),
     aiCache,
     endpoints: [
       "POST /parse  — Anchor source|file|project → Solana IR",

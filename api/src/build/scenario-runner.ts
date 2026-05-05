@@ -369,6 +369,79 @@ export interface ScenarioRunResult {
   allLogs: string[];
 }
 
+// ─── LiteSVM contract probe (A5) ────────────────────────────────────────────
+//
+// Before A5, scenario-runner duck-typed `svm.warpToTimestamp` per-call with
+// a silent no-op fallback. If LiteSVM ever renamed the method (or dropped
+// it on a major bump), every clock-pinning scenario would silently see the
+// SVM's default time on both runs — same on both sides, so byte-equal STILL
+// passes for time-independent programs, but any vesting / staking scenario
+// would get wrong-timestamp behavior with no error surfaced.
+//
+// Probe at module load: spin up a throwaway LiteSVM, confirm the method
+// exists, confirm calling it doesn't throw on a benign value. If the probe
+// fails, runScenarioOnSo refuses to run any scenario that pins the clock
+// and surfaces a loud error so the operator knows to pin a LiteSVM version
+// that exposes the contract.
+
+interface LiteSvmContract {
+  hasWarpToTimestamp: boolean;
+  hasWarpToSlot: boolean;
+  hasAddProgram: boolean;
+  hasAirdrop: boolean;
+  hasGetAccount: boolean;
+  hasSendTransaction: boolean;
+  hasLatestBlockhash: boolean;
+}
+
+const LITESVM_CONTRACT: LiteSvmContract = (() => {
+  const probe = new LiteSVM();
+  // Required surfaces. Their absence makes scenario execution impossible
+  // regardless of whether clock pinning is requested.
+  const hasAddProgram = typeof (probe as unknown as { addProgram?: unknown }).addProgram === "function";
+  const hasAirdrop = typeof (probe as unknown as { airdrop?: unknown }).airdrop === "function";
+  const hasGetAccount = typeof (probe as unknown as { getAccount?: unknown }).getAccount === "function";
+  const hasSendTransaction = typeof (probe as unknown as { sendTransaction?: unknown }).sendTransaction === "function";
+  const hasLatestBlockhash = typeof (probe as unknown as { latestBlockhash?: unknown }).latestBlockhash === "function";
+  if (!hasAddProgram || !hasAirdrop || !hasGetAccount || !hasSendTransaction || !hasLatestBlockhash) {
+    throw new Error(
+      `[litesvm-contract] LiteSVM core contract broken — addProgram/airdrop/getAccount/sendTransaction/latestBlockhash must all be present. Pin a compatible litesvm version. Detected: addProgram=${hasAddProgram}, airdrop=${hasAirdrop}, getAccount=${hasGetAccount}, sendTransaction=${hasSendTransaction}, latestBlockhash=${hasLatestBlockhash}`,
+    );
+  }
+  // Optional clock-pinning surfaces. We probe both the "method exists" and
+  // "method accepts the bigint we'll pass" steps so a silent rename to
+  // e.g. `warpTo({timestamp})` is caught here, not at request time.
+  let hasWarpToTimestamp = false;
+  try {
+    const fn = (probe as unknown as { warpToTimestamp?: (ts: bigint) => unknown }).warpToTimestamp;
+    if (typeof fn === "function") {
+      fn.call(probe, BigInt(1_700_000_000));
+      hasWarpToTimestamp = true;
+    }
+  } catch (err) {
+    console.warn(`[litesvm-contract] warpToTimestamp present but rejected probe call: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  let hasWarpToSlot = false;
+  try {
+    const fn = (probe as unknown as { warpToSlot?: (slot: bigint) => unknown }).warpToSlot;
+    if (typeof fn === "function") {
+      fn.call(probe, BigInt(1));
+      hasWarpToSlot = true;
+    }
+  } catch (err) {
+    console.warn(`[litesvm-contract] warpToSlot present but rejected probe call: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  console.log(
+    `[litesvm-contract] core=ok warpToTimestamp=${hasWarpToTimestamp} warpToSlot=${hasWarpToSlot}`,
+  );
+  return { hasWarpToTimestamp, hasWarpToSlot, hasAddProgram, hasAirdrop, hasGetAccount, hasSendTransaction, hasLatestBlockhash };
+})();
+
+/** Probe result, exported for /health surfacing + tests. */
+export function liteSvmContract(): LiteSvmContract {
+  return LITESVM_CONTRACT;
+}
+
 /**
  * Run one scenario against a freshly-spun-up LiteSVM with the given .so
  * deployed at programId. Generates fresh keypair material via the resolved
@@ -383,11 +456,28 @@ export function runScenarioOnSo(
 ): ScenarioRunResult {
   const svm = new LiteSVM();
 
-  // Pin clock if scenario requested it -- otherwise both runs see the
-  // LiteSVM default (different across runs, would silently diverge).
+  // Pin clock if scenario requested it. The LiteSVM contract probe ran at
+  // module load; if a scenario asks for clock pinning AND LiteSVM doesn't
+  // expose the surface, refuse loudly rather than silently using the SVM
+  // default — clock-dependent programs would diverge from the live chain
+  // in a way that's invisible in the byte-equal verdict.
   if (scenario.clock.timestamp !== undefined) {
-    const fn = (svm as { warpToTimestamp?: (t: bigint) => unknown }).warpToTimestamp;
-    if (typeof fn === "function") fn.call(svm, BigInt(scenario.clock.timestamp));
+    if (!LITESVM_CONTRACT.hasWarpToTimestamp) {
+      throw new Error(
+        `scenario.clock.timestamp = ${scenario.clock.timestamp} but LiteSVM doesn't expose warpToTimestamp on this version. Either upgrade litesvm OR drop clock pinning from the scenario.`,
+      );
+    }
+    (svm as unknown as { warpToTimestamp: (ts: bigint) => unknown })
+      .warpToTimestamp(BigInt(scenario.clock.timestamp));
+  }
+  if (scenario.clock.slot !== undefined) {
+    if (!LITESVM_CONTRACT.hasWarpToSlot) {
+      throw new Error(
+        `scenario.clock.slot = ${scenario.clock.slot} but LiteSVM doesn't expose warpToSlot on this version. Either upgrade litesvm OR drop slot pinning from the scenario.`,
+      );
+    }
+    (svm as unknown as { warpToSlot: (s: bigint) => unknown })
+      .warpToSlot(BigInt(scenario.clock.slot));
   }
 
   // Deploy the program at scenario's programId (or IR's declared id).
@@ -606,9 +696,28 @@ export function compareScenarioRuns(
       });
       continue;
     }
-    // Strip 8-byte Anchor discriminator before comparing.
-    const aData = a.data.length >= 8 ? a.data.subarray(8) : a.data;
-    const vData = v.data.length >= 8 ? v.data.subarray(8) : v.data;
+    // Anchor stamps an 8-byte sha256("account:<Name>")[..8] discriminator at
+    // offset 0 of every #[account]-derived state struct's data. The compare
+    // wants to ignore those bytes since they're a constant prefix and a
+    // "first diff at byte 0" message would be misleading. But blindly
+    // stripping 8 bytes from EVERY account is wrong for raw-lamport vault
+    // PDAs, system-owned signer accounts, and SPL token accounts (Token's
+    // own header has no Anchor discriminator). Decide per-account: strip
+    // ONLY when (a) the IR maps this account name to a state struct, AND
+    // (b) the data is at least 8 bytes long, AND (c) BOTH sides start with
+    // bytes matching the expected sha256("account:<Name>")[..8]. Otherwise
+    // the bytes aren't an Anchor discriminator and stripping would just
+    // shift the diff offset.
+    const accDef = findAccountDefForName(accName, ir);
+    const expectedDisc = accDef ? anchorAccountDiscriminator(accDef.name) : null;
+    const shouldStrip =
+      expectedDisc !== null
+      && a.data.length >= 8
+      && v.data.length >= 8
+      && bufStartsWith(a.data, expectedDisc)
+      && bufStartsWith(v.data, expectedDisc);
+    const aData = shouldStrip ? a.data.subarray(8) : a.data;
+    const vData = shouldStrip ? v.data.subarray(8) : v.data;
 
     const dataEq = aData.equals(vData);
     const lamportsEq = !scenario.compare.lamports || a.lamports === v.lamports;
@@ -631,7 +740,9 @@ export function compareScenarioRuns(
     // Per-field diff via IR AccountDef when we can find a matching type.
     // The AccountRef in the IR's instructions tells us the AccountDef name;
     // we look up the AccountDef's fields and try to deserialize each side.
-    const fieldDiffs = tryFieldDiff(accName, aData, vData, ir);
+    // Only attempt when we stripped a real Anchor discriminator -- without
+    // that, the bytes don't start at the borsh-encoded fields.
+    const fieldDiffs = shouldStrip ? tryFieldDiff(accName, aData, vData, ir) : undefined;
 
     accountDiffs.push({
       name: accName,
@@ -652,12 +763,16 @@ export function compareScenarioRuns(
     if (!snap || !anchorSnap) {
       return { assertion: a, passed: false, message: `account '${a.account}' not in compare set` };
     }
-    const dataAnvil = snap.data.length >= 8 ? snap.data.subarray(8) : snap.data;
-    const dataAnchor = anchorSnap.data.length >= 8 ? anchorSnap.data.subarray(8) : anchorSnap.data;
     const accDef = findAccountDefForName(a.account, ir);
     if (!accDef) {
       return { assertion: a, passed: false, message: `no IR AccountDef found for account '${a.account}' -- can't deserialize` };
     }
+    // Same per-account discriminator gate as the data compare above.
+    const expectedDisc = anchorAccountDiscriminator(accDef.name);
+    const stripA = anchorSnap.data.length >= 8 && bufStartsWith(anchorSnap.data, expectedDisc);
+    const stripV = snap.data.length >= 8 && bufStartsWith(snap.data, expectedDisc);
+    const dataAnvil = stripV ? snap.data.subarray(8) : snap.data;
+    const dataAnchor = stripA ? anchorSnap.data.subarray(8) : anchorSnap.data;
     const anvilFields = tryDeserializeFields(dataAnvil, accDef);
     const anchorFields = tryDeserializeFields(dataAnchor, accDef);
     const actualAnvil = anvilFields?.[a.field];
@@ -766,6 +881,26 @@ function arrayEqual(a: string[], b: string[]): boolean {
 
 function jsonEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Compute the 8-byte Anchor account discriminator: first 8 bytes of
+ * sha256("account:<StructName>"). Anchor stamps this at offset 0 of every
+ * #[account]-derived state struct's data so it can identify the type
+ * before deserializing fields. The Anvil emit reproduces the same
+ * convention via `borsh` derives + a discriminator constant.
+ */
+function anchorAccountDiscriminator(structName: string): Buffer {
+  return createHash("sha256").update(`account:${structName}`).digest().subarray(0, 8);
+}
+
+/** True when `buf` starts with every byte in `prefix`. */
+function bufStartsWith(buf: Buffer, prefix: Buffer): boolean {
+  if (buf.length < prefix.length) return false;
+  for (let i = 0; i < prefix.length; i++) {
+    if (buf[i] !== prefix[i]) return false;
+  }
+  return true;
 }
 
 function findAccountDefForName(accName: string, ir: SolanaIR): { name: string; fields: { name: string; type: string }[] } | null {
