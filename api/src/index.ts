@@ -8,6 +8,7 @@ import { aiRoute } from "./routes/ai.js";
 import { lintRoute } from "./routes/lint.js";
 import { buildRoute } from "./routes/build.js";
 import { differentialRoute } from "./routes/differential.js";
+import { evidenceRoute } from "./routes/evidence.js";
 import { differentialAvailable } from "./build/differential-build.js";
 import { liteSvmContract } from "./build/scenario-runner.js";
 import { metricsDashboardHandler } from "./routes/metrics-dashboard.js";
@@ -468,6 +469,7 @@ app.use("/emit", emitRoute);
 app.use("/lint", lintRoute);
 app.use("/build", buildRoute);
 app.use("/build/differential", differentialRoute);
+app.use("/evidence", evidenceRoute);
 app.use("/demo", demoRoute);
 app.use("/ai", aiRoute);
 
