@@ -777,8 +777,8 @@ export function compareScenarioRuns(
     const stripV = snap.data.length >= 8 && bufStartsWith(snap.data, expectedDisc);
     const dataAnvil = stripV ? snap.data.subarray(8) : snap.data;
     const dataAnchor = stripA ? anchorSnap.data.subarray(8) : anchorSnap.data;
-    const anvilFields = tryDeserializeFields(dataAnvil, accDef);
-    const anchorFields = tryDeserializeFields(dataAnchor, accDef);
+    const anvilFields = tryDeserializeFields(dataAnvil, accDef, ir);
+    const anchorFields = tryDeserializeFields(dataAnchor, accDef, ir);
     const actualAnvil = anvilFields?.[a.field];
     const actualAnchor = anchorFields?.[a.field];
     const passed = jsonEqual(actualAnvil, a.expectedValue) && jsonEqual(actualAnchor, a.expectedValue);
@@ -981,8 +981,8 @@ function tryFieldDiff(
 ): AccountDiff["fieldDiffs"] {
   const accDef = findAccountDefForName(accName, ir);
   if (!accDef) return undefined;
-  const aFields = tryDeserializeFields(aData, accDef);
-  const vFields = tryDeserializeFields(vData, accDef);
+  const aFields = tryDeserializeFields(aData, accDef, ir);
+  const vFields = tryDeserializeFields(vData, accDef, ir);
   if (!aFields || !vFields) return undefined;
   return accDef.fields.map((f) => ({
     field: f.name,
@@ -1026,54 +1026,165 @@ function findSourceLinkForField(
 
 /**
  * Best-effort deserialise an account's data into a {field: value} map using
- * the IR's AccountDef field types. Returns null when the data shape doesn't
- * match (variable-length fields out of range, etc.). Same primitive subset
- * as serializeArgs.
+ * the IR's AccountDef field types.
+ *
+ * Recursive type dispatch via readByType supports:
+ *   - integers (u8..u128 / i8..i128) — fixed width little-endian; >32-bit
+ *     returns as decimal string to dodge JSON-number precision loss
+ *   - bool — 1 byte
+ *   - Pubkey — 32 bytes, returns base58
+ *   - String — borsh `(u32 len, bytes)`, returns string
+ *   - Vec<T> — borsh `(u32 len, len * T)`, recurses on T
+ *   - Option<T> — 1-byte tag (0/1) + T when Some, returns null when None
+ *   - [T; N] — fixed N-element array, recurses on T
+ *   - <CustomTypeName> — looks up ir.types catalog, recurses on its fields
+ *     (struct: object) or returns variant name (enum)
+ *
+ * Returns null when the data shape doesn't match (variable-length fields
+ * out of range, unknown type, etc.). Caller falls back to hex preview.
+ *
+ * Symmetric with the borsh / Anchor account layout — every shape Anvil's
+ * IR carries can be deserialised here, so the verdict UI's per-field
+ * diff card works for richer state programs (escrow Order, Multisig
+ * with Vec<Pubkey>, etc.).
  */
 function tryDeserializeFields(
   data: Buffer,
   accDef: { fields: { name: string; type: string }[] },
+  ir?: SolanaIR,
 ): Record<string, unknown> | null {
-  let offset = 0;
+  const cursor = { offset: 0 };
   const result: Record<string, unknown> = {};
   try {
     for (const f of accDef.fields) {
-      const intMatch = f.type.match(/^([ui])(8|16|32|64|128)$/);
-      if (intMatch) {
-        const signed = intMatch[1] === "i";
-        const bits = parseInt(intMatch[2]!, 10);
-        const byteLen = bits / 8;
-        if (offset + byteLen > data.length) return null;
-        let v = 0n;
-        for (let i = 0; i < byteLen; i++) v |= BigInt(data[offset + i]!) << BigInt(8 * i);
-        if (signed && v >= 1n << BigInt(bits - 1)) v -= 1n << BigInt(bits);
-        result[f.name] = bits <= 32 ? Number(v) : v.toString();
-        offset += byteLen;
-      } else if (f.type === "bool") {
-        if (offset + 1 > data.length) return null;
-        result[f.name] = data[offset] === 1;
-        offset += 1;
-      } else if (f.type === "Pubkey") {
-        if (offset + 32 > data.length) return null;
-        result[f.name] = new PublicKey(data.subarray(offset, offset + 32)).toBase58();
-        offset += 32;
-      } else if (f.type === "String" || f.type === "Vec<u8>") {
-        if (offset + 4 > data.length) return null;
-        const len = data.readUInt32LE(offset);
-        offset += 4;
-        if (offset + len > data.length) return null;
-        const slice = data.subarray(offset, offset + len);
-        result[f.name] = f.type === "String"
-          ? new TextDecoder().decode(slice)
-          : Array.from(slice);
-        offset += len;
-      } else {
-        // Unknown type -- bail; caller falls back to hex diff.
-        return null;
-      }
+      const v = readByType(f.type, data, cursor, ir);
+      if (v === SHAPE_BAIL) return null;
+      result[f.name] = v;
     }
     return result;
   } catch {
     return null;
   }
+}
+
+/** Sentinel for "field shape didn't match buffer." Caller propagates as null. */
+const SHAPE_BAIL = Symbol("shape-bail");
+
+/**
+ * Borsh-style typed reader. Mutates `cursor.offset` in place.
+ *
+ * Returns the deserialised JS value for the given type, or `SHAPE_BAIL`
+ * when the type can't be parsed (unknown shape, OOB read, etc.). Any
+ * SHAPE_BAIL bubbles up as null from tryDeserializeFields.
+ */
+function readByType(
+  type: string,
+  data: Buffer,
+  cursor: { offset: number },
+  ir?: SolanaIR,
+): unknown {
+  // Primitive integers.
+  const intMatch = type.match(/^([ui])(8|16|32|64|128)$/);
+  if (intMatch) {
+    const signed = intMatch[1] === "i";
+    const bits = parseInt(intMatch[2]!, 10);
+    const byteLen = bits / 8;
+    if (cursor.offset + byteLen > data.length) return SHAPE_BAIL;
+    let v = 0n;
+    for (let i = 0; i < byteLen; i++) v |= BigInt(data[cursor.offset + i]!) << BigInt(8 * i);
+    if (signed && v >= 1n << BigInt(bits - 1)) v -= 1n << BigInt(bits);
+    cursor.offset += byteLen;
+    return bits <= 32 ? Number(v) : v.toString();
+  }
+  if (type === "bool") {
+    if (cursor.offset + 1 > data.length) return SHAPE_BAIL;
+    const b = data[cursor.offset];
+    cursor.offset += 1;
+    return b === 1;
+  }
+  if (type === "Pubkey") {
+    if (cursor.offset + 32 > data.length) return SHAPE_BAIL;
+    const v = new PublicKey(data.subarray(cursor.offset, cursor.offset + 32)).toBase58();
+    cursor.offset += 32;
+    return v;
+  }
+  if (type === "String") {
+    if (cursor.offset + 4 > data.length) return SHAPE_BAIL;
+    const len = data.readUInt32LE(cursor.offset);
+    cursor.offset += 4;
+    if (cursor.offset + len > data.length) return SHAPE_BAIL;
+    const slice = data.subarray(cursor.offset, cursor.offset + len);
+    cursor.offset += len;
+    return new TextDecoder().decode(slice);
+  }
+  // Vec<T>.
+  const vecMatch = type.match(/^Vec<(.+)>$/);
+  if (vecMatch?.[1]) {
+    if (cursor.offset + 4 > data.length) return SHAPE_BAIL;
+    const len = data.readUInt32LE(cursor.offset);
+    cursor.offset += 4;
+    // Vec<u8> shortcut: return as number array (matches the legacy shape).
+    if (vecMatch[1] === "u8") {
+      if (cursor.offset + len > data.length) return SHAPE_BAIL;
+      const slice = data.subarray(cursor.offset, cursor.offset + len);
+      cursor.offset += len;
+      return Array.from(slice);
+    }
+    const out: unknown[] = [];
+    for (let i = 0; i < len; i++) {
+      const v = readByType(vecMatch[1], data, cursor, ir);
+      if (v === SHAPE_BAIL) return SHAPE_BAIL;
+      out.push(v);
+    }
+    return out;
+  }
+  // Option<T> — borsh: 1-byte tag (0=None, 1=Some) + T when Some.
+  const optMatch = type.match(/^Option<(.+)>$/);
+  if (optMatch?.[1]) {
+    if (cursor.offset + 1 > data.length) return SHAPE_BAIL;
+    const tag = data[cursor.offset];
+    cursor.offset += 1;
+    if (tag === 0) return null;
+    if (tag !== 1) return SHAPE_BAIL;
+    return readByType(optMatch[1], data, cursor, ir);
+  }
+  // Fixed array `[T; N]`.
+  const arrMatch = type.match(/^\[(.+);\s*(\d+)\]$/);
+  if (arrMatch?.[1] && arrMatch[2]) {
+    const inner = arrMatch[1];
+    const n = parseInt(arrMatch[2], 10);
+    const out: unknown[] = [];
+    for (let i = 0; i < n; i++) {
+      const v = readByType(inner, data, cursor, ir);
+      if (v === SHAPE_BAIL) return SHAPE_BAIL;
+      out.push(v);
+    }
+    return out;
+  }
+  // Custom type — look up ir.types.
+  if (ir) {
+    const td = ir.types.find((t) => t.name === type);
+    if (td) {
+      if (td.kind === "enum") {
+        // Anchor enums serialize as a 1-byte variant tag (extension to
+        // payloaded variants is borsh-defined; current IR doesn't carry
+        // payload shapes for enum variants, so we only handle pure-tag).
+        if (cursor.offset + 1 > data.length) return SHAPE_BAIL;
+        const tag = data[cursor.offset]!;
+        cursor.offset += 1;
+        return td.variants?.[tag] ?? null;
+      }
+      // Struct: recurse on each field.
+      const fields = td.fields ?? [];
+      const obj: Record<string, unknown> = {};
+      for (const f of fields) {
+        const v = readByType(f.type, data, cursor, ir);
+        if (v === SHAPE_BAIL) return SHAPE_BAIL;
+        obj[f.name] = v;
+      }
+      return obj;
+    }
+  }
+  // Unknown type — bail.
+  return SHAPE_BAIL;
 }
