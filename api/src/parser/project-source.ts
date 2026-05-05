@@ -708,7 +708,60 @@ function rewriteErrMacroToExplicit(source: string): string {
     out += `Err(${inner}.into())`;
     i = parenEnd + 1;
   }
-  return out;
+  // Same paren-balanced rewrite for Anchor's `error!(EXPR)` macro. Distinct
+  // from err!: error! evaluates to an Error VALUE (used inside .ok_or, with
+  // ?, etc.), not a Result. So it rewrites to `EXPR.into()` (just the
+  // wrapped value), not `Err(EXPR.into())`. coral-multisig's
+  // `.ok_or(error!(ErrorCode::InvalidOwner))?;` is the canonical case.
+  let stage2 = "";
+  let j = 0;
+  while (j < out.length) {
+    const idx = out.indexOf("error!", j);
+    if (idx === -1) {
+      stage2 += out.slice(j);
+      break;
+    }
+    const prev = idx > 0 ? out[idx - 1]! : "";
+    if (prev !== "" && /[A-Za-z0-9_]/.test(prev)) {
+      stage2 += out.slice(j, idx + 6);
+      j = idx + 6;
+      continue;
+    }
+    let parenStart = idx + 6;
+    while (parenStart < out.length && /\s/.test(out[parenStart]!)) parenStart++;
+    if (out[parenStart] !== "(") {
+      stage2 += out.slice(j, idx + 6);
+      j = idx + 6;
+      continue;
+    }
+    let depth = 0;
+    let parenEnd = -1;
+    for (let k = parenStart; k < out.length; k++) {
+      const ch = out[k]!;
+      if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth === 0) { parenEnd = k; break; }
+      }
+    }
+    if (parenEnd === -1) {
+      stage2 += out.slice(j);
+      break;
+    }
+    stage2 += out.slice(j, idx);
+    const inner = out.slice(parenStart + 1, parenEnd).trim();
+    // `ProgramError::from(EXPR)` over `EXPR.into()`: at call sites like
+    // `.ok_or(error!(X))?` the Option<_>::ok_or signature is generic
+    // over E, so `.into()` produces an E0283 ambiguity (rustc can't
+    // pick the From-impl until ?-propagation resolves the function's
+    // return type). The fully-qualified `ProgramError::from(...)`
+    // pins the type at the call site. ProgramError is in scope on
+    // every handler that returns ProgramResult, so the form is safe
+    // verbatim across all our targets.
+    stage2 += `ProgramError::from(${inner})`;
+    j = parenEnd + 1;
+  }
+  return stage2;
 }
 
 // CPI structs + their common call-site function names. For pure
