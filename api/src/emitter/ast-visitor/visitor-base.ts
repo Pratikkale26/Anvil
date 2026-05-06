@@ -71,6 +71,7 @@ import {
   methodCall,
   comment,
   ref,
+  array,
 } from "./nodes.js";
 import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
 import {
@@ -278,6 +279,49 @@ export class AstVisitorBase {
       // `let LV = AC;` — single assign.
       return [letStmt(localVar, ident(accountName))];
     }
+    return this.ensureStateReadStructural(accountName, localVar, stmt.mutable);
+  }
+
+  /**
+   * Shared structural `ensure-state-read` helper.
+   *
+   * Replaces the runtime `walker.ensureStateRead()` side-effect with a
+   * structural emit returning RustStmt[]. Used by both visitStateRead
+   * AND visitStateFieldAssign — the latter previously captured
+   * ensureStateRead's pushed lines as raw_line stmts (66 raw_lines
+   * across the corpus). Now both paths produce the same structural
+   * output.
+   *
+   * Output shapes (mirrors the handler-side ensureStateRead):
+   *   - Skipped (program accounts, unknown types, already-bound) → []
+   *   - Aliasing (`accountName === localVar`) → `let X_account = X;` line
+   *     followed by the state-init/read/init-if-needed line.
+   *   - has_one constraints → 3 trailing lines per constraint via if_stmt.
+   *
+   * Side-effects on walker state (`stateVars`, `accountInfoVars`) are
+   * applied so subsequent visit calls (state_field_assign reading the
+   * same account) see consistent state.
+   *
+   * @param accountName Snake-cased canonical account name.
+   * @param localVar Snake-cased local variable to bind. Pass the same
+   *                 as accountName when callers don't have a different
+   *                 alias (state_field_assign case).
+   * @param mutableHint If true, emit `let mut X = …` regardless of the
+   *                    walker's mutableStateAccounts set membership.
+   *                    state_field_assign always passes true (it's
+   *                    about to mutate).
+   */
+  protected ensureStateReadStructural(
+    accountName: string,
+    localVar: string,
+    mutableHint: boolean,
+  ): RustStmt[] {
+    const w = this.walker;
+    if (w.stateVars.has(accountName)) return [];
+
+    const accountRef = w.instr.accounts.find((acc) => snakeCase(acc.name) === accountName);
+    const typeName = accountRef?.accountType ?? "Unknown";
+    if (!w.isGeneratedStateType(typeName)) return [];
 
     const out: RustStmt[] = [];
     const needsAlias = accountName === localVar;
@@ -287,23 +331,16 @@ export class AstVisitorBase {
     }
 
     const isInitIfNeeded = accountRef?.constraints.some((c) => c.kind === "init_if_needed") ?? false;
-    const mutable = stmt.mutable || w.mutableStateAccounts.has(accountName);
-    const typeName = stmt.accountType || "Unknown";
+    const mutable = mutableHint || w.mutableStateAccounts.has(accountName);
 
     if (isInitIfNeeded) {
-      // Multi-line if/else block — defer to handler's emitStateReadOrInit.
       out.push(rawLine(w.emitter.emitStateReadOrInit(accountInfoVar, typeName, localVar, mutable)));
     } else if (accountRef?.isInit) {
-      // Multi-line struct-literal — defer to handler's emitStateInit
-      // (default values per field type).
       out.push(rawLine(w.emitter.emitStateInit(typeName, localVar)));
     } else {
-      // Read case — single-line shape on both targets:
+      // Read case — single-line on both targets:
       //   Pinocchio: `let mut X = T::from_account_info(account_info)?;`
       //   Native:    `let mut X = T::read(&account_info.data.borrow())?;`
-      // Structurally portable via letStmt + tryPostfix(call(path, [args])).
-      // Keeps target divergence in the path argument; both produce
-      // byte-identical output to the existing emit.
       const isPinocchio = w.emitter.frameworkName === "Pinocchio";
       const callExpr = isPinocchio
         ? call(path([typeName, "from_account_info"]), [ident(accountInfoVar)])
@@ -314,26 +351,22 @@ export class AstVisitorBase {
     }
 
     // has_one constraint guards — structural via if_stmt + return_stmt.
-    // Replaces 3 raw_lines per constraint (`if … {`, `return Err…`, `}`)
-    // with one structural if_stmt that prints to the same shape.
     const hasOneConstraints =
       accountRef?.constraints.filter((c) => c.kind === "has_one" && c.value) ?? [];
     for (const c of hasOneConstraints) {
-      const targetAccount = snakeCase(c.value!);
+      const targetAccount = snakeCase(stripAnchorConstraintError(c.value!));
+      const targetRef = w.instr.accounts.find((acc) => snakeCase(acc.name) === targetAccount);
+      if (!targetRef) continue;
       const targetKey = w.emitter.emitAccountKeyExpr(w.resolveAccountInfoVar(targetAccount));
       const condExpr = rawExpr(`${localVar}.${snakeCase(c.value!)} != ${targetKey}`);
       const errReturn = returnStmt(call(path(["Err"]), [path(["ProgramError", "InvalidAccountData"])]));
       out.push(ifStmt(condExpr, [errReturn]));
     }
 
-    // Side-effects on walker state — KEEP these in sync with the handler so
-    // subsequent statement visits see the same context (subsequent
-    // state_field_assign sees stateVars populated, etc.). The handler does
-    // these mid-emit; we replicate so the visitor can be unit-tested in
-    // isolation while still producing the same downstream-context.
+    // Mirror the handler-side state mutations so subsequent visits see
+    // a consistent walker state.
     w.stateVars.set(accountName, localVar);
     w.accountInfoVars.set(accountName, accountInfoVar);
-
     return out;
   }
 
@@ -359,14 +392,11 @@ export class AstVisitorBase {
     const stateAccountName = w.canonicalAccountName(stmt.account);
     w.mutatedAccounts.add(stateAccountName);
 
-    // ensureStateRead may push lines into walker.lines as a side effect (when
-    // the state hasn't been read yet). Capture them BEFORE running our
-    // visitor so the visitor's output and the handler's output start from
-    // the same baseline of pre-emitted state-read lines.
-    const linesBefore = w.lines.length;
-    w.ensureStateRead(stateAccountName, true);
-    const ensureLines = w.lines.slice(linesBefore);
-    w.lines.length = linesBefore; // pop them; visitor returns them as raw_line stmts
+    const out: RustStmt[] = [];
+    // Structural ensure-state-read — replaces the previous capture-as-raw-
+    // line dance with the same per-target structural emit visitStateRead
+    // uses. Drops the prelude's raw_lines (was 66 across the corpus).
+    out.push(...this.ensureStateReadStructural(stateAccountName, stateAccountName, true));
 
     const stateAccountDef = w.ir.accounts.find(
       (acc) => snakeCase(acc.name) === stateAccountName,
@@ -376,13 +406,6 @@ export class AstVisitorBase {
     );
     const stateVarName = w.resolveStateVar(stateAccountName);
     const fieldName = snakeCase(stmt.field);
-
-    const out: RustStmt[] = [];
-    // ensureStateRead's lines already carry leading 4-space indent;
-    // pass through verbatim (printer's raw_line rule is identity).
-    for (const line of ensureLines) {
-      out.push(rawLine(line));
-    }
 
     // Compound branch — emit the assign as a structural `assign` AST
     // (LHS and RHS structured), so the printer re-adds the 4-space
@@ -661,13 +684,37 @@ export class AstVisitorBase {
   /**
    * Mirror `handleEmit` from body-emitter/handlers/control.ts.
    *
-   * `emitter.emitEmit` returns a multi-line block (struct-literal +
-   * borsh::to_vec + sol_log_data) — Pinocchio + Native shapes differ
-   * slightly. Same scope justification as visitRequire: structural
-   * port deferred to a milestone with block-level AST support.
+   * Two shapes per emitter.emitEmit:
+   *   - Empty-fields (just discriminator): single-line
+   *     `<log_path>::sol_log_data(&[&Event::DISCRIMINATOR]);`
+   *   - With fields: multi-line block (let __evt + borsh::to_vec +
+   *     extend_from_slice + sol_log_data).
+   *
+   * Empty-fields case is structurally portable today via call(path,
+   * [ref(array([ref(path)]))]) — both targets use the same shape,
+   * only the log_data path differs (pinocchio::log vs
+   * solana_program::log). Drops 1 raw_line per empty-fields
+   * occurrence.
+   *
+   * With-fields case stays runHandlerCapture — multi-line block needs
+   * struct_literal multi-line printer policy + the closure expression
+   * for `.map_err(|_| ProgramError::InvalidAccountData)?` (no closure
+   * AST node yet). Deferred.
    */
   visitEmit(stmt: EmitStmt): RustStmt[] {
-    return this.runHandlerCapture(handleEmit, stmt);
+    const w = this.walker;
+    if (stmt.fields.trim() !== "") {
+      return this.runHandlerCapture(handleEmit, stmt);
+    }
+    w.ctx.transformedCount++;
+    const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+    const logPath = isPinocchio
+      ? ["pinocchio", "log", "sol_log_data"]
+      : ["solana_program", "log", "sol_log_data"];
+    return [exprStmt(call(
+      path(logPath),
+      [ref(array([ref(path([stmt.event, "DISCRIMINATOR"]))]))],
+    ))];
   }
 
   /**
