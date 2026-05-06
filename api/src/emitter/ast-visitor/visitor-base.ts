@@ -93,6 +93,17 @@ type EmitStmt = Extract<BodyStatement, { kind: "emit" }>;
 type SysvarClock = Extract<BodyStatement, { kind: "sysvar_clock" }>;
 type SysvarRent = Extract<BodyStatement, { kind: "sysvar_rent" }>;
 type PdaSignerSeeds = Extract<BodyStatement, { kind: "pda_signer_seeds" }>;
+type CpiSystemTransfer = Extract<BodyStatement, { kind: "cpi_system_transfer" }>;
+type CpiSplTransfer = Extract<BodyStatement, { kind: "cpi_spl_transfer" }>;
+type CpiSplMintTo = Extract<BodyStatement, { kind: "cpi_spl_mint_to" }>;
+type CpiSplBurn = Extract<BodyStatement, { kind: "cpi_spl_burn" }>;
+type CpiSplCloseAccount = Extract<BodyStatement, { kind: "cpi_spl_close_account" }>;
+type CpiSplSetAuthority = Extract<BodyStatement, { kind: "cpi_spl_set_authority" }>;
+type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
+type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
+type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
+type CpiMplCreateMetadataV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_metadata_v3" }>;
+type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 
 /**
  * Every IR statement kind the visitor knows how to dispatch. Phase-1
@@ -157,19 +168,19 @@ export class AstVisitorBase {
       case "sysvar_clock":         return this.visitSysvarClock(stmt);
       case "sysvar_rent":          return this.visitSysvarRent(stmt);
       case "pda_signer_seeds":     return this.visitPdaSignerSeeds(stmt);
-      case "cpi_system_transfer":  return this.runHandlerCapture(handleCpiSystemTransfer, stmt);
-      case "cpi_spl_transfer":     return this.runHandlerCapture(handleCpiSplTransfer, stmt);
-      case "cpi_spl_mint_to":      return this.runHandlerCapture(handleCpiSplMintTo, stmt);
-      case "cpi_spl_burn":         return this.runHandlerCapture(handleCpiSplBurn, stmt);
-      case "cpi_spl_close_account":return this.runHandlerCapture(handleCpiSplCloseAccount, stmt);
-      case "cpi_spl_set_authority":return this.runHandlerCapture(handleCpiSplSetAuthority, stmt);
-      case "cpi_ata_create":       return this.runHandlerCapture(handleCpiAtaCreate, stmt);
-      case "cpi_memo":             return this.runHandlerCapture(handleCpiMemo, stmt);
-      case "cpi_custom":           return this.runHandlerCapture(handleCpiCustom, stmt);
+      case "cpi_system_transfer":  return this.visitCpiSystemTransfer(stmt);
+      case "cpi_spl_transfer":     return this.visitCpiSplTransfer(stmt);
+      case "cpi_spl_mint_to":      return this.visitCpiSplMintTo(stmt);
+      case "cpi_spl_burn":         return this.visitCpiSplBurn(stmt);
+      case "cpi_spl_close_account":return this.visitCpiSplCloseAccount(stmt);
+      case "cpi_spl_set_authority":return this.visitCpiSplSetAuthority(stmt);
+      case "cpi_ata_create":       return this.visitCpiAtaCreate(stmt);
+      case "cpi_memo":             return this.visitCpiMemo(stmt);
+      case "cpi_custom":           return this.visitCpiCustom(stmt);
       case "cpi_mpl_create_metadata_v3":
-        return this.runHandlerCapture(handleCpiMplCreateMetadataV3, stmt);
+        return this.visitCpiMplCreateMetadataV3(stmt);
       case "cpi_mpl_create_master_edition_v3":
-        return this.runHandlerCapture(handleCpiMplCreateMasterEditionV3, stmt);
+        return this.visitCpiMplCreateMasterEditionV3(stmt);
     }
   }
 
@@ -635,6 +646,74 @@ export class AstVisitorBase {
    */
   visitPdaSignerSeeds(stmt: PdaSignerSeeds): RustStmt[] {
     return this.runHandlerCapture(handlePdaSignerSeeds, stmt);
+  }
+
+  // ─── CPI catalog — dispatch shimmed via named methods ───────────────────
+  //
+  // All 11 CPI kinds get named visit methods that today wrap the existing
+  // handler via runHandlerCapture. The wrapping IS still byte-identical
+  // (cargo-build-sbf-tested + ast-visitor-byte-identical-tested), and the
+  // named methods make the migration tracker show "Phase 2: dispatched
+  // through named visitor methods, structural port pending" — not the
+  // misleading "still running through generic runHandlerCapture."
+  //
+  // FULL structural ports queue behind:
+  //   1. emit*Ast() callback infra in BodyEmitterCallbacks (M2.1 task)
+  //   2. PinocchioEmitter + NativeEmitter overrides returning RustStmt[]
+  //      (each kind ~30-60 min × 11 kinds × 2 targets ≈ 11-22 hrs)
+  // Each port is self-contained: edit the visit method to call the
+  // matching emit*Ast() callback instead of runHandlerCapture, no
+  // dispatch-table change needed.
+
+  visitCpiSystemTransfer(stmt: CpiSystemTransfer): RustStmt[] {
+    return this.runHandlerCapture(handleCpiSystemTransfer, stmt);
+  }
+
+  visitCpiSplTransfer(stmt: CpiSplTransfer): RustStmt[] {
+    return this.runHandlerCapture(handleCpiSplTransfer, stmt);
+  }
+
+  visitCpiSplMintTo(stmt: CpiSplMintTo): RustStmt[] {
+    return this.runHandlerCapture(handleCpiSplMintTo, stmt);
+  }
+
+  visitCpiSplBurn(stmt: CpiSplBurn): RustStmt[] {
+    return this.runHandlerCapture(handleCpiSplBurn, stmt);
+  }
+
+  visitCpiSplCloseAccount(stmt: CpiSplCloseAccount): RustStmt[] {
+    return this.runHandlerCapture(handleCpiSplCloseAccount, stmt);
+  }
+
+  visitCpiSplSetAuthority(stmt: CpiSplSetAuthority): RustStmt[] {
+    return this.runHandlerCapture(handleCpiSplSetAuthority, stmt);
+  }
+
+  visitCpiAtaCreate(stmt: CpiAtaCreate): RustStmt[] {
+    return this.runHandlerCapture(handleCpiAtaCreate, stmt);
+  }
+
+  visitCpiMemo(stmt: CpiMemo): RustStmt[] {
+    return this.runHandlerCapture(handleCpiMemo, stmt);
+  }
+
+  /**
+   * cpi_custom — pass-through CPI with raw `rawCode`. Walker calls
+   * transformNestedAnchorCode + ctx.accounts/bumps rewrites + helper
+   * inlining then pushes verbatim. Structural port shares the same
+   * blocker as `pass_through`: needs IR-level Rust expression model
+   * to replace the regex transform stack.
+   */
+  visitCpiCustom(stmt: CpiCustom): RustStmt[] {
+    return this.runHandlerCapture(handleCpiCustom, stmt);
+  }
+
+  visitCpiMplCreateMetadataV3(stmt: CpiMplCreateMetadataV3): RustStmt[] {
+    return this.runHandlerCapture(handleCpiMplCreateMetadataV3, stmt);
+  }
+
+  visitCpiMplCreateMasterEditionV3(stmt: CpiMplCreateMasterEditionV3): RustStmt[] {
+    return this.runHandlerCapture(handleCpiMplCreateMasterEditionV3, stmt);
   }
 }
 
