@@ -1,0 +1,465 @@
+=== helpers.rs ===
+//! Helper functions for ReallocGrowDemo
+
+use super::*;
+use crate::state::*;
+
+pub fn create_program_account<'a>(
+    account: &AccountInfo<'a>,
+    payer: &AccountInfo<'a>,
+    space: u64,
+    program_id: &Pubkey,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let rent = solana_program::sysvar::rent::Rent::get()?;
+    let lamports = rent.minimum_balance(space as usize);
+    let create_ix = system_instruction::create_account(
+        payer.key,
+        account.key,
+        lamports,
+        space,
+        program_id,
+    );
+    invoke_signed(
+        &create_ix,
+        &[payer.clone(), account.clone()],
+        signer_seeds,
+    )?;
+    Ok(())
+}
+
+=== instructions/append_four.rs ===
+use super::*;
+
+pub fn append_four(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let state = &accounts[0];
+    let owner = &accounts[1];
+    let _system_program = &accounts[2];
+
+    if !owner.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !state.is_writable || !owner.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if state.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let b0: u8 = arg_bytes[0];
+    if remaining.len() < 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let b1: u8 = arg_bytes[0];
+    if remaining.len() < 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let b2: u8 = arg_bytes[0];
+    if remaining.len() < 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let b3: u8 = arg_bytes[0];
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 4
+    {
+        let __state_for_realloc = GrowState::from_account_info(state)?;
+        let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 4) as usize;
+        let __rent = solana_program::sysvar::rent::Rent::get()?;
+        let __new_lamports = __rent.minimum_balance(__new_size);
+        let __delta = __new_lamports.saturating_sub(state.lamports());
+        if __delta > 0 {
+            let __ix = solana_program::system_instruction::transfer(
+                owner.key,
+                state.key,
+                __delta,
+            );
+            solana_program::program::invoke(
+                &__ix,
+                &[owner.clone(), state.clone()],
+            )?;
+        }
+        state.realloc(__new_size, false)?;
+    }
+    let (expected_key, _bump_state) = Pubkey::find_program_address(&[b"realloc-grow", owner.key.as_ref()], program_id);
+    if expected_key != *state.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let mut s = GrowState::read(&state.data.borrow())?;
+    s.log.push(b0);
+    s.log.push(b1);
+    s.log.push(b2);
+    s.log.push(b3);
+    GrowState::write(&mut state.data.borrow_mut(), &s)?;
+    Ok(())
+
+}
+
+=== instructions/append_one.rs ===
+use super::*;
+
+pub fn append_one(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let state = &accounts[0];
+    let owner = &accounts[1];
+    let _system_program = &accounts[2];
+
+    if !owner.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !state.is_writable || !owner.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if state.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let byte: u8 = arg_bytes[0];
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 1
+    {
+        let __state_for_realloc = GrowState::from_account_info(state)?;
+        let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 1) as usize;
+        let __rent = solana_program::sysvar::rent::Rent::get()?;
+        let __new_lamports = __rent.minimum_balance(__new_size);
+        let __delta = __new_lamports.saturating_sub(state.lamports());
+        if __delta > 0 {
+            let __ix = solana_program::system_instruction::transfer(
+                owner.key,
+                state.key,
+                __delta,
+            );
+            solana_program::program::invoke(
+                &__ix,
+                &[owner.clone(), state.clone()],
+            )?;
+        }
+        state.realloc(__new_size, false)?;
+    }
+    let (expected_key, _bump_state) = Pubkey::find_program_address(&[b"realloc-grow", owner.key.as_ref()], program_id);
+    if expected_key != *state.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let mut s = GrowState::read(&state.data.borrow())?;
+    s.log.push(byte);
+    GrowState::write(&mut state.data.borrow_mut(), &s)?;
+    Ok(())
+
+}
+
+=== instructions/append_two.rs ===
+use super::*;
+
+pub fn append_two(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let state = &accounts[0];
+    let owner = &accounts[1];
+    let _system_program = &accounts[2];
+
+    if !owner.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !state.is_writable || !owner.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if state.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let b0: u8 = arg_bytes[0];
+    if remaining.len() < 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let b1: u8 = arg_bytes[0];
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 2
+    {
+        let __state_for_realloc = GrowState::from_account_info(state)?;
+        let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 2) as usize;
+        let __rent = solana_program::sysvar::rent::Rent::get()?;
+        let __new_lamports = __rent.minimum_balance(__new_size);
+        let __delta = __new_lamports.saturating_sub(state.lamports());
+        if __delta > 0 {
+            let __ix = solana_program::system_instruction::transfer(
+                owner.key,
+                state.key,
+                __delta,
+            );
+            solana_program::program::invoke(
+                &__ix,
+                &[owner.clone(), state.clone()],
+            )?;
+        }
+        state.realloc(__new_size, false)?;
+    }
+    let (expected_key, _bump_state) = Pubkey::find_program_address(&[b"realloc-grow", owner.key.as_ref()], program_id);
+    if expected_key != *state.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let mut s = GrowState::read(&state.data.borrow())?;
+    s.log.push(b0);
+    s.log.push(b1);
+    GrowState::write(&mut state.data.borrow_mut(), &s)?;
+    Ok(())
+
+}
+
+=== instructions/init.rs ===
+use super::*;
+
+pub fn init(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let state = &accounts[0];
+    let owner = &accounts[1];
+    let _system_program = &accounts[2];
+
+    if !owner.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !state.is_writable || !owner.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (expected_key, bump_state) = Pubkey::find_program_address(&[b"realloc-grow", owner.key.as_ref()], program_id);
+    if expected_key != *state.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let init_state_seeds: &[&[u8]] = &[
+            b"realloc-grow",
+            owner.key.as_ref(),
+            &[bump_state],
+        ];
+    let init_state_signer_seeds = &[&init_state_seeds[..]];
+    create_program_account(state, owner, (8 + 1 + 4) as u64, program_id, init_state_signer_seeds)?;
+    let mut s = GrowState {
+        bump: 0,
+        log: Vec::new(),
+    };
+    s.bump = bump_state;
+    s.log = vec![];
+    GrowState::write(&mut state.data.borrow_mut(), &s)?;
+    Ok(())
+
+}
+
+=== instructions/mod.rs ===
+//! Instruction processors for ReallocGrowDemo
+
+use crate::*;
+use crate::state::*;
+use crate::helpers::*;
+
+pub mod init;
+pub use init::init;
+pub mod append_one;
+pub use append_one::append_one;
+pub mod append_two;
+pub use append_two::append_two;
+pub mod append_four;
+pub use append_four::append_four;
+
+
+=== lib.rs ===
+//! ReallocGrowDemo — generated by Anvil v0.3.0
+//! Source framework: Anchor → Target: Native
+//!
+//! This code was automatically generated. Sections marked with
+//! "⚠️ Anvil: Review" should be verified before deployment.
+#![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
+
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{
+    account_info::AccountInfo,
+    entrypoint,
+    entrypoint::ProgramResult,
+    program::invoke_signed,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    system_instruction,
+    sysvar::Sysvar,
+};
+
+mod state;
+
+mod instructions;
+
+mod helpers;
+
+use instructions::*;
+
+entrypoint!(process_instruction);
+
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    if instruction_data.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (discriminator, data) = instruction_data.split_at(8);
+    router(program_id, accounts, discriminator, data)
+}
+
+fn router(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    discriminator: &[u8],
+    data: &[u8],
+) -> ProgramResult {
+    match discriminator {
+        [220, 59, 207, 236, 108, 250, 47, 100] => init(program_id, accounts, data),
+        [25, 58, 85, 138, 131, 97, 96, 106] => append_one(program_id, accounts, data),
+        [164, 83, 80, 152, 223, 101, 161, 209] => append_two(program_id, accounts, data),
+        [40, 81, 107, 114, 24, 221, 5, 222] => append_four(program_id, accounts, data),
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+
+=== state.rs ===
+//! State account definitions for ReallocGrowDemo
+
+//! Generated by Anvil v0.3.0 — Target: Native
+
+
+use super::*;
+
+#[repr(C)]
+pub struct GrowState {
+    pub bump: u8,
+    pub log: Vec<u8>,
+}
+
+impl GrowState {
+    pub const DISCRIMINATOR: [u8; 8] = [123, 93, 213, 73, 84, 152, 37, 85];
+    pub const INIT_SPACE: usize = 5;
+    pub const LEN: usize = 5;
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
+
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut offset = 8usize;
+        let bump: u8 = data[offset];
+        offset += 1;
+        let mut log_bytes: &[u8] = &data[offset..];
+        let __log_before = log_bytes.len();
+        let log: Vec<u8> = BorshDeserialize::deserialize(&mut log_bytes)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += __log_before - log_bytes.len();
+        Ok(Self { bump, log })
+    }
+
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        data[offset] = value.bump as u8;
+        offset += 1;
+        let __log_serialized = ::borsh::to_vec(&value.log)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        data[offset..offset + __log_serialized.len()].copy_from_slice(&__log_serialized);
+        offset += __log_serialized.len();
+        Ok(())
+    }
+
+    /// Borsh-style convenience wrapper: borrow the account's data buffer
+    /// and write the value into it. Mirrors Pinocchio's save() so the same
+    /// emitter call site (`Type::save(account, &value)`) works on both.
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = account.try_borrow_mut_data()?;
+        Self::write(&mut data, value)
+    }
+
+    /// Mirror of Pinocchio's from_account_info — the body emitter calls
+    /// `<Type>::from_account_info(account)?` cross-target, so Native
+    /// must expose the same signature even though it could equivalently
+    /// borrow + read inline. Without this, programs whose handlers don't
+    /// directly call `::read(...)` (most non-trivial Anchor sources)
+    /// fail Native cargo build with E0599 'no associated item named
+    /// from_account_info'.
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = account.try_borrow_data()?;
+        Self::read(&data)
+    }
+}

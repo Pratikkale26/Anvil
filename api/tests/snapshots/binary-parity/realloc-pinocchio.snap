@@ -1,0 +1,303 @@
+=== helpers.rs ===
+//! Helper functions for ReallocDemo
+
+use super::*;
+use crate::state::*;
+
+pub fn bump_seed(
+    program_id: &Pubkey,
+    seeds: &[&[u8]],
+    expected: &Pubkey,
+) -> Result<u8, ProgramError> {
+    for bump in (0..=255u8).rev() {
+        let mut seeds_with_bump: [&[u8]; 16] = [&[]; 16];
+        let len = seeds.len().min(15);
+        seeds_with_bump[..len].copy_from_slice(&seeds[..len]);
+        let bump_slice = &[bump];
+        seeds_with_bump[len] = bump_slice;
+        if let Ok(derived) = pinocchio::pubkey::create_program_address(&seeds_with_bump[..len + 1], program_id) {
+            if &derived == expected {
+                return Ok(bump);
+            }
+        }
+    }
+    Err(ProgramError::InvalidSeeds)
+}
+
+pub fn create_program_account(
+    account: &AccountInfo,
+    payer: &AccountInfo,
+    space: usize,
+    program_id: &Pubkey,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    if signer_seeds.len() > 1 {
+        return Err(ProgramError::InvalidSeeds);
+    }
+
+    let signer_storage = signer_seeds.first().map(|seed_group| {
+        let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+        for (index, seed) in seed_group.iter().enumerate() {
+            if index >= seeds.len() {
+                return Err(ProgramError::InvalidSeeds);
+            }
+            seeds[index] = Seed::from(*seed);
+        }
+        Ok((seeds, seed_group.len()))
+    }).transpose()?;
+
+    let signer_slice = if let Some((ref seeds, len)) = signer_storage {
+        let signer = Signer::from(&seeds[..len]);
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[signer])
+    } else {
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[])
+    };
+
+    signer_slice
+}
+
+=== instructions/append.rs ===
+use super::*;
+
+pub fn append(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let state = &accounts[0];
+    let owner = &accounts[1];
+    let _system_program = &accounts[2];
+
+    if !owner.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !state.is_writable() || !owner.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if state.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let byte: u8 = arg_bytes[0];
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 1
+    {
+        let __state_for_realloc = LogState::from_account_info(state)?;
+        let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 1) as usize;
+        let __rent = pinocchio::sysvars::rent::Rent::get()?;
+        let __new_lamports = __rent.minimum_balance(__new_size);
+        let __delta = __new_lamports.saturating_sub(state.lamports());
+        if __delta > 0 {
+            pinocchio_system::instructions::Transfer {
+                from: owner,
+                to: state,
+                lamports: __delta,
+            }.invoke()?;
+        }
+        state.realloc(__new_size, false)?;
+    }
+    let _bump_state = bump_seed(program_id, &[b"realloc-st", owner.key().as_ref()], state.key())?;
+    let mut s = LogState::from_account_info(state)?;
+    s.log.push(byte);
+    LogState::save(state, &s)?;
+    Ok(())
+
+}
+
+=== instructions/init.rs ===
+use super::*;
+
+pub fn init(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let state = &accounts[0];
+    let owner = &accounts[1];
+    let _system_program = &accounts[2];
+
+    if !owner.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !state.is_writable() || !owner.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let bump_state = bump_seed(program_id, &[b"realloc-st", owner.key().as_ref()], state.key())?;
+    let init_state_seeds: &[&[u8]] = &[
+            b"realloc-st",
+            owner.key().as_ref(),
+            &[bump_state],
+        ];
+    let init_state_signer_seeds = &[&init_state_seeds[..]];
+    create_program_account(state, owner, (8 + 1 + 4) as usize, program_id, init_state_signer_seeds)?;
+    let mut s = LogState {
+        bump: 0,
+        log: Vec::new(),
+    };
+    s.bump = bump_state;
+    s.log = vec![];
+    LogState::save(state, &s)?;
+    Ok(())
+
+}
+
+=== instructions/mod.rs ===
+//! Instruction processors for ReallocDemo
+
+use crate::*;
+use crate::state::*;
+use crate::helpers::*;
+
+pub mod init;
+pub use init::init;
+pub mod append;
+pub use append::append;
+
+
+=== lib.rs ===
+//! ReallocDemo — generated by Anvil v0.3.0
+//! Source framework: Anchor → Target: Pinocchio
+//!
+//! This code was automatically generated. Sections marked with
+//! "⚠️ Anvil: Review" should be verified before deployment.
+#![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
+
+use core::convert::TryInto;
+use borsh::{BorshDeserialize, BorshSerialize};
+use pinocchio::{
+    account_info::AccountInfo,
+    entrypoint,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    ProgramResult,
+};
+use pinocchio::instruction::{Seed, Signer};
+use pinocchio_system::create_account_with_minimum_balance_signed;
+use pinocchio::sysvars::rent::Rent;
+use pinocchio::sysvars::Sysvar;
+
+mod state;
+
+mod instructions;
+
+mod helpers;
+
+use instructions::*;
+
+entrypoint!(process_instruction);
+
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    if instruction_data.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (discriminator, data) = instruction_data.split_at(8);
+    router(program_id, accounts, discriminator, data)
+}
+
+fn router(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    discriminator: &[u8],
+    data: &[u8],
+) -> ProgramResult {
+    match discriminator {
+        [220, 59, 207, 236, 108, 250, 47, 100] => init(program_id, accounts, data),
+        [149, 120, 18, 222, 236, 225, 88, 203] => append(program_id, accounts, data),
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+
+=== state.rs ===
+//! State account definitions for ReallocDemo
+
+//! Generated by Anvil v0.3.0 — Target: Pinocchio
+
+
+use super::*;
+
+#[repr(C)]
+pub struct LogState {
+    pub bump: u8,
+    pub log: Vec<u8>,
+}
+
+impl LogState {
+    pub const DISCRIMINATOR: [u8; 8] = [226, 189, 231, 202, 204, 219, 61, 111];
+    pub const INIT_SPACE: usize = 5;
+    pub const LEN: usize = 5;
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
+
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut offset = 8usize;
+        let bump: u8 = data[offset];
+        offset += 1;
+        let mut log_bytes: &[u8] = &data[offset..];
+        let __log_before = log_bytes.len();
+        let log: Vec<u8> = BorshDeserialize::deserialize(&mut log_bytes)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += __log_before - log_bytes.len();
+        Ok(Self { bump, log })
+    }
+
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        data[offset] = value.bump as u8;
+        offset += 1;
+        let __log_serialized = ::borsh::to_vec(&value.log)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        data[offset..offset + __log_serialized.len()].copy_from_slice(&__log_serialized);
+        offset += __log_serialized.len();
+        Ok(())
+    }
+
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = unsafe { account.borrow_data_unchecked() };
+        Self::read(&data)
+    }
+
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        Self::write(&mut data, value)
+    }
+}

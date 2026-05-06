@@ -1,0 +1,318 @@
+=== errors.rs ===
+//! Error definitions for ReturnErr
+
+use super::*;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum DemoError {
+    /// Zero is not allowed
+    ZeroNotAllowed = 6000,
+}
+
+pub use DemoError::*;
+
+impl From<DemoError> for ProgramError {
+    fn from(error: DemoError) -> Self {
+        ProgramError::Custom(error as u32)
+    }
+}
+
+=== helpers.rs ===
+//! Helper functions for ReturnErr
+
+use super::*;
+use crate::state::*;
+use crate::errors::*;
+
+pub fn bump_seed(
+    program_id: &Pubkey,
+    seeds: &[&[u8]],
+    expected: &Pubkey,
+) -> Result<u8, ProgramError> {
+    for bump in (0..=255u8).rev() {
+        let mut seeds_with_bump: [&[u8]; 16] = [&[]; 16];
+        let len = seeds.len().min(15);
+        seeds_with_bump[..len].copy_from_slice(&seeds[..len]);
+        let bump_slice = &[bump];
+        seeds_with_bump[len] = bump_slice;
+        if let Ok(derived) = pinocchio::pubkey::create_program_address(&seeds_with_bump[..len + 1], program_id) {
+            if &derived == expected {
+                return Ok(bump);
+            }
+        }
+    }
+    Err(ProgramError::InvalidSeeds)
+}
+
+pub fn create_program_account(
+    account: &AccountInfo,
+    payer: &AccountInfo,
+    space: usize,
+    program_id: &Pubkey,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    if signer_seeds.len() > 1 {
+        return Err(ProgramError::InvalidSeeds);
+    }
+
+    let signer_storage = signer_seeds.first().map(|seed_group| {
+        let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+        for (index, seed) in seed_group.iter().enumerate() {
+            if index >= seeds.len() {
+                return Err(ProgramError::InvalidSeeds);
+            }
+            seeds[index] = Seed::from(*seed);
+        }
+        Ok((seeds, seed_group.len()))
+    }).transpose()?;
+
+    let signer_slice = if let Some((ref seeds, len)) = signer_storage {
+        let signer = Signer::from(&seeds[..len]);
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[signer])
+    } else {
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[])
+    };
+
+    signer_slice
+}
+
+=== instructions/always_fails.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn always_fails(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let state = &accounts[0];
+    let authority = &accounts[1];
+    let _system_program = &accounts[2];
+
+    if !authority.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !state.is_writable() || !authority.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let bump_state = bump_seed(program_id, &[b"return-err", authority.key().as_ref()], state.key())?;
+    // init_if_needed: only allocate when the account is empty.
+    if state.data_is_empty() {
+        let init_state_seeds: &[&[u8]] = &[
+                b"return-err",
+                authority.key().as_ref(),
+                &[bump_state],
+            ];
+        let init_state_signer_seeds = &[&init_state_seeds[..]];
+        create_program_account(state, authority, (8 + StateAccount::INIT_SPACE) as usize, program_id, init_state_signer_seeds)?;
+    }
+    return Err(DemoError::ZeroNotAllowed.into());
+
+    Ok(())
+}
+
+=== instructions/mod.rs ===
+//! Instruction processors for ReturnErr
+
+use crate::*;
+use crate::state::*;
+use crate::errors::*;
+use crate::helpers::*;
+
+pub mod try_set;
+pub use try_set::try_set;
+pub mod always_fails;
+pub use always_fails::always_fails;
+
+
+=== instructions/try_set.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn try_set(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let state = &accounts[0];
+    let authority = &accounts[1];
+    let _system_program = &accounts[2];
+
+    if !authority.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !state.is_writable() || !authority.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let value: u64 = u64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let bump_state = bump_seed(program_id, &[b"return-err", authority.key().as_ref()], state.key())?;
+    // init_if_needed: only allocate when the account is empty.
+    if state.data_is_empty() {
+        let init_state_seeds: &[&[u8]] = &[
+                b"return-err",
+                authority.key().as_ref(),
+                &[bump_state],
+            ];
+        let init_state_signer_seeds = &[&init_state_seeds[..]];
+        create_program_account(state, authority, (8 + StateAccount::INIT_SPACE) as usize, program_id, init_state_signer_seeds)?;
+    }
+    if value == 0 {
+            return Err(DemoError::ZeroNotAllowed.into());
+        }
+    let state_account = state;
+    let mut state = match StateAccount::from_account_info(state_account) {
+        Ok(__existing) => __existing,
+        Err(_) => StateAccount {
+            value: 0,
+        },
+    };
+    state.value = value;
+    StateAccount::save(state_account, &state)?;
+    Ok(())
+
+}
+
+=== lib.rs ===
+//! ReturnErr — generated by Anvil v0.3.0
+//! Source framework: Anchor → Target: Pinocchio
+//!
+//! This code was automatically generated. Sections marked with
+//! "⚠️ Anvil: Review" should be verified before deployment.
+#![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
+
+use core::convert::TryInto;
+use borsh::{BorshDeserialize, BorshSerialize};
+use pinocchio::{
+    account_info::AccountInfo,
+    entrypoint,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    ProgramResult,
+};
+use pinocchio::instruction::{Seed, Signer};
+use pinocchio_system::create_account_with_minimum_balance_signed;
+
+mod state;
+
+mod instructions;
+
+mod errors;
+
+mod helpers;
+
+use instructions::*;
+
+entrypoint!(process_instruction);
+
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    if instruction_data.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (discriminator, data) = instruction_data.split_at(8);
+    router(program_id, accounts, discriminator, data)
+}
+
+fn router(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    discriminator: &[u8],
+    data: &[u8],
+) -> ProgramResult {
+    match discriminator {
+        [141, 240, 164, 243, 192, 121, 25, 176] => try_set(program_id, accounts, data),
+        [124, 243, 237, 3, 114, 123, 72, 218] => always_fails(program_id, accounts, data),
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+
+=== state.rs ===
+//! State account definitions for ReturnErr
+
+//! Generated by Anvil v0.3.0 — Target: Pinocchio
+
+
+use super::*;
+
+use crate::errors::*;
+
+#[repr(C)]
+pub struct StateAccount {
+    pub value: u64,
+}
+
+impl StateAccount {
+    pub const DISCRIMINATOR: [u8; 8] = [142, 247, 54, 95, 85, 133, 249, 103];
+    pub const INIT_SPACE: usize = 8;
+    pub const LEN: usize = 8;
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
+
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut offset = 8usize;
+        let value: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        Ok(Self { value })
+    }
+
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        data[offset..offset + 8].copy_from_slice(&value.value.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = unsafe { account.borrow_data_unchecked() };
+        Self::read(&data)
+    }
+
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        Self::write(&mut data, value)
+    }
+}

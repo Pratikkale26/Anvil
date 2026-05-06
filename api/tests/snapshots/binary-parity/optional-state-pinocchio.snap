@@ -1,0 +1,393 @@
+=== errors.rs ===
+//! Error definitions for OptionalStateDemo
+
+use super::*;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum VaultError {
+    /// Balance overflow
+    Overflow = 6000,
+}
+
+pub use VaultError::*;
+
+impl From<VaultError> for ProgramError {
+    fn from(error: VaultError) -> Self {
+        ProgramError::Custom(error as u32)
+    }
+}
+
+=== helpers.rs ===
+//! Helper functions for OptionalStateDemo
+
+use super::*;
+use crate::state::*;
+use crate::errors::*;
+
+pub fn bump_seed(
+    program_id: &Pubkey,
+    seeds: &[&[u8]],
+    expected: &Pubkey,
+) -> Result<u8, ProgramError> {
+    for bump in (0..=255u8).rev() {
+        let mut seeds_with_bump: [&[u8]; 16] = [&[]; 16];
+        let len = seeds.len().min(15);
+        seeds_with_bump[..len].copy_from_slice(&seeds[..len]);
+        let bump_slice = &[bump];
+        seeds_with_bump[len] = bump_slice;
+        if let Ok(derived) = pinocchio::pubkey::create_program_address(&seeds_with_bump[..len + 1], program_id) {
+            if &derived == expected {
+                return Ok(bump);
+            }
+        }
+    }
+    Err(ProgramError::InvalidSeeds)
+}
+
+pub fn create_program_account(
+    account: &AccountInfo,
+    payer: &AccountInfo,
+    space: usize,
+    program_id: &Pubkey,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    if signer_seeds.len() > 1 {
+        return Err(ProgramError::InvalidSeeds);
+    }
+
+    let signer_storage = signer_seeds.first().map(|seed_group| {
+        let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+        for (index, seed) in seed_group.iter().enumerate() {
+            if index >= seeds.len() {
+                return Err(ProgramError::InvalidSeeds);
+            }
+            seeds[index] = Seed::from(*seed);
+        }
+        Ok((seeds, seed_group.len()))
+    }).transpose()?;
+
+    let signer_slice = if let Some((ref seeds, len)) = signer_storage {
+        let signer = Signer::from(&seeds[..len]);
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[signer])
+    } else {
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[])
+    };
+
+    signer_slice
+}
+
+=== instructions/clear_delegate.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn clear_delegate(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 2 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let vault = &accounts[0];
+    let owner = &accounts[1];
+
+    if !owner.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !vault.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if vault.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let _bump_vault = bump_seed(program_id, &[b"opt-vault", owner.key().as_ref()], vault.key())?;
+    let mut v = OptVault::from_account_info(vault)?;
+    if v.owner != *owner.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    v.delegate = None;
+    OptVault::save(vault, &v)?;
+    Ok(())
+
+}
+
+=== instructions/deposit.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn deposit(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 2 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let vault = &accounts[0];
+    let owner = &accounts[1];
+
+    if !owner.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !vault.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if vault.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let amount: u64 = u64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let _bump_vault = bump_seed(program_id, &[b"opt-vault", owner.key().as_ref()], vault.key())?;
+    let mut v = OptVault::from_account_info(vault)?;
+    if v.owner != *owner.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    v.balance = v.balance.checked_add(amount).ok_or(VaultError::Overflow)?;
+    OptVault::save(vault, &v)?;
+    Ok(())
+
+}
+
+=== instructions/init.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn init(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let vault = &accounts[0];
+    let owner = &accounts[1];
+    let _system_program = &accounts[2];
+
+    if !owner.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !vault.is_writable() || !owner.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // Args
+    let mut remaining = data;
+    let delegate: Option<Pubkey> = BorshDeserialize::deserialize(&mut remaining)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+    let expiry: Option<i64> = BorshDeserialize::deserialize(&mut remaining)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let bump_vault = bump_seed(program_id, &[b"opt-vault", owner.key().as_ref()], vault.key())?;
+    let init_vault_seeds: &[&[u8]] = &[
+            b"opt-vault",
+            owner.key().as_ref(),
+            &[bump_vault],
+        ];
+    let init_vault_signer_seeds = &[&init_vault_seeds[..]];
+    create_program_account(vault, owner, (256) as usize, program_id, init_vault_signer_seeds)?;
+    let mut v = OptVault {
+        owner: [0u8; 32],
+        delegate: Option::<Pubkey>::default(),
+        expiry: Option::<i64>::default(),
+        balance: 0,
+        bump: 0,
+    };
+    v.owner = *owner.key();
+    v.delegate = delegate;
+    v.expiry = expiry;
+    v.balance = 0;
+    v.bump = bump_vault;
+    OptVault::save(vault, &v)?;
+    Ok(())
+
+}
+
+=== instructions/mod.rs ===
+//! Instruction processors for OptionalStateDemo
+
+use crate::*;
+use crate::state::*;
+use crate::errors::*;
+use crate::helpers::*;
+
+pub mod init;
+pub use init::init;
+pub mod deposit;
+pub use deposit::deposit;
+pub mod clear_delegate;
+pub use clear_delegate::clear_delegate;
+
+
+=== lib.rs ===
+//! OptionalStateDemo — generated by Anvil v0.3.0
+//! Source framework: Anchor → Target: Pinocchio
+//!
+//! This code was automatically generated. Sections marked with
+//! "⚠️ Anvil: Review" should be verified before deployment.
+#![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
+
+use core::convert::TryInto;
+use borsh::{BorshDeserialize, BorshSerialize};
+use pinocchio::{
+    account_info::AccountInfo,
+    entrypoint,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    ProgramResult,
+};
+use pinocchio::instruction::{Seed, Signer};
+use pinocchio_system::create_account_with_minimum_balance_signed;
+
+mod state;
+
+mod instructions;
+
+mod errors;
+
+mod helpers;
+
+use instructions::*;
+
+entrypoint!(process_instruction);
+
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    if instruction_data.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (discriminator, data) = instruction_data.split_at(8);
+    router(program_id, accounts, discriminator, data)
+}
+
+fn router(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    discriminator: &[u8],
+    data: &[u8],
+) -> ProgramResult {
+    match discriminator {
+        [220, 59, 207, 236, 108, 250, 47, 100] => init(program_id, accounts, data),
+        [242, 35, 198, 137, 82, 225, 242, 182] => deposit(program_id, accounts, data),
+        [225, 42, 179, 59, 112, 79, 196, 149] => clear_delegate(program_id, accounts, data),
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+
+=== state.rs ===
+//! State account definitions for OptionalStateDemo
+
+//! Generated by Anvil v0.3.0 — Target: Pinocchio
+
+
+use super::*;
+
+use crate::errors::*;
+
+#[repr(C)]
+pub struct OptVault {
+    pub owner: [u8; 32],
+    pub delegate: Option<Pubkey>,
+    pub expiry: Option<i64>,
+    pub balance: u64,
+    pub bump: u8,
+}
+
+impl OptVault {
+    pub const DISCRIMINATOR: [u8; 8] = [173, 207, 19, 244, 188, 200, 151, 114];
+    pub const INIT_SPACE: usize = 105;
+    pub const LEN: usize = 105;
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
+
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut offset = 8usize;
+        let owner: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += 32;
+        let mut delegate_bytes: &[u8] = &data[offset..];
+        let __delegate_before = delegate_bytes.len();
+        let delegate: Option<Pubkey> = BorshDeserialize::deserialize(&mut delegate_bytes)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += __delegate_before - delegate_bytes.len();
+        let mut expiry_bytes: &[u8] = &data[offset..];
+        let __expiry_before = expiry_bytes.len();
+        let expiry: Option<i64> = BorshDeserialize::deserialize(&mut expiry_bytes)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += __expiry_before - expiry_bytes.len();
+        let balance: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let bump: u8 = data[offset];
+        Ok(Self { owner, delegate, expiry, balance, bump })
+    }
+
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        data[offset..offset + 32].copy_from_slice(&value.owner);
+        offset += 32;
+        let __delegate_serialized = ::borsh::to_vec(&value.delegate)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        data[offset..offset + __delegate_serialized.len()].copy_from_slice(&__delegate_serialized);
+        offset += __delegate_serialized.len();
+        let __expiry_serialized = ::borsh::to_vec(&value.expiry)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        data[offset..offset + __expiry_serialized.len()].copy_from_slice(&__expiry_serialized);
+        offset += __expiry_serialized.len();
+        data[offset..offset + 8].copy_from_slice(&value.balance.to_le_bytes());
+        offset += 8;
+        data[offset] = value.bump as u8;
+        Ok(())
+    }
+
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = unsafe { account.borrow_data_unchecked() };
+        Self::read(&data)
+    }
+
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        Self::write(&mut data, value)
+    }
+}

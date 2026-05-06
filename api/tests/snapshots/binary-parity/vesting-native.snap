@@ -1,0 +1,850 @@
+=== errors.rs ===
+//! Error definitions for TokenVesting
+
+use super::*;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum VestingError {
+    /// Amount must be greater than zero
+    InvalidAmount = 6000,
+    /// Invalid vesting schedule: cliff must be >= start, end must be > cliff
+    InvalidSchedule = 6001,
+    /// Cannot vest tokens to yourself
+    SelfVesting = 6002,
+    /// Start timestamp is in the past
+    StartInPast = 6003,
+    /// Cliff period has not been reached yet
+    CliffNotReached = 6004,
+    /// Nothing to release yet
+    NothingToRelease = 6005,
+    /// This vesting is not revocable
+    NotRevocable = 6006,
+    /// This vesting has already been revoked
+    VestingRevoked = 6007,
+    /// Vesting is not closeable yet
+    NotCloseable = 6008,
+    /// Arithmetic overflow
+    ArithmeticOverflow = 6009,
+}
+
+pub use VestingError::*;
+
+impl From<VestingError> for ProgramError {
+    fn from(error: VestingError) -> Self {
+        ProgramError::Custom(error as u32)
+    }
+}
+
+impl std::fmt::Display for VestingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for VestingError {}
+
+=== helpers.rs ===
+//! Helper functions for TokenVesting
+
+use super::*;
+use crate::state::*;
+use crate::errors::*;
+
+pub fn create_program_account<'a>(
+    account: &AccountInfo<'a>,
+    payer: &AccountInfo<'a>,
+    space: u64,
+    program_id: &Pubkey,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let rent = solana_program::sysvar::rent::Rent::get()?;
+    let lamports = rent.minimum_balance(space as usize);
+    let create_ix = system_instruction::create_account(
+        payer.key,
+        account.key,
+        lamports,
+        space,
+        program_id,
+    );
+    invoke_signed(
+        &create_ix,
+        &[payer.clone(), account.clone()],
+        signer_seeds,
+    )?;
+    Ok(())
+}
+
+pub fn spl_token_transfer<'a>(
+    from: &AccountInfo<'a>,
+    to: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
+    amount: u64,
+) -> ProgramResult {
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        from.key,
+        to.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+    invoke(
+        &transfer_ix,
+        &[from.clone(), to.clone(), authority.clone()],
+    )?;
+    Ok(())
+}
+
+pub fn spl_token_transfer_signed<'a>(
+    from: &AccountInfo<'a>,
+    to: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        from.key,
+        to.key,
+        authority.key,
+        &[],
+        amount,
+    )?;
+    invoke_signed(
+        &transfer_ix,
+        &[from.clone(), to.clone(), authority.clone()],
+        signer_seeds,
+    )?;
+    Ok(())
+}
+
+pub fn close_program_account<'a>(
+    account: &AccountInfo<'a>,
+    destination: &AccountInfo<'a>,
+) -> ProgramResult {
+    if account.key == destination.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let lamports = account.lamports();
+    **destination.try_borrow_mut_lamports()? = destination
+        .lamports()
+        .checked_add(lamports)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    **account.try_borrow_mut_lamports()? = 0;
+    account.data.borrow_mut().fill(0);
+    Ok(())
+}
+
+/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
+pub fn token_account_amount<'a>(account: &AccountInfo<'a>) -> Result<u64, ProgramError> {
+    let data = account.data.borrow();
+    if data.len() < 72 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(u64::from_le_bytes(
+        data[64..72]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidAccountData)?
+    ))
+}
+
+// Carried from source (transformed for Native)
+pub fn vested_amount(
+    total: u64,
+    start_ts: i64,
+    cliff_ts: i64,
+    end_ts: i64,
+    now: i64,
+) -> u64 {
+    if now < cliff_ts {
+        return 0;
+    }
+    if now >= end_ts {
+        return total;
+    }
+    let elapsed = (now - start_ts) as u64;
+    let duration = (end_ts - start_ts) as u64;
+    total
+        .checked_mul(elapsed)
+        .and_then(|v| v.checked_div(duration))
+        .unwrap_or(0)
+}
+
+=== instructions/close.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn close(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 5 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let grantor = &accounts[0];
+    let vesting = &accounts[1];
+    let vault = &accounts[2];
+    let grantor_token_account = &accounts[3];
+    let _token_program = &accounts[4];
+
+    if !grantor.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !grantor.is_writable || !vesting.is_writable || !vault.is_writable || !grantor_token_account.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if vesting.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let vesting_account = vesting;
+    let vesting = Vesting::read(&vesting_account.data.borrow())?;
+    if vesting.grantor != *grantor.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let (expected_key, _bump_vesting) = Pubkey::find_program_address(&[VESTING_SEED, grantor.key.as_ref(), vesting.beneficiary.as_ref()], program_id);
+    if expected_key != *vesting_account.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let (expected_key, _bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting_account.key.as_ref()], program_id);
+    if expected_key != *vault.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    if !(vesting.revoked || vesting.released_amount == vesting.total_amount) {
+        return Err(VestingError::NotCloseable.into());
+    }
+    let vault_balance = token_account_amount(vault)?;
+    if vault_balance > 0 {
+            let vesting_key = *vesting_account.key;
+            let vault_bump = vesting.vault_bump;
+            let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];
+
+            spl_token_transfer_signed(vault, grantor_token_account, vault, vault_balance, &[seeds])?;
+        }
+    msg!("Vesting account closed.");
+    close_program_account(vesting_account, grantor)?;
+    Ok(())
+
+}
+
+=== instructions/create_vesting.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn create_vesting(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 8 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let grantor = &accounts[0];
+    let vesting = &accounts[1];
+    let vault = &accounts[2];
+    let grantor_token_account = &accounts[3];
+    let mint = &accounts[4];
+    let _token_program = &accounts[5];
+    let _system_program = &accounts[6];
+    let _rent = &accounts[7];
+
+    if !grantor.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !grantor.is_writable || !vesting.is_writable || !vault.is_writable || !grantor_token_account.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 32 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(32);
+    remaining = rest;
+    let beneficiary: Pubkey = Pubkey::new_from_array(arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?);
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let total_amount: u64 = u64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let start_ts: i64 = i64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let cliff_ts: i64 = i64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let end_ts: i64 = i64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if remaining.len() < 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let revocable: bool = match arg_bytes[0] {
+        0 => false,
+        1 => true,
+        _ => return Err(ProgramError::InvalidInstructionData),
+    };
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (expected_key, bump_vesting) = Pubkey::find_program_address(&[VESTING_SEED, grantor.key.as_ref(), beneficiary.as_ref()], program_id);
+    if expected_key != *vesting.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let init_vesting_seeds: &[&[u8]] = &[
+            VESTING_SEED,
+            grantor.key.as_ref(),
+            beneficiary.as_ref(),
+            &[bump_vesting],
+        ];
+    let init_vesting_signer_seeds = &[&init_vesting_seeds[..]];
+    create_program_account(vesting, grantor, (8 + Vesting::LEN) as u64, program_id, init_vesting_signer_seeds)?;
+    let (expected_key, bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting.key.as_ref()], program_id);
+    if expected_key != *vault.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let init_vault_seeds: &[&[u8]] = &[
+            VAULT_SEED,
+            vesting.key.as_ref(),
+            &[bump_vault],
+        ];
+    let init_vault_signer_seeds = &[&init_vault_seeds[..]];
+    // Init token account: vault
+    let __ta_lamports = Rent::get()?.minimum_balance(165);
+    let __ta_create = system_instruction::create_account(
+        grantor.key,
+        vault.key,
+        __ta_lamports,
+        165,
+        &spl_token::id(),
+    );
+    invoke_signed(&__ta_create, &[grantor.clone(), vault.clone()], init_vault_signer_seeds)?;
+    let __ta_init = spl_token::instruction::initialize_account3(
+        &spl_token::id(),
+        vault.key,
+        mint.key,
+        vault.key,
+    )?;
+    invoke(&__ta_init, &[vault.clone(), mint.clone()])?;
+    if !(total_amount > 0) {
+        return Err(VestingError::InvalidAmount.into());
+    }
+    if !(cliff_ts >= start_ts) {
+        return Err(VestingError::InvalidSchedule.into());
+    }
+    if !(end_ts > cliff_ts) {
+        return Err(VestingError::InvalidSchedule.into());
+    }
+    if !(beneficiary != *grantor.key) {
+        return Err(VestingError::SelfVesting.into());
+    }
+    let clock = solana_program::sysvar::clock::Clock::get()?;
+    if !(start_ts >= clock.unix_timestamp) {
+        return Err(VestingError::StartInPast.into());
+    }
+    let vesting_account = vesting;
+    let mut vesting = Vesting {
+        grantor: Pubkey::default(),
+        beneficiary: Pubkey::default(),
+        mint: Pubkey::default(),
+        vault: Pubkey::default(),
+        total_amount: 0,
+        released_amount: 0,
+        start_ts: 0,
+        cliff_ts: 0,
+        end_ts: 0,
+        revocable: false,
+        revoked: false,
+        created_at: 0,
+        bump: 0,
+        vault_bump: 0,
+    };
+    vesting.grantor = *grantor.key;
+    vesting.beneficiary = beneficiary;
+    vesting.mint = *mint.key;
+    vesting.vault = *vault.key;
+    vesting.total_amount = total_amount;
+    vesting.released_amount = 0;
+    vesting.start_ts = start_ts;
+    vesting.cliff_ts = cliff_ts;
+    vesting.end_ts = end_ts;
+    vesting.revocable = revocable;
+    vesting.revoked = false;
+    vesting.created_at = clock.unix_timestamp;
+    vesting.bump = bump_vesting;
+    vesting.vault_bump = bump_vault;
+    // SPL Token transfer — grantor_token_account → vault
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        grantor_token_account.key,
+        vault.key,
+        grantor.key,
+        &[],
+        total_amount,
+    )?;
+    invoke(
+        &transfer_ix,
+        &[grantor_token_account.clone(), vault.clone(), grantor.clone()],
+    )?;
+    msg!("Vesting created: {} tokens for {}", total_amount, beneficiary);
+    Vesting::write(&mut vesting_account.data.borrow_mut(), &vesting)?;
+    Ok(())
+
+}
+
+=== instructions/mod.rs ===
+//! Instruction processors for TokenVesting
+
+use crate::*;
+use crate::state::*;
+use crate::errors::*;
+use crate::helpers::*;
+
+pub mod create_vesting;
+pub use create_vesting::create_vesting;
+pub mod release;
+pub use release::release;
+pub mod revoke;
+pub use revoke::revoke;
+pub mod close;
+pub use close::close;
+
+
+=== instructions/release.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn release(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 5 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let beneficiary = &accounts[0];
+    let vesting = &accounts[1];
+    let vault = &accounts[2];
+    let beneficiary_token_account = &accounts[3];
+    let _token_program = &accounts[4];
+
+    if !beneficiary.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !vesting.is_writable || !vault.is_writable || !beneficiary_token_account.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if vesting.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let vesting_account = vesting;
+    let mut vesting = Vesting::read(&vesting_account.data.borrow())?;
+    if vesting.beneficiary != *beneficiary.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let (expected_key, _bump_vesting) = Pubkey::find_program_address(&[VESTING_SEED, vesting.grantor.as_ref(), beneficiary.key.as_ref()], program_id);
+    if expected_key != *vesting_account.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let (expected_key, _bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting_account.key.as_ref()], program_id);
+    if expected_key != *vault.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let clock = solana_program::sysvar::clock::Clock::get()?;
+    let now = clock.unix_timestamp;
+    if vesting.revoked {
+        return Err(VestingError::VestingRevoked.into());
+    }
+    if !(now >= vesting.cliff_ts) {
+        return Err(VestingError::CliffNotReached.into());
+    }
+    let vested = vested_amount(
+            vesting.total_amount,
+            vesting.start_ts,
+            vesting.cliff_ts,
+            vesting.end_ts,
+            now,
+        );
+    let releasable = vested.checked_sub(vesting.released_amount).ok_or(VestingError::ArithmeticOverflow)?;
+    if !(releasable > 0) {
+        return Err(VestingError::NothingToRelease.into());
+    }
+    vesting.released_amount = vesting.released_amount.checked_add(releasable).ok_or(VestingError::ArithmeticOverflow)?;
+    let vesting_key = *vesting_account.key;
+    let vault_bump = vesting.vault_bump;
+    // PDA signer seeds for 'vesting_key'
+    let seeds = &[
+            VAULT_SEED,
+            vesting_key.as_ref(),
+            &[vault_bump],
+        ];
+    let signer_seeds = &[&seeds[..]];
+    // SPL Token transfer (PDA signed) — vault → beneficiary_token_account
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        vault.key,
+        beneficiary_token_account.key,
+        vault.key,
+        &[],
+        releasable,
+    )?;
+    invoke_signed(
+        &transfer_ix,
+        &[vault.clone(), beneficiary_token_account.clone(), vault.clone()],
+        signer_seeds,
+    )?;
+    msg!("Released {} tokens to beneficiary", releasable);
+    Vesting::write(&mut vesting_account.data.borrow_mut(), &vesting)?;
+    Ok(())
+
+}
+
+=== instructions/revoke.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn revoke(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 5 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let grantor = &accounts[0];
+    let vesting = &accounts[1];
+    let vault = &accounts[2];
+    let grantor_token_account = &accounts[3];
+    let _token_program = &accounts[4];
+
+    if !grantor.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !vesting.is_writable || !vault.is_writable || !grantor_token_account.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if vesting.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let vesting_account = vesting;
+    let mut vesting = Vesting::read(&vesting_account.data.borrow())?;
+    if vesting.grantor != *grantor.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let (expected_key, _bump_vesting) = Pubkey::find_program_address(&[VESTING_SEED, grantor.key.as_ref(), vesting.beneficiary.as_ref()], program_id);
+    if expected_key != *vesting_account.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let (expected_key, _bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting_account.key.as_ref()], program_id);
+    if expected_key != *vault.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    if !vesting.revocable {
+        return Err(VestingError::NotRevocable.into());
+    }
+    if vesting.revoked {
+        return Err(VestingError::VestingRevoked.into());
+    }
+    let clock = solana_program::sysvar::clock::Clock::get()?;
+    let now = clock.unix_timestamp;
+    let vested = vested_amount(
+            vesting.total_amount,
+            vesting.start_ts,
+            vesting.cliff_ts,
+            vesting.end_ts,
+            now,
+        );
+    let unvested = vesting.total_amount.checked_sub(vested).ok_or(VestingError::ArithmeticOverflow)?;
+    vesting.revoked = true;
+    if unvested > 0 {
+            let vesting_key = *vesting_account.key;
+            let vault_bump = vesting.vault_bump;
+            let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];
+
+            spl_token_transfer_signed(vault, grantor_token_account, vault, unvested, &[seeds])?;
+        }
+    msg!("Vesting revoked. {} unvested tokens returned to grantor.", unvested);
+    Vesting::write(&mut vesting_account.data.borrow_mut(), &vesting)?;
+    Ok(())
+
+}
+
+=== lib.rs ===
+//! TokenVesting — generated by Anvil v0.3.0
+//! Source framework: Anchor → Target: Native
+//!
+//! This code was automatically generated. Sections marked with
+//! "⚠️ Anvil: Review" should be verified before deployment.
+#![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
+
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{
+    account_info::AccountInfo,
+    entrypoint,
+    entrypoint::ProgramResult,
+    msg,
+    program::invoke,
+    program::invoke_signed,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    system_instruction,
+    sysvar::Sysvar,
+};
+use solana_program::sysvar::clock::Clock;
+use solana_program::sysvar::rent::Rent;
+
+pub const VESTING_SEED: &[u8] = b"vesting";
+
+pub const VAULT_SEED: &[u8] = b"vault";
+
+pub const MAX_SCHEDULES: usize = 10;
+
+mod state;
+
+mod instructions;
+
+mod errors;
+
+mod helpers;
+
+use instructions::*;
+
+entrypoint!(process_instruction);
+
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    if instruction_data.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (discriminator, data) = instruction_data.split_at(8);
+    router(program_id, accounts, discriminator, data)
+}
+
+fn router(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    discriminator: &[u8],
+    data: &[u8],
+) -> ProgramResult {
+    match discriminator {
+        [135, 184, 171, 156, 197, 162, 246, 44] => create_vesting(program_id, accounts, data),
+        [253, 249, 15, 206, 28, 127, 193, 241] => release(program_id, accounts, data),
+        [170, 23, 31, 34, 133, 173, 93, 242] => revoke(program_id, accounts, data),
+        [98, 165, 201, 177, 108, 65, 206, 96] => close(program_id, accounts, data),
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+
+=== state.rs ===
+//! State account definitions for TokenVesting
+
+//! Generated by Anvil v0.3.0 — Target: Native
+
+
+use super::*;
+
+use crate::errors::*;
+
+#[repr(C)]
+pub struct Vesting {
+    pub grantor: Pubkey,
+    pub beneficiary: Pubkey,
+    pub mint: Pubkey,
+    pub vault: Pubkey,
+    pub total_amount: u64,
+    pub released_amount: u64,
+    pub start_ts: i64,
+    pub cliff_ts: i64,
+    pub end_ts: i64,
+    pub revocable: bool,
+    pub revoked: bool,
+    pub created_at: i64,
+    pub bump: u8,
+    pub vault_bump: u8,
+}
+
+impl Vesting {
+    pub const DISCRIMINATOR: [u8; 8] = [100, 149, 66, 138, 95, 200, 128, 241];
+    pub const INIT_SPACE: usize = 180;
+    pub const LEN: usize = 180;
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
+
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut offset = 8usize;
+        let grantor: Pubkey = Pubkey::new_from_array(
+            data[offset..offset + 32]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 32;
+        let beneficiary: Pubkey = Pubkey::new_from_array(
+            data[offset..offset + 32]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 32;
+        let mint: Pubkey = Pubkey::new_from_array(
+            data[offset..offset + 32]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 32;
+        let vault: Pubkey = Pubkey::new_from_array(
+            data[offset..offset + 32]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 32;
+        let total_amount: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let released_amount: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let start_ts: i64 = i64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let cliff_ts: i64 = i64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let end_ts: i64 = i64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let revocable: bool = match data[offset] {
+            0 => false,
+            1 => true,
+            _ => return Err(ProgramError::InvalidAccountData),
+        };
+        offset += 1;
+        let revoked: bool = match data[offset] {
+            0 => false,
+            1 => true,
+            _ => return Err(ProgramError::InvalidAccountData),
+        };
+        offset += 1;
+        let created_at: i64 = i64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let bump: u8 = data[offset];
+        offset += 1;
+        let vault_bump: u8 = data[offset];
+        Ok(Self { grantor, beneficiary, mint, vault, total_amount, released_amount, start_ts, cliff_ts, end_ts, revocable, revoked, created_at, bump, vault_bump })
+    }
+
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        data[offset..offset + 32].copy_from_slice(&value.grantor.as_ref());
+        offset += 32;
+        data[offset..offset + 32].copy_from_slice(&value.beneficiary.as_ref());
+        offset += 32;
+        data[offset..offset + 32].copy_from_slice(&value.mint.as_ref());
+        offset += 32;
+        data[offset..offset + 32].copy_from_slice(&value.vault.as_ref());
+        offset += 32;
+        data[offset..offset + 8].copy_from_slice(&value.total_amount.to_le_bytes());
+        offset += 8;
+        data[offset..offset + 8].copy_from_slice(&value.released_amount.to_le_bytes());
+        offset += 8;
+        data[offset..offset + 8].copy_from_slice(&value.start_ts.to_le_bytes());
+        offset += 8;
+        data[offset..offset + 8].copy_from_slice(&value.cliff_ts.to_le_bytes());
+        offset += 8;
+        data[offset..offset + 8].copy_from_slice(&value.end_ts.to_le_bytes());
+        offset += 8;
+        data[offset] = if value.revocable { 1 } else { 0 };
+        offset += 1;
+        data[offset] = if value.revoked { 1 } else { 0 };
+        offset += 1;
+        data[offset..offset + 8].copy_from_slice(&value.created_at.to_le_bytes());
+        offset += 8;
+        data[offset] = value.bump as u8;
+        offset += 1;
+        data[offset] = value.vault_bump as u8;
+        Ok(())
+    }
+
+    /// Borsh-style convenience wrapper: borrow the account's data buffer
+    /// and write the value into it. Mirrors Pinocchio's save() so the same
+    /// emitter call site (`Type::save(account, &value)`) works on both.
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = account.try_borrow_mut_data()?;
+        Self::write(&mut data, value)
+    }
+
+    /// Mirror of Pinocchio's from_account_info — the body emitter calls
+    /// `<Type>::from_account_info(account)?` cross-target, so Native
+    /// must expose the same signature even though it could equivalently
+    /// borrow + read inline. Without this, programs whose handlers don't
+    /// directly call `::read(...)` (most non-trivial Anchor sources)
+    /// fail Native cargo build with E0599 'no associated item named
+    /// from_account_info'.
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = account.try_borrow_data()?;
+        Self::read(&data)
+    }
+}

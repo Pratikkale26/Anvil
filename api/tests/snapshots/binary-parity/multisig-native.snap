@@ -1,0 +1,589 @@
+=== errors.rs ===
+//! Error definitions for MultisigDemo
+
+use super::*;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum MultisigError {
+    /// Threshold must be > 0 and ≤ owners.len()
+    InvalidThreshold = 6000,
+    /// Too many owners (max 8)
+    TooManyOwners = 6001,
+    /// Signer is not an owner
+    NotAnOwner = 6002,
+    /// Proposal already executed
+    AlreadyExecuted = 6003,
+    /// Not enough approvals to reach threshold
+    NotEnoughApprovals = 6004,
+}
+
+pub use MultisigError::*;
+
+impl From<MultisigError> for ProgramError {
+    fn from(error: MultisigError) -> Self {
+        ProgramError::Custom(error as u32)
+    }
+}
+
+impl std::fmt::Display for MultisigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for MultisigError {}
+
+=== helpers.rs ===
+//! Helper functions for MultisigDemo
+
+use super::*;
+use crate::state::*;
+use crate::errors::*;
+
+pub fn create_program_account<'a>(
+    account: &AccountInfo<'a>,
+    payer: &AccountInfo<'a>,
+    space: u64,
+    program_id: &Pubkey,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let rent = solana_program::sysvar::rent::Rent::get()?;
+    let lamports = rent.minimum_balance(space as usize);
+    let create_ix = system_instruction::create_account(
+        payer.key,
+        account.key,
+        lamports,
+        space,
+        program_id,
+    );
+    invoke_signed(
+        &create_ix,
+        &[payer.clone(), account.clone()],
+        signer_seeds,
+    )?;
+    Ok(())
+}
+
+=== instructions/approve.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn approve(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 4 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let multisig = &accounts[0];
+    let multisig_payer = &accounts[1];
+    let proposal = &accounts[2];
+    let signer = &accounts[3];
+
+    if !signer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !proposal.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if proposal.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (expected_key, _bump_multisig) = Pubkey::find_program_address(&[b"multisig", multisig_payer.key.as_ref()], program_id);
+    if expected_key != *multisig.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let m = MultisigAccount::read(&multisig.data.borrow())?;
+    let mut p = ProposalAccount::read(&proposal.data.borrow())?;
+    if p.multisig != *multisig.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if p.executed {
+        return Err(MultisigError::AlreadyExecuted.into());
+    }
+    let signer_key = *signer.key;
+    let idx = m.owners.iter().position(|o| o == &signer_key).ok_or(MultisigError::NotAnOwner)?;
+    p.approved[idx] = true;
+    ProposalAccount::write(&mut proposal.data.borrow_mut(), &p)?;
+    Ok(())
+
+}
+
+=== instructions/create.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn create(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let multisig = &accounts[0];
+    let payer = &accounts[1];
+    let _system_program = &accounts[2];
+
+    if !payer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !multisig.is_writable || !payer.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // Args
+    let mut remaining = data;
+    let owners: Vec<Pubkey> = BorshDeserialize::deserialize(&mut remaining)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+    if remaining.len() < 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let threshold: u8 = arg_bytes[0];
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (expected_key, bump_multisig) = Pubkey::find_program_address(&[b"multisig", payer.key.as_ref()], program_id);
+    if expected_key != *multisig.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let init_multisig_seeds: &[&[u8]] = &[
+            b"multisig",
+            payer.key.as_ref(),
+            &[bump_multisig],
+        ];
+    let init_multisig_signer_seeds = &[&init_multisig_seeds[..]];
+    create_program_account(multisig, payer, (8 + 32 + 4 + 32 * 8 + 1 + 8 + 1) as u64, program_id, init_multisig_signer_seeds)?;
+    if !(threshold > 0 && (threshold as usize) <= owners.len()) {
+        return Err(MultisigError::InvalidThreshold.into());
+    }
+    if !(owners.len() <= 8) {
+        return Err(MultisigError::TooManyOwners.into());
+    }
+    let mut m = MultisigAccount {
+        owners: Vec::<Pubkey>::default(),
+        threshold: 0,
+        proposal_count: 0,
+        bump: 0,
+    };
+    m.owners = owners;
+    m.threshold = threshold;
+    m.proposal_count = 0;
+    m.bump = bump_multisig;
+    MultisigAccount::write(&mut multisig.data.borrow_mut(), &m)?;
+    Ok(())
+
+}
+
+=== instructions/execute.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn execute(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 4 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let multisig = &accounts[0];
+    let multisig_payer = &accounts[1];
+    let proposal = &accounts[2];
+    let executor = &accounts[3];
+
+    if !executor.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !proposal.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if proposal.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (expected_key, _bump_multisig) = Pubkey::find_program_address(&[b"multisig", multisig_payer.key.as_ref()], program_id);
+    if expected_key != *multisig.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let m = MultisigAccount::read(&multisig.data.borrow())?;
+    let mut p = ProposalAccount::read(&proposal.data.borrow())?;
+    if p.multisig != *multisig.key {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if p.executed {
+        return Err(MultisigError::AlreadyExecuted.into());
+    }
+    let approval_count: u8 = p.approved.iter().filter(|&&a| a).count() as u8;
+    if !(approval_count >= m.threshold) {
+        return Err(MultisigError::NotEnoughApprovals.into());
+    }
+    p.executed = true;
+    ProposalAccount::write(&mut proposal.data.borrow_mut(), &p)?;
+    Ok(())
+
+}
+
+=== instructions/mod.rs ===
+//! Instruction processors for MultisigDemo
+
+use crate::*;
+use crate::state::*;
+use crate::errors::*;
+use crate::helpers::*;
+
+pub mod create;
+pub use create::create;
+pub mod propose;
+pub use propose::propose;
+pub mod approve;
+pub use approve::approve;
+pub mod execute;
+pub use execute::execute;
+
+
+=== instructions/propose.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn propose(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 5 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let multisig = &accounts[0];
+    let multisig_payer = &accounts[1];
+    let proposal = &accounts[2];
+    let proposer = &accounts[3];
+    let _system_program = &accounts[4];
+
+    if !proposer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !proposal.is_writable || !proposer.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let proposal_id: u64 = u64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let amount: u64 = u64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (expected_key, bump_proposal) = Pubkey::find_program_address(&[b"proposal", multisig.key.as_ref(), &proposal_id.to_le_bytes()], program_id);
+    if expected_key != *proposal.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let init_seed_bytes = proposal_id.to_le_bytes();
+    let init_proposal_seeds: &[&[u8]] = &[
+            b"proposal",
+            multisig.key.as_ref(),
+            &init_seed_bytes,
+            &[bump_proposal],
+        ];
+    let init_proposal_signer_seeds = &[&init_proposal_seeds[..]];
+    create_program_account(proposal, proposer, (256) as u64, program_id, init_proposal_signer_seeds)?;
+    let (expected_key, _bump_multisig) = Pubkey::find_program_address(&[b"multisig", multisig_payer.key.as_ref()], program_id);
+    if expected_key != *multisig.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let _ = proposal_id;
+    let m = MultisigAccount::read(&multisig.data.borrow())?;
+    let mut p = ProposalAccount {
+        multisig: Pubkey::default(),
+        amount: 0,
+        approved: Vec::<bool>::default(),
+        executed: false,
+        bump: 0,
+    };
+    let proposer_key = *proposer.key;
+    let is_owner = m.owners.iter().any(|o| o == &proposer_key);
+    if !is_owner {
+        return Err(MultisigError::NotAnOwner.into());
+    }
+    p.multisig = *multisig.key;
+    p.amount = amount;
+    p.approved = vec![false; m.owners.len()];
+    p.executed = false;
+    p.bump = bump_proposal;
+    ProposalAccount::write(&mut proposal.data.borrow_mut(), &p)?;
+    Ok(())
+
+}
+
+=== lib.rs ===
+//! MultisigDemo — generated by Anvil v0.3.0
+//! Source framework: Anchor → Target: Native
+//!
+//! This code was automatically generated. Sections marked with
+//! "⚠️ Anvil: Review" should be verified before deployment.
+#![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
+
+use borsh::{BorshDeserialize, BorshSerialize};
+use solana_program::{
+    account_info::AccountInfo,
+    entrypoint,
+    entrypoint::ProgramResult,
+    program::invoke_signed,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    system_instruction,
+    sysvar::Sysvar,
+};
+
+mod state;
+
+mod instructions;
+
+mod errors;
+
+mod helpers;
+
+use instructions::*;
+
+entrypoint!(process_instruction);
+
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    if instruction_data.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (discriminator, data) = instruction_data.split_at(8);
+    router(program_id, accounts, discriminator, data)
+}
+
+fn router(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    discriminator: &[u8],
+    data: &[u8],
+) -> ProgramResult {
+    match discriminator {
+        [24, 30, 200, 40, 5, 28, 7, 119] => create(program_id, accounts, data),
+        [93, 253, 82, 168, 118, 33, 102, 90] => propose(program_id, accounts, data),
+        [69, 74, 217, 36, 115, 117, 97, 76] => approve(program_id, accounts, data),
+        [130, 221, 242, 154, 13, 193, 189, 29] => execute(program_id, accounts, data),
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+
+=== state.rs ===
+//! State account definitions for MultisigDemo
+
+//! Generated by Anvil v0.3.0 — Target: Native
+
+
+use super::*;
+
+use crate::errors::*;
+
+#[repr(C)]
+pub struct MultisigAccount {
+    pub owners: Vec<Pubkey>,
+    pub threshold: u8,
+    pub proposal_count: u64,
+    pub bump: u8,
+}
+
+impl MultisigAccount {
+    pub const DISCRIMINATOR: [u8; 8] = [77, 9, 180, 199, 183, 246, 156, 81];
+    pub const INIT_SPACE: usize = 42;
+    pub const LEN: usize = 42;
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
+
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut offset = 8usize;
+        let mut owners_bytes: &[u8] = &data[offset..];
+        let __owners_before = owners_bytes.len();
+        let owners: Vec<Pubkey> = BorshDeserialize::deserialize(&mut owners_bytes)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += __owners_before - owners_bytes.len();
+        let threshold: u8 = data[offset];
+        offset += 1;
+        let proposal_count: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let bump: u8 = data[offset];
+        Ok(Self { owners, threshold, proposal_count, bump })
+    }
+
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        let __owners_serialized = ::borsh::to_vec(&value.owners)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        data[offset..offset + __owners_serialized.len()].copy_from_slice(&__owners_serialized);
+        offset += __owners_serialized.len();
+        data[offset] = value.threshold as u8;
+        offset += 1;
+        data[offset..offset + 8].copy_from_slice(&value.proposal_count.to_le_bytes());
+        offset += 8;
+        data[offset] = value.bump as u8;
+        Ok(())
+    }
+
+    /// Borsh-style convenience wrapper: borrow the account's data buffer
+    /// and write the value into it. Mirrors Pinocchio's save() so the same
+    /// emitter call site (`Type::save(account, &value)`) works on both.
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = account.try_borrow_mut_data()?;
+        Self::write(&mut data, value)
+    }
+
+    /// Mirror of Pinocchio's from_account_info — the body emitter calls
+    /// `<Type>::from_account_info(account)?` cross-target, so Native
+    /// must expose the same signature even though it could equivalently
+    /// borrow + read inline. Without this, programs whose handlers don't
+    /// directly call `::read(...)` (most non-trivial Anchor sources)
+    /// fail Native cargo build with E0599 'no associated item named
+    /// from_account_info'.
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = account.try_borrow_data()?;
+        Self::read(&data)
+    }
+}
+
+#[repr(C)]
+pub struct ProposalAccount {
+    pub multisig: Pubkey,
+    pub amount: u64,
+    pub approved: Vec<bool>,
+    pub executed: bool,
+    pub bump: u8,
+}
+
+impl ProposalAccount {
+    pub const DISCRIMINATOR: [u8; 8] = [164, 190, 4, 248, 203, 124, 243, 64];
+    pub const INIT_SPACE: usize = 74;
+    pub const LEN: usize = 74;
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
+
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut offset = 8usize;
+        let multisig: Pubkey = Pubkey::new_from_array(
+            data[offset..offset + 32]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 32;
+        let amount: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let mut approved_bytes: &[u8] = &data[offset..];
+        let __approved_before = approved_bytes.len();
+        let approved: Vec<bool> = BorshDeserialize::deserialize(&mut approved_bytes)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += __approved_before - approved_bytes.len();
+        let executed: bool = match data[offset] {
+            0 => false,
+            1 => true,
+            _ => return Err(ProgramError::InvalidAccountData),
+        };
+        offset += 1;
+        let bump: u8 = data[offset];
+        Ok(Self { multisig, amount, approved, executed, bump })
+    }
+
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        data[offset..offset + 32].copy_from_slice(&value.multisig.as_ref());
+        offset += 32;
+        data[offset..offset + 8].copy_from_slice(&value.amount.to_le_bytes());
+        offset += 8;
+        let __approved_serialized = ::borsh::to_vec(&value.approved)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        data[offset..offset + __approved_serialized.len()].copy_from_slice(&__approved_serialized);
+        offset += __approved_serialized.len();
+        data[offset] = if value.executed { 1 } else { 0 };
+        offset += 1;
+        data[offset] = value.bump as u8;
+        Ok(())
+    }
+
+    /// Borsh-style convenience wrapper: borrow the account's data buffer
+    /// and write the value into it. Mirrors Pinocchio's save() so the same
+    /// emitter call site (`Type::save(account, &value)`) works on both.
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = account.try_borrow_mut_data()?;
+        Self::write(&mut data, value)
+    }
+
+    /// Mirror of Pinocchio's from_account_info — the body emitter calls
+    /// `<Type>::from_account_info(account)?` cross-target, so Native
+    /// must expose the same signature even though it could equivalently
+    /// borrow + read inline. Without this, programs whose handlers don't
+    /// directly call `::read(...)` (most non-trivial Anchor sources)
+    /// fail Native cargo build with E0599 'no associated item named
+    /// from_account_info'.
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = account.try_borrow_data()?;
+        Self::read(&data)
+    }
+}

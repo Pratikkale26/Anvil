@@ -1,0 +1,520 @@
+=== errors.rs ===
+//! Error definitions for ProgramConfigDemo
+
+use super::*;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum ConfigError {
+    /// Caller is not the configured authority
+    Unauthorized = 6000,
+    /// New authority cannot be the default pubkey
+    InvalidAuthority = 6001,
+    /// Treasury cannot be the default pubkey
+    InvalidTreasury = 6002,
+    /// Fee exceeds maximum allowed (10 SOL)
+    FeeTooHigh = 6003,
+}
+
+pub use ConfigError::*;
+
+impl From<ConfigError> for ProgramError {
+    fn from(error: ConfigError) -> Self {
+        ProgramError::Custom(error as u32)
+    }
+}
+
+=== helpers.rs ===
+//! Helper functions for ProgramConfigDemo
+
+use super::*;
+use crate::state::*;
+use crate::errors::*;
+
+pub fn bump_seed(
+    program_id: &Pubkey,
+    seeds: &[&[u8]],
+    expected: &Pubkey,
+) -> Result<u8, ProgramError> {
+    for bump in (0..=255u8).rev() {
+        let mut seeds_with_bump: [&[u8]; 16] = [&[]; 16];
+        let len = seeds.len().min(15);
+        seeds_with_bump[..len].copy_from_slice(&seeds[..len]);
+        let bump_slice = &[bump];
+        seeds_with_bump[len] = bump_slice;
+        if let Ok(derived) = pinocchio::pubkey::create_program_address(&seeds_with_bump[..len + 1], program_id) {
+            if &derived == expected {
+                return Ok(bump);
+            }
+        }
+    }
+    Err(ProgramError::InvalidSeeds)
+}
+
+pub fn create_program_account(
+    account: &AccountInfo,
+    payer: &AccountInfo,
+    space: usize,
+    program_id: &Pubkey,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    if signer_seeds.len() > 1 {
+        return Err(ProgramError::InvalidSeeds);
+    }
+
+    let signer_storage = signer_seeds.first().map(|seed_group| {
+        let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+        for (index, seed) in seed_group.iter().enumerate() {
+            if index >= seeds.len() {
+                return Err(ProgramError::InvalidSeeds);
+            }
+            seeds[index] = Seed::from(*seed);
+        }
+        Ok((seeds, seed_group.len()))
+    }).transpose()?;
+
+    let signer_slice = if let Some((ref seeds, len)) = signer_storage {
+        let signer = Signer::from(&seeds[..len]);
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[signer])
+    } else {
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[])
+    };
+
+    signer_slice
+}
+
+=== instructions/initialize.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn initialize(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let config = &accounts[0];
+    let authority = &accounts[1];
+    let _system_program = &accounts[2];
+
+    if !authority.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !authority.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 32 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(32);
+    remaining = rest;
+    let treasury: [u8; 32] = arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?;
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let creation_fee: u64 = u64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let bump_config = bump_seed(program_id, &[b"program-config"], config.key())?;
+    let init_config_seeds: &[&[u8]] = &[
+            b"program-config",
+            &[bump_config],
+        ];
+    let init_config_signer_seeds = &[&init_config_seeds[..]];
+    create_program_account(config, authority, (8 + ProgramConfig::INIT_SPACE) as usize, program_id, init_config_signer_seeds)?;
+    let config_account = config;
+    let mut config = ProgramConfig {
+        authority: [0u8; 32],
+        treasury: [0u8; 32],
+        creation_fee: 0,
+        paused: false,
+        bump: 0,
+    };
+    config.authority = *authority.key();
+    config.treasury = treasury;
+    config.creation_fee = creation_fee;
+    config.paused = false;
+    config.bump = bump_config;
+    ProgramConfig::save(config_account, &config)?;
+    Ok(())
+
+}
+
+=== instructions/mod.rs ===
+//! Instruction processors for ProgramConfigDemo
+
+use crate::*;
+use crate::state::*;
+use crate::errors::*;
+use crate::helpers::*;
+
+pub mod initialize;
+pub use initialize::initialize;
+pub mod set_authority;
+pub use set_authority::set_authority;
+pub mod set_creation_fee;
+pub use set_creation_fee::set_creation_fee;
+pub mod set_treasury;
+pub use set_treasury::set_treasury;
+pub mod set_paused;
+pub use set_paused::set_paused;
+
+
+=== instructions/set_authority.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn set_authority(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 2 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let config = &accounts[0];
+    let authority = &accounts[1];
+
+    if !authority.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if config.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 32 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(32);
+    remaining = rest;
+    let new_authority: [u8; 32] = arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?;
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let _bump_config = bump_seed(program_id, &[b"program-config"], config.key())?;
+    if !(new_authority != Pubkey::default()) {
+        return Err(ConfigError::InvalidAuthority.into());
+    }
+    let config_account = config;
+    let mut config = ProgramConfig::from_account_info(config_account)?;
+    if config.authority != *authority.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    config.authority = new_authority;
+    ProgramConfig::save(config_account, &config)?;
+    Ok(())
+
+}
+
+=== instructions/set_creation_fee.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn set_creation_fee(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 2 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let config = &accounts[0];
+    let authority = &accounts[1];
+
+    if !authority.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if config.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let fee: u64 = u64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let _bump_config = bump_seed(program_id, &[b"program-config"], config.key())?;
+    if !(fee <= 10_000_000_000) {
+        return Err(ConfigError::FeeTooHigh.into());
+    }
+    let config_account = config;
+    let mut config = ProgramConfig::from_account_info(config_account)?;
+    if config.authority != *authority.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    config.creation_fee = fee;
+    ProgramConfig::save(config_account, &config)?;
+    Ok(())
+
+}
+
+=== instructions/set_paused.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn set_paused(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 2 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let config = &accounts[0];
+    let authority = &accounts[1];
+
+    if !authority.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if config.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(1);
+    remaining = rest;
+    let paused: bool = match arg_bytes[0] {
+        0 => false,
+        1 => true,
+        _ => return Err(ProgramError::InvalidInstructionData),
+    };
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let _bump_config = bump_seed(program_id, &[b"program-config"], config.key())?;
+    let config_account = config;
+    let mut config = ProgramConfig::from_account_info(config_account)?;
+    if config.authority != *authority.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    config.paused = paused;
+    ProgramConfig::save(config_account, &config)?;
+    Ok(())
+
+}
+
+=== instructions/set_treasury.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn set_treasury(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 2 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let config = &accounts[0];
+    let authority = &accounts[1];
+
+    if !authority.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if config.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 32 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(32);
+    remaining = rest;
+    let treasury: [u8; 32] = arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?;
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let _bump_config = bump_seed(program_id, &[b"program-config"], config.key())?;
+    if !(treasury != Pubkey::default()) {
+        return Err(ConfigError::InvalidTreasury.into());
+    }
+    let config_account = config;
+    let mut config = ProgramConfig::from_account_info(config_account)?;
+    if config.authority != *authority.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    config.treasury = treasury;
+    ProgramConfig::save(config_account, &config)?;
+    Ok(())
+
+}
+
+=== lib.rs ===
+//! ProgramConfigDemo — generated by Anvil v0.3.0
+//! Source framework: Anchor → Target: Pinocchio
+//!
+//! This code was automatically generated. Sections marked with
+//! "⚠️ Anvil: Review" should be verified before deployment.
+#![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
+
+use core::convert::TryInto;
+use borsh::{BorshDeserialize, BorshSerialize};
+use pinocchio::{
+    account_info::AccountInfo,
+    entrypoint,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    ProgramResult,
+};
+use pinocchio::instruction::{Seed, Signer};
+use pinocchio_system::create_account_with_minimum_balance_signed;
+
+mod state;
+
+mod instructions;
+
+mod errors;
+
+mod helpers;
+
+use instructions::*;
+
+entrypoint!(process_instruction);
+
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    if instruction_data.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (discriminator, data) = instruction_data.split_at(8);
+    router(program_id, accounts, discriminator, data)
+}
+
+fn router(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    discriminator: &[u8],
+    data: &[u8],
+) -> ProgramResult {
+    match discriminator {
+        [175, 175, 109, 31, 13, 152, 155, 237] => initialize(program_id, accounts, data),
+        [133, 250, 37, 21, 110, 163, 26, 121] => set_authority(program_id, accounts, data),
+        [30, 100, 118, 0, 113, 56, 97, 70] => set_creation_fee(program_id, accounts, data),
+        [57, 97, 196, 95, 195, 206, 106, 136] => set_treasury(program_id, accounts, data),
+        [91, 60, 125, 192, 176, 225, 166, 218] => set_paused(program_id, accounts, data),
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+
+=== state.rs ===
+//! State account definitions for ProgramConfigDemo
+
+//! Generated by Anvil v0.3.0 — Target: Pinocchio
+
+
+use super::*;
+
+use crate::errors::*;
+
+#[repr(C)]
+pub struct ProgramConfig {
+    pub authority: [u8; 32],
+    pub treasury: [u8; 32],
+    pub creation_fee: u64,
+    pub paused: bool,
+    pub bump: u8,
+}
+
+impl ProgramConfig {
+    pub const DISCRIMINATOR: [u8; 8] = [196, 210, 90, 231, 144, 149, 140, 63];
+    pub const INIT_SPACE: usize = 74;
+    pub const LEN: usize = 74;
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
+
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut offset = 8usize;
+        let authority: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += 32;
+        let treasury: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += 32;
+        let creation_fee: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let paused: bool = match data[offset] {
+            0 => false,
+            1 => true,
+            _ => return Err(ProgramError::InvalidAccountData),
+        };
+        offset += 1;
+        let bump: u8 = data[offset];
+        Ok(Self { authority, treasury, creation_fee, paused, bump })
+    }
+
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        data[offset..offset + 32].copy_from_slice(&value.authority);
+        offset += 32;
+        data[offset..offset + 32].copy_from_slice(&value.treasury);
+        offset += 32;
+        data[offset..offset + 8].copy_from_slice(&value.creation_fee.to_le_bytes());
+        offset += 8;
+        data[offset] = if value.paused { 1 } else { 0 };
+        offset += 1;
+        data[offset] = value.bump as u8;
+        Ok(())
+    }
+
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = unsafe { account.borrow_data_unchecked() };
+        Self::read(&data)
+    }
+
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        Self::write(&mut data, value)
+    }
+}
