@@ -66,6 +66,13 @@ export type RustStmt =
    */
   | { kind: "const_decl"; name: string; ty: string; value: RustExpr }
   /**
+   * Tail expression — `<expr>` with NO trailing `;`. Distinct from
+   * `expr_stmt` because the latter always prints `;` at the end.
+   * Used for function-body tail expressions like the bare `Ok(())`
+   * the pass_through handler short-circuits to.
+   */
+  | { kind: "tail_expr"; expr: RustExpr }
+  /**
    * Escape hatch: a complete statement passed through as raw text.
    * The emitted line(s) will be the verbatim string. Visitor metric:
    * each `raw_line` indicates a Phase-2 candidate (something the
@@ -213,6 +220,9 @@ export function assign(target: RustExpr, value: RustExpr): RustStmt {
 }
 export function exprStmt(expr: RustExpr): RustStmt {
   return { kind: "expr_stmt", expr };
+}
+export function tailExpr(expr: RustExpr): RustStmt {
+  return { kind: "tail_expr", expr };
 }
 export function returnStmt(value?: RustExpr): RustStmt {
   return value === undefined ? { kind: "return" } : { kind: "return", value };

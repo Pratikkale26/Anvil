@@ -77,6 +77,7 @@ import {
   block,
   constDecl,
   mlCall,
+  tailExpr,
 } from "./nodes.js";
 
 /**
@@ -185,6 +186,96 @@ function parseSimpleExprStrict(t: string): RustExpr | null {
   if (/^[A-Za-z_]\w*$/.test(t)) return ident(t);
 
   return null;
+}
+
+/**
+ * Convert a single `walker.lines` entry produced by handlePassThrough
+ * into a structural RustStmt where the shape is recognized; rawLine
+ * fallback otherwise. Only single-line entries get converted —
+ * multi-line entries (require!() rewrites, CpiContext blocks, etc.)
+ * stay rawLine because their shape varies enough to justify the bigger
+ * lift to structural in a separate milestone.
+ *
+ * Handles three high-frequency single-line shapes:
+ *   - exact `    Ok(())` — the pass_through Ok-short-circuit. Becomes
+ *     exprStmt(call(path(["Ok"]), [lit("()")])).
+ *   - `    let X[: T] = expr;` — let binding. The `: T` annotation is
+ *     captured into the value text via a typed-let prefix preserved
+ *     inside the rawLine fallback when present (the schema doesn't
+ *     model `ty` on let yet). Bare lets become letStmt(name,
+ *     parseSimpleExpr(value)).
+ *   - `    expr;` — bare expression statement. Becomes
+ *     exprStmt(parseSimpleExpr(expr)).
+ *
+ * Anything else (assignments to compound targets, multi-line blocks,
+ * comments, attributes) falls back to rawLine.
+ */
+function convertPassThroughLine(line: string): RustStmt {
+  if (line.includes("\n")) return rawLine(line);
+  if (line === "    Ok(())") {
+    // Tail expression — the pass_through Ok-short-circuit pushes
+    // `    Ok(())` with NO trailing `;` (it's the function-body tail
+    // expr). Use tailExpr so the printer matches that exactly.
+    return tailExpr(call(path(["Ok"]), [lit("()")]));
+  }
+  // Bare-let — `    let [mut] X = expr;` (no type annotation).
+  // Typed-let `    let X: T = expr;` falls back because the schema
+  // doesn't model `ty` on let stmts and the printer would drop the
+  // annotation.
+  const bareLet = /^    let (mut )?(\w+) = (.+);$/.exec(line);
+  if (bareLet?.[2] && bareLet[3] !== undefined) {
+    return letStmt(bareLet[2], parseSimpleExpr(bareLet[3]), { mut: !!bareLet[1] });
+  }
+  // Bare expression statement — `    expr;`. Skip if it looks like
+  // it could be an assignment (`X = Y`), a `return`, a comment, or
+  // anything else with embedded `=` at the top level — those need
+  // their own stmt nodes (assign / return / comment), and parsing
+  // them naively here would produce wrong byte output. Conservative:
+  // only convert when the body has no top-level `=` outside of `==`,
+  // `!=`, `<=`, `>=`.
+  const bareExpr = /^    (.+);$/.exec(line);
+  if (bareExpr?.[1]) {
+    const body = bareExpr[1];
+    if (/^let\b/.test(body)) return rawLine(line); // typed-let / shape we don't handle
+    if (/^return\b/.test(body)) return rawLine(line);
+    if (hasTopLevelAssignment(body)) return rawLine(line);
+    const parsed = parseSimpleExprStrict(body);
+    if (parsed) return exprStmt(parsed);
+  }
+  return rawLine(line);
+}
+
+/**
+ * True if `text` contains a `=` that's neither part of `==`, `!=`,
+ * `<=`, `>=`, `:=`, nor `=>`, AND is at top-level (depth 0 across
+ * (), [], {}, "", '').
+ *
+ * Used by convertPassThroughLine to decide whether a single-line
+ * `expr;` is actually an assignment rather than a bare expression
+ * statement. Assignments need an `assign` AST node, not exprStmt.
+ */
+function hasTopLevelAssignment(text: string): boolean {
+  let depth = 0;
+  let inStr: '"' | "'" | null = null;
+  for (let k = 0; k < text.length; k++) {
+    const c = text[k];
+    if (inStr) {
+      if (c === "\\") { k++; continue; }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { inStr = c; continue; }
+    if (c === "(" || c === "[" || c === "{") { depth++; continue; }
+    if (c === ")" || c === "]" || c === "}") { depth--; continue; }
+    if (depth !== 0) continue;
+    if (c !== "=") continue;
+    const prev = text[k - 1] ?? "";
+    const next = text[k + 1] ?? "";
+    if (prev === "=" || prev === "!" || prev === "<" || prev === ">" || prev === ":") continue;
+    if (next === "=" || next === ">") continue;
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -556,6 +647,7 @@ type EmitStmt = Extract<BodyStatement, { kind: "emit" }>;
 type SysvarClock = Extract<BodyStatement, { kind: "sysvar_clock" }>;
 type SysvarRent = Extract<BodyStatement, { kind: "sysvar_rent" }>;
 type PdaSignerSeeds = Extract<BodyStatement, { kind: "pda_signer_seeds" }>;
+type PassThroughStmt = Extract<BodyStatement, { kind: "pass_through" }>;
 type CpiSystemTransfer = Extract<BodyStatement, { kind: "cpi_system_transfer" }>;
 type CpiSplTransfer = Extract<BodyStatement, { kind: "cpi_spl_transfer" }>;
 type CpiSplMintTo = Extract<BodyStatement, { kind: "cpi_spl_mint_to" }>;
@@ -622,7 +714,7 @@ export class AstVisitorBase {
       case "bumps_access":         return this.visitBumpsAccess(stmt);
       // Handler-fallback Phase-2 increment ports — structural
       // conversion to be done one kind at a time in subsequent commits.
-      case "pass_through":         return this.runHandlerCapture(handlePassThrough, stmt);
+      case "pass_through":         return this.visitPassThrough(stmt);
       case "require":              return this.visitRequire(stmt);
       case "msg":                  return this.visitMsg(stmt);
       case "emit":                 return this.visitEmit(stmt);
@@ -1112,6 +1204,35 @@ export class AstVisitorBase {
   visitReturnErr(stmt: ReturnErr): RustStmt[] {
     this.walker.ctx.transformedCount++;
     return [returnStmt(call(path(["Err"]), [parseSimpleExpr(stmt.error)]))];
+  }
+
+  /**
+   * EM1 M5c — pass_through visitor-side structural conversion.
+   *
+   * The pass_through handler runs the full text-transform pipeline
+   * (CPI rewriters, ctx.accounts replacement, helper calls, sysvar
+   * qualification, residual CpiContext cleanup) on arbitrary Rust
+   * blocks. We delegate to it for the transforms (replicating that
+   * pipeline structurally is M5d, weeks of work) but then attempt to
+   * convert each captured line back into a structural stmt where the
+   * shape is recognized. Same byte output via rawLine fallback.
+   *
+   * Recognized single-line shapes:
+   *   - exact `    Ok(())` → exprStmt(call(path(["Ok"]), [lit("()")]))
+   *   - `    let X[: T] = expr;` → letStmt(X, parseSimpleExpr(expr))
+   *   - `    expr;` (no leading `let`/`return`/`//`) → exprStmt(parseSimpleExpr(expr))
+   *
+   * Multi-line outputs (require!() rewrites, CpiContext blocks, etc.)
+   * stay rawLine — those benefit from richer modeling deferred to
+   * later EM1 milestones.
+   */
+  protected visitPassThrough(stmt: PassThroughStmt): RustStmt[] {
+    const w = this.walker;
+    const before = w.lines.length;
+    handlePassThrough(w, stmt);
+    const captured = w.lines.slice(before);
+    w.lines.length = before;
+    return captured.map((entry) => convertPassThroughLine(entry));
   }
 
   /**
