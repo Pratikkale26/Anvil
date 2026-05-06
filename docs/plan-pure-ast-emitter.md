@@ -295,9 +295,46 @@ remaining ~50-70 hours across ~7 future sessions.
 - M2: dispatch shim — all 11 CPI catalog kinds get named visit
   methods (no structural change yet, just reorganization).
 - M2.1: AST node infrastructure — block / comment / const_decl /
-  array / struct_literal nodes + printer rules. Lands as dead code.
-- 4 commits: 30cb15b (M1), 6a54eec (M2 dispatch shim), 9345f05 (M2.1
-  AST infra), [docs commit pending].
+  array / struct_literal / if_stmt nodes + printer rules.
+- **require structurally ported** (cfb51a5 metric baseline + 82199b2
+  port). Drops 186 raw_lines → 0 raw_lines for require. raw_exprs
+  rises 0 → 372 (cond + error path are leaf rawExpr inside the
+  structural skeleton; full structural deferred to M5 IR extension).
+- 6 commits: 30cb15b, 6a54eec, 9345f05, e142f56, cfb51a5, 82199b2.
+
+**Verified state at end of Session 1** (bun scripts/em1-visitor-metric.ts):
+
+  Kinds with 0 raw nodes (PURE structural): 2 of 20 (sysvar_clock,
+  sysvar_rent). Demos don't exercise return_ok / cpi_mpl_*; they're
+  outside the metric.
+
+  Total raw_lines across corpus: 1011 (was 1197 pre-require; -15.5%).
+  Total raw_exprs across corpus: 818 (was 446; +83% from require's
+  cond+error and the existing state_field_assign value-side rawExprs).
+
+  raw_lines is the meaningful "bad smell" metric — whole-line
+  passthrough that bypasses structural emit. raw_exprs is acceptable
+  for now (leaf text inside structural skeletons; eliminated by M5
+  IR extension).
+
+  Per-kind raw_lines remaining:
+    pass_through        614  (M5 — needs IR extension)
+    state_read          168  (body emit text — runs through
+                              emitter.emitState* helpers)
+    state_field_assign   66  (prelude lines — ensureStateRead lines)
+    cpi_spl_transfer     52  (CPI struct_literal port)
+    emit                 38  (struct_literal + borsh block)
+    pda_signer_seeds     30  (let-bindings for seeds + signer_seeds)
+    cpi_system_transfer  10  (CPI port, Pinocchio is simple)
+    cpi_spl_close_account 8
+    cpi_spl_mint_to       6
+    cpi_spl_burn          4
+    cpi_custom            4  (M5 blocker — arbitrary Rust expr)
+    cpi_*_others        ≤2 each
+    msg                   3  (already mostly structural; 3 raw_lines
+                              are the formatted-msg comment line)
+    bumps_access          2  (already mostly structural; bump-line
+                              prelude raw)
 
 ### Sessions 2-3 (Tier B-1 + B-2): CPI catalog structural ports (~12-15 hrs)
 Per-kind ~2-3 hrs because of multi-line whitespace-policy matching
