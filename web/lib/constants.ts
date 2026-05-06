@@ -163,16 +163,27 @@ export type AutoFixResponse = {
   ok: boolean;
   stoppedReason:
     | "green"
+    | "differential_byte_equal"
     | "max_iterations"
     | "cost_cap"
     | "no_progress"
     | "refine_error"
-    | "unsupported_target";
+    | "unsupported_target"
+    | "client_closed"
+    | "regression_reverted"
+    | "daily_spend_cap_hit";
   iterations: AutoFixIteration[];
   finalFiles: { path: string; content: string }[];
   finalOk: boolean;
   totalDurationMs: number;
   totalCostUsd: number;
+  /**
+   * Top-level differential outcome when the auto-fix request enabled
+   * the byte-equal gate (`differential` field on the request body).
+   * Undefined when the gate wasn't requested. The badge renders
+   * "verified" only when this is explicitly "BYTE_EQUAL".
+   */
+  differentialVerdict?: "BYTE_EQUAL" | "DIVERGED" | "SCENARIO_FAILED" | "NOT_RUN";
 };
 
 export type ErrorDelta = { before: number; after: number };

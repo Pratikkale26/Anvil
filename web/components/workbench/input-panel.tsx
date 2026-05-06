@@ -965,11 +965,17 @@ function VerifyBuildBody(props: {
           className="rounded-xl border overflow-hidden"
           style={{
             borderColor:
-              autoFixResult?.stoppedReason === "green"
-                ? "rgba(14,168,128,0.32)"
-                : autoFixError
-                  ? "rgba(224,90,90,0.32)"
-                  : "rgba(107,123,255,0.28)",
+              // Byte-equal verified > compile-only-green > error > running.
+              // The new ordering puts the differential-verified outcome
+              // ahead of "green" since the gate is the strictest verdict.
+              autoFixResult?.differentialVerdict === "BYTE_EQUAL"
+                ? "rgba(14,168,128,0.55)"
+                : autoFixResult?.stoppedReason === "green" ||
+                  autoFixResult?.stoppedReason === "differential_byte_equal"
+                  ? "rgba(14,168,128,0.32)"
+                  : autoFixError
+                    ? "rgba(224,90,90,0.32)"
+                    : "rgba(107,123,255,0.28)",
             background: "rgba(255,255,255,0.02)",
           }}
         >
@@ -988,10 +994,39 @@ function VerifyBuildBody(props: {
                 ? "Auto-fix running…"
                 : autoFixError
                   ? "Auto-fix failed"
-                  : autoFixResult?.stoppedReason === "green"
-                    ? "Auto-fix succeeded"
-                    : "Auto-fix stopped"}
+                  : autoFixResult?.stoppedReason === "differential_byte_equal"
+                    ? "Auto-fix succeeded · byte-equal verified"
+                    : autoFixResult?.stoppedReason === "green"
+                      ? "Auto-fix succeeded"
+                      : "Auto-fix stopped"}
             </span>
+            {/* Differential gate badge: green when verdict === BYTE_EQUAL,
+                yellow when the gate ran but diverged. Sits next to the
+                stoppedReason so the audit-vs-verified state is visible
+                without expanding the iteration log. */}
+            {autoFixResult?.differentialVerdict && (
+              <span
+                className="ml-2 px-2 py-[2px] rounded-md text-[9.5px] font-mono uppercase tracking-wide shrink-0"
+                style={
+                  autoFixResult.differentialVerdict === "BYTE_EQUAL"
+                    ? { background: "rgba(14,168,128,0.18)", color: "#7be3b9", border: "1px solid rgba(14,168,128,0.45)" }
+                    : { background: "rgba(245,166,35,0.16)", color: "#f5cd83", border: "1px solid rgba(245,166,35,0.4)" }
+                }
+                title={
+                  autoFixResult.differentialVerdict === "BYTE_EQUAL"
+                    ? "AI patches compiled AND produced byte-equal post-scenario state vs Anchor reference."
+                    : "AI patches compiled but the byte-equal differential gate found divergence — audit before deploy."
+                }
+              >
+                {autoFixResult.differentialVerdict === "BYTE_EQUAL"
+                  ? "✓ byte-equal verified"
+                  : autoFixResult.differentialVerdict === "DIVERGED"
+                    ? "⚠ diverged"
+                    : autoFixResult.differentialVerdict === "SCENARIO_FAILED"
+                      ? "⚠ scenario failed"
+                      : "differential not run"}
+              </span>
+            )}
             {autoFixResult && (
               <span className="ml-auto text-[10px] font-mono text-anvil-text-muted">
                 {autoFixResult.iterations.length} iter · {autoFixResult.totalDurationMs}ms · ${autoFixResult.totalCostUsd.toFixed(4)}
@@ -1013,10 +1048,14 @@ function VerifyBuildBody(props: {
                   <div className="text-[11px] text-anvil-text-muted leading-snug mb-1">
                     Stopped: <span className="font-mono">{autoFixResult.stoppedReason}</span>
                     {autoFixResult.stoppedReason === "green" && " — generated code now compiles."}
+                    {autoFixResult.stoppedReason === "differential_byte_equal" && " — generated code compiles AND matches Anchor byte-equal under scenario."}
                     {autoFixResult.stoppedReason === "max_iterations" && " — hit iteration limit."}
                     {autoFixResult.stoppedReason === "cost_cap" && " — hit AI cost cap."}
                     {autoFixResult.stoppedReason === "no_progress" && " — AI accepted no patches; manual fix needed."}
                     {autoFixResult.stoppedReason === "refine_error" && " — AI provider error."}
+                    {autoFixResult.stoppedReason === "regression_reverted" && " — patches made cargo errors WORSE; reverted to last good state."}
+                    {autoFixResult.stoppedReason === "daily_spend_cap_hit" && " — daily AI spend cap reached."}
+                    {autoFixResult.stoppedReason === "client_closed" && " — client disconnected mid-run."}
                   </div>
                   <div className="flex flex-col gap-1 max-h-[160px] overflow-y-auto">
                     {autoFixResult.iterations.map((it, i) => (
