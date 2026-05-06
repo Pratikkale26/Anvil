@@ -54,7 +54,9 @@ Any divergence fails the gate loudly with the offset of the first differing byte
 
 ### Per-IR-kind fixture coverage
 
-17 byte-equal differential fixtures (counter, vault, has-one, ata-mint, spl-transfer, spl-burn, t22-transfer, close-account, set-authority, escrow, multisig, optional-state, init-if-needed, realloc, realloc-grow, event-emit, staking) collectively exercise the IR kinds Anvil supports. Each fixture exists because an emit divergence on that pattern is caught here, not in user code. `event-emit` and `staking` exercise opt-in event-log byte-equality (`compareEventLogs: true`) — the fourth comparison surface; `staking` additionally exercises clock-pinned state math (Clock::get + reward accrual via saturating_mul + integer division) across multiple transactions, with 4 events emitted that must byte-equal Anchor's macro expansion.
+**34 byte-equal differential fixtures** collectively exercise the IR kinds Anvil supports — 28 demos covering individual emit patterns + **6 externally-authored real-world Anchor programs** (anchor-escrow-2025, coral-events, favorites, account-data, pda-rent-payer, page-visits) cloned verbatim from public repos. Each fixture exists because an emit divergence on that pattern is caught here, not in user code.
+
+The real-world fixtures matter for trust: they prove Anvil's emit produces byte-identical post-state to Anchor on programs it didn't author. `event-emit` and `staking` exercise opt-in event-log byte-equality (`compareEventLogs: true`); `staking` additionally exercises clock-pinned state math (Clock::get + reward accrual via saturating_mul + integer division) across multiple transactions, with 4 events emitted that must byte-equal Anchor's macro expansion.
 
 - **What this proves**: Anvil's emit-level correctness for each common Anchor pattern is verified on at least one real program, with byte-equality.
 - **What it doesn't prove**: a *specific* user program's reachable states all map cleanly to fixtures we've already gated. Combinations of patterns can still surface emit bugs not covered by any individual fixture.
@@ -67,9 +69,9 @@ Stated plainly so an auditor can compare to what they've heard us say:
 
 - **We don't claim "no audit needed."** We claim the *translation step* doesn't need a separate audit when paired with sufficient differential coverage. Source-level audit of the Anchor program is still required for #1 (program semantics).
 - **We don't claim universal byte-equality.** We claim byte-equality on the scenarios you run. Inputs not in your scenarios are not gated.
-- **We don't claim AI-patched output is verified.** AI Refine produces a yellow banner in the workbench whenever patches are present. AI patches are not under the differential corpus today; they're explicitly out of scope for the trust claim.
+- **AI-patched output now has an opt-in differential gate.** `/build/auto-fix?with_differential=1` runs the byte-equal compare after each cargo-green iteration; patches that compile but diverge at runtime are flagged and fed back to the next refine call. The workbench's auto-fix card shows a green "✓ byte-equal verified" badge when the gate passes. When the gate is NOT requested, AI Refine still produces a yellow banner reminding you to audit before deploy. The trust claim covers AI-patched output ONLY when the differential verdict on the matching scenario is `BYTE_EQUAL`.
 - **Event log parity is opt-in via the TS fixture harness.** The TS fixture harness now supports `compareEventLogs: true` (see `differential-event-emit.test.ts`) which byte-compares `Program data:` lines (sol_log_data outputs). emit!() / emit_cpi!() lower to deterministic borsh-encoded payloads with sha256-derived discriminators that byte-equal Anchor's macro expansion. The JSON-scenario CLI path doesn't compare event logs yet — it warns when emit!() is present and requires `--ignore-events` to proceed; for full event coverage use the TS fixture harness.
-- **We don't claim Quasar is gated.** Quasar emit passes the validator + has snapshot tests, but no cargo-build coverage. It's flagged experimental in the workbench picker. The trust claims here cover Pinocchio (production) and Native (reference). If you compile to Quasar, treat it as a starting point that needs review.
+- **Quasar emit was deleted from the production path on 2026-05-05** (`quasar-lang` hadn't shipped a stable 1.0). Pinocchio (production) and Native (reference) are the supported, byte-equal-gated targets.
 
 ---
 
@@ -115,16 +117,16 @@ This is the strongest claim — it reduces re-audit need to "verify the IR captu
 
 Defensible and shippable today:
 
-> Anvil emits Pinocchio code that's byte-equal to Anchor on every scenario in the differential gate. The 17-fixture corpus + 54 real-world cargo regressions cover the emit patterns; scenarios you bring via `anvil-sol differential --scenario` cover your specific program's reachable states. Bring the scenarios your audit cares about and run them through the gate.
+> Anvil emits Pinocchio code that's byte-equal to Anchor on every scenario in the differential gate. The 34-fixture corpus (28 demo + **6 real-world externally-authored Anchor programs**) + 50+ real-world cargo regressions cover the emit patterns; scenarios you bring via `anvil-sol differential --scenario` cover your specific program's reachable states. Bring the scenarios your audit cares about and run them through the gate.
 >
 > What we don't ask you to take on faith: program semantics still need a source-level audit (Anvil consumes the same Rust your auditor reads). What we *do* ask you to skip: separate review of the translation step, on the conditions that (a) cargo-green, (b) byte-equal under your scenarios, and (c) you accept the published limits below.
 
 Conditions, in plain terms:
 
 1. The differential gate runs scenarios you specify. Coverage is your responsibility.
-2. AI Refine output is **not** under the gate today. If you used `anvil-sol compile --refine` or the workbench's "AI Refine" button, audit those patches as if hand-written.
+2. AI Refine output is gated only when the request opts in via `/build/auto-fix?with_differential=1` AND the verdict is `BYTE_EQUAL`. Without the gate, the workbench's persistent yellow banner reminds you to audit AI patches as if hand-written.
 3. The `--strict` flag refuses to write output when validator errors or `TODO(manual)` markers are present. Run with `--strict` for production deploy.
-4. The published limits apply to **Pinocchio** target. Native is the reference (always under the differential gate alongside Pinocchio). Quasar is experimental and **not** trust-claimed.
+4. The published limits apply to **Pinocchio** target. Native is the reference (always under the differential gate alongside Pinocchio).
 
 ---
 

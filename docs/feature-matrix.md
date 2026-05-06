@@ -10,9 +10,11 @@
 | Parser (Anchor source → IR) | Y (shared) | Y (shared) |
 | Instruction handlers + router | Y | Y |
 | Account constraints (`init`, `init_if_needed`, `mut`, `has_one`, `close`, `seeds`, `bump`, `realloc`) | Y | Y |
+| `#[derive(InitSpace)]` + `#[max_len]` | Y | Y |
 | PDA derivation + signer seeds | Y | Y |
 | `require_*!` / `msg!` / `emit!` | Y | Y |
 | System-program `transfer` | Y | Y |
+| System-program `create_account` (with arbitrary owner) | Y | Y |
 | SPL Token: `transfer` / `mint_to` / `burn` / `close_account` | Y | Y |
 | SPL Token: `set_authority` | Y (hand-rolled raw CPI) | Y (`spl_token::instruction::set_authority`) |
 | Associated Token Account `create` | Y (hand-rolled vs SPL ATA program ID) | Y (`spl_associated_token_account::instruction::create`) |
@@ -20,7 +22,9 @@
 | Token-2022 `_checked` variants | Y (runtime pass-through via `pinocchio_token`) | Y (`spl_token_2022::*_checked`) |
 | Token-2022 extensions (TransferFee, MintCloseAuthority, …) | partial — see [token-2022-extensions.md](token-2022-extensions.md) | partial — see [token-2022-extensions.md](token-2022-extensions.md) |
 | AI Refine (validator-driven) | Y (shared) | Y (shared) |
+| AI under byte-equal differential gate (`/build/auto-fix?with_differential=1`) | Y (shared) | Y (shared) |
 | Verify Build + Auto-fix loop | Y (shared) | Y (shared) |
+| AST visitor (Phase 2 — dead code, structural emit incrementally retiring regex layer) | Y (shared, scaffold + 4 IR kinds structurally ported) | Y (shared) |
 | Zero-copy account layouts (`#[account(zero_copy)]`) | — | — |
 | Pyth / MPL Core / Switchboard CPIs | lint | lint |
 | Impl-method inlining (`ctx.accounts.foo()`) | partial | partial |
@@ -28,6 +32,21 @@
 ## Locked under byte-equal differential gate
 
 These run on every Anvil release; any emit divergence fails the gate.
+
+**34 byte-equal differential fixtures** — 28 demos + 6 externally-authored real-world Anchor programs.
+
+### Real-world programs (cloned verbatim)
+
+| Program | Source | Surface |
+|---|---|---|
+| `anchor-escrow-2025` | mikemaccana/anchor-escrow-2025 | PDA + non-ATA token init + `token::transfer` |
+| `coral-events` | coral-xyz/anchor test corpus | `emit!()` event log + multi-field borsh payload |
+| `favorites` | solana-developers/program-examples | `init_if_needed` + `String` + `Vec<String>` (max_len) |
+| `account-data` | solana-developers/program-examples | 3× `String` fields under `#[max_len(50)]` |
+| `pda-rent-payer` | solana-developers/program-examples | Signer-seeded `system_program::create_account` |
+| `page-visits` | solana-developers/program-examples | Smallest possible PDA-init (5-byte struct) |
+
+### Demo fixtures (representative subset; 28 total)
 
 | Fixture | Surface |
 |---|---|
@@ -38,14 +57,17 @@ These run on every Anvil release; any emit divergence fails the gate.
 | `spl-transfer` | `token::transfer` |
 | `spl-burn` | `token::burn` |
 | `t22-transfer` | Token-2022 `transfer_checked` (decimals extraction) |
-| `close-account` | `close = receiver` rent refund + reap |
+| `close` | `close = receiver` rent refund + reap |
 | `set-authority` | hand-rolled raw SPL `set_authority` on Pinocchio |
 | `escrow` | PDA init + non-ATA token init (`init token::*` vault) + `token::transfer` |
+| `marketplace` | NFT marketplace state shape (admin + fee_bps + treasury) |
+| `staking` | Clock-pinned + `emit!` + msg/return-data triple parity |
+| `realloc` / `realloc-grow` | Vec resize with rent-delta accounting |
+| `multisig` | m-of-n signer enforcement |
+| `event-emit` | `emit!()` discriminator + borsh payload via `sol_log_data` |
+| `vesting` | Schedule + cliff + claim math |
 
-Deferred stubs (file headers in `api/tests/differential-*.test.ts` document the path to enable):
-
-- `staking` — clock + `emit!` event log handling
-- `realloc` — Vec-grow rent delta + zero-fill
+Plus 12 more covering bumps_access, init_if_needed, cpi_custom, cpi_memo, sysvars, return data/err, msg logs, optional-state, program-config, tip-jar, sysvar-rent. `bun test api/tests/differential-*.test.ts` runs the full set.
 
 ## Real-world cargo-build coverage
 
@@ -53,13 +75,7 @@ Deferred stubs (file headers in `api/tests/differential-*.test.ts` document the 
 
 ## Quasar status
 
-The Quasar emitter shares the parser and IR pipeline and produces output, but `quasar-lang` 0.0 is too early for an end-to-end cargo-build signal:
-
-- Zero cargo-build regression tests on Quasar output.
-- A few CPI surfaces (`set_authority`, ATA, Memo) emit `// Anvil TODO` stubs awaiting upstream features.
-- Disabled in the workbench picker; available via `anvil-sol compile --target quasar` for power users who want to inspect.
-
-Treat Quasar output as a starting point that needs review. **Pinocchio and Native are the gated targets.**
+Quasar emit was deleted from the production path on 2026-05-05 (`quasar-lang` hadn't shipped a stable 1.0). Pinocchio and Native are the supported, byte-equal-gated targets. The vendored CLI copy at `cli/src/api-src/emitter/quasar-*.ts` is preserved but no longer maintained.
 
 ## Known gaps
 

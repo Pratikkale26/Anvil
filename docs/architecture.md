@@ -2,18 +2,20 @@
 
 ## Overview
 
-Anvil is a small compiler that turns Anchor Rust into one of three target
-backends — Pinocchio, Native (raw `solana_program`), or Quasar — via a typed,
-schema-validated IR.
+Anvil is a small compiler that turns Anchor Rust into one of two target
+backends — Pinocchio (production) or Native (reference, raw `solana_program`)
+— via a typed, schema-validated IR.
 
 ```text
 Anchor-like Rust
   ├─► tree-sitter parse
   ├─► structural classification (instructions, accounts, constraints, body stmts)
-  ├─► SolanaIR (Zod-validated)
-  ├─► target emitter (Pinocchio | Native | Quasar)
+  ├─► SolanaIR (Zod-validated, 23 body-statement kinds)
+  ├─► target emitter (Pinocchio | Native)
   ├─► output validator (structural)
   └─► generated Rust + CU metadata
+                │
+                └─► (optional) byte-equal differential gate vs Anchor reference .so in LiteSVM
 ```
 
 Two apps:
@@ -31,7 +33,7 @@ Two apps:
 - account contexts with full constraint normalization (16 kinds: `init`, `mut`, `seeds`, `bump`, `has_one`, `close`, `init_if_needed`, `payer`, `space`, `token::*`, `associated_token::*`, freeform `constraint = …`, etc.)
 - custom errors
 - helper / inherent-impl methods (now flow-preserved into emit)
-- body statements classified into 17 IR kinds (`account_field_assign`, `cpi_spl_transfer`, `cpi_spl_set_authority`, `cpi_ata_create`, `cpi_memo`, `state_field_op`, `pass_through`, …)
+- body statements classified into 23 IR kinds (`state_read`, `state_field_assign`, `bumps_access`, `pass_through`, `require`, `msg`, `emit`, `return_ok`, `return_err`, `sysvar_clock`, `sysvar_rent`, `pda_signer_seeds`, `cpi_spl_transfer`, `cpi_spl_mint_to`, `cpi_spl_burn`, `cpi_spl_close_account`, `cpi_spl_set_authority`, `cpi_ata_create`, `cpi_memo`, `cpi_custom`, `cpi_system_transfer`, `cpi_mpl_create_metadata_v3`, `cpi_mpl_create_master_edition_v3`)
 
 Project ingestion supports raw source, single `.rs` file, project directory, or git repo URL with `programs/*/src/lib.rs` auto-detection.
 
@@ -49,11 +51,11 @@ Key files:
 
 ### Emitters
 
-- [`api/src/emitter/pinocchio-emitter.ts`](api/src/emitter/pinocchio-emitter.ts) — primary target. Hand-rolled CPI for SPL Token / Token-2022 / ATA / Memo. PDA signer-seed expansion. Const-size `[Seed; N]` allocation patterns for `no_std`-compat signers.
-- [`api/src/emitter/native-emitter.ts`](api/src/emitter/native-emitter.ts) — `solana_program` reference. Auto-imports SPL crates only when CPI body needs them; auto-injects `Mint::unpack` prelude when `<account>.decimals` is referenced.
-- [`api/src/emitter/quasar-emitter.ts`](api/src/emitter/quasar-emitter.ts) — experimental. Validator passes; not cargo-build-gated.
-- [`api/src/emitter/output-validator.ts`](api/src/emitter/output-validator.ts) — structural checks on emitted file set (no orphan refs, balanced braces, required imports present).
-- [`api/src/emitter/cu-analyzer.ts`](api/src/emitter/cu-analyzer.ts) — heuristic CU comparison (constants table, NOT measured; `scripts/measure-cu.ts` uses LiteSVM for real numbers).
+- [`api/src/emitter/pinocchio-emitter.ts`](../api/src/emitter/pinocchio-emitter.ts) — primary target. Hand-rolled CPI for SPL Token / Token-2022 / ATA / Memo. PDA signer-seed expansion. Const-size `[Seed; N]` allocation patterns for `no_std`-compat signers.
+- [`api/src/emitter/native-emitter.ts`](../api/src/emitter/native-emitter.ts) — `solana_program` reference. Auto-imports SPL crates only when CPI body needs them; auto-injects `Mint::unpack` prelude when `<account>.decimals` is referenced.
+- [`api/src/emitter/ast-visitor/`](../api/src/emitter/ast-visitor/) — EM1 Phase 2 increment. Per-IR-kind visitor that emits Rust-AST nodes (vs the legacy string-builder + regex post-process). Lands as DEAD CODE today, exercised only by `tests/ast-visitor-byte-identical.test.ts`. 4 IR kinds structurally ported (`state_read` LHS, `state_field_assign` LHS, `bumps_access` alias, `return_err`, `return_ok` Ok line, `msg` shape 1+3); the rest dispatch through a runHandlerCapture wrapper that's byte-identical to the existing handler chain. Phase 2 retires the regex layer one kind at a time.
+- [`api/src/emitter/output-validator.ts`](../api/src/emitter/output-validator.ts) — structural checks on emitted file set (no orphan refs, balanced braces, required imports present).
+- [`api/src/emitter/cu-analyzer.ts`](../api/src/emitter/cu-analyzer.ts) — heuristic CU comparison (constants table, NOT measured; `scripts/measure-cu.ts` uses LiteSVM for real numbers).
 
 ### Build + Sandbox
 
@@ -86,10 +88,13 @@ See [`api/src/ai/refine.ts`](api/src/ai/refine.ts).
 
 | Layer | Tests | What it gates |
 |------|-------|---------------|
-| Unit (parser / emitter / validator / API / spend-tracker) | 142 | Code correctness |
-| Cargo MUST_PASS (program-examples + escrow2025 + coral cohort + t22-transfer-fee) | 43 fixtures × {pinocchio,native} | Emitted code compiles |
-| Cargo tracking ceilings (coral-swap, t22-transfer-hook, …) | 6 fixtures | Emitted code regression-guard (errors ≤ ceiling) |
-| **Differential** ([api/tests/differential-*.test.ts](api/tests/)) | counter, vault | **Anchor ↔ Anvil-Pinocchio runtime equality (LiteSVM byte-equal)** |
+| Unit (parser / emitter / validator / API / spend-tracker) | ~150 | Code correctness |
+| Binary-parity snapshot ([api/tests/binary-parity-snapshot.test.ts](../api/tests/binary-parity-snapshot.test.ts)) | 61 fixture×target combinations | Locks `output.files` for the EM1 pure-AST emitter migration parity gate; any change to the regex post-process layer surfaces as a single-file diff |
+| AST visitor parity ([api/tests/ast-visitor-byte-identical.test.ts](../api/tests/ast-visitor-byte-identical.test.ts)) | 26 demos × 2 targets | Asserts visitor output is byte-identical to handler chain across every IR kind |
+| Cargo MUST_PASS (program-examples + escrow2025 + coral cohort + t22-transfer-fee) | 50+ fixtures × {pinocchio,native} | Emitted code compiles |
+| Cargo tracking ceilings (coral-swap, t22-transfer-hook, …) | ~9 fixtures | Emitted code regression-guard (errors ≤ ceiling) |
+| **Differential — demos** ([api/tests/differential-*.test.ts](../api/tests/)) | 28 byte-equal fixtures | **Anchor ↔ Anvil-Pinocchio runtime equality (LiteSVM byte-equal: data + lamports + owner)** |
+| **Differential — real-world** | 6 externally-authored Anchor programs (anchor-escrow-2025, coral-events, favorites, account-data, pda-rent-payer, page-visits) | Same gate, applied to programs Anvil didn't author |
 
 The differential layer is the load-bearing correctness signal — cargo-green is necessary but not sufficient. `differential-harness.ts` provides a per-fixture API: caller supplies setup + callScript + accountsToCompare, the harness handles building, running both .so files in LiteSVM with the same keypairs, and byte-comparing post-scenario state + lamports.
 
@@ -97,11 +102,11 @@ The differential layer is the load-bearing correctness signal — cargo-green is
 
 [`web/app/`](web/app/) — Next.js. Workbench panels:
 
-- **Input panel** — demo / source / file / folder / repo modes; target picker (Quasar disabled in UI pending differential coverage)
+- **Input panel** — demo / source / file / folder / repo modes; target picker (Pinocchio + Native)
 - **Output panel** — emitted file tree, single-file view, diff view (Anchor ↔ emit), compare-targets side-by-side, CU panel, lint panel
 - **Verify build** — runs `POST /build`, shows cargo errors inline
 - **Auto-fix** — runs `POST /build/auto-fix`, surfaces per-patch accept/reject reasons
-- **AI-patched audit banner** — persistent yellow warning when AI patches are present in the active output (cargo-green ≠ runtime-equal)
+- **AI-patched audit banner** — persistent yellow warning when AI patches are present in the active output (cargo-green ≠ runtime-equal). When `/build/auto-fix?with_differential=1` is used, the auto-fix card additionally shows a "✓ byte-equal verified" green badge or "⚠ diverged" yellow badge based on the differential verdict.
 
 ## Design Choices
 
@@ -116,15 +121,18 @@ Snapshot tests confirm "the emitter still emits the same string." Differential t
 
 ## Known Gaps (current)
 
-- Differential corpus is 2 fixtures (counter, vault). Escrow + staking are tracked but not yet differential-gated.
-- Quasar target is emitter-clean but has no cargo coverage and no runtime test.
-- Workspace ingestion (multi-program Anchor repos) requires explicit `sourcePath` per program.
-- CU heuristic table doesn't auto-update; real numbers come from `scripts/measure-cu.ts`.
-- Token-2022 extension surfaces (transfer-hook, transfer-fee) have ceilings, not green builds, on Pinocchio.
+- **Quasar emit deleted from production path** on 2026-05-05 (`quasar-lang` hadn't shipped a stable 1.0). The vendored CLI copy at `cli/src/api-src/emitter/quasar-*.ts` is preserved but no longer maintained.
+- **Workspace ingestion** (multi-program Anchor repos) requires explicit `sourcePath` per program.
+- **CU heuristic table** doesn't auto-update; real numbers come from `scripts/measure-cu.ts`.
+- **Token-2022 extension surfaces** (transfer-hook, transfer-fee, confidential-transfer) have ceilings, not green builds, on Pinocchio. Tracked-ceiling layer in `realworld-tracking.test.ts`.
+- **Pyth + Switchboard + Metaplex CPIs** — imports preserve, structural rewrites don't. Listed as grant M2 / M3 deliverables.
+- **Pinocchio formatted msg!()** can't byte-equal Anchor's `alloc::format!()` runtime substitution (Pinocchio is no_std). Static literal msg!() byte-equals; format-arg msg!() collapses to a static literal with a comment-tagged warning.
 
 ## Recommended next milestones
 
-1. Expand differential corpus (escrow → staking → real-world fixtures).
-2. Workspace ingestion (programs/*/Cargo.toml driven).
-3. Token-2022 extension parity on Pinocchio.
-4. CU measurement automation (replace heuristic table with measured numbers per fixture).
+1. **Expand real-world byte-equal corpus** beyond 6 (target: 10-15 externally-authored Anchor programs gated; adoption-tracking deliverable per the SF grant's A1).
+2. **Pyth + Switchboard CPIs** (grant M2): new IR kinds + emit + 2 byte-equal fixtures. ~2 weeks.
+3. **Metaplex Token Metadata + Core CPIs** (grant M3): 12-instruction catalog + 4 fixtures. ~5 weeks.
+4. **EM1 Phase 2 structural completion**: port the remaining 19 IR kinds from runHandlerCapture wrappers to direct AST construction. The simpler target-divergent kinds (`require`, `sysvar_*`, `emit`) need an `emit*Ast()` callback infra (~1hr setup) then ~30-60min/kind. The CPI catalog is ~2-3hrs/kind. `pass_through` is the largest single port (weeks) — it carries most of the regex layer's transform stack.
+5. **Workspace ingestion** (programs/*/Cargo.toml driven).
+6. **CU measurement automation** (replace heuristic table with measured numbers per fixture).

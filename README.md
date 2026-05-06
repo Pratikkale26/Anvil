@@ -25,7 +25,22 @@ Cargo green is necessary but not sufficient. This is the actual correctness sign
 
 ## What's verified today
 
-**10 byte-equal differential fixtures** lock these emit shapes against the Anchor reference on every commit:
+**34 byte-equal differential fixtures** lock these emit shapes against the Anchor reference on every commit. **Data + lamports + owner all byte-compared in a real VM** — not just `cargo build` green, not just IDL match.
+
+### 6 real-world Anchor programs verified byte-equal
+
+These are externally-authored programs cloned verbatim from public repos. Anvil's emit produces post-scenario state byte-identical to the Anchor reference under the same scenario:
+
+| Program | Source | Surface |
+|---|---|---|
+| `anchor-escrow-2025` | mikemaccana/anchor-escrow-2025 | PDA + non-ATA token init + `token::transfer` |
+| `coral-events` | coral-xyz/anchor test corpus | `emit!()` event log + multi-field borsh payload |
+| `favorites` | solana-developers/program-examples | `init_if_needed` + `String` + `Vec<String>` (max_len) |
+| `account-data` | solana-developers/program-examples | 3× `String` fields under `#[max_len(50)]` |
+| `pda-rent-payer` | solana-developers/program-examples | Signer-seeded `system_program::create_account` |
+| `page-visits` | solana-developers/program-examples | Smallest possible PDA-init (5-byte struct) |
+
+### 28 demo byte-equal fixtures (representative subset)
 
 | Fixture | Surface |
 |---|---|
@@ -36,11 +51,19 @@ Cargo green is necessary but not sufficient. This is the actual correctness sign
 | `spl-transfer` | `token::transfer` CPI |
 | `spl-burn` | `token::burn` CPI |
 | `t22-transfer` | Token-2022 `transfer_checked` (mint decimals extraction) |
-| `close-account` | `close = receiver` rent refund + reap |
+| `close` | `close = receiver` rent refund + reap |
 | `set-authority` | Hand-rolled raw SPL `set_authority` on Pinocchio |
 | `escrow` | PDA init + non-ATA token init (`init token::*` vault) + `token::transfer` |
+| `marketplace` | NFT marketplace state shape (admin + fee_bps + treasury) |
+| `event-emit` | `emit!()` discriminator + borsh payload via `sol_log_data` |
+| `staking` | Clock-pinned + `emit!` + msg/return-data triple parity |
+| `multisig` | m-of-n signer enforcement |
+| `realloc` / `realloc-grow` | Vec resize with rent-delta accounting |
+| `vesting` | Schedule + cliff + claim math |
 
-`bun test api/tests/differential-*.test.ts` runs all 13 + the AI-under-differential framework smoke. Plus 50+ deterministic real-world cargo-build regression gates from `solana-developers/program-examples` and the `coral-xyz/anchor` test corpus.
+Plus 18 more covering `bumps_access`, `init_if_needed`, `cpi_custom`, `cpi_memo`, sysvars, return data/err, msg logs, and others. `bun test api/tests/differential-*.test.ts` runs the full set.
+
+Plus 50+ deterministic real-world cargo-build regression gates from `solana-developers/program-examples` and the `coral-xyz/anchor` test corpus.
 
 ### Measured CU savings on bundled demos
 
@@ -58,9 +81,9 @@ Reproduce: `solana-test-validator --reset --quiet &` in one terminal, then `bun 
 
 What we **don't** claim:
 
-- AI-patched output is **not** under the differential corpus. The workbench surfaces a persistent yellow banner whenever AI patches are present; audit before deploy.
+- **AI patches now have an opt-in differential gate.** `/build/auto-fix?with_differential=1` runs the byte-equal compare after each cargo-green iteration; patches that compile but diverge at runtime are flagged and fed back to the next refine call. The workbench's auto-fix card shows a green "✓ byte-equal verified" badge when the gate passes vs a yellow "⚠ diverged" badge when it doesn't. When the gate is NOT requested, the workbench's persistent yellow banner reminds you to audit before deploy.
 - The CU table in the workbench is a heuristic estimator (constant-table per-construct sum). The measurement script above is the source of truth for absolute numbers.
-- Quasar is emitter-clean but has no cargo coverage. Disabled in the workbench picker; available via `anvil-sol compile --target quasar` for inspection.
+- Quasar emit was deleted from the production path on 2026-05-05 (Blueshift hadn't shipped a stable 1.0). Pinocchio + Native are the supported targets.
 
 ---
 
@@ -132,9 +155,9 @@ For the equivalent Pinocchio output and side-by-side comparison, see the workben
 ## Pipeline
 
 ```
-Anchor source → tree-sitter → Solana IR (Zod, 17 body kinds) → {Pinocchio, Native, Quasar} emit → Validator
+Anchor source → tree-sitter → Solana IR (Zod, 23 body kinds) → {Pinocchio, Native} emit → Validator
                                                   │
-                                                  └──► Differential harness (LiteSVM byte-equal)
+                                                  └──► Differential harness (LiteSVM byte-equal: data + lamports + owner)
 ```
 
 Same IR feeds the emitters, the lint / bench / snapshot / diff CLI commands, the workbench's compare-targets view, and the AI refine validator. No pass duplicates parsing.
@@ -145,9 +168,9 @@ For detail: [docs/architecture.md](docs/architecture.md).
 
 ## What works (per target)
 
-Pinocchio is the production target. Native is the reference. Quasar is experimental.
+Pinocchio is the production target. Native is the reference.
 
-Quick read: parser at 100% on 27 real-world programs; SPL Token + Token-2022 + ATA + Memo + System CPIs all green; account constraints (`init`, `init_if_needed`, `mut`, `has_one`, `close`, `seeds`, `bump`, `realloc`) all green.
+Quick read: parser at 100% on 27 real-world programs; SPL Token + Token-2022 + ATA + Memo + System CPIs all green; account constraints (`init`, `init_if_needed`, `mut`, `has_one`, `close`, `seeds`, `bump`, `realloc`) all green; `#[derive(InitSpace)]` + `#[max_len]` honored.
 
 Full matrix and known gaps: [docs/feature-matrix.md](docs/feature-matrix.md).
 
@@ -190,7 +213,9 @@ The web playground at [anvilsol.xyz](https://anvilsol.xyz):
 
 ## Public API
 
-`/parse` `/emit` `/lint` `/build` `/build/auto-fix` `/ai/refine` `/demo` `/health` `/metrics`. Every cargo invocation runs inside firejail / bwrap / unshare with prlimit caps and a stripped env (no `ANTHROPIC_API_KEY`-class secrets reach user code). Per-IP daily AI spend cap, per-IP build-sbf concurrency cap, per-minute rate limit.
+`/parse` `/emit` `/lint` `/build` `/build/auto-fix` `/build/auto-fix?with_differential=1` `/build/differential` `/build/differential/auto-scenario` `/ai/refine` `/ai/diagnose-differential` `/evidence` `/demo` `/health` `/metrics`. Every cargo invocation runs inside firejail / bwrap / unshare with prlimit caps and a stripped env (no `ANTHROPIC_API_KEY`-class secrets reach user code). Per-IP daily AI spend cap, per-IP build-sbf concurrency cap, per-minute rate limit.
+
+`/build/auto-fix?with_differential=1` accepts an additional `differential` body field with `anchorSource` + `scenario`. After each cargo-green iteration, the byte-equal compare runs; on `DIVERGED`, synthetic `differential_diverge` ValidationIssues feed back into the next refine call so patches converge toward both compile-AND-byte-equal. `finalPayload.differentialVerdict` carries the terminal verdict for badge consumption.
 
 Threat model: [SECURITY.md](SECURITY.md). Production deploy reqs are listed at the bottom.
 
@@ -211,7 +236,7 @@ docs/   Architecture, differential testing, feature matrix, migration guide
 
 ## Status
 
-v0.3.4. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). 183 passing tests across 30 files (13 byte-equal differential fixtures + 50+ real-world cargo regressions). Source of truth: `bun scripts/count-tests.ts`.
+v0.3.4. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). 230+ passing tests across 35+ files: 34 byte-equal differential fixtures (28 demo + **6 externally-authored Anchor programs**) + 50+ real-world cargo regressions + parser / emitter / validator / sandbox / AI suites. Source of truth: `bun scripts/count-tests.ts`.
 
 Working notes for grant + migration: [docs/migration-guide.md](docs/migration-guide.md).
 
