@@ -41,6 +41,24 @@ export type RustStmt =
    */
   | { kind: "return"; value?: RustExpr }
   /**
+   * Block — `{ stmt1; stmt2; ... }`. Wraps a list of stmts in
+   * curly braces. Used by CPI ports that emit a self-contained
+   * scope (e.g. cpi_memo's `{ const X = …; let ix = …; invoke(…)?; }`).
+   */
+  | { kind: "block"; stmts: RustStmt[] }
+  /**
+   * Comment line — `// text` (no trailing `\n`). Distinct from
+   * raw_line because the printer can flag/count comments
+   * separately from generic raw text.
+   */
+  | { kind: "comment"; text: string }
+  /**
+   * `const NAME: Type = value;` — used for compile-time-evaluated
+   * constants like the SPL Memo / ATA program ID byte arrays
+   * embedded in pinocchio CPIs.
+   */
+  | { kind: "const_decl"; name: string; ty: string; value: RustExpr }
+  /**
    * Escape hatch: a complete statement passed through as raw text.
    * The emitted line(s) will be the verbatim string. Visitor metric:
    * each `raw_line` indicates a Phase-2 candidate (something the
@@ -78,6 +96,18 @@ export type RustExpr =
    * regular calls would mis-print as `name(args)`. Only Anchor's `msg!`
    * + sibling logging macros use this today. */
   | { kind: "macro_call"; name: string; args: RustExpr[] }
+  /**
+   * Array literal — `[a, b, c]` or `[]`. Used for CPI account-list
+   * args (`accounts: &[]` in pinocchio's cpi_memo) and for the
+   * MEMO_PROGRAM_ID byte array constants (`[5, 74, 83, …]`).
+   */
+  | { kind: "array"; items: RustExpr[] }
+  /**
+   * Struct literal — `Type { field: value, ... }`. Used for CPI
+   * struct-literal calls (`pinocchio::instruction::Instruction
+   * { program_id: …, accounts: …, data: … }`).
+   */
+  | { kind: "struct_literal"; ty: string; fields: { name: string; value: RustExpr }[] }
   /**
    * Escape hatch: a sub-expression rendered from raw text. Same rationale
    * as `raw_line` at the stmt level. Visitor metric: count of `raw`
@@ -119,6 +149,21 @@ export function path(segments: string[]): RustExpr {
 }
 export function macroCall(name: string, args: RustExpr[]): RustExpr {
   return { kind: "macro_call", name, args };
+}
+export function array(items: RustExpr[]): RustExpr {
+  return { kind: "array", items };
+}
+export function structLiteral(ty: string, fields: { name: string; value: RustExpr }[]): RustExpr {
+  return { kind: "struct_literal", ty, fields };
+}
+export function block(stmts: RustStmt[]): RustStmt {
+  return { kind: "block", stmts };
+}
+export function comment(text: string): RustStmt {
+  return { kind: "comment", text };
+}
+export function constDecl(name: string, ty: string, value: RustExpr): RustStmt {
+  return { kind: "const_decl", name, ty, value };
 }
 export function rawExpr(text: string): RustExpr {
   return { kind: "raw", text };

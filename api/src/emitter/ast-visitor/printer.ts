@@ -71,6 +71,15 @@ export function printStmtAt(stmt: RustStmt, indent: string): string {
       return stmt.value === undefined
         ? `${indent}return;`
         : `${indent}return ${printExpr(stmt.value)};`;
+    case "block": {
+      // Indent the inner stmts by 4 more spaces than the outer.
+      const inner = stmt.stmts.map((s) => printStmtAt(s, `${indent}    `)).join("\n");
+      return `${indent}{\n${inner}\n${indent}}`;
+    }
+    case "comment":
+      return `${indent}// ${stmt.text}`;
+    case "const_decl":
+      return `${indent}const ${stmt.name}: ${stmt.ty} = ${printExpr(stmt.value)};`;
     case "raw_line":
       return stmt.text;
   }
@@ -89,6 +98,12 @@ export function printStmt(stmt: RustStmt): string {
       return `${printExpr(stmt.expr)};`;
     case "return":
       return stmt.value === undefined ? `return;` : `return ${printExpr(stmt.value)};`;
+    case "block":
+      return printStmtAt(stmt, "");
+    case "comment":
+      return `// ${stmt.text}`;
+    case "const_decl":
+      return `const ${stmt.name}: ${stmt.ty} = ${printExpr(stmt.value)};`;
     case "raw_line":
       return stmt.text;
   }
@@ -122,6 +137,15 @@ export function printExpr(expr: RustExpr): string {
     case "macro_call": {
       const args = expr.args.map(printExpr).join(", ");
       return `${expr.name}!(${args})`;
+    }
+    case "array": {
+      const items = expr.items.map(printExpr).join(", ");
+      return `[${items}]`;
+    }
+    case "struct_literal": {
+      if (expr.fields.length === 0) return `${expr.ty} {}`;
+      const fields = expr.fields.map((f) => `${f.name}: ${printExpr(f.value)}`).join(", ");
+      return `${expr.ty} { ${fields} }`;
     }
     case "raw":
       return expr.text;
@@ -158,7 +182,11 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
         for (const a of e.args) visit(a);
         return;
       case "macro_call":
-        for (const a of e.args) visit(a);
+      case "array":
+        for (const a of e.kind === "array" ? e.items : e.args) visit(a);
+        return;
+      case "struct_literal":
+        for (const f of e.fields) visit(f.value);
         return;
       case "ref":
       case "deref":
@@ -184,6 +212,22 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
         break;
       case "return":
         if (s.value !== undefined) visit(s.value);
+        break;
+      case "block":
+        for (const inner of s.stmts) {
+          // Recurse via the same metric — call countRawNodes on the
+          // inner stmts. Cheap enough for a small block; deep nesting
+          // is rare.
+          const sub = countRawNodes([inner]);
+          rawLines += sub.rawLines;
+          rawExprs += sub.rawExprs;
+        }
+        break;
+      case "const_decl":
+        visit(s.value);
+        break;
+      case "comment":
+        // Comments don't count as raw — they're structural.
         break;
     }
   }
