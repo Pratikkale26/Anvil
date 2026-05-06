@@ -189,6 +189,20 @@ export function parseStructFields(
       continue;
     }
 
+    // Skip comments / docs without dropping pending attrs. Sources like
+    // `#[max_len(50)] // explanatory comment\npub name: String,` parse as
+    // attribute_item / line_comment / field_declaration; resetting attrs
+    // on the comment would lose the max_len that belongs to the next
+    // field.
+    if (
+      child.type === "line_comment" ||
+      child.type === "block_comment" ||
+      child.type === "outer_doc_comment_marker" ||
+      child.type === "inner_doc_comment_marker"
+    ) {
+      continue;
+    }
+
     if (child.type !== "field_declaration") {
       pendingAttrs = [];
       continue;

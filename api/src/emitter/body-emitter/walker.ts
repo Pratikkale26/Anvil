@@ -1070,20 +1070,22 @@ export class BodyWalker {
     // gives `&*X.key` after normalization, which is `&Pubkey`.
     replaceCpi(
       /(?:anchor_lang::system_program::)?create_account\(\s*CpiContext::new\(\s*[\s\S]*?,\s*(?:anchor_lang::system_program::)?CreateAccount\s*\{\s*from:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,\s*to:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,?\s*\}\s*,?\s*\)\s*\.\s*with_signer\(\s*(\w+)\s*\)\s*,\s*([\s\S]*?)\s*,\s*([\s\S]*?)\s*,\s*&?(?:ctx\.accounts\.)?(\w+)(?:\.key\(\))?\s*,?\s*\)\?;/g,
-      (from, to, signerVar, lamports, space, _owner) => {
+      (from, to, signerVar, lamports, space, owner) => {
         const fromVar = snakeCase(from.replace(/\.to_account_info\(\)/, ""));
         const toVar = snakeCase(to.replace(/\.to_account_info\(\)/, ""));
-        return `// System Program: create account (PDA signed)\n    invoke_signed(\n        &system_instruction::create_account(\n            &${fromVar}.key,\n            &${toVar}.key,\n            ${cleanInlineExpr(lamports)},\n            ${cleanInlineExpr(space)} as u64,\n            program_id,\n        ),\n        &[${fromVar}.clone(), ${toVar}.clone()],\n        ${signerVar},\n    )?;`;
+        const ownerExpr = resolveCreateAccountOwner(owner);
+        return `// System Program: create account (PDA signed)\n    invoke_signed(\n        &system_instruction::create_account(\n            &${fromVar}.key,\n            &${toVar}.key,\n            ${cleanInlineExpr(lamports)},\n            ${cleanInlineExpr(space)} as u64,\n            ${ownerExpr},\n        ),\n        &[${fromVar}.clone(), ${toVar}.clone()],\n        ${signerVar},\n    )?;`;
       },
     );
 
     // ── system create_account via CpiContext, unsigned ──
     replaceCpi(
       /(?:anchor_lang::system_program::)?create_account\(\s*CpiContext::new\(\s*[\s\S]*?,\s*(?:anchor_lang::system_program::)?CreateAccount\s*\{\s*from:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,\s*to:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,?\s*\}\s*,?\s*\)\s*,\s*([\s\S]*?)\s*,\s*([\s\S]*?)\s*,\s*&?(?:ctx\.accounts\.)?(\w+)(?:\.key\(\))?\s*,?\s*\)\?;/g,
-      (from, to, lamports, space, _owner) => {
+      (from, to, lamports, space, owner) => {
         const fromVar = snakeCase(from.replace(/\.to_account_info\(\)/, ""));
         const toVar = snakeCase(to.replace(/\.to_account_info\(\)/, ""));
-        return `// System Program: create account\n    invoke(\n        &system_instruction::create_account(\n            &${fromVar}.key,\n            &${toVar}.key,\n            ${cleanInlineExpr(lamports)},\n            ${cleanInlineExpr(space)} as u64,\n            program_id,\n        ),\n        &[${fromVar}.clone(), ${toVar}.clone()],\n    )?;`;
+        const ownerExpr = resolveCreateAccountOwner(owner);
+        return `// System Program: create account\n    invoke(\n        &system_instruction::create_account(\n            &${fromVar}.key,\n            &${toVar}.key,\n            ${cleanInlineExpr(lamports)},\n            ${cleanInlineExpr(space)} as u64,\n            ${ownerExpr},\n        ),\n        &[${fromVar}.clone(), ${toVar}.clone()],\n    )?;`;
       },
     );
 
@@ -1441,4 +1443,30 @@ export class BodyWalker {
   isProgramAccount(typeName: string): boolean {
     return isProgramAccount(typeName);
   }
+}
+
+/**
+ * Resolve the captured owner identifier from a `create_account(..., &owner)`
+ * source-level call into the shape the walker emits as the 5th arg of
+ * `system_instruction::create_account`.
+ *
+ * - `program_id` → emit `program_id` (the current program's id, already a
+ *   `&Pubkey` in scope).
+ * - any other identifier (e.g. `system_program`) → emit `&IDENT.key`. The
+ *   walker's `&{var}.key` pattern is a `&Pubkey` after the per-target key-
+ *   normalization pass; `system_instruction::create_account` expects a
+ *   `&Pubkey` for the owner, so this matches.
+ *
+ * Bug fix context: previously the walker emitted `program_id` regardless
+ * of what the source supplied. Programs whose Anchor source explicitly
+ * passed `&ctx.accounts.system_program.key()` (the canonical pattern for
+ * SystemAccount creation) silently ended up program-owned instead of
+ * system-owned, breaking the new account's intended semantics. Surfaced
+ * by the pda-rent-payer byte-equal fixture (RW5) where Anchor's
+ * reference yielded a system-owned new_account but Anvil's emit yielded
+ * a program-owned one.
+ */
+function resolveCreateAccountOwner(captured: string): string {
+  if (captured === "program_id") return "program_id";
+  return `&${snakeCase(captured)}.key`;
 }

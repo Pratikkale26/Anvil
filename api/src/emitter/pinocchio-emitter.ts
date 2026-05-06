@@ -1162,18 +1162,25 @@ ${writeLines}
     );
     // System instruction create_account → pinocchio_system::instructions::CreateAccount
     // The walker emits a multiline `invoke(&system_instruction::create_account(
-    //     &*from.key(), &*to.key(), lamports, space, program_id), ...)?;`
-    // structure (key access varies — native is `&from.key`, pinocchio's
-    // emitAccountKeyExpr returns `*from.key()` so we get `&*from.key()`).
-    // Match both. Owner is always `program_id` (the regex doesn't try to
-    // capture user-provided owners — we'd need walker-level support for that).
+    //     &*from.key(), &*to.key(), lamports, space, <owner>), ...)?;`
+    // where <owner> is either `program_id` (when the source owner is
+    // literally `program_id`) or `&IDENT.key` (when the source passed an
+    // account-info reference like `&ctx.accounts.system_program.key()`).
+    // The regex captures owner as `program_id|&\w+.key` so the rewrite
+    // preserves the user's intent in the resulting CreateAccount struct
+    // — see resolveCreateAccountOwner in walker.ts and the pda-rent-payer
+    // byte-equal fixture for the bug this fixes.
     const KEY_RE = "&(?:\\*)?(\\w+)\\.key(?:\\(\\))?";
-    const CREATE_ACCT_BODY = `&system_instruction::create_account\\(\\s*${KEY_RE},\\s*${KEY_RE},\\s*([\\s\\S]+?),\\s*([\\s\\S]+?),\\s*program_id,?\\s*\\)`;
+    // Owner shape: literal `program_id` OR `&[*]IDENT.key[()]`. The latter
+    // covers post-normalization output where `&IDENT.key` was rewritten
+    // to `&*IDENT.key()` by the walker's per-target key collapse.
+    const OWNER_RE = "(program_id|&\\*?\\w+\\.key(?:\\(\\))?)";
+    const CREATE_ACCT_BODY = `&system_instruction::create_account\\(\\s*${KEY_RE},\\s*${KEY_RE},\\s*([\\s\\S]+?),\\s*([\\s\\S]+?),\\s*${OWNER_RE},?\\s*\\)`;
     // Unsigned form
     out = out.replace(
       new RegExp(`invoke\\(\\s*${CREATE_ACCT_BODY},\\s*&\\[[^\\]]*\\],?\\s*\\)\\?;`, "g"),
-      (_full, from, to, lamports, space) =>
-        `pinocchio_system::instructions::CreateAccount { from: ${from}, to: ${to}, lamports: ${lamports.trim()}, space: (${space.trim()}) as u64, owner: program_id }.invoke()?;`,
+      (_full, from, to, lamports, space, owner) =>
+        `pinocchio_system::instructions::CreateAccount { from: ${from}, to: ${to}, lamports: ${lamports.trim()}, space: (${space.trim()}) as u64, owner: ${owner.trim()} }.invoke()?;`,
     );
     // Signed form: invoke_signed(...) with trailing `seeds_var,` after the accounts array.
     // Anchor's `signer_seeds: &[&[&[u8]]]` form needs conversion to pinocchio's
@@ -1186,8 +1193,8 @@ ${writeLines}
     // wild uses >8 seeds; SPL ATA's 4-seed seeds list is the densest case).
     out = out.replace(
       new RegExp(`invoke_signed\\(\\s*${CREATE_ACCT_BODY},\\s*&\\[[^\\]]*\\],\\s*(\\w+),?\\s*\\)\\?;`, "g"),
-      (_full, from, to, lamports, space, seedsVar) =>
-        `// PDA-signed create_account via pinocchio_system\n    {\n        let __seed_refs = ${seedsVar}[0];\n        let mut __pda_seeds: [pinocchio::instruction::Seed<'_>; 8] = core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));\n        for (__i, __s) in __seed_refs.iter().enumerate() {\n            if __i >= __pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }\n            __pda_seeds[__i] = pinocchio::instruction::Seed::from(*__s);\n        }\n        let __signer = pinocchio::instruction::Signer::from(&__pda_seeds[..__seed_refs.len()]);\n        pinocchio_system::instructions::CreateAccount { from: ${from}, to: ${to}, lamports: ${lamports.trim()}, space: (${space.trim()}) as u64, owner: program_id }.invoke_signed(&[__signer])?;\n    }`,
+      (_full, from, to, lamports, space, owner, seedsVar) =>
+        `// PDA-signed create_account via pinocchio_system\n    {\n        let __seed_refs = ${seedsVar}[0];\n        let mut __pda_seeds: [pinocchio::instruction::Seed<'_>; 8] = core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));\n        for (__i, __s) in __seed_refs.iter().enumerate() {\n            if __i >= __pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }\n            __pda_seeds[__i] = pinocchio::instruction::Seed::from(*__s);\n        }\n        let __signer = pinocchio::instruction::Signer::from(&__pda_seeds[..__seed_refs.len()]);\n        pinocchio_system::instructions::CreateAccount { from: ${from}, to: ${to}, lamports: ${lamports.trim()}, space: (${space.trim()}) as u64, owner: ${owner.trim()} }.invoke_signed(&[__signer])?;\n    }`,
     );
     return out;
   }
