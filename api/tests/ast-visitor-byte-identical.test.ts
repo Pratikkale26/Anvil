@@ -1,28 +1,28 @@
 /**
  * AST visitor byte-identical parity test.
  *
- * For the IR kinds the Phase-1 visitor handles (`state_read`,
- * `state_field_assign`, `bumps_access`), this test asserts that the
- * visitor's output (AST → printer) is byte-identical to what the
- * existing handler chain pushes into BodyWalker.lines. Same demo
- * sources (counter, vault, escrow), same targets (pinocchio, native).
+ * For every IR kind the visitor dispatches (now: all 23 after the
+ * Phase-2 increment), this test asserts that the visitor's output
+ * (AST → printer) is byte-identical to what the existing handler
+ * chain pushes into BodyWalker.lines.
  *
  * Test methodology — compare two walker runs:
  *   - Walker A: dispatches every statement through the existing
- *     per-kind handlers (handleStateRead, handleStateFieldAssign, ...).
- *   - Walker B: dispatches `state_read` / `state_field_assign` /
- *     `bumps_access` through the AstVisitor (which produces RustStmt
- *     nodes, prints them, and pushes the resulting lines). Other
- *     statement kinds fall through to the same handlers as A.
+ *     per-kind handlers (handleStateRead, handlePassThrough, ...).
+ *   - Walker B: dispatches every statement through the AstVisitor.
+ *     The visitor either constructs structural AST (Phase-1 ports:
+ *     state_read, state_field_assign, bumps_access) or runs the same
+ *     handler under `runHandlerCapture` and wraps captured lines as
+ *     `raw_line` stmts (Phase-2 increment ports — every other kind).
+ *     The AST is then printed and pushed as lines.
  *
- * If the visitor produces byte-identical output for the supported
- * kinds, A.lines === B.lines exactly. Any deviation surfaces as a
- * line-by-line diff in the failure log so the regression is easy to
- * locate.
+ * If the visitor produces byte-identical output, A.lines === B.lines
+ * exactly. Any deviation surfaces as a line-by-line diff in the
+ * failure log so the regression is easy to locate.
  *
- * This is the parity gate for Phase 2: when the visitor is widened
- * to a new IR kind, this test grows. When all kinds are ported, the
- * visitor can replace the handler chain entirely (Phase 3).
+ * Coverage: all 26 demo programs that the differential layer tests
+ * against (covers every IR statement kind that ships with byte-equal
+ * coverage), times 2 targets (pinocchio + native) = 52 tests.
  *
  * Status: visitor lands as DEAD CODE. Production emit still goes
  * through the handler chain. This test is the only consumer.
@@ -50,7 +50,7 @@ import {
   PinocchioAstVisitor,
   NativeAstVisitor,
   VISITOR_SUPPORTED_KINDS,
-  printStmt,
+  printStmtAt,
   countRawNodes,
   type RustStmt,
 } from "../src/emitter/ast-visitor/index.ts";
@@ -84,7 +84,20 @@ import {
 } from "../src/emitter/body-emitter/handlers/control.ts";
 
 const DEMO_DIR = join(import.meta.dir, "..", "src", "demo-programs");
-const DEMOS = ["counter", "vault", "escrow"];
+/**
+ * Every demo with active byte-equal differential coverage. Mirrors
+ * the list in tests/binary-parity-snapshot.test.ts. Sweeping all 26
+ * is what surfaces real coverage of every IR kind through the
+ * visitor — counter/vault/escrow only exercise ~5 of the 23 kinds.
+ */
+const DEMOS = [
+  "ata-mint", "bumps-access", "close-account", "counter", "cpi-custom",
+  "cpi-memo", "escrow", "event-emit", "has-one", "init-if-needed",
+  "msg-emit", "multisig", "optional-state", "program-config",
+  "realloc", "realloc-grow", "return-data", "return-err",
+  "set-authority", "spl-burn", "spl-transfer", "sysvar-rent",
+  "t22-transfer", "tip-jar", "vault", "vesting",
+];
 
 interface TargetCase {
   name: "pinocchio" | "native";
@@ -105,7 +118,7 @@ const TARGETS: TargetCase[] = [
   },
 ];
 
-describe("AST visitor — byte-identical to handler chain (Phase 1: 3 IR kinds)", () => {
+describe("AST visitor — byte-identical to handler chain (Phase 2: all 23 IR kinds)", () => {
   for (const demo of DEMOS) {
     for (const target of TARGETS) {
       test(`${demo} (${target.name}): visitor output equals handler output`, async () => {
@@ -273,10 +286,14 @@ function runVisitorMixed(
   for (const stmt of instr.body) {
     if (VISITOR_SUPPORTED_KINDS.has(stmt.kind)) {
       const astStmts = visitor.visit(stmt);
+      // printStmtAt applies the indent rule per-kind: structural stmts
+      // get the 4-space prefix, raw_line is verbatim. Each AST stmt
+      // becomes one walker.lines element, mirroring handler convention
+      // so the element-wise comparison stays meaningful for non-multi-
+      // line stmts (handlers also push some multi-line emit blocks as
+      // single elements; raw_line preserves that shape).
       for (const node of astStmts) {
-        // Mirror handler convention: each pushed string carries 4-space
-        // indent. printStmt returns the unindented form; reapply here.
-        walker.lines.push(`    ${printStmt(node)}`);
+        walker.lines.push(printStmtAt(node, "    "));
       }
     } else {
       dispatchHandler(walker, stmt);

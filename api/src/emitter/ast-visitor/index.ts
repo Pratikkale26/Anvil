@@ -20,7 +20,7 @@ export {
   exprStmt,
   rawLine,
 } from "./nodes.js";
-export { printStmts, printStmt, printExpr, countRawNodes } from "./printer.js";
+export { printStmts, printStmt, printStmtAt, printExpr, countRawNodes } from "./printer.js";
 export { AstVisitorBase, VISITOR_SUPPORTED_KINDS } from "./visitor-base.js";
 export { PinocchioAstVisitor } from "./pinocchio-visitor.js";
 export { NativeAstVisitor } from "./native-visitor.js";

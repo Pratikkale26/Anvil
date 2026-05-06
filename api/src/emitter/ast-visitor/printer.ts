@@ -27,17 +27,52 @@
 import type { RustStmt, RustExpr } from "./nodes.js";
 
 /**
- * Print a list of statements. Each statement gets the supplied indent
- * prefix; statements are joined with `\n`. No trailing newline — the
- * caller (test harness, full-emit driver) controls trailing whitespace.
+ * Print a list of statements. Statements are joined with `\n`. No
+ * trailing newline — the caller (test harness, full-emit driver) controls
+ * trailing whitespace.
  *
- * The default indent matches BodyWalker.lines convention (4 spaces).
+ * Indent policy:
+ *   - Structural stmts (`let`, `assign`, `expr_stmt`): the supplied
+ *     `indent` (default `"    "`, matching BodyWalker convention) is
+ *     prepended to the emitted line.
+ *   - `raw_line` stmts: emitted VERBATIM. The wrapping pass that
+ *     produced them was responsible for capturing any leading
+ *     whitespace; the printer must not double-indent multi-line raw
+ *     blocks (e.g. handler emit fns that return `    if cond {\n
+ *     return Err…\n    }`).
+ *
+ * This split matters because `runHandlerCapture` in visitor-base.ts
+ * captures lines verbatim from BodyWalker.lines (which already include
+ * whatever indent the handler chose, including 8-space inner lines for
+ * if-block bodies). If the printer also added a 4-space prefix, those
+ * inner lines would lose their relative indent.
  */
 export function printStmts(stmts: RustStmt[], indent = "    "): string {
-  return stmts.map((s) => `${indent}${printStmt(s)}`).join("\n");
+  return stmts.map((s) => printStmtAt(s, indent)).join("\n");
 }
 
-/** Print a single statement (NO indent prefix). */
+/**
+ * Print a single statement WITH the indent applied per the rule above
+ * (structural gets the prefix, raw_line is verbatim). Exported so the
+ * AST visitor parity test can push one AST stmt per walker.lines slot,
+ * matching the per-element shape of handler-pushed lines.
+ */
+export function printStmtAt(stmt: RustStmt, indent: string): string {
+  switch (stmt.kind) {
+    case "let": {
+      const mutToken = stmt.mut ? "mut " : "";
+      return `${indent}let ${mutToken}${stmt.name} = ${printExpr(stmt.value)};`;
+    }
+    case "assign":
+      return `${indent}${printExpr(stmt.target)} = ${printExpr(stmt.value)};`;
+    case "expr_stmt":
+      return `${indent}${printExpr(stmt.expr)};`;
+    case "raw_line":
+      return stmt.text;
+  }
+}
+
+/** Print a single statement WITHOUT the printer's indent prefix. */
 export function printStmt(stmt: RustStmt): string {
   switch (stmt.kind) {
     case "let": {
@@ -49,8 +84,6 @@ export function printStmt(stmt: RustStmt): string {
     case "expr_stmt":
       return `${printExpr(stmt.expr)};`;
     case "raw_line":
-      // Raw lines are passed through verbatim — caller is responsible for
-      // any trailing `;` or `\n`. Internal `\n`s are preserved.
       return stmt.text;
   }
 }

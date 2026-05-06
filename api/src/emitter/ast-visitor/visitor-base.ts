@@ -2,29 +2,43 @@
  * AstVisitorBase — IR-statement visitor that emits Rust-AST nodes
  * (NOT strings).
  *
- * EM1 Phase 1 deliverable: visit `state_read`, `state_field_assign`,
- * `bumps_access` and produce AST that prints byte-identical to what
- * the existing handlers in `body-emitter/handlers/state.ts` push into
- * BodyWalker.lines. Other IR kinds are explicitly unsupported here
- * (Phase 2 ports them).
+ * Phase 1 (commit 6a46100) ported `state_read`, `state_field_assign`,
+ * `bumps_access` to per-method visitors that construct structural AST
+ * (e.g. `assign(field(ident(...), "...")` for the LHS) and wrap
+ * value-side text in raw_line / raw expressions.
  *
- * The visitor delegates state-tracking + string-transform helpers to
- * the BodyWalker it receives — `stateVars`, `mutableStateAccounts`,
- * `mutatedAccounts`, `transformCtxAccountsReferences`, etc. all live
- * on the walker and are reused. This keeps Phase 1 surgical: the only
- * NEW machinery is the AST node construction; transforms are
- * unchanged.
+ * Phase 2 increment (this commit) widens VISITOR_SUPPORTED_KINDS to
+ * cover ALL 23 IR kinds. The 20 newly-covered kinds dispatch through
+ * `runHandlerCapture`, which calls the existing per-kind handler and
+ * captures whatever lines it pushed into a `raw_line` array. State
+ * mutations on the walker (mutatedAccounts, stateVars, signerSeeds-
+ * InScope, etc.) are preserved because the handler runs against the
+ * same walker — only the line emission is intercepted.
  *
- * Per-target subclasses (`PinocchioAstVisitor`, `NativeAstVisitor`)
- * exist as named entry points so target-specific divergence (e.g.
- * pinocchio's `*X.key()` shape vs native's `&X.key`) can land as
- * overrides in Phase 2 without restructuring the call sites.
+ * What this gets us:
+ *   - All kinds dispatch through the visitor → Phase 3 (feature-flag
+ *     switchover) becomes structurally possible. Until Phase 2 actually
+ *     replaces a kind's runHandlerCapture with structural emit, the
+ *     output is byte-identical to the production path.
+ *   - countRawNodes is now a meaningful migration metric: every
+ *     handler-fallback kind contributes raw_line nodes; structural
+ *     ports drop them.
+ *   - The 3 Phase-1 kinds keep their structural pieces (visitState-
+ *     FieldAssign emits `assign(field(...))` for the LHS, etc.) — they
+ *     are NOT regressed to runHandlerCapture.
  *
- * Status this session:
- *   - Lands as DEAD CODE — no production emit path uses this.
- *   - Exercised only by `tests/ast-visitor-byte-identical.test.ts`
- *     which compares visitor output to handler output statement-by-
- *     statement on counter / vault / escrow demos.
+ * What this DOESN'T get us:
+ *   - Retiring the regex layer. Each runHandlerCapture invocation
+ *     still runs the full per-handler text-transform pipeline. The
+ *     visitor is byte-identical because it produces identical strings;
+ *     it does not yet model the structures the regex layer computes.
+ *   - That's the structural-port work, deferred to subsequent Phase 2
+ *     commits (one kind at a time, byte-identical gated by
+ *     binary-parity-snapshot.test.ts + ast-visitor-byte-identical.
+ *     test.ts).
+ *
+ * Production emit path remains unchanged. The visitor is still dead
+ * code outside the parity tests.
  */
 
 import type { BodyStatement } from "../../ir/schema.js";
@@ -39,20 +53,70 @@ import {
   rawExpr,
   rawLine,
 } from "./nodes.js";
+import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
+import {
+  handleCpiSystemTransfer,
+  handleCpiSplTransfer,
+  handleCpiSplMintTo,
+  handleCpiSplBurn,
+  handleCpiSplCloseAccount,
+  handleCpiSplSetAuthority,
+  handleCpiAtaCreate,
+  handleCpiMemo,
+  handleCpiCustom,
+  handleCpiMplCreateMetadataV3,
+  handleCpiMplCreateMasterEditionV3,
+} from "../body-emitter/handlers/cpi.js";
+import { handleSysvarClock, handleSysvarRent } from "../body-emitter/handlers/sysvar.js";
+import {
+  handleRequire,
+  handleMsg,
+  handleEmit,
+  handlePdaSignerSeeds,
+  handleReturnOk,
+  handleReturnErr,
+} from "../body-emitter/handlers/control.js";
 
 type StateRead = Extract<BodyStatement, { kind: "state_read" }>;
 type StateFieldAssign = Extract<BodyStatement, { kind: "state_field_assign" }>;
 type BumpsAccess = Extract<BodyStatement, { kind: "bumps_access" }>;
 
 /**
- * Statement kinds the Phase-1 visitor handles. Calls for other kinds
- * throw — production emit still goes through the existing string-builder
- * pipeline. Phase 2 will widen this set.
+ * Every IR statement kind the visitor knows how to dispatch. Phase-1
+ * structural ports + Phase-2-increment handler-fallback ports together
+ * cover the full set. If a new kind is added to the IR schema, append
+ * it here AND add a case to `visit()` below or the test gate breaks.
  */
 export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new Set([
+  // Structural Phase-1 ports — visitor builds AST nodes for the LHS,
+  // wraps RHS in raw expressions where text-transform pipelines apply.
   "state_read",
   "state_field_assign",
   "bumps_access",
+  // Handler-fallback Phase-2 ports — visitor invokes the existing
+  // handler and wraps the lines it emits in raw_line stmts. Byte-
+  // identical; structural conversion deferred per-kind to subsequent
+  // Phase-2 commits.
+  "pass_through",
+  "require",
+  "msg",
+  "emit",
+  "return_ok",
+  "return_err",
+  "sysvar_clock",
+  "sysvar_rent",
+  "pda_signer_seeds",
+  "cpi_system_transfer",
+  "cpi_spl_transfer",
+  "cpi_spl_mint_to",
+  "cpi_spl_burn",
+  "cpi_spl_close_account",
+  "cpi_spl_set_authority",
+  "cpi_ata_create",
+  "cpi_memo",
+  "cpi_custom",
+  "cpi_mpl_create_metadata_v3",
+  "cpi_mpl_create_master_edition_v3",
 ] as const satisfies readonly BodyStatement["kind"][]);
 
 export class AstVisitorBase {
@@ -61,22 +125,83 @@ export class AstVisitorBase {
   /**
    * Dispatch entry point. Returns an array of RustStmts for byte-identical
    * comparison against what the existing handler pushed into `walker.lines`.
-   * Throws on unsupported kinds — production must not call this for those.
+   * Every IR kind is covered after the Phase-2 increment.
    */
   visit(stmt: BodyStatement): RustStmt[] {
     switch (stmt.kind) {
-      case "state_read":
-        return this.visitStateRead(stmt);
-      case "state_field_assign":
-        return this.visitStateFieldAssign(stmt);
-      case "bumps_access":
-        return this.visitBumpsAccess(stmt);
-      default:
-        throw new Error(
-          `AstVisitor: IR kind '${stmt.kind}' is not yet ported (Phase 2 scope). ` +
-            `See docs/plan-pure-ast-emitter.md.`,
-        );
+      // Structural Phase-1 ports.
+      case "state_read":           return this.visitStateRead(stmt);
+      case "state_field_assign":   return this.visitStateFieldAssign(stmt);
+      case "bumps_access":         return this.visitBumpsAccess(stmt);
+      // Handler-fallback Phase-2 increment ports — structural
+      // conversion to be done one kind at a time in subsequent commits.
+      case "pass_through":         return this.runHandlerCapture(handlePassThrough, stmt);
+      case "require":              return this.runHandlerCapture(handleRequire, stmt);
+      case "msg":                  return this.runHandlerCapture(handleMsg, stmt);
+      case "emit":                 return this.runHandlerCapture(handleEmit, stmt);
+      case "return_ok":            return this.runHandlerCaptureNoArg(handleReturnOk);
+      case "return_err":           return this.runHandlerCapture(handleReturnErr, stmt);
+      case "sysvar_clock":         return this.runHandlerCapture(handleSysvarClock, stmt);
+      case "sysvar_rent":          return this.runHandlerCapture(handleSysvarRent, stmt);
+      case "pda_signer_seeds":     return this.runHandlerCapture(handlePdaSignerSeeds, stmt);
+      case "cpi_system_transfer":  return this.runHandlerCapture(handleCpiSystemTransfer, stmt);
+      case "cpi_spl_transfer":     return this.runHandlerCapture(handleCpiSplTransfer, stmt);
+      case "cpi_spl_mint_to":      return this.runHandlerCapture(handleCpiSplMintTo, stmt);
+      case "cpi_spl_burn":         return this.runHandlerCapture(handleCpiSplBurn, stmt);
+      case "cpi_spl_close_account":return this.runHandlerCapture(handleCpiSplCloseAccount, stmt);
+      case "cpi_spl_set_authority":return this.runHandlerCapture(handleCpiSplSetAuthority, stmt);
+      case "cpi_ata_create":       return this.runHandlerCapture(handleCpiAtaCreate, stmt);
+      case "cpi_memo":             return this.runHandlerCapture(handleCpiMemo, stmt);
+      case "cpi_custom":           return this.runHandlerCapture(handleCpiCustom, stmt);
+      case "cpi_mpl_create_metadata_v3":
+        return this.runHandlerCapture(handleCpiMplCreateMetadataV3, stmt);
+      case "cpi_mpl_create_master_edition_v3":
+        return this.runHandlerCapture(handleCpiMplCreateMasterEditionV3, stmt);
     }
+  }
+
+  /**
+   * Run `handler(walker, stmt)` and capture the lines it pushed into
+   * `walker.lines` as `raw_line` AST stmts. State mutations the handler
+   * makes on other walker fields (mutatedAccounts, stateVars,
+   * signerSeedsInScope, etc.) are preserved — only line emission is
+   * intercepted.
+   *
+   * Lines are captured VERBATIM (with their original leading indent).
+   * The printer's `raw_line` rule emits them unchanged so multi-line
+   * blocks (e.g. emitRequire returning `    if cond {\n        return
+   * Err…\n    }`) keep their inner-line indent. Stripping + re-prefixing
+   * via the printer's structural-indent rule was the Phase-1 approach
+   * but it broke on multi-line emits — see the regression at the end of
+   * commit 6a46100. The fix preserves indent end-to-end.
+   *
+   * This is the load-bearing primitive for the Phase-2 increment: every
+   * non-structural kind dispatches through here, which keeps byte-
+   * identical output while making the visitor responsible for the full
+   * IR statement set.
+   */
+  protected runHandlerCapture<S extends BodyStatement>(
+    handler: (w: BodyWalker, stmt: S) => void,
+    stmt: S,
+  ): RustStmt[] {
+    const w = this.walker;
+    const before = w.lines.length;
+    handler(w, stmt);
+    const captured = w.lines.slice(before);
+    w.lines.length = before;
+    return captured.map((line) => rawLine(line));
+  }
+
+  /** Variant for handlers with no `stmt` parameter (return_ok). */
+  protected runHandlerCaptureNoArg(
+    handler: (w: BodyWalker) => void,
+  ): RustStmt[] {
+    const w = this.walker;
+    const before = w.lines.length;
+    handler(w);
+    const captured = w.lines.slice(before);
+    w.lines.length = before;
+    return captured.map((line) => rawLine(line));
   }
 
   /**
@@ -135,22 +260,21 @@ export class AstVisitorBase {
     }
     // The framework emit returns text including its own leading indent
     // (matches what the handler currently pushes verbatim into walker.lines).
-    // To keep printStmts byte-identical, emit it as a raw_line stripped of
-    // the leading `    ` that the printer will re-add on its own indent prefix.
-    out.push(rawLine(stripLeadingFourSpaces(bodyText)));
+    // The printer's raw_line rule emits text verbatim so this preserves
+    // any inner-line indent in multi-line emit blocks.
+    out.push(rawLine(bodyText));
 
-    // has_one constraint guards.
+    // has_one constraint guards. Each line carries its own indent (4
+    // for the if/}, 8 for the inner Err) so the printer's verbatim
+    // raw_line rule renders them at the right depth.
     const hasOneConstraints =
       accountRef?.constraints.filter((c) => c.kind === "has_one" && c.value) ?? [];
     for (const c of hasOneConstraints) {
       const targetAccount = snakeCase(c.value!);
       const targetKey = w.emitter.emitAccountKeyExpr(w.resolveAccountInfoVar(targetAccount));
-      out.push(rawLine(`if ${localVar}.${snakeCase(c.value!)} != ${targetKey} {`));
-      // The handler pushes the inner Err line at depth-2 indent (8 spaces);
-      // strip the printer's 4-space prefix's worth so the final line lands
-      // at exactly `        return Err(...)`.
-      out.push(rawLine(`    return Err(ProgramError::InvalidAccountData);`));
-      out.push(rawLine(`}`));
+      out.push(rawLine(`    if ${localVar}.${snakeCase(c.value!)} != ${targetKey} {`));
+      out.push(rawLine(`        return Err(ProgramError::InvalidAccountData);`));
+      out.push(rawLine(`    }`));
     }
 
     // Side-effects on walker state — KEEP these in sync with the handler so
@@ -205,11 +329,16 @@ export class AstVisitorBase {
     const fieldName = snakeCase(stmt.field);
 
     const out: RustStmt[] = [];
+    // ensureStateRead's lines already carry leading 4-space indent;
+    // pass through verbatim (printer's raw_line rule is identity).
     for (const line of ensureLines) {
-      out.push(rawLine(stripLeadingFourSpaces(line)));
+      out.push(rawLine(line));
     }
 
-    // Compound branch.
+    // Compound branch — emit the assign as a structural `assign` AST
+    // (LHS and RHS structured), so the printer re-adds the 4-space
+    // prefix. RHS still wraps the transformed value text in `raw`
+    // pending Phase-2 deeper structural conversion.
     const compoundMatch = stmt.value.match(/^__compound_([+\-*\/])=__(.+)$/);
     if (compoundMatch?.[1] && compoundMatch[2] && fieldDef) {
       const op = compoundMatch[1];
@@ -222,11 +351,15 @@ export class AstVisitorBase {
           op === "+" ? "checked_add" :
           op === "-" ? "checked_sub" :
           op === "*" ? "checked_mul" : "checked_div";
-        out.push(rawLine(
-          `${stateVarName}.${fieldName} = ${stateVarName}.${fieldName}.${checked}(${rhs}).ok_or(ProgramError::ArithmeticOverflow)?;`,
+        out.push(assign(
+          field(ident(stateVarName), fieldName),
+          rawExpr(`${stateVarName}.${fieldName}.${checked}(${rhs}).ok_or(ProgramError::ArithmeticOverflow)?`),
         ));
       } else {
-        out.push(rawLine(`${stateVarName}.${fieldName} = ${stateVarName}.${fieldName} ${op} ${rhs};`));
+        out.push(assign(
+          field(ident(stateVarName), fieldName),
+          rawExpr(`${stateVarName}.${fieldName} ${op} ${rhs}`),
+        ));
       }
       return out;
     }
@@ -259,9 +392,8 @@ export class AstVisitorBase {
       const bumpAccount = value.match(/ctx\.bumps\.(\w+)/)?.[1] ?? stmt.account;
       const bumpLine = w.normalizedBumpLine(snakeCase(bumpAccount));
       if (bumpLine) {
-        // bumpLine carries its own leading indent; strip the outer `    `
-        // so the printer's prefix re-aligns it without doubling.
-        out.push(rawLine(stripLeadingFourSpaces(bumpLine)));
+        // bumpLine carries its own indent; pass through verbatim.
+        out.push(rawLine(bumpLine));
       }
       value = `bump_${snakeCase(bumpAccount)}`;
     }
@@ -288,7 +420,9 @@ export class AstVisitorBase {
     const out: RustStmt[] = [];
     const bumpLine = w.normalizedBumpLine(accountName);
     if (bumpLine) {
-      out.push(rawLine(stripLeadingFourSpaces(bumpLine)));
+      // Indent preserved verbatim — bumpLine already carries leading
+      // 4-space indent the handler convention requires.
+      out.push(rawLine(bumpLine));
     }
     const localVar = snakeCase(stmt.localVar);
     const bumpVar = `bump_${accountName}`;
@@ -297,23 +431,6 @@ export class AstVisitorBase {
     }
     return out;
   }
-}
-
-/**
- * Strip exactly four leading spaces from each line of `text`. The handlers
- * push lines pre-indented (`    let X = …`) into walker.lines; the AST
- * printer re-adds the prefix via `printStmts(stmts, "    ")`. Without this
- * normalization, raw_line stmts would be doubly-indented.
- *
- * Lines with fewer than 4 leading spaces (e.g. inner `}` at 0 indent) are
- * passed through unchanged. The handler only emits stmt-level lines at
- * 4-space depth or block-internal at 8-space — both shapes are preserved.
- */
-function stripLeadingFourSpaces(text: string): string {
-  return text
-    .split("\n")
-    .map((l) => (l.startsWith("    ") ? l.slice(4) : l))
-    .join("\n");
 }
 
 /**
