@@ -137,6 +137,83 @@ export const ArgSchema = z.object({
 
 export type Arg = z.infer<typeof ArgSchema>;
 
+// ─── Rust expression IR (EM1 M5 foundation) ─────────────────────────────────
+//
+// Structured Rust-expression IR — the typed alternative to raw `code: string`
+// fields in pass_through / require / state_field_assign / cpi_custom. Mirrors
+// the visitor's RustExpr / RustStmt shapes in
+// `api/src/emitter/ast-visitor/nodes.ts` so the visitor can consume IR
+// without an internal raw→structured conversion pass.
+//
+// **Status (2026-05-06):** schema is defined; parser and downstream
+// consumers DO NOT populate it yet. Existing IR kinds keep their `code: string`
+// fields untouched. M5's subsequent commits add parser support + per-IR-kind
+// migration, gated by `binary-parity-snapshot.test.ts`.
+//
+// The `raw` variants on both unions are intentional escape hatches: a parser
+// that recognises 80% of the structure can still produce IR while leaving the
+// remaining shapes as raw text. The visitor's `countRawNodes` metric
+// (already wired) tracks remaining migration scope.
+
+// Forward refs — Zod's z.lazy is required for recursive unions.
+const RustExprIrSchema: z.ZodType<RustExprIr> = z.lazy(() => z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("ident"), name: z.string() }),
+  z.object({ kind: z.literal("lit"), value: z.string() }),
+  z.object({ kind: z.literal("field"), obj: RustExprIrSchema, field: z.string() }),
+  z.object({ kind: z.literal("method_call"), receiver: RustExprIrSchema, method: z.string(), args: z.array(RustExprIrSchema) }),
+  z.object({ kind: z.literal("call"), callee: RustExprIrSchema, args: z.array(RustExprIrSchema), multiLine: z.boolean().optional() }),
+  z.object({ kind: z.literal("ref"), mut: z.boolean(), expr: RustExprIrSchema }),
+  z.object({ kind: z.literal("deref"), expr: RustExprIrSchema }),
+  z.object({ kind: z.literal("try"), expr: RustExprIrSchema }),
+  z.object({ kind: z.literal("path"), segments: z.array(z.string()) }),
+  z.object({ kind: z.literal("macro_call"), name: z.string(), args: z.array(RustExprIrSchema) }),
+  z.object({ kind: z.literal("array"), items: z.array(RustExprIrSchema) }),
+  z.object({ kind: z.literal("struct_literal"), ty: z.string(), fields: z.array(z.object({ name: z.string(), value: RustExprIrSchema })), multiLine: z.boolean().optional() }),
+  z.object({ kind: z.literal("raw"), text: z.string() }),
+]));
+
+export type RustExprIr =
+  | { kind: "ident"; name: string }
+  | { kind: "lit"; value: string }
+  | { kind: "field"; obj: RustExprIr; field: string }
+  | { kind: "method_call"; receiver: RustExprIr; method: string; args: RustExprIr[] }
+  | { kind: "call"; callee: RustExprIr; args: RustExprIr[]; multiLine?: boolean }
+  | { kind: "ref"; mut: boolean; expr: RustExprIr }
+  | { kind: "deref"; expr: RustExprIr }
+  | { kind: "try"; expr: RustExprIr }
+  | { kind: "path"; segments: string[] }
+  | { kind: "macro_call"; name: string; args: RustExprIr[] }
+  | { kind: "array"; items: RustExprIr[] }
+  | { kind: "struct_literal"; ty: string; fields: { name: string; value: RustExprIr }[]; multiLine?: boolean }
+  | { kind: "raw"; text: string };
+
+export { RustExprIrSchema };
+
+const RustStmtIrSchema: z.ZodType<RustStmtIr> = z.lazy(() => z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("let"), mut: z.boolean(), name: z.string(), value: RustExprIrSchema }),
+  z.object({ kind: z.literal("assign"), target: RustExprIrSchema, value: RustExprIrSchema }),
+  z.object({ kind: z.literal("expr_stmt"), expr: RustExprIrSchema }),
+  z.object({ kind: z.literal("return"), value: RustExprIrSchema.optional() }),
+  z.object({ kind: z.literal("block"), stmts: z.array(RustStmtIrSchema) }),
+  z.object({ kind: z.literal("if_stmt"), cond: RustExprIrSchema, body: z.array(RustStmtIrSchema), elseBody: z.array(RustStmtIrSchema).optional() }),
+  z.object({ kind: z.literal("comment"), text: z.string() }),
+  z.object({ kind: z.literal("const_decl"), name: z.string(), ty: z.string(), value: RustExprIrSchema }),
+  z.object({ kind: z.literal("raw_line"), text: z.string() }),
+]));
+
+export type RustStmtIr =
+  | { kind: "let"; mut: boolean; name: string; value: RustExprIr }
+  | { kind: "assign"; target: RustExprIr; value: RustExprIr }
+  | { kind: "expr_stmt"; expr: RustExprIr }
+  | { kind: "return"; value?: RustExprIr }
+  | { kind: "block"; stmts: RustStmtIr[] }
+  | { kind: "if_stmt"; cond: RustExprIr; body: RustStmtIr[]; elseBody?: RustStmtIr[] }
+  | { kind: "comment"; text: string }
+  | { kind: "const_decl"; name: string; ty: string; value: RustExprIr }
+  | { kind: "raw_line"; text: string };
+
+export { RustStmtIrSchema };
+
 // ─── Instruction Body Statement ──────────────────────────────────────────────
 
 /**
