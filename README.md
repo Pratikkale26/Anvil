@@ -73,6 +73,9 @@ Built both as Anchor original and Anvil-emitted Pinocchio, deployed to `solana-t
 |---|---:|---:|---:|
 | `counter::initialize(start_value=10)` | 6,074 | 3,268 | **46%** |
 | `counter::increment(amount=5)` | 2,753 | 1,801 | **35%** |
+| `vault::initialize` | 7,884 | 4,893 | **38%** |
+| `vault::deposit(amount=1_000_000_000)` | 6,726 | 4,674 | **31%** |
+| `vault::withdraw(amount=500_000_000)` | 6,758 | 4,716 | **30%** |
 | `escrow::create_escrow(seed=42, deposit=250000, receive=500000)` | 26,614 | 16,133 | **39%** |
 
 For SPL-heavy workloads (transfers, mints, burns), the savings are larger — Helius's hand-written p-token Pinocchio implementations measure 97-98% CU reduction vs SPL-Token-via-Anchor on those primitives, and Anvil's `cpi_spl_*` emit uses the same `pinocchio_token` builders. See [docs/feature-matrix.md](docs/feature-matrix.md#cu-savings) for the full breakdown.

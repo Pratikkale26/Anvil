@@ -50,9 +50,10 @@ import { buildProjectScaffold } from "../api/src/emitter/project-scaffold.js";
 const RPC = process.env.ANVIL_VALIDATOR_RPC ?? "http://localhost:8899";
 const COUNTER_SRC = "/home/pk/Anvil/api/src/demo-programs/counter.rs";
 const ESCROW_SRC = "/home/pk/Anvil/api/src/demo-programs/escrow.rs";
+const VAULT_SRC = "/home/pk/Anvil/api/src/demo-programs/vault.rs";
 const SOLANA_ID_PATH = join(process.env.HOME ?? "", ".config/solana/id.json");
-// Subset selector: comma-separated "counter,escrow" or unset = all.
-const FIXTURES = (process.env.ANVIL_CU_FIXTURES ?? "counter,escrow")
+// Subset selector: comma-separated "counter,escrow,vault" or unset = all.
+const FIXTURES = (process.env.ANVIL_CU_FIXTURES ?? "counter,escrow,vault")
   .split(",").map((s) => s.trim()).filter(Boolean);
 
 async function main(): Promise<void> {
@@ -114,6 +115,26 @@ async function main(): Promise<void> {
         anchor: anchorEscrowCU.createEscrow,
         anvil: anvilEscrowCU.createEscrow,
       });
+    }
+
+    if (FIXTURES.includes("vault")) {
+      console.log("\n══ vault ══════════════════════════════════════════════════");
+      const vaultSource = readFileSync(VAULT_SRC, "utf-8");
+      const { soPath: anchorSo, programId: anchorPid } =
+        await buildAnchorScratch(vaultSource, join(tmpRoot, "vault-anchor"), "vault_anchor_cu", "");
+      const { soPath: anvilSo, programId: anvilPid } =
+        await buildAnvilWithFreshId(vaultSource, join(tmpRoot, "vault-anvil"));
+      console.log(`[vault] Anchor:           ${anchorPid.toBase58()}`);
+      console.log(`[vault] Anvil-Pinocchio:  ${anvilPid.toBase58()}`);
+      console.log("[vault] Deploying both…");
+      await deploySo(anchorSo, anchorPid, payer);
+      await deploySo(anvilSo, anvilPid, payer);
+      console.log("[vault] Measuring initialize / deposit / withdraw (best of 5 trials)…");
+      const anchorVaultCU = await runAndMeasureVault(conn, payer, anchorPid, "Anchor");
+      const anvilVaultCU  = await runAndMeasureVault(conn, payer, anvilPid,  "Anvil-Pinocchio");
+      rows.push({ ix: "vault::initialize",                  anchor: anchorVaultCU.initialize, anvil: anvilVaultCU.initialize });
+      rows.push({ ix: "vault::deposit(amount=1_000_000_000)", anchor: anchorVaultCU.deposit,    anvil: anvilVaultCU.deposit });
+      rows.push({ ix: "vault::withdraw(amount=500_000_000)",  anchor: anchorVaultCU.withdraw,   anvil: anvilVaultCU.withdraw });
     }
 
     if (rows.length === 0) {
@@ -475,6 +496,74 @@ async function runEscrowTrial(
   }
   const m = cuLine.match(/consumed (\d+) of/);
   return m?.[1] ? parseInt(m[1], 10) : 0;
+}
+
+async function runAndMeasureVault(
+  conn: Connection,
+  payer: Keypair,
+  programId: PublicKey,
+  label: string,
+): Promise<{ initialize: number; deposit: number; withdraw: number }> {
+  const TRIALS = 5;
+  let bestInit = Infinity, bestDep = Infinity, bestWd = Infinity;
+  for (let i = 0; i < TRIALS; i++) {
+    const r = await runVaultTrial(conn, payer, programId, label);
+    if (r.initialize > 0 && r.initialize < bestInit) bestInit = r.initialize;
+    if (r.deposit    > 0 && r.deposit    < bestDep ) bestDep  = r.deposit;
+    if (r.withdraw   > 0 && r.withdraw   < bestWd  ) bestWd   = r.withdraw;
+  }
+  return {
+    initialize: bestInit === Infinity ? 0 : bestInit,
+    deposit:    bestDep  === Infinity ? 0 : bestDep,
+    withdraw:   bestWd   === Infinity ? 0 : bestWd,
+  };
+}
+
+async function runVaultTrial(
+  conn: Connection,
+  payer: Keypair,
+  programId: PublicKey,
+  label: string,
+): Promise<{ initialize: number; deposit: number; withdraw: number }> {
+  const authority = Keypair.generate();
+  // Airdrop 5 SOL — first deposit must hit rent-exempt for the vault PDA
+  // (~0.0009 SOL for 0 bytes) plus fee headroom for 3 txs.
+  await airdrop(conn, authority.publicKey, 5);
+
+  const [vaultStatePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault_state"), authority.publicKey.toBuffer()],
+    programId,
+  );
+  const [vaultPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), authority.publicKey.toBuffer()],
+    programId,
+  );
+
+  const initIx = makeIx(programId, discriminator("initialize"), new Uint8Array(0), [
+    meta(vaultStatePda,    false, true),
+    meta(vaultPda,         false, true),
+    meta(authority.publicKey, true, true),
+    meta(SystemProgram.programId, false, false),
+  ]);
+  // 1 SOL deposit — well above rent-exempt for an empty account (~890k lamports).
+  const depIx = makeIx(programId, discriminator("deposit"), encodeU64(1_000_000_000n), [
+    meta(vaultStatePda,    false, true),
+    meta(vaultPda,         false, true),
+    meta(authority.publicKey, true, true),
+    meta(SystemProgram.programId, false, false),
+  ]);
+  // 0.5 SOL withdraw — leaves vault rent-exempt.
+  const wdIx = makeIx(programId, discriminator("withdraw"), encodeU64(500_000_000n), [
+    meta(vaultStatePda,    false, true),
+    meta(vaultPda,         false, true),
+    meta(authority.publicKey, true, true),
+    meta(SystemProgram.programId, false, false),
+  ]);
+
+  const initCU = await sendAndExtractCU(conn, payer, authority, initIx, programId, label, "initialize");
+  const depCU  = await sendAndExtractCU(conn, payer, authority, depIx,  programId, label, "deposit");
+  const wdCU   = await sendAndExtractCU(conn, payer, authority, wdIx,   programId, label, "withdraw");
+  return { initialize: initCU, deposit: depCU, withdraw: wdCU };
 }
 
 async function sendAndExtractCU(
