@@ -83,6 +83,8 @@ import {
   handleCpiCustom,
   handleCpiMplCreateMetadataV3,
   handleCpiMplCreateMasterEditionV3,
+  shouldEmitSignerSeedsPrelude,
+  resolveSignerSeedsExpr,
 } from "../body-emitter/handlers/cpi.js";
 import { handleSysvarClock, handleSysvarRent } from "../body-emitter/handlers/sysvar.js";
 import {
@@ -720,8 +722,55 @@ export class AstVisitorBase {
   // matching emit*Ast() callback instead of runHandlerCapture, no
   // dispatch-table change needed.
 
+  /**
+   * Mirror `handleCpiSystemTransfer` from body-emitter/handlers/cpi.ts.
+   *
+   * Pinocchio path is structural: `transfer_lamports(from, to, amount)?`
+   * (unsigned) OR comment + `transfer_lamports_signed(from, to,
+   * amount, signer_seeds)?` (PDA-signed).
+   *
+   * Native path keeps runHandlerCapture for now — emitSystemTransfer
+   * returns multi-line `let ix = …; invoke(\n    &ix,\n    &[…],\n)?;`
+   * which needs multi-line call-arg printer policy. Deferred to a
+   * follow-up port that adds that policy.
+   *
+   * Cuts ~10 raw_lines from the corpus per the metric.
+   */
   visitCpiSystemTransfer(stmt: CpiSystemTransfer): RustStmt[] {
-    return this.runHandlerCapture(handleCpiSystemTransfer, stmt);
+    const w = this.walker;
+    if (w.emitter.frameworkName !== "Pinocchio") {
+      return this.runHandlerCapture(handleCpiSystemTransfer, stmt);
+    }
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: system_program::transfer(${stmt.from} → ${stmt.to})`);
+    const out: RustStmt[] = [];
+    // Replicate the prelude side-effect — captured as raw_line stmts.
+    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+      for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.from)) {
+        out.push(rawLine(preludeLine));
+      }
+    }
+    const fromVar = snakeCase(stmt.from);
+    const toVar = snakeCase(stmt.to);
+    const amountExpr = w.resolveAmountExpr(stmt.amount);
+    const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
+    if (signerSeedsResolved) {
+      // PDA-signed — comment + transfer_lamports_signed call.
+      out.push(rawLine(`    // System transfer with PDA signer`));
+      out.push(exprStmt(tryPostfix(call(ident("transfer_lamports_signed"), [
+        ident(fromVar),
+        ident(toVar),
+        rawExpr(amountExpr),
+        rawExpr(signerSeedsResolved),
+      ]))));
+    } else {
+      out.push(exprStmt(tryPostfix(call(ident("transfer_lamports"), [
+        ident(fromVar),
+        ident(toVar),
+        rawExpr(amountExpr),
+      ]))));
+    }
+    return out;
   }
 
   visitCpiSplTransfer(stmt: CpiSplTransfer): RustStmt[] {

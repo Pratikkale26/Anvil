@@ -19,7 +19,7 @@ type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
 type CpiMplCreateMetadataV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_metadata_v3" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 
-function shouldEmitSignerSeedsPrelude(w: BodyWalker, signerSeeds: string | undefined): boolean {
+export function shouldEmitSignerSeedsPrelude(w: BodyWalker, signerSeeds: string | undefined): boolean {
   if (!signerSeeds) return false;
   // The prelude generates a standardized `let seeds = &[…]; let signer_seeds
   // = &[&seeds[..]];` block tailored to the legacy default var name. When
@@ -49,7 +49,7 @@ function shouldEmitSignerSeedsPrelude(w: BodyWalker, signerSeeds: string | undef
  * override the IR's source-level name with the prelude's `signer_seeds`
  * variable. The legacy default `signer_seeds` already maps to itself.
  */
-function resolveSignerSeedsExpr(w: BodyWalker, signerSeeds: string | undefined): string | undefined {
+export function resolveSignerSeedsExpr(w: BodyWalker, signerSeeds: string | undefined): string | undefined {
   if (!signerSeeds) return signerSeeds;
   // Already the canonical name — pass through.
   if (signerSeeds === "signer_seeds") return signerSeeds;
