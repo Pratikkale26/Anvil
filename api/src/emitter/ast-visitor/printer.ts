@@ -76,6 +76,15 @@ export function printStmtAt(stmt: RustStmt, indent: string): string {
       const inner = stmt.stmts.map((s) => printStmtAt(s, `${indent}    `)).join("\n");
       return `${indent}{\n${inner}\n${indent}}`;
     }
+    case "if_stmt": {
+      const innerIndent = `${indent}    `;
+      const body = stmt.body.map((s) => printStmtAt(s, innerIndent)).join("\n");
+      if (stmt.elseBody === undefined) {
+        return `${indent}if ${printExpr(stmt.cond)} {\n${body}\n${indent}}`;
+      }
+      const elseBody = stmt.elseBody.map((s) => printStmtAt(s, innerIndent)).join("\n");
+      return `${indent}if ${printExpr(stmt.cond)} {\n${body}\n${indent}} else {\n${elseBody}\n${indent}}`;
+    }
     case "comment":
       return `${indent}// ${stmt.text}`;
     case "const_decl":
@@ -99,6 +108,8 @@ export function printStmt(stmt: RustStmt): string {
     case "return":
       return stmt.value === undefined ? `return;` : `return ${printExpr(stmt.value)};`;
     case "block":
+      return printStmtAt(stmt, "");
+    case "if_stmt":
       return printStmtAt(stmt, "");
     case "comment":
       return `// ${stmt.text}`;
@@ -215,14 +226,23 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
         break;
       case "block":
         for (const inner of s.stmts) {
-          // Recurse via the same metric — call countRawNodes on the
-          // inner stmts. Cheap enough for a small block; deep nesting
-          // is rare.
           const sub = countRawNodes([inner]);
           rawLines += sub.rawLines;
           rawExprs += sub.rawExprs;
         }
         break;
+      case "if_stmt": {
+        visit(s.cond);
+        const subBody = countRawNodes(s.body);
+        rawLines += subBody.rawLines;
+        rawExprs += subBody.rawExprs;
+        if (s.elseBody) {
+          const subElse = countRawNodes(s.elseBody);
+          rawLines += subElse.rawLines;
+          rawExprs += subElse.rawExprs;
+        }
+        break;
+      }
       case "const_decl":
         visit(s.value);
         break;

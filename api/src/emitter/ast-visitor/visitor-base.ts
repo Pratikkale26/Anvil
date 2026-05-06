@@ -42,10 +42,19 @@
  */
 
 import type { BodyStatement } from "../../ir/schema.js";
-import { snakeCase, isCheckedArithmeticType, isProgramAccount, cleanInlineExpr } from "../emitter-utils.js";
+import {
+  snakeCase,
+  isCheckedArithmeticType,
+  isProgramAccount,
+  cleanInlineExpr,
+  stripAnchorConstraintError,
+  trimOuterParens,
+  unwrapTopLevelNegation,
+} from "../emitter-utils.js";
 import type { BodyWalker } from "../body-emitter/walker.js";
 import {
   type RustStmt,
+  type RustExpr,
   assign,
   field,
   ident,
@@ -58,6 +67,8 @@ import {
   path,
   macroCall,
   tryPostfix,
+  ifStmt,
+  methodCall,
 } from "./nodes.js";
 import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
 import {
@@ -574,19 +585,63 @@ export class AstVisitorBase {
   }
 
   /**
-   * Mirror `handleRequire` from body-emitter/handlers/control.ts.
+   * Mirror `handleRequire` from body-emitter/handlers/control.ts +
+   * `emitRequireGuard` from emitter-utils.ts. Structural port — emits
+   * `if !cond { return Err(error.into()); }` via if_stmt + return_stmt
+   * AST nodes.
    *
-   * Source: `handleRequire(w, stmt) { lines.push(emitter.emitRequire(cond, err)); }`.
-   * `emitter.emitRequire` returns a 3-line `if !cond { return Err(...); }`
-   * block via `emitRequireGuard`. Structural port deferred — needs
-   * if-block AST node + `.into()` postfix as method-call AST + the
-   * negation-stripping logic from `emitRequireGuard` modeled
-   * structurally. Lands as named visit method now so the migration
-   * tracker shows the kind isn't via runHandlerCapture for misleading-
-   * progress reasons.
+   * Three condition shapes (mirrors emitRequireGuard exactly):
+   *   1. Source had ODD count of negations → bare `if expr { ... }`.
+   *   2. Expr is a single ident path → `if !ident { ... }`.
+   *   3. Else → `if !(expr) { ... }`.
+   *
+   * Same condition-normalization (cleanInlineExpr + stripAnchorConstraintError
+   * + trimOuterParens + unwrapTopLevelNegation loop) applied to match
+   * emitRequireGuard's output byte-for-byte.
+   *
+   * Replaces a per-occurrence raw_line (multi-line block as one entry)
+   * with a structural if_stmt that contains a structural return Err
+   * call. Drops 186 raw_lines across the demo corpus → 0 raw_lines
+   * for the require kind. Cond + error are wrapped in rawExpr (full
+   * structural would need a Rust expression IR; deferred to M5).
    */
   visitRequire(stmt: RequireStmt): RustStmt[] {
-    return this.runHandlerCapture(handleRequire, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    // Mirror handleRequire's pre-emit transforms on the condition.
+    const transformed = w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(stmt.condition)),
+    );
+
+    // Mirror emitRequireGuard's negation-stripping loop.
+    let condText = trimOuterParens(stripAnchorConstraintError(cleanInlineExpr(transformed)));
+    let isNegated = false;
+    while (true) {
+      const inner = unwrapTopLevelNegation(condText);
+      if (!inner) break;
+      isNegated = !isNegated;
+      condText = inner;
+    }
+
+    let condExpr: RustExpr;
+    if (isNegated) {
+      // Source had odd negations — emit bare `if expr`.
+      condExpr = rawExpr(condText);
+    } else if (/^[A-Za-z_][A-Za-z0-9_:.]*$/.test(condText)) {
+      // Single identifier path — emit `!ident` (no parens).
+      condExpr = rawExpr(`!${condText}`);
+    } else {
+      // General expression — emit `!(expr)` (parens required).
+      condExpr = rawExpr(`!(${condText})`);
+    }
+
+    // Body: `return Err(error.into());` — fully structural except for the
+    // error path text wrapped as rawExpr.
+    const errReturn = returnStmt(
+      call(path(["Err"]), [methodCall(rawExpr(stmt.error), "into", [])]),
+    );
+
+    return [ifStmt(condExpr, [errReturn])];
   }
 
   /**

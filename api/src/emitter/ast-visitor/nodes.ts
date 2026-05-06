@@ -47,6 +47,13 @@ export type RustStmt =
    */
   | { kind: "block"; stmts: RustStmt[] }
   /**
+   * If statement with optional else. `if cond { body } else { else_body }`.
+   * Today only the body branch fires (require!() lowers to bare `if`);
+   * else_body kept optional for future kinds (init_if_needed branch
+   * structural port, etc.).
+   */
+  | { kind: "if_stmt"; cond: RustExpr; body: RustStmt[]; elseBody?: RustStmt[] }
+  /**
    * Comment line — `// text` (no trailing `\n`). Distinct from
    * raw_line because the printer can flag/count comments
    * separately from generic raw text.
@@ -158,6 +165,9 @@ export function structLiteral(ty: string, fields: { name: string; value: RustExp
 }
 export function block(stmts: RustStmt[]): RustStmt {
   return { kind: "block", stmts };
+}
+export function ifStmt(cond: RustExpr, body: RustStmt[], elseBody?: RustStmt[]): RustStmt {
+  return elseBody === undefined ? { kind: "if_stmt", cond, body } : { kind: "if_stmt", cond, body, elseBody };
 }
 export function comment(text: string): RustStmt {
   return { kind: "comment", text };
