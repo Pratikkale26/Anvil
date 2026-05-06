@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Anvil CLI — Standalone Anchor-to-{Pinocchio,Native,Quasar} transpiler.
+ * Anvil CLI — Standalone Anchor-to-{Pinocchio,Native} transpiler.
  *
  * Directly imports the parser, emitters, and validator from the api/src
  * modules. No API server required.
@@ -19,7 +19,6 @@ import { resolve, join, basename, dirname } from "path";
 import { parseAnchor } from "../api/src/parser/anchor-parser.js";
 import { emitPinocchioFull } from "../api/src/emitter/pinocchio-emitter.js";
 import { emitNativeFull } from "../api/src/emitter/native-emitter.js";
-import { emitQuasarFull } from "../api/src/emitter/quasar-emitter.js";
 import { validateEmitterOutput } from "../api/src/emitter/output-validator.js";
 import { auditPassthrough } from "../api/src/emitter/passthrough-audit.js";
 import { analyzeCU } from "../api/src/emitter/cu-analyzer.js";
@@ -351,6 +350,19 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
 
+    // upgrade-only flags (other commands ignore them silently).
+    if (arg === "--global" || arg === "-g") {
+      (args as unknown as { global?: boolean })["global"] = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--dry-run") {
+      (args as unknown as { dryRun?: boolean })["dryRun"] = true;
+      i++;
+      continue;
+    }
+
     if (arg === "--scenario") {
       args.scenario = rest[i + 1] ?? null;
       i += 2;
@@ -457,7 +469,7 @@ function parseArgs(argv: string[]): CliArgs {
 function printHelp(): void {
   console.log(`
   ${c.bold}${c.cyan}ANVIL${c.reset} ${c.dim}v${VERSION}${c.reset}
-  Transpile Anchor programs to Pinocchio, Native, or Quasar.
+  Transpile Anchor programs to Pinocchio or Native.
 
   ${c.bold}USAGE${c.reset}
 
@@ -473,11 +485,12 @@ function printHelp(): void {
     snapshot     Save / check CU baseline — fails on regression
     diff         Storage layout diff between two program versions
     migrate      Anchor v1.0 Migration<From, To> codegen + safety analysis
-    completion   Print shell completion script (bash | zsh)
+    completion   Print shell completion script (bash | zsh | fish)
+    upgrade      Update anvil-sol to latest version via npm
 
   ${c.bold}OPTIONS${c.reset}
 
-    --target, -t <target>   Target framework: pinocchio, native, quasar
+    --target, -t <target>   Target framework: pinocchio, native
     --output, -o <dir>      Output directory (default: ./anvil-output/)
     --single-file           Emit a single .rs file instead of project layout
     --json                  JSON output (IR / issues / reports)
@@ -524,7 +537,7 @@ function printCompileHelp(): void {
 
   ${c.bold}OPTIONS${c.reset}
 
-    --target, -t <target>   ${c.bold}Required.${c.reset} One of: pinocchio, native, quasar
+    --target, -t <target>   ${c.bold}Required.${c.reset} One of: pinocchio, native
     --output, -o <dir>      Output directory (default: ./anvil-output/)
     --single-file           Emit a single .rs file instead of project layout
     --json                  Output the IR as JSON instead of writing files
@@ -578,7 +591,7 @@ function printValidateHelp(): void {
 
   ${c.bold}OPTIONS${c.reset}
 
-    --target, -t <target>   ${c.bold}Required.${c.reset} One of: pinocchio, native, quasar
+    --target, -t <target>   ${c.bold}Required.${c.reset} One of: pinocchio, native
     --json                  Output the issue list as JSON
 
   ${c.bold}EXIT CODES${c.reset}
@@ -710,7 +723,7 @@ function printCompletionHelp(): void {
 
   ${c.bold}ARGUMENTS${c.reset}
 
-    <shell>     Target shell. One of: bash, zsh
+    <shell>     Target shell. One of: bash, zsh, fish
 
   ${c.bold}INSTALL${c.reset}
 
@@ -719,6 +732,9 @@ function printCompletionHelp(): void {
 
     ${c.dim}# zsh${c.reset}
     anvil completion zsh >> ~/.zshrc
+
+    ${c.dim}# fish${c.reset}
+    anvil completion fish > ~/.config/fish/completions/anvil.fish
 
   After appending, restart your shell (or ${c.cyan}source${c.reset} the rc file)
   to enable tab-completion for ${c.cyan}anvil${c.reset}.
@@ -736,9 +752,38 @@ function printCommandHelp(command: string): void {
     case "diff":         printDiffHelp();       return;
     case "migrate":      printMigrateHelp();    return;
     case "completion":   printCompletionHelp(); return;
+    case "upgrade":      printUpgradeHelp();    return;
     case "differential": cmdDifferential({ ...({} as CliArgs), help: true } as CliArgs); return;
     default:           printHelp();
   }
+}
+
+function printUpgradeHelp(): void {
+  console.log(`
+  ${c.bold}anvil upgrade${c.reset} — Update anvil-sol to the latest published version.
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil upgrade [--global|-g]
+
+  ${c.bold}OPTIONS${c.reset}
+
+    --global, -g    Update the global install (default: detect from
+                    install path; passes -g when installed via npm i -g).
+    --dry-run       Print what would run without executing.
+
+  ${c.bold}NOTES${c.reset}
+
+    Wraps ${c.cyan}npm install -g anvil-sol@latest${c.reset} (or just
+    ${c.cyan}npm install anvil-sol@latest${c.reset} for local installs).
+    Equivalent to running it yourself; provided for convenience.
+
+  ${c.bold}EXAMPLES${c.reset}
+
+    anvil upgrade
+    anvil upgrade --global
+    anvil upgrade --dry-run
+`);
 }
 
 // ─── Source Resolution ───────────────────────────────────────────────────────
@@ -771,9 +816,9 @@ function resolveSource(inputPath: string): string {
 
 // ─── Emitter Dispatch ────────────────────────────────────────────────────────
 
-type TargetName = "pinocchio" | "native" | "quasar";
+type TargetName = "pinocchio" | "native";
 
-const VALID_TARGETS: TargetName[] = ["pinocchio", "native", "quasar"];
+const VALID_TARGETS: TargetName[] = ["pinocchio", "native"];
 
 function emitForTarget(ir: SolanaIR, target: TargetName): EmitterOutput {
   switch (target) {
@@ -781,8 +826,6 @@ function emitForTarget(ir: SolanaIR, target: TargetName): EmitterOutput {
       return emitPinocchioFull(ir);
     case "native":
       return emitNativeFull(ir);
-    case "quasar":
-      return emitQuasarFull(ir);
   }
 }
 
@@ -793,15 +836,6 @@ function validateTarget(target: string | null): TargetName {
   const normalized = target.toLowerCase() as TargetName;
   if (!VALID_TARGETS.includes(normalized)) {
     fatal(`Invalid target "${target}". Must be one of: ${VALID_TARGETS.join(", ")}`);
-  }
-  if (normalized === "quasar") {
-    // Quasar emit isn't gated by cargo-build tests and a few CPI surfaces
-    // emit `// Anvil TODO` stubs (set_authority, ATA, Memo) awaiting
-    // upstream features. Print to stderr so it doesn't pollute stdout
-    // when piping through other tools.
-    process.stderr.write(
-      `${c.yellow}warning:${c.reset} target ${c.bold}quasar${c.reset} is experimental — no cargo-build coverage and some CPIs emit TODO stubs. Treat output as a starting point that needs review.\n`,
-    );
   }
   return normalized;
 }
@@ -822,10 +856,6 @@ function formatCUAnalysis(estimates: CUEstimate[], target: TargetName): string {
       case "pinocchio":
         targetCU = est.pinocchio;
         savings = est.savingsPinocchio;
-        break;
-      case "quasar":
-        targetCU = est.quasar;
-        savings = est.savingsQuasar;
         break;
       case "native":
         targetCU = est.native;
@@ -1166,7 +1196,7 @@ async function cmdValidate(args: CliArgs): Promise<void> {
 
   ${c.bold}OPTIONS${c.reset}
 
-    --target, -t <target>   ${c.bold}Required.${c.reset} One of: pinocchio, native, quasar
+    --target, -t <target>   ${c.bold}Required.${c.reset} One of: pinocchio, native
     --json                  Output issues as JSON
 `);
     return;
@@ -1283,14 +1313,14 @@ async function cmdValidate(args: CliArgs): Promise<void> {
 
 async function cmdLint(args: CliArgs): Promise<void> {
   if (!args.input) {
-    fatal("Missing input file or directory.\n\n  Usage: anvil lint <input> [--target native|pinocchio|quasar] [--json|--markdown]");
+    fatal("Missing input file or directory.\n\n  Usage: anvil lint <input> [--target native|pinocchio] [--json|--markdown]");
   }
   // Target defaults to pinocchio (strictest). Users explicitly pass --target
   // native to score against the permissive target when that matches their
   // actual port goal.
-  const lintTarget = (args.target ?? "pinocchio") as "pinocchio" | "native" | "quasar";
-  if (!["pinocchio", "native", "quasar"].includes(lintTarget)) {
-    fatal(`Invalid --target "${args.target}". Must be pinocchio, native, or quasar.`);
+  const lintTarget = (args.target ?? "pinocchio") as "pinocchio" | "native";
+  if (!["pinocchio", "native"].includes(lintTarget)) {
+    fatal(`Invalid --target "${args.target}". Must be pinocchio or native.`);
   }
   if (!args.json && !args.markdown) banner();
   const source = resolveSource(args.input);
@@ -1385,7 +1415,7 @@ async function cmdBench(args: CliArgs): Promise<void> {
     `  ${c.bold}${pad("TOTAL", maxNameLen)}  ${rpad(report.totals.anchor.toLocaleString(), 8)}  ${rpad(report.totals.pinocchio.toLocaleString(), 10)}  ${rpad(report.totals.native.toLocaleString(), 7)}  ${rpad(report.overallSavings.pinocchio, 11)}${c.reset}`,
   );
   console.log();
-  console.log(`  ${c.dim}Pinocchio: ${report.overallSavings.pinocchio} · Native: ${report.overallSavings.native} · Quasar: ${report.overallSavings.quasar}${c.reset}`);
+  console.log(`  ${c.dim}Pinocchio: ${report.overallSavings.pinocchio} · Native: ${report.overallSavings.native}${c.reset}`);
   console.log();
 }
 
@@ -1574,10 +1604,10 @@ _anvil_completions() {
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
   cmd="\${COMP_WORDS[1]}"
 
-  local commands="compile parse validate lint bench snapshot diff completion"
+  local commands="compile parse validate lint bench snapshot diff differential migrate completion upgrade"
   local global_flags="--help -h --version -v"
-  local target_values="pinocchio native quasar"
-  local shell_values="bash zsh"
+  local target_values="pinocchio native"
+  local shell_values="bash zsh fish"
 
   # Top-level command
   if [ "\$COMP_CWORD" -eq 1 ]; then
@@ -1632,6 +1662,9 @@ _anvil_completions() {
         return 0
       fi
       ;;
+    upgrade)
+      flags="--global -g --dry-run --help -h"
+      ;;
     *)
       flags="\$global_flags"
       ;;
@@ -1660,7 +1693,10 @@ _anvil() {
     'bench:Per-instruction CU estimate vs Anchor baseline'
     'snapshot:Save / check CU baseline'
     'diff:Storage layout diff between two program versions'
+    'differential:Byte-equal differential vs Anchor reference'
+    'migrate:Account-layout migration codegen'
     'completion:Print shell completion script'
+    'upgrade:Update anvil-sol via npm'
   )
 
   local -a global_flags
@@ -1672,10 +1708,10 @@ _anvil() {
   )
 
   local -a target_values
-  target_values=(pinocchio native quasar)
+  target_values=(pinocchio native)
 
   local -a shell_values
-  shell_values=(bash zsh)
+  shell_values=(bash zsh fish)
 
   _arguments -C \\
     '1: :->command' \\
@@ -1754,6 +1790,96 @@ _anvil() {
 compdef _anvil anvil
 `;
 
+const COMPLETION_FISH = `# anvil fish completion
+# Install: anvil completion fish > ~/.config/fish/completions/anvil.fish
+function __anvil_using_command
+  set -l cmd (commandline -opc)
+  if test (count \$cmd) -gt 1
+    if test \$cmd[2] = \$argv[1]
+      return 0
+    end
+  end
+  return 1
+end
+
+# Top-level commands.
+complete -c anvil -n '__fish_use_subcommand' -a 'compile' -d 'Parse, emit, validate, and write output files'
+complete -c anvil -n '__fish_use_subcommand' -a 'parse' -d 'Parse only — output IR as JSON'
+complete -c anvil -n '__fish_use_subcommand' -a 'validate' -d 'Run output validator on emit'
+complete -c anvil -n '__fish_use_subcommand' -a 'lint' -d 'Portability lint analyzer'
+complete -c anvil -n '__fish_use_subcommand' -a 'bench' -d 'CU benchmark vs reference'
+complete -c anvil -n '__fish_use_subcommand' -a 'snapshot' -d 'Save / check IR snapshot'
+complete -c anvil -n '__fish_use_subcommand' -a 'diff' -d 'Diff two Anchor source IRs'
+complete -c anvil -n '__fish_use_subcommand' -a 'differential' -d 'Byte-equal differential vs Anchor reference'
+complete -c anvil -n '__fish_use_subcommand' -a 'migrate' -d 'Account-layout migration codegen'
+complete -c anvil -n '__fish_use_subcommand' -a 'completion' -d 'Print shell completion script'
+complete -c anvil -n '__fish_use_subcommand' -a 'upgrade' -d 'Update anvil-sol via npm'
+
+# --target / -t value completion (used by compile / validate / lint).
+complete -c anvil -n '__anvil_using_command compile; or __anvil_using_command validate; or __anvil_using_command lint' \\
+  -l target -s t -x -a 'pinocchio native' -d 'Emitter target'
+
+# --output / -o expects a path.
+complete -c anvil -n '__anvil_using_command compile' -l output -s o -r -d 'Output directory'
+
+# Per-command flags.
+complete -c anvil -n '__anvil_using_command compile' -l single-file -d 'Emit a single .rs file instead of crate scaffold'
+complete -c anvil -n '__anvil_using_command compile' -l json -d 'JSON output mode'
+complete -c anvil -n '__anvil_using_command parse' -l json -d 'JSON output mode'
+complete -c anvil -n '__anvil_using_command validate' -l json -d 'JSON output mode'
+complete -c anvil -n '__anvil_using_command lint' -l json -d 'JSON output mode'
+complete -c anvil -n '__anvil_using_command lint' -l markdown -l md -d 'Markdown output mode'
+complete -c anvil -n '__anvil_using_command bench' -l json -d 'JSON output mode'
+complete -c anvil -n '__anvil_using_command bench' -l markdown -l md -d 'Markdown output mode'
+complete -c anvil -n '__anvil_using_command snapshot' -l save -d 'Save current IR as snapshot'
+complete -c anvil -n '__anvil_using_command snapshot' -l check -d 'Check current IR against snapshot'
+complete -c anvil -n '__anvil_using_command snapshot' -l snapshot -r -d 'Snapshot file path'
+complete -c anvil -n '__anvil_using_command snapshot' -l threshold-pct -x -d 'Drift threshold (percent)'
+complete -c anvil -n '__anvil_using_command snapshot' -l threshold-abs -x -d 'Drift threshold (absolute)'
+complete -c anvil -n '__anvil_using_command diff' -l json -d 'JSON output mode'
+complete -c anvil -n '__anvil_using_command diff' -l markdown -l md -d 'Markdown output mode'
+
+# completion <shell>.
+complete -c anvil -n '__anvil_using_command completion' -a 'bash zsh fish' -d 'Shell name'
+
+# upgrade flags.
+complete -c anvil -n '__anvil_using_command upgrade' -l global -s g -d 'Update the global install'
+complete -c anvil -n '__anvil_using_command upgrade' -l dry-run -d 'Print what would run without executing'
+
+# Global flags.
+complete -c anvil -l help -s h -d 'Print help'
+complete -c anvil -l version -s v -d 'Print version'
+`;
+
+function cmdUpgrade(args: CliArgs): void {
+  if (args.help) {
+    printUpgradeHelp();
+    return;
+  }
+  // Detect global install via __dirname containing `node_modules` AND a
+  // typical global path marker (`/usr/`, `/.npm-global/`, `/.local/`,
+  // `\\AppData\\`). Fall back to local mode otherwise. Users can override
+  // either way with --global / -g.
+  const installPath = (typeof __dirname === "string" ? __dirname : "");
+  const looksGlobal = /node_modules/.test(installPath) && /(?:\/usr\/|\.npm-global|\/\.local\/|\\AppData\\)/.test(installPath);
+  const isGlobal = (args as unknown as { global?: boolean; g?: boolean }).global === true
+    || (args as unknown as { g?: boolean }).g === true
+    || looksGlobal;
+  const dryRun = (args as unknown as { dryRun?: boolean })["dryRun"] === true;
+  const cmd = isGlobal
+    ? "npm install -g anvil-sol@latest"
+    : "npm install anvil-sol@latest";
+  if (dryRun) {
+    process.stdout.write(`would run: ${cmd}\n`);
+    return;
+  }
+  banner();
+  process.stdout.write(`  Running: ${c.cyan}${cmd}${c.reset}\n\n`);
+  const { spawnSync } = require("child_process") as typeof import("child_process");
+  const proc = spawnSync(cmd, { shell: true, stdio: "inherit" });
+  process.exit(proc.status ?? 0);
+}
+
 function cmdCompletion(args: CliArgs): void {
   if (args.help) {
     printCompletionHelp();
@@ -1761,7 +1887,7 @@ function cmdCompletion(args: CliArgs): void {
   }
   const shell = args.input;
   if (!shell) {
-    fatal("Missing shell argument.\n\n  Usage: anvil completion <bash|zsh>");
+    fatal("Missing shell argument.\n\n  Usage: anvil completion <bash|zsh|fish>");
   }
   switch (shell) {
     case "bash":
@@ -1770,8 +1896,11 @@ function cmdCompletion(args: CliArgs): void {
     case "zsh":
       process.stdout.write(COMPLETION_ZSH);
       return;
+    case "fish":
+      process.stdout.write(COMPLETION_FISH);
+      return;
     default:
-      fatal(`Unsupported shell "${shell}". Supported: bash, zsh`);
+      fatal(`Unsupported shell "${shell}". Supported: bash, zsh, fish`);
   }
 }
 
@@ -1824,6 +1953,9 @@ async function main(): Promise<void> {
       break;
     case "completion":
       cmdCompletion(args);
+      break;
+    case "upgrade":
+      cmdUpgrade(args);
       break;
     case "migrate":
       await cmdMigrate(args);
