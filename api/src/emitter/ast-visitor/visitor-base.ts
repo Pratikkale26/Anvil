@@ -96,6 +96,239 @@ function stripLetMutPrefix(emitted: string, localVar: string): string {
 }
 
 /**
+ * Parse a Pinocchio Token-2022 hand-rolled CPI block (multi-line text
+ * the emitter produces) into structural stmts. Recognized shapes:
+ *
+ *   `    // <text>`                     → comment
+ *   `    {`                             → start outer block
+ *   `    }`                             → close outer block
+ *   `    let X = { ... };` (multi-line) → letStmt + rawExpr block
+ *   `        const X: T = [...];`       → constDecl with multi-line value
+ *   `        let X: T = [...];`         → rawLine fallback (typed local —
+ *                                         schema doesn't model `ty` yet)
+ *   `        let X = [...];`            → letStmt with rawExpr (multi-line array)
+ *   `        let X = T { ... };`        → letStmt with rawExpr (multi-line struct)
+ *   `        let X = ...;`              → letStmt + rawExpr (single-line)
+ *   `        let mut X: [T; N] = ...`   → rawLine fallback
+ *   `        for ... { ... }`           → rawLine block (multi-line for-loop)
+ *   `        if ... { ... }`            → rawLine
+ *   `        pinocchio::cpi::invoke(...)` → expr_stmt + tryPostfix + call
+ *   anything else                       → rawLine fallback
+ *
+ * Net: drops 1 raw_line per occurrence (each input line that became a
+ * structural stmt no longer counts), raw_exprs +N (one per
+ * multi-line value).
+ */
+function parseT22PinocchioBlock(emitted: string): RustStmt[] {
+  const out: RustStmt[] = [];
+  const lines = emitted.split("\n");
+  let i = 0;
+  // Walk each line; group multi-line constructs.
+  while (i < lines.length) {
+    const line = lines[i] ?? "";
+    const trimmed = line.trimStart();
+    const indent = line.length - trimmed.length;
+
+    if (trimmed === "") {
+      i++;
+      continue;
+    }
+
+    if (trimmed.startsWith("// ")) {
+      out.push(comment(trimmed.slice(3)));
+      i++;
+      continue;
+    }
+
+    // Outer block — `    {` then nested stmts then `    }`. Capture the
+    // nested stmts and recurse (passing the inner text through this
+    // same parser, just on the inner text without the brace lines).
+    if (line === "    {") {
+      const innerLines: string[] = [];
+      let depth = 1;
+      i++;
+      while (i < lines.length && depth > 0) {
+        const cur = lines[i] ?? "";
+        if (cur === "    }") {
+          depth--;
+          if (depth === 0) break;
+        }
+        // Track inner braces for nested blocks (e.g. `let X = { ... };`).
+        const opens = (cur.match(/\{/g) ?? []).length;
+        const closes = (cur.match(/\}/g) ?? []).length;
+        depth += opens - closes;
+        innerLines.push(cur);
+        i++;
+      }
+      i++; // skip closing `    }`
+      // Recurse on the inner text WITHOUT dedenting. RawExpr values
+      // inside structural stmts (const_decl array bodies, multi-line
+      // struct literals) are printed verbatim, so their leading
+      // whitespace must already match the final emit position.
+      // The block printer adds `+4` only to the structural-stmt
+      // indent prefix, not to rawExpr contents.
+      const innerStmts = parseT22PinocchioBlock(innerLines.join("\n"));
+      out.push(block(innerStmts));
+      continue;
+    }
+
+    // `    let X = { ... };` — multi-line block-as-expression.
+    const letBlockMatch = line.match(/^(\s*)let (mut )?(\w+) = \{$/);
+    if (letBlockMatch?.[3]) {
+      const blockIndent = letBlockMatch[1] ?? "";
+      const blockBodyLines: string[] = ["{"];
+      i++;
+      while (i < lines.length) {
+        const cur = lines[i] ?? "";
+        blockBodyLines.push(cur);
+        if (cur === `${blockIndent}};`) break;
+        i++;
+      }
+      i++;
+      const blockText = blockBodyLines.join("\n").replace(/};$/, "}");
+      out.push(letStmt(letBlockMatch[3], rawExpr(blockText), { mut: !!letBlockMatch[2] }));
+      continue;
+    }
+
+    // `<indent>const NAME: T = [...];` — multi-line const decl with
+    // typed array initializer.
+    const constMatch = line.match(/^(\s*)const (\w+): (.+?) = \[$/);
+    if (constMatch?.[2] && constMatch[3]) {
+      const ind = constMatch[1] ?? "";
+      const valLines: string[] = ["["];
+      i++;
+      while (i < lines.length) {
+        const cur = lines[i] ?? "";
+        valLines.push(cur);
+        if (cur.trim() === "];" || cur === `${ind}];`) break;
+        i++;
+      }
+      i++;
+      out.push(constDecl(constMatch[2], constMatch[3], rawExpr(valLines.join("\n").replace(/;$/, ""))));
+      continue;
+    }
+
+    // `<indent>let X: T = [...];` (multi-line typed array) —
+    // schema doesn't model `ty` on let, fallback to rawLine.
+    const typedLetArrayMatch = line.match(/^(\s*)let (mut )?(\w+): (.+?) = \[$/);
+    if (typedLetArrayMatch?.[3]) {
+      const ind = typedLetArrayMatch[1] ?? "";
+      const groupLines: string[] = [line];
+      i++;
+      while (i < lines.length) {
+        const cur = lines[i] ?? "";
+        groupLines.push(cur);
+        if (cur.trim() === "];" || cur === `${ind}];`) break;
+        i++;
+      }
+      i++;
+      out.push(rawLine(groupLines.join("\n")));
+      continue;
+    }
+
+    // `<indent>let X: T =` (multi-line typed init) — generic fallback.
+    if (/^\s*let (mut )?\w+: .+ =$/.test(line)) {
+      const groupLines: string[] = [line];
+      i++;
+      while (i < lines.length && !(lines[i] ?? "").trimEnd().endsWith(";")) {
+        groupLines.push(lines[i] ?? "");
+        i++;
+      }
+      if (i < lines.length) {
+        groupLines.push(lines[i] ?? "");
+        i++;
+      }
+      out.push(rawLine(groupLines.join("\n")));
+      continue;
+    }
+
+    // `<indent>let X = [\n            …,\n        ];` — multi-line array.
+    const letArrayMatch = line.match(/^(\s*)let (mut )?(\w+) = \[$/);
+    if (letArrayMatch?.[3]) {
+      const ind = letArrayMatch[1] ?? "";
+      const valLines: string[] = ["["];
+      i++;
+      while (i < lines.length) {
+        const cur = lines[i] ?? "";
+        valLines.push(cur);
+        if (cur.trim() === "];" || cur === `${ind}];`) break;
+        i++;
+      }
+      i++;
+      out.push(letStmt(
+        letArrayMatch[3],
+        rawExpr(valLines.join("\n").replace(/;$/, "")),
+        { mut: !!letArrayMatch[2] },
+      ));
+      continue;
+    }
+
+    // `<indent>let X = T {\n            …,\n        };` — multi-line struct literal.
+    const letStructMatch = line.match(/^(\s*)let (mut )?(\w+) = ([A-Za-z_:]+) \{$/);
+    if (letStructMatch?.[3] && letStructMatch[4]) {
+      const ind = letStructMatch[1] ?? "";
+      const valLines: string[] = [`${letStructMatch[4]} {`];
+      i++;
+      while (i < lines.length) {
+        const cur = lines[i] ?? "";
+        valLines.push(cur);
+        if (cur === `${ind}};`) break;
+        i++;
+      }
+      i++;
+      out.push(letStmt(
+        letStructMatch[3],
+        rawExpr(valLines.join("\n").replace(/;$/, "")),
+        { mut: !!letStructMatch[2] },
+      ));
+      continue;
+    }
+
+    // `<indent>let X = ...;` — single-line let (catches the
+    // signer-seed group lets).
+    const singleLineLet = line.match(/^(\s*)let (mut )?(\w+) = (.+);$/);
+    if (singleLineLet?.[3] && singleLineLet[4]) {
+      out.push(letStmt(
+        singleLineLet[3],
+        rawExpr(singleLineLet[4]),
+        { mut: !!singleLineLet[2] },
+      ));
+      i++;
+      continue;
+    }
+
+    // `<indent>for (...) { ... }` — multi-line for-loop. No AST for
+    // for-loops; rawLine the whole block.
+    if (/^\s*for /.test(line)) {
+      const groupLines: string[] = [line];
+      let braceDepth = (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+      i++;
+      while (i < lines.length && braceDepth > 0) {
+        const cur = lines[i] ?? "";
+        groupLines.push(cur);
+        braceDepth += (cur.match(/\{/g) ?? []).length - (cur.match(/\}/g) ?? []).length;
+        i++;
+      }
+      out.push(rawLine(groupLines.join("\n")));
+      continue;
+    }
+
+    // `<indent>pinocchio::cpi::invoke(&__t22_ix, &[...])?;` or
+    // `<indent>pinocchio::cpi::invoke_signed(&__t22_ix, &[...], &[__t22_signer])?;`
+    if (/^\s*pinocchio::cpi::invoke(_signed)?\(/.test(line)) {
+      out.push(rawLine(line));
+      i++;
+      continue;
+    }
+
+    // Default: pass through verbatim.
+    out.push(rawLine(line));
+    i++;
+  }
+  return out;
+}
+
+/**
  * Parse the lines `handlePdaSignerSeeds` pushes into the walker into a
  * list of structural Rust stmts. Output shape from the emitter:
  *
@@ -1128,10 +1361,7 @@ export class AstVisitorBase {
   visitCpiSplTransfer(stmt: CpiSplTransfer): RustStmt[] {
     const w = this.walker;
     if (stmt.tokenProgram === "token_2022") {
-      // Token-2022 paths (Pinocchio hand-rolled, Native deprecated) stay
-      // runHandlerCapture — the long bytecode-buffer dance and #[allow(
-      // deprecated)] on Native need per-shape work.
-      return this.runHandlerCapture(handleCpiSplTransfer, stmt);
+      return this.visitT22Transfer(stmt);
     }
     w.ctx.transformedCount++;
     w.ctx.details.push(`Transformed: token::transfer(${stmt.from} → ${stmt.to})`);
@@ -1192,6 +1422,118 @@ export class AstVisitorBase {
       invokeArgs,
     ))));
     return out;
+  }
+
+  /**
+   * Token-2022 transfer (checked + unchecked, both targets). Native
+   * transfer_checked / transfer_unchecked routes through structural
+   * mlCall + invoke. Pinocchio routes through the hand-rolled byte-
+   * array CPI block; we parse the emitter output into structural stmts
+   * via parseT22PinocchioBlock (similar approach to
+   * parsePdaSignerSeedsLines).
+   *
+   * Both variants drop their raw_lines to 0; raw_exprs go up because
+   * the multi-line byte-array literals + struct-literal values are
+   * still rawExpr leaves.
+   */
+  protected visitT22Transfer(stmt: CpiSplTransfer): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: token::transfer(${stmt.from} → ${stmt.to})`);
+    const out: RustStmt[] = [];
+    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+      for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.authority)) {
+        out.push(rawLine(preludeLine));
+      }
+    }
+    const fromVar = snakeCase(stmt.from);
+    const toVar = snakeCase(stmt.to);
+    const authorityName = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.authority))
+      : snakeCase(stmt.authority);
+    const amountExpr = w.resolveAmountExpr(stmt.amount);
+    const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
+    const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+    const checked = stmt.decimals !== undefined;
+
+    if (!isPinocchio) {
+      // Native — comment + (optional decimals prelude block) + multi-line
+      // transfer_ix let + multi-line invoke.
+      const checkedTitle = checked ? "transfer_checked" : "transfer (unchecked)";
+      out.push(comment(`Token-2022 ${checkedTitle} — ${stmt.from} → ${stmt.to}`));
+
+      let decimalsArg: RustExpr | undefined;
+      if (checked && stmt.mint && stmt.decimals !== undefined) {
+        const mintVar = snakeCase(stmt.mint);
+        const accessRe = new RegExp(`^${mintVar}\\.decimals$`);
+        if (accessRe.test(stmt.decimals.trim())) {
+          // Structural prelude: `let <mint>_decimals = { use Pack; ... };`
+          // Block-as-expression inner is a rawExpr.
+          out.push(letStmt(`${mintVar}_decimals`, rawExpr(
+            `{
+        use solana_program::program_pack::Pack;
+        spl_token_2022::state::Mint::unpack(&${mintVar}.data.borrow())?.decimals
+    }`,
+          )));
+          decimalsArg = ident(`${mintVar}_decimals`);
+        } else {
+          decimalsArg = rawExpr(stmt.decimals);
+        }
+      } else if (checked) {
+        // No-mint stub-out — same as the emitter's TODO comment-only output.
+        out.push(comment("TODO(manual): mint argument unresolved; reconstruct manually."));
+        return out;
+      }
+
+      const callPath = path(["spl_token_2022", "instruction", checked ? "transfer_checked" : "transfer"]);
+      const callArgs: RustExpr[] = [
+        ref(call(path(["spl_token_2022", "id"]), [])),
+        field(ident(fromVar), "key"),
+      ];
+      if (checked && stmt.mint) callArgs.push(field(ident(snakeCase(stmt.mint)), "key"));
+      callArgs.push(
+        field(ident(toVar), "key"),
+        field(ident(authorityName), "key"),
+        ref(array([])),
+        rawExpr(amountExpr),
+      );
+      if (checked && decimalsArg) callArgs.push(decimalsArg);
+
+      // Unchecked path needs `#[allow(deprecated)]` attribute on the let.
+      // No AST for attributes — emit as rawLine before the structural let.
+      if (!checked) out.push(rawLine("    #[allow(deprecated)]"));
+      out.push(letStmt(
+        "transfer_ix",
+        tryPostfix(mlCall(callPath, callArgs)),
+      ));
+
+      const invokeAccountClones: RustExpr[] = [methodCall(ident(fromVar), "clone", [])];
+      if (checked && stmt.mint) invokeAccountClones.push(methodCall(ident(snakeCase(stmt.mint)), "clone", []));
+      invokeAccountClones.push(
+        methodCall(ident(toVar), "clone", []),
+        methodCall(ident(authorityName), "clone", []),
+      );
+      const invokeArgs: RustExpr[] = [
+        ref(ident("transfer_ix")),
+        ref(array(invokeAccountClones)),
+      ];
+      if (signerSeedsResolved) invokeArgs.push(rawExpr(signerSeedsResolved));
+      out.push(exprStmt(tryPostfix(mlCall(
+        ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
+        invokeArgs,
+      ))));
+      return out;
+    }
+
+    // Pinocchio T22 — call the emitter, then parse into structural stmts.
+    // The hand-rolled block has many shapes (typed array literals, struct
+    // literals, signer-seed for-loop, conditional invoke flavor) that
+    // benefit from line-by-line structural conversion.
+    const emitted = w.emitter.emitSplTransfer(
+      fromVar, toVar, authorityName, amountExpr, signerSeedsResolved,
+      { tokenProgram: "token_2022", decimals: stmt.decimals, mint: stmt.mint ? snakeCase(stmt.mint) : undefined },
+    );
+    return parseT22PinocchioBlock(emitted);
   }
 
   visitCpiSplMintTo(stmt: CpiSplMintTo): RustStmt[] {
