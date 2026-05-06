@@ -257,14 +257,14 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                 {cuSavings && cuSavings.pct > 0 && (
                   <span
                     className="text-[10px] font-bold px-1.5 py-px rounded border"
-                    title={`Anchor baseline: ${cuSavings.anchor.toLocaleString()} CU · ${tm.label}: ${cuSavings.after.toLocaleString()} CU`}
+                    title={`Heuristic estimate from api/src/emitter/cu-analyzer.ts. Anchor baseline: ${cuSavings.anchor.toLocaleString()} CU · ${tm.label}: ${cuSavings.after.toLocaleString()} CU. Run \`bun scripts/measure-cu.ts\` for measured numbers.`}
                     style={{
                       color: tm.color,
                       background: `${tm.color}14`,
                       borderColor: `${tm.color}35`,
                     }}
                   >
-                    −{cuSavings.pct}% CU
+                    −{cuSavings.pct}% CU (est)
                   </span>
                 )}
                 {strictValidated && (
@@ -879,10 +879,10 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                   <thead>
                     <tr className="text-anvil-text-muted border-b border-anvil-line">
                       <th className="py-2 pr-3 text-left font-semibold">Instruction</th>
-                      <th className="py-2 px-3 text-right font-semibold">Anchor</th>
-                      <th className="py-2 px-3 text-right font-semibold">Pinocchio</th>
-                      <th className="py-2 px-3 text-right font-semibold">Native</th>
-                      <th className="py-2 pl-3 text-right font-semibold">Save ({tm.label})</th>
+                      <th className="py-2 px-3 text-right font-semibold">Anchor (est)</th>
+                      <th className="py-2 px-3 text-right font-semibold">Pinocchio (est)</th>
+                      <th className="py-2 px-3 text-right font-semibold">Native (est)</th>
+                      <th className="py-2 pl-3 text-right font-semibold">Save ({tm.label}, est)</th>
                     </tr>
                   </thead>
                   <tbody>
