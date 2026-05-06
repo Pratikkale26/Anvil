@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Cpu, Layers3, Zap } from "lucide-react";
+import { ArrowRight, Cpu, Layers3, ShieldCheck, Zap } from "lucide-react";
 
 type Stat = { value: string; label: string };
 
 export function Hero({ overallSavings }: { overallSavings: string }) {
   const stats: Stat[] = [
-    { value: "53", label: "Automated tests passing" },
+    { value: "6", label: "Real-world byte-equal" },
     { value: overallSavings, label: "CU reduction vs Anchor" },
     { value: "3", label: "Emit targets" },
   ];
@@ -35,8 +35,9 @@ export function Hero({ overallSavings }: { overallSavings: string }) {
       </h1>
 
       <p className="text-lead mx-auto max-w-150 mt-6">
-        Anvil parses Anchor programs into a framework-agnostic IR, then emits optimized
-        Pinocchio or Native Rust with byte-equal verification + live CU analysis.
+        Anvil parses Anchor into a framework-agnostic IR and emits Pinocchio or
+        Native Rust — verified byte-equal against the Anchor reference in 6
+        real-world programs and 11 demos under LiteSVM.
       </p>
 
       <div className="mt-10 flex items-center justify-center gap-3 flex-wrap">
@@ -52,6 +53,12 @@ export function Hero({ overallSavings }: { overallSavings: string }) {
         >
           Open Workbench <Layers3 size={14} />
         </Link>
+        <button
+          onClick={() => document.getElementById("verified")?.scrollIntoView({ behavior: "smooth" })}
+          className="inline-flex items-center gap-2 px-7 py-3 rounded-full text-[14px] font-bold cursor-pointer border-0 bg-white/6 text-anvil-text-sub hover:text-anvil-text hover:bg-white/8 transition-colors"
+        >
+          View Differential Evidence <ShieldCheck size={14} />
+        </button>
         <button
           onClick={() => document.getElementById("cu-analysis")?.scrollIntoView({ behavior: "smooth" })}
           className="inline-flex items-center gap-2 px-7 py-3 rounded-full text-[14px] font-bold cursor-pointer border-0 bg-white/6 text-anvil-text-sub hover:text-anvil-text hover:bg-white/8 transition-colors"

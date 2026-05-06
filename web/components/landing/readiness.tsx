@@ -1,11 +1,11 @@
 import { CheckCircle2, ChevronRight, Rocket } from "lucide-react";
 
 const WORKING = [
-  "100% parse rate on 27 real-world Anchor programs",
-  "Pinocchio + Native output passes cargo build on all 8 demo programs",
+  "6 real-world programs verified byte-equal against Anchor in LiteSVM",
+  "11 demos byte-equal + 36/36 program-examples cargo green on both targets",
   "Byte-equal differential testing — Anchor reference vs Anvil emit in LiteSVM",
+  "AI patches gated by byte-equal verification — divergent fixes auto-rejected",
   "Parser supports Anchor 1.0.0, Token-2022, Box<Account>, InterfaceAccount",
-  "8 demo programs: counter, vault, escrow, staking, AMM, marketplace, vesting, perp-funding",
   "GitHub repo ingestion — paste any public repo URL and compile",
   "Full multi-file project output (lib.rs, state.rs, instructions/)",
   "AI-powered code refinement for validation errors (Sonnet 4.6, cost-capped)",

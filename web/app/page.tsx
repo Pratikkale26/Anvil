@@ -4,6 +4,7 @@ import { useLandingPipeline } from "@/lib/use-landing-pipeline";
 import { Nav } from "@/components/landing/nav";
 import { Hero } from "@/components/landing/hero";
 import { HowItWorks } from "@/components/landing/how-it-works";
+import { VerifiedAgainst } from "@/components/landing/verified-against";
 import { Playground } from "@/components/landing/playground";
 import { CuAnalysis } from "@/components/landing/cu-analysis";
 import { Readiness } from "@/components/landing/readiness";
@@ -26,6 +27,7 @@ export default function Home() {
       <Nav apiOk={state.apiOk} />
       <Hero overallSavings={state.overallSavings} />
       <HowItWorks />
+      <VerifiedAgainst />
       <Playground state={state} />
       <CuAnalysis demo={state.demo} cuData={state.cuData} totals={state.totals} isMobile={state.isMobile} />
       <Readiness isTablet={state.isTablet} />
