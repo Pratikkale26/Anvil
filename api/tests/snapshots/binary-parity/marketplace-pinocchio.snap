@@ -1,0 +1,889 @@
+=== errors.rs ===
+//! Error definitions for Marketplace
+
+use super::*;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum MarketplaceError {
+    /// Price must be greater than zero
+    InvalidPrice = 6000,
+    /// Fee must be between 0 and 10000 bps
+    InvalidFeeBps = 6001,
+    /// Listing is not active
+    ListingNotActive = 6002,
+    /// Unauthorized
+    Unauthorized = 6003,
+    /// Arithmetic overflow
+    Overflow = 6004,
+    /// Arithmetic underflow
+    Underflow = 6005,
+    /// Invalid vault account
+    InvalidVault = 6006,
+}
+
+pub use MarketplaceError::*;
+
+impl From<MarketplaceError> for ProgramError {
+    fn from(error: MarketplaceError) -> Self {
+        ProgramError::Custom(error as u32)
+    }
+}
+
+=== helpers.rs ===
+//! Helper functions for Marketplace
+
+use super::*;
+use crate::state::*;
+use crate::errors::*;
+
+pub fn bump_seed(
+    program_id: &Pubkey,
+    seeds: &[&[u8]],
+    expected: &Pubkey,
+) -> Result<u8, ProgramError> {
+    for bump in (0..=255u8).rev() {
+        let mut seeds_with_bump: [&[u8]; 16] = [&[]; 16];
+        let len = seeds.len().min(15);
+        seeds_with_bump[..len].copy_from_slice(&seeds[..len]);
+        let bump_slice = &[bump];
+        seeds_with_bump[len] = bump_slice;
+        if let Ok(derived) = pinocchio::pubkey::create_program_address(&seeds_with_bump[..len + 1], program_id) {
+            if &derived == expected {
+                return Ok(bump);
+            }
+        }
+    }
+    Err(ProgramError::InvalidSeeds)
+}
+
+pub fn transfer_lamports(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    SystemTransfer {
+        from,
+        to,
+        lamports: amount,
+    }
+    .invoke()
+}
+
+pub fn create_program_account(
+    account: &AccountInfo,
+    payer: &AccountInfo,
+    space: usize,
+    program_id: &Pubkey,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    if signer_seeds.len() > 1 {
+        return Err(ProgramError::InvalidSeeds);
+    }
+
+    let signer_storage = signer_seeds.first().map(|seed_group| {
+        let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+        for (index, seed) in seed_group.iter().enumerate() {
+            if index >= seeds.len() {
+                return Err(ProgramError::InvalidSeeds);
+            }
+            seeds[index] = Seed::from(*seed);
+        }
+        Ok((seeds, seed_group.len()))
+    }).transpose()?;
+
+    let signer_slice = if let Some((ref seeds, len)) = signer_storage {
+        let signer = Signer::from(&seeds[..len]);
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[signer])
+    } else {
+        create_account_with_minimum_balance_signed(account, space, program_id, payer, None, &[])
+    };
+
+    signer_slice
+}
+
+pub fn spl_token_transfer(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    TokenTransfer {
+        from,
+        to,
+        authority,
+        amount,
+    }
+    .invoke()
+}
+
+pub fn spl_token_transfer_signed(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let seed_group = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+    let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+    for (i, seed) in seed_group.iter().enumerate() {
+        if i >= seeds.len() { return Err(ProgramError::InvalidSeeds); }
+        seeds[i] = Seed::from(*seed);
+    }
+    let signer = Signer::from(&seeds[..seed_group.len()]);
+    TokenTransfer {
+        from,
+        to,
+        authority,
+        amount,
+    }
+    .invoke_signed(&[signer])
+}
+
+pub fn spl_token_close_account_signed(
+    account: &AccountInfo,
+    destination: &AccountInfo,
+    authority: &AccountInfo,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let seed_group = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+    let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+    for (i, seed) in seed_group.iter().enumerate() {
+        if i >= seeds.len() { return Err(ProgramError::InvalidSeeds); }
+        seeds[i] = Seed::from(*seed);
+    }
+    let signer = Signer::from(&seeds[..seed_group.len()]);
+    TokenCloseAccount {
+        account,
+        destination,
+        authority,
+    }
+    .invoke_signed(&[signer])
+}
+
+pub fn close_program_account(
+    account: &AccountInfo,
+    destination: &AccountInfo,
+) -> ProgramResult {
+    if account.key() == destination.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let lamports = account.lamports();
+    {
+        let destination_lamports = unsafe { destination.borrow_mut_lamports_unchecked() };
+        *destination_lamports = destination_lamports
+            .checked_add(lamports)
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+    }
+    {
+        let account_lamports = unsafe { account.borrow_mut_lamports_unchecked() };
+        *account_lamports = 0;
+    }
+    {
+        // data doesn't need 'mut' on the binding — iter_mut() reborrows the
+        // underlying &mut [u8] without needing the binding itself mutable.
+        let data = unsafe { account.borrow_mut_data_unchecked() };
+        for byte in data.iter_mut() {
+            *byte = 0;
+        }
+    }
+    Ok(())
+}
+
+=== instructions/delist.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn delist(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 9 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let seller = &accounts[0];
+    let _nft_mint = &accounts[1];
+    let seller_ata = &accounts[2];
+    let listing = &accounts[3];
+    let marketplace = &accounts[4];
+    let vault = &accounts[5];
+    let _token_program = &accounts[6];
+    let _associated_token_program = &accounts[7];
+    let _system_program = &accounts[8];
+
+    if !seller.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !seller.is_writable() || !seller_ata.is_writable() || !listing.is_writable() || !marketplace.is_writable() || !vault.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if listing.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if marketplace.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let listing_account = listing;
+    let listing = Listing::from_account_info(listing_account)?;
+    if listing.marketplace != *marketplace.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let seed_bytes = listing.seed.to_le_bytes();
+    let _bump_listing = bump_seed(program_id, &[b"listing", seller.key().as_ref(), &seed_bytes], listing_account.key())?;
+    let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
+    if !(*vault.key() == listing.vault) {
+        return Err(ProgramError::InvalidAccountData.into());
+    }
+    if !listing.is_active {
+        return Err(MarketplaceError::ListingNotActive.into());
+    }
+    if !(listing.seller == *seller.key()) {
+        return Err(MarketplaceError::Unauthorized.into());
+    }
+    // PDA signer seeds for 'listing'
+    let seed_bytes = listing.seed.to_le_bytes();
+    let seeds = &[
+            b"listing",
+            listing.seller.as_ref(),
+            &seed_bytes,
+            &[listing.bump],
+        ];
+    let signer_seeds = &[&seeds[..]];
+    // SPL Token transfer (PDA signed) — vault → seller_ata
+    spl_token_transfer_signed(vault, seller_ata, listing_account, 1, signer_seeds)?;
+    // SPL Token close account — vault
+    spl_token_close_account_signed(vault, seller, listing_account, signer_seeds)?;
+    let marketplace_account = marketplace;
+    let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
+    marketplace.listing_count = marketplace.listing_count.checked_sub(1).ok_or(MarketplaceError::Underflow)?;
+    close_program_account(listing_account, seller)?;
+    Marketplace::save(marketplace_account, &marketplace)?;
+    Ok(())
+
+}
+
+=== instructions/initialize.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn initialize(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 4 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let marketplace = &accounts[0];
+    let admin = &accounts[1];
+    let treasury = &accounts[2];
+    let _system_program = &accounts[3];
+
+    if !admin.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !marketplace.is_writable() || !admin.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 2 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(2);
+    remaining = rest;
+    let fee_bps: u16 = u16::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
+    let init_marketplace_seeds: &[&[u8]] = &[
+            b"marketplace",
+            &[bump_marketplace],
+        ];
+    let init_marketplace_signer_seeds = &[&init_marketplace_seeds[..]];
+    create_program_account(marketplace, admin, (8 + Marketplace::LEN) as usize, program_id, init_marketplace_signer_seeds)?;
+    if !(fee_bps <= 10000) {
+        return Err(MarketplaceError::InvalidFeeBps.into());
+    }
+    let marketplace_account = marketplace;
+    let mut marketplace = Marketplace {
+        admin: [0u8; 32],
+        fee_bps: 0,
+        treasury: [0u8; 32],
+        bump: 0,
+        listing_count: 0,
+    };
+    marketplace.admin = *admin.key();
+    marketplace.fee_bps = fee_bps;
+    marketplace.treasury = *treasury.key();
+    marketplace.bump = bump_marketplace;
+    marketplace.listing_count = 0;
+    Marketplace::save(marketplace_account, &marketplace)?;
+    Ok(())
+
+}
+
+=== instructions/list.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn list(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 9 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let seller = &accounts[0];
+    let nft_mint = &accounts[1];
+    let seller_ata = &accounts[2];
+    let listing = &accounts[3];
+    let marketplace = &accounts[4];
+    let vault = &accounts[5];
+    let _token_program = &accounts[6];
+    let _associated_token_program = &accounts[7];
+    let _system_program = &accounts[8];
+
+    if !seller.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !seller.is_writable() || !seller_ata.is_writable() || !listing.is_writable() || !marketplace.is_writable() || !vault.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if marketplace.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let price: u64 = u64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let seed: u64 = u64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let seed_bytes = seed.to_le_bytes();
+    let bump_listing = bump_seed(program_id, &[b"listing", seller.key().as_ref(), &seed_bytes], listing.key())?;
+    let init_seed_bytes = seed.to_le_bytes();
+    let init_listing_seeds: &[&[u8]] = &[
+            b"listing",
+            seller.key().as_ref(),
+            &init_seed_bytes,
+            &[bump_listing],
+        ];
+    let init_listing_signer_seeds = &[&init_listing_seeds[..]];
+    create_program_account(listing, seller, (8 + Listing::LEN) as usize, program_id, init_listing_signer_seeds)?;
+    // Init token account: vault
+    {
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
+            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
+        ];
+        // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
+        let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
+        pinocchio_system::instructions::CreateAccount {
+            from: seller,
+            to: vault,
+            lamports: __ta_rent,
+            space: 165u64,
+            owner: &TOKEN_PROGRAM_ID,
+        }.invoke()?;
+        // 2. InitializeAccount3 — discriminator 18, data: 32-byte authority.
+        let mut __ta_init_data = [0u8; 33];
+        __ta_init_data[0] = 18;
+        __ta_init_data[1..33].copy_from_slice(listing.key().as_ref());
+        let __ta_init_metas = [
+            pinocchio::instruction::AccountMeta::new(vault.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(nft_mint.key(), false, false),
+        ];
+        let __ta_init_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_PROGRAM_ID,
+            accounts: &__ta_init_metas,
+            data: &__ta_init_data,
+        };
+        pinocchio::cpi::invoke(&__ta_init_ix, &[vault, nft_mint])?;
+    }
+    let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
+    if !(price > 0) {
+        return Err(MarketplaceError::InvalidPrice.into());
+    }
+    let listing_account = listing;
+    let mut listing = Listing {
+        seller: [0u8; 32],
+        mint: [0u8; 32],
+        price: 0,
+        seed: 0,
+        bump: 0,
+        marketplace: [0u8; 32],
+        vault: [0u8; 32],
+        is_active: false,
+    };
+    listing.seller = *seller.key();
+    listing.mint = *nft_mint.key();
+    listing.price = price;
+    listing.seed = seed;
+    listing.bump = bump_listing;
+    listing.marketplace = *marketplace.key();
+    listing.vault = *vault.key();
+    listing.is_active = true;
+    let marketplace_account = marketplace;
+    let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
+    marketplace.listing_count = marketplace.listing_count.checked_add(1).ok_or(MarketplaceError::Overflow)?;
+    // SPL Token transfer — seller_ata → vault
+    spl_token_transfer(seller_ata, vault, seller, 1)?;
+    Listing::save(listing_account, &listing)?;
+    Marketplace::save(marketplace_account, &marketplace)?;
+    Ok(())
+
+}
+
+=== instructions/mod.rs ===
+//! Instruction processors for Marketplace
+
+use crate::*;
+use crate::state::*;
+use crate::errors::*;
+use crate::helpers::*;
+
+pub mod initialize;
+pub use initialize::initialize;
+pub mod list;
+pub use list::list;
+pub mod delist;
+pub use delist::delist;
+pub mod purchase;
+pub use purchase::purchase;
+pub mod update_fee;
+pub use update_fee::update_fee;
+
+
+=== instructions/purchase.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn purchase(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 11 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let buyer = &accounts[0];
+    let seller = &accounts[1];
+    let nft_mint = &accounts[2];
+    let buyer_ata = &accounts[3];
+    let listing = &accounts[4];
+    let marketplace = &accounts[5];
+    let treasury = &accounts[6];
+    let vault = &accounts[7];
+    let token_program = &accounts[8];
+    let _associated_token_program = &accounts[9];
+    let system_program = &accounts[10];
+
+    if !buyer.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !buyer.is_writable() || !seller.is_writable() || !buyer_ata.is_writable() || !listing.is_writable() || !marketplace.is_writable() || !treasury.is_writable() || !vault.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if listing.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if marketplace.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    // Create Associated Token Account: buyer_ata
+    {
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
+            140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131,
+            11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
+        ];
+        let __ata_metas = [
+            pinocchio::instruction::AccountMeta::new(buyer.key(), true, true),
+            pinocchio::instruction::AccountMeta::new(buyer_ata.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(buyer.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(nft_mint.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
+        ];
+        let __ata_ix = pinocchio::instruction::Instruction {
+            program_id: &ATA_PROGRAM_ID,
+            accounts: &__ata_metas,
+            data: &[],
+        };
+        pinocchio::cpi::invoke(
+            &__ata_ix,
+            &[buyer, buyer_ata, buyer, nft_mint, system_program, token_program],
+        )?;
+    }
+    let listing_account = listing;
+    let listing = Listing::from_account_info(listing_account)?;
+    if listing.marketplace != *marketplace.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let seed_bytes = listing.seed.to_le_bytes();
+    let _bump_listing = bump_seed(program_id, &[b"listing", seller.key().as_ref(), &seed_bytes], listing_account.key())?;
+    let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
+    let marketplace_account = marketplace;
+    let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
+    if !(*treasury.key() == marketplace.treasury) {
+        return Err(ProgramError::InvalidAccountData.into());
+    }
+    if !(*vault.key() == listing.vault) {
+        return Err(ProgramError::InvalidAccountData.into());
+    }
+    if !listing.is_active {
+        return Err(MarketplaceError::ListingNotActive.into());
+    }
+    let fee = listing.price.checked_mul(marketplace.fee_bps as u64).ok_or(MarketplaceError::Overflow)?
+            .checked_div(10000).ok_or(MarketplaceError::Overflow)?;
+    let seller_amount = listing.price.checked_sub(fee).ok_or(MarketplaceError::Underflow)?;
+    transfer_lamports(buyer, seller, seller_amount)?;
+    transfer_lamports(buyer, treasury, fee)?;
+    // PDA signer seeds for 'listing'
+    let seed_bytes = listing.seed.to_le_bytes();
+    let seeds = &[
+            b"listing",
+            listing.seller.as_ref(),
+            &seed_bytes,
+            &[listing.bump],
+        ];
+    let signer_seeds = &[&seeds[..]];
+    // SPL Token transfer (PDA signed) — vault → buyer_ata
+    spl_token_transfer_signed(vault, buyer_ata, listing_account, 1, signer_seeds)?;
+    // SPL Token close account — vault
+    spl_token_close_account_signed(vault, seller, listing_account, signer_seeds)?;
+    marketplace.listing_count = marketplace.listing_count.checked_sub(1).ok_or(MarketplaceError::Underflow)?;
+    close_program_account(listing_account, seller)?;
+    Marketplace::save(marketplace_account, &marketplace)?;
+    Ok(())
+
+}
+
+=== instructions/update_fee.rs ===
+use super::*;
+use crate::errors::*;
+
+pub fn update_fee(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 2 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let marketplace = &accounts[0];
+    let admin = &accounts[1];
+
+    if !admin.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !marketplace.is_writable() || !admin.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if marketplace.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 2 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(2);
+    remaining = rest;
+    let new_fee_bps: u16 = u16::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
+    let marketplace_account = marketplace;
+    let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
+    if !(new_fee_bps <= 10000) {
+        return Err(MarketplaceError::InvalidFeeBps.into());
+    }
+    if !(marketplace.admin == *admin.key()) {
+        return Err(MarketplaceError::Unauthorized.into());
+    }
+    marketplace.fee_bps = new_fee_bps;
+    Marketplace::save(marketplace_account, &marketplace)?;
+    Ok(())
+
+}
+
+=== lib.rs ===
+//! Marketplace — generated by Anvil v0.3.0
+//! Source framework: Anchor → Target: Pinocchio
+//!
+//! This code was automatically generated. Sections marked with
+//! "⚠️ Anvil: Review" should be verified before deployment.
+#![deny(clippy::all)]
+#![allow(unexpected_cfgs, dead_code, deprecated, unused_imports)]
+
+use core::convert::TryInto;
+use borsh::{BorshDeserialize, BorshSerialize};
+use pinocchio::{
+    account_info::AccountInfo,
+    entrypoint,
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    ProgramResult,
+};
+use pinocchio_system::instructions::Transfer as SystemTransfer;
+use pinocchio::instruction::{Seed, Signer};
+use pinocchio_system::create_account_with_minimum_balance_signed;
+use pinocchio_token::instructions::Transfer as TokenTransfer;
+use pinocchio_token::instructions::CloseAccount as TokenCloseAccount;
+use pinocchio_associated_token_account::instructions::Create as CreateAssociatedToken;
+use pinocchio::sysvars::rent::Rent;
+use pinocchio::sysvars::Sysvar;
+
+mod state;
+
+mod instructions;
+
+mod errors;
+
+mod helpers;
+
+use instructions::*;
+
+entrypoint!(process_instruction);
+
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    if instruction_data.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (discriminator, data) = instruction_data.split_at(8);
+    router(program_id, accounts, discriminator, data)
+}
+
+fn router(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    discriminator: &[u8],
+    data: &[u8],
+) -> ProgramResult {
+    match discriminator {
+        [175, 175, 109, 31, 13, 152, 155, 237] => initialize(program_id, accounts, data),
+        [54, 174, 193, 67, 17, 41, 132, 38] => list(program_id, accounts, data),
+        [55, 136, 205, 107, 107, 173, 4, 31] => delist(program_id, accounts, data),
+        [21, 93, 113, 154, 193, 160, 242, 168] => purchase(program_id, accounts, data),
+        [232, 253, 195, 247, 148, 212, 73, 222] => update_fee(program_id, accounts, data),
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+
+=== state.rs ===
+//! State account definitions for Marketplace
+
+//! Generated by Anvil v0.3.0 — Target: Pinocchio
+
+
+use super::*;
+
+use crate::errors::*;
+
+#[repr(C)]
+pub struct Marketplace {
+    pub admin: [u8; 32],
+    pub fee_bps: u16,
+    pub treasury: [u8; 32],
+    pub bump: u8,
+    pub listing_count: u64,
+}
+
+impl Marketplace {
+    pub const DISCRIMINATOR: [u8; 8] = [70, 222, 41, 62, 78, 3, 32, 174];
+    pub const INIT_SPACE: usize = 75;
+    pub const LEN: usize = 75;
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
+
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut offset = 8usize;
+        let admin: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += 32;
+        let fee_bps: u16 = u16::from_le_bytes(
+            data[offset..offset + 2].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 2;
+        let treasury: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += 32;
+        let bump: u8 = data[offset];
+        offset += 1;
+        let listing_count: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        Ok(Self { admin, fee_bps, treasury, bump, listing_count })
+    }
+
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        data[offset..offset + 32].copy_from_slice(&value.admin);
+        offset += 32;
+        data[offset..offset + 2].copy_from_slice(&value.fee_bps.to_le_bytes());
+        offset += 2;
+        data[offset..offset + 32].copy_from_slice(&value.treasury);
+        offset += 32;
+        data[offset] = value.bump as u8;
+        offset += 1;
+        data[offset..offset + 8].copy_from_slice(&value.listing_count.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = unsafe { account.borrow_data_unchecked() };
+        Self::read(&data)
+    }
+
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        Self::write(&mut data, value)
+    }
+}
+
+#[repr(C)]
+pub struct Listing {
+    pub seller: [u8; 32],
+    pub mint: [u8; 32],
+    pub price: u64,
+    pub seed: u64,
+    pub bump: u8,
+    pub marketplace: [u8; 32],
+    pub vault: [u8; 32],
+    pub is_active: bool,
+}
+
+impl Listing {
+    pub const DISCRIMINATOR: [u8; 8] = [218, 32, 50, 73, 43, 134, 26, 58];
+    pub const INIT_SPACE: usize = 146;
+    pub const LEN: usize = 146;
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
+
+    pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if data[..8] != Self::DISCRIMINATOR {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut offset = 8usize;
+        let seller: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += 32;
+        let mint: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += 32;
+        let price: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let seed: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let bump: u8 = data[offset];
+        offset += 1;
+        let marketplace: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += 32;
+        let vault: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += 32;
+        let is_active: bool = match data[offset] {
+            0 => false,
+            1 => true,
+            _ => return Err(ProgramError::InvalidAccountData),
+        };
+        Ok(Self { seller, mint, price, seed, bump, marketplace, vault, is_active })
+    }
+
+    pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
+        if data.len() < Self::TOTAL_LEN {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let mut offset = 8usize;
+        data[offset..offset + 32].copy_from_slice(&value.seller);
+        offset += 32;
+        data[offset..offset + 32].copy_from_slice(&value.mint);
+        offset += 32;
+        data[offset..offset + 8].copy_from_slice(&value.price.to_le_bytes());
+        offset += 8;
+        data[offset..offset + 8].copy_from_slice(&value.seed.to_le_bytes());
+        offset += 8;
+        data[offset] = value.bump as u8;
+        offset += 1;
+        data[offset..offset + 32].copy_from_slice(&value.marketplace);
+        offset += 32;
+        data[offset..offset + 32].copy_from_slice(&value.vault);
+        offset += 32;
+        data[offset] = if value.is_active { 1 } else { 0 };
+        Ok(())
+    }
+
+    pub fn from_account_info(account: &AccountInfo) -> Result<Self, ProgramError> {
+        let data = unsafe { account.borrow_data_unchecked() };
+        Self::read(&data)
+    }
+
+    pub fn save(account: &AccountInfo, value: &Self) -> ProgramResult {
+        let mut data = unsafe { account.borrow_mut_data_unchecked() };
+        Self::write(&mut data, value)
+    }
+}

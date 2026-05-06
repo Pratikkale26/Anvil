@@ -76,6 +76,7 @@ const DIFFERENTIAL_DEMOS = [
   "event-emit",
   "has-one",
   "init-if-needed",
+  "marketplace",
   "msg-emit",
   "multisig",
   "optional-state",
