@@ -88,8 +88,21 @@ export type RustExpr =
   | { kind: "field"; obj: RustExpr; field: string }
   /** `receiver.method(arg1, arg2)`. */
   | { kind: "method_call"; receiver: RustExpr; method: string; args: RustExpr[] }
-  /** `callee(arg1, arg2)` — free-fn or path-qualified call. */
-  | { kind: "call"; callee: RustExpr; args: RustExpr[] }
+  /**
+   * `callee(arg1, arg2)` — free-fn or path-qualified call. When `multiLine`
+   * is set, the printer emits each arg on its own line with `+4` indent
+   * (matching the existing emit's multi-line invoke shape):
+   *
+   *   callee(
+   *       arg1,
+   *       arg2,
+   *       arg3,
+   *   )
+   *
+   * Requires the printer to thread the surrounding stmt indent through
+   * expr printing (the args' indent depends on where the stmt is rendered).
+   */
+  | { kind: "call"; callee: RustExpr; args: RustExpr[]; multiLine?: boolean }
   /** `&expr` or `&mut expr`. */
   | { kind: "ref"; mut: boolean; expr: RustExpr }
   /** `*expr`. */
@@ -112,9 +125,17 @@ export type RustExpr =
   /**
    * Struct literal — `Type { field: value, ... }`. Used for CPI
    * struct-literal calls (`pinocchio::instruction::Instruction
-   * { program_id: …, accounts: …, data: … }`).
+   * { program_id: …, accounts: …, data: … }`). When `multiLine` is set,
+   * the printer emits each field on its own line with `+4` indent and
+   * a trailing comma, matching the existing emit's multi-line struct
+   * shape:
+   *
+   *   Type {
+   *       field1: value1,
+   *       field2: value2,
+   *   }
    */
-  | { kind: "struct_literal"; ty: string; fields: { name: string; value: RustExpr }[] }
+  | { kind: "struct_literal"; ty: string; fields: { name: string; value: RustExpr }[]; multiLine?: boolean }
   /**
    * Escape hatch: a sub-expression rendered from raw text. Same rationale
    * as `raw_line` at the stmt level. Visitor metric: count of `raw`
@@ -142,6 +163,9 @@ export function methodCall(receiver: RustExpr, method: string, args: RustExpr[])
 export function call(callee: RustExpr, args: RustExpr[]): RustExpr {
   return { kind: "call", callee, args };
 }
+export function mlCall(callee: RustExpr, args: RustExpr[]): RustExpr {
+  return { kind: "call", callee, args, multiLine: true };
+}
 export function ref(expr: RustExpr, mut = false): RustExpr {
   return { kind: "ref", mut, expr };
 }
@@ -162,6 +186,9 @@ export function array(items: RustExpr[]): RustExpr {
 }
 export function structLiteral(ty: string, fields: { name: string; value: RustExpr }[]): RustExpr {
   return { kind: "struct_literal", ty, fields };
+}
+export function mlStructLiteral(ty: string, fields: { name: string; value: RustExpr }[]): RustExpr {
+  return { kind: "struct_literal", ty, fields, multiLine: true };
 }
 export function block(stmts: RustStmt[]): RustStmt {
   return { kind: "block", stmts };

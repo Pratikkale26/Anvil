@@ -61,16 +61,16 @@ export function printStmtAt(stmt: RustStmt, indent: string): string {
   switch (stmt.kind) {
     case "let": {
       const mutToken = stmt.mut ? "mut " : "";
-      return `${indent}let ${mutToken}${stmt.name} = ${printExpr(stmt.value)};`;
+      return `${indent}let ${mutToken}${stmt.name} = ${printExpr(stmt.value, indent)};`;
     }
     case "assign":
-      return `${indent}${printExpr(stmt.target)} = ${printExpr(stmt.value)};`;
+      return `${indent}${printExpr(stmt.target, indent)} = ${printExpr(stmt.value, indent)};`;
     case "expr_stmt":
-      return `${indent}${printExpr(stmt.expr)};`;
+      return `${indent}${printExpr(stmt.expr, indent)};`;
     case "return":
       return stmt.value === undefined
         ? `${indent}return;`
-        : `${indent}return ${printExpr(stmt.value)};`;
+        : `${indent}return ${printExpr(stmt.value, indent)};`;
     case "block": {
       // Indent the inner stmts by 4 more spaces than the outer.
       const inner = stmt.stmts.map((s) => printStmtAt(s, `${indent}    `)).join("\n");
@@ -80,15 +80,15 @@ export function printStmtAt(stmt: RustStmt, indent: string): string {
       const innerIndent = `${indent}    `;
       const body = stmt.body.map((s) => printStmtAt(s, innerIndent)).join("\n");
       if (stmt.elseBody === undefined) {
-        return `${indent}if ${printExpr(stmt.cond)} {\n${body}\n${indent}}`;
+        return `${indent}if ${printExpr(stmt.cond, indent)} {\n${body}\n${indent}}`;
       }
       const elseBody = stmt.elseBody.map((s) => printStmtAt(s, innerIndent)).join("\n");
-      return `${indent}if ${printExpr(stmt.cond)} {\n${body}\n${indent}} else {\n${elseBody}\n${indent}}`;
+      return `${indent}if ${printExpr(stmt.cond, indent)} {\n${body}\n${indent}} else {\n${elseBody}\n${indent}}`;
     }
     case "comment":
       return `${indent}// ${stmt.text}`;
     case "const_decl":
-      return `${indent}const ${stmt.name}: ${stmt.ty} = ${printExpr(stmt.value)};`;
+      return `${indent}const ${stmt.name}: ${stmt.ty} = ${printExpr(stmt.value, indent)};`;
     case "raw_line":
       return stmt.text;
   }
@@ -120,42 +120,65 @@ export function printStmt(stmt: RustStmt): string {
   }
 }
 
-/** Print a single expression. */
-export function printExpr(expr: RustExpr): string {
+/**
+ * Print a single expression.
+ *
+ * @param expr   The expression to print.
+ * @param indent The surrounding statement's indent (e.g. `"    "` for a
+ *               stmt at depth 1). Threaded through so multi-line exprs
+ *               (call.multiLine, struct_literal.multiLine) can format
+ *               their args/fields at `indent + "    "` and close at
+ *               `indent`. Inline-only callers can omit it.
+ */
+export function printExpr(expr: RustExpr, indent?: string): string {
   switch (expr.kind) {
     case "ident":
       return expr.name;
     case "lit":
       return expr.value;
     case "field":
-      return `${printExpr(expr.obj)}.${expr.field}`;
+      return `${printExpr(expr.obj, indent)}.${expr.field}`;
     case "method_call": {
-      const args = expr.args.map(printExpr).join(", ");
-      return `${printExpr(expr.receiver)}.${expr.method}(${args})`;
+      const args = expr.args.map((a) => printExpr(a, indent)).join(", ");
+      return `${printExpr(expr.receiver, indent)}.${expr.method}(${args})`;
     }
     case "call": {
-      const args = expr.args.map(printExpr).join(", ");
-      return `${printExpr(expr.callee)}(${args})`;
+      if (expr.multiLine && indent !== undefined && expr.args.length > 0) {
+        const innerIndent = `${indent}    `;
+        const argLines = expr.args
+          .map((a) => `${innerIndent}${printExpr(a, innerIndent)},`)
+          .join("\n");
+        return `${printExpr(expr.callee, indent)}(\n${argLines}\n${indent})`;
+      }
+      const args = expr.args.map((a) => printExpr(a, indent)).join(", ");
+      return `${printExpr(expr.callee, indent)}(${args})`;
     }
     case "ref":
-      return `&${expr.mut ? "mut " : ""}${printExpr(expr.expr)}`;
+      return `&${expr.mut ? "mut " : ""}${printExpr(expr.expr, indent)}`;
     case "deref":
-      return `*${printExpr(expr.expr)}`;
+      return `*${printExpr(expr.expr, indent)}`;
     case "try":
-      return `${printExpr(expr.expr)}?`;
+      return `${printExpr(expr.expr, indent)}?`;
     case "path":
       return expr.segments.join("::");
     case "macro_call": {
-      const args = expr.args.map(printExpr).join(", ");
+      const args = expr.args.map((a) => printExpr(a, indent)).join(", ");
       return `${expr.name}!(${args})`;
     }
     case "array": {
-      const items = expr.items.map(printExpr).join(", ");
+      const items = expr.items.map((a) => printExpr(a, indent)).join(", ");
       return `[${items}]`;
     }
     case "struct_literal": {
       if (expr.fields.length === 0) return `${expr.ty} {}`;
-      const fields = expr.fields.map((f) => `${f.name}: ${printExpr(f.value)}`).join(", ");
+      if (expr.multiLine && indent !== undefined) {
+        const innerIndent = `${indent}    `;
+        const fieldLines = expr.fields
+          .map((f) => `${innerIndent}${f.name}: ${printExpr(f.value, innerIndent)},`)
+          .join("\n");
+        return `${expr.ty} {\n${fieldLines}\n${indent}}`;
+      }
+      const fields = expr.fields.map((f) => `${f.name}: ${printExpr(f.value, indent)}`).join(", ");
       return `${expr.ty} { ${fields} }`;
     }
     case "raw":

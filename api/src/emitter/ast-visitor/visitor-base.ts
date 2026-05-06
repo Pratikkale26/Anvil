@@ -74,6 +74,7 @@ import {
   array,
   block,
   constDecl,
+  mlCall,
 } from "./nodes.js";
 import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
 import {
@@ -799,13 +800,10 @@ export class AstVisitorBase {
    */
   visitCpiSystemTransfer(stmt: CpiSystemTransfer): RustStmt[] {
     const w = this.walker;
-    if (w.emitter.frameworkName !== "Pinocchio") {
-      return this.runHandlerCapture(handleCpiSystemTransfer, stmt);
-    }
     w.ctx.transformedCount++;
     w.ctx.details.push(`Transformed: system_program::transfer(${stmt.from} → ${stmt.to})`);
+
     const out: RustStmt[] = [];
-    // Replicate the prelude side-effect — captured as raw_line stmts.
     if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
       for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.from)) {
         out.push(rawLine(preludeLine));
@@ -815,22 +813,42 @@ export class AstVisitorBase {
     const toVar = snakeCase(stmt.to);
     const amountExpr = w.resolveAmountExpr(stmt.amount);
     const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
-    if (signerSeedsResolved) {
-      // PDA-signed — comment + transfer_lamports_signed call.
-      out.push(comment("System transfer with PDA signer"));
-      out.push(exprStmt(tryPostfix(call(ident("transfer_lamports_signed"), [
-        ident(fromVar),
-        ident(toVar),
-        rawExpr(amountExpr),
-        rawExpr(signerSeedsResolved),
-      ]))));
-    } else {
-      out.push(exprStmt(tryPostfix(call(ident("transfer_lamports"), [
-        ident(fromVar),
-        ident(toVar),
-        rawExpr(amountExpr),
-      ]))));
+    const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+
+    if (isPinocchio) {
+      if (signerSeedsResolved) {
+        out.push(comment("System transfer with PDA signer"));
+        out.push(exprStmt(tryPostfix(call(ident("transfer_lamports_signed"), [
+          ident(fromVar), ident(toVar), rawExpr(amountExpr), rawExpr(signerSeedsResolved),
+        ]))));
+      } else {
+        out.push(exprStmt(tryPostfix(call(ident("transfer_lamports"), [
+          ident(fromVar), ident(toVar), rawExpr(amountExpr),
+        ]))));
+      }
+      return out;
     }
+
+    // Native — comment + let ix + multi-line invoke. mlCall lays out
+    // the invoke args one per line at +4 indent.
+    out.push(comment(signerSeedsResolved ? "System transfer with PDA signer" : "System transfer"));
+    out.push(letStmt("transfer_ix", call(path(["system_instruction", "transfer"]), [
+      field(ident(fromVar), "key"),
+      field(ident(toVar), "key"),
+      rawExpr(amountExpr),
+    ])));
+    const invokeArgs: RustExpr[] = [
+      ref(ident("transfer_ix")),
+      ref(array([
+        methodCall(ident(fromVar), "clone", []),
+        methodCall(ident(toVar), "clone", []),
+      ])),
+    ];
+    if (signerSeedsResolved) invokeArgs.push(rawExpr(signerSeedsResolved));
+    out.push(exprStmt(tryPostfix(mlCall(
+      ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
+      invokeArgs,
+    ))));
     return out;
   }
 
@@ -860,7 +878,10 @@ export class AstVisitorBase {
    */
   visitCpiSplTransfer(stmt: CpiSplTransfer): RustStmt[] {
     const w = this.walker;
-    if (w.emitter.frameworkName !== "Pinocchio" || stmt.tokenProgram === "token_2022") {
+    if (stmt.tokenProgram === "token_2022") {
+      // Token-2022 paths (Pinocchio hand-rolled, Native deprecated) stay
+      // runHandlerCapture — the long bytecode-buffer dance and #[allow(
+      // deprecated)] on Native need per-shape work.
       return this.runHandlerCapture(handleCpiSplTransfer, stmt);
     }
     w.ctx.transformedCount++;
@@ -878,20 +899,55 @@ export class AstVisitorBase {
       : snakeCase(stmt.authority);
     const amountExpr = w.resolveAmountExpr(stmt.amount);
     const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
-    const helperName = signerSeedsResolved ? "spl_token_transfer_signed" : "spl_token_transfer";
-    const commentText = signerSeedsResolved
+    const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+
+    if (isPinocchio) {
+      const helperName = signerSeedsResolved ? "spl_token_transfer_signed" : "spl_token_transfer";
+      const commentText = signerSeedsResolved
+        ? `SPL Token transfer (PDA signed) — ${stmt.from} → ${stmt.to}`
+        : `SPL Token transfer — ${stmt.from} → ${stmt.to}`;
+      const args: RustExpr[] = [ident(fromVar), ident(toVar), ident(authorityName), rawExpr(amountExpr)];
+      if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
+      out.push(comment(commentText));
+      out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+      return out;
+    }
+
+    // Native — let transfer_ix = multi-line spl_token::instruction::transfer +
+    //          multi-line invoke[_signed].
+    out.push(comment(signerSeedsResolved
       ? `SPL Token transfer (PDA signed) — ${stmt.from} → ${stmt.to}`
-      : `SPL Token transfer — ${stmt.from} → ${stmt.to}`;
-    const args: RustExpr[] = [ident(fromVar), ident(toVar), ident(authorityName), rawExpr(amountExpr)];
-    if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
-    out.push(comment(commentText));
-    out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+      : `SPL Token transfer — ${stmt.from} → ${stmt.to}`));
+    out.push(letStmt(
+      "transfer_ix",
+      tryPostfix(mlCall(path(["spl_token", "instruction", "transfer"]), [
+        ref(call(path(["spl_token", "id"]), [])),
+        field(ident(fromVar), "key"),
+        field(ident(toVar), "key"),
+        field(ident(authorityName), "key"),
+        ref(array([])),
+        rawExpr(amountExpr),
+      ])),
+    ));
+    const invokeArgs: RustExpr[] = [
+      ref(ident("transfer_ix")),
+      ref(array([
+        methodCall(ident(fromVar), "clone", []),
+        methodCall(ident(toVar), "clone", []),
+        methodCall(ident(authorityName), "clone", []),
+      ])),
+    ];
+    if (signerSeedsResolved) invokeArgs.push(rawExpr(signerSeedsResolved));
+    out.push(exprStmt(tryPostfix(mlCall(
+      ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
+      invokeArgs,
+    ))));
     return out;
   }
 
   visitCpiSplMintTo(stmt: CpiSplMintTo): RustStmt[] {
     const w = this.walker;
-    if (w.emitter.frameworkName !== "Pinocchio" || stmt.tokenProgram === "token_2022") {
+    if (stmt.tokenProgram === "token_2022") {
       return this.runHandlerCapture(handleCpiSplMintTo, stmt);
     }
     w.ctx.transformedCount++;
@@ -908,17 +964,49 @@ export class AstVisitorBase {
       : snakeCase(stmt.authority);
     const amountExpr = w.resolveAmountExpr(stmt.amount);
     const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
-    const helperName = signerSeedsResolved ? "spl_token_mint_to_signed" : "spl_token_mint_to";
-    const args: RustExpr[] = [ident(mintVar), ident(toVar), ident(authorityName), rawExpr(amountExpr)];
-    if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
+    const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+
+    if (isPinocchio) {
+      const helperName = signerSeedsResolved ? "spl_token_mint_to_signed" : "spl_token_mint_to";
+      const args: RustExpr[] = [ident(mintVar), ident(toVar), ident(authorityName), rawExpr(amountExpr)];
+      if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
+      out.push(comment(`SPL Token mint_to — ${stmt.mint} → ${stmt.to}`));
+      out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+      return out;
+    }
+
+    // Native — let mint_ix + invoke[_signed].
     out.push(comment(`SPL Token mint_to — ${stmt.mint} → ${stmt.to}`));
-    out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+    out.push(letStmt(
+      "mint_ix",
+      tryPostfix(mlCall(path(["spl_token", "instruction", "mint_to"]), [
+        ref(call(path(["spl_token", "id"]), [])),
+        field(ident(mintVar), "key"),
+        field(ident(toVar), "key"),
+        field(ident(authorityName), "key"),
+        ref(array([])),
+        rawExpr(amountExpr),
+      ])),
+    ));
+    const invokeArgs: RustExpr[] = [
+      ref(ident("mint_ix")),
+      ref(array([
+        methodCall(ident(mintVar), "clone", []),
+        methodCall(ident(toVar), "clone", []),
+        methodCall(ident(authorityName), "clone", []),
+      ])),
+    ];
+    if (signerSeedsResolved) invokeArgs.push(rawExpr(signerSeedsResolved));
+    out.push(exprStmt(tryPostfix(mlCall(
+      ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
+      invokeArgs,
+    ))));
     return out;
   }
 
   visitCpiSplBurn(stmt: CpiSplBurn): RustStmt[] {
     const w = this.walker;
-    if (w.emitter.frameworkName !== "Pinocchio" || stmt.tokenProgram === "token_2022") {
+    if (stmt.tokenProgram === "token_2022") {
       return this.runHandlerCapture(handleCpiSplBurn, stmt);
     }
     w.ctx.transformedCount++;
@@ -935,17 +1023,49 @@ export class AstVisitorBase {
       : snakeCase(stmt.authority);
     const amountExpr = w.resolveAmountExpr(stmt.amount);
     const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
-    const helperName = signerSeedsResolved ? "spl_token_burn_signed" : "spl_token_burn";
-    const args: RustExpr[] = [ident(fromVar), ident(mintVar), ident(authorityName), rawExpr(amountExpr)];
-    if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
+    const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+
+    if (isPinocchio) {
+      const helperName = signerSeedsResolved ? "spl_token_burn_signed" : "spl_token_burn";
+      const args: RustExpr[] = [ident(fromVar), ident(mintVar), ident(authorityName), rawExpr(amountExpr)];
+      if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
+      out.push(comment(`SPL Token burn — ${stmt.from}`));
+      out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+      return out;
+    }
+
+    // Native — let burn_ix + invoke[_signed].
     out.push(comment(`SPL Token burn — ${stmt.from}`));
-    out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+    out.push(letStmt(
+      "burn_ix",
+      tryPostfix(mlCall(path(["spl_token", "instruction", "burn"]), [
+        ref(call(path(["spl_token", "id"]), [])),
+        field(ident(fromVar), "key"),
+        field(ident(mintVar), "key"),
+        field(ident(authorityName), "key"),
+        ref(array([])),
+        rawExpr(amountExpr),
+      ])),
+    ));
+    const invokeArgs: RustExpr[] = [
+      ref(ident("burn_ix")),
+      ref(array([
+        methodCall(ident(fromVar), "clone", []),
+        methodCall(ident(mintVar), "clone", []),
+        methodCall(ident(authorityName), "clone", []),
+      ])),
+    ];
+    if (signerSeedsResolved) invokeArgs.push(rawExpr(signerSeedsResolved));
+    out.push(exprStmt(tryPostfix(mlCall(
+      ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
+      invokeArgs,
+    ))));
     return out;
   }
 
   visitCpiSplCloseAccount(stmt: CpiSplCloseAccount): RustStmt[] {
     const w = this.walker;
-    if (w.emitter.frameworkName !== "Pinocchio" || stmt.tokenProgram === "token_2022") {
+    if (stmt.tokenProgram === "token_2022") {
       return this.runHandlerCapture(handleCpiSplCloseAccount, stmt);
     }
     w.ctx.transformedCount++;
@@ -961,11 +1081,42 @@ export class AstVisitorBase {
       ? w.resolveAccountInfoVar(snakeCase(stmt.authority))
       : snakeCase(stmt.authority);
     const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
-    const helperName = signerSeedsResolved ? "spl_token_close_account_signed" : "spl_token_close_account";
-    const args: RustExpr[] = [ident(accountVar), ident(destinationVar), ident(authorityName)];
-    if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
+    const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+
+    if (isPinocchio) {
+      const helperName = signerSeedsResolved ? "spl_token_close_account_signed" : "spl_token_close_account";
+      const args: RustExpr[] = [ident(accountVar), ident(destinationVar), ident(authorityName)];
+      if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
+      out.push(comment(`SPL Token close account — ${stmt.account}`));
+      out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+      return out;
+    }
+
+    // Native — let close_ix + invoke[_signed].
     out.push(comment(`SPL Token close account — ${stmt.account}`));
-    out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+    out.push(letStmt(
+      "close_ix",
+      tryPostfix(mlCall(path(["spl_token", "instruction", "close_account"]), [
+        ref(call(path(["spl_token", "id"]), [])),
+        field(ident(accountVar), "key"),
+        field(ident(destinationVar), "key"),
+        field(ident(authorityName), "key"),
+        ref(array([])),
+      ])),
+    ));
+    const invokeArgs: RustExpr[] = [
+      ref(ident("close_ix")),
+      ref(array([
+        methodCall(ident(accountVar), "clone", []),
+        methodCall(ident(destinationVar), "clone", []),
+        methodCall(ident(authorityName), "clone", []),
+      ])),
+    ];
+    if (signerSeedsResolved) invokeArgs.push(rawExpr(signerSeedsResolved));
+    out.push(exprStmt(tryPostfix(mlCall(
+      ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
+      invokeArgs,
+    ))));
     return out;
   }
 
@@ -973,8 +1124,100 @@ export class AstVisitorBase {
     return this.runHandlerCapture(handleCpiSplSetAuthority, stmt);
   }
 
+  /**
+   * cpi_ata_create — both targets structural.
+   *
+   * Native: comment + let_stmt (inline spl_create_ata_ix call) + multi-
+   *         line invoke. Inline call because spl_create_ata_ix returns
+   *         Instruction directly (no Result, no `?`).
+   * Pinocchio: comment + block + const_decl(byte_array) + let(metas) +
+   *            let(ix struct) + multi-line invoke. Multi-line byte
+   *            array + AccountMeta array stay as rawExpr (preserves
+   *            the existing 4-space inner-line indent).
+   */
   visitCpiAtaCreate(stmt: CpiAtaCreate): RustStmt[] {
-    return this.runHandlerCapture(handleCpiAtaCreate, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: associated_token::create(${stmt.ata})`);
+
+    const out: RustStmt[] = [];
+    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+      for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.payer)) {
+        out.push(rawLine(preludeLine));
+      }
+    }
+    const ataVar = snakeCase(stmt.ata);
+    const payerVar = snakeCase(stmt.payer);
+    const mintVar = snakeCase(stmt.mint);
+    const authorityVar = snakeCase(stmt.authority);
+    const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+
+    if (!isPinocchio) {
+      out.push(comment(`Create Associated Token Account: ${stmt.ata}`));
+      out.push(letStmt(
+        "create_ata_ix",
+        mlCall(ident("spl_create_ata_ix"), [
+          field(ident(payerVar), "key"),
+          field(ident(authorityVar), "key"),
+          field(ident(mintVar), "key"),
+          ref(call(path(["spl_token", "id"]), [])),
+        ]),
+      ));
+      out.push(exprStmt(tryPostfix(mlCall(ident("invoke"), [
+        ref(ident("create_ata_ix")),
+        ref(array([
+          methodCall(ident(payerVar), "clone", []),
+          methodCall(ident(ataVar), "clone", []),
+          methodCall(ident(authorityVar), "clone", []),
+          methodCall(ident(mintVar), "clone", []),
+        ])),
+      ]))));
+      return out;
+    }
+
+    // Pinocchio path — block with const + lets + invoke.
+    out.push(comment(`Create Associated Token Account: ${stmt.ata}`));
+    out.push(block([
+      constDecl(
+        "ATA_PROGRAM_ID",
+        "pinocchio::pubkey::Pubkey",
+        rawExpr(`[
+            140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131,
+            11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
+        ]`),
+      ),
+      letStmt(
+        "__ata_metas",
+        rawExpr(`[
+            pinocchio::instruction::AccountMeta::new(${payerVar}.key(), true, true),
+            pinocchio::instruction::AccountMeta::new(${ataVar}.key(), true, false),
+            pinocchio::instruction::AccountMeta::new(${authorityVar}.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(${mintVar}.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
+        ]`),
+      ),
+      letStmt(
+        "__ata_ix",
+        rawExpr(`pinocchio::instruction::Instruction {
+            program_id: &ATA_PROGRAM_ID,
+            accounts: &__ata_metas,
+            data: &[],
+        }`),
+      ),
+      exprStmt(tryPostfix(mlCall(path(["pinocchio", "cpi", "invoke"]), [
+        ref(ident("__ata_ix")),
+        ref(array([
+          ident(payerVar),
+          ident(ataVar),
+          ident(authorityVar),
+          ident(mintVar),
+          ident("system_program"),
+          ident("token_program"),
+        ])),
+      ]))),
+    ]));
+    return out;
   }
 
   /**
