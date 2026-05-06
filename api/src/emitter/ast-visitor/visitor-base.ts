@@ -922,14 +922,34 @@ export class AstVisitorBase {
   }
 
   /**
-   * cpi_custom — pass-through CPI with raw `rawCode`. Walker calls
-   * transformNestedAnchorCode + ctx.accounts/bumps rewrites + helper
-   * inlining then pushes verbatim. Structural port shares the same
-   * blocker as `pass_through`: needs IR-level Rust expression model
-   * to replace the regex transform stack.
+   * cpi_custom — pass-through CPI with raw `rawCode`. The body itself
+   * needs IR-level Rust expression model to fully structuralize (same
+   * blocker as `pass_through`), but the comment-line is structural via
+   * `comment` AST. Net: -1 raw_line per occurrence; the body stays as
+   * a raw_line until M5 lands the IR extension.
    */
   visitCpiCustom(stmt: CpiCustom): RustStmt[] {
-    return this.runHandlerCapture(handleCpiCustom, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.warnings.push(
+      `Custom CPI to '${stmt.programAccount}' — passed through as raw code. Verify framework compatibility.`,
+    );
+    const { prelude: cpiPrelude, code: cpiCode } = w.replaceBumpRefs(stmt.rawCode);
+    let transformedCpiCode = w.normalizeKeyValueUsages(
+      w.transformAccountReferences(
+        w.transformCtxAccountsReferences(w.transformNestedAnchorCode(cpiCode)),
+      ),
+    );
+    if (w.emitter.frameworkName !== "Native") {
+      transformedCpiCode = transformedCpiCode.replace(/\.to_account_info\(\)/g, "");
+    }
+    const out: RustStmt[] = [];
+    for (const preludeLine of cpiPrelude) {
+      out.push(rawLine(preludeLine));
+    }
+    out.push(comment(`⚠️ Anvil: Custom CPI — verify this works with ${w.emitter.frameworkName}`));
+    out.push(rawLine(`    ${transformedCpiCode}`));
+    return out;
   }
 
   visitCpiMplCreateMetadataV3(stmt: CpiMplCreateMetadataV3): RustStmt[] {
