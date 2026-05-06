@@ -34,6 +34,13 @@ export type RustStmt =
    */
   | { kind: "expr_stmt"; expr: RustExpr }
   /**
+   * `return <expr>;` or bare `return;`. Represents an early-exit
+   * control flow — primarily emitted by `return_err` IR statements
+   * (`return Err(<error>);`) but also covers `return_ok` after the
+   * Phase-2 ports widen.
+   */
+  | { kind: "return"; value?: RustExpr }
+  /**
    * Escape hatch: a complete statement passed through as raw text.
    * The emitted line(s) will be the verbatim string. Visitor metric:
    * each `raw_line` indicates a Phase-2 candidate (something the
@@ -116,6 +123,9 @@ export function assign(target: RustExpr, value: RustExpr): RustStmt {
 }
 export function exprStmt(expr: RustExpr): RustStmt {
   return { kind: "expr_stmt", expr };
+}
+export function returnStmt(value?: RustExpr): RustStmt {
+  return value === undefined ? { kind: "return" } : { kind: "return", value };
 }
 export function rawLine(text: string): RustStmt {
   return { kind: "raw_line", text };

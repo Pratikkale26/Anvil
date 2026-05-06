@@ -52,6 +52,10 @@ import {
   letStmt,
   rawExpr,
   rawLine,
+  returnStmt,
+  exprStmt,
+  call,
+  path,
 } from "./nodes.js";
 import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
 import {
@@ -80,6 +84,7 @@ import {
 type StateRead = Extract<BodyStatement, { kind: "state_read" }>;
 type StateFieldAssign = Extract<BodyStatement, { kind: "state_field_assign" }>;
 type BumpsAccess = Extract<BodyStatement, { kind: "bumps_access" }>;
+type ReturnErr = Extract<BodyStatement, { kind: "return_err" }>;
 
 /**
  * Every IR statement kind the visitor knows how to dispatch. Phase-1
@@ -139,8 +144,8 @@ export class AstVisitorBase {
       case "require":              return this.runHandlerCapture(handleRequire, stmt);
       case "msg":                  return this.runHandlerCapture(handleMsg, stmt);
       case "emit":                 return this.runHandlerCapture(handleEmit, stmt);
-      case "return_ok":            return this.runHandlerCaptureNoArg(handleReturnOk);
-      case "return_err":           return this.runHandlerCapture(handleReturnErr, stmt);
+      case "return_ok":            return this.visitReturnOk();
+      case "return_err":           return this.visitReturnErr(stmt);
       case "sysvar_clock":         return this.runHandlerCapture(handleSysvarClock, stmt);
       case "sysvar_rent":          return this.runHandlerCapture(handleSysvarRent, stmt);
       case "pda_signer_seeds":     return this.runHandlerCapture(handlePdaSignerSeeds, stmt);
@@ -430,6 +435,60 @@ export class AstVisitorBase {
       out.push(letStmt(localVar, ident(bumpVar)));
     }
     return out;
+  }
+
+  /**
+   * Mirror `handleReturnOk` from body-emitter/handlers/control.ts.
+   *
+   * Source: `pub fn handleReturnOk(w) { w.emitAutoCloseAccounts();
+   *  w.emitPendingSaves(); w.lines.push("    Ok(())"); }`
+   *
+   * Hybrid emit: the two helper calls push their own lines (auto-
+   * close-account scaffolding + pending-state saves), captured here as
+   * raw_line stmts. The terminal `Ok(())` line is structural.
+   *
+   * Phase-2 structural port. The helpers themselves push lines that
+   * could be structurally modeled (they emit known shapes), but those
+   * are a separate port — same incrementalism approach as the other
+   * runHandlerCapture-using kinds.
+   */
+  visitReturnOk(): RustStmt[] {
+    const w = this.walker;
+    const before = w.lines.length;
+    w.emitAutoCloseAccounts();
+    w.emitPendingSaves();
+    const helperLines = w.lines.slice(before);
+    w.lines.length = before;
+
+    const out: RustStmt[] = helperLines.map((l) => rawLine(l));
+    // Structural `Ok(())` — `expr_stmt(call(path(["Ok"]), [rawExpr("()")]))`.
+    // The empty-tuple arg is rendered as `()` via the rawExpr escape;
+    // a dedicated tuple AST node would be marginally cleaner but isn't
+    // worth the schema growth for a single literal shape.
+    out.push(exprStmt(call(path(["Ok"]), [rawExpr("()")])));
+    return out;
+  }
+
+  /**
+   * Mirror `handleReturnErr` from body-emitter/handlers/control.ts.
+   *
+   * Source: `pub fn handleReturnErr(...) { w.lines.push(`    return
+   *  Err(${stmt.error});`); }`
+   *
+   * Structural emit: `return Err(<error>);` as a `return` AST stmt.
+   * The error expression is opaque text (could be a path like
+   * `MyError::Overflow` or a more complex expression with `.into()`),
+   * wrapped in `rawExpr` for now. Phase 2 may parse the error text
+   * into a structured expression tree if it becomes worthwhile, but
+   * the error-text string is already short and stable.
+   *
+   * First Phase-2 STRUCTURAL port (commit on top of EM1 Phase 2
+   * increment). Replaces the runHandlerCapture wrapper with direct
+   * AST construction; byte-identical to the handler's pushed line.
+   */
+  visitReturnErr(stmt: ReturnErr): RustStmt[] {
+    this.walker.ctx.transformedCount++;
+    return [returnStmt(call(path(["Err"]), [rawExpr(stmt.error)]))];
   }
 }
 

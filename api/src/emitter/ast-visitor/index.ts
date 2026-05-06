@@ -18,6 +18,7 @@ export {
   letStmt,
   assign,
   exprStmt,
+  returnStmt,
   rawLine,
 } from "./nodes.js";
 export { printStmts, printStmt, printStmtAt, printExpr, countRawNodes } from "./printer.js";

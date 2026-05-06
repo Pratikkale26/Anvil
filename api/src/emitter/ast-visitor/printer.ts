@@ -67,6 +67,10 @@ export function printStmtAt(stmt: RustStmt, indent: string): string {
       return `${indent}${printExpr(stmt.target)} = ${printExpr(stmt.value)};`;
     case "expr_stmt":
       return `${indent}${printExpr(stmt.expr)};`;
+    case "return":
+      return stmt.value === undefined
+        ? `${indent}return;`
+        : `${indent}return ${printExpr(stmt.value)};`;
     case "raw_line":
       return stmt.text;
   }
@@ -83,6 +87,8 @@ export function printStmt(stmt: RustStmt): string {
       return `${printExpr(stmt.target)} = ${printExpr(stmt.value)};`;
     case "expr_stmt":
       return `${printExpr(stmt.expr)};`;
+    case "return":
+      return stmt.value === undefined ? `return;` : `return ${printExpr(stmt.value)};`;
     case "raw_line":
       return stmt.text;
   }
@@ -168,6 +174,9 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
         break;
       case "expr_stmt":
         visit(s.expr);
+        break;
+      case "return":
+        if (s.value !== undefined) visit(s.value);
         break;
     }
   }
