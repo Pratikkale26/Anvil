@@ -69,6 +69,7 @@ import {
   tryPostfix,
   ifStmt,
   methodCall,
+  comment,
 } from "./nodes.js";
 import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
 import {
@@ -756,7 +757,7 @@ export class AstVisitorBase {
     const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
     if (signerSeedsResolved) {
       // PDA-signed — comment + transfer_lamports_signed call.
-      out.push(rawLine(`    // System transfer with PDA signer`));
+      out.push(comment("System transfer with PDA signer"));
       out.push(exprStmt(tryPostfix(call(ident("transfer_lamports_signed"), [
         ident(fromVar),
         ident(toVar),
@@ -773,20 +774,139 @@ export class AstVisitorBase {
     return out;
   }
 
+  /**
+   * SPL Token CPI structural ports — Pinocchio + SPL-Token (NOT
+   * Token-2022) path only. The Token-2022 path on Pinocchio is a
+   * hand-rolled multi-line block (raw Instruction + Signer dance vs
+   * the Token-2022 program ID); deferred to a per-port multi-line
+   * structural design that lands when the Token path is locked.
+   *
+   * Native paths use multi-line `invoke(\n &…,\n &[…],\n)?;` shapes
+   * that need multi-line call-arg printer policy — also deferred.
+   *
+   * What's structural here: the comment + single-line helper call:
+   *
+   *     // SPL Token <op> [(PDA signed)] — <args>
+   *     spl_token_<op>[_signed](<args>)?;
+   *
+   * Built via `comment(…) + exprStmt(tryPostfix(call(ident(helper),
+   * [args])))`. Helper name carries the _signed suffix when
+   * signerSeeds is present.
+   *
+   * Same prelude-emit and signerSeeds-resolve helpers as the handler
+   * (shouldEmitSignerSeedsPrelude + resolveSignerSeedsExpr) — captures
+   * any prelude lines from ensureSignerSeedsForAccount as raw_line
+   * stmts before the structural call.
+   */
   visitCpiSplTransfer(stmt: CpiSplTransfer): RustStmt[] {
-    return this.runHandlerCapture(handleCpiSplTransfer, stmt);
+    const w = this.walker;
+    if (w.emitter.frameworkName !== "Pinocchio" || stmt.tokenProgram === "token_2022") {
+      return this.runHandlerCapture(handleCpiSplTransfer, stmt);
+    }
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: token::transfer(${stmt.from} → ${stmt.to})`);
+    const out: RustStmt[] = [];
+    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+      for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.authority)) {
+        out.push(rawLine(preludeLine));
+      }
+    }
+    const fromVar = snakeCase(stmt.from);
+    const toVar = snakeCase(stmt.to);
+    const authorityName = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.authority))
+      : snakeCase(stmt.authority);
+    const amountExpr = w.resolveAmountExpr(stmt.amount);
+    const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
+    const helperName = signerSeedsResolved ? "spl_token_transfer_signed" : "spl_token_transfer";
+    const commentText = signerSeedsResolved
+      ? `SPL Token transfer (PDA signed) — ${stmt.from} → ${stmt.to}`
+      : `SPL Token transfer — ${stmt.from} → ${stmt.to}`;
+    const args: RustExpr[] = [ident(fromVar), ident(toVar), ident(authorityName), rawExpr(amountExpr)];
+    if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
+    out.push(comment(commentText));
+    out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+    return out;
   }
 
   visitCpiSplMintTo(stmt: CpiSplMintTo): RustStmt[] {
-    return this.runHandlerCapture(handleCpiSplMintTo, stmt);
+    const w = this.walker;
+    if (w.emitter.frameworkName !== "Pinocchio" || stmt.tokenProgram === "token_2022") {
+      return this.runHandlerCapture(handleCpiSplMintTo, stmt);
+    }
+    w.ctx.transformedCount++;
+    const out: RustStmt[] = [];
+    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+      for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.authority)) {
+        out.push(rawLine(preludeLine));
+      }
+    }
+    const mintVar = snakeCase(stmt.mint);
+    const toVar = snakeCase(stmt.to);
+    const authorityName = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.authority))
+      : snakeCase(stmt.authority);
+    const amountExpr = w.resolveAmountExpr(stmt.amount);
+    const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
+    const helperName = signerSeedsResolved ? "spl_token_mint_to_signed" : "spl_token_mint_to";
+    const args: RustExpr[] = [ident(mintVar), ident(toVar), ident(authorityName), rawExpr(amountExpr)];
+    if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
+    out.push(comment(`SPL Token mint_to — ${stmt.mint} → ${stmt.to}`));
+    out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+    return out;
   }
 
   visitCpiSplBurn(stmt: CpiSplBurn): RustStmt[] {
-    return this.runHandlerCapture(handleCpiSplBurn, stmt);
+    const w = this.walker;
+    if (w.emitter.frameworkName !== "Pinocchio" || stmt.tokenProgram === "token_2022") {
+      return this.runHandlerCapture(handleCpiSplBurn, stmt);
+    }
+    w.ctx.transformedCount++;
+    const out: RustStmt[] = [];
+    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+      for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.authority)) {
+        out.push(rawLine(preludeLine));
+      }
+    }
+    const fromVar = snakeCase(stmt.from);
+    const mintVar = snakeCase(stmt.mint);
+    const authorityName = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.authority))
+      : snakeCase(stmt.authority);
+    const amountExpr = w.resolveAmountExpr(stmt.amount);
+    const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
+    const helperName = signerSeedsResolved ? "spl_token_burn_signed" : "spl_token_burn";
+    const args: RustExpr[] = [ident(fromVar), ident(mintVar), ident(authorityName), rawExpr(amountExpr)];
+    if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
+    out.push(comment(`SPL Token burn — ${stmt.from}`));
+    out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+    return out;
   }
 
   visitCpiSplCloseAccount(stmt: CpiSplCloseAccount): RustStmt[] {
-    return this.runHandlerCapture(handleCpiSplCloseAccount, stmt);
+    const w = this.walker;
+    if (w.emitter.frameworkName !== "Pinocchio" || stmt.tokenProgram === "token_2022") {
+      return this.runHandlerCapture(handleCpiSplCloseAccount, stmt);
+    }
+    w.ctx.transformedCount++;
+    const out: RustStmt[] = [];
+    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+      for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.authority)) {
+        out.push(rawLine(preludeLine));
+      }
+    }
+    const accountVar = snakeCase(stmt.account);
+    const destinationVar = snakeCase(stmt.destination);
+    const authorityName = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.authority))
+      : snakeCase(stmt.authority);
+    const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
+    const helperName = signerSeedsResolved ? "spl_token_close_account_signed" : "spl_token_close_account";
+    const args: RustExpr[] = [ident(accountVar), ident(destinationVar), ident(authorityName)];
+    if (signerSeedsResolved) args.push(rawExpr(signerSeedsResolved));
+    out.push(comment(`SPL Token close account — ${stmt.account}`));
+    out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+    return out;
   }
 
   visitCpiSplSetAuthority(stmt: CpiSplSetAuthority): RustStmt[] {
