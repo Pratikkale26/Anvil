@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
+import { readFileSync } from "node:fs";
+import { PublicKey } from "@solana/web3.js";
 import {
   runBuild,
   runBuildStreaming,
@@ -20,6 +22,14 @@ import { refineOutput } from "../ai/refine.js";
 import { AIError } from "../ai/errors.js";
 import { checkSpendCap, recordSpend } from "../ai/spend-tracker.js";
 import type { ValidationIssue } from "../emitter/output-validator.js";
+import { ScenarioSchema, lintScenario, type Scenario } from "../ir/scenario.js";
+import { buildBothSos, differentialAvailable } from "../build/differential-build.js";
+import { buildProjectScaffold } from "../emitter/project-scaffold.js";
+import {
+  resolveScenarioContext,
+  runScenarioOnSo,
+  compareScenarioRuns,
+} from "../build/scenario-runner.js";
 
 export const buildRoute = Router();
 
@@ -46,6 +56,30 @@ const AutoFixRequestSchema = z.object({
   ir: z.unknown(), // validated below with SolanaIRSchema
   maxIterations: z.number().int().min(1).max(5).optional(),
   maxCostUsd: z.number().min(0).max(2).optional(),
+  /**
+   * Optional byte-equal differential gate. When supplied, AFTER each
+   * cargo-green iteration the auto-fix loop runs the AI-emitted .so
+   * through the same scenario as an Anchor reference build and
+   * byte-compares post-scenario state. Patches that compile but
+   * silently change runtime semantics (account-byte divergence,
+   * lamport divergence, owner reassignment) get flagged as
+   * `differential_diverge` ValidationIssues and fed back into the
+   * next refine iteration — turning the gate from "compiles" into
+   * "compiles AND runtime-equivalent to Anchor."
+   *
+   * Mirrors the `/build/differential` endpoint contract; see that
+   * route for the per-field semantics. Re-uses buildBothSos +
+   * scenario-runner so cache hits are shared across the two paths.
+   */
+  differential: z
+    .object({
+      anchorSource: z.string().min(1).max(5_000_000),
+      scenario: z.unknown(), // validated with ScenarioSchema
+      anchorExtraDeps: z.string().max(50_000).optional(),
+      anchorLangFeatures: z.array(z.string().max(64)).max(16).optional(),
+      programIdBase58: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/).optional(),
+    })
+    .optional(),
 });
 
 /**
@@ -249,6 +283,80 @@ buildRoute.post("/auto-fix", async (req, res) => {
   const maxIterations = parsed.data.maxIterations ?? 3;
   const maxCostUsd = parsed.data.maxCostUsd ?? 0.50;
 
+  // Differential gate setup — validate the scenario + program ID up front
+  // so a malformed payload fails before any AI is spent. The differential
+  // check itself runs after each green cargo iteration.
+  type DifferentialCfg = {
+    anchorSource: string;
+    scenario: Scenario;
+    anchorExtraDeps?: string;
+    anchorLangFeatures?: string[];
+    programId: PublicKey;
+  };
+  let differentialCfg: DifferentialCfg | null = null;
+  if (parsed.data.differential) {
+    if (!differentialAvailable()) {
+      const e = new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "Differential gate requested but cargo-build-sbf or anchor CLI not on PATH.",
+        undefined,
+        422,
+      );
+      res.status(e.statusCode).json(e.toJSON());
+      return;
+    }
+    const sParsed = ScenarioSchema.safeParse(parsed.data.differential.scenario);
+    if (!sParsed.success) {
+      const e = new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "Invalid scenario in differential gate",
+        sParsed.error.message,
+        422,
+      );
+      res.status(e.statusCode).json(e.toJSON());
+      return;
+    }
+    const lintErrors = lintScenario(sParsed.data).filter((i) => i.severity === "error");
+    if (lintErrors.length > 0) {
+      res.status(422).json({
+        error: "Scenario lint failed",
+        code: ErrorCode.VALIDATION_FAILED,
+        lintIssues: lintErrors,
+      });
+      return;
+    }
+    // Resolve programId — same priority order as /build/differential.
+    const declareIdMatch = parsed.data.differential.anchorSource.match(
+      /\bdeclare_id!\s*\(\s*"([^"]+)"\s*\)/,
+    );
+    let programId: PublicKey;
+    try {
+      programId = new PublicKey(
+        parsed.data.differential.programIdBase58
+          ?? sParsed.data.programId
+          ?? ir.programId
+          ?? declareIdMatch?.[1]
+          ?? "11111111111111111111111111111111",
+      );
+    } catch (err) {
+      const e = new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "Invalid programId base58 in differential gate",
+        String(err),
+        400,
+      );
+      res.status(e.statusCode).json(e.toJSON());
+      return;
+    }
+    differentialCfg = {
+      anchorSource: parsed.data.differential.anchorSource,
+      scenario: sParsed.data,
+      anchorExtraDeps: parsed.data.differential.anchorExtraDeps,
+      anchorLangFeatures: parsed.data.differential.anchorLangFeatures,
+      programId,
+    };
+  }
+
   // Streaming mode: ?stream=1 → respond as text/event-stream, emit one SSE
   // event per phase (iteration-start, build-result, refine-start,
   // refine-result/refine-error, done). Detected here AFTER body validation
@@ -294,16 +402,23 @@ buildRoute.post("/auto-fix", async (req, res) => {
   // as the offline sweep harness.
   let bestFiles: BuildFile[] = [...initialFiles];
   let bestErrorCount = Number.POSITIVE_INFINITY;
+  type DifferentialOutcome = {
+    verdict: "BYTE_EQUAL" | "DIVERGED" | "SCENARIO_FAILED";
+    accountDiffs: { name: string; status: string; firstDiffByte?: number }[];
+    durationMs: number;
+  };
   type Iteration = {
     iteration: number;
     buildResult: { ok: boolean; durationMs: number; errors: BuildDiagnostic[]; warnings: BuildDiagnostic[] };
     refine?: { acceptedPatches: number; rejectedPatches: number; rationale: string; estimatedCostUsd: number };
     refineError?: { category: string; message: string };
     reverted?: boolean;
+    differential?: DifferentialOutcome;
   };
   const iterations: Iteration[] = [];
   let stoppedReason:
     | "green"
+    | "differential_byte_equal"
     | "max_iterations"
     | "cost_cap"
     | "no_progress"
@@ -347,8 +462,50 @@ buildRoute.post("/auto-fix", async (req, res) => {
     if (buildRes.ok) {
       bestFiles = currentFiles;
       bestErrorCount = 0;
-      stoppedReason = "green";
-      break;
+      // If no differential gate requested, compile-green is the terminal
+      // condition — break here and return. Otherwise fall through to the
+      // byte-equal check; only BYTE_EQUAL counts as fully green.
+      if (!differentialCfg) {
+        stoppedReason = "green";
+        break;
+      }
+      const diffOutcome = await runDifferentialCheck(
+        differentialCfg,
+        target as BuildTarget,
+        currentFiles,
+        programName,
+        ir,
+      );
+      iter.differential = diffOutcome;
+      emit("differential-result", { iteration: i, ...diffOutcome });
+      if (diffOutcome.verdict === "BYTE_EQUAL") {
+        stoppedReason = "differential_byte_equal";
+        break;
+      }
+      // DIVERGED or SCENARIO_FAILED: synthesize ValidationIssues to feed
+      // back into the next refine. The cargo build is GREEN at this point,
+      // so we can't reuse buildRes.errors; instead append synthetic issues
+      // describing the runtime divergence.
+      const syntheticIssues = differentialDivergenceIssues(diffOutcome);
+      if (syntheticIssues.length === 0) {
+        // Pathological — verdict says diverged but nothing to feed back.
+        // Stop the loop and surface the verdict as the final outcome.
+        stoppedReason = "no_progress";
+        break;
+      }
+      // Replace the empty cargo-error issue list with the synthetic ones
+      // so the refine call below has something to act on.
+      buildRes.errors.push(...syntheticIssues.map((iss) => ({
+        filePath: iss.path ?? "",
+        line: iss.line ?? 0,
+        column: 0,
+        code: "differential_diverge",
+        message: iss.message,
+        spanText: "",
+        severity: "error" as const,
+      })));
+      // Fall through to the existing refine path with the synthetic issues
+      // packed into buildRes.errors.
     }
 
     // Revert-on-regression: if this iteration's cargo build is strictly
@@ -457,7 +614,15 @@ buildRoute.post("/auto-fix", async (req, res) => {
   }
 
   const lastIter = iterations[iterations.length - 1];
-  const finalOk = !!lastIter?.buildResult.ok;
+  // finalOk = cargo-green AND (no differential gate OR differential
+  // verdict is BYTE_EQUAL). A diverged-but-cargo-green run is NOT
+  // green from the gate's perspective; callers (workbench badge,
+  // CI) need that distinction to decide whether to deploy.
+  const cargoGreen = !!lastIter?.buildResult.ok;
+  const differentialOk =
+    !differentialCfg ||
+    lastIter?.differential?.verdict === "BYTE_EQUAL";
+  const finalOk = cargoGreen && differentialOk;
   const totalDurationMs = Date.now() - t0;
 
   // Telemetry: surface the loop outcome to /metrics. iterations.length is
@@ -486,6 +651,13 @@ buildRoute.post("/auto-fix", async (req, res) => {
     finalOk,
     totalDurationMs,
     totalCostUsd,
+    // Surface the latest differential outcome at the top level so callers
+    // don't have to scan iterations[]. Undefined when the gate wasn't
+    // requested. The workbench's "AI-patched + byte-equal verified" badge
+    // reads this directly.
+    differentialVerdict: differentialCfg
+      ? lastIter?.differential?.verdict ?? "NOT_RUN"
+      : undefined,
   };
 
   if (wantsStream) {
@@ -579,4 +751,112 @@ async function handleStreamingBuild(
   } finally {
     if (!res.writableEnded) res.end();
   }
+}
+
+/**
+ * Run the byte-equal differential check on the current iteration's
+ * cargo-green Anvil emit. Returns a compact verdict + per-account diff
+ * summary suitable for both the iteration record and synthetic
+ * ValidationIssue feedback to the next refine call.
+ *
+ * Reuses buildBothSos so SO-level cache hits are shared with the
+ * /build/differential endpoint when both run during the same session.
+ */
+async function runDifferentialCheck(
+  cfg: {
+    anchorSource: string;
+    scenario: Scenario;
+    anchorExtraDeps?: string;
+    anchorLangFeatures?: string[];
+    programId: PublicKey;
+  },
+  target: BuildTarget,
+  currentFiles: BuildFile[],
+  programName: string,
+  ir: SolanaIR,
+): Promise<{
+  verdict: "BYTE_EQUAL" | "DIVERGED" | "SCENARIO_FAILED";
+  accountDiffs: { name: string; status: string; firstDiffByte?: number }[];
+  durationMs: number;
+}> {
+  const t0 = Date.now();
+  // Strip src/ prefix from build files; the differential build pipeline
+  // expects bare paths (matches /emit's output shape).
+  const anvilEmittedFiles = currentFiles.map((f) => ({
+    path: f.path.replace(/^src\//, ""),
+    content: f.content,
+  }));
+  // Synthesise scaffold from IR + target — same pattern as /build/differential.
+  const anvilScaffoldFiles = buildProjectScaffold(ir, target);
+
+  try {
+    const artifacts = await buildBothSos({
+      anchorSource: cfg.anchorSource,
+      anvilEmittedFiles,
+      anvilScaffoldFiles,
+      anchorExtraDeps: cfg.anchorExtraDeps,
+      anchorLangFeatures: cfg.anchorLangFeatures,
+      programName,
+      ir,
+      programIdBase58: cfg.programId.toBase58(),
+    });
+    const ctx = resolveScenarioContext(cfg.scenario, cfg.programId);
+    const anchorSo = readFileSync(artifacts.anchorSoPath);
+    const anchorRun = runScenarioOnSo(cfg.scenario, ir, anchorSo, ctx);
+    const anvilSo = readFileSync(artifacts.anvilSoPath);
+    const anvilRun = runScenarioOnSo(cfg.scenario, ir, anvilSo, ctx);
+    const verdict = compareScenarioRuns(cfg.scenario, ir, anchorRun, anvilRun, Date.now() - t0);
+    return {
+      verdict: verdict.verdict,
+      accountDiffs: verdict.accountDiffs.map((d) => ({
+        name: d.name,
+        status: d.status,
+        firstDiffByte: d.firstDiffByte,
+      })),
+      durationMs: Date.now() - t0,
+    };
+  } catch (err) {
+    // Build/scenario failure is itself a divergence — surface it so the
+    // refine loop can react. SCENARIO_FAILED maps to "Anvil built but
+    // crashed during the scenario run"; the message lands as a synthetic
+    // ValidationIssue downstream.
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      verdict: "SCENARIO_FAILED",
+      accountDiffs: [{ name: "<scenario>", status: `failed: ${message}` }],
+      durationMs: Date.now() - t0,
+    };
+  }
+}
+
+/**
+ * Translate a divergence verdict into ValidationIssues the refine loop
+ * can act on. Each AccountDiff becomes one issue with a human-readable
+ * message naming the account + status (data/lamports/owner/missing).
+ * The path is unset because divergence isn't tied to a single source
+ * file — refine treats path-less issues as program-level concerns.
+ */
+function differentialDivergenceIssues(outcome: {
+  verdict: string;
+  accountDiffs: { name: string; status: string; firstDiffByte?: number }[];
+}): ValidationIssue[] {
+  if (outcome.verdict === "BYTE_EQUAL") return [];
+  if (outcome.accountDiffs.length === 0) {
+    return [{
+      severity: "error",
+      message:
+        `[differential_diverge] runtime byte-equal compare failed (verdict=${outcome.verdict}) ` +
+        `but no per-account diff surfaced. The Anvil-emitted .so may have crashed mid-scenario; ` +
+        `re-emit may need the scenario's account-init prelude to match Anchor's.`,
+    }];
+  }
+  return outcome.accountDiffs.map((d) => ({
+    severity: "error" as const,
+    message:
+      `[differential_diverge] account ${d.name} ${d.status}` +
+      (d.firstDiffByte !== undefined ? ` at byte ${d.firstDiffByte}` : "") +
+      `. Anvil's emit produced different post-scenario state than Anchor's reference. ` +
+      `The cargo build is green, so this is a runtime-semantics regression: the patches ` +
+      `that landed compile but change the program's observable behavior.`,
+  }));
 }
