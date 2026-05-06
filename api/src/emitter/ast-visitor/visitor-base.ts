@@ -2021,9 +2021,9 @@ export class AstVisitorBase {
           ref(call(path([crate, "id"]), [])),
           field(ident(accountVar), "key"),
           rawExpr(`match &${stmt.newAuthority} { Some(pk) => Some(pk), None => None }`),
-          rawExpr(remappedAuthorityType),
+          parseSimpleExpr(remappedAuthorityType),
           field(ident(currentAuthorityVar), "key"),
-          ref(rawExpr("[]")),
+          ref(array([])),
         ],
       )),
     ));
@@ -2039,7 +2039,7 @@ export class AstVisitorBase {
         methodCall(ident(currentAuthorityVar), "clone", []),
       ])),
     ];
-    if (signerSeedsExpr) invokeArgs.push(rawExpr(signerSeedsExpr));
+    if (signerSeedsExpr) invokeArgs.push(parseSimpleExpr(signerSeedsExpr));
     out.push(exprStmt(tryPostfix(mlCall(
       ident(signerSeedsExpr ? "invoke_signed" : "invoke"),
       invokeArgs,
@@ -2169,10 +2169,10 @@ export class AstVisitorBase {
         comment("SPL Memo CPI"),
         exprStmt(tryPostfix(mlCall(ident("invoke"), [
           ref(call(path(["spl_memo", "build_memo"]), [
-            rawExpr(bytesExpr),
-            ref(rawExpr("[]")),
+            parseSimpleExpr(bytesExpr),
+            ref(array([])),
           ])),
-          ref(rawExpr("[]")),
+          ref(array([])),
         ]))),
       ];
     }
@@ -2200,7 +2200,7 @@ export class AstVisitorBase {
           tryPostfix(
             call(path(["pinocchio", "cpi", "invoke"]), [
               ref(ident("__memo_ix")),
-              ref(rawExpr("[]")),
+              ref(array([])),
             ]),
           ),
         ),
