@@ -56,6 +56,7 @@ import {
   exprStmt,
   call,
   path,
+  macroCall,
 } from "./nodes.js";
 import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
 import {
@@ -85,6 +86,7 @@ type StateRead = Extract<BodyStatement, { kind: "state_read" }>;
 type StateFieldAssign = Extract<BodyStatement, { kind: "state_field_assign" }>;
 type BumpsAccess = Extract<BodyStatement, { kind: "bumps_access" }>;
 type ReturnErr = Extract<BodyStatement, { kind: "return_err" }>;
+type MsgStmt = Extract<BodyStatement, { kind: "msg" }>;
 
 /**
  * Every IR statement kind the visitor knows how to dispatch. Phase-1
@@ -142,7 +144,7 @@ export class AstVisitorBase {
       // conversion to be done one kind at a time in subsequent commits.
       case "pass_through":         return this.runHandlerCapture(handlePassThrough, stmt);
       case "require":              return this.runHandlerCapture(handleRequire, stmt);
-      case "msg":                  return this.runHandlerCapture(handleMsg, stmt);
+      case "msg":                  return this.visitMsg(stmt);
       case "emit":                 return this.runHandlerCapture(handleEmit, stmt);
       case "return_ok":            return this.visitReturnOk();
       case "return_err":           return this.visitReturnErr(stmt);
@@ -489,6 +491,69 @@ export class AstVisitorBase {
   visitReturnErr(stmt: ReturnErr): RustStmt[] {
     this.walker.ctx.transformedCount++;
     return [returnStmt(call(path(["Err"]), [rawExpr(stmt.error)]))];
+  }
+
+  /**
+   * Mirror `handleMsg` from body-emitter/handlers/control.ts.
+   *
+   * Source: walker calls emitter.emitMsg(transformedText), which returns
+   * target-specific log emission text. The structural port models the
+   * three shapes documented in PinocchioEmitter.emitMsg:
+   *
+   *   Shape 1 — pure string literal (no format args):
+   *     Pinocchio: `pinocchio::log::sol_log("text");` — fully structural
+   *                via expr_stmt(call(path([...sol_log]), [literal])).
+   *     Native:    `msg!("text");` — structural via macro_call.
+   *
+   *   Shape 2 — literal followed by format args:
+   *     Pinocchio: comment line + sol_log(literal-only). Hybrid: raw_line
+   *                comment + structural sol_log call.
+   *     Native:    Pass through to msg!() as-is. Structural macro_call
+   *                with the entire arg expression as a raw expr.
+   *
+   *   Shape 3 — non-literal (variable/expression):
+   *     Both targets pass through unchanged; structural via raw expr.
+   *
+   * Byte-identical to handler+emitMsg output across all three shapes.
+   * The pinocchio formatted-msg-collapse comment is the same exact
+   * banner emitMsg emits (one line, leading 4 spaces stripped to fit
+   * the printer's verbatim raw_line rule).
+   */
+  visitMsg(stmt: MsgStmt): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const msgText = w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(stmt.message)),
+    );
+
+    if (w.emitter.frameworkName === "Pinocchio") {
+      const literalMatch = msgText.match(/^"([^"\\]|\\.)*"/);
+      if (literalMatch?.[0]) {
+        const literal = literalMatch[0];
+        const solLogCall = exprStmt(
+          call(path(["pinocchio", "log", "sol_log"]), [rawExpr(literal)]),
+        );
+        if (literal === msgText.trim()) {
+          // Shape 1 — pure literal.
+          return [solLogCall];
+        }
+        // Shape 2 — literal + format args. emitMsg emits a comment + the
+        // sol_log call separated by a single `\n` inside one walker.lines
+        // entry. To keep byte-identical via per-stmt push, we emit two
+        // stmts: a raw_line for the comment (verbatim, with its 4-space
+        // indent matching the original) and an expr_stmt for the call.
+        return [
+          rawLine(`    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio`),
+          solLogCall,
+        ];
+      }
+      // Shape 3 — passthrough.
+      return [exprStmt(call(path(["pinocchio", "log", "sol_log"]), [rawExpr(msgText)]))];
+    }
+
+    // Native — msg!() macro across all three shapes (the macro itself
+    // handles format args). Structural via macro_call.
+    return [exprStmt(macroCall("msg", [rawExpr(msgText)]))];
   }
 }
 

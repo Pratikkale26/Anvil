@@ -73,6 +73,11 @@ export type RustExpr =
   | { kind: "try"; expr: RustExpr }
   /** Path with no leading `::`, e.g. `CounterError::Overflow`. */
   | { kind: "path"; segments: string[] }
+  /** Macro invocation — `name!(args)`. Distinct from `call` because macros
+   * in Rust have a `!` between the name and the args; modeling them as
+   * regular calls would mis-print as `name(args)`. Only Anchor's `msg!`
+   * + sibling logging macros use this today. */
+  | { kind: "macro_call"; name: string; args: RustExpr[] }
   /**
    * Escape hatch: a sub-expression rendered from raw text. Same rationale
    * as `raw_line` at the stmt level. Visitor metric: count of `raw`
@@ -111,6 +116,9 @@ export function tryPostfix(expr: RustExpr): RustExpr {
 }
 export function path(segments: string[]): RustExpr {
   return { kind: "path", segments };
+}
+export function macroCall(name: string, args: RustExpr[]): RustExpr {
+  return { kind: "macro_call", name, args };
 }
 export function rawExpr(text: string): RustExpr {
   return { kind: "raw", text };

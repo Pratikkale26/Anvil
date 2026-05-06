@@ -119,6 +119,10 @@ export function printExpr(expr: RustExpr): string {
       return `${printExpr(expr.expr)}?`;
     case "path":
       return expr.segments.join("::");
+    case "macro_call": {
+      const args = expr.args.map(printExpr).join(", ");
+      return `${expr.name}!(${args})`;
+    }
     case "raw":
       return expr.text;
   }
@@ -151,6 +155,9 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
         return;
       case "call":
         visit(e.callee);
+        for (const a of e.args) visit(a);
+        return;
+      case "macro_call":
         for (const a of e.args) visit(a);
         return;
       case "ref":

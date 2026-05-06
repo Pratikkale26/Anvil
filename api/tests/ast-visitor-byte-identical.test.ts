@@ -139,12 +139,23 @@ describe("AST visitor — byte-identical to handler chain (Phase 2: all 23 IR ki
             instr,
             ir,
           );
-          if (baselineLines.join("\n") !== visitorLines.join("\n")) {
-            // Locate first diverging line for an actionable error message.
-            const max = Math.max(baselineLines.length, visitorLines.length);
+          // Compare JOINED output, not element-wise arrays. Phase-2
+          // structural ports legitimately change walker.lines element
+          // granularity (e.g. msg shape 2 emits separate stmts for the
+          // comment + sol_log call where the handler pushed one
+          // multi-line entry). The byte-identical contract is on the
+          // joined emit, which is what the binary-parity-snapshot test
+          // gates against the production emit pipeline; per-element
+          // shape was a Phase-1 convenience that no longer holds.
+          const baselineJoined = baselineLines.join("\n");
+          const visitorJoined = visitorLines.join("\n");
+          if (baselineJoined !== visitorJoined) {
+            const baselineSplit = baselineJoined.split("\n");
+            const visitorSplit = visitorJoined.split("\n");
+            const max = Math.max(baselineSplit.length, visitorSplit.length);
             let firstDiff = -1;
             for (let i = 0; i < max; i++) {
-              if (baselineLines[i] !== visitorLines[i]) { firstDiff = i; break; }
+              if (baselineSplit[i] !== visitorSplit[i]) { firstDiff = i; break; }
             }
             const ctx = (lines: string[], idx: number) =>
               [
@@ -156,11 +167,11 @@ describe("AST visitor — byte-identical to handler chain (Phase 2: all 23 IR ki
               ].join("\n");
             throw new Error(
               `[ast-visitor-parity] ${demo}/${target.name}/${instr.name}: divergence at line ${firstDiff}\n\n` +
-                `--- handler baseline (${baselineLines.length} lines):\n${ctx(baselineLines, firstDiff)}\n\n` +
-                `--- visitor (${visitorLines.length} lines):\n${ctx(visitorLines, firstDiff)}`,
+                `--- handler baseline (${baselineSplit.length} lines):\n${ctx(baselineSplit, firstDiff)}\n\n` +
+                `--- visitor (${visitorSplit.length} lines):\n${ctx(visitorSplit, firstDiff)}`,
             );
           }
-          expect(visitorLines).toEqual(baselineLines);
+          expect(visitorJoined).toEqual(baselineJoined);
         }
       });
     }

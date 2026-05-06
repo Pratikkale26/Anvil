@@ -14,6 +14,7 @@ export {
   deref,
   tryPostfix,
   path,
+  macroCall,
   rawExpr,
   letStmt,
   assign,
