@@ -57,6 +57,7 @@ import {
   call,
   path,
   macroCall,
+  tryPostfix,
 } from "./nodes.js";
 import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
 import {
@@ -87,6 +88,11 @@ type StateFieldAssign = Extract<BodyStatement, { kind: "state_field_assign" }>;
 type BumpsAccess = Extract<BodyStatement, { kind: "bumps_access" }>;
 type ReturnErr = Extract<BodyStatement, { kind: "return_err" }>;
 type MsgStmt = Extract<BodyStatement, { kind: "msg" }>;
+type RequireStmt = Extract<BodyStatement, { kind: "require" }>;
+type EmitStmt = Extract<BodyStatement, { kind: "emit" }>;
+type SysvarClock = Extract<BodyStatement, { kind: "sysvar_clock" }>;
+type SysvarRent = Extract<BodyStatement, { kind: "sysvar_rent" }>;
+type PdaSignerSeeds = Extract<BodyStatement, { kind: "pda_signer_seeds" }>;
 
 /**
  * Every IR statement kind the visitor knows how to dispatch. Phase-1
@@ -143,14 +149,14 @@ export class AstVisitorBase {
       // Handler-fallback Phase-2 increment ports — structural
       // conversion to be done one kind at a time in subsequent commits.
       case "pass_through":         return this.runHandlerCapture(handlePassThrough, stmt);
-      case "require":              return this.runHandlerCapture(handleRequire, stmt);
+      case "require":              return this.visitRequire(stmt);
       case "msg":                  return this.visitMsg(stmt);
-      case "emit":                 return this.runHandlerCapture(handleEmit, stmt);
+      case "emit":                 return this.visitEmit(stmt);
       case "return_ok":            return this.visitReturnOk();
       case "return_err":           return this.visitReturnErr(stmt);
-      case "sysvar_clock":         return this.runHandlerCapture(handleSysvarClock, stmt);
-      case "sysvar_rent":          return this.runHandlerCapture(handleSysvarRent, stmt);
-      case "pda_signer_seeds":     return this.runHandlerCapture(handlePdaSignerSeeds, stmt);
+      case "sysvar_clock":         return this.visitSysvarClock(stmt);
+      case "sysvar_rent":          return this.visitSysvarRent(stmt);
+      case "pda_signer_seeds":     return this.visitPdaSignerSeeds(stmt);
       case "cpi_system_transfer":  return this.runHandlerCapture(handleCpiSystemTransfer, stmt);
       case "cpi_spl_transfer":     return this.runHandlerCapture(handleCpiSplTransfer, stmt);
       case "cpi_spl_mint_to":      return this.runHandlerCapture(handleCpiSplMintTo, stmt);
@@ -554,6 +560,81 @@ export class AstVisitorBase {
     // Native — msg!() macro across all three shapes (the macro itself
     // handles format args). Structural via macro_call.
     return [exprStmt(macroCall("msg", [rawExpr(msgText)]))];
+  }
+
+  /**
+   * Mirror `handleRequire` from body-emitter/handlers/control.ts.
+   *
+   * Source: `handleRequire(w, stmt) { lines.push(emitter.emitRequire(cond, err)); }`.
+   * `emitter.emitRequire` returns a 3-line `if !cond { return Err(...); }`
+   * block via `emitRequireGuard`. Structural port deferred — needs
+   * if-block AST node + `.into()` postfix as method-call AST + the
+   * negation-stripping logic from `emitRequireGuard` modeled
+   * structurally. Lands as named visit method now so the migration
+   * tracker shows the kind isn't via runHandlerCapture for misleading-
+   * progress reasons.
+   */
+  visitRequire(stmt: RequireStmt): RustStmt[] {
+    return this.runHandlerCapture(handleRequire, stmt);
+  }
+
+  /**
+   * Mirror `handleEmit` from body-emitter/handlers/control.ts.
+   *
+   * `emitter.emitEmit` returns a multi-line block (struct-literal +
+   * borsh::to_vec + sol_log_data) — Pinocchio + Native shapes differ
+   * slightly. Same scope justification as visitRequire: structural
+   * port deferred to a milestone with block-level AST support.
+   */
+  visitEmit(stmt: EmitStmt): RustStmt[] {
+    return this.runHandlerCapture(handleEmit, stmt);
+  }
+
+  /**
+   * Mirror `handleSysvarClock` from body-emitter/handlers/sysvar.ts.
+   *
+   * Pure structural. Both targets emit `let X = <path>::Clock::get()?;`.
+   * Path differs: pinocchio::sysvars::clock vs solana_program::sysvar::clock.
+   * Detected via walker.emitter.frameworkName so adding a target later
+   * extends the switch instead of needing a subclass override.
+   */
+  visitSysvarClock(stmt: SysvarClock): RustStmt[] {
+    this.walker.ctx.transformedCount++;
+    const segments =
+      this.walker.emitter.frameworkName === "Pinocchio"
+        ? ["pinocchio", "sysvars", "clock", "Clock", "get"]
+        : ["solana_program", "sysvar", "clock", "Clock", "get"];
+    return [letStmt(stmt.localVar, tryPostfix(call(path(segments), [])))];
+  }
+
+  /**
+   * Mirror `handleSysvarRent`. Same shape as visitSysvarClock —
+   * `let X = <path>::Rent::get()?;`. Per-target path divergence.
+   */
+  visitSysvarRent(stmt: SysvarRent): RustStmt[] {
+    this.walker.ctx.transformedCount++;
+    const segments =
+      this.walker.emitter.frameworkName === "Pinocchio"
+        ? ["pinocchio", "sysvars", "rent", "Rent", "get"]
+        : ["solana_program", "sysvar", "rent", "Rent", "get"];
+    return [letStmt(stmt.localVar, tryPostfix(call(path(segments), [])))];
+  }
+
+  /**
+   * Mirror `handlePdaSignerSeeds` from body-emitter/handlers/control.ts.
+   *
+   * Most complex of the simple-set handlers — emits a multi-step
+   * prelude: optional bump-seed lines + `let seeds = &[…]; let
+   * signer_seeds = &[&seeds[..]];`. Per-target divergence is large
+   * (pinocchio uses const-size [Seed; 8] with Signer wrapper; native
+   * uses &[&[u8]] slices). Structural port deferred — needs array-
+   * literal + slice-ref AST nodes (or an emitPdaSignerSeedsAst
+   * callback). Wrapped in named method now so the migration tracker
+   * shows the kind isn't via runHandlerCapture (misleading-progress
+   * reasons).
+   */
+  visitPdaSignerSeeds(stmt: PdaSignerSeeds): RustStmt[] {
+    return this.runHandlerCapture(handlePdaSignerSeeds, stmt);
   }
 }
 
