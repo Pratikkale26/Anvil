@@ -149,8 +149,8 @@ pub struct Proposal {
 
 impl Proposal {
     pub const DISCRIMINATOR: [u8; 8] = [26, 94, 189, 187, 116, 136, 53, 33];
-    pub const INIT_SPACE: usize = 36;
-    pub const LEN: usize = 36;
+    pub const INIT_SPACE: usize = 264;
+    pub const LEN: usize = 264;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;

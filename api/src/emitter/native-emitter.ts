@@ -842,7 +842,7 @@ ${maybeRead}    let seeds = &[
       .map((f) => `    pub ${snakeCase(f.name)}: ${this.rustTypeForFramework(f.type)},`)
       .join("\n");
 
-    const bodyLen = acc.fields.reduce((s, f) => s + this.resolveTypeSize(f.type), 0);
+    const bodyLen = acc.fields.reduce((s, f) => s + this.resolveTypeSize(f.type, f.maxLen), 0);
     const readLines = this.buildReadLines(acc);
     const writeLines = this.buildWriteLines(acc);
     const ctorFields = acc.fields.map((f) => snakeCase(f.name)).join(", ");

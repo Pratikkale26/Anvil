@@ -472,6 +472,22 @@ export const AccountFieldSchema = z.object({
   name: z.string(),
   type: SolanaTypeSchema,
   docs: z.string().optional(),
+  /**
+   * `#[max_len(...)]` arguments. Anchor's InitSpace derive macro reads
+   * this attribute on String / Vec<...> fields to compute the byte
+   * count it allocates for the account at init time. Without it, the
+   * field type alone (e.g. `String` is dynamic) gives no bound.
+   *
+   * Shape:
+   *   - `#[max_len(50)]` on `String` → [50] (max bytes)
+   *   - `#[max_len(50)]` on `Vec<u8>` → [50] (max element count)
+   *   - `#[max_len(5, 50)]` on `Vec<String>` → [5, 50]
+   *     (max element count, then max bytes per element string)
+   *
+   * Stored verbatim as a number array; consumers (resolveTypeSize)
+   * decide how to apply each entry based on field type.
+   */
+  maxLen: z.array(z.number()).optional(),
 });
 
 export type AccountField = z.infer<typeof AccountFieldSchema>;

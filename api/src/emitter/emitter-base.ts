@@ -1043,10 +1043,14 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     return ranked[0]?.[0] ?? `${toPascalCase(ir.name)}Error`;
   }
 
-  protected resolveTypeSize(typeName: string, visited = new Set<string>()): number {
+  protected resolveTypeSize(
+    typeName: string,
+    maxLen?: number[],
+    visited = new Set<string>(),
+  ): number {
     const fixedArray = parseFixedArrayType(typeName);
     if (fixedArray) {
-      const elementSize = this.resolveTypeSize(fixedArray.elementType, visited);
+      const elementSize = this.resolveTypeSize(fixedArray.elementType, undefined, visited);
       const len = resolveConstExprValue(fixedArray.lenExpr, this.currentIr?.constants ?? []);
       if (elementSize > 0 && len !== null) {
         return elementSize * len;
@@ -1056,14 +1060,17 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
     if (visited.has(typeName)) return 0;
     const typeDef = this.customTypeDef(typeName);
     if (!typeDef) {
-      return typeSize(typeName);
+      return typeSize(typeName, maxLen);
     }
 
     if (typeDef.kind === "enum") return 1;
-    if (!typeDef.fields) return typeSize(typeName);
+    if (!typeDef.fields) return typeSize(typeName, maxLen);
 
     visited.add(typeName);
-    const size = typeDef.fields.reduce((sum, field) => sum + this.resolveTypeSize(field.type, visited), 0);
+    const size = typeDef.fields.reduce(
+      (sum, field) => sum + this.resolveTypeSize(field.type, field.maxLen, visited),
+      0,
+    );
     visited.delete(typeName);
     return size;
   }
@@ -1150,7 +1157,7 @@ ${fields}
     // present (the size depends on the unbound parameters).
     let initSpaceLine: string | null = null;
     if (typeDef.kind !== "enum" && typeDef.fields && typeDef.fields.length > 0 && !gen) {
-      const total = typeDef.fields.reduce((sum, f) => sum + this.resolveTypeSize(f.type), 0);
+      const total = typeDef.fields.reduce((sum, f) => sum + this.resolveTypeSize(f.type, f.maxLen), 0);
       if (total > 0) {
         initSpaceLine = `    pub const INIT_SPACE: usize = ${total};`;
       }

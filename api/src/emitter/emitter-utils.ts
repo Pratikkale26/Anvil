@@ -55,12 +55,42 @@ export function isCheckedArithmeticType(typeName: string): boolean {
 
 // ─── Type sizing ─────────────────────────────────────────────────────────────
 
-export function typeSize(typeName: string): number {
+export function typeSize(typeName: string, maxLen?: number[]): number {
   const sizes: Record<string, number> = {
     u8: 1, u16: 2, u32: 4, u64: 8, u128: 16,
     i8: 1, i16: 2, i32: 4, i64: 8, i128: 16,
-    bool: 1, Pubkey: 32, String: 64, "Vec<u8>": 4,
+    bool: 1, Pubkey: 32,
+    // Legacy back-compat defaults for variable-length fields without a
+    // `#[max_len]` annotation. These yield the LENGTH-PREFIX bytes only
+    // (no content cap), preserving pre-max-len behavior on demos that
+    // don't use the attribute. When max_len IS set, the more specific
+    // branches below take precedence.
+    String: 64,
+    "Vec<u8>": 4,
   };
+  // `#[max_len(...)]`-aware sizing. Anchor's InitSpace derive macro
+  // reads the same attribute and produces the following byte-count
+  // formulas; mirroring them here keeps Anvil's INIT_SPACE constant
+  // byte-identical to Anchor's so init-time allocations match.
+  if (typeName === "String" && maxLen?.[0] !== undefined) {
+    // `String` with `#[max_len(N)]` → 4-byte length prefix + N bytes.
+    return 4 + maxLen[0];
+  }
+  if (typeName === "Vec<u8>" && maxLen?.[0] !== undefined) {
+    // `Vec<u8>` with `#[max_len(N)]` → 4-byte count + N bytes.
+    return 4 + maxLen[0];
+  }
+  const vecMatch = typeName.match(/^Vec<\s*(.+?)\s*>$/);
+  if (vecMatch?.[1] && maxLen?.[0] !== undefined) {
+    const elem = vecMatch[1];
+    if (elem === "String" && maxLen[1] !== undefined) {
+      // `Vec<String>` with `#[max_len(N, M)]` → 4 + N * (4 + M).
+      return 4 + maxLen[0] * (4 + maxLen[1]);
+    }
+    // Generic `Vec<T>` with `#[max_len(N)]` and a sized element T.
+    const elemSize = typeSize(elem);
+    if (elemSize > 0) return 4 + maxLen[0] * elemSize;
+  }
   const fixedArray = parseFixedArrayType(typeName);
   if (fixedArray) {
     const elementSize = typeSize(fixedArray.elementType);

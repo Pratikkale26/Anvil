@@ -167,29 +167,83 @@ export function parseAccountDataStruct(
 
 export function parseStructFields(
   structNode: SyntaxNode,
-): { name: string; type: string }[] {
-  const fields: { name: string; type: string }[] = [];
+): { name: string; type: string; maxLen?: number[] }[] {
+  const fields: { name: string; type: string; maxLen?: number[] }[] = [];
   const bodyNode = structNode.childForFieldName("body");
   if (!bodyNode) return fields;
 
+  // Collect preceding `#[…]` attribute_items so each field_declaration
+  // can see what was annotated above it. Anchor's #[derive(InitSpace)]
+  // honors `#[max_len(N)]` (or `#[max_len(N, M)]` for Vec<String>) on
+  // String / Vec<...> fields to compute the byte count it allocates;
+  // without parsing the attribute, Anvil's typeSize falls back to a
+  // 64-byte default that disagrees with Anchor's actual allocation
+  // and breaks byte-equal differential on programs like favorites.
+  let pendingAttrs: SyntaxNode[] = [];
   for (let i = 0; i < bodyNode.namedChildCount; i++) {
     const child = bodyNode.namedChild(i);
-    if (!child || child.type !== "field_declaration") continue;
+    if (!child) continue;
+
+    if (child.type === "attribute_item") {
+      pendingAttrs.push(child);
+      continue;
+    }
+
+    if (child.type !== "field_declaration") {
+      pendingAttrs = [];
+      continue;
+    }
 
     const nameNode = child.childForFieldName("name");
     const typeNode = child.childForFieldName("type");
-    if (!nameNode || !typeNode) continue;
+    if (!nameNode || !typeNode) {
+      pendingAttrs = [];
+      continue;
+    }
 
     const name = nameNode.text;
-    if (name === "_phantom") continue;
+    if (name === "_phantom") {
+      pendingAttrs = [];
+      continue;
+    }
 
-    fields.push({
+    const field: { name: string; type: string; maxLen?: number[] } = {
       name,
       type: normalizeSolanaType(typeNode.text),
-    });
+    };
+    const maxLen = extractMaxLen(pendingAttrs);
+    if (maxLen) field.maxLen = maxLen;
+    fields.push(field);
+    pendingAttrs = [];
   }
 
   return fields;
+}
+
+/**
+ * Extract `#[max_len(N)]` or `#[max_len(N, M, …)]` from a list of
+ * preceding attribute_item nodes. Returns the parsed numbers in source
+ * order, or `undefined` if no max_len attribute is present. Multiple
+ * max_len attributes are uncommon; if seen we use the first one.
+ *
+ * Robust to whitespace + newlines inside the attribute. Non-numeric
+ * args (e.g. `#[max_len(MAX_LEN)]` referencing a const) are skipped —
+ * resolveTypeSize falls back to its existing default in that case.
+ */
+function extractMaxLen(attrs: SyntaxNode[]): number[] | undefined {
+  for (const attr of attrs) {
+    const text = attr.text.replace(/\s+/g, "");
+    const m = text.match(/^#\[max_len\(([^)]+)\)\]/);
+    if (!m?.[1]) continue;
+    const parts = m[1].split(",").map((p) => p.trim());
+    const nums: number[] = [];
+    for (const p of parts) {
+      if (!/^\d+$/.test(p)) return undefined;
+      nums.push(Number.parseInt(p, 10));
+    }
+    return nums.length > 0 ? nums : undefined;
+  }
+  return undefined;
 }
 
 // ─── Account type extraction ────────────────────────────────────────────────
