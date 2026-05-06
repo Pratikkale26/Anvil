@@ -73,11 +73,13 @@ import {
   comment,
   ref,
   deref,
+  notExpr,
   array,
   block,
   constDecl,
   mlCall,
   tailExpr,
+  evtStructLiteral,
 } from "./nodes.js";
 
 /**
@@ -186,6 +188,88 @@ function parseSimpleExprStrict(t: string): RustExpr | null {
   if (/^[A-Za-z_]\w*$/.test(t)) return ident(t);
 
   return null;
+}
+
+/**
+ * Parse the fields-text of an `emit!(Event { fields })` IR statement
+ * into a structural field list for evtStructLiteral. Returns null on
+ * any unrecognized shape so the caller can fall back to rawExpr.
+ *
+ * The handler's emit output preserves the original whitespace from
+ * the `${event} { ${fields} }` template substitution, so:
+ *   - field 0 is `name: value` or shorthand `name` (from the IR text
+ *     directly after the `{ `)
+ *   - subsequent fields each appear on a continuation line at 12-space
+ *     indent (the handler's emitEmit puts them inside an outer 4-space
+ *     block, so 8 + 4 = 12)
+ *   - trailing `,` after the last field is preserved
+ *
+ * Splitting strategy: depth-aware split on `,` (parens/brackets/braces +
+ * string-literal tracked). For each part, look for `name: value` —
+ * fall back to shorthand if just a bare ident.
+ */
+function parseEvtStructFields(text: string): { name: string; value: RustExpr; shorthand?: boolean }[] | null {
+  const trimmed = text.trim().replace(/,\s*$/, "");
+  if (trimmed.length === 0) return null;
+  const parts: string[] = [];
+  let depth = 0;
+  let inStr: '"' | "'" | null = null;
+  let start = 0;
+  for (let k = 0; k < trimmed.length; k++) {
+    const c = trimmed[k];
+    if (inStr) {
+      if (c === "\\") { k++; continue; }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { inStr = c; continue; }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      parts.push(trimmed.slice(start, k));
+      start = k + 1;
+    }
+  }
+  parts.push(trimmed.slice(start));
+  const out: { name: string; value: RustExpr; shorthand?: boolean }[] = [];
+  for (const part of parts) {
+    const t = part.trim();
+    if (t.length === 0) continue;
+    const colonIdx = findTopLevelColon(t);
+    if (colonIdx < 0) {
+      // Shorthand — bare ident.
+      if (!/^[A-Za-z_]\w*$/.test(t)) return null;
+      out.push({ name: t, value: ident(t), shorthand: true });
+      continue;
+    }
+    const name = t.slice(0, colonIdx).trim();
+    const valueText = t.slice(colonIdx + 1).trim();
+    if (!/^[A-Za-z_]\w*$/.test(name)) return null;
+    out.push({ name, value: parseSimpleExpr(valueText) });
+  }
+  return out;
+}
+
+function findTopLevelColon(t: string): number {
+  let depth = 0;
+  let inStr: '"' | "'" | null = null;
+  for (let k = 0; k < t.length; k++) {
+    const c = t[k];
+    if (inStr) {
+      if (c === "\\") { k++; continue; }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { inStr = c; continue; }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === ":" && depth === 0) {
+      // Skip `::`-paths.
+      if (t[k + 1] === ":" || t[k - 1] === ":") { k++; continue; }
+      return k;
+    }
+  }
+  return -1;
 }
 
 /**
@@ -1347,13 +1431,14 @@ export class AstVisitorBase {
       // shapes go structural; rawExpr fallback otherwise.
       condExpr = parseSimpleExpr(condText);
     } else if (/^[A-Za-z_][A-Za-z0-9_:.]*$/.test(condText)) {
-      // Single identifier path — emit `!ident` (no parens). No `not`
-      // AST node yet; whole `!ident` stays a single rawExpr.
-      condExpr = rawExpr(`!${condText}`);
+      // Single identifier path — emit `!ident` (no parens) via the
+      // structural `not` node so the metric drops.
+      condExpr = notExpr(parseSimpleExpr(condText), { parens: false });
     } else {
-      // General expression — emit `!(expr)` (parens required). Same
-      // reason: no `not` node, the negation + parens stay raw.
-      condExpr = rawExpr(`!(${condText})`);
+      // General expression — emit `!(expr)` (parens required). The
+      // inner expr goes through parseSimpleExpr (rawExpr fallback if
+      // shape unrecognized).
+      condExpr = notExpr(parseSimpleExpr(condText), { parens: true });
     }
 
     // Body: `return Err(error.into());` — fully structural; the error
@@ -1414,13 +1499,21 @@ export class AstVisitorBase {
     //
     // Closure `|_| ProgramError::InvalidAccountData` isn't in the AST
     // yet — wrapped in rawExpr inside a methodCall for map_err. The
-    // event struct literal stays rawExpr because the handler's emit
-    // produces a quirky multi-line layout (first field on same line
-    // as `Type {`, continuation indent, trailing `};`) that the
-    // structural printer doesn't replicate cleanly.
+    // event struct literal becomes a structural evtStructLiteral
+    // (firstOnOpen layout matches handleEmit's quirky output exactly).
+    // Field-text transforms mirror handleEmit (transformCtxAccounts +
+    // transformAccountReferences) so values like `ctx.accounts.X.key()`
+    // resolve to `*X.key()` before parsing.
+    const transformedFields = w.transformAccountReferences(
+      w.transformCtxAccountsReferences(stmt.fields),
+    );
+    const evtFields = parseEvtStructFields(transformedFields);
+    const evtValue = evtFields !== null
+      ? evtStructLiteral(stmt.event, evtFields)
+      : rawExpr(`${stmt.event} { ${stmt.fields} }`);
     return [
       block([
-        letStmt("__evt", rawExpr(`${stmt.event} { ${stmt.fields} }`)),
+        letStmt("__evt", evtValue),
         letStmt(
           "__evt_bytes",
           tryPostfix(

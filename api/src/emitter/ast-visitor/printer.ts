@@ -161,6 +161,10 @@ export function printExpr(expr: RustExpr, indent?: string): string {
       return `&${expr.mut ? "mut " : ""}${printExpr(expr.expr, indent)}`;
     case "deref":
       return `*${printExpr(expr.expr, indent)}`;
+    case "not":
+      return expr.parens
+        ? `!(${printExpr(expr.expr, indent)})`
+        : `!${printExpr(expr.expr, indent)}`;
     case "try":
       return `${printExpr(expr.expr, indent)}?`;
     case "path":
@@ -175,14 +179,29 @@ export function printExpr(expr: RustExpr, indent?: string): string {
     }
     case "struct_literal": {
       if (expr.fields.length === 0) return `${expr.ty} {}`;
+      const fmtField = (f: { name: string; value: RustExpr; shorthand?: boolean }, ind: string | undefined): string =>
+        f.shorthand ? f.name : `${f.name}: ${printExpr(f.value, ind)}`;
+      if (expr.multiLine === "firstOnOpen" && indent !== undefined) {
+        // First field on the same line as `{`, subsequent fields on
+        // own continuation lines at +4 from the outer let's indent
+        // (matches handleEmit's emit shape — 12 spaces total when the
+        // let is at 8-space block-inner indent).
+        const contIndent = `${indent}    `;
+        const first = expr.fields[0]!;
+        const rest = expr.fields.slice(1);
+        const tail = rest.length === 0
+          ? ""
+          : "\n" + rest.map((f) => `${contIndent}${fmtField(f, contIndent)},`).join("\n");
+        return `${expr.ty} { ${fmtField(first, indent)},${tail} }`;
+      }
       if (expr.multiLine && indent !== undefined) {
         const innerIndent = `${indent}    `;
         const fieldLines = expr.fields
-          .map((f) => `${innerIndent}${f.name}: ${printExpr(f.value, innerIndent)},`)
+          .map((f) => `${innerIndent}${fmtField(f, innerIndent)},`)
           .join("\n");
         return `${expr.ty} {\n${fieldLines}\n${indent}}`;
       }
-      const fields = expr.fields.map((f) => `${f.name}: ${printExpr(f.value, indent)}`).join(", ");
+      const fields = expr.fields.map((f) => fmtField(f, indent)).join(", ");
       return `${expr.ty} { ${fields} }`;
     }
     case "raw":
@@ -228,6 +247,7 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
         return;
       case "ref":
       case "deref":
+      case "not":
       case "try":
         visit(e.expr);
         return;

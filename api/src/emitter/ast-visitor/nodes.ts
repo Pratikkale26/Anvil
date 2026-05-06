@@ -114,6 +114,14 @@ export type RustExpr =
   | { kind: "ref"; mut: boolean; expr: RustExpr }
   /** `*expr`. */
   | { kind: "deref"; expr: RustExpr }
+  /**
+   * Logical negation — `!expr`. When `parens` is true, prints `!(expr)`
+   * instead of `!expr` (used for general negated expressions where
+   * binding-precedence makes parens necessary; e.g. `!(a == b)` not
+   * `!a == b`). Distinct from `deref` because `*` and `!` have
+   * different parse meanings even though both prefix.
+   */
+  | { kind: "not"; expr: RustExpr; parens: boolean }
   /** Postfix `?` — `expr?`. */
   | { kind: "try"; expr: RustExpr }
   /** Path with no leading `::`, e.g. `CounterError::Overflow`. */
@@ -142,7 +150,24 @@ export type RustExpr =
    *       field2: value2,
    *   }
    */
-  | { kind: "struct_literal"; ty: string; fields: { name: string; value: RustExpr }[]; multiLine?: boolean }
+  /**
+   * Struct literal — `Type { field: value, ... }`. Layout modes:
+   *   - inline (default, multiLine omitted/false):
+   *     `Type { field1: value1, field2: value2 }`
+   *   - "aligned" (multiLine === true):
+   *     each field on own line, +4 indent, trailing `,` per field,
+   *     closing `}` on its own line at the outer indent.
+   *   - "firstOnOpen" (multiLine === "firstOnOpen"):
+   *     first field on the opening-`{` line, subsequent fields each
+   *     on own continuation line (+8 indent, matching the emit handler's
+   *     output), trailing `,` per field including last, closing `}` on
+   *     same line as last field with a leading space.
+   *     Used by visitEmit to match handleEmit's quirky multi-line shape.
+   *   Per-field `shorthand: true` skips the `: value` in print, emitting
+   *   just `name,` (Rust struct shorthand). Required for emit fields
+   *   like `amount_a,` (no `: value`).
+   */
+  | { kind: "struct_literal"; ty: string; fields: { name: string; value: RustExpr; shorthand?: boolean }[]; multiLine?: boolean | "firstOnOpen" }
   /**
    * Escape hatch: a sub-expression rendered from raw text. Same rationale
    * as `raw_line` at the stmt level. Visitor metric: count of `raw`
@@ -179,6 +204,9 @@ export function ref(expr: RustExpr, mut = false): RustExpr {
 export function deref(expr: RustExpr): RustExpr {
   return { kind: "deref", expr };
 }
+export function notExpr(expr: RustExpr, opts?: { parens?: boolean }): RustExpr {
+  return { kind: "not", expr, parens: opts?.parens ?? false };
+}
 export function tryPostfix(expr: RustExpr): RustExpr {
   return { kind: "try", expr };
 }
@@ -191,11 +219,19 @@ export function macroCall(name: string, args: RustExpr[]): RustExpr {
 export function array(items: RustExpr[]): RustExpr {
   return { kind: "array", items };
 }
-export function structLiteral(ty: string, fields: { name: string; value: RustExpr }[]): RustExpr {
+export function structLiteral(ty: string, fields: { name: string; value: RustExpr; shorthand?: boolean }[]): RustExpr {
   return { kind: "struct_literal", ty, fields };
 }
-export function mlStructLiteral(ty: string, fields: { name: string; value: RustExpr }[]): RustExpr {
+export function mlStructLiteral(ty: string, fields: { name: string; value: RustExpr; shorthand?: boolean }[]): RustExpr {
   return { kind: "struct_literal", ty, fields, multiLine: true };
+}
+/**
+ * "First field on opening line, rest on continuation lines" struct
+ * literal — matches handleEmit's quirky multi-line layout. The
+ * structural form lets visitEmit drop its rawExpr wrap.
+ */
+export function evtStructLiteral(ty: string, fields: { name: string; value: RustExpr; shorthand?: boolean }[]): RustExpr {
+  return { kind: "struct_literal", ty, fields, multiLine: "firstOnOpen" };
 }
 export function block(stmts: RustStmt[]): RustStmt {
   return { kind: "block", stmts };
