@@ -76,6 +76,107 @@ import {
   constDecl,
   mlCall,
 } from "./nodes.js";
+
+/**
+ * Strip the leading `    let mut <localVar> = ` from an emitter-produced
+ * multi-line state-read-or-init string and the trailing `;`. The
+ * remainder is the value expression text — wrapped in `rawExpr` for
+ * use as the value of a structurally-emitted `letStmt`.
+ *
+ * Used for `init_if_needed` accounts where the value is a `match` expr
+ * the AST doesn't model yet. Net: drops 1 raw_line per occurrence (the
+ * outer let becomes structural); raw_exprs +1 (the match body).
+ */
+function stripLetMutPrefix(emitted: string, localVar: string): string {
+  const prefix = `    let mut ${localVar} = `;
+  if (!emitted.startsWith(prefix)) return emitted;
+  let rest = emitted.slice(prefix.length);
+  if (rest.endsWith(";")) rest = rest.slice(0, -1);
+  return rest;
+}
+
+/**
+ * Parse the lines `handlePdaSignerSeeds` pushes into the walker into a
+ * list of structural Rust stmts. Output shape from the emitter:
+ *
+ *   [    // PDA signer seeds for '<account>']  (one line, optional)
+ *   [    let X_data = ...;]                    (one line, optional state-read)
+ *   [    let seed_bytes_N = ...;]              (zero or more bytes prelude)
+ *   <    let seeds = &[
+ *            seed1,
+ *            ...,
+ *        ];                                    (multi-line let — group)
+ *   [    let signer_seeds = &[&seeds[..]];]    (one line, terminator)
+ *
+ * Each line ending in `;` (or the multi-line `let seeds = ...];` block)
+ * becomes a structural stmt. The `// PDA signer seeds for ...` line
+ * becomes a comment stmt. Multi-line value text is wrapped in rawExpr.
+ *
+ * Non-recognized lines (defensive fallback for emitter shape drift)
+ * pass through as rawLine — same byte output, still counts as a
+ * raw_line in the metric.
+ */
+function parsePdaSignerSeedsLines(lines: string[]): RustStmt[] {
+  const out: RustStmt[] = [];
+  // Concatenate and re-split because some pushed entries span newlines
+  // (the multi-line `let seeds = &[\n    ...,\n];` is a single push).
+  const text = lines.join("\n");
+  const allLines = text.split("\n");
+  let i = 0;
+  while (i < allLines.length) {
+    const line = allLines[i] ?? "";
+    const trimmed = line.trimStart();
+
+    if (trimmed.startsWith("// ")) {
+      // Strip `    ` indent + `// ` to recover the comment text.
+      out.push(comment(trimmed.slice(3)));
+      i++;
+      continue;
+    }
+
+    // `    let signer_seeds = &[&seeds[..]];` — single-line let.
+    const signerMatch = line.match(/^    let signer_seeds = (.+);$/);
+    if (signerMatch?.[1]) {
+      out.push(letStmt("signer_seeds", rawExpr(signerMatch[1])));
+      i++;
+      continue;
+    }
+
+    // `    let seeds = &[\n            ...,\n        ];` — multi-line let.
+    if (line === "    let seeds = &[") {
+      // Capture lines until we find `        ];` (the closing of the
+      // array). The captured inner block becomes the value's rawExpr.
+      const innerLines: string[] = [];
+      i++;
+      while (i < allLines.length && allLines[i] !== "        ];") {
+        innerLines.push(allLines[i] ?? "");
+        i++;
+      }
+      // Skip the closing `        ];`.
+      i++;
+      out.push(letStmt(
+        "seeds",
+        rawExpr(`&[\n${innerLines.join("\n")}\n        ]`),
+      ));
+      continue;
+    }
+
+    // Generic single-line `    let X = ...;` — both the optional state-
+    // read line and the bytes-prelude lines fit this shape.
+    const letMatch = line.match(/^    let (mut )?(\w+) = (.+);$/);
+    if (letMatch?.[2] && letMatch[3]) {
+      out.push(letStmt(letMatch[2], rawExpr(letMatch[3]), { mut: !!letMatch[1] }));
+      i++;
+      continue;
+    }
+
+    // Unrecognized line — pass through verbatim. Still counts as a
+    // raw_line in the metric, which surfaces emitter shape drift.
+    if (line !== "") out.push(rawLine(line));
+    i++;
+  }
+  return out;
+}
 import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
 import {
   handleCpiSystemTransfer,
@@ -337,9 +438,28 @@ export class AstVisitorBase {
     const mutable = mutableHint || w.mutableStateAccounts.has(accountName);
 
     if (isInitIfNeeded) {
-      out.push(rawLine(w.emitter.emitStateReadOrInit(accountInfoVar, typeName, localVar, mutable)));
+      // `let mut LV = match T::from_account_info(AC) {
+      //      Ok(__existing) => __existing,
+      //      Err(_) => T { field: default, ... } | T::default(),
+      //  };`
+      // The match expr isn't in the AST yet — wrap as rawExpr at the
+      // value level. Drops 1 raw_line per occurrence; raw_exprs +1.
+      out.push(letStmt(
+        localVar,
+        rawExpr(stripLetMutPrefix(w.emitter.emitStateReadOrInit(accountInfoVar, typeName, localVar, mutable), localVar)),
+        { mut: true },
+      ));
     } else if (accountRef?.isInit) {
-      out.push(rawLine(w.emitter.emitStateInit(typeName, localVar)));
+      // `let mut LV = T { field1: default1, ..., fieldN: defaultN };`
+      // (or `let mut LV = T::default();` when the emitter's currentIr
+      // doesn't have a definition). Structural at the let level; value
+      // text wrapped in rawExpr — defers per-default-value structural
+      // modeling but drops 1 raw_line per occurrence.
+      out.push(letStmt(
+        localVar,
+        rawExpr(stripLetMutPrefix(w.emitter.emitStateInit(typeName, localVar), localVar)),
+        { mut: true },
+      ));
     } else {
       // Read case — single-line on both targets:
       //   Pinocchio: `let mut X = T::from_account_info(account_info)?;`
@@ -465,11 +585,7 @@ export class AstVisitorBase {
 
     if (value.includes("ctx.bumps.")) {
       const bumpAccount = value.match(/ctx\.bumps\.(\w+)/)?.[1] ?? stmt.account;
-      const bumpLine = w.normalizedBumpLine(snakeCase(bumpAccount));
-      if (bumpLine) {
-        // bumpLine carries its own indent; pass through verbatim.
-        out.push(rawLine(bumpLine));
-      }
+      out.push(...this.emitBumpDerivationStructural(snakeCase(bumpAccount)));
       value = `bump_${snakeCase(bumpAccount)}`;
     }
 
@@ -489,16 +605,95 @@ export class AstVisitorBase {
    *   2. An aliasing `let bump = bump_<account>;` when localVar diverges
    *      from the canonical `bump_<account>` name.
    */
-  visitBumpsAccess(stmt: BumpsAccess): RustStmt[] {
+  /**
+   * Structural mirror of `BodyWalker.normalizedBumpLine` — emits the
+   * bump-derivation block for `accountName`, or `[]` if already emitted.
+   * Side-effect (matches the walker): adds `accountName` to
+   * `walker.emittedBumps`.
+   *
+   * Pinocchio: optional `let seed_bytes_N = X.to_le_bytes();` prelude
+   *            lets + final `let bump_X = bump_seed(program_id, &[seeds],
+   *            <expectedKey>.key())?;`.
+   * Native:    `let (expected_key, bump_X) = Pubkey::find_program_address(
+   *            &[seeds], program_id);` + `if expected_key != *X.key {
+   *            return Err(ProgramError::InvalidSeeds); }`.
+   *
+   * Shared between visitBumpsAccess and visitStateFieldAssign so an
+   * assign whose value contains `ctx.bumps.X` no longer has to push a
+   * raw_line bumpLine.
+   */
+  emitBumpDerivationStructural(accountName: string): RustStmt[] {
     const w = this.walker;
-    const accountName = snakeCase(stmt.account);
+    const normalized = snakeCase(accountName);
+    if (w.emittedBumps.has(normalized)) return [];
+    w.emittedBumps.add(normalized);
+
+    const accountRef = w.instr.accounts.find(
+      (acc) => snakeCase(acc.name) === normalized,
+    );
+    const pdaSeeds = (accountRef?.pdaSeeds ?? [`b"${normalized}"`]).map(
+      (seed) => w.normalizeSeedExpr(seed),
+    );
+    const expectedKey = w.resolveAccountInfoVar(normalized);
+    const bumpVar = `bump_${normalized}`;
     const out: RustStmt[] = [];
-    const bumpLine = w.normalizedBumpLine(accountName);
-    if (bumpLine) {
-      // Indent preserved verbatim — bumpLine already carries leading
-      // 4-space indent the handler convention requires.
-      out.push(rawLine(bumpLine));
+
+    if (w.emitter.frameworkName === "Pinocchio") {
+      let tempCount = 0;
+      const transformedSeeds = pdaSeeds.map((seed) => {
+        const m1 = seed.match(/^&(.*)\.to_le_bytes\(\)$/);
+        if (m1?.[1]) {
+          const varName = tempCount === 0 ? "seed_bytes" : `seed_bytes_${tempCount + 1}`;
+          tempCount++;
+          out.push(letStmt(varName, methodCall(rawExpr(m1[1].trim()), "to_le_bytes", [])));
+          return `&${varName}`;
+        }
+        const m2 = seed.match(/^(.*)\.to_le_bytes\(\)\.as_ref\(\)$/);
+        if (!m2?.[1]) return seed;
+        const varName = tempCount === 0 ? "seed_bytes" : `seed_bytes_${tempCount + 1}`;
+        tempCount++;
+        out.push(letStmt(varName, methodCall(rawExpr(m2[1].trim()), "to_le_bytes", [])));
+        return `${varName}.as_ref()`;
+      });
+      out.push(
+        letStmt(
+          bumpVar,
+          tryPostfix(
+            call(ident("bump_seed"), [
+              ident("program_id"),
+              rawExpr(`&[${transformedSeeds.join(", ")}]`),
+              methodCall(ident(expectedKey), "key", []),
+            ]),
+          ),
+        ),
+      );
+    } else {
+      out.push(
+        letStmt(
+          `(expected_key, ${bumpVar})`,
+          call(path(["Pubkey", "find_program_address"]), [
+            rawExpr(`&[${pdaSeeds.join(", ")}]`),
+            ident("program_id"),
+          ]),
+        ),
+      );
+      out.push(
+        ifStmt(
+          rawExpr(`expected_key != *${expectedKey}.key`),
+          [
+            returnStmt(
+              call(path(["Err"]), [path(["ProgramError", "InvalidSeeds"])]),
+            ),
+          ],
+        ),
+      );
     }
+    return out;
+  }
+
+  visitBumpsAccess(stmt: BumpsAccess): RustStmt[] {
+    const accountName = snakeCase(stmt.account);
+    const out: RustStmt[] = [...this.emitBumpDerivationStructural(accountName)];
     const localVar = snakeCase(stmt.localVar);
     const bumpVar = `bump_${accountName}`;
     if (localVar !== bumpVar) {
@@ -611,7 +806,7 @@ export class AstVisitorBase {
         // stmts: a raw_line for the comment (verbatim, with its 4-space
         // indent matching the original) and an expr_stmt for the call.
         return [
-          rawLine(`    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio`),
+          comment("⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio"),
           solLogCall,
         ];
       }
@@ -706,18 +901,62 @@ export class AstVisitorBase {
    */
   visitEmit(stmt: EmitStmt): RustStmt[] {
     const w = this.walker;
-    if (stmt.fields.trim() !== "") {
-      return this.runHandlerCapture(handleEmit, stmt);
-    }
     w.ctx.transformedCount++;
     const isPinocchio = w.emitter.frameworkName === "Pinocchio";
     const logPath = isPinocchio
       ? ["pinocchio", "log", "sol_log_data"]
       : ["solana_program", "log", "sol_log_data"];
-    return [exprStmt(call(
-      path(logPath),
-      [ref(array([ref(path([stmt.event, "DISCRIMINATOR"]))]))],
-    ))];
+
+    if (stmt.fields.trim() === "") {
+      // Empty-fields case — single-line sol_log_data of just the
+      // event discriminator.
+      return [exprStmt(call(
+        path(logPath),
+        [ref(array([ref(path([stmt.event, "DISCRIMINATOR"]))]))],
+      ))];
+    }
+
+    // With-fields case — block of 5 stmts:
+    //   {
+    //       let __evt = Event { fields };
+    //       let __evt_bytes = ::borsh::to_vec(&__evt).map_err(|_| ProgramError::InvalidAccountData)?;
+    //       let mut __evt_payload = Event::DISCRIMINATOR.to_vec();
+    //       __evt_payload.extend_from_slice(&__evt_bytes);
+    //       <log_path>::sol_log_data(&[&__evt_payload]);
+    //   }
+    //
+    // Closure `|_| ProgramError::InvalidAccountData` isn't in the AST
+    // yet — wrapped in rawExpr inside a methodCall for map_err. The
+    // rest is fully structural.
+    return [
+      block([
+        letStmt("__evt", rawExpr(`${stmt.event} { ${stmt.fields} }`)),
+        letStmt(
+          "__evt_bytes",
+          tryPostfix(
+            methodCall(
+              call(path(["", "borsh", "to_vec"]), [ref(ident("__evt"))]),
+              "map_err",
+              [rawExpr("|_| ProgramError::InvalidAccountData")],
+            ),
+          ),
+        ),
+        letStmt(
+          "__evt_payload",
+          methodCall(path([stmt.event, "DISCRIMINATOR"]), "to_vec", []),
+          { mut: true },
+        ),
+        exprStmt(methodCall(
+          ident("__evt_payload"),
+          "extend_from_slice",
+          [ref(ident("__evt_bytes"))],
+        )),
+        exprStmt(call(
+          path(logPath),
+          [ref(array([ref(ident("__evt_payload"))]))],
+        )),
+      ]),
+    ];
   }
 
   /**
@@ -764,7 +1003,17 @@ export class AstVisitorBase {
    * reasons).
    */
   visitPdaSignerSeeds(stmt: PdaSignerSeeds): RustStmt[] {
-    return this.runHandlerCapture(handlePdaSignerSeeds, stmt);
+    // The handler does heavy walker bookkeeping (seedStateAccount
+    // resolution, bumpPrelude derivation, state-var lookup,
+    // accountsWithSignerSeeds bookkeeping) — preserve it by running the
+    // handler against the walker, then post-process the lines it pushed
+    // into structural stmts.
+    const w = this.walker;
+    const before = w.lines.length;
+    handlePdaSignerSeeds(w, stmt);
+    const lines = w.lines.slice(before);
+    w.lines.length = before;
+    return parsePdaSignerSeedsLines(lines);
   }
 
   // ─── CPI catalog — dispatch shimmed via named methods ───────────────────
@@ -1121,7 +1370,82 @@ export class AstVisitorBase {
   }
 
   visitCpiSplSetAuthority(stmt: CpiSplSetAuthority): RustStmt[] {
-    return this.runHandlerCapture(handleCpiSplSetAuthority, stmt);
+    const w = this.walker;
+    if (w.emitter.frameworkName !== "Native") {
+      // Pinocchio path emits a hand-rolled CPI block with const +
+      // multiple lets + match expression that the AST doesn't model.
+      // Defer until match support lands.
+      return this.runHandlerCapture(handleCpiSplSetAuthority, stmt);
+    }
+    w.ctx.transformedCount++;
+    w.ctx.details.push(
+      `Transformed: token::set_authority(${stmt.account}, ${stmt.authorityType})`,
+    );
+
+    const out: RustStmt[] = [];
+    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+      for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.currentAuthority)) {
+        out.push(rawLine(preludeLine));
+      }
+    }
+    const accountVar = snakeCase(stmt.account);
+    const currentAuthorityVar = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.currentAuthority))
+      : snakeCase(stmt.currentAuthority);
+    const signerSeedsExpr = resolveSignerSeedsExpr(w, stmt.signerSeeds);
+    const crate = stmt.tokenProgram === "token_2022" ? "spl_token_2022" : "spl_token";
+    const remappedAuthorityType = stmt.authorityType.replace(
+      /\bAuthorityType\b/g,
+      `${crate}::instruction::AuthorityType`,
+    );
+
+    // Comment line — `// <SPL Token | Token-2022> set authority — <account>`.
+    out.push(comment(
+      `${crate === "spl_token_2022" ? "Token-2022" : "SPL Token"} set authority — ${stmt.account}`,
+    ));
+    // `let set_authority_ix = <crate>::instruction::set_authority(
+    //     &<crate>::id(),
+    //     <account>.key,
+    //     match &<newAuthority> { Some(pk) => Some(pk), None => None },
+    //     <authorityType>,
+    //     <currentAuthority>.key,
+    //     &[],
+    // )?;`
+    //
+    // The `match` arg + the `&[]` empty-slice-of-Pubkey arg + the
+    // remapped AuthorityType identifier wrap as rawExpr inside mlCall.
+    out.push(letStmt(
+      "set_authority_ix",
+      tryPostfix(mlCall(
+        path([crate, "instruction", "set_authority"]),
+        [
+          ref(call(path([crate, "id"]), [])),
+          field(ident(accountVar), "key"),
+          rawExpr(`match &${stmt.newAuthority} { Some(pk) => Some(pk), None => None }`),
+          rawExpr(remappedAuthorityType),
+          field(ident(currentAuthorityVar), "key"),
+          ref(rawExpr("[]")),
+        ],
+      )),
+    ));
+    // `<invoke|invoke_signed>(
+    //      &set_authority_ix,
+    //      &[<account>.clone(), <currentAuthority>.clone()],
+    //      <signerSeeds>?,                  (only if signed)
+    //  )?;`
+    const invokeArgs: RustExpr[] = [
+      ref(ident("set_authority_ix")),
+      ref(array([
+        methodCall(ident(accountVar), "clone", []),
+        methodCall(ident(currentAuthorityVar), "clone", []),
+      ])),
+    ];
+    if (signerSeedsExpr) invokeArgs.push(rawExpr(signerSeedsExpr));
+    out.push(exprStmt(tryPostfix(mlCall(
+      ident(signerSeedsExpr ? "invoke_signed" : "invoke"),
+      invokeArgs,
+    ))));
+    return out;
   }
 
   /**
@@ -1234,13 +1558,26 @@ export class AstVisitorBase {
    */
   visitCpiMemo(stmt: CpiMemo): RustStmt[] {
     const w = this.walker;
-    if (w.emitter.frameworkName !== "Pinocchio") {
-      return this.runHandlerCapture(handleCpiMemo, stmt);
-    }
     w.ctx.transformedCount++;
     w.ctx.details.push("Transformed: spl_memo::build_memo");
     const data = stmt.data;
     const bytesExpr = /^".*"$/.test(data.trim()) ? `${data}.as_bytes()` : data;
+
+    if (w.emitter.frameworkName !== "Pinocchio") {
+      // Native: comment + multi-line invoke wrapping spl_memo::build_memo.
+      // build_memo returns Instruction directly; no `?` on the inner call.
+      return [
+        comment("SPL Memo CPI"),
+        exprStmt(tryPostfix(mlCall(ident("invoke"), [
+          ref(call(path(["spl_memo", "build_memo"]), [
+            rawExpr(bytesExpr),
+            ref(rawExpr("[]")),
+          ])),
+          ref(rawExpr("[]")),
+        ]))),
+      ];
+    }
+
     return [
       comment("SPL Memo CPI"),
       block([

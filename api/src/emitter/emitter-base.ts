@@ -1700,7 +1700,7 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
    * Subclasses can override for framework-specific type representations
    * (e.g. Pinocchio uses [0u8; 32] instead of Pubkey::default()).
    */
-  protected defaultValueForType(typeName: string): string {
+  defaultValueForType(typeName: string): string {
     const normalized = typeName.trim();
     const typeDef = this.customTypeDef(normalized);
     const fixedArray = parseFixedArrayType(normalized);
