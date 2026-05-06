@@ -71,7 +71,7 @@ const STANDARD_IMPL_NAME_RE = new RegExp(
   `\\bpub\\s+(?:const|fn)\\s+(?:${STANDARD_IMPL_NAMES.join("|")})\\b`,
 );
 
-class NativeEmitter extends BaseEmitter {
+export class NativeEmitter extends BaseEmitter {
   override readonly frameworkName = "Native";
 
   /**

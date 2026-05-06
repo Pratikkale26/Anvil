@@ -117,7 +117,7 @@ const STANDARD_IMPL_NAME_RE = new RegExp(
   `\\bpub\\s+(?:const|fn)\\s+(?:${STANDARD_IMPL_NAMES.join("|")})\\b`,
 );
 
-class PinocchioEmitter extends BaseEmitter {
+export class PinocchioEmitter extends BaseEmitter {
   override readonly frameworkName = "Pinocchio";
 
   /**

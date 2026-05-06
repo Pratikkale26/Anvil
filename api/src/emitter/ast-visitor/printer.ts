@@ -1,0 +1,142 @@
+/**
+ * AST printer — renders RustStmt / RustExpr nodes back to Rust source.
+ *
+ * Whitespace decisions live here, NOT on the node types. That's the
+ * key invariant for Phase 2: when we replace a `raw` node with a
+ * structured node, the printed string must be byte-identical to what
+ * the regex layer produced. The printer's per-kind whitespace
+ * convention is the contract Phase 2 ports against.
+ *
+ * Indentation: every emitted statement is prefixed with `    ` (4
+ * spaces) by `printStmts`. That matches the indent the existing
+ * handlers use when pushing into BodyWalker.lines, which then `join("\n")`.
+ *
+ * Operator spacing:
+ *   - `lhs = rhs;`            (single space around =)
+ *   - `obj.field`             (no space around .)
+ *   - `&expr` / `&mut expr`   (no space after &/`&mut `)
+ *   - `*expr`                 (no space after *)
+ *   - `expr?`                 (no space before ?)
+ *   - `f(a, b)`               (comma-space between args, no leading/trailing)
+ *   - `path::seg::seg`        (no space around ::)
+ *
+ * These match the bodies emitted by the existing handlers; the regex
+ * post-process layer doesn't introduce any deviating whitespace shape.
+ */
+
+import type { RustStmt, RustExpr } from "./nodes.js";
+
+/**
+ * Print a list of statements. Each statement gets the supplied indent
+ * prefix; statements are joined with `\n`. No trailing newline — the
+ * caller (test harness, full-emit driver) controls trailing whitespace.
+ *
+ * The default indent matches BodyWalker.lines convention (4 spaces).
+ */
+export function printStmts(stmts: RustStmt[], indent = "    "): string {
+  return stmts.map((s) => `${indent}${printStmt(s)}`).join("\n");
+}
+
+/** Print a single statement (NO indent prefix). */
+export function printStmt(stmt: RustStmt): string {
+  switch (stmt.kind) {
+    case "let": {
+      const mutToken = stmt.mut ? "mut " : "";
+      return `let ${mutToken}${stmt.name} = ${printExpr(stmt.value)};`;
+    }
+    case "assign":
+      return `${printExpr(stmt.target)} = ${printExpr(stmt.value)};`;
+    case "expr_stmt":
+      return `${printExpr(stmt.expr)};`;
+    case "raw_line":
+      // Raw lines are passed through verbatim — caller is responsible for
+      // any trailing `;` or `\n`. Internal `\n`s are preserved.
+      return stmt.text;
+  }
+}
+
+/** Print a single expression. */
+export function printExpr(expr: RustExpr): string {
+  switch (expr.kind) {
+    case "ident":
+      return expr.name;
+    case "lit":
+      return expr.value;
+    case "field":
+      return `${printExpr(expr.obj)}.${expr.field}`;
+    case "method_call": {
+      const args = expr.args.map(printExpr).join(", ");
+      return `${printExpr(expr.receiver)}.${expr.method}(${args})`;
+    }
+    case "call": {
+      const args = expr.args.map(printExpr).join(", ");
+      return `${printExpr(expr.callee)}(${args})`;
+    }
+    case "ref":
+      return `&${expr.mut ? "mut " : ""}${printExpr(expr.expr)}`;
+    case "deref":
+      return `*${printExpr(expr.expr)}`;
+    case "try":
+      return `${printExpr(expr.expr)}?`;
+    case "path":
+      return expr.segments.join("::");
+    case "raw":
+      return expr.text;
+  }
+}
+
+/**
+ * Count `raw_line` and `raw` nodes in a stmt list. Visible Phase-2
+ * scope metric: as kinds get ported from raw-passthrough to structured
+ * AST, this number drops. When it hits 0 across all visited fixtures,
+ * the regex layer can be retired.
+ */
+export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: number } {
+  let rawLines = 0;
+  let rawExprs = 0;
+  const visit = (e: RustExpr): void => {
+    switch (e.kind) {
+      case "ident":
+      case "lit":
+      case "path":
+        return;
+      case "raw":
+        rawExprs++;
+        return;
+      case "field":
+        visit(e.obj);
+        return;
+      case "method_call":
+        visit(e.receiver);
+        for (const a of e.args) visit(a);
+        return;
+      case "call":
+        visit(e.callee);
+        for (const a of e.args) visit(a);
+        return;
+      case "ref":
+      case "deref":
+      case "try":
+        visit(e.expr);
+        return;
+    }
+  };
+  for (const s of stmts) {
+    switch (s.kind) {
+      case "raw_line":
+        rawLines++;
+        break;
+      case "let":
+        visit(s.value);
+        break;
+      case "assign":
+        visit(s.target);
+        visit(s.value);
+        break;
+      case "expr_stmt":
+        visit(s.expr);
+        break;
+    }
+  }
+  return { rawLines, rawExprs };
+}

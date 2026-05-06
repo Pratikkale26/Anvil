@@ -1,0 +1,122 @@
+/**
+ * Rust-AST node types for the Anvil emitter visitor (EM1 Phase 1).
+ *
+ * This is a minimal Rust-AST representation — generation only, NOT
+ * parsing. Tree-sitter is used for parsing (in `src/parser/`), and that
+ * stays. Here we emit AST nodes from IR statements, then print them
+ * back to Rust source via `printer.ts`. The string-builder + regex
+ * post-process layer in pinocchio-emitter.ts / native-emitter.ts /
+ * walker.ts is what this visitor will eventually replace.
+ *
+ * Phase 1 grows JUST the nodes needed for counter / vault / escrow's
+ * `state_read`, `state_field_assign`, `bumps_access` IR kinds.
+ * Additional nodes land as additional IR kinds get ported in Phase 2.
+ *
+ * Escape hatch: every node level has a `raw` variant carrying a literal
+ * string. The visitor uses this for sub-expressions that the existing
+ * walker computes via string transforms — Phase 1 wraps them, Phase 2
+ * replaces them with structured AST. A `raw` count metric makes the
+ * remaining migration scope visible at a glance.
+ *
+ * Whitespace policy: nodes carry semantic content only. Indent + newline
+ * decisions live in `printer.ts`. This separation is the load-bearing
+ * design choice — see docs/plan-pure-ast-emitter.md.
+ */
+
+/** Rust statement (`let`, assignment, expression-as-stmt). */
+export type RustStmt =
+  | { kind: "let"; mut: boolean; name: string; value: RustExpr }
+  | { kind: "assign"; target: RustExpr; value: RustExpr }
+  /**
+   * Expression statement — `<expr>;`. Used for things like a bare
+   * `Ok(())` line in a function body, or a method call with no
+   * binding.
+   */
+  | { kind: "expr_stmt"; expr: RustExpr }
+  /**
+   * Escape hatch: a complete statement passed through as raw text.
+   * The emitted line(s) will be the verbatim string. Visitor metric:
+   * each `raw_line` indicates a Phase-2 candidate (something the
+   * visitor doesn't model structurally yet).
+   */
+  | { kind: "raw_line"; text: string };
+
+/** Rust expression. */
+export type RustExpr =
+  /** A bare identifier — `foo`, `counter`, `bump_seed`. */
+  | { kind: "ident"; name: string }
+  /**
+   * Literal source text — used for numeric literals, string literals,
+   * boolean literals, and any other terminal we don't tokenize.
+   * `value` is the full literal as it appears in Rust source
+   * (e.g. `"42u64"`, `"0"`, `"true"`, `"\"hello\""`).
+   */
+  | { kind: "lit"; value: string }
+  /** `obj.field` — chained struct/enum field access. */
+  | { kind: "field"; obj: RustExpr; field: string }
+  /** `receiver.method(arg1, arg2)`. */
+  | { kind: "method_call"; receiver: RustExpr; method: string; args: RustExpr[] }
+  /** `callee(arg1, arg2)` — free-fn or path-qualified call. */
+  | { kind: "call"; callee: RustExpr; args: RustExpr[] }
+  /** `&expr` or `&mut expr`. */
+  | { kind: "ref"; mut: boolean; expr: RustExpr }
+  /** `*expr`. */
+  | { kind: "deref"; expr: RustExpr }
+  /** Postfix `?` — `expr?`. */
+  | { kind: "try"; expr: RustExpr }
+  /** Path with no leading `::`, e.g. `CounterError::Overflow`. */
+  | { kind: "path"; segments: string[] }
+  /**
+   * Escape hatch: a sub-expression rendered from raw text. Same rationale
+   * as `raw_line` at the stmt level. Visitor metric: count of `raw`
+   * expressions tells you how much structural modeling is left to do.
+   */
+  | { kind: "raw"; text: string };
+
+/**
+ * Helpers for constructing common shapes — keeps visitor code dense
+ * and free of `kind: "..."` noise. All return values are discriminated
+ * union members above; type narrowing in the printer remains exhaustive.
+ */
+export function ident(name: string): RustExpr {
+  return { kind: "ident", name };
+}
+export function lit(value: string): RustExpr {
+  return { kind: "lit", value };
+}
+export function field(obj: RustExpr, name: string): RustExpr {
+  return { kind: "field", obj, field: name };
+}
+export function methodCall(receiver: RustExpr, method: string, args: RustExpr[]): RustExpr {
+  return { kind: "method_call", receiver, method, args };
+}
+export function call(callee: RustExpr, args: RustExpr[]): RustExpr {
+  return { kind: "call", callee, args };
+}
+export function ref(expr: RustExpr, mut = false): RustExpr {
+  return { kind: "ref", mut, expr };
+}
+export function deref(expr: RustExpr): RustExpr {
+  return { kind: "deref", expr };
+}
+export function tryPostfix(expr: RustExpr): RustExpr {
+  return { kind: "try", expr };
+}
+export function path(segments: string[]): RustExpr {
+  return { kind: "path", segments };
+}
+export function rawExpr(text: string): RustExpr {
+  return { kind: "raw", text };
+}
+export function letStmt(name: string, value: RustExpr, opts?: { mut?: boolean }): RustStmt {
+  return { kind: "let", mut: opts?.mut ?? false, name, value };
+}
+export function assign(target: RustExpr, value: RustExpr): RustStmt {
+  return { kind: "assign", target, value };
+}
+export function exprStmt(expr: RustExpr): RustStmt {
+  return { kind: "expr_stmt", expr };
+}
+export function rawLine(text: string): RustStmt {
+  return { kind: "raw_line", text };
+}
