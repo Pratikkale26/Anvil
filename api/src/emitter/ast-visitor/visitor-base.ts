@@ -72,6 +72,8 @@ import {
   comment,
   ref,
   array,
+  block,
+  constDecl,
 } from "./nodes.js";
 import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
 import {
@@ -975,8 +977,56 @@ export class AstVisitorBase {
     return this.runHandlerCapture(handleCpiAtaCreate, stmt);
   }
 
+  /**
+   * cpi_memo Pinocchio path — structural via block + const_decl + let
+   * + invoke. Native uses spl_memo crate (multi-line invoke); stays
+   * runHandlerCapture pending multi-line call-arg printer policy.
+   *
+   * The MEMO_PROGRAM_ID byte array is preserved as rawExpr (16-bytes-
+   * per-line layout matches the existing emit). The Instruction struct
+   * literal is also rawExpr (multi-line struct field layout matches).
+   * Inner stmts are structurally typed (const_decl, let, expr_stmt)
+   * even though their values carry raw text — the structural OUTER
+   * layer is what enables Phase-3 switchover.
+   */
   visitCpiMemo(stmt: CpiMemo): RustStmt[] {
-    return this.runHandlerCapture(handleCpiMemo, stmt);
+    const w = this.walker;
+    if (w.emitter.frameworkName !== "Pinocchio") {
+      return this.runHandlerCapture(handleCpiMemo, stmt);
+    }
+    w.ctx.transformedCount++;
+    w.ctx.details.push("Transformed: spl_memo::build_memo");
+    const data = stmt.data;
+    const bytesExpr = /^".*"$/.test(data.trim()) ? `${data}.as_bytes()` : data;
+    return [
+      comment("SPL Memo CPI"),
+      block([
+        constDecl(
+          "MEMO_PROGRAM_ID",
+          "pinocchio::pubkey::Pubkey",
+          rawExpr(`[
+            5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124,
+            124, 53, 181, 221, 188, 146, 187, 129, 228, 31, 168, 64, 65, 5, 68, 141,
+        ]`),
+        ),
+        letStmt(
+          "__memo_ix",
+          rawExpr(`pinocchio::instruction::Instruction {
+            program_id: &MEMO_PROGRAM_ID,
+            accounts: &[],
+            data: ${bytesExpr},
+        }`),
+        ),
+        exprStmt(
+          tryPostfix(
+            call(path(["pinocchio", "cpi", "invoke"]), [
+              ref(ident("__memo_ix")),
+              ref(rawExpr("[]")),
+            ]),
+          ),
+        ),
+      ]),
+    ];
   }
 
   /**
