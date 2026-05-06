@@ -58,6 +58,7 @@ import {
   assign,
   field,
   ident,
+  lit,
   letStmt,
   rawExpr,
   rawLine,
@@ -71,11 +72,120 @@ import {
   methodCall,
   comment,
   ref,
+  deref,
   array,
   block,
   constDecl,
   mlCall,
 } from "./nodes.js";
+
+/**
+ * Recognize common Rust expression shapes from text and return a
+ * structural RustExpr. Falls back to `rawExpr(text)` for anything not
+ * matched. Each successful match drops 1 raw_expr from the metric.
+ *
+ * Recognized shapes (after the visitor's text-transform chain has
+ * already run — e.g. ctx.accounts.X is already a bare ident, .key()
+ * normalization done):
+ *
+ *   - numeric / bool / string / char literal
+ *   - bare ident (`amount`, `start_value`)
+ *   - dotted access (`counter.count`, `clock.unix_timestamp`,
+ *     `a.b.c.d`) → nested field
+ *   - `::`-path (`Self::FOO`, `MarketplaceError::Underflow`)
+ *   - method call no-args (`X.to_le_bytes()`, `Y.clone()`)
+ *   - prefix `&` / `&mut` / `*` / `!`
+ *   - postfix `?`
+ *
+ * Conservative on purpose. Anything with an operator, multi-arg call,
+ * cast, closure, generic, etc. falls back to rawExpr — same printed
+ * output, just doesn't move the metric.
+ */
+function parseSimpleExpr(text: string): RustExpr {
+  const t = text.trim();
+  if (t.length === 0) return rawExpr(text);
+
+  // Postfix `?`. Recurse on the inner. Only safe when the `?` is the
+  // last char and the inner has balanced delimiters (which we don't
+  // verify — guarded by the inner's own pattern match).
+  if (t.endsWith("?") && t.length > 1) {
+    const inner = parseSimpleExprStrict(t.slice(0, -1));
+    if (inner) return tryPostfix(inner);
+  }
+
+  return parseSimpleExprStrict(t) ?? rawExpr(text);
+}
+
+/**
+ * Strict version of parseSimpleExpr — returns `null` when no shape
+ * matches, instead of falling back to rawExpr. Used by the recursive
+ * paths (postfix `?`, prefix `&` / `*`) so they don't wrap a structural
+ * outer around a rawExpr inner — that would be net-zero on the metric
+ * and bloats the AST. Either the whole expr is structural or the
+ * caller falls back to rawExpr at the outermost level.
+ */
+function parseSimpleExprStrict(t: string): RustExpr | null {
+  // Numeric literal: optional sign, digits + underscores, optional
+  // suffix (u8/u16/u32/u64/u128/i8…/usize/isize/f32/f64).
+  if (/^-?\d[\d_]*(?:u8|u16|u32|u64|u128|i8|i16|i32|i64|i128|usize|isize|f32|f64)?$/.test(t)) {
+    return lit(t);
+  }
+  // Floating literal: `1.5`, `1.5_f64`, etc.
+  if (/^-?\d[\d_]*\.\d[\d_]*(?:f32|f64)?$/.test(t)) return lit(t);
+  // Bool / unit / common keyword literal.
+  if (t === "true" || t === "false" || t === "()") return lit(t);
+  // Char literal `'x'` or `'\n'`.
+  if (/^'(?:[^'\\]|\\.)'$/.test(t)) return lit(t);
+  // String literal — single-line, no embedded `"` except escaped.
+  if (/^"(?:[^"\\]|\\.)*"$/.test(t)) return lit(t);
+
+  // Prefix `&mut` / `&` / `*` / `!`. Recurse strictly so we don't wrap
+  // a structural outer around a raw inner.
+  const prefMutRef = /^&mut\s+(.+)$/.exec(t);
+  if (prefMutRef?.[1]) {
+    const inner = parseSimpleExprStrict(prefMutRef[1]);
+    return inner ? ref(inner, true) : null;
+  }
+  const prefRef = /^&\s*(.+)$/.exec(t);
+  if (prefRef?.[1] && !t.startsWith("&&")) {
+    const inner = parseSimpleExprStrict(prefRef[1]);
+    return inner ? ref(inner, false) : null;
+  }
+  const prefDeref = /^\*\s*(.+)$/.exec(t);
+  if (prefDeref?.[1] && !t.startsWith("**")) {
+    const inner = parseSimpleExprStrict(prefDeref[1]);
+    return inner ? deref(inner) : null;
+  }
+
+  // Method call no-args: `X.to_le_bytes()` / `Y.clone()`. The receiver
+  // recurses (so `a.b.method()` works as `methodCall(field(...), method, [])`).
+  const methodNoArgs = /^(.+)\.([A-Za-z_]\w*)\(\)$/.exec(t);
+  if (methodNoArgs?.[1] && methodNoArgs[2]) {
+    const recv = parseSimpleExprStrict(methodNoArgs[1]);
+    if (recv) return methodCall(recv, methodNoArgs[2], []);
+  }
+
+  // Dotted access: `a.b.c…`. Tail must be an ident; head recurses.
+  const lastDot = t.lastIndexOf(".");
+  if (lastDot > 0 && lastDot < t.length - 1) {
+    const head = t.slice(0, lastDot);
+    const tail = t.slice(lastDot + 1);
+    if (/^[A-Za-z_]\w*$/.test(tail)) {
+      const recv = parseSimpleExprStrict(head);
+      if (recv) return field(recv, tail);
+    }
+  }
+
+  // `::`-path: `A::B::C`. All segments must be valid idents.
+  if (/^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)+$/.test(t)) {
+    return path(t.split("::"));
+  }
+
+  // Bare ident.
+  if (/^[A-Za-z_]\w*$/.test(t)) return ident(t);
+
+  return null;
+}
 
 /**
  * Strip the leading `    let mut <localVar> = ` from an emitter-produced
@@ -779,11 +889,26 @@ export class AstVisitorBase {
           op === "+" ? "checked_add" :
           op === "-" ? "checked_sub" :
           op === "*" ? "checked_mul" : "checked_div";
+        // Structural: <state>.<field>.checked_op(<rhs>).ok_or(<err>)?
+        // The `?` wraps the whole .ok_or(...) call; inner .ok_or is a
+        // method call on .checked_X(rhs); rhs is parsed structurally
+        // when its shape matches.
         out.push(assign(
           field(ident(stateVarName), fieldName),
-          rawExpr(`${stateVarName}.${fieldName}.${checked}(${rhs}).ok_or(ProgramError::ArithmeticOverflow)?`),
+          tryPostfix(methodCall(
+            methodCall(
+              field(ident(stateVarName), fieldName),
+              checked,
+              [parseSimpleExpr(rhs)],
+            ),
+            "ok_or",
+            [path(["ProgramError", "ArithmeticOverflow"])],
+          )),
         ));
       } else {
+        // Structural: <state>.<field> <op> <rhs>. No binary-op AST node
+        // yet; the LHS becomes a field access but the binary op + rhs
+        // collapse into a rawExpr that includes the operator.
         out.push(assign(
           field(ident(stateVarName), fieldName),
           rawExpr(`${stateVarName}.${fieldName} ${op} ${rhs}`),
@@ -823,9 +948,9 @@ export class AstVisitorBase {
     }
 
     // Structured assign — LHS is `stateVarName.fieldName`, RHS the
-    // transformed string wrapped in `raw`. Phase 2 will parse `value` into
-    // a structured RustExpr.
-    out.push(assign(field(ident(stateVarName), fieldName), rawExpr(value)));
+    // transformed value parsed into a structural RustExpr where the
+    // shape is recognized; rawExpr fallback otherwise.
+    out.push(assign(field(ident(stateVarName), fieldName), parseSimpleExpr(value)));
     return out;
   }
 
@@ -1026,8 +1151,10 @@ export class AstVisitorBase {
       const literalMatch = msgText.match(/^"([^"\\]|\\.)*"/);
       if (literalMatch?.[0]) {
         const literal = literalMatch[0];
+        // Pure string literal goes structural via lit() — drops the
+        // rawExpr wrap.
         const solLogCall = exprStmt(
-          call(path(["pinocchio", "log", "sol_log"]), [rawExpr(literal)]),
+          call(path(["pinocchio", "log", "sol_log"]), [lit(literal)]),
         );
         if (literal === msgText.trim()) {
           // Shape 1 — pure literal.
@@ -1043,13 +1170,15 @@ export class AstVisitorBase {
           solLogCall,
         ];
       }
-      // Shape 3 — passthrough.
-      return [exprStmt(call(path(["pinocchio", "log", "sol_log"]), [rawExpr(msgText)]))];
+      // Shape 3 — passthrough; whole msgText is the (non-literal) arg.
+      return [exprStmt(call(path(["pinocchio", "log", "sol_log"]), [parseSimpleExpr(msgText)]))];
     }
 
     // Native — msg!() macro across all three shapes (the macro itself
-    // handles format args). Structural via macro_call.
-    return [exprStmt(macroCall("msg", [rawExpr(msgText)]))];
+    // handles format args). Structural via macro_call. parseSimpleExpr
+    // catches pure string literals; format-arg shapes fall through to
+    // rawExpr.
+    return [exprStmt(macroCall("msg", [parseSimpleExpr(msgText)]))];
   }
 
   /**
@@ -1093,20 +1222,24 @@ export class AstVisitorBase {
 
     let condExpr: RustExpr;
     if (isNegated) {
-      // Source had odd negations — emit bare `if expr`.
-      condExpr = rawExpr(condText);
+      // Source had odd negations — emit bare `if expr`. Recognized
+      // shapes go structural; rawExpr fallback otherwise.
+      condExpr = parseSimpleExpr(condText);
     } else if (/^[A-Za-z_][A-Za-z0-9_:.]*$/.test(condText)) {
-      // Single identifier path — emit `!ident` (no parens).
+      // Single identifier path — emit `!ident` (no parens). No `not`
+      // AST node yet; whole `!ident` stays a single rawExpr.
       condExpr = rawExpr(`!${condText}`);
     } else {
-      // General expression — emit `!(expr)` (parens required).
+      // General expression — emit `!(expr)` (parens required). Same
+      // reason: no `not` node, the negation + parens stay raw.
       condExpr = rawExpr(`!(${condText})`);
     }
 
-    // Body: `return Err(error.into());` — fully structural except for the
-    // error path text wrapped as rawExpr.
+    // Body: `return Err(error.into());` — fully structural; the error
+    // path is parsed structurally when it's a `::`-path or a bare ident
+    // (the common case — `MyError::Variant`).
     const errReturn = returnStmt(
-      call(path(["Err"]), [methodCall(rawExpr(stmt.error), "into", [])]),
+      call(path(["Err"]), [methodCall(parseSimpleExpr(stmt.error), "into", [])]),
     );
 
     return [ifStmt(condExpr, [errReturn])];
@@ -1160,7 +1293,10 @@ export class AstVisitorBase {
     //
     // Closure `|_| ProgramError::InvalidAccountData` isn't in the AST
     // yet — wrapped in rawExpr inside a methodCall for map_err. The
-    // rest is fully structural.
+    // event struct literal stays rawExpr because the handler's emit
+    // produces a quirky multi-line layout (first field on same line
+    // as `Type {`, continuation indent, trailing `};`) that the
+    // structural printer doesn't replicate cleanly.
     return [
       block([
         letStmt("__evt", rawExpr(`${stmt.event} { ${stmt.fields} }`)),
