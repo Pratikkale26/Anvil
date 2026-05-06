@@ -70,6 +70,7 @@ import {
   ifStmt,
   methodCall,
   comment,
+  ref,
 } from "./nodes.js";
 import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
 import {
@@ -287,32 +288,42 @@ export class AstVisitorBase {
 
     const isInitIfNeeded = accountRef?.constraints.some((c) => c.kind === "init_if_needed") ?? false;
     const mutable = stmt.mutable || w.mutableStateAccounts.has(accountName);
+    const typeName = stmt.accountType || "Unknown";
 
-    let bodyText: string;
     if (isInitIfNeeded) {
-      bodyText = w.emitter.emitStateReadOrInit(accountInfoVar, stmt.accountType || "Unknown", localVar, mutable);
+      // Multi-line if/else block — defer to handler's emitStateReadOrInit.
+      out.push(rawLine(w.emitter.emitStateReadOrInit(accountInfoVar, typeName, localVar, mutable)));
     } else if (accountRef?.isInit) {
-      bodyText = w.emitter.emitStateInit(stmt.accountType || "Unknown", localVar);
+      // Multi-line struct-literal — defer to handler's emitStateInit
+      // (default values per field type).
+      out.push(rawLine(w.emitter.emitStateInit(typeName, localVar)));
     } else {
-      bodyText = w.emitter.emitStateRead(accountInfoVar, stmt.accountType || "Unknown", localVar, mutable);
+      // Read case — single-line shape on both targets:
+      //   Pinocchio: `let mut X = T::from_account_info(account_info)?;`
+      //   Native:    `let mut X = T::read(&account_info.data.borrow())?;`
+      // Structurally portable via letStmt + tryPostfix(call(path, [args])).
+      // Keeps target divergence in the path argument; both produce
+      // byte-identical output to the existing emit.
+      const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+      const callExpr = isPinocchio
+        ? call(path([typeName, "from_account_info"]), [ident(accountInfoVar)])
+        : call(path([typeName, "read"]), [
+            ref(methodCall(field(ident(accountInfoVar), "data"), "borrow", [])),
+          ]);
+      out.push(letStmt(localVar, tryPostfix(callExpr), { mut: mutable }));
     }
-    // The framework emit returns text including its own leading indent
-    // (matches what the handler currently pushes verbatim into walker.lines).
-    // The printer's raw_line rule emits text verbatim so this preserves
-    // any inner-line indent in multi-line emit blocks.
-    out.push(rawLine(bodyText));
 
-    // has_one constraint guards. Each line carries its own indent (4
-    // for the if/}, 8 for the inner Err) so the printer's verbatim
-    // raw_line rule renders them at the right depth.
+    // has_one constraint guards — structural via if_stmt + return_stmt.
+    // Replaces 3 raw_lines per constraint (`if … {`, `return Err…`, `}`)
+    // with one structural if_stmt that prints to the same shape.
     const hasOneConstraints =
       accountRef?.constraints.filter((c) => c.kind === "has_one" && c.value) ?? [];
     for (const c of hasOneConstraints) {
       const targetAccount = snakeCase(c.value!);
       const targetKey = w.emitter.emitAccountKeyExpr(w.resolveAccountInfoVar(targetAccount));
-      out.push(rawLine(`    if ${localVar}.${snakeCase(c.value!)} != ${targetKey} {`));
-      out.push(rawLine(`        return Err(ProgramError::InvalidAccountData);`));
-      out.push(rawLine(`    }`));
+      const condExpr = rawExpr(`${localVar}.${snakeCase(c.value!)} != ${targetKey}`);
+      const errReturn = returnStmt(call(path(["Err"]), [path(["ProgramError", "InvalidAccountData"])]));
+      out.push(ifStmt(condExpr, [errReturn]));
     }
 
     // Side-effects on walker state — KEEP these in sync with the handler so
