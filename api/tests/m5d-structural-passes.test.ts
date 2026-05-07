@@ -22,6 +22,7 @@ import {
   replaceBumpRefsStructural,
   normalizeContextNameStructural,
   transformCtxAccountsStructural,
+  rewriteCtxAccountsRefsStructural,
   applySession1Passes,
   type PassContext,
 } from "../src/emitter/body-emitter/pass-through-structural.ts";
@@ -398,6 +399,78 @@ describe("M5d Session 5a — transformCtxAccountsStructural", () => {
     expect(transformCtxAccountsStructural(`let r = ctx.remaining_accounts;`, ctx)).toBe(
       `let r = ctx.remaining_accounts;`,
     );
+  });
+});
+
+describe("M5d Session 5b — rewriteCtxAccountsRefsStructural", () => {
+  test("bare `ctx.accounts.foo` → `foo`", () => {
+    expect(rewriteCtxAccountsRefsStructural(`do_thing(ctx.accounts.foo);`)).toBe(
+      `do_thing(foo);`,
+    );
+  });
+
+  test("`&ctx.accounts.foo` → `&foo`", () => {
+    expect(rewriteCtxAccountsRefsStructural(`do_thing(&ctx.accounts.foo);`)).toBe(
+      `do_thing(&foo);`,
+    );
+  });
+
+  test("`&mut ctx.accounts.foo` → `&mut foo`", () => {
+    expect(rewriteCtxAccountsRefsStructural(`do_thing(&mut ctx.accounts.foo);`)).toBe(
+      `do_thing(&mut foo);`,
+    );
+  });
+
+  test("`&*ctx.accounts.foo` → `&foo` (collapses both & and *)", () => {
+    expect(rewriteCtxAccountsRefsStructural(`do_thing(&*ctx.accounts.foo);`)).toBe(
+      `do_thing(&foo);`,
+    );
+  });
+
+  test("snakeCase normalization (camelCase account name)", () => {
+    expect(rewriteCtxAccountsRefsStructural(`do_thing(ctx.accounts.fooBar);`)).toBe(
+      `do_thing(foo_bar);`,
+    );
+  });
+
+  test("multiple shapes in one block — all rewritten", () => {
+    const input = `let a = ctx.accounts.foo; do(&ctx.accounts.bar, &mut ctx.accounts.baz, &*ctx.accounts.qux);`;
+    const expected = `let a = foo; do(&bar, &mut baz, &qux);`;
+    expect(rewriteCtxAccountsRefsStructural(input)).toBe(expected);
+  });
+
+  test("SKIP when chain continues with `.field` — left for regex", () => {
+    // The regex panel handles ctx.accounts.X.<field> chains via specialized
+    // matchers. Structural skips them to avoid stepping on the regex's
+    // .key()/.lamports/state-bound matchers.
+    const input = `do(ctx.accounts.foo.amount);`;
+    expect(rewriteCtxAccountsRefsStructural(input)).toBe(input);
+  });
+
+  test("SKIP when chain continues with `.method()` — left for regex", () => {
+    const input = `do(ctx.accounts.foo.key());`;
+    expect(rewriteCtxAccountsRefsStructural(input)).toBe(input);
+  });
+
+  test("SKIP `&ctx.accounts.foo.field` (chain continues, & stays)", () => {
+    const input = `do(&ctx.accounts.foo.amount);`;
+    expect(rewriteCtxAccountsRefsStructural(input)).toBe(input);
+  });
+
+  test("`*ctx.accounts.foo` (deref without &) — keep the `*`", () => {
+    expect(rewriteCtxAccountsRefsStructural(`do(*ctx.accounts.foo);`)).toBe(`do(*foo);`);
+  });
+
+  test("string literal containing 'ctx.accounts.foo' NOT rewritten", () => {
+    const input = `msg!("ctx.accounts.foo example");`;
+    expect(rewriteCtxAccountsRefsStructural(input)).toBe(input);
+  });
+
+  test("idempotent — second application is a no-op", () => {
+    const input = `let a = ctx.accounts.foo; do(&ctx.accounts.bar);`;
+    const once = rewriteCtxAccountsRefsStructural(input);
+    const twice = rewriteCtxAccountsRefsStructural(once);
+    expect(twice).toBe(once);
   });
 });
 

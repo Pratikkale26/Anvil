@@ -20,6 +20,7 @@ import {
   replaceBumpRefsStructural,
   normalizeContextNameStructural,
   transformCtxAccountsStructural,
+  rewriteCtxAccountsRefsStructural,
   type PassContext,
 } from "../pass-through-structural.js";
 
@@ -117,12 +118,18 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     w.transformNestedAnchorCode(bumpAdjustedRawCode),
     structuralCtx,
   );
+  // M5d Session 5b — `ctx.accounts.X` reference forms (4 shapes:
+  // `&*`, `&mut`, `&`, bare). Skip-when-chain-continues rule preserves
+  // the regex panel's specialized `.key` / state-bound `.field` matchers
+  // by leaving compound chains untouched. Single AST walk eliminates the
+  // sequential regex order-dependence (`&*` → `&` → bare).
+  const ctxRefsRewritten = rewriteCtxAccountsRefsStructural(ctxLeafRewritten);
   let transformedRawCode = simplifyPassThroughCode(
     w.transformHelperCalls(
       w.normalizeKeyValueUsages(
         normalizeKeyValueStructural(
           w.transformAccountReferences(
-            w.transformCtxAccountsReferences(ctxLeafRewritten),
+            w.transformCtxAccountsReferences(ctxRefsRewritten),
           ),
           structuralCtx,
         ),

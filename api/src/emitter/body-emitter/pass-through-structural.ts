@@ -670,6 +670,85 @@ export function transformCtxAccountsStructural(code: string, ctx: PassContext): 
   return applyEdits(code, edits);
 }
 
+// ─── Pass 5b — ctx.accounts.X reference forms (&*, &mut, &, bare) ──────────
+
+/**
+ * Rewrite the four `ctx.accounts.X` reference shapes that
+ * walker.transformCtxAccountsReferences handles via 4 sequential regexes
+ * (lines 984-999). Doing them in a single AST walk eliminates the regex
+ * order-dependence (the regex panel relies on `&*` collapsing to `&` first,
+ * then the `&` matcher running on the result).
+ *
+ * Shapes (in regex order, all collapse to the same final form):
+ *   `&*ctx.accounts.X`  → `&<snake_X>`     (consumes both &*)
+ *   `&mut ctx.accounts.X` → `&mut <snake_X>`
+ *   `&ctx.accounts.X`   → `&<snake_X>`
+ *   bare `ctx.accounts.X` → `<snake_X>`
+ *
+ * SKIP RULE: when the inner `ctx.accounts.X` is the receiver of a
+ * continuing field/method chain (parent is field_expression), leave it
+ * for the regex panel to handle — those chains have their own specialized
+ * matchers (`.key()`, `.lamports()` already-rewritten by S5a, state-bound
+ * `.field` via ensureStateRead) that need to see the canonical
+ * `ctx.accounts.X.…` text. The regex pattern 17 (`\bctx\.accounts\.X\b`)
+ * still fires as a fallback after those specialized rewrites.
+ *
+ * Verified byte-equal via binary-parity-snapshot — the skip rule's
+ * conservatism is covered by the regex panel running after.
+ */
+export function rewriteCtxAccountsRefsStructural(code: string): string {
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  const edits: Edit[] = [];
+  for (const stmt of parsed.stmts) {
+    walk(stmt, (n) => {
+      const accountName = asCtxAccountsField(n);
+      if (accountName === null) return true;
+      const parent = n.parent;
+      // Skip when chain continues — regex panel handles those.
+      if (parent?.type === "field_expression") return true;
+      // Skip when n is the function position of a call (defensive — ctx.accounts.X
+      // isn't normally callable, but guard anyway).
+      if (parent?.type === "call_expression" && parent.namedChild(0)?.id === n.id) return true;
+      const snake = snakeCase(accountName);
+      let editStart = n.startIndex - parsed.bodyOffset;
+      let editEnd = n.endIndex - parsed.bodyOffset;
+      let replacement = snake;
+      // `&*ctx.accounts.X` — parent is unary_expression(*), grand-parent
+      // is reference_expression(&). Consume the whole `&*…` and emit `&snake`.
+      if (parent?.type === "unary_expression") {
+        const gp = parent.parent;
+        if (
+          gp?.type === "reference_expression" &&
+          gp.namedChild(gp.namedChildCount - 1)?.id === parent.id &&
+          !gp.text.startsWith("&mut")
+        ) {
+          editStart = gp.startIndex - parsed.bodyOffset;
+          editEnd = gp.endIndex - parsed.bodyOffset;
+          replacement = `&${snake}`;
+        }
+        // else: just `*ctx.accounts.X` — keep the `*`, rewrite inner only.
+      } else if (
+        parent?.type === "reference_expression" &&
+        parent.namedChild(parent.namedChildCount - 1)?.id === n.id
+      ) {
+        if (parent.text.startsWith("&mut")) {
+          editStart = parent.startIndex - parsed.bodyOffset;
+          editEnd = parent.endIndex - parsed.bodyOffset;
+          replacement = `&mut ${snake}`;
+        } else {
+          editStart = parent.startIndex - parsed.bodyOffset;
+          editEnd = parent.endIndex - parsed.bodyOffset;
+          replacement = `&${snake}`;
+        }
+      }
+      edits.push({ start: editStart, end: editEnd, replacement });
+      return false;
+    });
+  }
+  return applyEdits(code, edits);
+}
+
 // ─── Verification helper ────────────────────────────────────────────────────
 
 /**
