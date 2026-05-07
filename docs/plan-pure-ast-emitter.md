@@ -447,6 +447,19 @@ The bigger structural-port opportunities now live OUTSIDE pass_through:
   `separator?: "," | ";"` (handles `vec![false; len]` repeat form).
   Closes pass_through residual `vec![source]` too. 11th kind PURE
   structural ★.
+- 🟡 cpi_spl_transfer — was 12 raw_nodes, now **8** after the 2026-05-07
+  port: corpus-wide sweep replaced `parseSimpleExpr(amountExpr)` /
+  `parseSimpleExpr(signerSeedsResolved)` / `parseSimpleExpr(stmt.decimals)`
+  with `tryStructuralizeExpr(...) ?? parseSimpleExpr(...)` across all
+  CPI visit methods (cpi_spl_transfer/mint_to/burn/close_account/
+  set_authority). Catches `&[vault_seeds]`, `token_account_amount(X)?`,
+  `(amount).to_le_bytes()` shapes. Remaining 8 are multi-line
+  block-expression literals embedded in the t22-transfer.rs hand-rolled
+  `emitSplTransfer` body (mint decimals extraction block, discriminator
+  byte array, AccountMeta array, Instruction struct literal) — all
+  fixture-specific multi-line constructions that need parseT22PinocchioBlock
+  to do deeper structuralization. Not worth the round-trip for the
+  marginal gain. Stop here.
 
 These are deterministic-shape and would benefit from per-kind structural
 ports following the same template. Each is ~3-5 hrs.

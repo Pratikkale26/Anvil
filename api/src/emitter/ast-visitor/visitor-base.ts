@@ -1688,11 +1688,11 @@ export class AstVisitorBase {
       if (signerSeedsResolved) {
         out.push(comment("System transfer with PDA signer"));
         out.push(exprStmt(tryPostfix(call(ident("transfer_lamports_signed"), [
-          ident(fromVar), ident(toVar), parseSimpleExpr(amountExpr), parseSimpleExpr(signerSeedsResolved),
+          ident(fromVar), ident(toVar), (tryStructuralizeExpr(amountExpr) ?? parseSimpleExpr(amountExpr)), (tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved)),
         ]))));
       } else {
         out.push(exprStmt(tryPostfix(call(ident("transfer_lamports"), [
-          ident(fromVar), ident(toVar), parseSimpleExpr(amountExpr),
+          ident(fromVar), ident(toVar), (tryStructuralizeExpr(amountExpr) ?? parseSimpleExpr(amountExpr)),
         ]))));
       }
       return out;
@@ -1704,7 +1704,7 @@ export class AstVisitorBase {
     out.push(letStmt("transfer_ix", call(path(["system_instruction", "transfer"]), [
       field(ident(fromVar), "key"),
       field(ident(toVar), "key"),
-      parseSimpleExpr(amountExpr),
+      (tryStructuralizeExpr(amountExpr) ?? parseSimpleExpr(amountExpr)),
     ])));
     const invokeArgs: RustExpr[] = [
       ref(ident("transfer_ix")),
@@ -1713,7 +1713,7 @@ export class AstVisitorBase {
         methodCall(ident(toVar), "clone", []),
       ])),
     ];
-    if (signerSeedsResolved) invokeArgs.push(parseSimpleExpr(signerSeedsResolved));
+    if (signerSeedsResolved) invokeArgs.push((tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved)));
     out.push(exprStmt(tryPostfix(mlCall(
       ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
       invokeArgs,
@@ -1767,13 +1767,20 @@ export class AstVisitorBase {
     const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
     const isPinocchio = w.emitter.frameworkName === "Pinocchio";
 
+    // Tree-sitter first for amount + signerSeeds (handles
+    // `token_account_amount(X)?`, `&[vault_seeds]`, `(X).to_le_bytes()`,
+    // etc.); parseSimpleExpr fallback for shapes tree-sitter punts on.
+    const amountStruct = tryStructuralizeExpr(amountExpr) ?? parseSimpleExpr(amountExpr);
+    const signerSeedsStruct = signerSeedsResolved
+      ? (tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved))
+      : null;
     if (isPinocchio) {
       const helperName = signerSeedsResolved ? "spl_token_transfer_signed" : "spl_token_transfer";
       const commentText = signerSeedsResolved
         ? `SPL Token transfer (PDA signed) — ${stmt.from} → ${stmt.to}`
         : `SPL Token transfer — ${stmt.from} → ${stmt.to}`;
-      const args: RustExpr[] = [ident(fromVar), ident(toVar), ident(authorityName), parseSimpleExpr(amountExpr)];
-      if (signerSeedsResolved) args.push(parseSimpleExpr(signerSeedsResolved));
+      const args: RustExpr[] = [ident(fromVar), ident(toVar), ident(authorityName), amountStruct];
+      if (signerSeedsStruct) args.push(signerSeedsStruct);
       out.push(comment(commentText));
       out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
       return out;
@@ -1792,7 +1799,7 @@ export class AstVisitorBase {
         field(ident(toVar), "key"),
         field(ident(authorityName), "key"),
         ref(array([])),
-        parseSimpleExpr(amountExpr),
+        amountStruct,
       ])),
     ));
     const invokeArgs: RustExpr[] = [
@@ -1803,7 +1810,7 @@ export class AstVisitorBase {
         methodCall(ident(authorityName), "clone", []),
       ])),
     ];
-    if (signerSeedsResolved) invokeArgs.push(parseSimpleExpr(signerSeedsResolved));
+    if (signerSeedsStruct) invokeArgs.push(signerSeedsStruct);
     out.push(exprStmt(tryPostfix(mlCall(
       ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
       invokeArgs,
@@ -1864,7 +1871,7 @@ export class AstVisitorBase {
           )));
           decimalsArg = ident(`${mintVar}_decimals`);
         } else {
-          decimalsArg = parseSimpleExpr(stmt.decimals);
+          decimalsArg = tryStructuralizeExpr(stmt.decimals) ?? parseSimpleExpr(stmt.decimals);
         }
       } else if (checked) {
         // No-mint stub-out — same as the emitter's TODO comment-only output.
@@ -1882,7 +1889,7 @@ export class AstVisitorBase {
         field(ident(toVar), "key"),
         field(ident(authorityName), "key"),
         ref(array([])),
-        parseSimpleExpr(amountExpr),
+        (tryStructuralizeExpr(amountExpr) ?? parseSimpleExpr(amountExpr)),
       );
       if (checked && decimalsArg) callArgs.push(decimalsArg);
 
@@ -1904,7 +1911,7 @@ export class AstVisitorBase {
         ref(ident("transfer_ix")),
         ref(array(invokeAccountClones)),
       ];
-      if (signerSeedsResolved) invokeArgs.push(parseSimpleExpr(signerSeedsResolved));
+      if (signerSeedsResolved) invokeArgs.push((tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved)));
       out.push(exprStmt(tryPostfix(mlCall(
         ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
         invokeArgs,
@@ -1946,8 +1953,8 @@ export class AstVisitorBase {
 
     if (isPinocchio) {
       const helperName = signerSeedsResolved ? "spl_token_mint_to_signed" : "spl_token_mint_to";
-      const args: RustExpr[] = [ident(mintVar), ident(toVar), ident(authorityName), parseSimpleExpr(amountExpr)];
-      if (signerSeedsResolved) args.push(parseSimpleExpr(signerSeedsResolved));
+      const args: RustExpr[] = [ident(mintVar), ident(toVar), ident(authorityName), (tryStructuralizeExpr(amountExpr) ?? parseSimpleExpr(amountExpr))];
+      if (signerSeedsResolved) args.push((tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved)));
       out.push(comment(`SPL Token mint_to — ${stmt.mint} → ${stmt.to}`));
       out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
       return out;
@@ -1963,7 +1970,7 @@ export class AstVisitorBase {
         field(ident(toVar), "key"),
         field(ident(authorityName), "key"),
         ref(array([])),
-        parseSimpleExpr(amountExpr),
+        (tryStructuralizeExpr(amountExpr) ?? parseSimpleExpr(amountExpr)),
       ])),
     ));
     const invokeArgs: RustExpr[] = [
@@ -1974,7 +1981,7 @@ export class AstVisitorBase {
         methodCall(ident(authorityName), "clone", []),
       ])),
     ];
-    if (signerSeedsResolved) invokeArgs.push(parseSimpleExpr(signerSeedsResolved));
+    if (signerSeedsResolved) invokeArgs.push((tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved)));
     out.push(exprStmt(tryPostfix(mlCall(
       ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
       invokeArgs,
@@ -2005,8 +2012,8 @@ export class AstVisitorBase {
 
     if (isPinocchio) {
       const helperName = signerSeedsResolved ? "spl_token_burn_signed" : "spl_token_burn";
-      const args: RustExpr[] = [ident(fromVar), ident(mintVar), ident(authorityName), parseSimpleExpr(amountExpr)];
-      if (signerSeedsResolved) args.push(parseSimpleExpr(signerSeedsResolved));
+      const args: RustExpr[] = [ident(fromVar), ident(mintVar), ident(authorityName), (tryStructuralizeExpr(amountExpr) ?? parseSimpleExpr(amountExpr))];
+      if (signerSeedsResolved) args.push((tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved)));
       out.push(comment(`SPL Token burn — ${stmt.from}`));
       out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
       return out;
@@ -2022,7 +2029,7 @@ export class AstVisitorBase {
         field(ident(mintVar), "key"),
         field(ident(authorityName), "key"),
         ref(array([])),
-        parseSimpleExpr(amountExpr),
+        (tryStructuralizeExpr(amountExpr) ?? parseSimpleExpr(amountExpr)),
       ])),
     ));
     const invokeArgs: RustExpr[] = [
@@ -2033,7 +2040,7 @@ export class AstVisitorBase {
         methodCall(ident(authorityName), "clone", []),
       ])),
     ];
-    if (signerSeedsResolved) invokeArgs.push(parseSimpleExpr(signerSeedsResolved));
+    if (signerSeedsResolved) invokeArgs.push((tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved)));
     out.push(exprStmt(tryPostfix(mlCall(
       ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
       invokeArgs,
@@ -2064,7 +2071,7 @@ export class AstVisitorBase {
     if (isPinocchio) {
       const helperName = signerSeedsResolved ? "spl_token_close_account_signed" : "spl_token_close_account";
       const args: RustExpr[] = [ident(accountVar), ident(destinationVar), ident(authorityName)];
-      if (signerSeedsResolved) args.push(parseSimpleExpr(signerSeedsResolved));
+      if (signerSeedsResolved) args.push((tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved)));
       out.push(comment(`SPL Token close account — ${stmt.account}`));
       out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
       return out;
@@ -2090,7 +2097,7 @@ export class AstVisitorBase {
         methodCall(ident(authorityName), "clone", []),
       ])),
     ];
-    if (signerSeedsResolved) invokeArgs.push(parseSimpleExpr(signerSeedsResolved));
+    if (signerSeedsResolved) invokeArgs.push((tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved)));
     out.push(exprStmt(tryPostfix(mlCall(
       ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
       invokeArgs,
