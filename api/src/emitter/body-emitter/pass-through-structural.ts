@@ -35,6 +35,7 @@
  */
 
 import { getParserSync, parseGuarded, type SyntaxNode } from "../../parser/ts-init.js";
+import { snakeCase } from "../emitter-utils.js";
 
 export interface PassContext {
   /** Per-target sysvar Clock path: e.g. `pinocchio::sysvars::clock::Clock`
@@ -57,6 +58,16 @@ export interface PassContext {
   /** account name (or alias) → AccountInfo var name. Used by the
    *  to_account_info strip pass. */
   accountInfoVars: Map<string, string>;
+  /**
+   * Optional side-effect callback invoked when replaceBumpRefsStructural
+   * matches a `ctx.bumps.<account>` reference. The caller (walker) is
+   * responsible for prelude generation + dedup — the structural pass
+   * only knows about the rewrite, not the bump-line scaffolding it
+   * implies. Mirrors the closure passed to walker.replaceBumpRefs's
+   * `.replace` chain. Returns void; the structural pass synthesizes
+   * the `bump_<account>` substitution itself.
+   */
+  onBumpRef?: (accountName: string) => void;
 }
 
 interface Edit {
@@ -320,6 +331,109 @@ export function normalizeKeyValueStructural(code: string, ctx: PassContext): str
     });
   }
   return applyEdits(code, edits);
+}
+
+// ─── Pass 4 — replaceBumpRefs (4 ctx.bumps shapes) ─────────────────────────
+
+/**
+ * Replace `ctx.bumps.<account>` and 3 wrapped variants with the
+ * `bump_<account>` local var. Mirrors walker.replaceBumpRefs's 4
+ * sequential regex .replace calls:
+ *
+ *   - `(&ctx.bumps).field` → `bump_field`        (parens + ref-of-ctx.bumps)
+ *   - `(ctx.bumps).field`  → `bump_field`        (parens-only)
+ *   - `&ctx.bumps.field`   → `bump_field`        (top-level ref-of-field)
+ *   - `ctx.bumps.field`    → `bump_field`        (bare)
+ *
+ * For shape 3 (`&ctx.bumps.field`), the leading `&` is part of the
+ * regex match and gets consumed — the structural port replicates this
+ * by extending the edit to include the parent reference_expression.
+ *
+ * Side effects: calls `ctx.onBumpRef(accountName)` per match. The
+ * caller (walker) owns the dedup + prelude push state.
+ *
+ * Output is byte-equivalent to walker.replaceBumpRefs's `code` field
+ * for all 4 shapes (unit-tested in m5d-structural-passes.test.ts).
+ */
+export function replaceBumpRefsStructural(code: string, ctx: PassContext): string {
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  const edits: Edit[] = [];
+  for (const stmt of parsed.stmts) {
+    walk(stmt, (n) => {
+      if (n.type !== "field_expression") return true;
+      // Outer field_expression: receiver + field_identifier(<accountName>).
+      let outerReceiver: SyntaxNode | null = null;
+      let outerField: SyntaxNode | null = null;
+      for (let i = 0; i < n.namedChildCount; i++) {
+        const c = n.namedChild(i);
+        if (!c) continue;
+        if (c.type === "field_identifier") outerField = c;
+        else outerReceiver = c;
+      }
+      if (!outerReceiver || !outerField) return true;
+      // The receiver must match one of:
+      //   field_expression(identifier(ctx), field_identifier(bumps))   -- bare
+      //   parenthesized_expression(reference_expression(<bare>))       -- (&ctx.bumps)
+      //   parenthesized_expression(<bare>)                             -- (ctx.bumps)
+      // For shape "&ctx.bumps.field" the `&` lives ABOVE the outer
+      // field_expression (parent is reference_expression) — checked below.
+      const matchesCtxBumps = isCtxBumpsReceiver(outerReceiver);
+      if (!matchesCtxBumps) return true;
+      const accountName = outerField.text;
+      const normalized = snakeCase(accountName);
+      ctx.onBumpRef?.(accountName);
+      // Determine edit range. Default: the outer field_expression itself.
+      // Shape 3 expansion: if parent is reference_expression with us as the
+      // sole named child, expand to consume the `&` too — mirrors the
+      // regex's `&\s*ctx\.bumps\.(\w+)` consuming the `&`.
+      let editStart = n.startIndex - parsed.bodyOffset;
+      let editEnd = n.endIndex - parsed.bodyOffset;
+      const parent = n.parent;
+      if (
+        parent?.type === "reference_expression" &&
+        parent.namedChildCount === 1 &&
+        parent.namedChild(0)?.id === n.id
+      ) {
+        editStart = parent.startIndex - parsed.bodyOffset;
+        editEnd = parent.endIndex - parsed.bodyOffset;
+      }
+      edits.push({ start: editStart, end: editEnd, replacement: `bump_${normalized}` });
+      return false;
+    });
+  }
+  return applyEdits(code, edits);
+}
+
+/** True if the node represents `ctx.bumps`, `(ctx.bumps)`, or `(&ctx.bumps)`. */
+function isCtxBumpsReceiver(n: SyntaxNode): boolean {
+  // bare: field_expression(identifier(ctx), field_identifier(bumps))
+  if (n.type === "field_expression") {
+    let receiver: SyntaxNode | null = null;
+    let field: SyntaxNode | null = null;
+    for (let i = 0; i < n.namedChildCount; i++) {
+      const c = n.namedChild(i);
+      if (!c) continue;
+      if (c.type === "field_identifier") field = c;
+      else receiver = c;
+    }
+    return (
+      !!receiver &&
+      receiver.type === "identifier" &&
+      receiver.text === "ctx" &&
+      !!field &&
+      field.text === "bumps"
+    );
+  }
+  // wrapped: parenthesized_expression(<bare>) or parenthesized_expression(reference_expression(<bare>))
+  if (n.type === "parenthesized_expression" && n.namedChildCount === 1) {
+    const inner = n.namedChild(0)!;
+    if (inner.type === "reference_expression" && inner.namedChildCount === 1) {
+      return isCtxBumpsReceiver(inner.namedChild(0)!);
+    }
+    return isCtxBumpsReceiver(inner);
+  }
+  return false;
 }
 
 // ─── Verification helper ────────────────────────────────────────────────────

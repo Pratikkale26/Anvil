@@ -19,6 +19,7 @@ import {
   qualifySysvarsStructural,
   stripToAccountInfoStructural,
   normalizeKeyValueStructural,
+  replaceBumpRefsStructural,
   applySession1Passes,
   type PassContext,
 } from "../src/emitter/body-emitter/pass-through-structural.ts";
@@ -167,6 +168,89 @@ describe("M5d Session 1 — normalizeKeyValueStructural", () => {
     const input = `let k = stranger.key();`;
     const out = normalizeKeyValueStructural(input, PIN_CTX);
     expect(out).toBe(input);
+  });
+});
+
+describe("M5d Session 3 — replaceBumpRefsStructural", () => {
+  // The structural pass calls onBumpRef per match for prelude/dedup. Tests
+  // capture the calls + assert the rewritten text matches what the
+  // walker.replaceBumpRefs regex panel produces.
+  function withCapture(): { ctx: PassContext; calls: string[] } {
+    const calls: string[] = [];
+    const ctx: PassContext = {
+      ...PIN_CTX,
+      onBumpRef: (acc) => calls.push(acc),
+    };
+    return { ctx, calls };
+  }
+
+  test("bare `ctx.bumps.foo` → `bump_foo`", () => {
+    const { ctx, calls } = withCapture();
+    expect(replaceBumpRefsStructural(`let x = ctx.bumps.foo;`, ctx)).toBe(`let x = bump_foo;`);
+    expect(calls).toEqual(["foo"]);
+  });
+
+  test("`&ctx.bumps.foo` → `bump_foo` (consumes the &)", () => {
+    const { ctx, calls } = withCapture();
+    expect(replaceBumpRefsStructural(`let x = &ctx.bumps.foo;`, ctx)).toBe(`let x = bump_foo;`);
+    expect(calls).toEqual(["foo"]);
+  });
+
+  test("`(ctx.bumps).foo` → `bump_foo` (consumes the parens)", () => {
+    const { ctx, calls } = withCapture();
+    expect(replaceBumpRefsStructural(`let x = (ctx.bumps).foo;`, ctx)).toBe(`let x = bump_foo;`);
+    expect(calls).toEqual(["foo"]);
+  });
+
+  test("`(&ctx.bumps).foo` → `bump_foo` (consumes parens + &)", () => {
+    const { ctx, calls } = withCapture();
+    expect(replaceBumpRefsStructural(`let x = (&ctx.bumps).foo;`, ctx)).toBe(`let x = bump_foo;`);
+    expect(calls).toEqual(["foo"]);
+  });
+
+  test("snakeCase normalization on accountName (camelCase → snake_case)", () => {
+    const { ctx, calls } = withCapture();
+    expect(replaceBumpRefsStructural(`let x = ctx.bumps.fooBar;`, ctx)).toBe(`let x = bump_foo_bar;`);
+    expect(calls).toEqual(["fooBar"]);
+  });
+
+  test("multiple references in one block — all rewritten, callback fires per match", () => {
+    const { ctx, calls } = withCapture();
+    const input = `let a = ctx.bumps.foo; let b = &ctx.bumps.foo; let c = ctx.bumps.bar;`;
+    const out = replaceBumpRefsStructural(input, ctx);
+    expect(out).toBe(`let a = bump_foo; let b = bump_foo; let c = bump_bar;`);
+    // Caller manages dedup — structural just reports every match.
+    expect(calls).toEqual(["foo", "foo", "bar"]);
+  });
+
+  test("non-bumps field accesses untouched", () => {
+    const { ctx, calls } = withCapture();
+    const input = `let x = ctx.accounts.foo; let y = ctx.bumps.bar;`;
+    const out = replaceBumpRefsStructural(input, ctx);
+    expect(out).toBe(`let x = ctx.accounts.foo; let y = bump_bar;`);
+    expect(calls).toEqual(["bar"]);
+  });
+
+  test("idempotent — second application is a no-op", () => {
+    const { ctx } = withCapture();
+    const input = `let x = ctx.bumps.foo;`;
+    const once = replaceBumpRefsStructural(input, ctx);
+    const twice = replaceBumpRefsStructural(once, ctx);
+    expect(twice).toBe(once);
+  });
+
+  test("bumps inside a string literal NOT rewritten", () => {
+    const { ctx, calls } = withCapture();
+    const input = `msg!("ctx.bumps.foo example");`;
+    const out = replaceBumpRefsStructural(input, ctx);
+    expect(out).toBe(input);
+    expect(calls).toEqual([]);
+  });
+
+  test("works without onBumpRef callback (caller opts out of side effects)", () => {
+    const ctxNoCallback: PassContext = { ...PIN_CTX };
+    const out = replaceBumpRefsStructural(`let x = ctx.bumps.foo;`, ctxNoCallback);
+    expect(out).toBe(`let x = bump_foo;`);
   });
 });
 
