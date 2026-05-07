@@ -28,6 +28,10 @@ import {
   collapseMultiDerefStructural,
   rewriteStateBoundFieldsStructural,
   rewriteHelperCallsStructural,
+  stripLineCommentsStructural,
+  collapseHelperModulePathsStructural,
+  stripRedundantProgramErrorIntoStructural,
+  wrapBareErrAsReturnStructural,
   applySession1Passes,
   type PassContext,
 } from "../src/emitter/body-emitter/pass-through-structural.ts";
@@ -918,6 +922,155 @@ describe("M5d Session 7 — rewriteHelperCallsStructural", () => {
     const ctx: PassContext = { ...PIN_CTX };
     const input = `update_pool(pool, 5);`;
     expect(rewriteHelperCallsStructural(input, ctx)).toBe(input);
+  });
+});
+
+describe("M5d Session 8a — stripLineCommentsStructural", () => {
+  test("strips trailing line comment", () => {
+    expect(stripLineCommentsStructural(`let x = 5; // assignment`)).toBe(
+      `let x = 5; `,
+    );
+  });
+
+  test("strips full-line comment", () => {
+    expect(stripLineCommentsStructural(`// header\nlet x = 5;`)).toBe(`\nlet x = 5;`);
+  });
+
+  test("preserves block comments", () => {
+    const input = `let x = /* keep */ 5;`;
+    expect(stripLineCommentsStructural(input)).toBe(input);
+  });
+
+  test("string literal containing `//` NOT stripped", () => {
+    const input = `let url = "https://example.com";`;
+    expect(stripLineCommentsStructural(input)).toBe(input);
+  });
+
+  test("multiple comments stripped in one block", () => {
+    const input = `let a = 1; // first\nlet b = 2; // second`;
+    expect(stripLineCommentsStructural(input)).toBe(`let a = 1; \nlet b = 2; `);
+  });
+
+  test("no `//` in input — fast path", () => {
+    const input = `let x = 5;`;
+    expect(stripLineCommentsStructural(input)).toBe(input);
+  });
+});
+
+describe("M5d Session 8b — collapseHelperModulePathsStructural", () => {
+  function buildCtx(helpers: string[]): PassContext {
+    return { ...PIN_CTX, helperFnNames: new Set(helpers) };
+  }
+
+  test("`module::helper(...)` → `helper(...)` when helper known", () => {
+    const ctx = buildCtx(["get_rides"]);
+    expect(collapseHelperModulePathsStructural(`do(ride::get_rides(x));`, ctx)).toBe(
+      `do(get_rides(x));`,
+    );
+  });
+
+  test("`module::unknown(...)` left alone (not a known helper)", () => {
+    const ctx = buildCtx(["get_rides"]);
+    expect(collapseHelperModulePathsStructural(`do(ride::other_fn(x));`, ctx)).toBe(
+      `do(ride::other_fn(x));`,
+    );
+  });
+
+  test("nested path `crate::ride::get_rides(...)` NOT collapsed (regex parity)", () => {
+    // The regex only matches simple `\w+::\w+(`. Nested paths like
+    // `crate::state::ride::get_rides()` are skipped — they're a
+    // qualified reference, not a flattened-helper miss.
+    const ctx = buildCtx(["get_rides"]);
+    const input = `do(crate::ride::get_rides(x));`;
+    expect(collapseHelperModulePathsStructural(input, ctx)).toBe(input);
+  });
+
+  test("string literal with `module::helper(` NOT collapsed", () => {
+    const ctx = buildCtx(["get_rides"]);
+    const input = `msg!("ride::get_rides example");`;
+    expect(collapseHelperModulePathsStructural(input, ctx)).toBe(input);
+  });
+
+  test("empty helperFnNames — no-op fast path", () => {
+    const ctx: PassContext = { ...PIN_CTX };
+    const input = `do(ride::get_rides(x));`;
+    expect(collapseHelperModulePathsStructural(input, ctx)).toBe(input);
+  });
+
+  test("idempotent — already-collapsed call no-op", () => {
+    const ctx = buildCtx(["get_rides"]);
+    const input = `do(get_rides(x));`;
+    expect(collapseHelperModulePathsStructural(input, ctx)).toBe(input);
+  });
+});
+
+describe("M5d Session 8c — stripRedundantProgramErrorIntoStructural", () => {
+  test("`Err(ProgramError::Foo.into())` → `Err(ProgramError::Foo)`", () => {
+    expect(
+      stripRedundantProgramErrorIntoStructural(`return Err(ProgramError::InvalidArgument.into());`),
+    ).toBe(`return Err(ProgramError::InvalidArgument);`);
+  });
+
+  test("`Err(ProgramError::Foo(arg).into())` → `Err(ProgramError::Foo(arg))`", () => {
+    expect(
+      stripRedundantProgramErrorIntoStructural(`return Err(ProgramError::Custom(5).into());`),
+    ).toBe(`return Err(ProgramError::Custom(5));`);
+  });
+
+  test("`Err(ErrorCode::X.into())` left alone (user error needs .into())", () => {
+    const input = `return Err(ErrorCode::InvalidValue.into());`;
+    expect(stripRedundantProgramErrorIntoStructural(input)).toBe(input);
+  });
+
+  test("`Err(ProgramError::X)` (already clean) — no-op", () => {
+    const input = `return Err(ProgramError::InvalidArgument);`;
+    expect(stripRedundantProgramErrorIntoStructural(input)).toBe(input);
+  });
+
+  test("string literal with the pattern NOT rewritten", () => {
+    const input = `msg!("Err(ProgramError::Foo.into())");`;
+    expect(stripRedundantProgramErrorIntoStructural(input)).toBe(input);
+  });
+
+  test("no `.into()` in input — fast path", () => {
+    const input = `return Ok(());`;
+    expect(stripRedundantProgramErrorIntoStructural(input)).toBe(input);
+  });
+});
+
+describe("M5d Session 8d — wrapBareErrAsReturnStructural", () => {
+  test("whole-statement `Err(MyError::X)` → `return Err(MyError::X);`", () => {
+    expect(wrapBareErrAsReturnStructural(`Err(MyError::InvalidValue)`)).toBe(
+      `return Err(MyError::InvalidValue);`,
+    );
+  });
+
+  test("with trailing semi: `Err(MyError::X);` → `return Err(MyError::X);`", () => {
+    expect(wrapBareErrAsReturnStructural(`Err(MyError::InvalidValue);`)).toBe(
+      `return Err(MyError::InvalidValue);`,
+    );
+  });
+
+  test("Err with bare identifier (not scoped) — NOT wrapped", () => {
+    // The regex requires `\w+(?:::\w+)+` — at least one `::`. Bare
+    // identifier (`Err(my_var)`) doesn't qualify.
+    const input = `Err(my_var)`;
+    expect(wrapBareErrAsReturnStructural(input)).toBe(input);
+  });
+
+  test("multi-statement input — NOT wrapped (regex `^...$` anchored)", () => {
+    const input = `let x = 5; Err(MyError::X);`;
+    expect(wrapBareErrAsReturnStructural(input)).toBe(input);
+  });
+
+  test("Err inside a larger expression — NOT wrapped", () => {
+    const input = `if cond { Err(MyError::X) } else { Ok(()) }`;
+    expect(wrapBareErrAsReturnStructural(input)).toBe(input);
+  });
+
+  test("no `Err(` in input — fast path", () => {
+    const input = `let x = 5;`;
+    expect(wrapBareErrAsReturnStructural(input)).toBe(input);
   });
 });
 

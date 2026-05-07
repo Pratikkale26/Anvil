@@ -113,6 +113,12 @@ export interface PassContext {
    *  to gate which arguments get the `&mut` prefix. Mirrors
    *  walker.stateAccountNames + walker.resolveStateVar. */
   stateVarNames?: Set<string>;
+  /** Set of helper-fn names from ir.helperFns (the flat helpers.rs
+   *  module). Used by collapseHelperModulePathsStructural to recognize
+   *  qualified calls (`module::helperFn(`) that should collapse to
+   *  bare calls (`helperFn(`) since Anvil flattens helpers across
+   *  submodules. Mirrors walker.transformNestedAnchorCode lines 1051-1058. */
+  helperFnNames?: Set<string>;
 }
 
 interface Edit {
@@ -1061,6 +1067,211 @@ export function rewriteHelperCallsStructural(code: string, ctx: PassContext): st
     });
   }
   return applyEdits(code, edits);
+}
+
+// ─── Pass 8a — line-comment strip ────────────────────────────────────────────
+
+/**
+ * Strip `// line comments` (preserving block comments). Mirrors the leading
+ * regex in walker.transformNestedAnchorCode (line 1042):
+ *   `(^|[^:])\/\/[^\n]*`  →  `$1`
+ *
+ * Why: Anchor source commonly has trailing comments inside CpiContext::new
+ * struct literals (`from: ctx.accounts.foo.to_account_info(), // From pubkey`).
+ * The downstream CPI-rewriting regexes use `\s*,\s*` to bridge fields, which
+ * can't span a comment.
+ *
+ * The regex's `[^:]` lookbehind guards URLs (`https://example.com`). Tree-
+ * sitter's line_comment node is more accurate — naturally skips strings
+ * AND `://` shapes since those are inside a string_literal or path
+ * component, not a comment.
+ */
+export function stripLineCommentsStructural(code: string): string {
+  if (!code.includes("//")) return code;
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  const edits: Edit[] = [];
+  for (const stmt of parsed.stmts) {
+    walk(stmt, (n) => {
+      if (n.type !== "line_comment") return true;
+      const start = n.startIndex - parsed.bodyOffset;
+      const end = n.endIndex - parsed.bodyOffset;
+      edits.push({ start, end, replacement: "" });
+      return false;
+    });
+  }
+  return applyEdits(code, edits);
+}
+
+// ─── Pass 8b — collapse helper module paths ──────────────────────────────────
+
+/**
+ * Collapse `<module>::<helperFn>(...)` to `<helperFn>(...)` when helperFn
+ * is a known IR helper. Anvil flattens helpers into a single helpers.rs
+ * module, but Anchor source organizes them across submodules (e.g.
+ * carnival's `ride::get_rides()`, `game::get_games()`). Mirrors walker
+ * regex `\b(\w+)::(\w+)\s*\(` gated on `helperNames.has(fnName)`
+ * (lines 1051-1058).
+ *
+ * Tree-sitter version matches call_expression(scoped_identifier(...))
+ * which naturally skips inside string literals and only collapses
+ * SIMPLE module prefixes (single ident), not nested paths like
+ * `crate::state::ride::get_rides` — same as the regex `\w+::\w+`.
+ */
+export function collapseHelperModulePathsStructural(code: string, ctx: PassContext): string {
+  if (!ctx.helperFnNames || ctx.helperFnNames.size === 0) return code;
+  const helpers = ctx.helperFnNames;
+  if (!code.includes("::")) return code;
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  const edits: Edit[] = [];
+  for (const stmt of parsed.stmts) {
+    walk(stmt, (n) => {
+      if (n.type !== "call_expression") return true;
+      const fn = n.namedChild(0);
+      if (!fn || fn.type !== "scoped_identifier") return true;
+      // scoped_identifier has 2+ children. We want exactly 2 (module, fn) —
+      // not nested paths. Tree-sitter encodes `a::b::c` as nested
+      // scoped_identifier(scoped_identifier(a, b), c), so the immediate
+      // first child of fn would itself be a scoped_identifier for nested
+      // paths. Gate on first child being a plain identifier.
+      const modulePart = fn.namedChild(0);
+      const fnPart = fn.namedChild(1);
+      if (!modulePart || modulePart.type !== "identifier") return true;
+      if (!fnPart || fnPart.type !== "identifier") return true;
+      if (!helpers.has(fnPart.text)) return true;
+      const start = fn.startIndex - parsed.bodyOffset;
+      const end = fn.endIndex - parsed.bodyOffset;
+      edits.push({ start, end, replacement: fnPart.text });
+      return true; // descend — args may have more calls
+    });
+  }
+  return applyEdits(code, edits);
+}
+
+// ─── Pass 8c — strip redundant `.into()` on Err(ProgramError::*) ────────────
+
+/**
+ * Drop redundant `.into()` on `Err(ProgramError::Foo.into())`. Identity
+ * conversion on ProgramError is ambiguous (E0283). Mirrors walker regex
+ * (lines 1067-1070):
+ *   `\bErr\(\s*(ProgramError::\w+(?:\([^)]*\))?)\.into\(\)\s*\)`
+ *   →  `Err($1)`
+ *
+ * Restricted to ProgramError specifically: user error enums (e.g.
+ * `ErrorCode::X`) need `.into()` since they coerce ErrorCode → ProgramError
+ * via their generated `impl From<ErrorCode> for ProgramError`.
+ *
+ * AST shape: call_expression(identifier(Err), arguments(call_expression(
+ *   field_expression(<programError_path>, field_identifier(into)),
+ *   arguments())))
+ * where <programError_path> is scoped_identifier(ProgramError, X)
+ * OR call_expression(scoped_identifier(ProgramError, X), arguments).
+ */
+export function stripRedundantProgramErrorIntoStructural(code: string): string {
+  if (!code.includes(".into()")) return code;
+  if (!code.includes("ProgramError")) return code;
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  const edits: Edit[] = [];
+  for (const stmt of parsed.stmts) {
+    walk(stmt, (n) => {
+      if (n.type !== "call_expression") return true;
+      const errFn = n.namedChild(0);
+      const errArgs = n.namedChild(1);
+      if (!errFn || errFn.type !== "identifier" || errFn.text !== "Err") return true;
+      if (!errArgs || errArgs.type !== "arguments" || errArgs.namedChildCount !== 1) return true;
+      const inner = errArgs.namedChild(0);
+      // inner: call_expression(field_expression(<path>, into), arguments())
+      if (!inner || inner.type !== "call_expression") return true;
+      const intoFn = inner.namedChild(0);
+      const intoArgs = inner.namedChild(1);
+      if (!intoFn || intoFn.type !== "field_expression") return true;
+      if (!intoArgs || intoArgs.type !== "arguments" || intoArgs.namedChildCount !== 0) {
+        return true;
+      }
+      const intoRecv = intoFn.namedChild(0);
+      const intoField = intoFn.namedChild(1);
+      if (!intoRecv) return true;
+      if (!intoField || intoField.type !== "field_identifier" || intoField.text !== "into") {
+        return true;
+      }
+      // intoRecv is the ProgramError::X path, optionally with (args).
+      // Two shapes accepted:
+      //   scoped_identifier(ProgramError, X)
+      //   call_expression(scoped_identifier(ProgramError, X), arguments)
+      let pathNode: SyntaxNode = intoRecv;
+      if (pathNode.type === "call_expression") {
+        const inner2 = pathNode.namedChild(0);
+        if (!inner2) return true;
+        pathNode = inner2;
+      }
+      if (pathNode.type !== "scoped_identifier") return true;
+      const modulePart = pathNode.namedChild(0);
+      if (!modulePart || modulePart.type !== "identifier" || modulePart.text !== "ProgramError") {
+        return true;
+      }
+      // Replace the inner call_expression text with its receiver text
+      // (`ProgramError::X` or `ProgramError::X(args)`), wrapped in `Err(...)`.
+      const innerText = code.slice(
+        intoRecv.startIndex - parsed.bodyOffset,
+        intoRecv.endIndex - parsed.bodyOffset,
+      );
+      const start = n.startIndex - parsed.bodyOffset;
+      const end = n.endIndex - parsed.bodyOffset;
+      edits.push({ start, end, replacement: `Err(${innerText})` });
+      return false;
+    });
+  }
+  return applyEdits(code, edits);
+}
+
+// ─── Pass 8d — wrap whole-statement bare Err as `return Err(…);` ────────────
+
+/**
+ * When the ENTIRE pass-through statement is a bare `Err(<Type>::Variant)`
+ * (no `return`, possibly with trailing `;`), wrap it as `return Err(...);`.
+ * Without the `return`, rustc can't bind the `Err`'s generic Ok-type
+ * (E0282 type annotations needed). Mirrors walker regex (lines 1079-1082):
+ *   `^\s*Err\(\s*(\w+(?:::\w+)+)\s*\)\s*;?\s*$`
+ *   → `return Err(...);`
+ *
+ * Anchored — only fires when the whole input is one Err(scoped_path)
+ * statement. Won't grab match arms / Ok|Err patterns in surrounding code.
+ *
+ * AST: parsed.stmts must have exactly one statement that is either:
+ *   - expression_statement(call_expression(identifier(Err), args(scoped_identifier)))
+ *   - bare call_expression(identifier(Err), args(scoped_identifier)) [trailing
+ *     expression of block, no `;`]
+ */
+export function wrapBareErrAsReturnStructural(code: string): string {
+  if (!code.includes("Err(")) return code;
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  if (parsed.stmts.length !== 1) return code;
+  const stmt = parsed.stmts[0]!;
+  let callExpr: SyntaxNode | null = null;
+  if (stmt.type === "expression_statement" && stmt.namedChildCount === 1) {
+    const c = stmt.namedChild(0);
+    if (c?.type === "call_expression") callExpr = c;
+  } else if (stmt.type === "call_expression") {
+    callExpr = stmt;
+  }
+  if (!callExpr) return code;
+  const fn = callExpr.namedChild(0);
+  const args = callExpr.namedChild(1);
+  if (!fn || fn.type !== "identifier" || fn.text !== "Err") return code;
+  if (!args || args.type !== "arguments" || args.namedChildCount !== 1) return code;
+  const argInner = args.namedChild(0);
+  if (!argInner || argInner.type !== "scoped_identifier") return code;
+  // Replace the whole statement's range with `return Err(<path>);`.
+  const pathText = code.slice(
+    argInner.startIndex - parsed.bodyOffset,
+    argInner.endIndex - parsed.bodyOffset,
+  );
+  const start = stmt.startIndex - parsed.bodyOffset;
+  const end = stmt.endIndex - parsed.bodyOffset;
+  return code.slice(0, start) + `return Err(${pathText});` + code.slice(end);
 }
 
 // ─── Verification helper ────────────────────────────────────────────────────

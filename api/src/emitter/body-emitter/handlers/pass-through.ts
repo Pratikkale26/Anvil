@@ -25,6 +25,10 @@ import {
   collapseMultiDerefStructural,
   rewriteStateBoundFieldsStructural,
   rewriteHelperCallsStructural,
+  stripLineCommentsStructural,
+  collapseHelperModulePathsStructural,
+  stripRedundantProgramErrorIntoStructural,
+  wrapBareErrAsReturnStructural,
   type PassContext,
 } from "../pass-through-structural.js";
 
@@ -118,8 +122,21 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // structural caught. Regex still handles the patterns S5a doesn't port
   // (state-bound field reads, bare/&/&mut/&* ctx.accounts.X reference
   // forms, ctx.accounts.X.key chains) — those defer to S5b/S6.
+  // M5d Session 8 — 4 cleanup passes from transformNestedAnchorCode:
+  // line-comment strip, helper module-collapse, ProgramError.into() cleanup,
+  // bare-Err → return Err. Order matches the regex panel's sequence so
+  // when walker.transformNestedAnchorCode runs after, the equivalent
+  // regex-side transforms see already-clean text and fall through.
+  const nestedPreCleanup = wrapBareErrAsReturnStructural(
+    stripRedundantProgramErrorIntoStructural(
+      collapseHelperModulePathsStructural(
+        stripLineCommentsStructural(bumpAdjustedRawCode),
+        structuralCtx,
+      ),
+    ),
+  );
   const ctxLeafRewritten = transformCtxAccountsStructural(
-    w.transformNestedAnchorCode(bumpAdjustedRawCode),
+    w.transformNestedAnchorCode(nestedPreCleanup),
     structuralCtx,
   );
   // M5d Session 5b — `ctx.accounts.X` reference forms (4 shapes:
@@ -386,6 +403,7 @@ function buildPassContext(w: BodyWalker): PassContext {
     tokenLikeAccounts: buildTokenLikeAccountsSet(w),
     helperMutRefNames: w.helperMutRefNames,
     stateVarNames: buildStateVarNamesSet(w),
+    helperFnNames: new Set((w.ir.helperFns ?? []).map((h) => h.name)),
   };
 }
 
