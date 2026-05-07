@@ -108,6 +108,19 @@ function emitT22Invoke(accountsList: string, signerSeeds: string | undefined): s
         pinocchio::cpi::invoke_signed(&__t22_ix, &[${accountsList}], &[__t22_signer])?;`;
 }
 
+// Maps a parsed `state:` expression for DefaultAccountState init/update to
+// its repr(u8) byte value when the source uses one of the canonical
+// `&AccountState::X` / `AccountState::X` literals. Returns null on any
+// non-literal expression so the emit can fall back to TODO commentout
+// rather than guess at a byte for an unknown variable.
+function mapAccountStateLiteralToByte(expr: string): number | null {
+  const stripped = expr.trim().replace(/^&\s*/, "").trim();
+  if (stripped === "AccountState::Uninitialized") return 0;
+  if (stripped === "AccountState::Initialized") return 1;
+  if (stripped === "AccountState::Frozen") return 2;
+  return null;
+}
+
 // See native-emitter.ts for rationale; mirrored list of standard impl names.
 const STANDARD_IMPL_NAMES = [
   "DISCRIMINATOR", "INIT_SPACE", "LEN", "TOTAL_LEN", "SPACE", "SIZE",
@@ -966,20 +979,41 @@ ${invokeCall}
     mint: string,
     _tokenProgram: string,
     state: string,
-    _signerSeeds?: string,
+    signerSeeds?: string,
   ): string {
-    // DefaultAccountState requires spl_token_2022::state::AccountState
-    // (repr(u8)) to extract the state byte. Pinocchio is no_std and
-    // doesn't have that type in scope. Anchor users typically pass
-    // either a literal `&AccountState::X` or a variable; converting
-    // a variable to u8 without the enum type is unsafe pointer-cast
-    // territory. Emit TODO commentout — Native target has the typed
-    // emit; Pinocchio users hand-write the byte value if needed.
-    return `    // ⚠️ Anvil TODO: default_account_state_initialize(${mint}, state=${state})
-    //   Pinocchio lacks spl_token_2022::state::AccountState; convert
-    //   state to a u8 manually (Uninitialized=0, Initialized=1, Frozen=2)
-    //   and hand-roll discriminator 28+0 + 1-byte payload. Native target
-    //   has the typed emit fully wired.`;
+    // DefaultAccountStateExtension(28) → Initialize(0). Payload: 1 byte
+    // state value. Total: 3 bytes.
+    const stateByte = mapAccountStateLiteralToByte(state);
+    if (stateByte === null) {
+      return `    // ⚠️ Anvil TODO: default_account_state_initialize(${mint}, state=${state})
+    //   Pinocchio path supports literal &AccountState::{Uninitialized,Initialized,Frozen};
+    //   the source uses a non-literal expression. Hand-roll the u8 byte if needed.`;
+    }
+    const invokeCall = signerSeeds
+      ? `        let __dasi_seed_refs = ${signerSeeds}[0];
+        let mut __dasi_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__dasi_i, __dasi_s) in __dasi_seed_refs.iter().enumerate() {
+            if __dasi_i >= __dasi_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __dasi_pda_seeds[__dasi_i] = pinocchio::instruction::Seed::from(*__dasi_s);
+        }
+        let __dasi_signer = pinocchio::instruction::Signer::from(&__dasi_pda_seeds[..__dasi_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__dasi_ix, &[${mint}], &[__dasi_signer])?;`
+      : `        pinocchio::cpi::invoke(&__dasi_ix, &[${mint}])?;`;
+    return `    // Token-2022 DefaultAccountState extension init — ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __dasi_data: [u8; 3] = [28, 0, ${stateByte}];
+        let __dasi_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+        ];
+        let __dasi_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__dasi_metas,
+            data: &__dasi_data,
+        };
+${invokeCall}
+    }`;
   }
 
   override emitT22DefaultAccountStateUpdate(
@@ -987,12 +1021,42 @@ ${invokeCall}
     _tokenProgram: string,
     freezeAuthority: string,
     state: string,
-    _signerSeeds?: string,
+    signerSeeds?: string,
   ): string {
-    return `    // ⚠️ Anvil TODO: default_account_state_update(${mint}, authority=${freezeAuthority}, state=${state})
-    //   Pinocchio lacks spl_token_2022::state::AccountState; same gap
-    //   as default_account_state_initialize. Native has typed emit;
-    //   Pinocchio users hand-write the discriminator 28+1 + 1-byte payload.`;
+    // DefaultAccountStateExtension(28) → Update(1). Same payload shape
+    // as Initialize plus the freeze_authority readonly_signer meta.
+    const stateByte = mapAccountStateLiteralToByte(state);
+    if (stateByte === null) {
+      return `    // ⚠️ Anvil TODO: default_account_state_update(${mint}, authority=${freezeAuthority}, state=${state})
+    //   Pinocchio path supports literal &AccountState::{Uninitialized,Initialized,Frozen};
+    //   the source uses a non-literal expression. Hand-roll the u8 byte if needed.`;
+    }
+    const invokeCall = signerSeeds
+      ? `        let __dasu_seed_refs = ${signerSeeds}[0];
+        let mut __dasu_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__dasu_i, __dasu_s) in __dasu_seed_refs.iter().enumerate() {
+            if __dasu_i >= __dasu_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __dasu_pda_seeds[__dasu_i] = pinocchio::instruction::Seed::from(*__dasu_s);
+        }
+        let __dasu_signer = pinocchio::instruction::Signer::from(&__dasu_pda_seeds[..__dasu_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__dasu_ix, &[${mint}, ${freezeAuthority}], &[__dasu_signer])?;`
+      : `        pinocchio::cpi::invoke(&__dasu_ix, &[${mint}, ${freezeAuthority}])?;`;
+    return `    // Token-2022 DefaultAccountState — update default state on ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __dasu_data: [u8; 3] = [28, 1, ${stateByte}];
+        let __dasu_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${freezeAuthority}.key()),
+        ];
+        let __dasu_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__dasu_metas,
+            data: &__dasu_data,
+        };
+${invokeCall}
+    }`;
   }
 
   override emitT22InterestBearingMintInitialize(

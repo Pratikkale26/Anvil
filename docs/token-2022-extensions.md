@@ -22,7 +22,7 @@ Statuses:
 | InterestBearingMint | Y (init+update_rate) | Y (init+update_rate) | none on base CPIs — Y; init+update_rate differential-gated 2026-05-07 |
 | NonTransferable | Y | Y | `transfer_checked` rejects at program level — Y (rejection round-trips); init differential-gated 2026-05-07 |
 | CpiGuard | partial | partial | restricts which CPI calls a token account permits — Y for permitted ops |
-| DefaultAccountState | TODO (no AccountState type) | Y (init+update) | newly-initialized accounts start frozen — Y for state-aware code; Native init+update differential-gated 2026-05-07; Pinocchio TODO commentout (lacks spl_token_2022::state::AccountState) |
+| DefaultAccountState | Y (init+update) | Y (init+update) | newly-initialized accounts start frozen — Y for state-aware code; init+update differential-gated 2026-05-07 (Pinocchio uses literal-AccountState→u8 mapping for the state byte) |
 | ImmutableOwner | Y | Y | none on base CPIs — Y; init differential-gated 2026-05-07 |
 | PermanentDelegate | partial | partial | `transfer_checked` honors the delegate — Y |
 | MetadataPointer | partial | partial | none on base CPIs — Y |

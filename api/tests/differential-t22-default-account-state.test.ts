@@ -1,11 +1,9 @@
 /**
  * Token-2022 DefaultAccountState differential — EM2 Session 3.
  * Validates cpi_t22_default_account_state_initialize +
- * cpi_t22_default_account_state_update.
- *
- * Pinocchio side: BOTH instructions are TODO commentouts (pinocchio
- * lacks spl_token_2022::state::AccountState; converting the state to
- * a u8 byte requires the type). Test runs against Anchor + Anvil-Native.
+ * cpi_t22_default_account_state_update on BOTH targets — Pinocchio
+ * uses hand-rolled discriminator 28+0/28+1 + 1-byte state payload
+ * with literal AccountState::* mapped statically to u8 bytes.
  *
  * Setup: allocate mint with DefaultAccountState extension space, run
  * make_frozen_default + initialize_mint + unfreeze_default. Compare
@@ -48,10 +46,9 @@ defineDifferential({
   anchorSource: readFileSync(SRC, "utf-8"),
   anchorPackageName: "t22_das_anchor_diff",
   anchorExtraDeps: 'anchor-spl = { version = "0.31", features = ["token_2022"] }',
-  // Pinocchio path TODO commentouts both DefaultAccountState CPIs
-  // (lacks spl_token_2022::state::AccountState); exercise Native only
-  // for the byte-equal compare.
-  anvilTarget: "native",
+  // Default Pinocchio target now that the typed emit lands (was "native"
+  // when DefaultAccountState was a TODO commentout). Native cargo-build
+  // coverage remains via cargo-build-real-anvil.test.ts on the demo.
 
   setup: async () => ({ payer: Keypair.generate(), mint: Keypair.generate() }),
 
