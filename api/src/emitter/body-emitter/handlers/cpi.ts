@@ -25,6 +25,8 @@ type CpiT22DefaultAccountStateUpdate = Extract<BodyStatement, { kind: "cpi_t22_d
 type CpiT22InterestBearingMintInit = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_initialize" }>;
 type CpiT22InterestBearingMintUpdateRate = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_update_rate" }>;
 type CpiT22TokenMetadataInit = Extract<BodyStatement, { kind: "cpi_t22_token_metadata_initialize" }>;
+type CpiT22TokenMetadataUpdateField = Extract<BodyStatement, { kind: "cpi_t22_token_metadata_update_field" }>;
+type CpiT22TokenMetadataUpdateAuthority = Extract<BodyStatement, { kind: "cpi_t22_token_metadata_update_authority" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -443,6 +445,51 @@ export function handleCpiT22TokenMetadataInit(
       stmt.name,
       stmt.symbol,
       stmt.uri,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22TokenMetadataUpdateField(
+  w: BodyWalker,
+  stmt: CpiT22TokenMetadataUpdateField,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: token_metadata_update_field(${stmt.metadata})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.updateAuthority)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitT22TokenMetadataUpdateField(
+      snakeCase(stmt.metadata),
+      snakeCase(stmt.updateAuthority),
+      snakeCase(stmt.tokenProgram),
+      stmt.field,
+      stmt.value,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22TokenMetadataUpdateAuthority(
+  w: BodyWalker,
+  stmt: CpiT22TokenMetadataUpdateAuthority,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: token_metadata_update_authority(${stmt.metadata})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.currentAuthority)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitT22TokenMetadataUpdateAuthority(
+      snakeCase(stmt.metadata),
+      snakeCase(stmt.currentAuthority),
+      snakeCase(stmt.tokenProgram),
+      stmt.newAuthority,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ),
   );

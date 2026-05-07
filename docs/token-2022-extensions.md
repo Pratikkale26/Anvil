@@ -26,7 +26,7 @@ Statuses:
 | ImmutableOwner | Y | Y | none on base CPIs — Y; init differential-gated 2026-05-07 |
 | PermanentDelegate | partial | partial | `transfer_checked` honors the delegate — Y |
 | MetadataPointer | partial | partial | none on base CPIs — Y |
-| TokenMetadata | Y (init) | Y (init) | none on base CPIs — Y; init differential-gated 2026-05-07 (Pinocchio uses precomputed sha256 disc + Borsh-strings into 1024-byte stack buffer) |
+| TokenMetadata | Y (init+update_field+update_authority) | Y (init+update_field+update_authority) | none on base CPIs — Y; init+update_field+update_authority differential-gated 2026-05-07 across both targets via 4-instruction byte-equal harness exercising Field::Name + Field::Key("...") + OptionalNonZeroPubkey::None |
 | GroupPointer / MemberPointer | partial | partial | none on base CPIs — Y |
 | TransferHook | partial | partial | base `transfer_checked` triggers the hook program — Y if hook program is co-deployed |
 | ConfidentialTransferMint | lint | lint | requires zk-proofs path; `transfer_checked` doesn't apply to encrypted balances |

@@ -618,6 +618,54 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // Token-2022 spl-token-metadata-interface: UpdateField. Updates one of
+  // the metadata fields (Name | Symbol | Uri | Key(<custom>)). Discriminator
+  // is sha256("spl_token_metadata_interface:updating_field")[..8] =
+  // [221, 233, 49, 45, 181, 202, 220, 200]. Wire payload is Borsh-encoded
+  // Field enum (variant byte + optional Borsh-string for Key) followed by
+  // the Borsh-encoded value String. Native uses the
+  // spl_token_metadata_interface::instruction::update_field helper;
+  // Pinocchio statically maps Field::{Name,Symbol,Uri,Key("...")} literal
+  // expressions to byte sequences (TODO commentout fallback for non-literal).
+  z.object({
+    kind: z.literal("cpi_t22_token_metadata_update_field"),
+    /** AccountInfo binding for the metadata account (often = mint). */
+    metadata: z.string(),
+    /** AccountInfo binding for the update_authority signer. */
+    updateAuthority: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    /** Raw expression for the field (typically a Field enum value). */
+    field: z.string(),
+    /** Raw expression for the new value (typically `String`). */
+    value: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // Token-2022 spl-token-metadata-interface: UpdateAuthority. Rotates the
+  // metadata's update_authority. Discriminator is
+  // sha256("spl_token_metadata_interface:update_the_authority")[..8] =
+  // [215, 228, 166, 228, 84, 100, 86, 123]. Wire payload is the
+  // OptionalNonZeroPubkey form: 32 bytes always — zero-filled means None,
+  // otherwise the pubkey bytes. Native uses the
+  // spl_token_metadata_interface::instruction::update_authority helper;
+  // Pinocchio recognises `OptionalNonZeroPubkey::try_from(None)?` and
+  // `OptionalNonZeroPubkey::try_from(Some(<pk>))?` literal patterns +
+  // emits the corresponding 32-byte payload (TODO commentout for any
+  // non-literal expression).
+  z.object({
+    kind: z.literal("cpi_t22_token_metadata_update_authority"),
+    /** AccountInfo binding for the metadata account (often = mint). */
+    metadata: z.string(),
+    /** AccountInfo binding for the current_authority signer. */
+    currentAuthority: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    /** Raw expression for the new authority (OptionalNonZeroPubkey). */
+    newAuthority: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: create_metadata_accounts_v3.
   // First-class IR slot for the Metaplex CPI catalog (#29). Today the
   // emitter still falls back to the walker.ts regex stub for actual

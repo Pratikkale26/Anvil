@@ -50,6 +50,8 @@ import {
   handleCpiT22InterestBearingMintInit,
   handleCpiT22InterestBearingMintUpdateRate,
   handleCpiT22TokenMetadataInit,
+  handleCpiT22TokenMetadataUpdateField,
+  handleCpiT22TokenMetadataUpdateAuthority,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -263,6 +265,8 @@ export class BodyWalker {
         case "cpi_t22_interest_bearing_mint_initialize": handleCpiT22InterestBearingMintInit(this, stmt); break;
         case "cpi_t22_interest_bearing_mint_update_rate": handleCpiT22InterestBearingMintUpdateRate(this, stmt); break;
         case "cpi_t22_token_metadata_initialize": handleCpiT22TokenMetadataInit(this, stmt); break;
+        case "cpi_t22_token_metadata_update_field": handleCpiT22TokenMetadataUpdateField(this, stmt); break;
+        case "cpi_t22_token_metadata_update_authority": handleCpiT22TokenMetadataUpdateAuthority(this, stmt); break;
         case "cpi_ata_create": handleCpiAtaCreate(this, stmt); break;
         case "cpi_memo": handleCpiMemo(this, stmt); break;
         case "cpi_custom": handleCpiCustom(this, stmt); break;

@@ -157,7 +157,11 @@ function extractUsedCrates(ir: SolanaIR): Set<string> {
       // EM2: typed IR kinds whose Native emit references external
       // crates that don't appear textually in source-side fields.
       // Without this hint, scaffolding misses the dep.
-      if (stmt.kind === "cpi_t22_token_metadata_initialize") {
+      if (
+        stmt.kind === "cpi_t22_token_metadata_initialize" ||
+        stmt.kind === "cpi_t22_token_metadata_update_field" ||
+        stmt.kind === "cpi_t22_token_metadata_update_authority"
+      ) {
         seen.add("spl_token_metadata_interface");
       }
     }

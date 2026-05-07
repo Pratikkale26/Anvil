@@ -613,6 +613,8 @@ import {
   handleCpiT22InterestBearingMintInit,
   handleCpiT22InterestBearingMintUpdateRate,
   handleCpiT22TokenMetadataInit,
+  handleCpiT22TokenMetadataUpdateField,
+  handleCpiT22TokenMetadataUpdateAuthority,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -660,6 +662,8 @@ type CpiT22DefaultAccountStateUpdate = Extract<BodyStatement, { kind: "cpi_t22_d
 type CpiT22InterestBearingMintInit = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_initialize" }>;
 type CpiT22InterestBearingMintUpdateRate = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_update_rate" }>;
 type CpiT22TokenMetadataInit = Extract<BodyStatement, { kind: "cpi_t22_token_metadata_initialize" }>;
+type CpiT22TokenMetadataUpdateField = Extract<BodyStatement, { kind: "cpi_t22_token_metadata_update_field" }>;
+type CpiT22TokenMetadataUpdateAuthority = Extract<BodyStatement, { kind: "cpi_t22_token_metadata_update_authority" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -709,6 +713,8 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_t22_interest_bearing_mint_initialize",
   "cpi_t22_interest_bearing_mint_update_rate",
   "cpi_t22_token_metadata_initialize",
+  "cpi_t22_token_metadata_update_field",
+  "cpi_t22_token_metadata_update_authority",
   "cpi_ata_create",
   "cpi_memo",
   "cpi_custom",
@@ -771,6 +777,10 @@ export class AstVisitorBase {
         return this.visitCpiT22InterestBearingMintUpdateRate(stmt);
       case "cpi_t22_token_metadata_initialize":
         return this.visitCpiT22TokenMetadataInit(stmt);
+      case "cpi_t22_token_metadata_update_field":
+        return this.visitCpiT22TokenMetadataUpdateField(stmt);
+      case "cpi_t22_token_metadata_update_authority":
+        return this.visitCpiT22TokenMetadataUpdateAuthority(stmt);
       case "cpi_ata_create":       return this.visitCpiAtaCreate(stmt);
       case "cpi_memo":             return this.visitCpiMemo(stmt);
       case "cpi_custom":           return this.visitCpiCustom(stmt);
@@ -2200,6 +2210,14 @@ export class AstVisitorBase {
 
   visitCpiT22TokenMetadataInit(stmt: CpiT22TokenMetadataInit): RustStmt[] {
     return this.captureAndConvert(handleCpiT22TokenMetadataInit, stmt);
+  }
+
+  visitCpiT22TokenMetadataUpdateField(stmt: CpiT22TokenMetadataUpdateField): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22TokenMetadataUpdateField, stmt);
+  }
+
+  visitCpiT22TokenMetadataUpdateAuthority(stmt: CpiT22TokenMetadataUpdateAuthority): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22TokenMetadataUpdateAuthority, stmt);
   }
 
   /**

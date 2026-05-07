@@ -171,6 +171,12 @@ export function detectCpi(
   if (funcText.includes("token_metadata_initialize")) {
     return extractT22TokenMetadataInitialize(callNode, collector);
   }
+  if (funcText.includes("token_metadata_update_field")) {
+    return extractT22TokenMetadataUpdateField(callNode, collector);
+  }
+  if (funcText.includes("token_metadata_update_authority")) {
+    return extractT22TokenMetadataUpdateAuthority(callNode, collector);
+  }
 
   // ── SPL Token transfer ──
   if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
@@ -1326,6 +1332,108 @@ function extractT22TokenMetadataInitialize(
     name,
     symbol,
     uri,
+    signerSeeds,
+  };
+}
+
+// Anchor source shape:
+//   token_metadata_update_field(
+//       CpiContext::new(token_program, TokenMetadataUpdateField {
+//           token_program_id, metadata, update_authority,
+//       }),
+//       field, value,
+//   )?;
+function extractT22TokenMetadataUpdateField(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 token_metadata_update_field", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(collector, "T22 token_metadata_update_field (var-bound CpiContext)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let metadata = "metadata";
+  let updateAuthority = "update_authority";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    metadata = extractStructField(accountsStruct, "metadata") ?? metadata;
+    updateAuthority = extractStructField(accountsStruct, "update_authority") ?? updateAuthority;
+    tokenProgram =
+      extractStructField(accountsStruct, "program_id") ??
+      extractStructField(accountsStruct, "token_program_id") ??
+      tokenProgram;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  const field = args[1]?.text.trim() ?? "";
+  const value = args[2]?.text.trim() ?? "String::new()";
+  return {
+    kind: "cpi_t22_token_metadata_update_field",
+    metadata: cleanAccountRef(metadata),
+    updateAuthority: cleanAccountRef(updateAuthority),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    field,
+    value,
+    signerSeeds,
+  };
+}
+
+// Anchor source shape:
+//   token_metadata_update_authority(
+//       CpiContext::new(token_program, TokenMetadataUpdateAuthority {
+//           token_program_id, metadata, current_authority, new_authority,
+//       }),
+//       new_authority_key,  // OptionalNonZeroPubkey
+//   )?;
+// new_authority is captured as the AccountInfo binding (the on-chain account
+// that may or may not be the new authority); new_authority_key is the
+// OptionalNonZeroPubkey value passed as the function arg. The Native target
+// only uses new_authority_key (passes it to the spl helper); Pinocchio
+// recognises literal `OptionalNonZeroPubkey::try_from(...)` patterns and
+// emits the corresponding 32-byte payload.
+function extractT22TokenMetadataUpdateAuthority(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 token_metadata_update_authority", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(collector, "T22 token_metadata_update_authority (var-bound CpiContext)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let metadata = "metadata";
+  let currentAuthority = "current_authority";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    metadata = extractStructField(accountsStruct, "metadata") ?? metadata;
+    currentAuthority = extractStructField(accountsStruct, "current_authority") ?? currentAuthority;
+    tokenProgram =
+      extractStructField(accountsStruct, "program_id") ??
+      extractStructField(accountsStruct, "token_program_id") ??
+      tokenProgram;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  const newAuthority = args[1]?.text.trim() ?? "OptionalNonZeroPubkey::try_from(None)?";
+  return {
+    kind: "cpi_t22_token_metadata_update_authority",
+    metadata: cleanAccountRef(metadata),
+    currentAuthority: cleanAccountRef(currentAuthority),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    newAuthority,
     signerSeeds,
   };
 }

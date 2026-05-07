@@ -283,6 +283,34 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // TokenMetadata: update one of the metadata fields (Name | Symbol |
+  // Uri | Key(<custom>)). Discriminator sha256("...:updating_field")[..8].
+  // Native uses the spl_token_metadata_interface helper; Pinocchio
+  // statically maps Field::* literal expressions to byte sequences
+  // (TODO commentout fallback for non-literal field expressions).
+  abstract emitT22TokenMetadataUpdateField(
+    metadata: string,
+    updateAuthority: string,
+    tokenProgram: string,
+    field: string,
+    value: string,
+    signerSeeds?: string,
+  ): string;
+
+  // TokenMetadata: rotate the update_authority. Discriminator
+  // sha256("...:update_the_authority")[..8]. Wire payload is
+  // OptionalNonZeroPubkey (32 bytes always — zero-filled = None).
+  // Native uses the spl_token_metadata_interface helper; Pinocchio
+  // recognises `OptionalNonZeroPubkey::try_from(None|Some(...))?`
+  // literal patterns + emits the corresponding 32-byte payload.
+  abstract emitT22TokenMetadataUpdateAuthority(
+    metadata: string,
+    currentAuthority: string,
+    tokenProgram: string,
+    newAuthority: string,
+    signerSeeds?: string,
+  ): string;
+
   abstract emitProgramAccountClose(account: string, destination: string): string;
   abstract emitCreateProgramAccount(
     account: string,
@@ -484,6 +512,14 @@ export abstract class BaseEmitter {
         if (/\bspl_tlv_account_resolution\b/.test(statement)) return false;
         if (/\bspl_transfer_hook_interface\b/.test(statement)) return false;
         if (/\bspl_discriminator\b/.test(statement)) return false;
+        // spl_token_metadata_interface is a Native-target dep
+        // (auto-added by project-scaffold when typed TokenMetadata IR
+        // kinds are present). Pinocchio doesn't ship it — the typed
+        // emit hand-rolls the discriminator+payload using literal
+        // Field::* / OptionalNonZeroPubkey::try_from(...) mapping at
+        // emit time, so the import is unnecessary on the Pinocchio
+        // side and would E0432 if left in.
+        if (!isNative && /\bspl_token_metadata_interface\b/.test(statement)) return false;
         // spl_pod isn't in any scaffold — neither Pinocchio nor Native
         // ship it. Drop on both targets.
         if (/\bspl_pod\b/.test(statement)) return false;

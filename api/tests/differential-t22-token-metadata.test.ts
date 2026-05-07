@@ -58,7 +58,8 @@ defineDifferential({
   programIdBase58: PROGRAM_ID,
   anchorSource: readFileSync(SRC, "utf-8"),
   anchorPackageName: "t22_token_metadata_anchor_diff",
-  anchorExtraDeps: 'anchor-spl = { version = "0.31", features = ["token_2022"] }',
+  anchorExtraDeps: `anchor-spl = { version = "0.31", features = ["token_2022"] }
+spl-token-metadata-interface = "0.6"`,
   // Default Pinocchio target now that the typed emit lands (was "native"
   // when TokenMetadata was a TODO commentout). Native cargo-build
   // coverage remains via cargo-build.test.ts on the demo.
@@ -69,6 +70,8 @@ defineDifferential({
     name: "Anvil Coin",
     symbol: "ANV",
     uri: "https://anvilsol.xyz/em2-test.json",
+    renamed: "Anvil Coin v2",
+    customValue: "anchor-rust+pinocchio",
   }),
 
   callScript: async (svm: LiteSVM, ctx, programId: PublicKey) => {
@@ -82,13 +85,20 @@ defineDifferential({
     // metadata blob size: 4-byte TLV header + 32-byte mint pubkey +
     // 4-byte string length prefix per of (name, symbol, uri) + the
     // string bytes + 4-byte additional_metadata Vec length + slack.
+    // Account for the worst-case post-update string sizes since the
+    // mint is rent-funded once and the variable-length metadata blob
+    // grows with each update_field.
     const baseMintLen = getMintLen([ExtensionType.MetadataPointer]);
     const metadataLen =
       4 + 32 +
-      (4 + ctx.name.length) +
+      (4 + Math.max(ctx.name.length, ctx.renamed.length)) +
       (4 + ctx.symbol.length) +
       (4 + ctx.uri.length) +
-      4 + 64; // 64-byte slack
+      // additional_metadata: u32 Vec len + 1 entry of (u32+key + u32+value)
+      4 +
+      (4 + "anvil_marker".length) +
+      (4 + ctx.customValue.length) +
+      256; // generous slack for TLV alignment
     const mintRent = svm.minimumBalanceForRentExemption(BigInt(baseMintLen));
 
     // 1. Allocate mint + init MetadataPointer + init base mint
@@ -126,28 +136,57 @@ defineDifferential({
     setupTx.sign(ctx.payer, ctx.mint);
     expectOk(svm.sendTransaction(setupTx), "mint + MetadataPointer setup");
 
-    // 2. make_metadata(name, symbol, uri)
-    const ix = new TransactionInstruction({
-      programId,
-      keys: [
-        { pubkey: ctx.payer.publicKey, isSigner: true, isWritable: true },
-        { pubkey: ctx.mint.publicKey, isSigner: false, isWritable: true },
-        { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
-      ],
-      data: Buffer.from(
-        concatBytes(
-          anchorIxDiscriminator("make_metadata"),
-          encodeStringBorsh(ctx.name),
-          encodeStringBorsh(ctx.symbol),
-          encodeStringBorsh(ctx.uri),
+    // Helper: send a single-instruction tx for one of our handlers.
+    // The 3 update instructions all use the same MakeMetadata-shaped
+    // accounts list (payer/update_authority + mint + token_program).
+    const send = (ixName: string, payload: Uint8Array, label: string) => {
+      const ix = new TransactionInstruction({
+        programId,
+        keys: [
+          { pubkey: ctx.payer.publicKey, isSigner: true, isWritable: true },
+          { pubkey: ctx.mint.publicKey, isSigner: false, isWritable: true },
+          { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        data: Buffer.from(
+          concatBytes(anchorIxDiscriminator(ixName), payload),
         ),
+      });
+      const tx = new Transaction().add(ix);
+      tx.recentBlockhash = svm.latestBlockhash();
+      tx.feePayer = ctx.payer.publicKey;
+      tx.sign(ctx.payer);
+      expectOk(svm.sendTransaction(tx), label);
+    };
+
+    // 2. make_metadata(name, symbol, uri)
+    send(
+      "make_metadata",
+      concatBytes(
+        encodeStringBorsh(ctx.name),
+        encodeStringBorsh(ctx.symbol),
+        encodeStringBorsh(ctx.uri),
       ),
-    });
-    const tx = new Transaction().add(ix);
-    tx.recentBlockhash = svm.latestBlockhash();
-    tx.feePayer = ctx.payer.publicKey;
-    tx.sign(ctx.payer);
-    expectOk(svm.sendTransaction(tx), "make_metadata");
+      "make_metadata",
+    );
+
+    // 3. rename(new_name) — exercises Field::Name → byte 0 + Borsh value.
+    send(
+      "rename",
+      encodeStringBorsh(ctx.renamed),
+      "rename",
+    );
+
+    // 4. write_custom_key(value) — exercises Field::Key("anvil_marker") →
+    //    byte 3 + Borsh-encoded key + Borsh-encoded value.
+    send(
+      "write_custom_key",
+      encodeStringBorsh(ctx.customValue),
+      "write_custom_key",
+    );
+
+    // 5. renounce_authority() — exercises OptionalNonZeroPubkey::None
+    //    (32 zero bytes) wire form. Last because it makes metadata immutable.
+    send("renounce_authority", new Uint8Array(0), "renounce_authority");
   },
 
   stripDiscriminator: false,

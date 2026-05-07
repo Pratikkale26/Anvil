@@ -152,7 +152,9 @@ export class NativeEmitter extends BaseEmitter {
         s.kind === "cpi_t22_default_account_state_update" ||
         s.kind === "cpi_t22_interest_bearing_mint_initialize" ||
         s.kind === "cpi_t22_interest_bearing_mint_update_rate" ||
-        s.kind === "cpi_t22_token_metadata_initialize"
+        s.kind === "cpi_t22_token_metadata_initialize" ||
+        s.kind === "cpi_t22_token_metadata_update_field" ||
+        s.kind === "cpi_t22_token_metadata_update_authority"
       )
     );
     const t22NeedsInvoke =
@@ -311,6 +313,12 @@ use solana_program::{
               (s as { transferFeeConfigAuthority: string }).transferFeeConfigAuthority,
               (s as { withdrawWithheldAuthority: string }).withdrawWithheldAuthority,
             ];
+          }
+          if (s.kind === "cpi_t22_token_metadata_update_field") {
+            return [(s as { field: string }).field];
+          }
+          if (s.kind === "cpi_t22_token_metadata_update_authority") {
+            return [(s as { newAuthority: string }).newAuthority];
           }
           return [];
         }),
@@ -848,6 +856,52 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     ${invokeType}(
         &tmi_ix,
         &[${metadata}.clone(), ${updateAuthority}.clone(), ${mint}.clone(), ${mintAuthority}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22TokenMetadataUpdateField(
+    metadata: string,
+    updateAuthority: string,
+    tokenProgram: string,
+    field: string,
+    value: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 TokenMetadata update_field — ${metadata}
+    let tmuf_ix = spl_token_metadata_interface::instruction::update_field(
+        &spl_token_2022::id(),
+        ${metadata}.key,
+        ${updateAuthority}.key,
+        ${field},
+        ${value},
+    );
+    ${invokeType}(
+        &tmuf_ix,
+        &[${metadata}.clone(), ${updateAuthority}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22TokenMetadataUpdateAuthority(
+    metadata: string,
+    currentAuthority: string,
+    tokenProgram: string,
+    newAuthority: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 TokenMetadata update_authority — ${metadata}
+    let tmua_ix = spl_token_metadata_interface::instruction::update_authority(
+        &spl_token_2022::id(),
+        ${metadata}.key,
+        ${currentAuthority}.key,
+        ${newAuthority},
+    );
+    ${invokeType}(
+        &tmua_ix,
+        &[${metadata}.clone(), ${currentAuthority}.clone(), ${tokenProgram}.clone()],${signerArg}
     )?;`;
   }
 
@@ -1642,6 +1696,11 @@ function collectT22ExtensionAutoImports(allCarriedText: string, sourceImportsTex
     // spl_token_2022::state::AccountState; emit code references it via
     // `&AccountState::Frozen` etc. Auto-import so users don't have to.
     { ident: "AccountState", path: "spl_token_2022::state::AccountState" },
+    // EM2 — TokenMetadata update_field uses Field enum; live at
+    // spl_token_metadata_interface::state::Field. Source typically pulls
+    // it in via a `use anchor_spl::token_interface::*` block (filtered
+    // out) or via `use spl_token_metadata_interface::state::Field` direct.
+    { ident: "Field", path: "spl_token_metadata_interface::state::Field" },
   ];
   for (const { ident, path } of extensionTypes) {
     if (!has(new RegExp(`\\b${ident}\\b`))) continue;

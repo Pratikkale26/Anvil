@@ -121,6 +121,50 @@ function mapAccountStateLiteralToByte(expr: string): number | null {
   return null;
 }
 
+// Maps a parsed `field:` expression for token_metadata_update_field to its
+// Borsh-encoded byte sequence. Returns:
+//   - { kind: "fixed", bytes: [N] } for Name/Symbol/Uri (single variant byte)
+//   - { kind: "key", literal: '"foo"' } for Field::Key("foo") (variant byte 3
+//     + Borsh string)
+//   - null for any non-literal expression (TODO commentout fallback)
+type FieldLiteralEncoding =
+  | { kind: "fixed"; byte: number }
+  | { kind: "key"; literal: string };
+function mapFieldLiteralToEncoding(expr: string): FieldLiteralEncoding | null {
+  const stripped = expr.trim().replace(/^&\s*/, "").trim();
+  if (stripped === "Field::Name") return { kind: "fixed", byte: 0 };
+  if (stripped === "Field::Symbol") return { kind: "fixed", byte: 1 };
+  if (stripped === "Field::Uri") return { kind: "fixed", byte: 2 };
+  // Field::Key(<expr>) — capture the inner expression. Used as Rust source
+  // verbatim so it must already be a String-typed expression.
+  const keyMatch = stripped.match(/^Field::Key\(([\s\S]+)\)$/);
+  if (keyMatch && keyMatch[1]) return { kind: "key", literal: keyMatch[1].trim() };
+  return null;
+}
+
+// Maps a parsed `new_authority:` expression for token_metadata_update_authority
+// to its 32-byte payload form. The OptionalNonZeroPubkey wire form is always
+// 32 bytes; zero-filled means None, otherwise the pubkey bytes. Returns:
+//   - { kind: "none" } for OptionalNonZeroPubkey::try_from(None)?
+//   - { kind: "some", pubkeyExpr: "<expr>" } for try_from(Some(<expr>))? where
+//     <expr> evaluates to a Pubkey (Native solana_program::pubkey::Pubkey)
+//   - null for any non-literal expression (TODO commentout fallback)
+type NewAuthorityEncoding =
+  | { kind: "none" }
+  | { kind: "some"; pubkeyExpr: string };
+function mapNewAuthorityLiteralToEncoding(expr: string): NewAuthorityEncoding | null {
+  const stripped = expr.trim();
+  // OptionalNonZeroPubkey::try_from(None)? with optional ? operator.
+  if (/^OptionalNonZeroPubkey::try_from\(\s*None\s*\)\??$/.test(stripped)) {
+    return { kind: "none" };
+  }
+  const someMatch = stripped.match(
+    /^OptionalNonZeroPubkey::try_from\(\s*Some\(([\s\S]+)\)\s*\)\??$/,
+  );
+  if (someMatch && someMatch[1]) return { kind: "some", pubkeyExpr: someMatch[1].trim() };
+  return null;
+}
+
 // See native-emitter.ts for rationale; mirrored list of standard impl names.
 const STANDARD_IMPL_NAMES = [
   "DISCRIMINATOR", "INIT_SPACE", "LEN", "TOTAL_LEN", "SPACE", "SIZE",
@@ -1021,6 +1065,126 @@ ${TOKEN_2022_PROGRAM_ID_CONST}
             data: &__tmi_data[..__tmi_len],
         };
         pinocchio::cpi::invoke(&__tmi_ix, &[${metadata}, ${updateAuthority}, ${mint}, ${mintAuthority}])?;
+    }`;
+  }
+
+  override emitT22TokenMetadataUpdateField(
+    metadata: string,
+    updateAuthority: string,
+    _tokenProgram: string,
+    field: string,
+    value: string,
+    _signerSeeds?: string,
+  ): string {
+    // sha256("spl_token_metadata_interface:updating_field")[..8]
+    //   = [221, 233, 49, 45, 181, 202, 220, 200]
+    // Wire payload: 8-byte disc + Borsh Field enum + Borsh String value.
+    // Field encoding (Borsh):
+    //   Name  → 0x00
+    //   Symbol → 0x01
+    //   Uri   → 0x02
+    //   Key(s)→ 0x03 + u32 LE strlen + UTF-8 bytes
+    const enc = mapFieldLiteralToEncoding(field);
+    if (enc === null) {
+      return `    // ⚠️ Anvil TODO: token_metadata_update_field(metadata=${metadata}, field=${field}, value=${value})
+    //   Pinocchio path supports literal Field::{Name,Symbol,Uri,Key("...")};
+    //   the source uses a non-literal expression. Hand-roll the disc+payload
+    //   if needed.`;
+    }
+    // Field-encoding block written into the buffer right after the 8-byte disc.
+    // For Field::Key("..."), bind the inner expression to a named local
+    // first so a String temporary (e.g. `String::from("foo")`) outlives
+    // the .as_bytes() borrow (E0716 otherwise).
+    const fieldBlock = enc.kind === "fixed"
+      ? `        __tmuf_data[__tmuf_len] = ${enc.byte};
+        __tmuf_len += 1;`
+      : `        __tmuf_data[__tmuf_len] = 3;
+        __tmuf_len += 1;
+        let __tmuf_key_owned = ${enc.literal};
+        let __tmuf_key_bytes = __tmuf_key_owned.as_bytes();
+        if __tmuf_len + 4 + __tmuf_key_bytes.len() > __tmuf_data.len() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        __tmuf_data[__tmuf_len..__tmuf_len + 4]
+            .copy_from_slice(&(__tmuf_key_bytes.len() as u32).to_le_bytes());
+        __tmuf_len += 4;
+        __tmuf_data[__tmuf_len..__tmuf_len + __tmuf_key_bytes.len()]
+            .copy_from_slice(__tmuf_key_bytes);
+        __tmuf_len += __tmuf_key_bytes.len();`;
+    return `    // Token-2022 TokenMetadata update_field — ${metadata}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        // sha256("spl_token_metadata_interface:updating_field")[..8]
+        const __TMUF_DISC: [u8; 8] = [221, 233, 49, 45, 181, 202, 220, 200];
+        let mut __tmuf_data = [0u8; 1024];
+        let mut __tmuf_len: usize = 0;
+        __tmuf_data[..8].copy_from_slice(&__TMUF_DISC);
+        __tmuf_len = 8;
+${fieldBlock}
+        // Borsh String value: u32 LE length prefix + UTF-8 bytes.
+        let __tmuf_value_bytes = ${value}.as_bytes();
+        if __tmuf_len + 4 + __tmuf_value_bytes.len() > __tmuf_data.len() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        __tmuf_data[__tmuf_len..__tmuf_len + 4]
+            .copy_from_slice(&(__tmuf_value_bytes.len() as u32).to_le_bytes());
+        __tmuf_len += 4;
+        __tmuf_data[__tmuf_len..__tmuf_len + __tmuf_value_bytes.len()]
+            .copy_from_slice(__tmuf_value_bytes);
+        __tmuf_len += __tmuf_value_bytes.len();
+        let __tmuf_metas = [
+            pinocchio::instruction::AccountMeta::writable(${metadata}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${updateAuthority}.key()),
+        ];
+        let __tmuf_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__tmuf_metas,
+            data: &__tmuf_data[..__tmuf_len],
+        };
+        pinocchio::cpi::invoke(&__tmuf_ix, &[${metadata}, ${updateAuthority}])?;
+    }`;
+  }
+
+  override emitT22TokenMetadataUpdateAuthority(
+    metadata: string,
+    currentAuthority: string,
+    _tokenProgram: string,
+    newAuthority: string,
+    _signerSeeds?: string,
+  ): string {
+    // sha256("spl_token_metadata_interface:update_the_authority")[..8]
+    //   = [215, 228, 166, 228, 84, 100, 86, 123]
+    // Wire payload: 8-byte disc + 32-byte OptionalNonZeroPubkey (zeros = None).
+    const enc = mapNewAuthorityLiteralToEncoding(newAuthority);
+    if (enc === null) {
+      return `    // ⚠️ Anvil TODO: token_metadata_update_authority(metadata=${metadata}, new_authority=${newAuthority})
+    //   Pinocchio path supports literal OptionalNonZeroPubkey::try_from(None|Some(<pk>))?;
+    //   the source uses a non-literal expression. Hand-roll the disc+32-byte payload
+    //   if needed.`;
+    }
+    const payloadBlock = enc.kind === "none"
+      ? `        // None — bytes 8..40 already zero-initialised`
+      : `        // Some(pk) — copy 32 pubkey bytes
+        let __tmua_pk_bytes: &[u8; 32] = (${enc.pubkeyExpr}).as_ref();
+        __tmua_data[8..40].copy_from_slice(__tmua_pk_bytes);`;
+    return `    // Token-2022 TokenMetadata update_authority — ${metadata}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        // sha256("spl_token_metadata_interface:update_the_authority")[..8]
+        const __TMUA_DISC: [u8; 8] = [215, 228, 166, 228, 84, 100, 86, 123];
+        let mut __tmua_data = [0u8; 40];
+        __tmua_data[..8].copy_from_slice(&__TMUA_DISC);
+${payloadBlock}
+        let __tmua_metas = [
+            pinocchio::instruction::AccountMeta::writable(${metadata}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${currentAuthority}.key()),
+        ];
+        let __tmua_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__tmua_metas,
+            data: &__tmua_data,
+        };
+        pinocchio::cpi::invoke(&__tmua_ix, &[${metadata}, ${currentAuthority}])?;
     }`;
   }
 
