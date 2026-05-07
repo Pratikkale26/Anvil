@@ -589,6 +589,88 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       if (innerExpr === null) return null;
       return parenExpr(innerExpr);
     }
+    case "macro_invocation": {
+      // `name!(args)` / `name![args]` / `name!{args}`. tree-sitter
+      // exposes the macro name as the first named child (an identifier
+      // or scoped_identifier) and the arguments as a `token_tree` named
+      // child whose inner text is bracket-wrapped (`[...]`, `(...)`, or
+      // `{...}`).
+      //
+      // Strategy:
+      //   1. Identify delim from the first/last char of token_tree.text.
+      //   2. Strip the outer bracket and split the inner text on
+      //      top-level `,` (depth-aware on parens/brackets/braces +
+      //      string-literals). Bail if any top-level `;` shows up
+      //      (vec![value; count] repeat form — no comma-list AST).
+      //   3. Parse each part via tryStructuralizeExpr (recursive
+      //      tree-sitter parse). Bail on null.
+      //   4. Empty list yields macro_call(name, [], delim).
+      const nameNode = node.namedChild(0);
+      if (!nameNode) return null;
+      const macroName = nameNode.text;
+      // Find the token_tree child.
+      let tt: SyntaxNode | null = null;
+      for (let i = 1; i < node.namedChildCount; i++) {
+        const c = node.namedChild(i);
+        if (c && c.type === "token_tree") { tt = c; break; }
+      }
+      if (!tt) return null;
+      const ttText = tt.text;
+      if (ttText.length < 2) return null;
+      const open = ttText[0];
+      const close = ttText[ttText.length - 1];
+      if (
+        !((open === "(" && close === ")") ||
+          (open === "[" && close === "]") ||
+          (open === "{" && close === "}"))
+      ) return null;
+      const inner = ttText.slice(1, -1).trim();
+      if (inner.length === 0) {
+        return { kind: "macro_call", name: macroName, args: [], delim: open };
+      }
+      // Depth-aware split. First pass: detect whether the top-level
+      // separator is `,` or `;` (vec! repeat form). Mixed separators
+      // bail to rawExpr fallback.
+      const parts: string[] = [];
+      let separator: "," | ";" | null = null;
+      let depth = 0;
+      let inStr: '"' | "'" | null = null;
+      let start = 0;
+      for (let k = 0; k < inner.length; k++) {
+        const c = inner[k];
+        if (inStr) {
+          if (c === "\\") { k++; continue; }
+          if (c === inStr) inStr = null;
+          continue;
+        }
+        if (c === '"' || c === "'") { inStr = c; continue; }
+        if (c === "(" || c === "[" || c === "{") depth++;
+        else if (c === ")" || c === "]" || c === "}") depth--;
+        else if ((c === "," || c === ";") && depth === 0) {
+          // First top-level separator wins; subsequent must match.
+          if (separator === null) separator = c;
+          else if (separator !== c) return null;
+          parts.push(inner.slice(start, k));
+          start = k + 1;
+        }
+      }
+      const tail = inner.slice(start).trim();
+      if (tail.length > 0) parts.push(tail);
+      const args: RustExpr[] = [];
+      for (const p of parts) {
+        const t = p.trim();
+        if (t.length === 0) continue;
+        const arg = tryStructuralizeExpr(t);
+        if (arg === null) return null;
+        args.push(arg);
+      }
+      // `;` separator is only valid in vec![value; count] shape (exactly
+      // 2 args). Reject pathological inputs.
+      if (separator === ";" && args.length !== 2) return null;
+      return separator === ";"
+        ? { kind: "macro_call", name: macroName, args, delim: open, separator: ";" }
+        : { kind: "macro_call", name: macroName, args, delim: open };
+    }
     case "unary_expression": {
       // `*expr` (deref) / `!expr` (not) / `-expr` (negation). The
       // operator is in an unnamed child; the operand is the named

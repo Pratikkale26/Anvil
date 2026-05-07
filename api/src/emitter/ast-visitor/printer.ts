@@ -180,8 +180,11 @@ export function printExpr(expr: RustExpr, indent?: string): string {
     case "path":
       return expr.segments.join("::");
     case "macro_call": {
-      const args = expr.args.map((a) => printExpr(a, indent)).join(", ");
-      return `${expr.name}!(${args})`;
+      const sep = expr.separator ?? ",";
+      const args = expr.args.map((a) => printExpr(a, indent)).join(`${sep} `);
+      const open = expr.delim ?? "(";
+      const close = open === "(" ? ")" : open === "[" ? "]" : "}";
+      return `${expr.name}!${open}${args}${close}`;
     }
     case "array": {
       if (expr.multiLine && indent !== undefined) {

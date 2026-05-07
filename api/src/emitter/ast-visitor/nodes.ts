@@ -146,7 +146,17 @@ export type RustExpr =
    * in Rust have a `!` between the name and the args; modeling them as
    * regular calls would mis-print as `name(args)`. Only Anchor's `msg!`
    * + sibling logging macros use this today. */
-  | { kind: "macro_call"; name: string; args: RustExpr[] }
+  /**
+   * Macro invocation `name!(args)`. `delim` controls the bracket form:
+   * default `(` for the conventional `msg!("...")`, `panic!()` shape;
+   * `[` for the `vec![item, item, ...]` style. `separator` controls
+   * how multi-arg invocations are joined — default `","` for the
+   * standard form, `";"` for the `vec![value; count]` repeat form
+   * (always exactly 2 args). Both delim and separator forms are
+   * valid Rust syntax and parse identically, but byte-equality
+   * requires preserving the source's chosen form.
+   */
+  | { kind: "macro_call"; name: string; args: RustExpr[]; delim?: "(" | "[" | "{"; separator?: "," | ";" }
   /**
    * Array literal — `[a, b, c]` or `[]`. Used for CPI account-list
    * args (`accounts: &[]` in pinocchio's cpi_memo) and for the
@@ -268,8 +278,8 @@ export function tryPostfix(expr: RustExpr): RustExpr {
 export function path(segments: string[]): RustExpr {
   return { kind: "path", segments };
 }
-export function macroCall(name: string, args: RustExpr[]): RustExpr {
-  return { kind: "macro_call", name, args };
+export function macroCall(name: string, args: RustExpr[], delim?: "(" | "[" | "{"): RustExpr {
+  return delim ? { kind: "macro_call", name, args, delim } : { kind: "macro_call", name, args };
 }
 export function array(items: RustExpr[]): RustExpr {
   return { kind: "array", items };

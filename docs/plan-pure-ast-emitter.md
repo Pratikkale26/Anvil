@@ -438,6 +438,15 @@ The bigger structural-port opportunities now live OUTSIDE pass_through:
   shape as require's binary+unary expression, now caught by tree-sitter
   thanks to the unary_expression case. Cascaded into ~10 raw_node
   ripple drops in adjacent paths. 10th kind PURE structural ★.
+- ✅ state_field_assign — was 16 raw_exprs, now **0 PURE structural ★** after
+  the 2026-05-07 port. The 16 became 6 from the unary_expression cascade;
+  the residual 6 were `vec![]` and `vec![value; count]` macro_invocations
+  whose tree-sitter shape exprFromNode didn't recognize. Added
+  `macro_invocation` case to the converter + extended `macro_call` AST
+  with `delim?: "(" | "[" | "{"` (preserves the `[]` style) and
+  `separator?: "," | ";"` (handles `vec![false; len]` repeat form).
+  Closes pass_through residual `vec![source]` too. 11th kind PURE
+  structural ★.
 
 These are deterministic-shape and would benefit from per-kind structural
 ports following the same template. Each is ~3-5 hrs.
