@@ -76,6 +76,7 @@ import {
   notExpr,
   array,
   arrayMultiLine,
+  closureExpr,
   block,
   constDecl,
   mlCall,
@@ -144,7 +145,10 @@ function parseEvtStructFields(text: string): { name: string; value: RustExpr; sh
     const name = t.slice(0, colonIdx).trim();
     const valueText = t.slice(colonIdx + 1).trim();
     if (!/^[A-Za-z_]\w*$/.test(name)) return null;
-    out.push({ name, value: parseSimpleExpr(valueText) });
+    // Tree-sitter first (handles `as` casts, complex method chains, etc.);
+    // parseSimpleExpr fallback covers shapes tree-sitter punts on or
+    // when the parser isn't ready yet.
+    out.push({ name, value: tryStructuralizeExpr(valueText) ?? parseSimpleExpr(valueText) });
   }
   return out;
 }
@@ -1523,9 +1527,9 @@ export class AstVisitorBase {
     //       <log_path>::sol_log_data(&[&__evt_payload]);
     //   }
     //
-    // Closure `|_| ProgramError::InvalidAccountData` isn't in the AST
-    // yet — wrapped in rawExpr inside a methodCall for map_err. The
-    // event struct literal becomes a structural evtStructLiteral
+    // Closure `|_| ProgramError::InvalidAccountData` is now a
+    // structural closure(paramsText, path) node (M5 port 2026-05-07).
+    // The event struct literal becomes a structural evtStructLiteral
     // (firstOnOpen layout matches handleEmit's quirky output exactly).
     // Field-text transforms mirror handleEmit (transformCtxAccounts +
     // transformAccountReferences) so values like `ctx.accounts.X.key()`
@@ -1546,7 +1550,7 @@ export class AstVisitorBase {
             methodCall(
               call(path(["", "borsh", "to_vec"]), [ref(ident("__evt"))]),
               "map_err",
-              [rawExpr("|_| ProgramError::InvalidAccountData")],
+              [closureExpr("|_|", path(["ProgramError", "InvalidAccountData"]))],
             ),
           ),
         ),

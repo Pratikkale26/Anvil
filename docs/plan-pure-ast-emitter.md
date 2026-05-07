@@ -416,7 +416,12 @@ The bigger structural-port opportunities now live OUTSIDE pass_through:
   raw_exprs are the `&[&seeds[..]]` value of `let signer_seeds = ...`,
   which can't be reduced without a Range AST kind (deferred — adding one
   is its own arc).
-- emit (40 raw_exprs) — struct_literal + borsh block
+- ✅ emit — was 40 raw_exprs, now **0 PURE structural ★** after the 2026-05-07
+  port: replaced the `|_| ProgramError::InvalidAccountData` rawExpr with
+  `closureExpr("|_|", path([...]))` and swapped `parseSimpleExpr` →
+  `tryStructuralizeExpr` for evt struct field values (catches cast
+  expressions like `shares_to_mint as u64` that the simple parser punts
+  on). 8th kind to reach pure structural ★ in the metric.
 - state_read (22 raw_exprs) — body emit text
 - require (20 raw_exprs) — cond + error path leaf rawExpr
 
