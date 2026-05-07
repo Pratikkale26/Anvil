@@ -1837,7 +1837,7 @@ export class AstVisitorBase {
   visitCpiSplMintTo(stmt: CpiSplMintTo): RustStmt[] {
     const w = this.walker;
     if (stmt.tokenProgram === "token_2022") {
-      return this.runHandlerCapture(handleCpiSplMintTo, stmt);
+      return this.captureAndConvert(handleCpiSplMintTo, stmt);
     }
     w.ctx.transformedCount++;
     const out: RustStmt[] = [];
@@ -1896,7 +1896,7 @@ export class AstVisitorBase {
   visitCpiSplBurn(stmt: CpiSplBurn): RustStmt[] {
     const w = this.walker;
     if (stmt.tokenProgram === "token_2022") {
-      return this.runHandlerCapture(handleCpiSplBurn, stmt);
+      return this.captureAndConvert(handleCpiSplBurn, stmt);
     }
     w.ctx.transformedCount++;
     const out: RustStmt[] = [];
@@ -1955,7 +1955,7 @@ export class AstVisitorBase {
   visitCpiSplCloseAccount(stmt: CpiSplCloseAccount): RustStmt[] {
     const w = this.walker;
     if (stmt.tokenProgram === "token_2022") {
-      return this.runHandlerCapture(handleCpiSplCloseAccount, stmt);
+      return this.captureAndConvert(handleCpiSplCloseAccount, stmt);
     }
     w.ctx.transformedCount++;
     const out: RustStmt[] = [];
@@ -2015,7 +2015,7 @@ export class AstVisitorBase {
       // Pinocchio path emits a hand-rolled CPI block with const +
       // multiple lets + match expression that the AST doesn't model.
       // Defer until match support lands.
-      return this.runHandlerCapture(handleCpiSplSetAuthority, stmt);
+      return this.captureAndConvert(handleCpiSplSetAuthority, stmt);
     }
     w.ctx.transformedCount++;
     w.ctx.details.push(
