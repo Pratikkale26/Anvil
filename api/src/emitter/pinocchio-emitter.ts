@@ -71,10 +71,7 @@ function resolveT22DecimalsPinocchio(
  * Token-2022 program ID literal as a `pinocchio::pubkey::Pubkey` ([u8; 32]).
  * Decoded from base58 "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb".
  */
-const TOKEN_2022_PROGRAM_ID_CONST = `        const TOKEN_2022_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            6, 221, 246, 225, 238, 117, 143, 222, 24, 66, 93, 188, 228, 108, 205, 218,
-            182, 26, 252, 77, 131, 185, 13, 39, 254, 189, 249, 40, 216, 161, 139, 252,
-        ];`;
+const TOKEN_2022_PROGRAM_ID_CONST = `        const TOKEN_2022_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 238, 117, 143, 222, 24, 66, 93, 188, 228, 108, 205, 218, 182, 26, 252, 77, 131, 185, 13, 39, 254, 189, 249, 40, 216, 161, 139, 252];`;
 
 /**
  * Build the Token-2022 invoke line. The IR-level `signerSeeds` string is a
@@ -733,10 +730,7 @@ ${invokeCall}
     const programIdConst =
       opts?.tokenProgram === "token_2022"
         ? TOKEN_2022_PROGRAM_ID_CONST
-        : `        const SPL_TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
-            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
-        ];`;
+        : `        const SPL_TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];`;
     const programIdRef = opts?.tokenProgram === "token_2022" ? "TOKEN_2022_PROGRAM_ID" : "SPL_TOKEN_PROGRAM_ID";
     // Convert Anchor's `&[&[&[u8]]]` signer-seeds shape into pinocchio's
     // `&[Signer]` (where Signer wraps `&[Seed]`). Use the same const-size
@@ -1522,10 +1516,7 @@ ${invokeCall}
     // create order: payer, ata, owner, mint, system_program, token_program.
     return `    // Create Associated Token Account: ${ata}
     {
-        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131,
-            11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
-        ];
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];
         let __ata_metas = [
             pinocchio::instruction::AccountMeta::new(${payer}.key(), true, true),
             pinocchio::instruction::AccountMeta::new(${ata}.key(), true, false),
@@ -1585,10 +1576,7 @@ ${invokeCall}
         }.invoke()?;`;
     return `    // Init token account: ${account}
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
-            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
-        ];
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
         // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
         ${createInvoke}
@@ -1617,10 +1605,7 @@ ${invokeCall}
     const bytesExpr = /^".*"$/.test(data.trim()) ? `${data}.as_bytes()` : data;
     return `    // SPL Memo CPI
     {
-        const MEMO_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124,
-            124, 53, 181, 221, 188, 146, 187, 129, 228, 31, 168, 64, 65, 5, 68, 141,
-        ];
+        const MEMO_PROGRAM_ID: pinocchio::pubkey::Pubkey = [5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124, 124, 53, 181, 221, 188, 146, 187, 129, 228, 31, 168, 64, 65, 5, 68, 141];
         let __memo_ix = pinocchio::instruction::Instruction {
             program_id: &MEMO_PROGRAM_ID,
             accounts: &[],

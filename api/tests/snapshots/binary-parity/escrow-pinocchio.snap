@@ -198,10 +198,7 @@ pub fn accept_escrow(
 
     // Create Associated Token Account: taker_ata_a
     {
-        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131,
-            11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
-        ];
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];
         let __ata_metas = [
             pinocchio::instruction::AccountMeta::new(taker.key(), true, true),
             pinocchio::instruction::AccountMeta::new(taker_ata_a.key(), true, false),
@@ -222,10 +219,7 @@ pub fn accept_escrow(
     }
     // Create Associated Token Account: maker_ata_b
     {
-        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131,
-            11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
-        ];
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];
         let __ata_metas = [
             pinocchio::instruction::AccountMeta::new(taker.key(), true, true),
             pinocchio::instruction::AccountMeta::new(maker_ata_b.key(), true, false),
@@ -414,10 +408,7 @@ pub fn create_escrow(
     create_program_account(escrow, maker, (8 + Escrow::INIT_SPACE) as usize, program_id, init_escrow_signer_seeds)?;
     // Init token account: vault
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
-            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
-        ];
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
         // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
         pinocchio_system::instructions::CreateAccount {

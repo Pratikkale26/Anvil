@@ -482,6 +482,33 @@ Added `range` AST node + factory `rangeExpr({start?, end?, inclusive?})`
 closes the 30 residual raw_exprs in pda_signer_seeds — 12th kind to
 reach PURE structural ★.
 
+### Multi-line block-expression arc landed 2026-05-07
+
+Added `block_expr` RustExpr kind + factory + printer + tree-sitter
+`case "block"` in exprFromNode + match-arm block-body support
+(no trailing comma when arm body is a block). Plus normalized 5
+chunked-2-line const arrays (TOKEN_2022_PROGRAM_ID, SPL_TOKEN_PROGRAM_ID,
+ATA_PROGRAM_ID, TOKEN_PROGRAM_ID, MEMO_PROGRAM_ID) to single-line so
+the structural converter can round-trip them via the const_item case.
+
+Net metric: 72 → 70 raw nodes (cpi_t22_interest_bearing_mint_initialize
+PURE ★, cpi_spl_set_authority 2 → 1). 23 of 34 IR kinds at PURE
+structural. The other typed CPI Pinocchio inits (token_metadata_initialize,
+transfer_fee_initialize, harvest_withheld_tokens_to_mint) and
+token_metadata_update_field still have 1 raw_node each — distinct
+shapes (token_metadata uses Borsh-string write loop, transfer_fee uses
+2-byte write at index 1, harvest uses match-on-N invoke dispatch
+that the converter doesn't yet handle).
+
+Plus a critical fix to expression_statement: a multi-line match used
+as a side-effect statement (no trailing `;`) was being refused as
+"not last child". Now match/block/if without `;` ARE accepted as
+exprStmt regardless of position — Rust convention allows this when
+the value type is `()`.
+
+7 binary-parity snapshots re-baselined for the const single-line
+normalization.
+
 ### bumps_access port landed 2026-05-07
 
 Two `rawExpr(...)` hardcodes in `emitBumpDerivationStructural` swapped

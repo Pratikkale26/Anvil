@@ -208,6 +208,16 @@ export function printExpr(expr: RustExpr, indent?: string): string {
     }
     case "closure":
       return `${expr.paramsText} ${printExpr(expr.body, indent)}`;
+    case "block_expr": {
+      // Multi-line block at expression position. Inner stmts indented
+      // at `indent + 4`; closing `}` aligned with `indent`. Empty body
+      // produces `{}`.
+      if (expr.stmts.length === 0) return `{}`;
+      const innerIndent = indent !== undefined ? `${indent}    ` : "    ";
+      const closeIndent = indent ?? "";
+      const inner = expr.stmts.map((s) => printStmtAt(s, innerIndent)).join("\n");
+      return `{\n${inner}\n${closeIndent}}`;
+    }
     case "range": {
       const op = expr.inclusive ? "..=" : "..";
       const startTxt = expr.start !== undefined ? printExpr(expr.start, indent) : "";
@@ -216,11 +226,17 @@ export function printExpr(expr: RustExpr, indent?: string): string {
     }
     case "match": {
       // Multi-line layout — arms at +4 from the surrounding stmt
-      // indent, closing `}` aligned with the stmt indent.
+      // indent, closing `}` aligned with the stmt indent. Block-bodied
+      // arms (`Pat => { stmt; }`) get NO trailing comma per Rust
+      // convention; expression-bodied arms get a trailing comma.
       const armIndent = indent !== undefined ? `${indent}    ` : "    ";
       const closeIndent = indent ?? "";
       const armLines = expr.arms
-        .map((a) => `${armIndent}${a.patternText} => ${printExpr(a.body, armIndent)},`)
+        .map((a) => {
+          const bodyText = printExpr(a.body, armIndent);
+          const isBlock = (a.body as { kind: string }).kind === "block_expr";
+          return `${armIndent}${a.patternText} => ${bodyText}${isBlock ? "" : ","}`;
+        })
         .join("\n");
       return `match ${printExpr(expr.value, indent)} {\n${armLines}\n${closeIndent}}`;
     }
@@ -296,6 +312,13 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
         return;
       case "closure":
         visit(e.body);
+        return;
+      case "block_expr":
+        for (const s of e.stmts) {
+          const sub = countRawNodes([s]);
+          rawLines += sub.rawLines;
+          rawExprs += sub.rawExprs;
+        }
         return;
       case "range":
         if (e.start !== undefined) visit(e.start);

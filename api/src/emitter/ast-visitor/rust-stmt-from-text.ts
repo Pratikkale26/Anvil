@@ -56,6 +56,7 @@ import {
   notExpr,
   parenExpr,
   rangeExpr,
+  blockExpr,
   path,
   ref,
   returnStmt,
@@ -223,11 +224,12 @@ function stmtFromNode(node: SyntaxNode, isLast: boolean): RustStmt | null {
       // not (tail expression / control-flow stmt). Inspect the child.
       const expr = node.namedChild(0);
       if (!expr) return null;
-      // Statement-style if/match/return — these don't fit the
-      // exprFromNode mold (no rust expression value semantics in
-      // statement position; the printer expects a different shape
-      // for each). Route to stmtFromNode for direct conversion.
-      if (expr.type === "if_expression" || expr.type === "match_expression" || expr.type === "return_expression") {
+      // Statement-style if/return — these have dedicated stmtFromNode
+      // cases (if_stmt / return wrappers). Route there directly.
+      // match_expression doesn't get a stmt wrapper — it falls through
+      // to the exprFromNode + exprStmt/tailExpr path below, which
+      // produces `expr_stmt(matchExpr(...))` (with optional `;`).
+      if (expr.type === "if_expression" || expr.type === "return_expression") {
         return stmtFromNode(expr, isLast);
       }
       // Assignment as a statement — `LHS = RHS;` (incl. `arr[i] = X`,
@@ -245,8 +247,14 @@ function stmtFromNode(node: SyntaxNode, isLast: boolean): RustStmt | null {
       if (re === null) return null;
       const endsWithSemi = node.text.trimEnd().endsWith(";");
       if (endsWithSemi) return exprStmt(re);
-      // Tail expression — must be the last child to be valid Rust;
-      // refuse otherwise.
+      // No trailing `;`. For shapes that conventionally don't need it
+      // when used as a side-effect statement (block, match), wrap as
+      // expr_stmt regardless of position. Tree-sitter accepts these
+      // mid-block. Other shapes must be the LAST child (tail
+      // expression) to be valid Rust; refuse otherwise.
+      if (expr.type === "match_expression" || expr.type === "block" || expr.type === "if_expression") {
+        return exprStmt(re);
+      }
       if (!isLast) return null;
       return tailExpr(re);
     }
@@ -517,16 +525,14 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       for (let i = 0; i < block.namedChildCount; i++) {
         const arm = block.namedChild(i);
         if (!arm || arm.type !== "match_arm") return null;
-        // match_arm = pattern (named: match_pattern) + body expr.
         const pat = arm.namedChild(0);
         if (!pat || pat.type !== "match_pattern") return null;
-        // Refuse guards — match_pattern with more than one named child
-        // means there's an `if cond` clause.
         if (pat.namedChildCount !== 1) return null;
         const body = arm.namedChild(1);
         if (!body) return null;
-        // Body must be single-line for byte-equal layout.
-        if (body.text.includes("\n")) return null;
+        // Body may be multi-line ONLY when it's a block expression
+        // (`Pat => { stmt; }`). Other multi-line shapes refuse.
+        if (body.text.includes("\n") && body.type !== "block") return null;
         const bodyExpr = exprFromNode(body);
         if (bodyExpr === null) return null;
         arms.push({ patternText: pat.text, body: bodyExpr });
@@ -793,6 +799,14 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       return separator === ";"
         ? { kind: "macro_call", name: macroName, args, delim: open, separator: ";" }
         : { kind: "macro_call", name: macroName, args, delim: open };
+    }
+    case "block": {
+      // Block at expression position — `{ stmt; stmt; tail_expr? }`.
+      // Each inner stmt converts via convertBlockStmts (allows
+      // multi-line). Wraps as block_expr for the printer.
+      const stmts = convertBlockStmts(node, true);
+      if (stmts === null) return null;
+      return blockExpr(stmts);
     }
     case "range_expression": {
       // `..`, `..end`, `start..`, `start..end`, `start..=end`. Endpoints

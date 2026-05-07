@@ -449,10 +449,7 @@ pub fn create_vesting(
     let init_vault_signer_seeds = &[&init_vault_seeds[..]];
     // Init token account: vault
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
-            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
-        ];
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
         // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
         // PDA-signed create — build a Signer<Seed> from the threaded seeds.

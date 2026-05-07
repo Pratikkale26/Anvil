@@ -187,6 +187,15 @@ export type RustExpr =
    */
   | { kind: "closure"; paramsText: string; body: RustExpr }
   /**
+   * Block expression — `{ stmts; tail_expr? }` used in expression
+   * position (typically match-arm bodies, if-expression branches that
+   * need a multi-stmt block, etc.). Same shape as the `block` stmt
+   * but valid where an expression is expected. Printer formats
+   * multi-line: `{\n  stmt1;\n  stmt2;\n}` with stmts indented at
+   * `indent + 4` from the surrounding context.
+   */
+  | { kind: "block_expr"; stmts: RustStmt[] }
+  /**
    * Range expression — `..`, `..end`, `start..`, `start..end`,
    * `start..=end`. Both endpoints are optional; `inclusive` toggles
    * `..` vs `..=`. Used inside index_expressions for slice subscripts
@@ -303,6 +312,9 @@ export function tupleExpr(items: RustExpr[]): RustExpr {
 }
 export function closureExpr(paramsText: string, body: RustExpr): RustExpr {
   return { kind: "closure", paramsText, body };
+}
+export function blockExpr(stmts: RustStmt[]): RustExpr {
+  return { kind: "block_expr", stmts };
 }
 export function rangeExpr(opts: { start?: RustExpr; end?: RustExpr; inclusive?: boolean } = {}): RustExpr {
   const r: { kind: "range"; start?: RustExpr; end?: RustExpr; inclusive: boolean } = {
