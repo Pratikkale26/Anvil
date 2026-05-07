@@ -1,10 +1,10 @@
 /**
- * Token-2022 TokenMetadata differential — EM2 Session 4 (Native-only).
+ * Token-2022 TokenMetadata differential — EM2 Session 4.
  * Validates cpi_t22_token_metadata_initialize emits a CPI byte-equal
- * to Anchor's token_metadata_initialize helper.
- *
- * Pinocchio path is TODO commentout (separate spl-token-metadata-
- * interface protocol shim required); runs Native target only.
+ * to Anchor's token_metadata_initialize helper. Pinocchio path uses
+ * a precomputed sha256 discriminator (first 8 bytes of
+ * "spl_token_metadata_interface:initialize_account") + Borsh-encoded
+ * name/symbol/uri serialized into a 1024-byte stack buffer.
  *
  * Setup: pre-allocate a mint with MetadataPointer extension pointing
  * at itself + variable-length space for the metadata blob, init the
@@ -59,9 +59,9 @@ defineDifferential({
   anchorSource: readFileSync(SRC, "utf-8"),
   anchorPackageName: "t22_token_metadata_anchor_diff",
   anchorExtraDeps: 'anchor-spl = { version = "0.31", features = ["token_2022"] }',
-  // Pinocchio emit is TODO commentout (spl-token-metadata-interface
-  // protocol shim required); Native target only for the byte-equal compare.
-  anvilTarget: "native",
+  // Default Pinocchio target now that the typed emit lands (was "native"
+  // when TokenMetadata was a TODO commentout). Native cargo-build
+  // coverage remains via cargo-build.test.ts on the demo.
 
   setup: async () => ({
     payer: Keypair.generate(),

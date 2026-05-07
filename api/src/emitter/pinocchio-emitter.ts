@@ -960,19 +960,68 @@ ${invokeCall}
     _signerSeeds?: string,
   ): string {
     // TokenMetadata uses the spl-token-metadata-interface protocol
-    // layered on Token-2022 — discriminators are SHA256-derived
-    // ("spl_token_metadata_interface:initialize_account" → first 8
-    // bytes) and string args use Borsh serialization. Pinocchio is
-    // no_std + no spl_token_metadata_interface dep + no native sha256
-    // helper for compile-time discriminator computation. Rather than
-    // ship partial infra, emit a TODO so the program compiles and
-    // users hand-roll the CPI if needed. Native target has the typed
-    // emit fully wired.
-    return `    // ⚠️ Anvil TODO: token_metadata_initialize(metadata=${metadata}, mint=${mint}, name=${name}, symbol=${symbol}, uri=${uri})
-    //   Pinocchio path requires the spl-token-metadata-interface protocol shim
-    //   (sha256 discriminator + Borsh-serialized String args). Native target
-    //   uses spl_token_metadata_interface::instruction::initialize directly.
-    //   mintAuthority=${mintAuthority}, updateAuthority=${updateAuthority}`;
+    // layered on Token-2022. The Initialize discriminator is the first
+    // 8 bytes of sha256("spl_token_metadata_interface:initialize_account"),
+    // precomputed: d2e11ea258b84d8d → [210, 225, 30, 162, 88, 184, 77, 141].
+    // Payload is Borsh-encoded (u32 LE length + UTF-8 bytes) for each of
+    // name, symbol, uri. We serialize into a fixed-size 1024-byte stack
+    // buffer — Solana's instruction-data ceiling is 1232 bytes, so this
+    // covers any realistic metadata payload while staying no_std.
+    return `    // Token-2022 TokenMetadata extension init — ${metadata}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        // sha256("spl_token_metadata_interface:initialize_account")[..8]
+        const __TMI_DISC: [u8; 8] = [210, 225, 30, 162, 88, 184, 77, 141];
+        let mut __tmi_data = [0u8; 1024];
+        let mut __tmi_len: usize = 0;
+        __tmi_data[..8].copy_from_slice(&__TMI_DISC);
+        __tmi_len = 8;
+        // Borsh String: u32 LE length prefix + UTF-8 bytes, repeated for
+        // name, symbol, uri. Bounds-check each write against the 1024-byte
+        // stack buffer (Solana ix-data cap is 1232).
+        let __tmi_name_bytes = ${name}.as_bytes();
+        if __tmi_len + 4 + __tmi_name_bytes.len() > __tmi_data.len() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        __tmi_data[__tmi_len..__tmi_len + 4]
+            .copy_from_slice(&(__tmi_name_bytes.len() as u32).to_le_bytes());
+        __tmi_len += 4;
+        __tmi_data[__tmi_len..__tmi_len + __tmi_name_bytes.len()]
+            .copy_from_slice(__tmi_name_bytes);
+        __tmi_len += __tmi_name_bytes.len();
+        let __tmi_symbol_bytes = ${symbol}.as_bytes();
+        if __tmi_len + 4 + __tmi_symbol_bytes.len() > __tmi_data.len() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        __tmi_data[__tmi_len..__tmi_len + 4]
+            .copy_from_slice(&(__tmi_symbol_bytes.len() as u32).to_le_bytes());
+        __tmi_len += 4;
+        __tmi_data[__tmi_len..__tmi_len + __tmi_symbol_bytes.len()]
+            .copy_from_slice(__tmi_symbol_bytes);
+        __tmi_len += __tmi_symbol_bytes.len();
+        let __tmi_uri_bytes = ${uri}.as_bytes();
+        if __tmi_len + 4 + __tmi_uri_bytes.len() > __tmi_data.len() {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        __tmi_data[__tmi_len..__tmi_len + 4]
+            .copy_from_slice(&(__tmi_uri_bytes.len() as u32).to_le_bytes());
+        __tmi_len += 4;
+        __tmi_data[__tmi_len..__tmi_len + __tmi_uri_bytes.len()]
+            .copy_from_slice(__tmi_uri_bytes);
+        __tmi_len += __tmi_uri_bytes.len();
+        let __tmi_metas = [
+            pinocchio::instruction::AccountMeta::writable(${metadata}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${updateAuthority}.key()),
+            pinocchio::instruction::AccountMeta::readonly(${mint}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${mintAuthority}.key()),
+        ];
+        let __tmi_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__tmi_metas,
+            data: &__tmi_data[..__tmi_len],
+        };
+        pinocchio::cpi::invoke(&__tmi_ix, &[${metadata}, ${updateAuthority}, ${mint}, ${mintAuthority}])?;
+    }`;
   }
 
   override emitT22DefaultAccountStateInitialize(

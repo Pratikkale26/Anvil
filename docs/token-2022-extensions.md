@@ -26,7 +26,7 @@ Statuses:
 | ImmutableOwner | Y | Y | none on base CPIs — Y; init differential-gated 2026-05-07 |
 | PermanentDelegate | partial | partial | `transfer_checked` honors the delegate — Y |
 | MetadataPointer | partial | partial | none on base CPIs — Y |
-| TokenMetadata | TODO (interface protocol) | Y (init) | none on base CPIs — Y; Native init differential-gated 2026-05-07; Pinocchio TODO commentout (sha256-disc + Borsh-strings infra needed) |
+| TokenMetadata | Y (init) | Y (init) | none on base CPIs — Y; init differential-gated 2026-05-07 (Pinocchio uses precomputed sha256 disc + Borsh-strings into 1024-byte stack buffer) |
 | GroupPointer / MemberPointer | partial | partial | none on base CPIs — Y |
 | TransferHook | partial | partial | base `transfer_checked` triggers the hook program — Y if hook program is co-deployed |
 | ConfidentialTransferMint | lint | lint | requires zk-proofs path; `transfer_checked` doesn't apply to encrypted balances |
