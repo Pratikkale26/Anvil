@@ -26,3 +26,4 @@ export { printStmts, printStmt, printStmtAt, printExpr, countRawNodes } from "./
 export { AstVisitorBase, VISITOR_SUPPORTED_KINDS } from "./visitor-base.js";
 export { PinocchioAstVisitor } from "./pinocchio-visitor.js";
 export { NativeAstVisitor } from "./native-visitor.js";
+export { ensureRustParserReady } from "./rust-stmt-from-text.js";

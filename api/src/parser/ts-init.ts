@@ -15,6 +15,17 @@ let parserInstance: Parser | null = null;
 let initPromise: Promise<Parser> | null = null;
 
 /**
+ * Returns the already-initialized parser singleton synchronously, or
+ * `null` if `getParser()` hasn't completed yet. Used by sync code
+ * paths (e.g. the ast-visitor's M5d slice) that run AFTER parseAnchor
+ * has populated the singleton — they can avoid plumbing async through
+ * the visitor.
+ */
+export function getParserSync(): Parser | null {
+  return parserInstance;
+}
+
+/**
  * Returns an initialized tree-sitter Parser with the Rust language.
  * Safe to call multiple times — initializes only once.
  */
