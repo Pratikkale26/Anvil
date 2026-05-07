@@ -7,7 +7,49 @@ pub mod say_hello;
 pub use say_hello::say_hello;
 pub mod say_status;
 pub use say_status::say_status;
+pub mod say_formatted;
+pub use say_formatted::say_formatted;
 
+
+=== instructions/say_formatted.rs ===
+use super::*;
+
+pub fn say_formatted(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 0 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+
+
+    // Args
+    let mut remaining = data;
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let amount: u64 = u64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if remaining.len() < 32 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(32);
+    remaining = rest;
+    let target: Pubkey = Pubkey::new_from_array(arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?);
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    msg!("amount: {} target: {}", amount, target);
+    msg!("count: {}", amount);
+    Ok(())
+
+}
 
 === instructions/say_hello.rs ===
 use super::*;
@@ -121,6 +163,7 @@ fn router(
     match discriminator {
         [250, 163, 169, 119, 25, 42, 108, 31] => say_hello(program_id, accounts, data),
         [147, 196, 195, 120, 55, 129, 223, 45] => say_status(program_id, accounts, data),
+        [57, 59, 138, 154, 8, 130, 179, 176] => say_formatted(program_id, accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
