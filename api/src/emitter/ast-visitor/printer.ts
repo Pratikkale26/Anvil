@@ -144,6 +144,8 @@ export function printExpr(expr: RustExpr, indent?: string): string {
       return expr.value;
     case "field":
       return `${printExpr(expr.obj, indent)}.${expr.field}`;
+    case "index":
+      return `${printExpr(expr.obj, indent)}[${printExpr(expr.idx, indent)}]`;
     case "method_call": {
       const args = expr.args.map((a) => printExpr(a, indent)).join(", ");
       return `${printExpr(expr.receiver, indent)}.${expr.method}(${args})`;
@@ -184,6 +186,26 @@ export function printExpr(expr: RustExpr, indent?: string): string {
     case "array": {
       const items = expr.items.map((a) => printExpr(a, indent)).join(", ");
       return `[${items}]`;
+    }
+    case "tuple": {
+      if (expr.items.length === 0) return `()`;
+      if (expr.items.length === 1) {
+        return `(${printExpr(expr.items[0]!, indent)},)`;
+      }
+      const items = expr.items.map((a) => printExpr(a, indent)).join(", ");
+      return `(${items})`;
+    }
+    case "closure":
+      return `${expr.paramsText} ${printExpr(expr.body, indent)}`;
+    case "match": {
+      // Multi-line layout — arms at +4 from the surrounding stmt
+      // indent, closing `}` aligned with the stmt indent.
+      const armIndent = indent !== undefined ? `${indent}    ` : "    ";
+      const closeIndent = indent ?? "";
+      const armLines = expr.arms
+        .map((a) => `${armIndent}${a.patternText} => ${printExpr(a.body, armIndent)},`)
+        .join("\n");
+      return `match ${printExpr(expr.value, indent)} {\n${armLines}\n${closeIndent}}`;
     }
     case "struct_literal": {
       if (expr.fields.length === 0) return `${expr.ty} {}`;
@@ -238,6 +260,10 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
       case "field":
         visit(e.obj);
         return;
+      case "index":
+        visit(e.obj);
+        visit(e.idx);
+        return;
       case "method_call":
         visit(e.receiver);
         for (const a of e.args) visit(a);
@@ -248,7 +274,15 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
         return;
       case "macro_call":
       case "array":
-        for (const a of e.kind === "array" ? e.items : e.args) visit(a);
+      case "tuple":
+        for (const a of e.kind === "macro_call" ? e.args : e.items) visit(a);
+        return;
+      case "closure":
+        visit(e.body);
+        return;
+      case "match":
+        visit(e.value);
+        for (const a of e.arms) visit(a.body);
         return;
       case "struct_literal":
         for (const f of e.fields) visit(f.value);

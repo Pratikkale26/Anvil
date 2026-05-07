@@ -93,6 +93,8 @@ export type RustExpr =
   | { kind: "lit"; value: string }
   /** `obj.field` — chained struct/enum field access. */
   | { kind: "field"; obj: RustExpr; field: string }
+  /** `obj[idx]` — index expression. */
+  | { kind: "index"; obj: RustExpr; idx: RustExpr }
   /** `receiver.method(arg1, arg2)`. */
   | { kind: "method_call"; receiver: RustExpr; method: string; args: RustExpr[] }
   /**
@@ -152,6 +154,26 @@ export type RustExpr =
    */
   | { kind: "array"; items: RustExpr[] }
   /**
+   * Tuple expression — `(a, b, c)` or `()` (unit handled via lit).
+   * Single-element tuples need a trailing comma `(a,)` per Rust syntax;
+   * the printer emits this when items.length === 1.
+   */
+  | { kind: "tuple"; items: RustExpr[] }
+  /**
+   * Closure — `|params| body`. `paramsText` carries the parameter
+   * list verbatim from source (`|x|`, `|&&a|`, `|_|`, `|x: u32|`,
+   * etc.) since modeling all Rust patterns structurally would be a
+   * separate AST tree. `body` is the structural expression.
+   */
+  | { kind: "closure"; paramsText: string; body: RustExpr }
+  /**
+   * Match expression — `match VALUE { PAT0 => BODY0, PAT1 => BODY1, ... }`.
+   * Patterns are captured verbatim as text; bodies are structural.
+   * Multi-line layout: arms each on own line at +4 from the surrounding
+   * stmt indent, closing `}` aligned with the surrounding stmt.
+   */
+  | { kind: "match"; value: RustExpr; arms: { patternText: string; body: RustExpr }[] }
+  /**
    * Struct literal — `Type { field: value, ... }`. Used for CPI
    * struct-literal calls (`pinocchio::instruction::Instruction
    * { program_id: …, accounts: …, data: … }`). When `multiLine` is set,
@@ -203,6 +225,9 @@ export function lit(value: string): RustExpr {
 export function field(obj: RustExpr, name: string): RustExpr {
   return { kind: "field", obj, field: name };
 }
+export function indexExpr(obj: RustExpr, idx: RustExpr): RustExpr {
+  return { kind: "index", obj, idx };
+}
 export function methodCall(receiver: RustExpr, method: string, args: RustExpr[]): RustExpr {
   return { kind: "method_call", receiver, method, args };
 }
@@ -241,6 +266,15 @@ export function macroCall(name: string, args: RustExpr[]): RustExpr {
 }
 export function array(items: RustExpr[]): RustExpr {
   return { kind: "array", items };
+}
+export function tupleExpr(items: RustExpr[]): RustExpr {
+  return { kind: "tuple", items };
+}
+export function closureExpr(paramsText: string, body: RustExpr): RustExpr {
+  return { kind: "closure", paramsText, body };
+}
+export function matchExpr(value: RustExpr, arms: { patternText: string; body: RustExpr }[]): RustExpr {
+  return { kind: "match", value, arms };
 }
 export function structLiteral(ty: string, fields: { name: string; value: RustExpr; shorthand?: boolean }[]): RustExpr {
   return { kind: "struct_literal", ty, fields };

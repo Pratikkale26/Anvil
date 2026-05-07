@@ -37,21 +37,28 @@
 import {
   type RustStmt,
   type RustExpr,
+  array,
+  assign,
   binaryExpr,
   call,
   castExpr,
+  closureExpr,
   comment,
   exprStmt,
   ident,
   ifStmt,
+  indexExpr,
   letStmt,
   lit,
+  matchExpr,
   methodCall,
   parenExpr,
   path,
+  ref,
   returnStmt,
   tailExpr,
   tryPostfix,
+  tupleExpr,
 } from "./nodes.js";
 import { parseSimpleExpr, parseSimpleExprStrict } from "./parse-simple-expr.js";
 import { getParser, getParserSync, parseGuarded, type SyntaxNode } from "../../parser/ts-init.js";
@@ -178,6 +185,11 @@ function stmtFromNode(node: SyntaxNode, isLast: boolean): RustStmt | null {
       if (expr.type === "if_expression" || expr.type === "match_expression" || expr.type === "return_expression") {
         return stmtFromNode(expr, isLast);
       }
+      // Assignment as a statement — `LHS = RHS;` (incl. `arr[i] = X`,
+      // `state.field = Y`). Route to stmtFromNode → assign() AST.
+      if (expr.type === "assignment_expression") {
+        return stmtFromNode(expr, isLast);
+      }
       const re = exprFromNode(expr);
       if (re === null) return null;
       const endsWithSemi = node.text.trimEnd().endsWith(";");
@@ -232,11 +244,22 @@ function stmtFromNode(node: SyntaxNode, isLast: boolean): RustStmt | null {
       if (innerExpr === null) return null;
       return returnStmt(innerExpr);
     }
+    case "assignment_expression": {
+      // `LHS = RHS` as a statement. Both sides through exprFromNode.
+      const lhs = node.namedChild(0);
+      const rhs = node.namedChild(1);
+      if (!lhs || !rhs) return null;
+      const lhsExpr = exprFromNode(lhs);
+      const rhsExpr = exprFromNode(rhs);
+      if (lhsExpr === null || rhsExpr === null) return null;
+      return assign(lhsExpr, rhsExpr);
+    }
     case "let_declaration": {
       // `let [mut] PATTERN[: TYPE] = VALUE;` — supported pattern shapes:
-      // single identifier (with optional type annotation). Tuple
-      // destructuring + struct patterns refuse (caller falls back to
-      // rawLine).
+      // single identifier OR tuple_pattern `(a, b, c)` (printer treats
+      // the pattern text as the bind name, no destructuring AST node).
+      // Other complex patterns (tuple_struct_pattern, ref_pattern,
+      // struct_pattern) refuse — fallback to rawLine.
       let name: string | null = null;
       let mut = false;
       let ty: string | undefined;
@@ -248,7 +271,14 @@ function stmtFromNode(node: SyntaxNode, isLast: boolean): RustStmt | null {
           mut = true;
           continue;
         }
-        if (c.type === "tuple_pattern" || c.type === "tuple_struct_pattern" || c.type === "ref_pattern" || c.type === "reference_pattern") {
+        // Tuple destructuring: store the pattern text verbatim as the
+        // "name" — the printer emits `let (a, b) = ...` correctly since
+        // it just substitutes name into the template.
+        if (c.type === "tuple_pattern" && name === null) {
+          name = c.text;
+          continue;
+        }
+        if (c.type === "tuple_struct_pattern" || c.type === "ref_pattern" || c.type === "reference_pattern" || c.type === "struct_pattern") {
           return null;
         }
         if (c.type === "identifier" && name === null) {
@@ -317,6 +347,16 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       if (!collect(node)) return null;
       return path(segs);
     }
+    case "index_expression": {
+      // `obj[idx]` — both children must convert structurally.
+      const obj = node.namedChild(0);
+      const idx = node.namedChild(1);
+      if (!obj || !idx) return null;
+      const objExpr = exprFromNode(obj);
+      const idxExpr = exprFromNode(idx);
+      if (objExpr === null || idxExpr === null) return null;
+      return indexExpr(objExpr, idxExpr);
+    }
     case "field_expression": {
       // `obj.field` — value child + field child.
       const obj = node.namedChild(0);
@@ -354,10 +394,77 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       }
       return call(fnExpr, argExprs);
     }
+    case "match_expression": {
+      // `match VALUE { match_block { match_arm × N } }`. Pattern text
+      // captured verbatim; arm body must convert structurally. Refuses
+      // arms with guard clauses (`pat if cond => ...`) — those need
+      // their own AST extension.
+      const value = node.namedChild(0);
+      const block = node.namedChild(1);
+      if (!value || !block || block.type !== "match_block") return null;
+      const valueExpr = exprFromNode(value);
+      if (valueExpr === null) return null;
+      const arms: { patternText: string; body: RustExpr }[] = [];
+      for (let i = 0; i < block.namedChildCount; i++) {
+        const arm = block.namedChild(i);
+        if (!arm || arm.type !== "match_arm") return null;
+        // match_arm = pattern (named: match_pattern) + body expr.
+        const pat = arm.namedChild(0);
+        if (!pat || pat.type !== "match_pattern") return null;
+        // Refuse guards — match_pattern with more than one named child
+        // means there's an `if cond` clause.
+        if (pat.namedChildCount !== 1) return null;
+        const body = arm.namedChild(1);
+        if (!body) return null;
+        // Body must be single-line for byte-equal layout.
+        if (body.text.includes("\n")) return null;
+        const bodyExpr = exprFromNode(body);
+        if (bodyExpr === null) return null;
+        arms.push({ patternText: pat.text, body: bodyExpr });
+      }
+      return matchExpr(valueExpr, arms);
+    }
+    case "closure_expression": {
+      // `|params| body`. tree-sitter exposes closure_parameters as the
+      // first named child + the body as the next named child. Refuse
+      // closures with explicit return-type annotation (`-> T`) and
+      // multi-line block bodies — both can be added in a later slice
+      // when use cases come up. paramsText captured verbatim from
+      // closure_parameters.text since closure-parameter patterns
+      // (`|&&a|`, `|_|`, `|x: u32|`) are too varied to model
+      // structurally for a marginal byte-equality win.
+      const params = node.namedChild(0);
+      if (!params || params.type !== "closure_parameters") return null;
+      // Refuse if there's a return-type annotation between params and body.
+      // tree-sitter exposes that as a named child of type "primitive_type"
+      // / "type_identifier" before the body.
+      const body = node.namedChild(node.namedChildCount - 1);
+      if (!body) return null;
+      if (body === params) return null;
+      // Body must convert structurally; multi-line bodies refused via
+      // the existing newline check on stmts (closures inside calls go
+      // through exprFromNode where multi-line text is fine since the
+      // parent enclosing stmt's text-newline check won't fire if the
+      // closure is on a single line).
+      const bodyExpr = exprFromNode(body);
+      if (bodyExpr === null) return null;
+      // Verify there's no return-type node between params (idx 0) and
+      // body (last idx). namedChildCount === 2 means just params + body.
+      if (node.namedChildCount !== 2) return null;
+      return closureExpr(params.text, bodyExpr);
+    }
     case "tuple_expression": {
-      // `()` — only support unit literal at this stage.
+      // `()` → unit lit, `(a)` → just the inner expr (paren), `(a, b, ...)` → tuple.
       if (node.namedChildCount === 0) return lit("()");
-      return null;
+      const items: RustExpr[] = [];
+      for (let i = 0; i < node.namedChildCount; i++) {
+        const c = node.namedChild(i);
+        if (!c) return null;
+        const e = exprFromNode(c);
+        if (e === null) return null;
+        items.push(e);
+      }
+      return tupleExpr(items);
     }
     case "binary_expression": {
       // `lhs OP rhs` — tree-sitter exposes the operator as an UNNAMED
@@ -388,6 +495,34 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       const rhsExpr = exprFromNode(rhs);
       if (rhsExpr === null) return null;
       return binaryExpr(op, lhsExpr, rhsExpr);
+    }
+    case "array_expression": {
+      // `[a, b, c]` — every element must convert; bail otherwise.
+      const items: RustExpr[] = [];
+      for (let i = 0; i < node.namedChildCount; i++) {
+        const c = node.namedChild(i);
+        if (!c) return null;
+        const e = exprFromNode(c);
+        if (e === null) return null;
+        items.push(e);
+      }
+      return array(items);
+    }
+    case "reference_expression": {
+      // `&expr` / `&mut expr`. tree-sitter exposes `mutable_specifier`
+      // as a NAMED child when present, in addition to the inner expr.
+      let isMut = false;
+      let inner: SyntaxNode | null = null;
+      for (let i = 0; i < node.namedChildCount; i++) {
+        const c = node.namedChild(i);
+        if (!c) continue;
+        if (c.type === "mutable_specifier") isMut = true;
+        else inner = c;
+      }
+      if (!inner) return null;
+      const innerExpr = exprFromNode(inner);
+      if (innerExpr === null) return null;
+      return ref(innerExpr, isMut);
     }
     case "type_cast_expression": {
       // `expr as TYPE` — tree-sitter exposes value (named) and type

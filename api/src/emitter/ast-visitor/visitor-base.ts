@@ -861,20 +861,26 @@ export class AstVisitorBase {
       //  };`
       // The match expr isn't in the AST yet — wrap as rawExpr at the
       // value level. Drops 1 raw_line per occurrence; raw_exprs +1.
+      const initText = stripLetMutPrefix(w.emitter.emitStateReadOrInit(accountInfoVar, typeName, localVar, mutable), localVar);
+      // M5d slice 10 — try structural match-expr conversion via
+      // tree-sitter; falls back to rawExpr if the shape doesn't fully
+      // resolve.
       out.push(letStmt(
         localVar,
-        rawExpr(stripLetMutPrefix(w.emitter.emitStateReadOrInit(accountInfoVar, typeName, localVar, mutable), localVar)),
+        tryStructuralizeExpr(initText) ?? rawExpr(initText),
         { mut: true },
       ));
     } else if (accountRef?.isInit) {
       // `let mut LV = T { field1: default1, ..., fieldN: defaultN };`
       // (or `let mut LV = T::default();` when the emitter's currentIr
       // doesn't have a definition). Structural at the let level; value
-      // text wrapped in rawExpr — defers per-default-value structural
-      // modeling but drops 1 raw_line per occurrence.
+      // goes through tree-sitter structural parse (catches T::default()
+      // path-call shape); rawExpr fallback for inline struct-init that
+      // requires struct_literal AST not yet wired here.
+      const initText = stripLetMutPrefix(w.emitter.emitStateInit(typeName, localVar), localVar);
       out.push(letStmt(
         localVar,
-        rawExpr(stripLetMutPrefix(w.emitter.emitStateInit(typeName, localVar), localVar)),
+        tryStructuralizeExpr(initText) ?? rawExpr(initText),
         { mut: true },
       ));
     } else {
