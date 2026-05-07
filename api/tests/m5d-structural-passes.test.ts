@@ -27,6 +27,7 @@ import {
   rewriteLocalAliasesStructural,
   collapseMultiDerefStructural,
   rewriteStateBoundFieldsStructural,
+  rewriteHelperCallsStructural,
   applySession1Passes,
   type PassContext,
 } from "../src/emitter/body-emitter/pass-through-structural.ts";
@@ -752,6 +753,171 @@ describe("M5d Session 6c — rewriteStateBoundFieldsStructural", () => {
     };
     const input = `do(counter.value);`;
     expect(rewriteStateBoundFieldsStructural(input, ctx)).toBe(input);
+  });
+});
+
+describe("M5d Session 6b — bare-receiver `.lamports()` / `.amount` extension", () => {
+  // Extension to transformCtxAccountsStructural: handles bare-receiver
+  // `<acct>.lamports()` (no gate) and `<acct>.amount` (gated on tokenLikeAccounts).
+  function buildCtx(opts: {
+    lamports?: Array<[string, string]>;
+    info?: Array<[string, string]>;
+    tokenLike?: string[];
+  }): PassContext {
+    return {
+      ...PIN_CTX,
+      accountInfoVars: new Map([
+        ...PIN_CTX.accountInfoVars,
+        ...(opts.info ?? []),
+      ]),
+      accountLamportsExprs: new Map(opts.lamports ?? []),
+      tokenLikeAccounts: new Set(opts.tokenLike ?? []),
+    };
+  }
+
+  test("bare `<acct>.lamports()` → emitter lamports expr", () => {
+    const ctx = buildCtx({
+      lamports: [["from_acct", "*from_acct.lamports.borrow()"]],
+      info: [["from_acct", "from_acct"]],
+    });
+    expect(transformCtxAccountsStructural(`let l = from_acct.lamports();`, ctx)).toBe(
+      `let l = *from_acct.lamports.borrow();`,
+    );
+  });
+
+  test("bare `<acct>.lamports()` for unknown account — no rewrite", () => {
+    const ctx = buildCtx({ lamports: [["from_acct", "X"]] });
+    expect(transformCtxAccountsStructural(`let l = unknown.lamports();`, ctx)).toBe(
+      `let l = unknown.lamports();`,
+    );
+  });
+
+  test("bare `<acct>.amount` (tokenLike) → token_account_amount(infoVar)?", () => {
+    const ctx = buildCtx({
+      info: [["pool_a", "pool_a"]],
+      tokenLike: ["pool_a"],
+    });
+    expect(transformCtxAccountsStructural(`let v = pool_a.amount;`, ctx)).toBe(
+      `let v = token_account_amount(pool_a)?;`,
+    );
+  });
+
+  test("bare `<acct>.amount` (NOT tokenLike) — no rewrite", () => {
+    const ctx = buildCtx({
+      info: [["counter", "counter"]],
+      tokenLike: [],
+    });
+    expect(transformCtxAccountsStructural(`let v = counter.amount;`, ctx)).toBe(
+      `let v = counter.amount;`,
+    );
+  });
+
+  test("bare `<acct>.amount()` (with parens) — NOT rewritten (only bare field)", () => {
+    const ctx = buildCtx({
+      info: [["pool_a", "pool_a"]],
+      tokenLike: ["pool_a"],
+    });
+    const input = `let v = pool_a.amount();`;
+    expect(transformCtxAccountsStructural(input, ctx)).toBe(input);
+  });
+
+  test("ctx.accounts.X.lamports() still works (S5a path preserved)", () => {
+    const ctx = buildCtx({
+      lamports: [["counter", "*counter.lamports.borrow()"]],
+      info: [["counter", "counter"]],
+    });
+    expect(
+      transformCtxAccountsStructural(`let l = ctx.accounts.counter.lamports();`, ctx),
+    ).toBe(`let l = *counter.lamports.borrow();`);
+  });
+
+  test("ctx.accounts.X.amount still rewrites unconditionally (S5a path preserved)", () => {
+    // Unlike bare receiver, the ctx.accounts path doesn't gate on tokenLike
+    // (mirroring the regex panel's behavior).
+    const ctx = buildCtx({
+      info: [["counter", "counter"]],
+      tokenLike: [], // counter NOT tokenLike — but ctx.accounts.X path doesn't gate
+    });
+    expect(transformCtxAccountsStructural(`let v = ctx.accounts.counter.amount;`, ctx)).toBe(
+      `let v = token_account_amount(counter)?;`,
+    );
+  });
+});
+
+describe("M5d Session 7 — rewriteHelperCallsStructural", () => {
+  function buildCtx(helpers: string[], stateVars: string[]): PassContext {
+    return {
+      ...PIN_CTX,
+      helperMutRefNames: new Set(helpers),
+      stateVarNames: new Set(stateVars),
+    };
+  }
+
+  test("`helper(stateVar, …)` → `helper(&mut stateVar, …)`", () => {
+    const ctx = buildCtx(["update_pool"], ["pool"]);
+    expect(rewriteHelperCallsStructural(`update_pool(pool, 5);`, ctx)).toBe(
+      `update_pool(&mut pool, 5);`,
+    );
+  });
+
+  test("first arg only — second arg untouched even if it's also a state var", () => {
+    const ctx = buildCtx(["combine"], ["pool", "user"]);
+    expect(rewriteHelperCallsStructural(`combine(pool, user);`, ctx)).toBe(
+      `combine(&mut pool, user);`,
+    );
+  });
+
+  test("non-helper fn call — no rewrite", () => {
+    const ctx = buildCtx(["update_pool"], ["pool"]);
+    expect(rewriteHelperCallsStructural(`other_fn(pool, 5);`, ctx)).toBe(
+      `other_fn(pool, 5);`,
+    );
+  });
+
+  test("first arg is not a state var — no rewrite", () => {
+    const ctx = buildCtx(["update_pool"], ["pool"]);
+    expect(rewriteHelperCallsStructural(`update_pool(amount, 5);`, ctx)).toBe(
+      `update_pool(amount, 5);`,
+    );
+  });
+
+  test("idempotent — already-`&mut` prefix not double-injected", () => {
+    const ctx = buildCtx(["update_pool"], ["pool"]);
+    const input = `update_pool(&mut pool, 5);`;
+    const once = rewriteHelperCallsStructural(input, ctx);
+    expect(once).toBe(input);
+  });
+
+  test("method call NOT rewritten (regex's `\\b${helper}` would false-match)", () => {
+    // obj.update_pool(pool, 5) — `update_pool` is field_identifier, not bare
+    // identifier. Tree-sitter naturally skips it; regex would falsely match.
+    const ctx = buildCtx(["update_pool"], ["pool"]);
+    const input = `obj.update_pool(pool, 5);`;
+    expect(rewriteHelperCallsStructural(input, ctx)).toBe(input);
+  });
+
+  test("zero-arg helper call — no rewrite (no first arg)", () => {
+    const ctx = buildCtx(["update_pool"], ["pool"]);
+    expect(rewriteHelperCallsStructural(`update_pool();`, ctx)).toBe(`update_pool();`);
+  });
+
+  test("nested helper calls — outer + inner both rewritten", () => {
+    const ctx = buildCtx(["wrap", "update_pool"], ["pool", "user"]);
+    expect(rewriteHelperCallsStructural(`wrap(user, update_pool(pool, 5));`, ctx)).toBe(
+      `wrap(&mut user, update_pool(&mut pool, 5));`,
+    );
+  });
+
+  test("string literal containing helper(stateVar) NOT rewritten", () => {
+    const ctx = buildCtx(["update_pool"], ["pool"]);
+    const input = `msg!("update_pool(pool) example");`;
+    expect(rewriteHelperCallsStructural(input, ctx)).toBe(input);
+  });
+
+  test("empty helperMutRefNames / stateVarNames — no-op fast path", () => {
+    const ctx: PassContext = { ...PIN_CTX };
+    const input = `update_pool(pool, 5);`;
+    expect(rewriteHelperCallsStructural(input, ctx)).toBe(input);
   });
 });
 

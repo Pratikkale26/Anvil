@@ -98,6 +98,21 @@ export interface PassContext {
    * regex (and the parallel one in walker.transformCtxAccountsReferences).
    */
   onStateRead?: (accountName: string) => string;
+  /** Snake-case names of accounts whose accountType contains "TokenAccount"
+   *  OR whose constraints include token::* / associated_token::*. Used by
+   *  transformCtxAccountsStructural to gate the bare-receiver `.amount`
+   *  rewrite to `token_account_amount(infoVar)?`. Mirrors the tokenLike
+   *  check in walker.transformAccountReferences (lines 820-832). */
+  tokenLikeAccounts?: Set<string>;
+  /** Set of helper-fn names whose first parameter is `&mut <StateType>`.
+   *  Used by rewriteHelperCallsStructural to inject `&mut` before
+   *  state-var arguments at call sites. Mirrors walker.helperMutRefNames. */
+  helperMutRefNames?: Set<string>;
+  /** Snake-case names of state-var locals (the localVar that
+   *  ensureStateRead would return). Used by rewriteHelperCallsStructural
+   *  to gate which arguments get the `&mut` prefix. Mirrors
+   *  walker.stateAccountNames + walker.resolveStateVar. */
+  stateVarNames?: Set<string>;
 }
 
 interface Edit {
@@ -618,7 +633,20 @@ export function transformCtxAccountsStructural(code: string, ctx: PassContext): 
             else recv = c;
           }
           if (recv && fld?.text === "lamports") {
-            const accountName = asCtxAccountsField(recv);
+            // Two receiver shapes:
+            //   ctx.accounts.X.lamports() (S5a original)
+            //   <acct>.lamports()         (S6b extension — bare receiver,
+            //                              mirrors the per-account loop in
+            //                              walker.transformAccountReferences
+            //                              lines 816-819, no tokenLike gate)
+            let accountName: string | null = null;
+            if (recv.type === "identifier") {
+              if (ctx.accountLamportsExprs?.has(snakeCase(recv.text))) {
+                accountName = snakeCase(recv.text);
+              }
+            } else {
+              accountName = asCtxAccountsField(recv);
+            }
             if (accountName !== null) {
               const lamportsExpr = ctx.accountLamportsExprs?.get(accountName);
               if (lamportsExpr) {
@@ -664,10 +692,23 @@ export function transformCtxAccountsStructural(code: string, ctx: PassContext): 
             return false;
           }
         }
-        // ctx.accounts.X.amount — skip if followed by `(` (then it's
-        // .amount() which isn't covered) or chained further.
+        // .amount — skip if followed by `(` (then it's .amount() which
+        // isn't covered) or chained further. Two receiver shapes:
+        //   ctx.accounts.X.amount  (S5a original — unconditional rewrite)
+        //   <acct>.amount          (S6b extension — bare receiver, gated
+        //                           on tokenLikeAccounts to mirror the
+        //                           walker.transformAccountReferences
+        //                           lines 820-832 tokenLike branch)
         if (fld.text === "amount") {
-          const accountName = asCtxAccountsField(recv);
+          let accountName: string | null = null;
+          if (recv.type === "identifier") {
+            const snake = snakeCase(recv.text);
+            if (ctx.tokenLikeAccounts?.has(snake) && ctx.accountInfoVars.has(snake)) {
+              accountName = snake;
+            }
+          } else {
+            accountName = asCtxAccountsField(recv);
+          }
           if (accountName !== null) {
             const infoVar = ctx.accountInfoVars.get(accountName);
             if (infoVar) {
@@ -968,6 +1009,55 @@ export function rewriteStateBoundFieldsStructural(code: string, ctx: PassContext
         replacement: `${localVar}.${snakeCase(fieldName)}`,
       });
       return false;
+    });
+  }
+  return applyEdits(code, edits);
+}
+
+// ─── Pass 7 — helper-fn calls: inject &mut for state-var args ──────────────
+
+/**
+ * Inject `&mut` before state-var arguments at helper-fn call sites whose
+ * first parameter is `&mut <StateType>`. Mirrors walker.transformHelperCalls
+ * (lines 1459-1471) — which uses an O(helpers × stateVars) regex loop.
+ *
+ * Match shape: `<helperName>(<stateVar>,` where helperName is in
+ * helperMutRefNames AND stateVar is in stateVarNames. Only the first
+ * positional argument is rewritten (per the regex pattern). Subsequent
+ * args are left alone.
+ *
+ * Tree-sitter eliminates two false-positive risks the regex carries:
+ *   - `<helperName>` collision with field accesses: regex's `\b` boundary
+ *     would match `obj.helperName(stateVar,` but the AST gates on
+ *     `call_expression.namedChild(0).type === "identifier"` (bare ident).
+ *   - `<stateVar>` collision with similarly-named locals: regex matches
+ *     literal text; AST checks identifier node.
+ *
+ * Idempotent: if the source already has `helper(&mut x, …)`, the first
+ * argument is a reference_expression, not an identifier — no rewrite.
+ */
+export function rewriteHelperCallsStructural(code: string, ctx: PassContext): string {
+  if (!ctx.helperMutRefNames || ctx.helperMutRefNames.size === 0) return code;
+  if (!ctx.stateVarNames || ctx.stateVarNames.size === 0) return code;
+  const helpers = ctx.helperMutRefNames;
+  const stateVars = ctx.stateVarNames;
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  const edits: Edit[] = [];
+  for (const stmt of parsed.stmts) {
+    walk(stmt, (n) => {
+      if (n.type !== "call_expression") return true;
+      const fn = n.namedChild(0);
+      const args = n.namedChild(1);
+      if (!fn || fn.type !== "identifier" || !helpers.has(fn.text)) return true;
+      if (!args || args.type !== "arguments" || args.namedChildCount === 0) return true;
+      const firstArg = args.namedChild(0);
+      if (!firstArg || firstArg.type !== "identifier") return true;
+      if (!stateVars.has(firstArg.text)) return true;
+      const start = firstArg.startIndex - parsed.bodyOffset;
+      const end = firstArg.endIndex - parsed.bodyOffset;
+      edits.push({ start, end, replacement: `&mut ${firstArg.text}` });
+      return true; // continue descending — nested helper calls in args
     });
   }
   return applyEdits(code, edits);

@@ -24,6 +24,7 @@ import {
   rewriteLocalAliasesStructural,
   collapseMultiDerefStructural,
   rewriteStateBoundFieldsStructural,
+  rewriteHelperCallsStructural,
   type PassContext,
 } from "../pass-through-structural.js";
 
@@ -149,15 +150,23 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // Pure text transform, runs AFTER walker.transformAccountReferences
   // since the regex panel's per-account `.key()` rewrites can themselves
   // introduce `**X.key()` shapes when collapsing wrapped references.
+  // M5d Session 7 — helper-fn `&mut` injection runs BEFORE the regex
+  // walker.transformHelperCalls. Both rewrite the same shape
+  // idempotently — once structural has injected `&mut`, the first arg
+  // is a reference_expression (not bare identifier), so the regex's
+  // `\b${helperName}\(\s*${stateVar}` pattern doesn't match again.
   let transformedRawCode = simplifyPassThroughCode(
     w.transformHelperCalls(
-      w.normalizeKeyValueUsages(
-        normalizeKeyValueStructural(
-          collapseMultiDerefStructural(
-            w.transformAccountReferences(aliasRewritten),
+      rewriteHelperCallsStructural(
+        w.normalizeKeyValueUsages(
+          normalizeKeyValueStructural(
+            collapseMultiDerefStructural(
+              w.transformAccountReferences(aliasRewritten),
+            ),
+            structuralCtx,
           ),
-          structuralCtx,
         ),
+        structuralCtx,
       ),
     ),
   );
@@ -374,7 +383,42 @@ function buildPassContext(w: BodyWalker): PassContext {
     localAliases: w.localAliases,
     stateBoundAccounts: buildStateBoundAccountsSet(w),
     onStateRead: (acc: string) => w.ensureStateRead(acc),
+    tokenLikeAccounts: buildTokenLikeAccountsSet(w),
+    helperMutRefNames: w.helperMutRefNames,
+    stateVarNames: buildStateVarNamesSet(w),
   };
+}
+
+/**
+ * Build the set of snake-case account names whose accountType contains
+ * "TokenAccount" OR whose constraints include token::* / associated_token::*.
+ * Mirrors the tokenLike check in walker.transformAccountReferences
+ * (lines 820-832) — used to gate the bare-receiver `.amount` rewrite.
+ */
+function buildTokenLikeAccountsSet(w: BodyWalker): Set<string> {
+  const out = new Set<string>();
+  for (const acc of w.instr.accounts) {
+    const tokenLike =
+      acc.accountType.includes("TokenAccount") ||
+      acc.constraints.some(
+        (c) => c.kind.startsWith("token::") || c.kind.startsWith("associated_token::"),
+      );
+    if (tokenLike) out.add(snakeCase(acc.name));
+  }
+  return out;
+}
+
+/**
+ * Build the set of state-var local names (what walker.resolveStateVar
+ * returns for each state-bound account). Used by rewriteHelperCallsStructural
+ * to gate which arguments to a known mut-ref helper get the `&mut` prefix.
+ */
+function buildStateVarNamesSet(w: BodyWalker): Set<string> {
+  const out = new Set<string>();
+  for (const accountName of w.stateAccountNames) {
+    out.add(w.resolveStateVar(accountName));
+  }
+  return out;
 }
 
 /**
