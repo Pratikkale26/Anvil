@@ -558,11 +558,28 @@ export class BodyWalker {
     // substitutes a `&ctx.bumps` arg into a body that uses `bumps.field`. The
     // bare form `ctx.bumps.field` runs last so the broader regex doesn't
     // partial-match inside an already-rewritten parens form.
-    const transformed = code
+    let transformed = code
       .replace(/\(\s*&\s*ctx\.bumps\s*\)\.(\w+)/g, onMatch)
       .replace(/\(\s*ctx\.bumps\s*\)\.(\w+)/g, onMatch)
       .replace(/&\s*ctx\.bumps\.(\w+)/g, onMatch)
       .replace(/ctx\.bumps\.(\w+)/g, onMatch);
+    // Bare `&ctx.bumps` (no .field) — the whole bumps map is being passed as
+    // an argument. Surfaces in multi-file Anchor programs that delegate
+    // instruction bodies to impl methods declared in sibling files
+    // (`ctx.accounts.do_thing(&ctx.bumps)`). Anvil's parser only sees the
+    // delegating lib.rs, not the contexts/ impl bodies, so we don't know
+    // which bump fields the receiver dereferences. Tag with a TODO marker
+    // so the validator's "ctx.bumps leaked" error message points the
+    // user at the right thing instead of just rejecting the emit silently.
+    transformed = transformed.replace(
+      /&\s*ctx\.bumps\b(?!\.\w)/g,
+      "&__BUMPS_FULL_STRUCT_TODO__ /* ⚠️ Anvil: full bumps struct passed as ref (multi-file impl-method delegate). Anvil doesn't parse contexts/*.rs yet — port the receiver inline or pass individual bump fields. */",
+    );
+    // Bare `ctx.bumps` (no .field, no leading &) — same rationale.
+    transformed = transformed.replace(
+      /\bctx\.bumps\b(?!\.\w)/g,
+      "__BUMPS_FULL_STRUCT_TODO__ /* ⚠️ Anvil: full bumps struct value (multi-file impl-method delegate). */",
+    );
     return { prelude, code: transformed };
   }
 

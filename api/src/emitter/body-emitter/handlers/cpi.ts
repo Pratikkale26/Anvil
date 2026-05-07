@@ -57,6 +57,21 @@ export function resolveSignerSeedsExpr(w: BodyWalker, signerSeeds: string | unde
   // already; rewrite the IR's source-level reference (e.g. `&[vault_seeds]`,
   // `&[fee_vault_seeds]`) to point at it.
   if (w.signerSeedsInScope) return "signer_seeds";
+  // Inline literal signer-seeds — `&[&[ctx.accounts.X.key().as_ref(),
+  // &[ctx.bumps.Y]]]` style — appears when the source uses
+  // `CpiContext::new_with_signer(prog, accounts, &[&[...]])` with the seeds
+  // built inline rather than via a `let X_seeds = ...;` binding. The IR
+  // captures the verbatim text. Pass it through transformCtxAccountsReferences
+  // and replaceBumpRefs so ctx.accounts.X / ctx.bumps.Y become the local
+  // AccountInfo / bump_X identifiers the rest of the emit uses. Only fires
+  // on signerSeeds expressions that contain literal `ctx.accounts` /
+  // `ctx.bumps` patterns — non-literal variable references aren't touched.
+  if (/\bctx\.accounts\b|\bctx\.bumps\b/.test(signerSeeds)) {
+    const { code: transformedSeeds } = w.replaceBumpRefs(
+      w.transformCtxAccountsReferences(signerSeeds),
+    );
+    return transformedSeeds;
+  }
   // No prelude in scope and a non-default name — leave it alone. This is the
   // case the original prelude-skip logic was protecting.
   return signerSeeds;
