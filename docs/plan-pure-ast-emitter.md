@@ -460,6 +460,17 @@ The bigger structural-port opportunities now live OUTSIDE pass_through:
   fixture-specific multi-line constructions that need parseT22PinocchioBlock
   to do deeper structuralization. Not worth the round-trip for the
   marginal gain. Stop here.
+- 🟡 msg — was 10 raw_nodes (5+5), now **5** after the 2026-05-07 port:
+  Native `msg!("X: {}", a, b)` was wrapping the whole `"X: {}", a, b`
+  text as a single `parseSimpleExpr(msgText)` rawExpr. Fixed by splitting
+  msgText on top-level commas (via the existing `splitMsgArgs` helper
+  in m7-format-msg.ts) and parsing each arg individually via
+  `tryStructuralizeExpr ?? parseSimpleExpr`. Closes 5 of 5 Native
+  raw_exprs. Remaining 5 are Pinocchio formatted-msg buffer-builder
+  block-expressions emitted by `emitFormattedMsgPinocchio` — multi-line
+  blocks with range-expression slicing (`__log_buf[__log_len..__log_len
+  + __seg0.len()]`) that can't be structurally parsed without a Range
+  AST kind. Stop here.
 
 These are deterministic-shape and would benefit from per-kind structural
 ports following the same template. Each is ~3-5 hrs.

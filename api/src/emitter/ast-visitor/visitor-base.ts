@@ -1414,9 +1414,19 @@ export class AstVisitorBase {
     }
 
     // Native — msg!() macro across all three shapes (the macro itself
-    // handles format args). Structural via macro_call. parseSimpleExpr
-    // catches pure string literals; format-arg shapes fall through to
-    // rawExpr.
+    // handles format args). Structural via macro_call. Split msgText on
+    // top-level commas so multi-arg `msg!("X: {}", a, b)` becomes a
+    // proper macro_call with N args instead of stuffing everything into
+    // a single rawExpr. Each arg goes through tryStructuralizeExpr +
+    // parseSimpleExpr fallback for byte-equal printer output.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { splitMsgArgs } = require("../m7-format-msg.js") as typeof import("../m7-format-msg.js");
+    const parts = splitMsgArgs(msgText);
+    if (parts !== null && parts.length > 0) {
+      const macroArgs = parts.map((p) => tryStructuralizeExpr(p) ?? parseSimpleExpr(p));
+      return [exprStmt(macroCall("msg", macroArgs))];
+    }
+    // Fallback for empty/unsplittable input (e.g. malformed source).
     return [exprStmt(macroCall("msg", [parseSimpleExpr(msgText)]))];
   }
 
