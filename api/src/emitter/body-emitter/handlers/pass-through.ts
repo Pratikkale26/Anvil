@@ -119,6 +119,19 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // either redundant or unresolvable. Strip universally.
   transformedRawCode = transformedRawCode.replace(/\.to_account_info\(\)/g, "");
 
+  // ── P-C — branched SPL CPI rewriter (token-swap pattern) ──
+  // The cpi_spl_transfer detector runs per-statement at the top level of
+  // an instruction body. CPIs nested inside an if-else / match expression
+  // fall through to pass_through, where the `Transfer { ... }` struct
+  // literal would leak into the emit (Pinocchio doesn't have an
+  // `anchor_spl::token::Transfer` equivalent in scope). This transform
+  // recognizes the recoverable shapes and rewrites them to Anvil's
+  // `spl_token_transfer[_signed]` helpers — same shape the
+  // cpi_spl_transfer IR kind emits. Idempotent — operates only on
+  // text that still contains the `token::transfer(CpiContext::new...`
+  // marker; downstream cleanups don't disturb it.
+  transformedRawCode = transformBranchedSplCpis(transformedRawCode);
+
   // ── Final CPI cleanup: convert remaining CpiContext patterns to invoke() ──
   // Handles cases where CpiContext::new() uses pre-extracted variables or was
   // not caught by the specific CPI regex patterns above.
@@ -198,4 +211,204 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     code = `    // ⚠️ Anvil: Review this section — ${stmt.reviewReason ?? "may need manual verification"}\n${code}`;
   }
   w.lines.push(code);
+}
+
+/**
+ * Rewrite `token::transfer(CpiContext::new[_with_signer](prog, Transfer { from,
+ * to, authority }, [seeds]), amount)?` patterns nested inside if/match/block
+ * expressions into Anvil's helper calls (`spl_token_transfer` /
+ * `spl_token_transfer_signed`). Same final shape the cpi_spl_transfer IR
+ * kind emits at the top level — the helpers + their imports are already
+ * scaffolded by the emitter; this transform just extends recognition into
+ * positions the cpi-detector misses.
+ *
+ * Per `reports/next-session-pc-plan.md` Option B. Paren-balanced scan —
+ * NOT a regex, since the inner struct literal + nested calls (e.g.
+ * `.to_account_info()` already-stripped) defeat naive `[^)]*` matching.
+ *
+ * Non-recognized CPI shapes (token::mint_to, token::burn, token_2022::*)
+ * pass through unchanged — they fall to the existing CpiContext cleanup
+ * regex which comments them out as TODO stubs. Future expansion can add
+ * mint_to / burn / close_account / set_authority here following the same
+ * pattern.
+ */
+export function transformBranchedSplCpis(code: string): string {
+  const result: string[] = [];
+  let i = 0;
+  while (i < code.length) {
+    const tokenIdx = code.indexOf("token::transfer(", i);
+    if (tokenIdx === -1) {
+      result.push(code.slice(i));
+      break;
+    }
+    result.push(code.slice(i, tokenIdx));
+    const callOpenParen = tokenIdx + "token::transfer(".length - 1;
+    const callCloseParen = matchParen(code, callOpenParen);
+    if (callCloseParen === -1) {
+      // Malformed — give up on this match, advance past `token::transfer(`.
+      result.push(code.slice(tokenIdx, tokenIdx + "token::transfer(".length));
+      i = tokenIdx + "token::transfer(".length;
+      continue;
+    }
+    const innerArgs = code.slice(callOpenParen + 1, callCloseParen);
+    // Optional trailing `?` and `;`.
+    let tailEnd = callCloseParen + 1;
+    if (code[tailEnd] === "?") tailEnd++;
+    if (code[tailEnd] === ";") tailEnd++;
+    const replacement = rewriteSplTransferCall(innerArgs);
+    if (replacement === null) {
+      // Couldn't recognize — leave the original verbatim.
+      result.push(code.slice(tokenIdx, tailEnd));
+    } else {
+      result.push(replacement);
+    }
+    i = tailEnd;
+  }
+  return result.join("");
+}
+
+/** Return the index of the matching `)` for an opening `(` at `openIdx`,
+ *  paren-balanced over `( ) [ ] { }` and string literals. Returns -1 if
+ *  unbalanced. */
+function matchParen(s: string, openIdx: number): number {
+  let depth = 0;
+  let inStr: '"' | "'" | null = null;
+  for (let k = openIdx; k < s.length; k++) {
+    const c = s[k];
+    if (inStr) {
+      if (c === "\\") { k++; continue; }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { inStr = c; continue; }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") {
+      depth--;
+      if (depth === 0) return k;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Given the inner arg list of a `token::transfer(...)` call (everything
+ * between the outer parens), recognize the
+ * `CpiContext::new[_with_signer](prog, Transfer { ... }, [seeds]), amount`
+ * shape and return the helper-call replacement text. Returns null if the
+ * shape doesn't match — caller leaves the original code in place.
+ */
+function rewriteSplTransferCall(innerArgs: string): string | null {
+  // Find `CpiContext::new` / `CpiContext::new_with_signer` at the start
+  // (after any leading whitespace).
+  const trimmedStart = innerArgs.search(/\S/);
+  if (trimmedStart < 0) return null;
+  let cursor = trimmedStart;
+  let withSigner = false;
+  if (innerArgs.startsWith("CpiContext::new_with_signer", cursor)) {
+    withSigner = true;
+    cursor += "CpiContext::new_with_signer".length;
+  } else if (innerArgs.startsWith("CpiContext::new", cursor)) {
+    cursor += "CpiContext::new".length;
+  } else {
+    return null;
+  }
+  // Skip whitespace + open paren.
+  while (cursor < innerArgs.length && /\s/.test(innerArgs[cursor]!)) cursor++;
+  if (innerArgs[cursor] !== "(") return null;
+  const ctxOpen = cursor;
+  const ctxClose = matchParen(innerArgs, ctxOpen);
+  if (ctxClose === -1) return null;
+  const ctxInner = innerArgs.slice(ctxOpen + 1, ctxClose);
+  // Split ctxInner on top-level commas: prog, struct, [seeds].
+  const ctxParts = splitTopLevelCommas(ctxInner);
+  if (withSigner && ctxParts.length !== 3) return null;
+  if (!withSigner && ctxParts.length !== 2) return null;
+  // Parse the struct literal `Transfer { from: A, to: B, authority: C, }`
+  // from ctxParts[1].
+  const structText = ctxParts[1]!.trim();
+  const structMatch = /^Transfer\s*\{\s*([\s\S]+?)\s*\}\s*,?\s*$/.exec(structText);
+  if (!structMatch?.[1]) return null;
+  const fields = parseStructFields(structMatch[1]);
+  const from = fields.get("from");
+  const to = fields.get("to");
+  const authority = fields.get("authority");
+  if (!from || !to || !authority) return null;
+  const seeds = withSigner ? ctxParts[2]!.trim() : null;
+  // After the CpiContext::new(...) closing paren, expect `, <amount>`.
+  // The remaining text is innerArgs.slice(ctxClose + 1). Skip whitespace
+  // + comma; the rest is the amount expr.
+  let remaining = innerArgs.slice(ctxClose + 1).trim();
+  if (remaining.startsWith(",")) remaining = remaining.slice(1).trim();
+  // Trailing comma (`amount,`) is fine; strip it.
+  if (remaining.endsWith(",")) remaining = remaining.slice(0, -1).trim();
+  if (remaining.length === 0) return null;
+  const amount = remaining;
+  if (withSigner && seeds) {
+    return `spl_token_transfer_signed(${from}, ${to}, ${authority}, ${amount}, ${seeds})?;`;
+  }
+  return `spl_token_transfer(${from}, ${to}, ${authority}, ${amount})?;`;
+}
+
+/** Split `"a, b, c"` into `["a", "b", "c"]`, paren/bracket/brace + string-
+ *  literal aware so `Transfer { from: ctx.X, to: ctx.Y }` stays one part. */
+function splitTopLevelCommas(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let inStr: '"' | "'" | null = null;
+  let start = 0;
+  for (let k = 0; k < s.length; k++) {
+    const c = s[k];
+    if (inStr) {
+      if (c === "\\") { k++; continue; }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { inStr = c; continue; }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(s.slice(start, k));
+      start = k + 1;
+    }
+  }
+  const tail = s.slice(start).trim();
+  if (tail.length > 0 || out.length > 0) out.push(s.slice(start));
+  return out.map((p) => p.trim()).filter((p) => p.length > 0);
+}
+
+/** Parse a struct-literal field list (`from: A, to: B, authority: C, ...`)
+ *  into a Map<name, value-text>. Trailing comma OK. Whitespace tolerant. */
+function parseStructFields(fieldsText: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const part of splitTopLevelCommas(fieldsText)) {
+    const colonIdx = findTopLevelColonInPart(part);
+    if (colonIdx < 0) continue;
+    const name = part.slice(0, colonIdx).trim();
+    const value = part.slice(colonIdx + 1).trim();
+    if (!/^[A-Za-z_]\w*$/.test(name)) continue;
+    out.set(name, value);
+  }
+  return out;
+}
+
+function findTopLevelColonInPart(s: string): number {
+  let depth = 0;
+  let inStr: '"' | "'" | null = null;
+  for (let k = 0; k < s.length; k++) {
+    const c = s[k];
+    if (inStr) {
+      if (c === "\\") { k++; continue; }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { inStr = c; continue; }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === ":" && depth === 0) {
+      // Skip `::` paths.
+      if (s[k + 1] === ":" || s[k - 1] === ":") { k++; continue; }
+      return k;
+    }
+  }
+  return -1;
 }
