@@ -1695,13 +1695,13 @@ ${invokeCall}
       return seed;
     });
 
-    const seedsStr = transformedSeeds.join(",\n            ");
+    const seedsStr = transformedSeeds.join(",\n        ");
     const resolvedTypeName = typeName || account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
     const maybeRead = stateVar || !shouldReadState ? "" : `    let ${dataVar} = ${resolvedTypeName}::from_account_info(${accountInfoVar})?;\n`;
     return `    // PDA signer seeds for '${account}'
 ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds = &[
-            ${seedsStr},
-        ];
+        ${seedsStr},
+    ];
     let signer_seeds = &[&seeds[..]];`;
   }
 

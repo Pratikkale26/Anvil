@@ -75,6 +75,7 @@ import {
   deref,
   notExpr,
   array,
+  arrayMultiLine,
   block,
   constDecl,
   mlCall,
@@ -558,21 +559,28 @@ function parsePdaSignerSeedsLines(lines: string[]): RustStmt[] {
       continue;
     }
 
-    // `    let seeds = &[\n            ...,\n        ];` — multi-line let.
+    // `    let seeds = &[\n        ...,\n    ];` — multi-line let.
+    // Post-port format: outer indent 4, inner items at indent 8, close at
+    // indent 4 (matches arrayMultiLine printer + emit text). M5 port
+    // tryStructuralizes each seed expression individually so the
+    // metric counts only un-recognized seeds rather than the whole
+    // `&[...]` block as one rawExpr.
     if (line === "    let seeds = &[") {
-      // Capture lines until we find `        ];` (the closing of the
-      // array). The captured inner block becomes the value's rawExpr.
       const innerLines: string[] = [];
       i++;
-      while (i < allLines.length && allLines[i] !== "        ];") {
+      while (i < allLines.length && allLines[i] !== "    ];") {
         innerLines.push(allLines[i] ?? "");
         i++;
       }
-      // Skip the closing `        ];`.
+      // Skip the closing `    ];`.
       i++;
+      const seedExprs: RustExpr[] = innerLines
+        .map((ln) => ln.trim().replace(/,$/, "").trim())
+        .filter((s) => s.length > 0)
+        .map((seedText) => tryStructuralizeExpr(seedText) ?? rawExpr(seedText));
       out.push(letStmt(
         "seeds",
-        rawExpr(`&[\n${innerLines.join("\n")}\n        ]`),
+        ref(arrayMultiLine(seedExprs)),
       ));
       continue;
     }

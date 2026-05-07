@@ -152,7 +152,14 @@ export type RustExpr =
    * args (`accounts: &[]` in pinocchio's cpi_memo) and for the
    * MEMO_PROGRAM_ID byte array constants (`[5, 74, 83, …]`).
    */
-  | { kind: "array"; items: RustExpr[] }
+  /**
+   * Array literal `[a, b, c]`. `multiLine` triggers a per-item line
+   * layout (used by structural ports of multi-line array constructions
+   * like `let seeds = &[seed1, seed2, ...]`); the printer formats it
+   * with one item per line, indented by `indent + 4` from the
+   * surrounding stmt indent. Mirrors struct_literal's multiLine option.
+   */
+  | { kind: "array"; items: RustExpr[]; multiLine?: boolean }
   /**
    * Tuple expression — `(a, b, c)` or `()` (unit handled via lit).
    * Single-element tuples need a trailing comma `(a,)` per Rust syntax;
@@ -266,6 +273,9 @@ export function macroCall(name: string, args: RustExpr[]): RustExpr {
 }
 export function array(items: RustExpr[]): RustExpr {
   return { kind: "array", items };
+}
+export function arrayMultiLine(items: RustExpr[]): RustExpr {
+  return { kind: "array", items, multiLine: true };
 }
 export function tupleExpr(items: RustExpr[]): RustExpr {
   return { kind: "tuple", items };

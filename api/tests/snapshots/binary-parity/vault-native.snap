@@ -300,10 +300,10 @@ pub fn withdraw(
     }
     // PDA signer seeds for 'vault'
     let seeds = &[
-            b"vault",
-            vault_state.authority.as_ref(),
-            &[vault_state.vault_bump],
-        ];
+        b"vault",
+        vault_state.authority.as_ref(),
+        &[vault_state.vault_bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // System transfer with PDA signer
     let transfer_ix = system_instruction::transfer(vault.key, authority.key, amount);

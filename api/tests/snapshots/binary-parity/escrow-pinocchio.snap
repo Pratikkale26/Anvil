@@ -260,11 +260,11 @@ pub fn accept_escrow(
     // PDA signer seeds for 'escrow'
     let seed_bytes = escrow.seed.to_le_bytes();
     let seeds = &[
-            b"escrow",
-            escrow.maker.as_ref(),
-            &seed_bytes,
-            &[escrow.bump],
-        ];
+        b"escrow",
+        escrow.maker.as_ref(),
+        &seed_bytes,
+        &[escrow.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer — taker_ata_b → maker_ata_b
     spl_token_transfer(taker_ata_b, maker_ata_b, taker, escrow.receive_amount)?;
@@ -325,11 +325,11 @@ pub fn cancel_escrow(
     // PDA signer seeds for 'escrow'
     let seed_bytes = escrow.seed.to_le_bytes();
     let seeds = &[
-            b"escrow",
-            escrow.maker.as_ref(),
-            &seed_bytes,
-            &[escrow.bump],
-        ];
+        b"escrow",
+        escrow.maker.as_ref(),
+        &seed_bytes,
+        &[escrow.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → maker_ata_a
     spl_token_transfer_signed(vault, maker_ata_a, escrow_account, token_account_amount(vault)?, signer_seeds)?;

@@ -228,11 +228,11 @@ pub fn delist(
     }
     // PDA signer seeds for 'listing'
     let seeds = &[
-            b"listing",
-            listing.seller.as_ref(),
-            &listing.seed.to_le_bytes(),
-            &[listing.bump],
-        ];
+        b"listing",
+        listing.seller.as_ref(),
+        &listing.seed.to_le_bytes(),
+        &[listing.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → seller_ata
     let transfer_ix = spl_token::instruction::transfer(
@@ -587,11 +587,11 @@ pub fn purchase(
     )?;
     // PDA signer seeds for 'listing'
     let seeds = &[
-            b"listing",
-            listing.seller.as_ref(),
-            &listing.seed.to_le_bytes(),
-            &[listing.bump],
-        ];
+        b"listing",
+        listing.seller.as_ref(),
+        &listing.seed.to_le_bytes(),
+        &[listing.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → buyer_ata
     let transfer_ix = spl_token::instruction::transfer(

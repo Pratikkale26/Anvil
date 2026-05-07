@@ -641,10 +641,10 @@ pub fn release(
     let vault_bump = vesting.vault_bump;
     // PDA signer seeds for 'vesting_key'
     let seeds = &[
-            VAULT_SEED,
-            vesting_key.as_ref(),
-            &[vault_bump],
-        ];
+        VAULT_SEED,
+        vesting_key.as_ref(),
+        &[vault_bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → beneficiary_token_account
     spl_token_transfer_signed(vault, beneficiary_token_account, vault, releasable, signer_seeds)?;

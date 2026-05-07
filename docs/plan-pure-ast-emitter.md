@@ -410,14 +410,18 @@ typing) or trivial macro_call shapes (vec![], etc).
 
 The bigger structural-port opportunities now live OUTSIDE pass_through:
 
-- pda_signer_seeds (60 raw_lines) — let-bindings for seeds + signer_seeds
-- emit (40 raw_lines) — struct_literal + borsh block
-- state_read (22 raw_lines) — body emit text
-- require (20 raw_lines) — cond + error path leaf rawExpr
+- ✅ pda_signer_seeds — was 60 raw_exprs, now **30** (-50%) after the 2026-05-07
+  port: each seed expression now passes through `tryStructuralizeExpr` and
+  the seeds-array uses the new `arrayMultiLine` printer mode. Remaining 30
+  raw_exprs are the `&[&seeds[..]]` value of `let signer_seeds = ...`,
+  which can't be reduced without a Range AST kind (deferred — adding one
+  is its own arc).
+- emit (40 raw_exprs) — struct_literal + borsh block
+- state_read (22 raw_exprs) — body emit text
+- require (20 raw_exprs) — cond + error path leaf rawExpr
 
 These are deterministic-shape and would benefit from per-kind structural
-ports following the same template that closed the CPI catalog. Each is
-~3-5 hrs.
+ports following the same template. Each is ~3-5 hrs.
 
 ### Session 8 (M7 — Pinocchio formatted msg!() proper support): LANDED 2026-05-07
 - ✅ 8a: int → ASCII decimal helper (commit `cb8f914`).

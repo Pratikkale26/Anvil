@@ -184,6 +184,13 @@ export function printExpr(expr: RustExpr, indent?: string): string {
       return `${expr.name}!(${args})`;
     }
     case "array": {
+      if (expr.multiLine && indent !== undefined) {
+        const innerIndent = `${indent}    `;
+        const itemLines = expr.items
+          .map((a) => `${innerIndent}${printExpr(a, innerIndent)},`)
+          .join("\n");
+        return `[\n${itemLines}\n${indent}]`;
+      }
       const items = expr.items.map((a) => printExpr(a, indent)).join(", ");
       return `[${items}]`;
     }

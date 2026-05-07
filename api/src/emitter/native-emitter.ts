@@ -1147,15 +1147,15 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
       return seed;
     });
 
-    const seedsStr = transformedSeeds.join(",\n            ");
+    const seedsStr = transformedSeeds.join(",\n        ");
     const shouldReadState = !!typeName && !!this.currentIr?.accounts.find((acc) => acc.name === typeName);
     const maybeRead = stateVar || !shouldReadState
       ? ""
       : `    let ${dataVar} = ${resolvedTypeName}::try_from_slice(&${accountInfoVar}.data.borrow()[8..])?;\n`;
     return `    // PDA signer seeds for '${account}'
 ${maybeRead}    let seeds = &[
-            ${seedsStr},
-        ];
+        ${seedsStr},
+    ];
     let signer_seeds = &[&seeds[..]];`;
   }
 
