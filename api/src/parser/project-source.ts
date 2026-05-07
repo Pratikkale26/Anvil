@@ -728,12 +728,39 @@ function rewriteProgramModuleBody(
     (match, qualifiers: string, fnName: string) => {
       const parts = qualifiers.replace(/::$/, "").split("::");
       if (parts.length > 0 && resolvedModules.has(parts[0]!)) {
-        // Derive the expected renamed function name
+        // Try multiple rename derivations — the renamer uses
+        // `<originating-file-stem>_<fnName>` which doesn't always
+        // match the call's qualifier path.
+        //
+        // Case 1: `instructions::initialize::handler` → qualifier
+        // last segment IS the file stem (`initialize`), so
+        // `<parts[-1]>_<fnName>` = `initialize_handler` matches.
+        //
+        // Case 2 (wildcard re-export pattern, e.g. token-swap):
+        // `instructions::create_amm` where lib.rs has
+        // `pub use super::instructions::*;` — the file stem
+        // (`create_amm`) is also the fn name. Rename is
+        // `create_amm_create_amm`. Caller writes
+        // `instructions::create_amm(...)` — qualifier lacks the
+        // file-stem segment, so case-1 derivation produces
+        // `instructions_create_amm` which doesn't match.
         const parentModule = parts[parts.length - 1]!;
-        const expectedRename = `${parentModule}_${fnName}`;
-
-        if (renamedNames.has(expectedRename)) {
-          return `${expectedRename}(`;
+        const expectedRename1 = `${parentModule}_${fnName}`;
+        if (renamedNames.has(expectedRename1)) {
+          return `${expectedRename1}(`;
+        }
+        // Case 2: file stem == fn name (`create_amm_create_amm` shape).
+        const expectedRename2 = `${fnName}_${fnName}`;
+        if (renamedNames.has(expectedRename2)) {
+          return `${expectedRename2}(`;
+        }
+        // Case 3: scan all renames for any name ending in `_<fnName>`
+        // whose original name was `<fnName>`. This catches arbitrary
+        // file-stem prefixes when neither case 1 nor 2 matches.
+        for (const renamed of renamedNames) {
+          if (renamed.endsWith(`_${fnName}`)) {
+            return `${renamed}(`;
+          }
         }
         // No rename — function name is unique, just drop the qualifier
         return `${fnName}(`;
