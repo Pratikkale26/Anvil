@@ -648,8 +648,22 @@ pub fn release(
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → beneficiary_token_account
     spl_token_transfer_signed(vault, beneficiary_token_account, vault, releasable, signer_seeds)?;
-    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio
-    pinocchio::log::sol_log("Released {} tokens to beneficiary");
+    {
+        let mut __log_buf = [0u8; 256];
+        let mut __log_len = 0usize;
+        let __seg0 = b"Released ";
+        __log_buf[__log_len..__log_len + __seg0.len()].copy_from_slice(__seg0);
+        __log_len += __seg0.len();
+        let (__a1, __o1) = u64_to_ascii(releasable as u64);
+        let __ab1 = &__a1[__o1..];
+        __log_buf[__log_len..__log_len + __ab1.len()].copy_from_slice(__ab1);
+        __log_len += __ab1.len();
+        let __seg2 = b" tokens to beneficiary";
+        __log_buf[__log_len..__log_len + __seg2.len()].copy_from_slice(__seg2);
+        __log_len += __seg2.len();
+        let __log_str = unsafe { core::str::from_utf8_unchecked(&__log_buf[..__log_len]) };
+        pinocchio::log::sol_log(__log_str);
+    }
     Vesting::save(vesting_account, &vesting)?;
     Ok(())
 
@@ -719,8 +733,22 @@ pub fn revoke(
 
             spl_token_transfer_signed(vault, grantor_token_account, vault, unvested, &[seeds])?;
         }
-    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio
-    pinocchio::log::sol_log("Vesting revoked. {} unvested tokens returned to grantor.");
+    {
+        let mut __log_buf = [0u8; 256];
+        let mut __log_len = 0usize;
+        let __seg0 = b"Vesting revoked. ";
+        __log_buf[__log_len..__log_len + __seg0.len()].copy_from_slice(__seg0);
+        __log_len += __seg0.len();
+        let (__a1, __o1) = u64_to_ascii(unvested as u64);
+        let __ab1 = &__a1[__o1..];
+        __log_buf[__log_len..__log_len + __ab1.len()].copy_from_slice(__ab1);
+        __log_len += __ab1.len();
+        let __seg2 = b" unvested tokens returned to grantor.";
+        __log_buf[__log_len..__log_len + __seg2.len()].copy_from_slice(__seg2);
+        __log_len += __seg2.len();
+        let __log_str = unsafe { core::str::from_utf8_unchecked(&__log_buf[..__log_len]) };
+        pinocchio::log::sol_log(__log_str);
+    }
     Vesting::save(vesting_account, &vesting)?;
     Ok(())
 

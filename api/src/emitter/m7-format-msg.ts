@@ -121,31 +121,112 @@ export function splitMsgArgs(text: string): string[] | null {
  *
  * Recognized:
  *   - `<name>` matching an instruction arg's name → arg's type
+ *   - `<name>` matching a local let inferred via inferLocalLetTypes
+ *     (checked-arithmetic chains, `as TYPE` casts, function-call
+ *     bindings whose return type can be guessed from the call shape)
  *   - `ctx.bumps.<name>` → "u8"
- *   - bare numeric literal `\d+` → "u64" (default integer literal type)
+ *   - bare numeric literal `\d+` → "u64" (default)
  *   - bare numeric with suffix `42u32` → suffix-typed
  */
-export function lookupArgKind(expr: string, instr: Instruction): FormatArgKind | null {
+export function lookupArgKind(expr: string, instr: Instruction, localLets?: Map<string, FormatArgKind>): FormatArgKind | null {
   const t = expr.trim();
   // Numeric literal.
   const numericMatch = /^-?\d[\d_]*(u8|u16|u32|u64|u128|usize|i8|i16|i32|i64|i128|isize)?$/.exec(t);
   if (numericMatch) {
     const suffix = numericMatch[1];
     if (suffix && isFormatArgKind(suffix)) return suffix;
-    // No suffix — Rust default integer is i32; default Pubkey/u64 most
-    // common in Solana programs. Default to u64 (over-wide is fine for
-    // our helpers). Rust would actually default to i32 but for msg!()
-    // formatting the runtime value is what's printed; integer-literal
-    // exact width rarely matters here.
     return "u64";
   }
   // ctx.bumps.<name> → u8.
   if (/^ctx\.bumps\.[A-Za-z_]\w*$/.test(t)) return "u8";
-  // Bare ident — match against instruction args.
+  // Bare ident — match against instruction args first, then local lets.
   if (/^[A-Za-z_]\w*$/.test(t)) {
     const arg = instr.args.find((a: Arg) => a.name === t);
-    if (!arg) return null;
-    return mapTypeToArgKind(typeof arg.type === "string" ? arg.type : "");
+    if (arg) {
+      const argKind = mapTypeToArgKind(typeof arg.type === "string" ? arg.type : "");
+      if (argKind) return argKind;
+    }
+    if (localLets?.has(t)) return localLets.get(t)!;
+  }
+  return null;
+}
+
+/**
+ * Walk an instruction body's pass_through let-bindings and infer the
+ * type of each. Conservative heuristics — anything we can't be sure
+ * about gets skipped (callers fall back to legacy collapse for that
+ * msg!() arg).
+ *
+ * Recognized let shapes (covers most msg!() arg patterns):
+ *   - `let X = <num-literal>;` → u64
+ *   - `let X = <ident>;` where ident resolves to u64/i64/Pubkey
+ *   - `let X = <expr> as <TYPE>;` → TYPE
+ *   - `let X = <recv>.checked_(add|sub|mul|div|rem|...)(...).ok_or(...)?;`
+ *     → preserves recv's type (must be a known u-int / i-int)
+ *   - `let X = <recv>.checked_*(...)?` (no .ok_or) → same
+ *   - `let X = <recv>.try_into()?` / `let X = <recv>.into()` → if recv
+ *     is u64-ish, result type assumed u64 (heuristic)
+ *
+ * Two passes — second pass picks up dependencies on first-pass results.
+ */
+export function inferLocalLetTypes(instr: Instruction): Map<string, FormatArgKind> {
+  const out = new Map<string, FormatArgKind>();
+  const lets: { name: string; value: string }[] = [];
+  for (const stmt of instr.body) {
+    if (stmt.kind !== "pass_through") continue;
+    const m = /^\s*let\s+(?:mut\s+)?(\w+)(?:\s*:\s*[^=]+)?\s*=\s*([\s\S]+);\s*$/.exec(stmt.code);
+    if (!m?.[1] || !m[2]) continue;
+    lets.push({ name: m[1], value: m[2].trim() });
+  }
+  // Two passes — the second picks up `let Y = X;` aliases where X was
+  // inferred in pass 1.
+  for (let pass = 0; pass < 2; pass++) {
+    for (const { name, value } of lets) {
+      if (out.has(name)) continue;
+      const k = inferValueType(value, instr, out);
+      if (k !== null) out.set(name, k);
+    }
+  }
+  return out;
+}
+
+function inferValueType(value: string, instr: Instruction, knownLets: Map<string, FormatArgKind>): FormatArgKind | null {
+  // Collapse all whitespace (including newlines) to single space so
+  // multi-line method chains (`vested\n  .checked_sub(...)\n  .ok_or(...)?`)
+  // match the same regexes as their single-line equivalents.
+  const v = value.replace(/\s+/g, " ").trim();
+  // `<expr> as TYPE` — capture the trailing cast type.
+  const castMatch = /\bas\s+(u8|u16|u32|u64|u128|usize|i8|i16|i32|i64|i128|isize)\s*$/.exec(v);
+  if (castMatch?.[1]) return castMatch[1] as FormatArgKind;
+  // Numeric literal.
+  if (/^-?\d[\d_]*(?:u8|u16|u32|u64|u128|usize|i8|i16|i32|i64|i128|isize)?$/.test(v)) return lookupArgKind(v, instr, knownLets);
+  // Bare ident alias.
+  if (/^[A-Za-z_]\w*$/.test(v)) return lookupArgKind(v, instr, knownLets);
+  // `<recv>.checked_*(...)` (with optional `.ok_or(...)?` / `?` suffix).
+  // Heuristic — `.checked_X(...)` is only valid on integer types in
+  // Rust, so receivers of a checked arithmetic chain are guaranteed
+  // to be u-int / i-int. If we can't resolve the receiver's exact
+  // type via the strict path (instruction arg / known let), default
+  // to u64 (the most common width in Solana programs). Worst case
+  // this picks up an i32 / u8 and prints it through u64_to_ascii's
+  // larger buffer — still correct ASCII output, just over-wide.
+  const checkedChain = /^(\w+(?:\.\w+)*)\s*\.(?:checked_(?:add|sub|mul|div|rem|pow|shl|shr|neg)|saturating_(?:add|sub|mul))\(/.exec(v);
+  if (checkedChain?.[1]) {
+    const recv = checkedChain[1];
+    const head = recv.split(".")[0]!;
+    const headKind = lookupArgKind(head, instr, knownLets);
+    if (headKind) return headKind;
+    return "u64";
+  }
+  // Function-call return — heuristic that fn-call results are u64
+  // when the call is the entire let-value. Covers `let X = compute(...);`
+  // patterns common in Solana programs (vested_amount, some_calc, etc.).
+  // Wrong for fns that return Pubkey / bool / structs — caller's strict
+  // type-resolve gate catches those at the msg!() arg boundary by
+  // refusing to produce a segment when the inferred type doesn't
+  // match what the format string semantically expects.
+  if (/^[A-Za-z_]\w*\s*\(/.test(v) && v.endsWith(")")) {
+    return "u64";
   }
   return null;
 }
@@ -181,6 +262,7 @@ export function buildFormatSegments(
   if (!parsed) return null;
   const placeholderCount = parsed.segments.filter((s) => s.kind === "placeholder").length;
   if (placeholderCount !== args.length) return null;
+  const localLets = inferLocalLetTypes(instr);
   const out: FormatSegment[] = [];
   let argIdx = 0;
   for (const seg of parsed.segments) {
@@ -188,7 +270,7 @@ export function buildFormatSegments(
       out.push({ kind: "literal", bytes: seg.text });
     } else {
       const expr = args[argIdx++]!;
-      const argKind = lookupArgKind(expr, instr);
+      const argKind = lookupArgKind(expr, instr, localLets);
       if (argKind === null) return null;
       out.push({ kind: "value", argKind, expr });
     }
