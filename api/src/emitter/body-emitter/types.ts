@@ -89,6 +89,10 @@ export interface BodyEmitterCallbacks {
   emitT22TransferCheckedWithFee(source: string, mint: string, destination: string, authority: string, tokenProgram: string, amount: string, decimals: string, fee: string, signerSeeds?: string): string;
   emitT22WithdrawWithheldFromMint(mint: string, destination: string, authority: string, tokenProgram: string, signerSeeds?: string): string;
   emitT22HarvestWithheldToMint(mint: string, tokenProgram: string, sourcesExpr: string, signerSeeds?: string): string;
+  emitT22DefaultAccountStateInitialize(mint: string, tokenProgram: string, state: string, signerSeeds?: string): string;
+  emitT22DefaultAccountStateUpdate(mint: string, tokenProgram: string, freezeAuthority: string, state: string, signerSeeds?: string): string;
+  emitT22InterestBearingMintInitialize(mint: string, tokenProgram: string, rateAuthority: string, rate: string, signerSeeds?: string): string;
+  emitT22InterestBearingMintUpdateRate(mint: string, tokenProgram: string, rateAuthority: string, rate: string, signerSeeds?: string): string;
   emitCreateAta(ata: string, payer: string, mint: string, authority: string, signerSeeds?: string): string;
   emitMemo(data: string, signerSeeds?: string): string;
   emitProgramAccountClose(account: string, destination: string): string;

@@ -156,6 +156,18 @@ export function detectCpi(
   if (funcText.includes("harvest_withheld_tokens_to_mint")) {
     return extractT22HarvestWithheldToMint(callNode, collector);
   }
+  if (funcText.includes("default_account_state_initialize")) {
+    return extractT22DefaultAccountStateInit(callNode, collector);
+  }
+  if (funcText.includes("default_account_state_update")) {
+    return extractT22DefaultAccountStateUpdate(callNode, collector);
+  }
+  if (funcText.includes("interest_bearing_mint_initialize")) {
+    return extractT22InterestBearingMintInit(callNode, collector);
+  }
+  if (funcText.includes("interest_bearing_mint_update_rate")) {
+    return extractT22InterestBearingMintUpdateRate(callNode, collector);
+  }
 
   // ── SPL Token transfer ──
   if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
@@ -1103,6 +1115,152 @@ function extractT22HarvestWithheldToMint(
     mint: cleanAccountRef(mint),
     tokenProgram: cleanAccountRef(tokenProgram),
     sources,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 DefaultAccountState init/update (EM2 Session 3) ─────────────
+function extractT22DefaultAccountStateInit(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 default_account_state_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(collector, "T22 default_account_state_initialize (var-bound CpiContext)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram = extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  const state = args[1]?.text.trim() ?? "&AccountState::Initialized";
+  return {
+    kind: "cpi_t22_default_account_state_initialize",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    state,
+    signerSeeds,
+  };
+}
+
+function extractT22DefaultAccountStateUpdate(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 default_account_state_update", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(collector, "T22 default_account_state_update (var-bound CpiContext)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  let freezeAuthority = "freeze_authority";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram = extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+    freezeAuthority = extractStructField(accountsStruct, "freeze_authority") ?? freezeAuthority;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  const state = args[1]?.text.trim() ?? "&AccountState::Initialized";
+  return {
+    kind: "cpi_t22_default_account_state_update",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    freezeAuthority: cleanAccountRef(freezeAuthority),
+    state,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 InterestBearingMint init/update_rate (EM2 Session 3) ────────
+function extractT22InterestBearingMintInit(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 interest_bearing_mint_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(collector, "T22 interest_bearing_mint_initialize (var-bound CpiContext)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram = extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  const rateAuthority = args[1]?.text.trim() ?? "None";
+  const rate = cleanAmountExpr(args[2]?.text ?? "0i16");
+  return {
+    kind: "cpi_t22_interest_bearing_mint_initialize",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    rateAuthority,
+    rate,
+    signerSeeds,
+  };
+}
+
+function extractT22InterestBearingMintUpdateRate(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 interest_bearing_mint_update_rate", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(collector, "T22 interest_bearing_mint_update_rate (var-bound CpiContext)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  let rateAuthority = "rate_authority";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram = extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+    rateAuthority = extractStructField(accountsStruct, "rate_authority") ?? rateAuthority;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  const rate = cleanAmountExpr(args[1]?.text ?? "0i16");
+  return {
+    kind: "cpi_t22_interest_bearing_mint_update_rate",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    rateAuthority: cleanAccountRef(rateAuthority),
+    rate,
     signerSeeds,
   };
 }

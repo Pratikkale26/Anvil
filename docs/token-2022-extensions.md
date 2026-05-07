@@ -19,10 +19,10 @@ Statuses:
 |---|---|---|---|
 | TransferFeeConfig | Y (init+set_fee+transfer_checked_with_fee+withdraw) / TODO (harvest — const-N invoke gap) | Y (init+set_fee+transfer_checked_with_fee+withdraw+harvest) | base `transfer_checked` automatically deducts fee — Y; init+set_fee+transfer_checked_with_fee+withdraw differential-gated 2026-05-07; harvest typed on Native, Pinocchio TODO |
 | MintCloseAuthority | partial | partial | none on base CPIs — Y |
-| InterestBearingMint | partial | partial | none on base CPIs — Y |
+| InterestBearingMint | Y (init+update_rate) | Y (init+update_rate) | none on base CPIs — Y; init+update_rate differential-gated 2026-05-07 |
 | NonTransferable | Y | Y | `transfer_checked` rejects at program level — Y (rejection round-trips); init differential-gated 2026-05-07 |
 | CpiGuard | partial | partial | restricts which CPI calls a token account permits — Y for permitted ops |
-| DefaultAccountState | partial | partial | newly-initialized accounts start frozen — Y for state-aware code |
+| DefaultAccountState | TODO (no AccountState type) | Y (init+update) | newly-initialized accounts start frozen — Y for state-aware code; Native init+update differential-gated 2026-05-07; Pinocchio TODO commentout (lacks spl_token_2022::state::AccountState) |
 | ImmutableOwner | Y | Y | none on base CPIs — Y; init differential-gated 2026-05-07 |
 | PermanentDelegate | partial | partial | `transfer_checked` honors the delegate — Y |
 | MetadataPointer | partial | partial | none on base CPIs — Y |

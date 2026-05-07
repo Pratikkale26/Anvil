@@ -231,6 +231,42 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // DefaultAccountState: set the default state (Initialized / Frozen)
+  // newly-minted token accounts will start in. Init = no authority,
+  // update = freeze_authority signer.
+  abstract emitT22DefaultAccountStateInitialize(
+    mint: string,
+    tokenProgram: string,
+    state: string,
+    signerSeeds?: string,
+  ): string;
+  abstract emitT22DefaultAccountStateUpdate(
+    mint: string,
+    tokenProgram: string,
+    freezeAuthority: string,
+    state: string,
+    signerSeeds?: string,
+  ): string;
+
+  // InterestBearingMint: configure / update the interest rate (bps,
+  // can be negative) for UI amount display. Init takes Option<Pubkey>
+  // rate authority + i16 rate; update_rate takes only i16 + rate auth
+  // signer.
+  abstract emitT22InterestBearingMintInitialize(
+    mint: string,
+    tokenProgram: string,
+    rateAuthority: string,
+    rate: string,
+    signerSeeds?: string,
+  ): string;
+  abstract emitT22InterestBearingMintUpdateRate(
+    mint: string,
+    tokenProgram: string,
+    rateAuthority: string,
+    rate: string,
+    signerSeeds?: string,
+  ): string;
+
   abstract emitProgramAccountClose(account: string, destination: string): string;
   abstract emitCreateProgramAccount(
     account: string,

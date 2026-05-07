@@ -540,6 +540,57 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // anchor_spl::token_interface::default_account_state_initialize.
+  // Sets the default state (Initialized | Frozen) that newly-minted
+  // token accounts will start in. Mint must be pre-allocated with
+  // DefaultAccountState extension space.
+  z.object({
+    kind: z.literal("cpi_t22_default_account_state_initialize"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    /** Raw expression for `&AccountState::Frozen` / `&AccountState::Initialized`. */
+    state: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_interface::default_account_state_update. Mutates
+  // the default state on an existing mint. Requires the mint's
+  // freeze_authority signer.
+  z.object({
+    kind: z.literal("cpi_t22_default_account_state_update"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    freezeAuthority: z.string(),
+    state: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_interface::interest_bearing_mint_initialize.
+  // Configures a mint to display interest-bearing UI amounts based on
+  // a rate (basis points, can be negative). Mint must be pre-allocated
+  // with InterestBearingConfig extension space.
+  z.object({
+    kind: z.literal("cpi_t22_interest_bearing_mint_initialize"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    /** Raw expression for `Option<Pubkey>` rate authority. */
+    rateAuthority: z.string(),
+    /** i16 expression — interest rate in basis points. */
+    rate: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_interface::interest_bearing_mint_update_rate.
+  // Updates the interest rate on an existing InterestBearing mint.
+  z.object({
+    kind: z.literal("cpi_t22_interest_bearing_mint_update_rate"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    rateAuthority: z.string(),
+    rate: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: create_metadata_accounts_v3.
   // First-class IR slot for the Metaplex CPI catalog (#29). Today the
   // emitter still falls back to the walker.ts regex stub for actual

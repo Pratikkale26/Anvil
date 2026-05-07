@@ -136,8 +136,30 @@ export class NativeEmitter extends BaseEmitter {
         s.tokenProgram === "token_2022"
       )
     );
-    const t22NeedsInvoke = t22Cpis.some((s) => !(s as { signerSeeds?: string }).signerSeeds);
-    const t22NeedsInvokeSigned = t22Cpis.some((s) => !!(s as { signerSeeds?: string }).signerSeeds);
+    // EM2 typed T22 extension CPIs — every kind here emits an
+    // invoke{,_signed} call in its Native handler, so they all need
+    // the program::invoke / invoke_signed imports added to lib.rs.
+    const t22ExtCpis = _ir.instructions.flatMap((i) =>
+      (i.body ?? []).filter((s) =>
+        s.kind === "cpi_t22_non_transferable_mint_initialize" ||
+        s.kind === "cpi_t22_transfer_fee_initialize" ||
+        s.kind === "cpi_t22_transfer_fee_set_fee" ||
+        s.kind === "cpi_t22_immutable_owner_initialize" ||
+        s.kind === "cpi_t22_transfer_checked_with_fee" ||
+        s.kind === "cpi_t22_withdraw_withheld_tokens_from_mint" ||
+        s.kind === "cpi_t22_harvest_withheld_tokens_to_mint" ||
+        s.kind === "cpi_t22_default_account_state_initialize" ||
+        s.kind === "cpi_t22_default_account_state_update" ||
+        s.kind === "cpi_t22_interest_bearing_mint_initialize" ||
+        s.kind === "cpi_t22_interest_bearing_mint_update_rate"
+      )
+    );
+    const t22NeedsInvoke =
+      t22Cpis.some((s) => !(s as { signerSeeds?: string }).signerSeeds) ||
+      t22ExtCpis.some((s) => !(s as { signerSeeds?: string }).signerSeeds);
+    const t22NeedsInvokeSigned =
+      t22Cpis.some((s) => !!(s as { signerSeeds?: string }).signerSeeds) ||
+      t22ExtCpis.some((s) => !!(s as { signerSeeds?: string }).signerSeeds);
 
     // Pass-through bodies are user Anchor source carried into the emit
     // verbatim. Walker.ts regexes rewrite shapes like
@@ -274,6 +296,21 @@ use solana_program::{
           if (s.kind === "pass_through") return [(s as { code: string }).code];
           if (s.kind === "state_field_assign") return [(s as { value: string }).value];
           if (s.kind === "require") return [(s as { condition: string; errorMsg?: string }).condition];
+          // EM2 Session 3 — typed T22 IR kinds carry raw expressions
+          // (state literals, Option<Pubkey> authorities) that may
+          // reference types needing auto-import. Surface those text
+          // fields so collectT22ExtensionAutoImports sees them.
+          if (s.kind === "cpi_t22_default_account_state_initialize") return [(s as { state: string }).state];
+          if (s.kind === "cpi_t22_default_account_state_update") return [(s as { state: string }).state];
+          if (s.kind === "cpi_t22_interest_bearing_mint_initialize") {
+            return [(s as { rateAuthority: string }).rateAuthority];
+          }
+          if (s.kind === "cpi_t22_transfer_fee_initialize") {
+            return [
+              (s as { transferFeeConfigAuthority: string }).transferFeeConfigAuthority,
+              (s as { withdrawWithheldAuthority: string }).withdrawWithheldAuthority,
+            ];
+          }
           return [];
         }),
       ),
@@ -710,6 +747,95 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     ${invokeType}(
         &transfer_fee_init_ix,
         &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22DefaultAccountStateInitialize(
+    mint: string,
+    tokenProgram: string,
+    state: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 DefaultAccountState extension init — ${mint}
+    let das_init_ix = spl_token_2022::extension::default_account_state::instruction::initialize_default_account_state(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${state},
+    )?;
+    ${invokeType}(
+        &das_init_ix,
+        &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22DefaultAccountStateUpdate(
+    mint: string,
+    tokenProgram: string,
+    freezeAuthority: string,
+    state: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 DefaultAccountState — update default state on ${mint}
+    let das_update_ix = spl_token_2022::extension::default_account_state::instruction::update_default_account_state(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${freezeAuthority}.key,
+        &[],
+        ${state},
+    )?;
+    ${invokeType}(
+        &das_update_ix,
+        &[${mint}.clone(), ${freezeAuthority}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22InterestBearingMintInitialize(
+    mint: string,
+    tokenProgram: string,
+    rateAuthority: string,
+    rate: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    // The spl_token_2022 helper takes COption<Pubkey> directly (Some/None values).
+    return `    // Token-2022 InterestBearingMint extension init — ${mint}
+    let ibm_init_ix = spl_token_2022::extension::interest_bearing_mint::instruction::initialize(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${rateAuthority},
+        ${rate},
+    )?;
+    ${invokeType}(
+        &ibm_init_ix,
+        &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22InterestBearingMintUpdateRate(
+    mint: string,
+    tokenProgram: string,
+    rateAuthority: string,
+    rate: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 InterestBearingMint — update rate on ${mint}
+    let ibm_update_ix = spl_token_2022::extension::interest_bearing_mint::instruction::update_rate(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${rateAuthority}.key,
+        &[],
+        ${rate},
+    )?;
+    ${invokeType}(
+        &ibm_update_ix,
+        &[${mint}.clone(), ${rateAuthority}.clone(), ${tokenProgram}.clone()],${signerArg}
     )?;`;
   }
 
@@ -1477,6 +1603,10 @@ function collectT22ExtensionAutoImports(allCarriedText: string, sourceImportsTex
     { ident: "ExtensionType", path: "spl_token_2022::extension::ExtensionType" },
     { ident: "PodMint", path: "spl_token_2022::pod::PodMint" },
     { ident: "OptionalNonZeroPubkey", path: "spl_pod::optional_keys::OptionalNonZeroPubkey" },
+    // EM2 Session 3 — DefaultAccountState's `state` enum lives at
+    // spl_token_2022::state::AccountState; emit code references it via
+    // `&AccountState::Frozen` etc. Auto-import so users don't have to.
+    { ident: "AccountState", path: "spl_token_2022::state::AccountState" },
   ];
   for (const { ident, path } of extensionTypes) {
     if (!has(new RegExp(`\\b${ident}\\b`))) continue;

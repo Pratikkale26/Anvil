@@ -45,6 +45,10 @@ import {
   handleCpiT22TransferCheckedWithFee,
   handleCpiT22WithdrawWithheldFromMint,
   handleCpiT22HarvestWithheldToMint,
+  handleCpiT22DefaultAccountStateInit,
+  handleCpiT22DefaultAccountStateUpdate,
+  handleCpiT22InterestBearingMintInit,
+  handleCpiT22InterestBearingMintUpdateRate,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -253,6 +257,10 @@ export class BodyWalker {
         case "cpi_t22_transfer_checked_with_fee": handleCpiT22TransferCheckedWithFee(this, stmt); break;
         case "cpi_t22_withdraw_withheld_tokens_from_mint": handleCpiT22WithdrawWithheldFromMint(this, stmt); break;
         case "cpi_t22_harvest_withheld_tokens_to_mint": handleCpiT22HarvestWithheldToMint(this, stmt); break;
+        case "cpi_t22_default_account_state_initialize": handleCpiT22DefaultAccountStateInit(this, stmt); break;
+        case "cpi_t22_default_account_state_update": handleCpiT22DefaultAccountStateUpdate(this, stmt); break;
+        case "cpi_t22_interest_bearing_mint_initialize": handleCpiT22InterestBearingMintInit(this, stmt); break;
+        case "cpi_t22_interest_bearing_mint_update_rate": handleCpiT22InterestBearingMintUpdateRate(this, stmt); break;
         case "cpi_ata_create": handleCpiAtaCreate(this, stmt); break;
         case "cpi_memo": handleCpiMemo(this, stmt); break;
         case "cpi_custom": handleCpiCustom(this, stmt); break;

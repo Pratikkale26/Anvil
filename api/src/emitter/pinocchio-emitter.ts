@@ -935,6 +935,131 @@ ${invokeCall}
     }`;
   }
 
+  override emitT22DefaultAccountStateInitialize(
+    mint: string,
+    _tokenProgram: string,
+    state: string,
+    _signerSeeds?: string,
+  ): string {
+    // DefaultAccountState requires spl_token_2022::state::AccountState
+    // (repr(u8)) to extract the state byte. Pinocchio is no_std and
+    // doesn't have that type in scope. Anchor users typically pass
+    // either a literal `&AccountState::X` or a variable; converting
+    // a variable to u8 without the enum type is unsafe pointer-cast
+    // territory. Emit TODO commentout — Native target has the typed
+    // emit; Pinocchio users hand-write the byte value if needed.
+    return `    // ⚠️ Anvil TODO: default_account_state_initialize(${mint}, state=${state})
+    //   Pinocchio lacks spl_token_2022::state::AccountState; convert
+    //   state to a u8 manually (Uninitialized=0, Initialized=1, Frozen=2)
+    //   and hand-roll discriminator 28+0 + 1-byte payload. Native target
+    //   has the typed emit fully wired.`;
+  }
+
+  override emitT22DefaultAccountStateUpdate(
+    mint: string,
+    _tokenProgram: string,
+    freezeAuthority: string,
+    state: string,
+    _signerSeeds?: string,
+  ): string {
+    return `    // ⚠️ Anvil TODO: default_account_state_update(${mint}, authority=${freezeAuthority}, state=${state})
+    //   Pinocchio lacks spl_token_2022::state::AccountState; same gap
+    //   as default_account_state_initialize. Native has typed emit;
+    //   Pinocchio users hand-write the discriminator 28+1 + 1-byte payload.`;
+  }
+
+  override emitT22InterestBearingMintInitialize(
+    mint: string,
+    _tokenProgram: string,
+    rateAuthority: string,
+    rate: string,
+    signerSeeds?: string,
+  ): string {
+    // InterestBearingMintExtension(33) → Initialize(0). The wire
+    // format uses OptionalNonZeroPubkey for rate_authority — a 32-byte
+    // pubkey field where all-zeros means None (NOT COption's 1-byte
+    // tag form). Plus i16 LE rate (2 bytes). Total: 2 disc + 32 + 2 = 36.
+    const invokeCall = signerSeeds
+      ? `        let __ibm_seed_refs = ${signerSeeds}[0];
+        let mut __ibm_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__ibm_i, __ibm_s) in __ibm_seed_refs.iter().enumerate() {
+            if __ibm_i >= __ibm_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __ibm_pda_seeds[__ibm_i] = pinocchio::instruction::Seed::from(*__ibm_s);
+        }
+        let __ibm_signer = pinocchio::instruction::Signer::from(&__ibm_pda_seeds[..__ibm_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__ibm_ix, &[${mint}], &[__ibm_signer])?;`
+      : `        pinocchio::cpi::invoke(&__ibm_ix, &[${mint}])?;`;
+    return `    // Token-2022 InterestBearingMint extension init — ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let mut __ibm_data = [0u8; 36];
+        __ibm_data[0] = 33;
+        __ibm_data[1] = 0;
+        // OptionalNonZeroPubkey: zeroed = None, copy pubkey bytes when Some.
+        match &${rateAuthority} {
+            Some(__pk) => {
+                __ibm_data[2..34].copy_from_slice(__pk.as_ref());
+            }
+            None => {
+                // bytes 2..34 already zero-initialized
+            }
+        }
+        let __ibm_rate: i16 = ${rate};
+        __ibm_data[34..36].copy_from_slice(&__ibm_rate.to_le_bytes());
+        let __ibm_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+        ];
+        let __ibm_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__ibm_metas,
+            data: &__ibm_data,
+        };
+${invokeCall}
+    }`;
+  }
+
+  override emitT22InterestBearingMintUpdateRate(
+    mint: string,
+    _tokenProgram: string,
+    rateAuthority: string,
+    rate: string,
+    signerSeeds?: string,
+  ): string {
+    // InterestBearingMintExtension(33) → UpdateRate(1).
+    // Payload: i16 LE rate (2 bytes). Total: 4 bytes.
+    const invokeCall = signerSeeds
+      ? `        let __iur_seed_refs = ${signerSeeds}[0];
+        let mut __iur_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__iur_i, __iur_s) in __iur_seed_refs.iter().enumerate() {
+            if __iur_i >= __iur_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __iur_pda_seeds[__iur_i] = pinocchio::instruction::Seed::from(*__iur_s);
+        }
+        let __iur_signer = pinocchio::instruction::Signer::from(&__iur_pda_seeds[..__iur_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__iur_ix, &[${mint}, ${rateAuthority}], &[__iur_signer])?;`
+      : `        pinocchio::cpi::invoke(&__iur_ix, &[${mint}, ${rateAuthority}])?;`;
+    return `    // Token-2022 InterestBearingMint — update rate on ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let mut __iur_data = [0u8; 4];
+        __iur_data[0] = 33;
+        __iur_data[1] = 1;
+        let __iur_rate: i16 = ${rate};
+        __iur_data[2..4].copy_from_slice(&__iur_rate.to_le_bytes());
+        let __iur_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${rateAuthority}.key()),
+        ];
+        let __iur_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__iur_metas,
+            data: &__iur_data,
+        };
+${invokeCall}
+    }`;
+  }
+
   override emitT22HarvestWithheldToMint(
     mint: string,
     _tokenProgram: string,

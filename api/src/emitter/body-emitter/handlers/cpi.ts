@@ -20,6 +20,10 @@ type CpiT22ImmutableOwnerInit = Extract<BodyStatement, { kind: "cpi_t22_immutabl
 type CpiT22TransferCheckedWithFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_checked_with_fee" }>;
 type CpiT22WithdrawWithheldFromMint = Extract<BodyStatement, { kind: "cpi_t22_withdraw_withheld_tokens_from_mint" }>;
 type CpiT22HarvestWithheldToMint = Extract<BodyStatement, { kind: "cpi_t22_harvest_withheld_tokens_to_mint" }>;
+type CpiT22DefaultAccountStateInit = Extract<BodyStatement, { kind: "cpi_t22_default_account_state_initialize" }>;
+type CpiT22DefaultAccountStateUpdate = Extract<BodyStatement, { kind: "cpi_t22_default_account_state_update" }>;
+type CpiT22InterestBearingMintInit = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_initialize" }>;
+type CpiT22InterestBearingMintUpdateRate = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_update_rate" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -345,6 +349,95 @@ export function handleCpiT22HarvestWithheldToMint(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
       sourcesResolved,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22DefaultAccountStateInit(
+  w: BodyWalker,
+  stmt: CpiT22DefaultAccountStateInit,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: default_account_state_initialize(${stmt.mint})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.mint)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitT22DefaultAccountStateInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      stmt.state,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22DefaultAccountStateUpdate(
+  w: BodyWalker,
+  stmt: CpiT22DefaultAccountStateUpdate,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: default_account_state_update(${stmt.mint})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.freezeAuthority)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitT22DefaultAccountStateUpdate(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      snakeCase(stmt.freezeAuthority),
+      stmt.state,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22InterestBearingMintInit(
+  w: BodyWalker,
+  stmt: CpiT22InterestBearingMintInit,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: interest_bearing_mint_initialize(${stmt.mint})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.mint)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  // Rate-authority arg may reference ctx.accounts.X.key().
+  const rateAuth = w.transformCtxAccountsReferences(stmt.rateAuthority);
+  w.lines.push(
+    w.emitter.emitT22InterestBearingMintInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      rateAuth,
+      stmt.rate,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22InterestBearingMintUpdateRate(
+  w: BodyWalker,
+  stmt: CpiT22InterestBearingMintUpdateRate,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: interest_bearing_mint_update_rate(${stmt.mint})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.rateAuthority)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitT22InterestBearingMintUpdateRate(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      snakeCase(stmt.rateAuthority),
+      stmt.rate,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ),
   );

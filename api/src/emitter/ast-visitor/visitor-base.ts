@@ -608,6 +608,10 @@ import {
   handleCpiT22TransferCheckedWithFee,
   handleCpiT22WithdrawWithheldFromMint,
   handleCpiT22HarvestWithheldToMint,
+  handleCpiT22DefaultAccountStateInit,
+  handleCpiT22DefaultAccountStateUpdate,
+  handleCpiT22InterestBearingMintInit,
+  handleCpiT22InterestBearingMintUpdateRate,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -650,6 +654,10 @@ type CpiT22ImmutableOwnerInit = Extract<BodyStatement, { kind: "cpi_t22_immutabl
 type CpiT22TransferCheckedWithFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_checked_with_fee" }>;
 type CpiT22WithdrawWithheldFromMint = Extract<BodyStatement, { kind: "cpi_t22_withdraw_withheld_tokens_from_mint" }>;
 type CpiT22HarvestWithheldToMint = Extract<BodyStatement, { kind: "cpi_t22_harvest_withheld_tokens_to_mint" }>;
+type CpiT22DefaultAccountStateInit = Extract<BodyStatement, { kind: "cpi_t22_default_account_state_initialize" }>;
+type CpiT22DefaultAccountStateUpdate = Extract<BodyStatement, { kind: "cpi_t22_default_account_state_update" }>;
+type CpiT22InterestBearingMintInit = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_initialize" }>;
+type CpiT22InterestBearingMintUpdateRate = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_update_rate" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -694,6 +702,10 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_t22_transfer_checked_with_fee",
   "cpi_t22_withdraw_withheld_tokens_from_mint",
   "cpi_t22_harvest_withheld_tokens_to_mint",
+  "cpi_t22_default_account_state_initialize",
+  "cpi_t22_default_account_state_update",
+  "cpi_t22_interest_bearing_mint_initialize",
+  "cpi_t22_interest_bearing_mint_update_rate",
   "cpi_ata_create",
   "cpi_memo",
   "cpi_custom",
@@ -746,6 +758,14 @@ export class AstVisitorBase {
         return this.visitCpiT22WithdrawWithheldFromMint(stmt);
       case "cpi_t22_harvest_withheld_tokens_to_mint":
         return this.visitCpiT22HarvestWithheldToMint(stmt);
+      case "cpi_t22_default_account_state_initialize":
+        return this.visitCpiT22DefaultAccountStateInit(stmt);
+      case "cpi_t22_default_account_state_update":
+        return this.visitCpiT22DefaultAccountStateUpdate(stmt);
+      case "cpi_t22_interest_bearing_mint_initialize":
+        return this.visitCpiT22InterestBearingMintInit(stmt);
+      case "cpi_t22_interest_bearing_mint_update_rate":
+        return this.visitCpiT22InterestBearingMintUpdateRate(stmt);
       case "cpi_ata_create":       return this.visitCpiAtaCreate(stmt);
       case "cpi_memo":             return this.visitCpiMemo(stmt);
       case "cpi_custom":           return this.visitCpiCustom(stmt);
@@ -2155,6 +2175,22 @@ export class AstVisitorBase {
 
   visitCpiT22HarvestWithheldToMint(stmt: CpiT22HarvestWithheldToMint): RustStmt[] {
     return this.captureAndConvert(handleCpiT22HarvestWithheldToMint, stmt);
+  }
+
+  visitCpiT22DefaultAccountStateInit(stmt: CpiT22DefaultAccountStateInit): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22DefaultAccountStateInit, stmt);
+  }
+
+  visitCpiT22DefaultAccountStateUpdate(stmt: CpiT22DefaultAccountStateUpdate): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22DefaultAccountStateUpdate, stmt);
+  }
+
+  visitCpiT22InterestBearingMintInit(stmt: CpiT22InterestBearingMintInit): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22InterestBearingMintInit, stmt);
+  }
+
+  visitCpiT22InterestBearingMintUpdateRate(stmt: CpiT22InterestBearingMintUpdateRate): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22InterestBearingMintUpdateRate, stmt);
   }
 
   /**
