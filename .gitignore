@@ -64,5 +64,6 @@ test-ledger/
 # Snapshot test failure leftovers — regenerated on mismatch, byte-identical
 # to .snap.rs once the snapshot updates, otherwise stale-but-harmless.
 api/tests/snapshots/emitter-output/*.actual.rs
+api/tests/snapshots/binary-parity/*.snap.actual
 # anvil-sol prepack output (regenerated on each npm publish)
 cli/src/
