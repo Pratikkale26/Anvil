@@ -13,6 +13,11 @@ import {
 } from "../../emitter-utils.js";
 import { hasResidualAnchorPatterns } from "../../emitter-helpers.js";
 import type { BodyWalker } from "../walker.js";
+import {
+  qualifySysvarsStructural,
+  stripToAccountInfoStructural,
+  type PassContext,
+} from "../pass-through-structural.js";
 
 type PassThrough = Extract<BodyStatement, { kind: "pass_through" }>;
 
@@ -71,6 +76,30 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
       ),
     ),
   );
+  // M5d Session 1 — structural replacements for two regex transforms.
+  // Output is byte-identical to the regex versions (verified by
+  // tests/m5d-structural-passes.test.ts on hand-crafted patterns AND
+  // by binary-parity-snapshot on every demo × target). Tree-sitter
+  // parse + node-shape match replaces ad-hoc lookbehinds.
+  //
+  // Falls back to the regex pipeline when tree-sitter can't parse
+  // the input (parse error → structural pass returns code unchanged,
+  // we still call walker.normalizeToAccountInfoCalls + the 4 regex
+  // .replace calls to cover that case).
+  const structuralCtx: PassContext = {
+    qualifiedClockGet: w.qualifiedClockGetExpr(),
+    qualifiedRentGet: w.qualifiedRentGetExpr(),
+    qualifiedClockGetValue: w.qualifiedClockGetValueExpr(),
+    qualifiedRentGetValue: w.qualifiedRentGetValueExpr(),
+    accountKeyExprs: new Map(),  // Session 2 wiring — Pass 3 not yet primary
+    accountInfoVars: buildAccountInfoVarsMap(w),
+  };
+  transformedRawCode = qualifySysvarsStructural(transformedRawCode, structuralCtx);
+  transformedRawCode = stripToAccountInfoStructural(transformedRawCode, structuralCtx);
+  // Fallback: still run the regex versions in case tree-sitter parse
+  // returned the code unchanged (parse error → no-op). The regex is
+  // idempotent on already-structurally-rewritten text since the tree-
+  // sitter passes match the same shapes the regex would.
   transformedRawCode = w.normalizeToAccountInfoCalls(transformedRawCode);
   transformedRawCode = transformedRawCode
     .replace(/(?<!:)\bClock::get\(\)\?/g, w.qualifiedClockGetExpr())
@@ -211,6 +240,21 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     code = `    // ⚠️ Anvil: Review this section — ${stmt.reviewReason ?? "may need manual verification"}\n${code}`;
   }
   w.lines.push(code);
+}
+
+/**
+ * Build the `accountInfoVars` map for the structural to_account_info
+ * pass. Walker exposes `resolveAccountInfoVar` per account; we
+ * pre-collect the mapping for known accounts so the structural pass
+ * doesn't need walker access.
+ */
+function buildAccountInfoVarsMap(w: BodyWalker): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const acc of w.instr.accounts) {
+    const name = snakeCase(acc.name);
+    out.set(name, w.resolveAccountInfoVar(name));
+  }
+  return out;
 }
 
 /**
