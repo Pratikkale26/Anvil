@@ -468,9 +468,19 @@ The bigger structural-port opportunities now live OUTSIDE pass_through:
   `tryStructuralizeExpr ?? parseSimpleExpr`. Closes 5 of 5 Native
   raw_exprs. Remaining 5 are Pinocchio formatted-msg buffer-builder
   block-expressions emitted by `emitFormattedMsgPinocchio` — multi-line
-  blocks with range-expression slicing (`__log_buf[__log_len..__log_len
-  + __seg0.len()]`) that can't be structurally parsed without a Range
-  AST kind. Stop here.
+  blocks that need additional AST infrastructure (array_repeat
+  literal `[0u8; 256]`, compound-assign `+=`, unsafe blocks) to fully
+  structuralize. Diminishing returns — kept as rawLine.
+
+### Range AST kind landed 2026-05-07
+
+Added `range` AST node + factory `rangeExpr({start?, end?, inclusive?})`
++ printer + tree-sitter `range_expression` case. Handles `..`, `..end`,
+`start..`, `start..end`, `start..=end`. Once landed, swapping
+`parsePdaSignerSeedsLines`'s `parseSimpleExpr` to
+`tryStructuralizeExpr ?? parseSimpleExpr` for the signer_seeds value
+closes the 30 residual raw_exprs in pda_signer_seeds — 12th kind to
+reach PURE structural ★.
 
 These are deterministic-shape and would benefit from per-kind structural
 ports following the same template. Each is ~3-5 hrs.

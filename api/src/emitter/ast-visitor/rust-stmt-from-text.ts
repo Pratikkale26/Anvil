@@ -55,6 +55,7 @@ import {
   methodCall,
   notExpr,
   parenExpr,
+  rangeExpr,
   path,
   ref,
   returnStmt,
@@ -670,6 +671,48 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       return separator === ";"
         ? { kind: "macro_call", name: macroName, args, delim: open, separator: ";" }
         : { kind: "macro_call", name: macroName, args, delim: open };
+    }
+    case "range_expression": {
+      // `..`, `..end`, `start..`, `start..end`, `start..=end`. Endpoints
+      // are named children; the operator (`..` / `..=`) is in an unnamed
+      // child between (or before/after) them. We disambiguate where the
+      // single named child sits relative to the operator by comparing
+      // start indexes.
+      const opChild = (() => {
+        for (let i = 0; i < node.childCount; i++) {
+          const c = node.child(i);
+          if (!c || c.isNamed) continue;
+          const txt = c.text;
+          if (txt === ".." || txt === "..=") return c;
+        }
+        return null;
+      })();
+      if (!opChild) return null;
+      const inclusive = opChild.text === "..=";
+      const named: SyntaxNode[] = [];
+      for (let i = 0; i < node.namedChildCount; i++) {
+        const c = node.namedChild(i);
+        if (c) named.push(c);
+      }
+      let start: RustExpr | undefined;
+      let end: RustExpr | undefined;
+      if (named.length === 0) {
+        // bare `..` — both endpoints absent
+      } else if (named.length === 2) {
+        const lhs = exprFromNode(named[0]!);
+        const rhs = exprFromNode(named[1]!);
+        if (lhs === null || rhs === null) return null;
+        start = lhs;
+        end = rhs;
+      } else {
+        // exactly 1 named child — figure out side from index ordering
+        const c = named[0]!;
+        const e = exprFromNode(c);
+        if (e === null) return null;
+        if (c.startIndex < opChild.startIndex) start = e;
+        else end = e;
+      }
+      return rangeExpr({ start, end, inclusive });
     }
     case "unary_expression": {
       // `*expr` (deref) / `!expr` (not) / `-expr` (negation). The

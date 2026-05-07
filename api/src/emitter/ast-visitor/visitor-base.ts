@@ -555,10 +555,16 @@ function parsePdaSignerSeedsLines(lines: string[]): RustStmt[] {
       continue;
     }
 
-    // `    let signer_seeds = &[&seeds[..]];` — single-line let.
+    // `    let signer_seeds = &[&seeds[..]];` — single-line let. Now
+    // structuralizes via tryStructuralizeExpr (handles the `[..]`
+    // range slice via the range_expression case landed 2026-05-07);
+    // parseSimpleExpr fallback for any non-canonical shape.
     const signerMatch = line.match(/^    let signer_seeds = (.+);$/);
     if (signerMatch?.[1]) {
-      out.push(letStmt("signer_seeds", parseSimpleExpr(signerMatch[1])));
+      out.push(letStmt(
+        "signer_seeds",
+        tryStructuralizeExpr(signerMatch[1]) ?? parseSimpleExpr(signerMatch[1]),
+      ));
       i++;
       continue;
     }

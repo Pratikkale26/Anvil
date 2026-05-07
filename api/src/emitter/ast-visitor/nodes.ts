@@ -184,6 +184,14 @@ export type RustExpr =
    */
   | { kind: "closure"; paramsText: string; body: RustExpr }
   /**
+   * Range expression — `..`, `..end`, `start..`, `start..end`,
+   * `start..=end`. Both endpoints are optional; `inclusive` toggles
+   * `..` vs `..=`. Used inside index_expressions for slice subscripts
+   * (`&seeds[..]`, `&buf[..n]`) and as standalone exprs in some macros
+   * (e.g. `for i in 0..n`).
+   */
+  | { kind: "range"; start?: RustExpr; end?: RustExpr; inclusive: boolean }
+  /**
    * Match expression — `match VALUE { PAT0 => BODY0, PAT1 => BODY1, ... }`.
    * Patterns are captured verbatim as text; bodies are structural.
    * Multi-line layout: arms each on own line at +4 from the surrounding
@@ -292,6 +300,15 @@ export function tupleExpr(items: RustExpr[]): RustExpr {
 }
 export function closureExpr(paramsText: string, body: RustExpr): RustExpr {
   return { kind: "closure", paramsText, body };
+}
+export function rangeExpr(opts: { start?: RustExpr; end?: RustExpr; inclusive?: boolean } = {}): RustExpr {
+  const r: { kind: "range"; start?: RustExpr; end?: RustExpr; inclusive: boolean } = {
+    kind: "range",
+    inclusive: !!opts.inclusive,
+  };
+  if (opts.start !== undefined) r.start = opts.start;
+  if (opts.end !== undefined) r.end = opts.end;
+  return r;
 }
 export function matchExpr(value: RustExpr, arms: { patternText: string; body: RustExpr }[]): RustExpr {
   return { kind: "match", value, arms };

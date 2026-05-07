@@ -207,6 +207,12 @@ export function printExpr(expr: RustExpr, indent?: string): string {
     }
     case "closure":
       return `${expr.paramsText} ${printExpr(expr.body, indent)}`;
+    case "range": {
+      const op = expr.inclusive ? "..=" : "..";
+      const startTxt = expr.start !== undefined ? printExpr(expr.start, indent) : "";
+      const endTxt = expr.end !== undefined ? printExpr(expr.end, indent) : "";
+      return `${startTxt}${op}${endTxt}`;
+    }
     case "match": {
       // Multi-line layout — arms at +4 from the surrounding stmt
       // indent, closing `}` aligned with the stmt indent.
@@ -289,6 +295,10 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
         return;
       case "closure":
         visit(e.body);
+        return;
+      case "range":
+        if (e.start !== undefined) visit(e.start);
+        if (e.end !== undefined) visit(e.end);
         return;
       case "match":
         visit(e.value);
