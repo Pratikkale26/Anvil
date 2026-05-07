@@ -39,6 +39,7 @@ import {
   type RustExpr,
   binaryExpr,
   call,
+  castExpr,
   comment,
   exprStmt,
   ident,
@@ -46,6 +47,7 @@ import {
   letStmt,
   lit,
   methodCall,
+  parenExpr,
   path,
   returnStmt,
   tailExpr,
@@ -231,24 +233,52 @@ function stmtFromNode(node: SyntaxNode, isLast: boolean): RustStmt | null {
       return returnStmt(innerExpr);
     }
     case "let_declaration": {
-      // `let [mut] PATTERN[: TYPE] = VALUE;` — only support the simplest
-      // shape: pattern is a single identifier, no type annotation, value
-      // present. Refuse otherwise (caller falls back to rawLine).
+      // `let [mut] PATTERN[: TYPE] = VALUE;` — supported pattern shapes:
+      // single identifier (with optional type annotation). Tuple
+      // destructuring + struct patterns refuse (caller falls back to
+      // rawLine).
       let name: string | null = null;
       let mut = false;
+      let ty: string | undefined;
       let value: SyntaxNode | null = null;
       for (let i = 0; i < node.namedChildCount; i++) {
         const c = node.namedChild(i);
         if (!c) continue;
-        if (c.type === "mutable_specifier") mut = true;
-        else if (c.type === "identifier" && name === null) name = c.text;
-        else if (c.type === "tuple_pattern" || c.type === "tuple_struct_pattern" || c.type === "type_identifier") return null;
-        else if (i > 0) value = c;
+        if (c.type === "mutable_specifier") {
+          mut = true;
+          continue;
+        }
+        if (c.type === "tuple_pattern" || c.type === "tuple_struct_pattern" || c.type === "ref_pattern" || c.type === "reference_pattern") {
+          return null;
+        }
+        if (c.type === "identifier" && name === null) {
+          name = c.text;
+          continue;
+        }
+        // Type annotation node — capture verbatim text. Tree-sitter
+        // exposes types under several node types (primitive_type,
+        // generic_type, scoped_type_identifier, array_type, ...).
+        // Treating any of these as the `ty` slot is fine because the
+        // raw text is the source of truth (printer emits it verbatim).
+        if (
+          c.type === "primitive_type" ||
+          c.type === "type_identifier" ||
+          c.type === "scoped_type_identifier" ||
+          c.type === "generic_type" ||
+          c.type === "array_type" ||
+          c.type === "reference_type" ||
+          c.type === "tuple_type"
+        ) {
+          ty = c.text;
+          continue;
+        }
+        // Anything else after the first ident slot is the value.
+        if (name !== null) value = c;
       }
       if (name === null || value === null) return null;
       const re = exprFromNode(value);
       if (re === null) return null;
-      return letStmt(name, re, { mut });
+      return letStmt(name, re, { mut, ty });
     }
     default:
       return null;
@@ -359,15 +389,27 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       if (rhsExpr === null) return null;
       return binaryExpr(op, lhsExpr, rhsExpr);
     }
+    case "type_cast_expression": {
+      // `expr as TYPE` — tree-sitter exposes value (named) and type
+      // (named). The type slot has multiple node-type names depending
+      // on its shape; treat any second-named-child as the type and
+      // capture its raw text.
+      const inner = node.namedChild(0);
+      const tyNode = node.namedChild(1);
+      if (!inner || !tyNode) return null;
+      const innerExpr = exprFromNode(inner);
+      if (innerExpr === null) return null;
+      return castExpr(innerExpr, tyNode.text);
+    }
     case "parenthesized_expression": {
-      // `(expr)` — flatten the parens. The printer doesn't model
-      // parens explicitly; in expressions where parens matter for
-      // precedence the binary_expression's tree-sitter parse already
-      // resolved grouping, so emitting without explicit parens is
-      // fine here.
+      // `(expr)` — preserve via parenExpr so byte-equality holds for
+      // sources that wrote explicit parens (`(threshold as usize)`,
+      // `(a + b) * c`, etc.).
       const inner = node.namedChild(0);
       if (!inner) return null;
-      return exprFromNode(inner);
+      const innerExpr = exprFromNode(inner);
+      if (innerExpr === null) return null;
+      return parenExpr(innerExpr);
     }
     default:
       return null;

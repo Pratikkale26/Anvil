@@ -25,7 +25,7 @@
 
 /** Rust statement (`let`, assignment, expression-as-stmt). */
 export type RustStmt =
-  | { kind: "let"; mut: boolean; name: string; value: RustExpr }
+  | { kind: "let"; mut: boolean; name: string; value: RustExpr; ty?: string }
   | { kind: "assign"; target: RustExpr; value: RustExpr }
   /**
    * Expression statement — `<expr>;`. Used for things like a bare
@@ -131,6 +131,11 @@ export type RustExpr =
    * binary_expression with the correct grouping).
    */
   | { kind: "binary"; op: string; lhs: RustExpr; rhs: RustExpr }
+  /** `expr as Type` — primitive cast. `ty` is the textual type. */
+  | { kind: "cast"; expr: RustExpr; ty: string }
+  /** Explicit `(expr)` parens. Preserves byte equality where dropping
+   * the parens would change operator precedence (or just look diff). */
+  | { kind: "paren"; expr: RustExpr }
   /** Postfix `?` — `expr?`. */
   | { kind: "try"; expr: RustExpr }
   /** Path with no leading `::`, e.g. `CounterError::Overflow`. */
@@ -219,6 +224,12 @@ export function notExpr(expr: RustExpr, opts?: { parens?: boolean }): RustExpr {
 export function binaryExpr(op: string, lhs: RustExpr, rhs: RustExpr): RustExpr {
   return { kind: "binary", op, lhs, rhs };
 }
+export function castExpr(expr: RustExpr, ty: string): RustExpr {
+  return { kind: "cast", expr, ty };
+}
+export function parenExpr(expr: RustExpr): RustExpr {
+  return { kind: "paren", expr };
+}
 export function tryPostfix(expr: RustExpr): RustExpr {
   return { kind: "try", expr };
 }
@@ -260,8 +271,10 @@ export function constDecl(name: string, ty: string, value: RustExpr): RustStmt {
 export function rawExpr(text: string): RustExpr {
   return { kind: "raw", text };
 }
-export function letStmt(name: string, value: RustExpr, opts?: { mut?: boolean }): RustStmt {
-  return { kind: "let", mut: opts?.mut ?? false, name, value };
+export function letStmt(name: string, value: RustExpr, opts?: { mut?: boolean; ty?: string }): RustStmt {
+  return opts?.ty !== undefined
+    ? { kind: "let", mut: opts?.mut ?? false, name, value, ty: opts.ty }
+    : { kind: "let", mut: opts?.mut ?? false, name, value };
 }
 export function assign(target: RustExpr, value: RustExpr): RustStmt {
   return { kind: "assign", target, value };

@@ -61,7 +61,8 @@ export function printStmtAt(stmt: RustStmt, indent: string): string {
   switch (stmt.kind) {
     case "let": {
       const mutToken = stmt.mut ? "mut " : "";
-      return `${indent}let ${mutToken}${stmt.name} = ${printExpr(stmt.value, indent)};`;
+      const tyToken = stmt.ty !== undefined ? `: ${stmt.ty}` : "";
+      return `${indent}let ${mutToken}${stmt.name}${tyToken} = ${printExpr(stmt.value, indent)};`;
     }
     case "assign":
       return `${indent}${printExpr(stmt.target, indent)} = ${printExpr(stmt.value, indent)};`;
@@ -101,7 +102,8 @@ export function printStmt(stmt: RustStmt): string {
   switch (stmt.kind) {
     case "let": {
       const mutToken = stmt.mut ? "mut " : "";
-      return `let ${mutToken}${stmt.name} = ${printExpr(stmt.value)};`;
+      const tyToken = stmt.ty !== undefined ? `: ${stmt.ty}` : "";
+      return `let ${mutToken}${stmt.name}${tyToken} = ${printExpr(stmt.value)};`;
     }
     case "assign":
       return `${printExpr(stmt.target)} = ${printExpr(stmt.value)};`;
@@ -167,6 +169,10 @@ export function printExpr(expr: RustExpr, indent?: string): string {
         : `!${printExpr(expr.expr, indent)}`;
     case "binary":
       return `${printExpr(expr.lhs, indent)} ${expr.op} ${printExpr(expr.rhs, indent)}`;
+    case "cast":
+      return `${printExpr(expr.expr, indent)} as ${expr.ty}`;
+    case "paren":
+      return `(${printExpr(expr.expr, indent)})`;
     case "try":
       return `${printExpr(expr.expr, indent)}?`;
     case "path":
@@ -256,6 +262,10 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
       case "binary":
         visit(e.lhs);
         visit(e.rhs);
+        return;
+      case "cast":
+      case "paren":
+        visit(e.expr);
         return;
     }
   };
