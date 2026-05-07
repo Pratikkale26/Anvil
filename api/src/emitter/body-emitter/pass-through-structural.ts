@@ -68,6 +68,13 @@ export interface PassContext {
    * the `bump_<account>` substitution itself.
    */
   onBumpRef?: (accountName: string) => void;
+  /** For each known account name, the emitter-specific lamports
+   *  expression to substitute for `ctx.accounts.<X>.lamports()`. Built
+   *  by the caller from instr.accounts via emitter.emitAccountLamportsExpr. */
+  accountLamportsExprs?: Map<string, string>;
+  /** Number of non-optional named accounts on the instruction — used as
+   *  the slice index for the `ctx.remaining_accounts` rewrite. */
+  namedAccountCount?: number;
 }
 
 interface Edit {
@@ -434,6 +441,233 @@ function isCtxBumpsReceiver(n: SyntaxNode): boolean {
     return isCtxBumpsReceiver(inner);
   }
   return false;
+}
+
+// ─── Pass 5a — context.X → ctx.X normalization ──────────────────────────────
+
+/**
+ * Rename the receiver of `context.{accounts,bumps,program_id,remaining_accounts}`
+ * field accesses from `context` to `ctx`. Some Anchor codebases (e.g.
+ * solana-developers/program-examples/favorites) use `context: Context<T>`
+ * instead of the conventional `ctx`. Mirrors the 4 leading `.replace`s
+ * in walker.transformCtxAccountsReferences. Subsequent structural passes
+ * only need to handle the canonical `ctx` receiver.
+ */
+const CONTEXT_RECEIVER_FIELDS = new Set([
+  "accounts",
+  "bumps",
+  "program_id",
+  "remaining_accounts",
+]);
+
+export function normalizeContextNameStructural(code: string): string {
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  const edits: Edit[] = [];
+  for (const stmt of parsed.stmts) {
+    walk(stmt, (n) => {
+      if (n.type !== "field_expression") return true;
+      let receiver: SyntaxNode | null = null;
+      let field: SyntaxNode | null = null;
+      for (let i = 0; i < n.namedChildCount; i++) {
+        const c = n.namedChild(i);
+        if (!c) continue;
+        if (c.type === "field_identifier") field = c;
+        else receiver = c;
+      }
+      if (!receiver || receiver.type !== "identifier") return true;
+      if (receiver.text !== "context") return true;
+      if (!field || !CONTEXT_RECEIVER_FIELDS.has(field.text)) return true;
+      const start = receiver.startIndex - parsed.bodyOffset;
+      const end = receiver.endIndex - parsed.bodyOffset;
+      edits.push({ start, end, replacement: "ctx" });
+      return true; // descend — sibling field_expressions may also match
+    });
+  }
+  return applyEdits(code, edits);
+}
+
+// ─── Pass 5b — ctx.* leaf rewrites + id() routing ───────────────────────────
+
+/**
+ * Returns the account name if `n` is `ctx.accounts.<name>`, else null.
+ * AST shape: field_expression(field_expression(identifier(ctx),
+ * field_identifier(accounts)), field_identifier(<name>)).
+ */
+function asCtxAccountsField(n: SyntaxNode): string | null {
+  if (n.type !== "field_expression") return null;
+  let inner: SyntaxNode | null = null;
+  let outerField: SyntaxNode | null = null;
+  for (let i = 0; i < n.namedChildCount; i++) {
+    const c = n.namedChild(i);
+    if (!c) continue;
+    if (c.type === "field_identifier") outerField = c;
+    else inner = c;
+  }
+  if (!inner || inner.type !== "field_expression") return null;
+  if (!outerField) return null;
+  let innerRecv: SyntaxNode | null = null;
+  let innerField: SyntaxNode | null = null;
+  for (let i = 0; i < inner.namedChildCount; i++) {
+    const c = inner.namedChild(i);
+    if (!c) continue;
+    if (c.type === "field_identifier") innerField = c;
+    else innerRecv = c;
+  }
+  if (!innerRecv || innerRecv.type !== "identifier" || innerRecv.text !== "ctx") return null;
+  if (!innerField || innerField.type !== "field_identifier" || innerField.text !== "accounts") {
+    return null;
+  }
+  return outerField.text;
+}
+
+/**
+ * Single-pass rewrite of the leaf-level ctx.* / id() shapes that
+ * walker.transformCtxAccountsReferences handles via regex:
+ *
+ * - `ctx.program_id` → `program_id`
+ * - `ctx.remaining_accounts` → `&accounts[<namedAccountCount>..]`
+ * - `ctx.accounts.<X>.lamports()` → emitter-specific lamports expr
+ * - `ctx.accounts.<X>.amount` → `token_account_amount(<infoVar>)?`
+ * - `&id()` → `program_id`
+ * - `id()` → `(*program_id)` (only when `id` is a bare identifier, not
+ *    a path-qualified `module::id()`)
+ *
+ * Does NOT handle (deferred to S5b/S6):
+ *   - `ctx.accounts.X` reference forms (`&*`, `&mut`, `&`, bare)
+ *   - `ctx.accounts.X.<field>` state-bound rewrites (need ensureStateRead callback)
+ *   - `ctx.accounts.X.key()` / `.key` / `.key.as_ref()` / `.key().as_ref()` /
+ *      compound `.to_account_info().key()` chains
+ *   - `ctx.bumps.<X>` (covered by replaceBumpRefsStructural in S3/S4)
+ */
+export function transformCtxAccountsStructural(code: string, ctx: PassContext): string {
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  const edits: Edit[] = [];
+  for (const stmt of parsed.stmts) {
+    walk(stmt, (n) => {
+      // ── &id() / id() ──
+      if (n.type === "call_expression") {
+        const fn = n.namedChild(0);
+        const args = n.namedChild(1);
+        if (
+          fn?.type === "identifier" &&
+          fn.text === "id" &&
+          args?.type === "arguments" &&
+          args.namedChildCount === 0
+        ) {
+          const parent = n.parent;
+          // `&id()` — parent reference_expression containing this call as its
+          // last named child. Skip `&mut id()` (regex `/&\s*id\(\)/g` doesn't
+          // match it either).
+          if (
+            parent?.type === "reference_expression" &&
+            parent.namedChild(parent.namedChildCount - 1)?.id === n.id &&
+            !parent.text.startsWith("&mut")
+          ) {
+            const start = parent.startIndex - parsed.bodyOffset;
+            const end = parent.endIndex - parsed.bodyOffset;
+            edits.push({ start, end, replacement: "program_id" });
+          } else {
+            const start = n.startIndex - parsed.bodyOffset;
+            const end = n.endIndex - parsed.bodyOffset;
+            edits.push({ start, end, replacement: "(*program_id)" });
+          }
+          return false;
+        }
+      }
+
+      // ── ctx.accounts.X.lamports() ──
+      if (n.type === "call_expression") {
+        const fn = n.namedChild(0);
+        const args = n.namedChild(1);
+        if (
+          fn?.type === "field_expression" &&
+          args?.type === "arguments" &&
+          args.namedChildCount === 0
+        ) {
+          let recv: SyntaxNode | null = null;
+          let fld: SyntaxNode | null = null;
+          for (let i = 0; i < fn.namedChildCount; i++) {
+            const c = fn.namedChild(i);
+            if (!c) continue;
+            if (c.type === "field_identifier") fld = c;
+            else recv = c;
+          }
+          if (recv && fld?.text === "lamports") {
+            const accountName = asCtxAccountsField(recv);
+            if (accountName !== null) {
+              const lamportsExpr = ctx.accountLamportsExprs?.get(accountName);
+              if (lamportsExpr) {
+                const start = n.startIndex - parsed.bodyOffset;
+                const end = n.endIndex - parsed.bodyOffset;
+                edits.push({ start, end, replacement: lamportsExpr });
+                return false;
+              }
+            }
+          }
+        }
+      }
+
+      // ── ctx.accounts.X.amount (no parens — bare field) ──
+      // ── ctx.program_id ──
+      // ── ctx.remaining_accounts ──
+      if (n.type === "field_expression") {
+        let recv: SyntaxNode | null = null;
+        let fld: SyntaxNode | null = null;
+        for (let i = 0; i < n.namedChildCount; i++) {
+          const c = n.namedChild(i);
+          if (!c) continue;
+          if (c.type === "field_identifier") fld = c;
+          else recv = c;
+        }
+        if (!recv || !fld) return true;
+        // ctx.program_id / ctx.remaining_accounts
+        if (recv.type === "identifier" && recv.text === "ctx") {
+          if (fld.text === "program_id") {
+            const start = n.startIndex - parsed.bodyOffset;
+            const end = n.endIndex - parsed.bodyOffset;
+            edits.push({ start, end, replacement: "program_id" });
+            return false;
+          }
+          if (fld.text === "remaining_accounts" && ctx.namedAccountCount !== undefined) {
+            const start = n.startIndex - parsed.bodyOffset;
+            const end = n.endIndex - parsed.bodyOffset;
+            edits.push({
+              start,
+              end,
+              replacement: `&accounts[${ctx.namedAccountCount}..]`,
+            });
+            return false;
+          }
+        }
+        // ctx.accounts.X.amount — skip if followed by `(` (then it's
+        // .amount() which isn't covered) or chained further.
+        if (fld.text === "amount") {
+          const accountName = asCtxAccountsField(recv);
+          if (accountName !== null) {
+            const infoVar = ctx.accountInfoVars.get(accountName);
+            if (infoVar) {
+              // Confirm bare field — next char in source isn't `(`.
+              const after = code.slice(n.endIndex - parsed.bodyOffset);
+              if (!after.startsWith("(")) {
+                const start = n.startIndex - parsed.bodyOffset;
+                const end = n.endIndex - parsed.bodyOffset;
+                edits.push({
+                  start,
+                  end,
+                  replacement: `token_account_amount(${infoVar})?`,
+                });
+                return false;
+              }
+            }
+          }
+        }
+      }
+      return true;
+    });
+  }
+  return applyEdits(code, edits);
 }
 
 // ─── Verification helper ────────────────────────────────────────────────────

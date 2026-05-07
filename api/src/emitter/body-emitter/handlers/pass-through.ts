@@ -18,6 +18,8 @@ import {
   stripToAccountInfoStructural,
   normalizeKeyValueStructural,
   replaceBumpRefsStructural,
+  normalizeContextNameStructural,
+  transformCtxAccountsStructural,
   type PassContext,
 } from "../pass-through-structural.js";
 
@@ -90,7 +92,11 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // Dedup via `emittedBumps` ensures structural-then-regex doesn't
   // double-push if a shape slips past the structural matcher and the
   // regex catches it on the rewritten text.
-  const preProcessedRawCode = replaceBumpRefsStructural(rawCode, {
+  // M5d Session 5a — context-name normalization runs FIRST so all
+  // subsequent passes (structural + regex) only need to handle the
+  // canonical `ctx` receiver. Cheap (no side effects).
+  const ctxNormalizedCode = normalizeContextNameStructural(rawCode);
+  const preProcessedRawCode = replaceBumpRefsStructural(ctxNormalizedCode, {
     ...structuralCtx,
     onBumpRef: (acc) => { w.recordBumpRef(acc); },
   });
@@ -100,12 +106,23 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // (its match patterns require a `[=,(]` or whitespace prefix; once
   // the structural pass has rewritten `acct.key()` → `*acct.key()` on
   // pinocchio, the resulting `*acct.key()` no longer matches `acct.key()`).
+  // M5d Session 5a — leaf rewrites (ctx.program_id, ctx.remaining_accounts,
+  // ctx.accounts.X.lamports(), ctx.accounts.X.amount, &id(), id()) run
+  // BEFORE walker.transformCtxAccountsReferences so the regex panel sees
+  // already-rewritten text and falls through as a no-op for the leaves
+  // structural caught. Regex still handles the patterns S5a doesn't port
+  // (state-bound field reads, bare/&/&mut/&* ctx.accounts.X reference
+  // forms, ctx.accounts.X.key chains) — those defer to S5b/S6.
+  const ctxLeafRewritten = transformCtxAccountsStructural(
+    w.transformNestedAnchorCode(bumpAdjustedRawCode),
+    structuralCtx,
+  );
   let transformedRawCode = simplifyPassThroughCode(
     w.transformHelperCalls(
       w.normalizeKeyValueUsages(
         normalizeKeyValueStructural(
           w.transformAccountReferences(
-            w.transformCtxAccountsReferences(w.transformNestedAnchorCode(bumpAdjustedRawCode)),
+            w.transformCtxAccountsReferences(ctxLeafRewritten),
           ),
           structuralCtx,
         ),
@@ -320,7 +337,24 @@ function buildPassContext(w: BodyWalker): PassContext {
     qualifiedRentGetValue: w.qualifiedRentGetValueExpr(),
     accountKeyExprs: buildAccountKeyExprsMap(w),
     accountInfoVars: buildAccountInfoVarsMap(w),
+    accountLamportsExprs: buildAccountLamportsExprsMap(w),
+    namedAccountCount: w.instr.accounts.filter((a) => !a.isOptional).length,
   };
+}
+
+/**
+ * Build the `accountLamportsExprs` map for the structural ctx.accounts
+ * leaf-rewrite pass. Mirrors `accountKeyExprs` but uses
+ * emitter.emitAccountLamportsExpr for the per-target lamports access shape.
+ */
+function buildAccountLamportsExprsMap(w: BodyWalker): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const acc of w.instr.accounts) {
+    const name = snakeCase(acc.name);
+    const infoVar = w.resolveAccountInfoVar(name);
+    out.set(name, w.emitter.emitAccountLamportsExpr(infoVar));
+  }
+  return out;
 }
 
 /**

@@ -20,6 +20,8 @@ import {
   stripToAccountInfoStructural,
   normalizeKeyValueStructural,
   replaceBumpRefsStructural,
+  normalizeContextNameStructural,
+  transformCtxAccountsStructural,
   applySession1Passes,
   type PassContext,
 } from "../src/emitter/body-emitter/pass-through-structural.ts";
@@ -251,6 +253,151 @@ describe("M5d Session 3 — replaceBumpRefsStructural", () => {
     const ctxNoCallback: PassContext = { ...PIN_CTX };
     const out = replaceBumpRefsStructural(`let x = ctx.bumps.foo;`, ctxNoCallback);
     expect(out).toBe(`let x = bump_foo;`);
+  });
+});
+
+describe("M5d Session 5a — normalizeContextNameStructural", () => {
+  test("`context.accounts` → `ctx.accounts`", () => {
+    expect(normalizeContextNameStructural(`let a = context.accounts.foo;`)).toBe(
+      `let a = ctx.accounts.foo;`,
+    );
+  });
+
+  test("`context.bumps` → `ctx.bumps`", () => {
+    expect(normalizeContextNameStructural(`let b = context.bumps.foo;`)).toBe(
+      `let b = ctx.bumps.foo;`,
+    );
+  });
+
+  test("`context.program_id` → `ctx.program_id`", () => {
+    expect(normalizeContextNameStructural(`let p = context.program_id;`)).toBe(
+      `let p = ctx.program_id;`,
+    );
+  });
+
+  test("`context.remaining_accounts` → `ctx.remaining_accounts`", () => {
+    expect(normalizeContextNameStructural(`let r = context.remaining_accounts;`)).toBe(
+      `let r = ctx.remaining_accounts;`,
+    );
+  });
+
+  test("does NOT rename `context.foo` (unrelated field)", () => {
+    expect(normalizeContextNameStructural(`let x = context.unknown_field;`)).toBe(
+      `let x = context.unknown_field;`,
+    );
+  });
+
+  test("multiple receivers in one block", () => {
+    const input = `let a = context.accounts.x; let b = context.bumps.y; let c = context.program_id;`;
+    const expected = `let a = ctx.accounts.x; let b = ctx.bumps.y; let c = ctx.program_id;`;
+    expect(normalizeContextNameStructural(input)).toBe(expected);
+  });
+
+  test("string literal containing 'context.accounts' NOT rewritten", () => {
+    const input = `msg!("context.accounts.foo example");`;
+    expect(normalizeContextNameStructural(input)).toBe(input);
+  });
+
+  test("idempotent", () => {
+    const input = `let a = context.accounts.foo;`;
+    const once = normalizeContextNameStructural(input);
+    const twice = normalizeContextNameStructural(once);
+    expect(twice).toBe(once);
+  });
+});
+
+describe("M5d Session 5a — transformCtxAccountsStructural", () => {
+  // Build a context with the new fields.
+  function buildCtx(): PassContext {
+    return {
+      ...PIN_CTX,
+      accountLamportsExprs: new Map([
+        ["authority", "*authority.lamports.borrow()"],
+        ["payer", "*payer.lamports.borrow()"],
+        ["counter", "*counter.lamports.borrow()"],
+      ]),
+      namedAccountCount: 3,
+    };
+  }
+
+  test("`ctx.program_id` → `program_id`", () => {
+    expect(transformCtxAccountsStructural(`let p = ctx.program_id;`, buildCtx())).toBe(
+      `let p = program_id;`,
+    );
+  });
+
+  test("`ctx.remaining_accounts` → `&accounts[N..]`", () => {
+    expect(transformCtxAccountsStructural(`let r = ctx.remaining_accounts;`, buildCtx())).toBe(
+      `let r = &accounts[3..];`,
+    );
+  });
+
+  test("`ctx.accounts.X.lamports()` → emitter lamports expr", () => {
+    expect(
+      transformCtxAccountsStructural(`let l = ctx.accounts.authority.lamports();`, buildCtx()),
+    ).toBe(`let l = *authority.lamports.borrow();`);
+  });
+
+  test("`ctx.accounts.X.amount` → token_account_amount(infoVar)?", () => {
+    expect(
+      transformCtxAccountsStructural(`let v = ctx.accounts.authority.amount;`, buildCtx()),
+    ).toBe(`let v = token_account_amount(authority)?;`);
+  });
+
+  test("`&id()` → `program_id` (consumes the `&`)", () => {
+    expect(transformCtxAccountsStructural(`let p = &id();`, buildCtx())).toBe(
+      `let p = program_id;`,
+    );
+  });
+
+  test("`id()` → `(*program_id)` (bare call)", () => {
+    expect(transformCtxAccountsStructural(`let p = id();`, buildCtx())).toBe(
+      `let p = (*program_id);`,
+    );
+  });
+
+  test("`module::id()` NOT rewritten — path-qualified", () => {
+    expect(transformCtxAccountsStructural(`let p = my_program::id();`, buildCtx())).toBe(
+      `let p = my_program::id();`,
+    );
+  });
+
+  test("`ctx.accounts.X.amount()` (with parens) NOT rewritten — only bare field", () => {
+    // amount() is a method call (different shape than the .amount field).
+    // The current pass only handles bare-field shape; method-call shape
+    // would need a separate matcher and isn't in S5a scope.
+    const input = `let v = ctx.accounts.authority.amount();`;
+    expect(transformCtxAccountsStructural(input, buildCtx())).toBe(input);
+  });
+
+  test("unknown account on lamports — leave unchanged", () => {
+    const input = `let l = ctx.accounts.unknown.lamports();`;
+    expect(transformCtxAccountsStructural(input, buildCtx())).toBe(input);
+  });
+
+  test("string literal containing matched shapes NOT rewritten", () => {
+    const input = `msg!("ctx.program_id and id() ignored");`;
+    expect(transformCtxAccountsStructural(input, buildCtx())).toBe(input);
+  });
+
+  test("multiple shapes in one block — all rewritten", () => {
+    const input = `let a = ctx.program_id; let b = id(); let c = ctx.remaining_accounts;`;
+    const expected = `let a = program_id; let b = (*program_id); let c = &accounts[3..];`;
+    expect(transformCtxAccountsStructural(input, buildCtx())).toBe(expected);
+  });
+
+  test("idempotent — second application is a no-op", () => {
+    const input = `let a = ctx.program_id; let b = ctx.accounts.authority.lamports();`;
+    const once = transformCtxAccountsStructural(input, buildCtx());
+    const twice = transformCtxAccountsStructural(once, buildCtx());
+    expect(twice).toBe(once);
+  });
+
+  test("`namedAccountCount` undefined → remaining_accounts NOT rewritten", () => {
+    const ctx: PassContext = { ...PIN_CTX };
+    expect(transformCtxAccountsStructural(`let r = ctx.remaining_accounts;`, ctx)).toBe(
+      `let r = ctx.remaining_accounts;`,
+    );
   });
 });
 
