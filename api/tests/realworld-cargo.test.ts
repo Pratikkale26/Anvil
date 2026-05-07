@@ -198,6 +198,20 @@ const MUST_PASS: Case[] = [
     maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
 ];
 
+// Round 3 sweep picks (cnft-burn, cnft-vault) emit cleanly per the
+// VALIDATOR but FAIL full cargo build under the regression guard:
+//   - `expected ;, found Ok` — syntax error in inlined CPI invoke
+//     code (mpl-bubblegum `Burn`/`Transfer` instruction builders
+//     produce shapes Anvil doesn't fully terminate)
+//   - `BorshSerialize defined multiple times` (duplicate import scan)
+//   - `AccountMeta` / `tree_authority` undeclared — auto-import +
+//     account-binding gaps for compression/mpl-bubblegum CPIs
+//
+// These mirror the round-2 promotion failures (tokens/escrow,
+// token-swap, oracle-pyth) — the regression layer's full cargo
+// build pipeline catches what `cargo check` via the CLI scaffold
+// path does not. Promote only after fixing the underlying emit gaps.
+
 // reports/external-anchor-sweep-2026-05-07.md round 2 picks
 // (tokens/escrow, tokens/token-swap, oracles/pyth) PASS cargo check
 // via the CLI path but FAIL full cargo build under the regression
