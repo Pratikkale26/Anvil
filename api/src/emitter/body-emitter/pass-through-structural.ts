@@ -274,9 +274,28 @@ export function stripToAccountInfoStructural(code: string, ctx: PassContext): st
         else receiver = c;
       }
       if (!receiver || !field || field.text !== "to_account_info") return true;
-      if (receiver.type !== "identifier") return true;
-      // Build the replacement — bare account-info var.
-      const accountName = receiver.text;
+      // Two receiver shapes:
+      //   1. bare identifier — `<X>.to_account_info()` where X is an
+      //      Anchor-typed account binding the user had let-bound or
+      //      passed in. Use accountInfoVars[X] (the AccountInfo binding).
+      //   2. ctx.accounts chain — `ctx.accounts.<X>.to_account_info()`.
+      //      coral-multisig hits this with
+      //      `ctx.accounts.multisig.to_account_info().key.as_ref()`.
+      //      Without this branch the naive `.replace(/.to_account_info\(\)/g, "")`
+      //      downstream strips the call but leaves `ctx.accounts.X` →
+      //      transformCtxAccountsReferences then resolves it to the
+      //      DESERIALIZED state-struct binding (e.g. `multisig`), losing
+      //      the AccountInfo context. Result: `multisig.key.as_ref()` →
+      //      E0609 because `multisig` is `state::Multisig`, not
+      //      AccountInfo. Resolve here to the AccountInfo binding directly.
+      let accountName: string | null = null;
+      if (receiver.type === "identifier") {
+        accountName = receiver.text;
+      } else if (receiver.type === "field_expression") {
+        const ctxAcctsField = asCtxAccountsField(receiver);
+        if (ctxAcctsField) accountName = ctxAcctsField;
+      }
+      if (accountName === null) return true;
       const replacement = ctx.accountInfoVars.get(accountName) ?? accountName;
       // If immediately preceded by `&` (reference_expression), the regex
       // version replaces the whole `&X.to_account_info()` with the var
@@ -969,7 +988,21 @@ function isInsideStringLiteral(code: string, offset: number): boolean {
  * depth where the regex panel would be invoked, so prelude ordering
  * stays consistent.
  */
-const STATE_FIELD_SKIP = new Set(["key", "lamports", "amount"]);
+const STATE_FIELD_SKIP = new Set([
+  "key",
+  "lamports",
+  "amount",
+  // `to_account_info` is an Anchor wrapper-method, not a state-struct
+  // field. Without skipping it, the state-bound rewrite turns
+  // `ctx.accounts.X.to_account_info()` into
+  // `<state-struct-binding>.to_account_info()` — and downstream the
+  // `.to_account_info()` strip leaves `<state-struct>.key.as_ref()`
+  // (E0609: no field `key` on the deserialized struct). The regex
+  // panel's `ctx.accounts.X.to_account_info().key…` matchers handle
+  // the chain correctly when we leave it alone here. Coral-multisig
+  // execute_transaction's signer-seeds line is the canonical case.
+  "to_account_info",
+]);
 
 export function rewriteStateBoundFieldsStructural(code: string, ctx: PassContext): string {
   if (!ctx.stateBoundAccounts || ctx.stateBoundAccounts.size === 0) return code;
