@@ -16,6 +16,7 @@ import type { BodyWalker } from "../walker.js";
 import {
   qualifySysvarsStructural,
   stripToAccountInfoStructural,
+  normalizeKeyValueStructural,
   type PassContext,
 } from "../pass-through-structural.js";
 
@@ -37,8 +38,12 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   const requireMatch = rawCode.match(/^require!\(([\s\S]+),\s*([\w:]+(?:::\w+)*)\s*\);?$/);
   if (requireMatch?.[1] && requireMatch[2]) {
     w.ctx.transformedCount++;
+    const passCtx = buildPassContext(w);
     const condition = w.normalizeKeyValueUsages(
-      w.transformCtxAccountsReferences(requireMatch[1].trim()),
+      normalizeKeyValueStructural(
+        w.transformCtxAccountsReferences(requireMatch[1].trim()),
+        passCtx,
+      ),
     );
     w.lines.push(w.emitter.emitRequire(condition, requireMatch[2]));
     return;
@@ -59,19 +64,36 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
       keys_eq: "==", keys_neq: "!=",
     };
     const op = cmpOps[requireCmpMatch[1]] ?? "==";
-    const lhs = w.normalizeKeyValueUsages(w.transformCtxAccountsReferences(requireCmpMatch[2]));
-    const rhs = w.normalizeKeyValueUsages(w.transformCtxAccountsReferences(requireCmpMatch[3]));
+    const passCtx = buildPassContext(w);
+    const lhs = w.normalizeKeyValueUsages(
+      normalizeKeyValueStructural(w.transformCtxAccountsReferences(requireCmpMatch[2]), passCtx),
+    );
+    const rhs = w.normalizeKeyValueUsages(
+      normalizeKeyValueStructural(w.transformCtxAccountsReferences(requireCmpMatch[3]), passCtx),
+    );
     w.ctx.transformedCount++;
     w.lines.push(w.emitter.emitRequire(`${lhs} ${op} ${rhs}`, requireCmpMatch[4]));
     return;
   }
 
   const { prelude, code: bumpAdjustedRawCode } = w.replaceBumpRefs(rawCode);
+  // Build pass context once — used by both the structural pre-pass
+  // (key normalization, run before the regex chain) and the post-pass
+  // (sysvar + to_account_info, run after).
+  const structuralCtx = buildPassContext(w);
+  // M5d Session 2 — structural .key normalization runs BEFORE the regex
+  // chain so the regex's normalizeKeyValueUsages becomes idempotent
+  // (its match patterns require a `[=,(]` or whitespace prefix; once
+  // the structural pass has rewritten `acct.key()` → `*acct.key()` on
+  // pinocchio, the resulting `*acct.key()` no longer matches `acct.key()`).
   let transformedRawCode = simplifyPassThroughCode(
     w.transformHelperCalls(
       w.normalizeKeyValueUsages(
-        w.transformAccountReferences(
-          w.transformCtxAccountsReferences(w.transformNestedAnchorCode(bumpAdjustedRawCode)),
+        normalizeKeyValueStructural(
+          w.transformAccountReferences(
+            w.transformCtxAccountsReferences(w.transformNestedAnchorCode(bumpAdjustedRawCode)),
+          ),
+          structuralCtx,
         ),
       ),
     ),
@@ -86,14 +108,6 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // the input (parse error → structural pass returns code unchanged,
   // we still call walker.normalizeToAccountInfoCalls + the 4 regex
   // .replace calls to cover that case).
-  const structuralCtx: PassContext = {
-    qualifiedClockGet: w.qualifiedClockGetExpr(),
-    qualifiedRentGet: w.qualifiedRentGetExpr(),
-    qualifiedClockGetValue: w.qualifiedClockGetValueExpr(),
-    qualifiedRentGetValue: w.qualifiedRentGetValueExpr(),
-    accountKeyExprs: new Map(),  // Session 2 wiring — Pass 3 not yet primary
-    accountInfoVars: buildAccountInfoVarsMap(w),
-  };
   transformedRawCode = qualifySysvarsStructural(transformedRawCode, structuralCtx);
   transformedRawCode = stripToAccountInfoStructural(transformedRawCode, structuralCtx);
   // Fallback: still run the regex versions in case tree-sitter parse
@@ -255,6 +269,41 @@ function buildAccountInfoVarsMap(w: BodyWalker): Map<string, string> {
     out.set(name, w.resolveAccountInfoVar(name));
   }
   return out;
+}
+
+/**
+ * Build the `accountKeyExprs` map for the structural .key normalization
+ * pass. Walker's regex iterates `instr.accounts` × 8 patterns, half
+ * keyed on `accountName`, half on `accountInfoVar`. We populate BOTH
+ * keys so the structural matcher's identifier-receiver lookup catches
+ * both forms with one rewrite.
+ */
+function buildAccountKeyExprsMap(w: BodyWalker): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const acc of w.instr.accounts) {
+    const name = snakeCase(acc.name);
+    const infoVar = w.resolveAccountInfoVar(name);
+    const expr = w.emitter.emitAccountKeyExpr(infoVar);
+    out.set(name, expr);
+    if (infoVar !== name) out.set(infoVar, expr);
+  }
+  return out;
+}
+
+/**
+ * Build the full PassContext used by all 3 Session-1 + Session-2
+ * structural passes. Centralized so each call site (require!,
+ * require_*!, main pipeline) gets identical context shape.
+ */
+function buildPassContext(w: BodyWalker): PassContext {
+  return {
+    qualifiedClockGet: w.qualifiedClockGetExpr(),
+    qualifiedRentGet: w.qualifiedRentGetExpr(),
+    qualifiedClockGetValue: w.qualifiedClockGetValueExpr(),
+    qualifiedRentGetValue: w.qualifiedRentGetValueExpr(),
+    accountKeyExprs: buildAccountKeyExprsMap(w),
+    accountInfoVars: buildAccountInfoVarsMap(w),
+  };
 }
 
 /**
