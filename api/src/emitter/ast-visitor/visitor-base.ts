@@ -979,6 +979,12 @@ export class AstVisitorBase {
     }
 
     // has_one constraint guards — structural via if_stmt + return_stmt.
+    // The condition is `<localVar>.<field> != <targetKey>` where
+    // <targetKey> is target-specific (`*X.key()` on Pinocchio,
+    // `*X.key` on Native). After the unary_expression fix in
+    // rust-stmt-from-text.ts, tryStructuralizeExpr handles both
+    // shapes — fall back to rawExpr only if tree-sitter can't parse
+    // (defensive; shouldn't happen for the canonical shape).
     const hasOneConstraints =
       accountRef?.constraints.filter((c) => c.kind === "has_one" && c.value) ?? [];
     for (const c of hasOneConstraints) {
@@ -986,7 +992,8 @@ export class AstVisitorBase {
       const targetRef = w.instr.accounts.find((acc) => snakeCase(acc.name) === targetAccount);
       if (!targetRef) continue;
       const targetKey = w.emitter.emitAccountKeyExpr(w.resolveAccountInfoVar(targetAccount));
-      const condExpr = rawExpr(`${localVar}.${snakeCase(c.value!)} != ${targetKey}`);
+      const condText = `${localVar}.${snakeCase(c.value!)} != ${targetKey}`;
+      const condExpr = tryStructuralizeExpr(condText) ?? rawExpr(condText);
       const errReturn = returnStmt(call(path(["Err"]), [path(["ProgramError", "InvalidAccountData"])]));
       out.push(ifStmt(condExpr, [errReturn]));
     }

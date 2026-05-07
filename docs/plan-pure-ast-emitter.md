@@ -431,7 +431,13 @@ The bigger structural-port opportunities now live OUTSIDE pass_through:
   expression rawExpr. Adding the unary case fixes it for require AND
   any other path using tryStructuralizeExpr (raw_line metric also
   dropped by 1 from a ripple effect). 9th kind PURE structural ★.
-- state_read (22 raw_exprs) — body emit text
+- ✅ state_read — was 22 raw_exprs, now **0 PURE structural ★** after the
+  2026-05-07 port: swapped `rawExpr(condText)` to
+  `tryStructuralizeExpr(condText) ?? rawExpr(condText)` for the has_one
+  constraint condition (`<state>.<field> != *<account>.key[()]`). Same
+  shape as require's binary+unary expression, now caught by tree-sitter
+  thanks to the unary_expression case. Cascaded into ~10 raw_node
+  ripple drops in adjacent paths. 10th kind PURE structural ★.
 
 These are deterministic-shape and would benefit from per-kind structural
 ports following the same template. Each is ~3-5 hrs.
