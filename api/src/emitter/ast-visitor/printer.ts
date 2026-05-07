@@ -165,6 +165,8 @@ export function printExpr(expr: RustExpr, indent?: string): string {
       return expr.parens
         ? `!(${printExpr(expr.expr, indent)})`
         : `!${printExpr(expr.expr, indent)}`;
+    case "binary":
+      return `${printExpr(expr.lhs, indent)} ${expr.op} ${printExpr(expr.rhs, indent)}`;
     case "try":
       return `${printExpr(expr.expr, indent)}?`;
     case "path":
@@ -250,6 +252,10 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
       case "not":
       case "try":
         visit(e.expr);
+        return;
+      case "binary":
+        visit(e.lhs);
+        visit(e.rhs);
         return;
     }
   };

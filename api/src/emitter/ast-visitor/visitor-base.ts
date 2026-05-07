@@ -86,7 +86,7 @@ import {
 // `./parse-simple-expr.ts` so the M5d slice (rust-stmt-from-text.ts)
 // can import them without creating a cycle through visitor-base.
 import { parseSimpleExpr, parseSimpleExprStrict } from "./parse-simple-expr.js";
-import { tryStructuralizeMultiLine, ensureRustParserReady } from "./rust-stmt-from-text.js";
+import { tryStructuralizeMultiLine, tryStructuralizeExpr, ensureRustParserReady } from "./rust-stmt-from-text.js";
 
 /**
  * Parse the fields-text of an `emit!(Event { fields })` IR statement
@@ -1022,9 +1022,12 @@ export class AstVisitorBase {
     }
 
     // Structured assign — LHS is `stateVarName.fieldName`, RHS the
-    // transformed value parsed into a structural RustExpr where the
-    // shape is recognized; rawExpr fallback otherwise.
-    out.push(assign(field(ident(stateVarName), fieldName), parseSimpleExpr(value)));
+    // transformed value parsed into a structural RustExpr. Try the
+    // tree-sitter expr converter first (handles binary_expression,
+    // multi-arg call, method_call_expression); fall back to
+    // parseSimpleExpr → rawExpr on anything tree-sitter can't model.
+    const tsRhs = tryStructuralizeExpr(value);
+    out.push(assign(field(ident(stateVarName), fieldName), tsRhs ?? parseSimpleExpr(value)));
     return out;
   }
 
@@ -1333,20 +1336,23 @@ export class AstVisitorBase {
       condText = inner;
     }
 
+    // Try the tree-sitter expr converter first — handles binary_expression,
+    // method_call_expression, etc. that parseSimpleExpr's regex misses.
+    // Falls back to parseSimpleExpr on null (which itself falls back to
+    // rawExpr).
+    const tsExpr = tryStructuralizeExpr(condText);
+    const innerExpr = tsExpr ?? parseSimpleExpr(condText);
     let condExpr: RustExpr;
     if (isNegated) {
-      // Source had odd negations — emit bare `if expr`. Recognized
-      // shapes go structural; rawExpr fallback otherwise.
-      condExpr = parseSimpleExpr(condText);
+      // Source had odd negations — emit bare `if expr`.
+      condExpr = innerExpr;
     } else if (/^[A-Za-z_][A-Za-z0-9_:.]*$/.test(condText)) {
       // Single identifier path — emit `!ident` (no parens) via the
       // structural `not` node so the metric drops.
-      condExpr = notExpr(parseSimpleExpr(condText), { parens: false });
+      condExpr = notExpr(innerExpr, { parens: false });
     } else {
-      // General expression — emit `!(expr)` (parens required). The
-      // inner expr goes through parseSimpleExpr (rawExpr fallback if
-      // shape unrecognized).
-      condExpr = notExpr(parseSimpleExpr(condText), { parens: true });
+      // General expression — emit `!(expr)` (parens required).
+      condExpr = notExpr(innerExpr, { parens: true });
     }
 
     // Body: `return Err(error.into());` — fully structural; the error

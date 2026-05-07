@@ -122,6 +122,15 @@ export type RustExpr =
    * different parse meanings even though both prefix.
    */
   | { kind: "not"; expr: RustExpr; parens: boolean }
+  /**
+   * Binary expression — `lhs OP rhs`. NO operator-precedence handling:
+   * the printer emits `${lhs} ${op} ${rhs}` verbatim, so callers are
+   * responsible for explicit parens when ambiguity matters. This is
+   * fine because we only construct binary nodes from source that
+   * already had its precedence resolved (tree-sitter parsed the
+   * binary_expression with the correct grouping).
+   */
+  | { kind: "binary"; op: string; lhs: RustExpr; rhs: RustExpr }
   /** Postfix `?` — `expr?`. */
   | { kind: "try"; expr: RustExpr }
   /** Path with no leading `::`, e.g. `CounterError::Overflow`. */
@@ -206,6 +215,9 @@ export function deref(expr: RustExpr): RustExpr {
 }
 export function notExpr(expr: RustExpr, opts?: { parens?: boolean }): RustExpr {
   return { kind: "not", expr, parens: opts?.parens ?? false };
+}
+export function binaryExpr(op: string, lhs: RustExpr, rhs: RustExpr): RustExpr {
+  return { kind: "binary", op, lhs, rhs };
 }
 export function tryPostfix(expr: RustExpr): RustExpr {
   return { kind: "try", expr };

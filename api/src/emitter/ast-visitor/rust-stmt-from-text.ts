@@ -37,6 +37,7 @@
 import {
   type RustStmt,
   type RustExpr,
+  binaryExpr,
   call,
   comment,
   exprStmt,
@@ -249,6 +250,46 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       if (node.namedChildCount === 0) return lit("()");
       return null;
     }
+    case "binary_expression": {
+      // `lhs OP rhs` — tree-sitter exposes the operator as an UNNAMED
+      // child between the two named children. Extract it via the
+      // child(0)/child(1)/child(2) raw walk; keep the lhs/rhs structural.
+      const lhs = node.namedChild(0);
+      const rhs = node.namedChild(1);
+      if (!lhs || !rhs) return null;
+      // The operator sits between the two named children. tree-sitter
+      // doesn't always name it; we read it from the raw child list.
+      let op: string | null = null;
+      const total = node.childCount;
+      for (let i = 0; i < total; i++) {
+        const c = node.child(i);
+        if (!c) continue;
+        if (c === lhs || c === rhs) continue;
+        if (c.isNamed) continue;
+        // Filter: must be a real operator token (no whitespace).
+        const txt = c.text;
+        if (txt.length > 0 && !/^\s+$/.test(txt)) {
+          op = txt;
+          break;
+        }
+      }
+      if (!op) return null;
+      const lhsExpr = exprFromNode(lhs);
+      if (lhsExpr === null) return null;
+      const rhsExpr = exprFromNode(rhs);
+      if (rhsExpr === null) return null;
+      return binaryExpr(op, lhsExpr, rhsExpr);
+    }
+    case "parenthesized_expression": {
+      // `(expr)` — flatten the parens. The printer doesn't model
+      // parens explicitly; in expressions where parens matter for
+      // precedence the binary_expression's tree-sitter parse already
+      // resolved grouping, so emitting without explicit parens is
+      // fine here.
+      const inner = node.namedChild(0);
+      if (!inner) return null;
+      return exprFromNode(inner);
+    }
     default:
       return null;
   }
@@ -268,6 +309,45 @@ function exprFromNodeOrSimpleText(node: SyntaxNode): RustExpr | null {
   const direct = exprFromNode(node);
   if (direct !== null) return direct;
   return parseSimpleExprStrict(node.text);
+}
+
+/**
+ * Strict expression converter — parses the given text as a Rust
+ * expression via tree-sitter and converts it to a structural RustExpr
+ * if every node maps to a recognized shape; returns null otherwise.
+ *
+ * Used by visit methods (visitRequire) that have a single-expression
+ * text input rather than a stmt list. Lossless: caller falls back to
+ * the existing rawExpr/parseSimpleExpr path on null.
+ */
+export function tryStructuralizeExpr(text: string): RustExpr | null {
+  const parser = getParserSync();
+  if (!parser) return null;
+  // Wrap as a let binding so tree-sitter parses the text as an
+  // expression in expression-position (top-level Rust doesn't have
+  // bare expressions outside fn bodies).
+  const wrapped = `fn _w() { let __anvil_expr = ${text}; }`;
+  let tree;
+  try {
+    tree = parseGuarded(parser, wrapped);
+  } catch {
+    return null;
+  }
+  const root = tree.rootNode;
+  const fn = root.namedChild(0);
+  if (!fn || fn.type !== "function_item") return null;
+  let block: SyntaxNode | null = null;
+  for (let i = 0; i < fn.namedChildCount; i++) {
+    const c = fn.namedChild(i);
+    if (c?.type === "block") { block = c; break; }
+  }
+  if (!block || block.hasError) return null;
+  const letDecl = block.namedChild(0);
+  if (!letDecl || letDecl.type !== "let_declaration") return null;
+  // The last named child of let_declaration is the value (the expr).
+  const valueNode = letDecl.namedChild(letDecl.namedChildCount - 1);
+  if (!valueNode) return null;
+  return exprFromNode(valueNode);
 }
 
 // Re-export for ergonomics — caller doesn't need to import parse-simple-expr
