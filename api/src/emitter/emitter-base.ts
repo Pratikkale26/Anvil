@@ -159,6 +159,31 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // Initialize the TransferFee mint extension. Sets the fee config
+  // authority, withdraw authority, basis points, and per-transfer cap.
+  // Must precede initialize_mint (extension data lives ahead of the
+  // standard mint header in the allocated mint buffer).
+  abstract emitT22TransferFeeInitialize(
+    mint: string,
+    tokenProgram: string,
+    transferFeeConfigAuthority: string,
+    withdrawWithheldAuthority: string,
+    basisPoints: string,
+    maximumFee: string,
+    signerSeeds?: string,
+  ): string;
+
+  // Update the TransferFee schedule on an existing mint. 2-epoch delay
+  // before the new fees take effect.
+  abstract emitT22TransferFeeSetFee(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    basisPoints: string,
+    maximumFee: string,
+    signerSeeds?: string,
+  ): string;
+
   abstract emitProgramAccountClose(account: string, destination: string): string;
   abstract emitCreateProgramAccount(
     account: string,

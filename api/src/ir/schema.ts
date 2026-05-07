@@ -439,6 +439,42 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // anchor_spl::token_interface::transfer_fee_initialize. First call
+  // for the TransferFee extension — sets the fee config authority,
+  // withdraw authority, fee basis points, and max-per-transfer cap on
+  // a freshly-allocated mint. Must precede initialize_mint.
+  z.object({
+    kind: z.literal("cpi_t22_transfer_fee_initialize"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    /** Raw expression for `Option<&Pubkey>` (e.g. `Some(&ctx.accounts.payer.key())`, `None`). */
+    transferFeeConfigAuthority: z.string(),
+    /** Raw expression for `Option<&Pubkey>`. */
+    withdrawWithheldAuthority: z.string(),
+    /** u16 expression — basis-points fee per transfer (e.g. `transfer_fee_basis_points`, `100`). */
+    basisPoints: z.string(),
+    /** u64 expression — maximum fee per transfer in token units. */
+    maximumFee: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_interface::transfer_fee_set. Updates the fee
+  // schedule on an already-initialized TransferFee mint. Note: there's
+  // a 2-epoch delay before new fees take effect (Token-2022 safety
+  // feature).
+  z.object({
+    kind: z.literal("cpi_t22_transfer_fee_set_fee"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    /** AccountInfo binding for the transfer-fee config authority signer. */
+    authority: z.string(),
+    /** u16 expression — new basis-points fee. */
+    basisPoints: z.string(),
+    /** u64 expression — new maximum-per-transfer cap. */
+    maximumFee: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: create_metadata_accounts_v3.
   // First-class IR slot for the Metaplex CPI catalog (#29). Today the
   // emitter still falls back to the walker.ts regex stub for actual

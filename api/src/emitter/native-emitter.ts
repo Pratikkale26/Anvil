@@ -687,6 +687,57 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     )?;`;
   }
 
+  override emitT22TransferFeeInitialize(
+    mint: string,
+    tokenProgram: string,
+    transferFeeConfigAuthority: string,
+    withdrawWithheldAuthority: string,
+    basisPoints: string,
+    maximumFee: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 TransferFee extension init — ${mint}
+    let transfer_fee_init_ix = spl_token_2022::extension::transfer_fee::instruction::initialize_transfer_fee_config(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${transferFeeConfigAuthority},
+        ${withdrawWithheldAuthority},
+        ${basisPoints},
+        ${maximumFee},
+    )?;
+    ${invokeType}(
+        &transfer_fee_init_ix,
+        &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22TransferFeeSetFee(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    basisPoints: string,
+    maximumFee: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 TransferFee — set fee schedule on ${mint}
+    let transfer_fee_set_ix = spl_token_2022::extension::transfer_fee::instruction::set_transfer_fee(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${authority}.key,
+        &[],
+        ${basisPoints},
+        ${maximumFee},
+    )?;
+    ${invokeType}(
+        &transfer_fee_set_ix,
+        &[${mint}.clone(), ${authority}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
   override emitProgramAccountClose(account: string, destination: string): string {
     return `    close_program_account(${account}, ${destination})?;`;
   }

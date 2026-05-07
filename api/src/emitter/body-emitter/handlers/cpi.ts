@@ -14,6 +14,8 @@ type CpiSplBurn = Extract<BodyStatement, { kind: "cpi_spl_burn" }>;
 type CpiSplCloseAccount = Extract<BodyStatement, { kind: "cpi_spl_close_account" }>;
 type CpiSplSetAuthority = Extract<BodyStatement, { kind: "cpi_spl_set_authority" }>;
 type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non_transferable_mint_initialize" }>;
+type CpiT22TransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_initialize" }>;
+type CpiT22TransferFeeSetFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_set_fee" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -238,6 +240,58 @@ export function handleCpiT22NonTransferableMintInit(
     w.emitter.emitT22NonTransferableMintInitialize(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22TransferFeeInit(
+  w: BodyWalker,
+  stmt: CpiT22TransferFeeInit,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: transfer_fee_initialize(${stmt.mint})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.mint)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  // Authority expressions reference Anchor-side ctx.accounts.X.key();
+  // run them through the same passes the body emitter uses for typed
+  // CPI value args so they resolve to the local AccountInfo bindings.
+  const tfca = w.transformCtxAccountsReferences(stmt.transferFeeConfigAuthority);
+  const wwa = w.transformCtxAccountsReferences(stmt.withdrawWithheldAuthority);
+  w.lines.push(
+    w.emitter.emitT22TransferFeeInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      tfca,
+      wwa,
+      stmt.basisPoints,
+      stmt.maximumFee,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22TransferFeeSetFee(
+  w: BodyWalker,
+  stmt: CpiT22TransferFeeSetFee,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: transfer_fee_set(${stmt.mint})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.authority)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitT22TransferFeeSetFee(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      snakeCase(stmt.authority),
+      stmt.basisPoints,
+      stmt.maximumFee,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ),
   );

@@ -602,6 +602,8 @@ import {
   handleCpiSplCloseAccount,
   handleCpiSplSetAuthority,
   handleCpiT22NonTransferableMintInit,
+  handleCpiT22TransferFeeInit,
+  handleCpiT22TransferFeeSetFee,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -638,6 +640,8 @@ type CpiSplBurn = Extract<BodyStatement, { kind: "cpi_spl_burn" }>;
 type CpiSplCloseAccount = Extract<BodyStatement, { kind: "cpi_spl_close_account" }>;
 type CpiSplSetAuthority = Extract<BodyStatement, { kind: "cpi_spl_set_authority" }>;
 type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non_transferable_mint_initialize" }>;
+type CpiT22TransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_initialize" }>;
+type CpiT22TransferFeeSetFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_set_fee" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -676,6 +680,8 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_spl_close_account",
   "cpi_spl_set_authority",
   "cpi_t22_non_transferable_mint_initialize",
+  "cpi_t22_transfer_fee_initialize",
+  "cpi_t22_transfer_fee_set_fee",
   "cpi_ata_create",
   "cpi_memo",
   "cpi_custom",
@@ -716,6 +722,10 @@ export class AstVisitorBase {
       case "cpi_spl_set_authority":return this.visitCpiSplSetAuthority(stmt);
       case "cpi_t22_non_transferable_mint_initialize":
         return this.visitCpiT22NonTransferableMintInit(stmt);
+      case "cpi_t22_transfer_fee_initialize":
+        return this.visitCpiT22TransferFeeInit(stmt);
+      case "cpi_t22_transfer_fee_set_fee":
+        return this.visitCpiT22TransferFeeSetFee(stmt);
       case "cpi_ata_create":       return this.visitCpiAtaCreate(stmt);
       case "cpi_memo":             return this.visitCpiMemo(stmt);
       case "cpi_custom":           return this.visitCpiCustom(stmt);
@@ -2101,6 +2111,14 @@ export class AstVisitorBase {
    */
   visitCpiT22NonTransferableMintInit(stmt: CpiT22NonTransferableMintInit): RustStmt[] {
     return this.captureAndConvert(handleCpiT22NonTransferableMintInit, stmt);
+  }
+
+  visitCpiT22TransferFeeInit(stmt: CpiT22TransferFeeInit): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22TransferFeeInit, stmt);
+  }
+
+  visitCpiT22TransferFeeSetFee(stmt: CpiT22TransferFeeSetFee): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22TransferFeeSetFee, stmt);
   }
 
   /**

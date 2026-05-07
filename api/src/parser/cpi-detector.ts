@@ -138,6 +138,12 @@ export function detectCpi(
   if (funcText.includes("non_transferable_mint_initialize")) {
     return extractT22NonTransferableMintInitialize(callNode, collector);
   }
+  if (funcText.includes("transfer_fee_initialize")) {
+    return extractT22TransferFeeInitialize(callNode, collector);
+  }
+  if (funcText.includes("transfer_fee_set")) {
+    return extractT22TransferFeeSet(callNode, collector);
+  }
 
   // ── SPL Token transfer ──
   if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
@@ -757,6 +763,132 @@ function extractT22NonTransferableMintInitialize(
     kind: "cpi_t22_non_transferable_mint_initialize",
     mint: cleanAccountRef(mint),
     tokenProgram: cleanAccountRef(tokenProgram),
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 TransferFee extension init (EM2 Session 1) ──────────────────
+//
+// Anchor source shape:
+//   transfer_fee_initialize(
+//       CpiContext::new(
+//           ctx.accounts.token_program.key(),
+//           TransferFeeInitialize {
+//               token_program_id: ctx.accounts.token_program.to_account_info(),
+//               mint: ctx.accounts.mint_account.to_account_info(),
+//           },
+//       ),
+//       Some(&ctx.accounts.payer.key()),  // transfer_fee_config_authority
+//       Some(&ctx.accounts.payer.key()),  // withdraw_withheld_authority
+//       transfer_fee_basis_points,        // u16
+//       maximum_fee,                      // u64
+//   )?;
+function extractT22TransferFeeInitialize(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 transfer_fee_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 transfer_fee_initialize (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  // Trailing args after the CpiContext: 4 positional values. Carry
+  // them as raw text — values may be Anchor expressions
+  // (`Some(&ctx.accounts.payer.key())`) that the body-emitter pass
+  // pipeline will further resolve via transformCtxAccountsReferences.
+  const transferFeeConfigAuthority = args[1]?.text.trim() ?? "None";
+  const withdrawWithheldAuthority = args[2]?.text.trim() ?? "None";
+  const basisPoints = cleanAmountExpr(args[3]?.text ?? "0u16");
+  const maximumFee = cleanAmountExpr(args[4]?.text ?? "0u64");
+  return {
+    kind: "cpi_t22_transfer_fee_initialize",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    transferFeeConfigAuthority,
+    withdrawWithheldAuthority,
+    basisPoints,
+    maximumFee,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 TransferFee extension manage: set_fee ───────────────────────
+//
+// Anchor source shape:
+//   transfer_fee_set(
+//       CpiContext::new(
+//           ctx.accounts.token_program.key(),
+//           TransferFeeSetTransferFee {
+//               token_program_id: ctx.accounts.token_program.to_account_info(),
+//               mint: ctx.accounts.mint_account.to_account_info(),
+//               authority: ctx.accounts.authority.to_account_info(),
+//           },
+//       ),
+//       transfer_fee_basis_points,
+//       maximum_fee,
+//   )?;
+function extractT22TransferFeeSet(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 transfer_fee_set", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 transfer_fee_set (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  let authority = "authority";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+    authority = extractStructField(accountsStruct, "authority") ?? authority;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  const basisPoints = cleanAmountExpr(args[1]?.text ?? "0u16");
+  const maximumFee = cleanAmountExpr(args[2]?.text ?? "0u64");
+  return {
+    kind: "cpi_t22_transfer_fee_set_fee",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    authority: cleanAccountRef(authority),
+    basisPoints,
+    maximumFee,
     signerSeeds,
   };
 }

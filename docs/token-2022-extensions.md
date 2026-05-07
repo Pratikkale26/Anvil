@@ -17,7 +17,7 @@ Statuses:
 
 | Extension | Pinocchio | Native | Runtime impact on base CPIs |
 |---|---|---|---|
-| TransferFeeConfig | partial | partial | base `transfer_checked` automatically deducts fee — Y |
+| TransferFeeConfig | Y (init+set_fee) / partial (harvest/withdraw/transfer_checked_with_fee) | Y (init+set_fee) / partial (harvest/withdraw/transfer_checked_with_fee) | base `transfer_checked` automatically deducts fee — Y; init+set_fee differential-gated 2026-05-07 |
 | MintCloseAuthority | partial | partial | none on base CPIs — Y |
 | InterestBearingMint | partial | partial | none on base CPIs — Y |
 | NonTransferable | Y | Y | `transfer_checked` rejects at program level — Y (rejection round-trips); init differential-gated 2026-05-07 |

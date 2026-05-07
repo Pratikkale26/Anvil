@@ -39,6 +39,8 @@ import {
   handleCpiSplCloseAccount,
   handleCpiSplSetAuthority,
   handleCpiT22NonTransferableMintInit,
+  handleCpiT22TransferFeeInit,
+  handleCpiT22TransferFeeSetFee,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -241,6 +243,8 @@ export class BodyWalker {
         case "cpi_spl_close_account": handleCpiSplCloseAccount(this, stmt); break;
         case "cpi_spl_set_authority": handleCpiSplSetAuthority(this, stmt); break;
         case "cpi_t22_non_transferable_mint_initialize": handleCpiT22NonTransferableMintInit(this, stmt); break;
+        case "cpi_t22_transfer_fee_initialize": handleCpiT22TransferFeeInit(this, stmt); break;
+        case "cpi_t22_transfer_fee_set_fee": handleCpiT22TransferFeeSetFee(this, stmt); break;
         case "cpi_ata_create": handleCpiAtaCreate(this, stmt); break;
         case "cpi_memo": handleCpiMemo(this, stmt); break;
         case "cpi_custom": handleCpiCustom(this, stmt); break;

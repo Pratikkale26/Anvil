@@ -727,6 +727,124 @@ ${invokeCall}
     }`;
   }
 
+  override emitT22TransferFeeInitialize(
+    mint: string,
+    _tokenProgram: string,
+    transferFeeConfigAuthority: string,
+    withdrawWithheldAuthority: string,
+    basisPoints: string,
+    maximumFee: string,
+    signerSeeds?: string,
+  ): string {
+    // Token-2022 TransferFee InitializeTransferFeeConfig: outer
+    // discriminator 26 (TransferFeeExtension) + inner 0
+    // (InitializeTransferFeeConfig) + payload:
+    //   COption<&Pubkey> transfer_fee_config_authority (1 + 0/32 bytes)
+    //   COption<&Pubkey> withdraw_withheld_authority   (1 + 0/32 bytes)
+    //   u16 LE basis_points                            (2 bytes)
+    //   u64 LE maximum_fee                             (8 bytes)
+    // Max payload = 78 bytes (2 disc + 33 + 33 + 2 + 8).
+    const invokeCall = signerSeeds
+      ? `        let __tf_seed_refs = ${signerSeeds}[0];
+        let mut __tf_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__tf_i, __tf_s) in __tf_seed_refs.iter().enumerate() {
+            if __tf_i >= __tf_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __tf_pda_seeds[__tf_i] = pinocchio::instruction::Seed::from(*__tf_s);
+        }
+        let __tf_signer = pinocchio::instruction::Signer::from(&__tf_pda_seeds[..__tf_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__tf_ix, &[${mint}], &[__tf_signer])?;`
+      : `        pinocchio::cpi::invoke(&__tf_ix, &[${mint}])?;`;
+    return `    // Token-2022 TransferFee extension init — ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let mut __tf_data = [0u8; 78];
+        __tf_data[0] = 26;
+        __tf_data[1] = 0;
+        let mut __tf_len = 2usize;
+        match &${transferFeeConfigAuthority} {
+            Some(__pk) => {
+                __tf_data[__tf_len] = 1;
+                __tf_data[__tf_len + 1..__tf_len + 33].copy_from_slice(__pk.as_ref());
+                __tf_len += 33;
+            }
+            None => {
+                __tf_data[__tf_len] = 0;
+                __tf_len += 1;
+            }
+        }
+        match &${withdrawWithheldAuthority} {
+            Some(__pk) => {
+                __tf_data[__tf_len] = 1;
+                __tf_data[__tf_len + 1..__tf_len + 33].copy_from_slice(__pk.as_ref());
+                __tf_len += 33;
+            }
+            None => {
+                __tf_data[__tf_len] = 0;
+                __tf_len += 1;
+            }
+        }
+        let __tf_bp: u16 = ${basisPoints};
+        __tf_data[__tf_len..__tf_len + 2].copy_from_slice(&__tf_bp.to_le_bytes());
+        __tf_len += 2;
+        let __tf_max: u64 = ${maximumFee};
+        __tf_data[__tf_len..__tf_len + 8].copy_from_slice(&__tf_max.to_le_bytes());
+        __tf_len += 8;
+        let __tf_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+        ];
+        let __tf_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__tf_metas,
+            data: &__tf_data[..__tf_len],
+        };
+${invokeCall}
+    }`;
+  }
+
+  override emitT22TransferFeeSetFee(
+    mint: string,
+    _tokenProgram: string,
+    authority: string,
+    basisPoints: string,
+    maximumFee: string,
+    signerSeeds?: string,
+  ): string {
+    // SetTransferFee: outer 26 + inner 5 + u16 bp + u64 max = 12 bytes.
+    const invokeCall = signerSeeds
+      ? `        let __ts_seed_refs = ${signerSeeds}[0];
+        let mut __ts_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__ts_i, __ts_s) in __ts_seed_refs.iter().enumerate() {
+            if __ts_i >= __ts_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __ts_pda_seeds[__ts_i] = pinocchio::instruction::Seed::from(*__ts_s);
+        }
+        let __ts_signer = pinocchio::instruction::Signer::from(&__ts_pda_seeds[..__ts_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__ts_ix, &[${mint}, ${authority}], &[__ts_signer])?;`
+      : `        pinocchio::cpi::invoke(&__ts_ix, &[${mint}, ${authority}])?;`;
+    return `    // Token-2022 TransferFee — set fee schedule on ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let mut __ts_data = [0u8; 12];
+        __ts_data[0] = 26;
+        __ts_data[1] = 5;
+        let __ts_bp: u16 = ${basisPoints};
+        __ts_data[2..4].copy_from_slice(&__ts_bp.to_le_bytes());
+        let __ts_max: u64 = ${maximumFee};
+        __ts_data[4..12].copy_from_slice(&__ts_max.to_le_bytes());
+        let __ts_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __ts_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__ts_metas,
+            data: &__ts_data,
+        };
+${invokeCall}
+    }`;
+  }
+
   override emitT22NonTransferableMintInitialize(
     mint: string,
     _tokenProgram: string,
