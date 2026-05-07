@@ -397,6 +397,43 @@ export class BodyWalker {
     );
     const typeName = accountRef?.accountType ?? "Unknown";
     if (!this.isGeneratedStateType(typeName)) {
+      // SPL TokenAccount / Mint short-circuit — Anchor's
+      // `Account<'info, TokenAccount>` auto-deserializes via SPL's
+      // unpack at handler entry. Anvil's previous behavior was to
+      // skip emit entirely, leaving the body's `pool_a.amount` style
+      // accesses with no binding. Emit an unpack now so the body
+      // compiles.
+      const isSplToken = typeName === "TokenAccount" || typeName === "Mint";
+      if (isSplToken) {
+        const localVar = normalized;
+        const accountInfoVar = `${normalized}_account`;
+        this.lines.push(`    let ${accountInfoVar} = ${normalized};`);
+        this.stateVars.set(normalized, localVar);
+        this.accountInfoVars.set(normalized, accountInfoVar);
+        if (this.emitter.frameworkName === "Pinocchio") {
+          // pinocchio_token uses `Mint::from_account_info_unchecked` /
+          // `TokenAccount::from_account_info` (latter validates the
+          // discriminator). We don't auto-import — caller should already
+          // pull these via cpi_spl_* helpers.
+          const importPath = typeName === "Mint"
+            ? `pinocchio_token::state::Mint`
+            : `pinocchio_token::state::TokenAccount`;
+          this.lines.push(
+            `    let ${localVar} = ${importPath}::from_account_info(${accountInfoVar})?;`,
+          );
+        } else {
+          // Native — spl_token::state has both. unpack reads from data
+          // bytes; doesn't validate the program ID (caller is expected
+          // to pre-check via the standard owner-check panel).
+          const importPath = typeName === "Mint"
+            ? `spl_token::state::Mint`
+            : `spl_token::state::Account`;
+          this.lines.push(
+            `    let ${localVar} = ${importPath}::unpack(&${accountInfoVar}.data.borrow())?;`,
+          );
+        }
+        return localVar;
+      }
       return normalized;
     }
     const localVar = normalized;

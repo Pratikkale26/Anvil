@@ -98,6 +98,12 @@ const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
   ark_bn254:                 `ark-bn254 = "0.4"`,
   ark_ff:                    `ark-ff = "0.4"`,
   ark_serialize:             `ark-serialize = "0.4"`,
+  // Fixed-point arithmetic — used by AMM / DEX programs (token-swap,
+  // marginfi, etc.) for ratio math without floats. Pinned to 1.28
+  // (the last release compatible with rustc 1.89; 1.29+ requires
+  // rustc 1.93). Pure-Rust no_std-compatible when default-features
+  // disabled.
+  fixed:                     `fixed = "=1.28"`,
 };
 
 /**
@@ -120,6 +126,9 @@ const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
   blake3:                    `blake3 = { version = "1.5", default-features = false }`,
   num_derive:                `num-derive = "0.4"`,
   num_traits:                `num-traits = { version = "0.2", default-features = false }`,
+  // Fixed-point arithmetic for AMM / DEX programs — no_std-compat
+  // when default-features disabled. Pinned to 1.28 (rustc 1.89 compat).
+  fixed:                     `fixed = { version = "=1.28", default-features = false }`,
 };
 
 /** Extract crate prefixes from IR imports AND from carried-over source text

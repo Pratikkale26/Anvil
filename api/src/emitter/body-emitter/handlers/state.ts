@@ -22,6 +22,44 @@ export function handleStateRead(w: BodyWalker, stmt: StateRead): void {
   if (isProgramAccount(stmt.accountType || "")) {
     return;
   }
+  // SPL TokenAccount / Mint short-circuit — emit unpack so body
+  // accesses like `pool_a.amount` compile. Anchor auto-deserializes
+  // these via Account<'info, TokenAccount>; we do the same here.
+  if (stmt.accountType === "TokenAccount" || stmt.accountType === "Mint") {
+    const accountName = snakeCase(stmt.account);
+    const localVar = snakeCase(stmt.localVar);
+    if (w.stateVars.has(accountName)) {
+      // Already bound — record alias if needed.
+      const existing = w.stateVars.get(accountName)!;
+      if (existing !== localVar && !w.localAliases.has(localVar)) {
+        w.localAliases.set(localVar, existing);
+      }
+      return;
+    }
+    const needsAlias = accountName === localVar;
+    const accountInfoVar = needsAlias ? `${accountName}_account` : accountName;
+    if (needsAlias) {
+      w.lines.push(`    let ${accountInfoVar} = ${accountName};`);
+    }
+    w.stateVars.set(accountName, localVar);
+    w.accountInfoVars.set(accountName, accountInfoVar);
+    if (w.emitter.frameworkName === "Pinocchio") {
+      const importPath = stmt.accountType === "Mint"
+        ? `pinocchio_token::state::Mint`
+        : `pinocchio_token::state::TokenAccount`;
+      w.lines.push(
+        `    let ${localVar} = ${importPath}::from_account_info(${accountInfoVar})?;`,
+      );
+    } else {
+      const importPath = stmt.accountType === "Mint"
+        ? `spl_token::state::Mint`
+        : `spl_token::state::Account`;
+      w.lines.push(
+        `    let ${localVar} = ${importPath}::unpack(&${accountInfoVar}.data.borrow())?;`,
+      );
+    }
+    return;
+  }
   // Skip unknown/unresolved types — emitting Unknown::from_account_info() would
   // cause a compile failure. Just bind the account name without deserialization.
   if (
