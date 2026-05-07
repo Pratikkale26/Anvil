@@ -211,4 +211,13 @@ defineDifferential({
     { pubkey: ctx.grantorAta, label: "grantor_ata" },
     { pubkey: ctx.beneficiaryAta, label: "beneficiary_ata" },
   ],
+  // compareMsgLogs intentionally still off — vesting.rs has 4 msg!()
+  // calls; M7 8c converts only the one whose args are both ix-args
+  // (`total_amount`, `beneficiary`). The other 3 reference local lets
+  // (`releasable`, `unvested`) that strict-mode type lookup can't
+  // resolve — they fall back to the legacy collapse and diverge by
+  // design. compareMsgLogs is full-set-equal in the harness, so a
+  // 1-of-4 conversion would still fail. The dedicated byte-equal
+  // proof for M7 8c lives in differential-msg-logs.test.ts +
+  // msg-emit.rs `say_formatted` (added alongside M7 8d).
 });

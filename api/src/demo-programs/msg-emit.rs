@@ -1,18 +1,11 @@
 // Minimal program for the compareMsgLogs fixture.
 //
-// Two instructions, each emitting two `msg!()` lines using PURE STRING
-// LITERALS (no format args). Goal: prove that Anvil's emit produces
-// byte-identical user-emitted log text to Anchor's reference for the
-// supported subset of msg!() shapes.
-//
-// Why no `msg!("fmt {}", arg)` here: Pinocchio's `sol_log` has no format
-// support. Anvil's emitter intentionally collapses formatted msg!() to
-// sol_log of the format string only (args dropped) — see
-// pinocchio-emitter.ts:emitMsg. A format-args fixture would byte-diverge
-// by design, which would be a misleading test failure (it'd be testing
-// the documented-limitation, not the surface). When formatted msg!()
-// emit lands (likely via a hand-rolled format helper), add a separate
-// fixture to lock that in.
+// Three instructions covering the supported msg!() shapes:
+//   - say_hello / say_status: pure string literals (always byte-equal)
+//   - say_formatted: formatted args (M7 8c — Anvil expands via the
+//     stack-allocated u64_to_ascii / pubkey_to_base58 helpers in
+//     m7-helpers.ts, byte-equal to Anchor's runtime format!() for
+//     u64 + Pubkey arg types)
 
 use anchor_lang::prelude::*;
 
@@ -35,6 +28,15 @@ pub mod msg_emit {
             msg!("status: bad");
         }
         msg!("done");
+        Ok(())
+    }
+
+    pub fn say_formatted(_ctx: Context<NoAccounts>, amount: u64, target: Pubkey) -> Result<()> {
+        // Both args are instruction args with primitive types — Anvil's
+        // strict-mode lookup resolves them, so M7 8c's format expansion
+        // fires. Output should byte-equal Anchor's `format!()` runtime.
+        msg!("amount: {} target: {}", amount, target);
+        msg!("count: {}", amount);
         Ok(())
     }
 }

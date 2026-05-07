@@ -25,6 +25,7 @@ import {
   defineDifferential,
   anchorIxDiscriminator,
   concatBytes,
+  encodeU64LE,
   Keypair,
   PublicKey,
   LiteSVM,
@@ -61,8 +62,22 @@ defineDifferential({
       keys: [],
       data: Buffer.from(concatBytes(anchorIxDiscriminator("say_status"), Uint8Array.from([0]))),
     });
+    // M7 8d — formatted msg!() with u64 + Pubkey ix args. Anchor's
+    // runtime format!() and Anvil's stack-allocated u64_to_ascii +
+    // pubkey_to_base58 helpers must produce byte-identical Program
+    // log lines: "amount: 12345 target: <base58>" and "count: 12345".
+    const target = new PublicKey("11111111111111111111111111111112"); // recognizable in base58
+    const formattedIx = new TransactionInstruction({
+      programId,
+      keys: [],
+      data: Buffer.from(concatBytes(
+        anchorIxDiscriminator("say_formatted"),
+        encodeU64LE(12345n),
+        target.toBuffer(),
+      )),
+    });
 
-    for (const ix of [helloIx, statusOkIx, statusBadIx]) {
+    for (const ix of [helloIx, statusOkIx, statusBadIx, formattedIx]) {
       const tx = new Transaction().add(ix);
       tx.recentBlockhash = svm.latestBlockhash();
       tx.feePayer = ctx.payer.publicKey;
