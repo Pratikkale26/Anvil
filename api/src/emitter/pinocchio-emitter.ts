@@ -1064,20 +1064,70 @@ ${invokeCall}
     mint: string,
     _tokenProgram: string,
     sourcesExpr: string,
-    _signerSeeds?: string,
+    signerSeeds?: string,
   ): string {
-    // pinocchio::cpi::invoke is generic over `const ACCOUNTS: usize` —
-    // the source-list length must be known at compile time. harvest
-    // takes a runtime-length list of source token accounts, so it
-    // doesn't fit pinocchio's invoke API directly. Emit a TODO
-    // commentout so the program compiles; users who need this on
-    // Pinocchio must hand-write per-N invoke branches.
-    // (Native emit fully types this CPI via spl_token_2022 helpers.)
-    return `    // ⚠️ Anvil TODO: harvest_withheld_tokens_to_mint(${mint}, sources=${sourcesExpr})
-    //   pinocchio::cpi::invoke requires compile-time-known account count;
-    //   the runtime-length sources list isn't supported. Native target
-    //   has the typed emit; Pinocchio users should hand-write per-N
-    //   branches if needed. EM2 does NOT block on this gap.`;
+    // TransferFeeExtension(26) → HarvestWithheldTokensToMint(4).
+    // No payload (just 2-byte discriminator). Account metas are
+    // [mint writable] + [each source writable].
+    //
+    // pinocchio::cpi::invoke is generic over `const ACCOUNTS: usize`,
+    // so the account_infos array length must be known at compile time.
+    // harvest takes a runtime-length sources list — we dispatch
+    // through a match-on-N branch table for N=1..16. 16 = upper bound
+    // observed in transfer-fee programs in practice; fail-soft on
+    // overflow (a real harvest of 16+ accounts can split across
+    // multiple instructions).
+    const branches: string[] = [];
+    for (let n = 1; n <= 16; n++) {
+      const slots = Array.from({ length: n }, (_, i) => `__hwtm_srcs[${i}]`).join(", ");
+      const invokeFn = signerSeeds ? "invoke_signed" : "invoke";
+      const signerArg = signerSeeds ? `, &[__hwtm_signer]` : "";
+      branches.push(
+        `            ${n} => pinocchio::cpi::${invokeFn}(&__hwtm_ix, &[${mint}, ${slots}]${signerArg})?,`,
+      );
+    }
+    const signerSetup = signerSeeds
+      ? `        let __hwtm_seed_refs = ${signerSeeds}[0];
+        let mut __hwtm_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__hwtm_i, __hwtm_s) in __hwtm_seed_refs.iter().enumerate() {
+            if __hwtm_i >= __hwtm_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __hwtm_pda_seeds[__hwtm_i] = pinocchio::instruction::Seed::from(*__hwtm_s);
+        }
+        let __hwtm_signer = pinocchio::instruction::Signer::from(&__hwtm_pda_seeds[..__hwtm_seed_refs.len()]);
+`
+      : "";
+    return `    // Token-2022 TransferFee — harvest_withheld_tokens_to_mint
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        const __HWTM_MAX: usize = 16;
+        // sources may be Vec<&AccountInfo>, &[&AccountInfo], or
+        // similar. Coerce to a slice via &<expr>[..] which works for
+        // all common shapes (Vec, slice, array).
+        let __hwtm_srcs: &[&AccountInfo] = &(${sourcesExpr})[..];
+        if __hwtm_srcs.len() == 0 || __hwtm_srcs.len() > __HWTM_MAX {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        // Build mint+sources meta list (slice — Instruction.accounts
+        // accepts a slice, only invoke's account_infos array needs
+        // const-N).
+        let __hwtm_data = [26u8, 4u8];
+        let mut __hwtm_metas: [pinocchio::instruction::AccountMeta<'_>; __HWTM_MAX + 1] =
+            core::array::from_fn(|_| pinocchio::instruction::AccountMeta::writable(${mint}.key()));
+        for (__hwtm_i, __hwtm_src) in __hwtm_srcs.iter().enumerate() {
+            __hwtm_metas[__hwtm_i + 1] = pinocchio::instruction::AccountMeta::writable(__hwtm_src.key());
+        }
+        let __hwtm_meta_len = 1 + __hwtm_srcs.len();
+        let __hwtm_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__hwtm_metas[..__hwtm_meta_len],
+            data: &__hwtm_data,
+        };
+${signerSetup}        match __hwtm_srcs.len() {
+${branches.join("\n")}
+            _ => return Err(ProgramError::InvalidInstructionData),
+        }
+    }`;
   }
 
   override emitT22ImmutableOwnerInitialize(

@@ -17,7 +17,7 @@ Statuses:
 
 | Extension | Pinocchio | Native | Runtime impact on base CPIs |
 |---|---|---|---|
-| TransferFeeConfig | Y (init+set_fee+transfer_checked_with_fee+withdraw) / TODO (harvest — const-N invoke gap) | Y (init+set_fee+transfer_checked_with_fee+withdraw+harvest) | base `transfer_checked` automatically deducts fee — Y; init+set_fee+transfer_checked_with_fee+withdraw differential-gated 2026-05-07; harvest typed on Native, Pinocchio TODO |
+| TransferFeeConfig | Y (all 5 CPIs) | Y (all 5 CPIs) | base `transfer_checked` automatically deducts fee — Y; full TransferFee family differential-gated 2026-05-07 |
 | MintCloseAuthority | partial | partial | none on base CPIs — Y |
 | InterestBearingMint | Y (init+update_rate) | Y (init+update_rate) | none on base CPIs — Y; init+update_rate differential-gated 2026-05-07 |
 | NonTransferable | Y | Y | `transfer_checked` rejects at program level — Y (rejection round-trips); init differential-gated 2026-05-07 |

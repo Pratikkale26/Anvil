@@ -183,11 +183,27 @@ defineDifferential({
     feeTransferTx.sign(ctx.payer);
     expectOk(svm.sendTransaction(feeTransferTx), "fee_transfer");
 
-    // 4. withdraw_fees — drain mint's withheld pool to feeRecipient.
-    //    Note: harvest_fees omitted from this demo — see
-    //    t22-transfer-fee-init.rs for rationale (pinocchio::cpi::invoke's
-    //    const-N constraint blocks dynamic source lists). Native still
-    //    has typed harvest IR + emit, validated by cargo build.
+    // 4. harvest_fees — sweeps fees withheld on dst into the mint's
+    //    pool. Single source (the dst token account that received
+    //    the 100-token fee from the previous fee_transfer call).
+    //    Pinocchio variant exercises the new match-on-N branch
+    //    (N=1 here) instead of the old TODO commentout.
+    const harvestIx = new TransactionInstruction({
+      programId,
+      keys: [
+        { pubkey: ctx.mint.publicKey, isSigner: false, isWritable: true },
+        { pubkey: ctx.dst.publicKey, isSigner: false, isWritable: true },
+        { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+      ],
+      data: Buffer.from(anchorIxDiscriminator("harvest_fees")),
+    });
+    const harvestTx = new Transaction().add(harvestIx);
+    harvestTx.recentBlockhash = svm.latestBlockhash();
+    harvestTx.feePayer = ctx.payer.publicKey;
+    harvestTx.sign(ctx.payer);
+    expectOk(svm.sendTransaction(harvestTx), "harvest_fees");
+
+    // 5. withdraw_fees — drain mint's withheld pool to feeRecipient.
     const withdrawIx = new TransactionInstruction({
       programId,
       keys: [

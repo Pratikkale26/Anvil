@@ -1,8 +1,9 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{
-    transfer_checked_with_fee, transfer_fee_initialize, transfer_fee_set,
-    withdraw_withheld_tokens_from_mint, Token2022, TransferCheckedWithFee,
-    TransferFeeInitialize, TransferFeeSetTransferFee, WithdrawWithheldTokensFromMint,
+    harvest_withheld_tokens_to_mint, transfer_checked_with_fee, transfer_fee_initialize,
+    transfer_fee_set, withdraw_withheld_tokens_from_mint, HarvestWithheldTokensToMint,
+    Token2022, TransferCheckedWithFee, TransferFeeInitialize, TransferFeeSetTransferFee,
+    WithdrawWithheldTokensFromMint,
 };
 
 declare_id!("Tf1mC7QPzUNqx4M2YxYx4dXq8j5wvwZ7VtWJTeyWfuV");
@@ -98,16 +99,25 @@ pub mod t22_transfer_fee_init {
         Ok(())
     }
 
-    // harvest_withheld_tokens_to_mint is INTENTIONALLY OMITTED from
-    // this demo. The CPI takes a runtime-length Vec<AccountInfo> for
-    // the sources list, but pinocchio::cpi::invoke is generic over a
-    // compile-time `const ACCOUNTS: usize` — dynamic-length account
-    // slices don't fit without per-N branching boilerplate. EM2
-    // Session 1b ships the 2 fixed-account TransferFee CPIs
-    // (transfer_checked_with_fee + withdraw_withheld_tokens_from_mint);
-    // the typed IR kind cpi_t22_harvest_withheld_tokens_to_mint and
-    // its Native+Pinocchio emit ARE wired and validated by cargo
-    // build, but no demo here exercises them runtime-end-to-end.
+    /// Sweep accrued fees from a single source token account into the
+    /// mint's withheld pool. The wrapped CPI accepts Vec<AccountInfo>
+    /// for runtime-length lists; this demo passes a 1-element Vec to
+    /// keep the Context shape simple. Pinocchio emit dispatches the
+    /// invoke through a match-on-N branch table (N=1..16).
+    pub fn harvest_fees(ctx: Context<HarvestFees>) -> Result<()> {
+        let sources = vec![ctx.accounts.source.to_account_info()];
+        harvest_withheld_tokens_to_mint(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                HarvestWithheldTokensToMint {
+                    token_program_id: ctx.accounts.token_program.to_account_info(),
+                    mint: ctx.accounts.mint.to_account_info(),
+                },
+            ),
+            sources,
+        )?;
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -154,6 +164,17 @@ pub struct WithdrawFees<'info> {
     /// CHECK: Destination token account for withdrawn fees
     #[account(mut)]
     pub destination: UncheckedAccount<'info>,
+    pub token_program: Program<'info, Token2022>,
+}
+
+#[derive(Accounts)]
+pub struct HarvestFees<'info> {
+    /// CHECK: TransferFee mint — fees swept here from `source`.
+    #[account(mut)]
+    pub mint: UncheckedAccount<'info>,
+    /// CHECK: Source token account holding accrued fees.
+    #[account(mut)]
+    pub source: UncheckedAccount<'info>,
     pub token_program: Program<'info, Token2022>,
 }
 
