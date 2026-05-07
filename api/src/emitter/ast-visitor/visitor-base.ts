@@ -1276,7 +1276,26 @@ export class AstVisitorBase {
           // Shape 1 — pure literal.
           return [solLogCall];
         }
-        // Shape 2 — literal + format args. emitMsg emits a comment + the
+        // Shape 2 — literal + format args. M7 8c first: try to expand
+        // the format args into a buffer-builder block (matches handleMsg's
+        // legacy path under flag-OFF, so binary-parity holds under both
+        // flag values). Falls back to the legacy collapse when any arg
+        // type can't be resolved (mirroring m7-format-msg.irUsesFormattedMsg
+        // gate).
+        const tail = msgText.slice(literal.length).trim();
+        if (tail.startsWith(",")) {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { splitMsgArgs, buildFormatSegments, emitFormattedMsgPinocchio } =
+            require("../m7-format-msg.js") as typeof import("../m7-format-msg.js");
+          const args = splitMsgArgs(tail.slice(1).trim());
+          if (args !== null) {
+            const segments = buildFormatSegments(literal, args, w.instr);
+            if (segments !== null) {
+              return [rawLine(emitFormattedMsgPinocchio(segments))];
+            }
+          }
+        }
+        // Legacy collapse fallback. emitMsg emits a comment + the
         // sol_log call separated by a single `\n` inside one walker.lines
         // entry. To keep byte-identical via per-stmt push, we emit two
         // stmts: a raw_line for the comment (verbatim, with its 4-space

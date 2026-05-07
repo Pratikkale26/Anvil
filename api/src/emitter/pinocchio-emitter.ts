@@ -1247,6 +1247,20 @@ impl From<${enumName}> for ProgramError {
   override emitHelperFunctions(ir: SolanaIR): string {
     const helpers: string[] = [];
 
+    // M7 8c — emit the int/Pubkey → ASCII helpers when any instruction
+    // body uses a formatted msg!() (e.g. `msg!("X: {}", arg)`). The
+    // helpers are pulled verbatim from m7-helpers.ts so the Rust source
+    // string is the single source of truth across emitter, helper
+    // module, and TS algorithm-mirror tests.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { irUsesFormattedMsg } = require("./m7-format-msg.js") as typeof import("./m7-format-msg.js");
+    if (irUsesFormattedMsg(ir)) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { RUST_U64_TO_ASCII, RUST_PUBKEY_TO_BASE58 } = require("./m7-helpers.js") as typeof import("./m7-helpers.js");
+      helpers.push(RUST_U64_TO_ASCII);
+      helpers.push(RUST_PUBKEY_TO_BASE58);
+    }
+
     helpers.push(`pub fn bump_seed(
     program_id: &Pubkey,
     seeds: &[&[u8]],

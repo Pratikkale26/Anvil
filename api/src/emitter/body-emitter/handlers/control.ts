@@ -27,6 +27,36 @@ export function handleMsg(w: BodyWalker, stmt: MsgStmt): void {
   const msgText = w.normalizeKeyValueUsages(
     w.transformAccountReferences(w.transformCtxAccountsReferences(stmt.message)),
   );
+  // M7 8c — formatted msg!() expansion for Pinocchio. When the msg has
+  // format args AND every arg's type resolves to a recognized primitive
+  // (instruction arg, ctx.bumps, numeric literal), build a buffer-
+  // builder block on the stack using the int/Pubkey → ASCII helpers
+  // and emit a single sol_log call with the assembled string. Falls
+  // back to the legacy emitMsg (placeholder-collapse) when any arg
+  // type can't be resolved or the format string uses unsupported specs.
+  if (w.emitter.frameworkName === "Pinocchio") {
+    const literalMatch = msgText.match(/^"([^"\\]|\\.)*"/);
+    if (literalMatch?.[0]) {
+      const literal = literalMatch[0];
+      const tail = msgText.slice(literal.length).trim();
+      if (tail.startsWith(",")) {
+        // Has format args.
+        const argList = tail.slice(1).trim();
+        // Lazy-require to keep cold-start light when the path doesn't fire.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { splitMsgArgs, buildFormatSegments, emitFormattedMsgPinocchio } =
+          require("../../m7-format-msg.js") as typeof import("../../m7-format-msg.js");
+        const args = splitMsgArgs(argList);
+        if (args !== null) {
+          const segments = buildFormatSegments(literal, args, w.instr);
+          if (segments !== null) {
+            w.lines.push(emitFormattedMsgPinocchio(segments));
+            return;
+          }
+        }
+      }
+    }
+  }
   w.lines.push(w.emitter.emitMsg(msgText));
 }
 
