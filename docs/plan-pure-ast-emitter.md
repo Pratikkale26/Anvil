@@ -422,8 +422,16 @@ The bigger structural-port opportunities now live OUTSIDE pass_through:
   `tryStructuralizeExpr` for evt struct field values (catches cast
   expressions like `shares_to_mint as u64` that the simple parser punts
   on). 8th kind to reach pure structural ★ in the metric.
+- ✅ require — was 20 raw_exprs, now **0 PURE structural ★** after the 2026-05-07
+  port: added `unary_expression` case to `exprFromNode` in
+  rust-stmt-from-text.ts (handles `*X.key()` deref + `!expr` not). All
+  20 require rawExprs were `<lhs> [==|!=] <rhs>` shapes where one side
+  was `*X.key[()]` — tree-sitter recognized the binary_expression but
+  the unary `*` operand returned null, propagating up to make the whole
+  expression rawExpr. Adding the unary case fixes it for require AND
+  any other path using tryStructuralizeExpr (raw_line metric also
+  dropped by 1 from a ripple effect). 9th kind PURE structural ★.
 - state_read (22 raw_exprs) — body emit text
-- require (20 raw_exprs) — cond + error path leaf rawExpr
 
 These are deterministic-shape and would benefit from per-kind structural
 ports following the same template. Each is ~3-5 hrs.

@@ -44,6 +44,7 @@ import {
   castExpr,
   closureExpr,
   comment,
+  deref,
   exprStmt,
   ident,
   ifStmt,
@@ -52,6 +53,7 @@ import {
   lit,
   matchExpr,
   methodCall,
+  notExpr,
   parenExpr,
   path,
   ref,
@@ -586,6 +588,29 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       const innerExpr = exprFromNode(inner);
       if (innerExpr === null) return null;
       return parenExpr(innerExpr);
+    }
+    case "unary_expression": {
+      // `*expr` (deref) / `!expr` (not) / `-expr` (negation). The
+      // operator is in an unnamed child; the operand is the named
+      // child. Map `*` → deref, `!` → notExpr, `-` punted (no
+      // negation AST node — fall through to null so the strict
+      // converter returns null and the caller falls back to
+      // parseSimpleExpr / rawExpr).
+      const operand = node.namedChild(0);
+      if (!operand) return null;
+      let op: string | null = null;
+      for (let i = 0; i < node.childCount; i++) {
+        const c = node.child(i);
+        if (!c || c === operand || c.isNamed) continue;
+        const txt = c.text;
+        if (txt.length > 0 && !/^\s+$/.test(txt)) { op = txt; break; }
+      }
+      if (op === null) return null;
+      const operandExpr = exprFromNode(operand);
+      if (operandExpr === null) return null;
+      if (op === "*") return deref(operandExpr);
+      if (op === "!") return notExpr(operandExpr, { parens: false });
+      return null;
     }
     default:
       return null;
