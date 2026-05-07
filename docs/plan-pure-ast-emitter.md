@@ -373,15 +373,19 @@ inside pass_through transforms. Structural port requires:
 - 5d: Migration — every byte-equal differential fixture must hold.
   Re-run full corpus; revert + diagnose any divergence.
 
-### Session 8 (M7 — Pinocchio formatted msg!() proper support): ~16-20 hrs (~2-3 days)
-- 8a: int → ASCII decimal helper (~50 LoC const-time, no alloc dep,
-  stack-allocated buffer). Verify against test vectors.
-- 8b: Pubkey → ASCII base58 helper (~80 LoC with leading-zero
-  handling). Verify against bs58 crate output.
-- 8c: Format-arg detection in emitter, template parsing, buffer-
-  builder splice in handler prologue, sol_log on the result.
-- 8d: Vesting demo fixture exercising compareMsgLogs with formatted
-  msg!() — byte-equal verify on Pinocchio.
+### Session 8 (M7 — Pinocchio formatted msg!() proper support): LANDED 2026-05-07
+- ✅ 8a: int → ASCII decimal helper (commit `cb8f914`).
+- ✅ 8b: Pubkey → ASCII base58 helper (commit `684a4a4`).
+- ✅ 8c: Format-arg detection + template parser + buffer-builder splice
+  + sol_log on the result (commit `329af8f` + local-let type
+  inference followup `41ed748`).
+- ✅ 8d: Vesting differential exercises compareMsgLogs with formatted
+  msg!() — byte-equal on Pinocchio (commit `5379256`; snapshots
+  re-baselined in `37f536b`).
+- Module: `api/src/emitter/m7-format-msg.ts` (parser + codegen) +
+  `api/src/emitter/m7-helpers.ts` (no_std int/Pubkey ASCII helpers).
+- Strict-mode policy documented inline; non-recognised format
+  shapes fall back to legacy literal-only collapse.
 
 ### Session 9 (M6.1 — Phase 3 switchover): ~6-8 hrs
 - Add `ANVIL_AST_EMIT=1` feature flag routing through visitor
