@@ -128,8 +128,17 @@ export function tryStructuralizeMultiLine(text: string): RustStmt[] | null {
     // Refuse multi-line statements that aren't intentionally-multi-line
     // shapes (if/match/block themselves can be multi-line; arbitrary
     // multi-line method chains in let bindings can't because the printer
-    // doesn't preserve their line breaks).
-    if (child.text.includes("\n") && !MULTI_LINE_OK.has(child.type)) return null;
+    // doesn't preserve their line breaks). For expression_statement,
+    // peek at the wrapped expr — `if`/`match` wrapped in expression_statement
+    // is also OK.
+    if (child.text.includes("\n")) {
+      let okType = MULTI_LINE_OK.has(child.type);
+      if (!okType && child.type === "expression_statement") {
+        const inner = child.namedChild(0);
+        if (inner && MULTI_LINE_OK.has(inner.type)) okType = true;
+      }
+      if (!okType) return null;
+    }
     const isLast = i === childCount - 1;
     const stmt = stmtFromNode(child, isLast);
     if (stmt === null) return null;
@@ -143,6 +152,32 @@ const MULTI_LINE_OK = new Set([
   "match_expression",
   "block",
 ]);
+
+/**
+ * Check that a block node's first inner statement is indented at
+ * outer.column + 4 (standard Rust indent), AND the closing brace is
+ * at outer.column. The printer always emits +4 indent for block
+ * inners; if the source uses anything else (e.g. 8-space-deeper), the
+ * structural conversion would change byte output.
+ */
+function hasStandardBlockIndent(outer: SyntaxNode, block: SyntaxNode): boolean {
+  // Find the first inner stmt's start column.
+  if (block.namedChildCount === 0) return true;
+  const first = block.namedChild(0);
+  if (!first) return true;
+  const expectedInner = outer.startPosition.column + 4;
+  if (first.startPosition.column !== expectedInner) return false;
+  // Closing brace position — find the last char of block.text and
+  // check it sits at outer.column when on its own line. The block's
+  // own endPosition.column is one PAST the `}`; subtract 1 to get
+  // the brace column.
+  // Empty body or single-line block (no \n) is handled by the
+  // multi-line gate in tryStructuralizeMultiLine; here we trust
+  // tree-sitter's positions.
+  const closeCol = block.endPosition.column - 1;
+  if (closeCol !== outer.startPosition.column) return false;
+  return true;
+}
 
 /**
  * Walk a `block` node's named children and convert each to RustStmt.
@@ -225,6 +260,12 @@ function stmtFromNode(node: SyntaxNode, isLast: boolean): RustStmt | null {
         }
       }
       if (!body) return null;
+      // Refuse if the source's body block uses non-standard indent
+      // (anything other than the if's column + 4 spaces). The printer
+      // always emits +4; source-preserving non-standard layouts would
+      // break byte-equality.
+      if (!hasStandardBlockIndent(node, body)) return null;
+      if (elseBlock && !hasStandardBlockIndent(node, elseBlock)) return null;
       const bodyStmts = convertBlockStmts(body, false);
       if (bodyStmts === null) return null;
       if (elseBlock !== null) {
