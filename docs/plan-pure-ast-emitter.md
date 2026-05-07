@@ -357,7 +357,7 @@ ast-visitor-byte-identical test, run binary-parity-snapshot.
 - Audit pass: run countRawNodes on full demo corpus; document any
   remaining raw_line per kind.
 
-### Sessions 5-7 (M5 — pass_through structural): ~15-20 hrs over 2-3 sessions
+### Sessions 5-7 (M5 — pass_through structural): MOSTLY DONE — see 2026-05-07 audit below
 The big one. The regex post-process layer's biggest surface lives
 inside pass_through transforms. Structural port requires:
 - 5a: IR extension — Rust expression sub-types in SolanaIR (Zod
@@ -372,6 +372,52 @@ inside pass_through transforms. Structural port requires:
   regex sweeps for pass_through-derived expressions.
 - 5d: Migration — every byte-equal differential fixture must hold.
   Re-run full corpus; revert + diagnose any divergence.
+
+**M5 audit 2026-05-07 (after EM2 + tail-collapse fix):**
+
+Visitor metric dump (`bun scripts/em1-dump-raw-passthrough.ts`) reveals
+that pass_through's residual raw nodes ARE NOT shapes that benefit from
+typed-IR extension. The residual breaks down as:
+
+- **103 raw_line nodes / 54 unique shapes** — overwhelmingly user
+  application logic (AMM `checked_mul`/`checked_add` chains, vesting
+  math, marketplace fee math, funding rate calculations,
+  `match Position::from_account_info(...)` conditional-bind, etc).
+  Modeling these structurally would require representing all of Rust
+  as IR. Not viable, not the M5 goal.
+- **2 raw_expr nodes / 1 unique shape** (down from 20 / 11 shapes) —
+  `vec![source]` macro_call. Trivial 1-shape residual; would close to
+  0 if the visitor's expr converter handled `vec![]` macro_call.
+
+Tail-collapse fix landed as part of this audit: a final
+`collapseMultiDerefStructural` pass at the end of the
+`handlePassThrough` chain. The earlier collapse runs before
+`normalizeKeyValueUsages` / `transformHelperCalls`, both of which can
+re-introduce `**X.key()` shapes when a state-rebound identifier
+(e.g. `market_account`) replaces a value-context `account` with
+deref-form, and the regex panel's deref-prepend sees the rewritten
+text and prepends another `*`. Idempotent (single-`*` doesn't match).
+Closed 18 of 20 pass_through raw_exprs in one commit.
+
+**Honest M5 status:** the original 614 raw_lines estimate was a
+metric-script artifact from a different counting methodology; current
+metric shows pass_through = 95 raw_lines + 2 raw_exprs across 454
+occurrences (avg 0.21 raw nodes per occurrence). The remaining work
+is bounded and well-characterised. **5a/5b/5c/5d as originally scoped
+are not the right framing** — pass_through is mostly structural
+already; the residual is either user app-logic (not viable for IR
+typing) or trivial macro_call shapes (vec![], etc).
+
+The bigger structural-port opportunities now live OUTSIDE pass_through:
+
+- pda_signer_seeds (60 raw_lines) — let-bindings for seeds + signer_seeds
+- emit (40 raw_lines) — struct_literal + borsh block
+- state_read (22 raw_lines) — body emit text
+- require (20 raw_lines) — cond + error path leaf rawExpr
+
+These are deterministic-shape and would benefit from per-kind structural
+ports following the same template that closed the CPI catalog. Each is
+~3-5 hrs.
 
 ### Session 8 (M7 — Pinocchio formatted msg!() proper support): LANDED 2026-05-07
 - ✅ 8a: int → ASCII decimal helper (commit `cb8f914`).

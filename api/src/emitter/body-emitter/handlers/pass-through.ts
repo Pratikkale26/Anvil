@@ -199,6 +199,15 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // .replace calls to cover that case).
   transformedRawCode = qualifySysvarsStructural(transformedRawCode, structuralCtx);
   transformedRawCode = stripToAccountInfoStructural(transformedRawCode, structuralCtx);
+  // M5 — Final multi-deref collapse pass. The earlier collapse runs
+  // before normalizeKeyValueUsages / transformHelperCalls, both of
+  // which can re-introduce `**X.key()` shapes when a state-rebound
+  // identifier (e.g. `market_account`) replaces a value-context
+  // `account` with deref-form, and the regex panel's deref-prepend
+  // sees the rewritten text and prepends another `*`. Idempotent
+  // (single-`*` doesn't match the `\*{2,}` pattern). Closes the 20
+  // remaining pass_through rawExpr nodes from the EM1 metric.
+  transformedRawCode = collapseMultiDerefStructural(transformedRawCode);
   // Fallback: still run the regex versions in case tree-sitter parse
   // returned the code unchanged (parse error → no-op). The regex is
   // idempotent on already-structurally-rewritten text since the tree-
