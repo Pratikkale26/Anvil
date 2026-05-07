@@ -24,6 +24,7 @@ type CpiT22DefaultAccountStateInit = Extract<BodyStatement, { kind: "cpi_t22_def
 type CpiT22DefaultAccountStateUpdate = Extract<BodyStatement, { kind: "cpi_t22_default_account_state_update" }>;
 type CpiT22InterestBearingMintInit = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_initialize" }>;
 type CpiT22InterestBearingMintUpdateRate = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_update_rate" }>;
+type CpiT22TokenMetadataInit = Extract<BodyStatement, { kind: "cpi_t22_token_metadata_initialize" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -416,6 +417,32 @@ export function handleCpiT22InterestBearingMintInit(
       snakeCase(stmt.tokenProgram),
       rateAuth,
       stmt.rate,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22TokenMetadataInit(
+  w: BodyWalker,
+  stmt: CpiT22TokenMetadataInit,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: token_metadata_initialize(${stmt.metadata})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.mintAuthority)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitT22TokenMetadataInitialize(
+      snakeCase(stmt.metadata),
+      snakeCase(stmt.mint),
+      snakeCase(stmt.mintAuthority),
+      snakeCase(stmt.updateAuthority),
+      snakeCase(stmt.tokenProgram),
+      stmt.name,
+      stmt.symbol,
+      stmt.uri,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ),
   );

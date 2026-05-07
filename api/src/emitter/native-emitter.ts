@@ -151,7 +151,8 @@ export class NativeEmitter extends BaseEmitter {
         s.kind === "cpi_t22_default_account_state_initialize" ||
         s.kind === "cpi_t22_default_account_state_update" ||
         s.kind === "cpi_t22_interest_bearing_mint_initialize" ||
-        s.kind === "cpi_t22_interest_bearing_mint_update_rate"
+        s.kind === "cpi_t22_interest_bearing_mint_update_rate" ||
+        s.kind === "cpi_t22_token_metadata_initialize"
       )
     );
     const t22NeedsInvoke =
@@ -813,6 +814,40 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     ${invokeType}(
         &ibm_init_ix,
         &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22TokenMetadataInitialize(
+    metadata: string,
+    mint: string,
+    mintAuthority: string,
+    updateAuthority: string,
+    tokenProgram: string,
+    name: string,
+    symbol: string,
+    uri: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    // spl_token_metadata_interface::instruction::initialize returns
+    // Instruction by value (no Result), unlike the spl_token_2022
+    // helpers used elsewhere. The instruction's program_id is the
+    // Token-2022 program (the metadata interface routes through it).
+    return `    // Token-2022 TokenMetadata initialize — ${metadata}
+    let tmi_ix = spl_token_metadata_interface::instruction::initialize(
+        &spl_token_2022::id(),
+        ${metadata}.key,
+        ${updateAuthority}.key,
+        ${mint}.key,
+        ${mintAuthority}.key,
+        ${name},
+        ${symbol},
+        ${uri},
+    );
+    ${invokeType}(
+        &tmi_ix,
+        &[${metadata}.clone(), ${updateAuthority}.clone(), ${mint}.clone(), ${mintAuthority}.clone(), ${tokenProgram}.clone()],${signerArg}
     )?;`;
   }
 

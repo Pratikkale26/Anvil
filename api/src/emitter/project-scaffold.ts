@@ -75,6 +75,10 @@ const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
   // SPL extensions (beyond core token + ATA + memo + token-2022)
   spl_account_compression:   `spl-account-compression = "0.4"`,
   spl_governance:            `spl-governance = "4.0"`,
+  // EM2: spl-token-metadata-interface — pulled in by anchor-spl 0.31's
+  // token_2022 feature, exposed for direct CPI use when emit produces
+  // typed cpi_t22_token_metadata_initialize.
+  spl_token_metadata_interface: `spl-token-metadata-interface = "0.7"`,
   spl_concurrent_merkle_tree: `spl-concurrent-merkle-tree = "0.4"`,
   spl_noop:                  `spl-noop = "0.2"`,
   // Solana hash helpers used in custom logic
@@ -150,6 +154,12 @@ function extractUsedCrates(ir: SolanaIR): Set<string> {
     for (const stmt of instr.body ?? []) {
       if ("code" in stmt) scan(stmt.code);
       if ("rawCode" in stmt) scan(stmt.rawCode);
+      // EM2: typed IR kinds whose Native emit references external
+      // crates that don't appear textually in source-side fields.
+      // Without this hint, scaffolding misses the dep.
+      if (stmt.kind === "cpi_t22_token_metadata_initialize") {
+        seen.add("spl_token_metadata_interface");
+      }
     }
   }
   return seen;

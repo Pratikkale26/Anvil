@@ -267,6 +267,22 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // TokenMetadata: initialize the metadata for a Token-2022 mint via
+  // the spl-token-metadata-interface protocol. Native uses the
+  // canonical helper; Pinocchio = TODO commentout (own protocol shim
+  // layer required — sha256 disc + Borsh strings).
+  abstract emitT22TokenMetadataInitialize(
+    metadata: string,
+    mint: string,
+    mintAuthority: string,
+    updateAuthority: string,
+    tokenProgram: string,
+    name: string,
+    symbol: string,
+    uri: string,
+    signerSeeds?: string,
+  ): string;
+
   abstract emitProgramAccountClose(account: string, destination: string): string;
   abstract emitCreateProgramAccount(
     account: string,

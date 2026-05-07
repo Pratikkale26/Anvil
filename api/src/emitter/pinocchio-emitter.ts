@@ -935,6 +935,33 @@ ${invokeCall}
     }`;
   }
 
+  override emitT22TokenMetadataInitialize(
+    metadata: string,
+    mint: string,
+    mintAuthority: string,
+    updateAuthority: string,
+    _tokenProgram: string,
+    name: string,
+    symbol: string,
+    uri: string,
+    _signerSeeds?: string,
+  ): string {
+    // TokenMetadata uses the spl-token-metadata-interface protocol
+    // layered on Token-2022 — discriminators are SHA256-derived
+    // ("spl_token_metadata_interface:initialize_account" → first 8
+    // bytes) and string args use Borsh serialization. Pinocchio is
+    // no_std + no spl_token_metadata_interface dep + no native sha256
+    // helper for compile-time discriminator computation. Rather than
+    // ship partial infra, emit a TODO so the program compiles and
+    // users hand-roll the CPI if needed. Native target has the typed
+    // emit fully wired.
+    return `    // ⚠️ Anvil TODO: token_metadata_initialize(metadata=${metadata}, mint=${mint}, name=${name}, symbol=${symbol}, uri=${uri})
+    //   Pinocchio path requires the spl-token-metadata-interface protocol shim
+    //   (sha256 discriminator + Borsh-serialized String args). Native target
+    //   uses spl_token_metadata_interface::instruction::initialize directly.
+    //   mintAuthority=${mintAuthority}, updateAuthority=${updateAuthority}`;
+  }
+
   override emitT22DefaultAccountStateInitialize(
     mint: string,
     _tokenProgram: string,

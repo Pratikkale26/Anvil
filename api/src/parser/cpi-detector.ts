@@ -168,6 +168,9 @@ export function detectCpi(
   if (funcText.includes("interest_bearing_mint_update_rate")) {
     return extractT22InterestBearingMintUpdateRate(callNode, collector);
   }
+  if (funcText.includes("token_metadata_initialize")) {
+    return extractT22TokenMetadataInitialize(callNode, collector);
+  }
 
   // ── SPL Token transfer ──
   if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
@@ -1261,6 +1264,68 @@ function extractT22InterestBearingMintUpdateRate(
     tokenProgram: cleanAccountRef(tokenProgram),
     rateAuthority: cleanAccountRef(rateAuthority),
     rate,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 TokenMetadata initialize (EM2 Session 4) ────────────────────
+//
+// Uses the spl-token-metadata-interface protocol layered on Token-2022.
+// Anchor source shape:
+//   token_metadata_initialize(
+//       CpiContext::new(token_program, TokenMetadataInitialize {
+//           token_program_id, mint, metadata, mint_authority, update_authority,
+//       }),
+//       name, symbol, uri,  // String args
+//   )?;
+function extractT22TokenMetadataInitialize(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 token_metadata_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(collector, "T22 token_metadata_initialize (var-bound CpiContext)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let metadata = "metadata";
+  let mint = "mint";
+  let mintAuthority = "mint_authority";
+  let updateAuthority = "update_authority";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    metadata = extractStructField(accountsStruct, "metadata") ?? metadata;
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mintAuthority = extractStructField(accountsStruct, "mint_authority") ?? mintAuthority;
+    updateAuthority = extractStructField(accountsStruct, "update_authority") ?? updateAuthority;
+    // anchor-spl 0.31 uses `program_id`; older versions used
+    // `token_program_id`. Try both.
+    tokenProgram =
+      extractStructField(accountsStruct, "program_id") ??
+      extractStructField(accountsStruct, "token_program_id") ??
+      tokenProgram;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  const name = args[1]?.text.trim() ?? `String::new()`;
+  const symbol = args[2]?.text.trim() ?? `String::new()`;
+  const uri = args[3]?.text.trim() ?? `String::new()`;
+  return {
+    kind: "cpi_t22_token_metadata_initialize",
+    metadata: cleanAccountRef(metadata),
+    mint: cleanAccountRef(mint),
+    mintAuthority: cleanAccountRef(mintAuthority),
+    updateAuthority: cleanAccountRef(updateAuthority),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    name,
+    symbol,
+    uri,
     signerSeeds,
   };
 }

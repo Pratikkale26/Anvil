@@ -612,6 +612,7 @@ import {
   handleCpiT22DefaultAccountStateUpdate,
   handleCpiT22InterestBearingMintInit,
   handleCpiT22InterestBearingMintUpdateRate,
+  handleCpiT22TokenMetadataInit,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -658,6 +659,7 @@ type CpiT22DefaultAccountStateInit = Extract<BodyStatement, { kind: "cpi_t22_def
 type CpiT22DefaultAccountStateUpdate = Extract<BodyStatement, { kind: "cpi_t22_default_account_state_update" }>;
 type CpiT22InterestBearingMintInit = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_initialize" }>;
 type CpiT22InterestBearingMintUpdateRate = Extract<BodyStatement, { kind: "cpi_t22_interest_bearing_mint_update_rate" }>;
+type CpiT22TokenMetadataInit = Extract<BodyStatement, { kind: "cpi_t22_token_metadata_initialize" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -706,6 +708,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_t22_default_account_state_update",
   "cpi_t22_interest_bearing_mint_initialize",
   "cpi_t22_interest_bearing_mint_update_rate",
+  "cpi_t22_token_metadata_initialize",
   "cpi_ata_create",
   "cpi_memo",
   "cpi_custom",
@@ -766,6 +769,8 @@ export class AstVisitorBase {
         return this.visitCpiT22InterestBearingMintInit(stmt);
       case "cpi_t22_interest_bearing_mint_update_rate":
         return this.visitCpiT22InterestBearingMintUpdateRate(stmt);
+      case "cpi_t22_token_metadata_initialize":
+        return this.visitCpiT22TokenMetadataInit(stmt);
       case "cpi_ata_create":       return this.visitCpiAtaCreate(stmt);
       case "cpi_memo":             return this.visitCpiMemo(stmt);
       case "cpi_custom":           return this.visitCpiCustom(stmt);
@@ -2191,6 +2196,10 @@ export class AstVisitorBase {
 
   visitCpiT22InterestBearingMintUpdateRate(stmt: CpiT22InterestBearingMintUpdateRate): RustStmt[] {
     return this.captureAndConvert(handleCpiT22InterestBearingMintUpdateRate, stmt);
+  }
+
+  visitCpiT22TokenMetadataInit(stmt: CpiT22TokenMetadataInit): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22TokenMetadataInit, stmt);
   }
 
   /**

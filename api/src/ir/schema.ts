@@ -591,6 +591,33 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // anchor_spl::token_interface::token_metadata_initialize. Uses the
+  // spl-token-metadata-interface protocol layered on Token-2022.
+  // Discriminators are SHA256-derived (NOT the simple disc+sub-disc
+  // pattern of the other extensions) and string args use Borsh
+  // serialization. Native target uses the spl_token_metadata_interface
+  // helper; Pinocchio = TODO (own protocol shim layer required).
+  z.object({
+    kind: z.literal("cpi_t22_token_metadata_initialize"),
+    /** AccountInfo binding for the metadata account (often = mint). */
+    metadata: z.string(),
+    /** AccountInfo binding for the mint account. */
+    mint: z.string(),
+    /** AccountInfo binding for mint authority signer. */
+    mintAuthority: z.string(),
+    /** AccountInfo binding for the metadata's update authority. */
+    updateAuthority: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    /** Raw expression for the metadata name (typically `String`). */
+    name: z.string(),
+    /** Raw expression for the symbol. */
+    symbol: z.string(),
+    /** Raw expression for the URI. */
+    uri: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: create_metadata_accounts_v3.
   // First-class IR slot for the Metaplex CPI catalog (#29). Today the
   // emitter still falls back to the walker.ts regex stub for actual
