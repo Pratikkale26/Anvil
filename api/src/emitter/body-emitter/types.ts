@@ -82,6 +82,7 @@ export interface BodyEmitterCallbacks {
   emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string;
   emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string, opts?: Token2022Opts): string;
   emitSplSetAuthority(account: string, currentAuthority: string, authorityType: string, newAuthority: string, signerSeeds?: string, opts?: Token2022Opts): string;
+  emitT22NonTransferableMintInitialize(mint: string, tokenProgram: string, signerSeeds?: string): string;
   emitCreateAta(ata: string, payer: string, mint: string, authority: string, signerSeeds?: string): string;
   emitMemo(data: string, signerSeeds?: string): string;
   emitProgramAccountClose(account: string, destination: string): string;

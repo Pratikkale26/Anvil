@@ -147,6 +147,18 @@ export abstract class BaseEmitter {
   abstract emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string;
   abstract emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string, opts?: Token2022Opts): string;
   abstract emitSplSetAuthority(account: string, currentAuthority: string, authorityType: string, newAuthority: string, signerSeeds?: string, opts?: Token2022Opts): string;
+
+  // ── Token-2022 extension CPIs (EM2) ──
+  // Initialize the NonTransferable mint extension. Single-instruction
+  // family — no manage/update CPIs. Must be called before
+  // initialize_mint (extension data lives in the same allocated mint
+  // buffer ahead of the standard mint header).
+  abstract emitT22NonTransferableMintInitialize(
+    mint: string,
+    tokenProgram: string,
+    signerSeeds?: string,
+  ): string;
+
   abstract emitProgramAccountClose(account: string, destination: string): string;
   abstract emitCreateProgramAccount(
     account: string,

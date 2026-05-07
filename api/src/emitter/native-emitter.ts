@@ -669,6 +669,24 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     )?;`;
   }
 
+  override emitT22NonTransferableMintInitialize(
+    mint: string,
+    tokenProgram: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 NonTransferable extension init — ${mint}
+    let non_transferable_init_ix = spl_token_2022::instruction::initialize_non_transferable_mint(
+        &spl_token_2022::id(),
+        ${mint}.key,
+    )?;
+    ${invokeType}(
+        &non_transferable_init_ix,
+        &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
   override emitProgramAccountClose(account: string, destination: string): string {
     return `    close_program_account(${account}, ${destination})?;`;
   }

@@ -13,6 +13,7 @@ type CpiSplMintTo = Extract<BodyStatement, { kind: "cpi_spl_mint_to" }>;
 type CpiSplBurn = Extract<BodyStatement, { kind: "cpi_spl_burn" }>;
 type CpiSplCloseAccount = Extract<BodyStatement, { kind: "cpi_spl_close_account" }>;
 type CpiSplSetAuthority = Extract<BodyStatement, { kind: "cpi_spl_set_authority" }>;
+type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non_transferable_mint_initialize" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -218,6 +219,26 @@ export function handleCpiSplSetAuthority(w: BodyWalker, stmt: CpiSplSetAuthority
       stmt.newAuthority,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
       { tokenProgram: stmt.tokenProgram },
+    ),
+  );
+}
+
+export function handleCpiT22NonTransferableMintInit(
+  w: BodyWalker,
+  stmt: CpiT22NonTransferableMintInit,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: non_transferable_mint_initialize(${stmt.mint})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.mint)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitT22NonTransferableMintInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ),
   );
 }

@@ -601,6 +601,7 @@ import {
   handleCpiSplBurn,
   handleCpiSplCloseAccount,
   handleCpiSplSetAuthority,
+  handleCpiT22NonTransferableMintInit,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -636,6 +637,7 @@ type CpiSplMintTo = Extract<BodyStatement, { kind: "cpi_spl_mint_to" }>;
 type CpiSplBurn = Extract<BodyStatement, { kind: "cpi_spl_burn" }>;
 type CpiSplCloseAccount = Extract<BodyStatement, { kind: "cpi_spl_close_account" }>;
 type CpiSplSetAuthority = Extract<BodyStatement, { kind: "cpi_spl_set_authority" }>;
+type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non_transferable_mint_initialize" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -673,6 +675,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_spl_burn",
   "cpi_spl_close_account",
   "cpi_spl_set_authority",
+  "cpi_t22_non_transferable_mint_initialize",
   "cpi_ata_create",
   "cpi_memo",
   "cpi_custom",
@@ -711,6 +714,8 @@ export class AstVisitorBase {
       case "cpi_spl_burn":         return this.visitCpiSplBurn(stmt);
       case "cpi_spl_close_account":return this.visitCpiSplCloseAccount(stmt);
       case "cpi_spl_set_authority":return this.visitCpiSplSetAuthority(stmt);
+      case "cpi_t22_non_transferable_mint_initialize":
+        return this.visitCpiT22NonTransferableMintInit(stmt);
       case "cpi_ata_create":       return this.visitCpiAtaCreate(stmt);
       case "cpi_memo":             return this.visitCpiMemo(stmt);
       case "cpi_custom":           return this.visitCpiCustom(stmt);
@@ -2086,6 +2091,16 @@ export class AstVisitorBase {
       invokeArgs,
     ))));
     return out;
+  }
+
+  /**
+   * cpi_t22_non_transferable_mint_initialize — Phase-2 handler-fallback.
+   * Both Pinocchio and Native emit hand-rolled CPI shapes that the AST
+   * doesn't model directly yet; defer structural conversion to a later
+   * commit.
+   */
+  visitCpiT22NonTransferableMintInit(stmt: CpiT22NonTransferableMintInit): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22NonTransferableMintInit, stmt);
   }
 
   /**

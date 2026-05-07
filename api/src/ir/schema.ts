@@ -417,6 +417,28 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     needsReview: z.boolean().default(true),
   }),
 
+  // ── Token-2022 extension CPIs (EM2 arc) ──
+  //
+  // These are CPI calls that initialize / manage Token-2022 mint
+  // extensions via the anchor_spl::token_interface::* helpers. EM2
+  // adds a typed slot per extension family so the emit dispatches
+  // through structural visit methods instead of falling through as
+  // pass_through. See `docs/token-2022-extensions.md` for status table
+  // and `posts/plan-em2-t22-expansion.md` for the per-family plan.
+
+  // anchor_spl::token_interface::non_transferable_mint_initialize.
+  // Single-instruction extension — flips the mint into non-transferable
+  // mode. No manage instructions; transfer attempts revert at the
+  // Token-2022 program level.
+  z.object({
+    kind: z.literal("cpi_t22_non_transferable_mint_initialize"),
+    /** AccountInfo binding for the mint account being initialized. */
+    mint: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: create_metadata_accounts_v3.
   // First-class IR slot for the Metaplex CPI catalog (#29). Today the
   // emitter still falls back to the walker.ts regex stub for actual

@@ -727,6 +727,42 @@ ${invokeCall}
     }`;
   }
 
+  override emitT22NonTransferableMintInitialize(
+    mint: string,
+    _tokenProgram: string,
+    signerSeeds?: string,
+  ): string {
+    // Token-2022 InitializeNonTransferableMint: discriminator 32, no
+    // payload (single-byte instruction data), accounts = [writable mint].
+    // pinocchio_token has no helper for T22 extension instructions, so
+    // hand-roll the raw CPI against the const TOKEN_2022_PROGRAM_ID.
+    const invokeCall = signerSeeds
+      ? `        let __nt_seed_refs = ${signerSeeds}[0];
+        let mut __nt_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__nt_i, __nt_s) in __nt_seed_refs.iter().enumerate() {
+            if __nt_i >= __nt_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __nt_pda_seeds[__nt_i] = pinocchio::instruction::Seed::from(*__nt_s);
+        }
+        let __nt_signer = pinocchio::instruction::Signer::from(&__nt_pda_seeds[..__nt_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__nt_ix, &[${mint}], &[__nt_signer])?;`
+      : `        pinocchio::cpi::invoke(&__nt_ix, &[${mint}])?;`;
+    return `    // Token-2022 NonTransferable extension init — ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __nt_data = [32u8];
+        let __nt_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+        ];
+        let __nt_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__nt_metas,
+            data: &__nt_data,
+        };
+${invokeCall}
+    }`;
+  }
+
   override emitProgramAccountClose(account: string, destination: string): string {
     return `    close_program_account(${account}, ${destination})?;`;
   }

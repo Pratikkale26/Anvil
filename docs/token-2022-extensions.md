@@ -20,7 +20,7 @@ Statuses:
 | TransferFeeConfig | partial | partial | base `transfer_checked` automatically deducts fee — Y |
 | MintCloseAuthority | partial | partial | none on base CPIs — Y |
 | InterestBearingMint | partial | partial | none on base CPIs — Y |
-| NonTransferable | partial | partial | `transfer_checked` rejects at program level — Y (rejection round-trips) |
+| NonTransferable | Y | Y | `transfer_checked` rejects at program level — Y (rejection round-trips); init differential-gated 2026-05-07 |
 | CpiGuard | partial | partial | restricts which CPI calls a token account permits — Y for permitted ops |
 | DefaultAccountState | partial | partial | newly-initialized accounts start frozen — Y for state-aware code |
 | ImmutableOwner | partial | partial | none on base CPIs — Y |

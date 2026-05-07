@@ -130,6 +130,15 @@ export function detectCpi(
     }
   }
 
+  // T22 extension: non_transferable_mint_initialize. Match by helper
+  // name regardless of qualifier — Anchor programs typically `use
+  // anchor_spl::token_interface::non_transferable_mint_initialize`,
+  // making the call site unqualified. The accounts-struct field
+  // names disambiguate from any non-T22 collisions.
+  if (funcText.includes("non_transferable_mint_initialize")) {
+    return extractT22NonTransferableMintInitialize(callNode, collector);
+  }
+
   // ── SPL Token transfer ──
   if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
     return extractSplTransfer(callNode, collector, cpiCtxLookup);
@@ -695,6 +704,59 @@ function extractSplCloseAccount(callNode: SyntaxNode, collector?: WarningCollect
     account: cleanAccountRef(account),
     destination: cleanAccountRef(destination),
     authority: cleanAccountRef(authority),
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 NonTransferable extension init (EM2 Session 1) ──────────────
+//
+// Anchor source shape:
+//   non_transferable_mint_initialize(CpiContext::new(
+//       ctx.accounts.token_program.key(),
+//       NonTransferableMintInitialize {
+//           token_program_id: ctx.accounts.token_program.to_account_info(),
+//           mint: ctx.accounts.mint_account.to_account_info(),
+//       },
+//   ))?;
+//
+// Extracts mint + tokenProgram from the inline struct. Signer-seeds variant
+// supported via new_with_signer. Falls back to pass_through when the
+// CpiContext isn't inline (variable-bound CpiContext is the same gap as
+// set_authority — handled by the From-trait inliner work).
+function extractT22NonTransferableMintInitialize(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 non_transferable_mint_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 non_transferable_mint_initialize (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_non_transferable_mint_initialize",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
     signerSeeds,
   };
 }
