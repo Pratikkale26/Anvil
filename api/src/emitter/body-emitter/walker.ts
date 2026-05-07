@@ -186,6 +186,32 @@ export class BodyWalker {
   walk(): string {
     this.emitAccountConstraintChecks();
 
+    // M6.1 — ANVIL_AST_EMIT=1 routes body statements through the
+    // visitor instead of the per-kind handler chain. The visitor's
+    // output is byte-identical to the handler chain (asserted by
+    // ast-visitor-byte-identical.test.ts on every demo × target),
+    // so binary-parity-snapshot.test.ts must pass identically under
+    // both flag values. Honest framing: this is the switchover
+    // SCAFFOLDING — the visitor still calls into handlers for
+    // non-structural kinds via runHandlerCapture, so flipping the
+    // flag does not actually retire the regex layer yet. M6.2
+    // (sunset) is gated on every IR kind being structurally
+    // complete in the visitor.
+    if (process.env["ANVIL_AST_EMIT"] === "1") {
+      // Lazy require to avoid pulling the visitor module on the
+      // legacy path (keeps cold-start cheap when the flag is off).
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { PinocchioAstVisitor, NativeAstVisitor, printStmts } =
+        require("../ast-visitor/index.js") as typeof import("../ast-visitor/index.js");
+      const visitor = this.emitter.frameworkName === "Pinocchio"
+        ? new PinocchioAstVisitor(this)
+        : new NativeAstVisitor(this);
+      for (const stmt of this.statements) {
+        const rustStmts = visitor.visit(stmt);
+        const text = printStmts(rustStmts, "    ");
+        if (text.length > 0) this.lines.push(text);
+      }
+    } else {
     for (const stmt of this.statements) {
       // Walker v2 opt-in (ANVIL_WALKER_V2=1): per-IR-kind handlers
       // migrated to v2 are dispatched here first. Returns true when
@@ -219,6 +245,7 @@ export class BodyWalker {
         case "return_err": handleReturnErr(this, stmt); break;
       }
     }
+    } // end of !ANVIL_AST_EMIT branch
 
     const result = this.lines.join("\n");
     return result
