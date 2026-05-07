@@ -1415,6 +1415,71 @@ export class BodyWalker {
           condition = `${this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(account.name)))} == ${this.transformAccountReferences(
             this.transformCtxAccountsReferences(stripAnchorConstraintError(constraint.value)),
           )}`;
+        } else if (constraint.kind === "has_one") {
+          // `#[account(has_one = <target>)]` — assert the deserialized
+          // account's `<target>` field equals the `<target>` AccountInfo
+          // key. Anchor enforces this at runtime via try_accounts;
+          // we deserialize via from_account_info and check the field.
+          //
+          // ensureStateRead also emits this check INSIDE its state-read
+          // flow when the body deserializes the account. Both fire,
+          // dedup via bodyRequireConditions.has() below — same condition
+          // text, second occurrence skipped. This catches the case where
+          // the body uses `ctx.accounts.X.key()` but never deserializes
+          // `X` (so ensureStateRead never runs for X) yet has_one was
+          // declared — without the top-level emit the check never lands.
+          const targetField = snakeCase(stripAnchorConstraintError(constraint.value));
+          const targetRef = this.instr.accounts.find(
+            (acc) => snakeCase(acc.name) === targetField,
+          );
+          if (!targetRef) continue;
+          const accountName = snakeCase(account.name);
+          // Skip if the account is being initialized this instruction —
+          // can't has_one a freshly-allocated account (its data is
+          // default-zero, not the eventual authority). Anchor itself
+          // wouldn't enforce has_one on init accounts either.
+          const isInitOrInitIfNeeded = account.constraints.some(
+            (c) => c.kind === "init" || c.kind === "init_if_needed",
+          );
+          if (isInitOrInitIfNeeded) continue;
+          // Skip if the body's statements include a state_read OR
+          // state_field_assign for this account — both call into
+          // ensureStateRead which emits the has_one check inline.
+          // Also bumps_access reads bump_<account> derivation; the
+          // state's data isn't deserialized in that path though, so
+          // it doesn't trigger the check — include here for safety
+          // since the bump derivation resolveAccountInfoVar reads
+          // the same AccountInfo.
+          const hasBodyStateAccess = this.statements.some(
+            (s) =>
+              (s.kind === "state_read" || s.kind === "state_field_assign") &&
+              snakeCase(s.account) === accountName,
+          );
+          if (hasBodyStateAccess) continue;
+          const accountInfo = this.resolveAccountInfoVar(accountName);
+          const typeName = account.accountType;
+          if (!typeName || !this.isGeneratedStateType(typeName)) continue;
+          const localVar = `__ha_${accountName}`;
+          // Push the deserialize prelude + comparison as a single
+          // multi-line lines.push so dedup tracks the whole block by
+          // its condition text.
+          const targetKeyExpr = this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(targetField));
+          condition = this.normalizeKeyValueUsages(`${localVar}.${targetField} != ${targetKeyExpr}`);
+          if (this.bodyRequireConditions.has(normalizeConditionKey(condition))) {
+            continue;
+          }
+          // Mirror emitter's state-read shape (per-target):
+          // pinocchio: `<T>::from_account_info(<info>)?`
+          // native:    `<T>::read(&<info>.data.borrow())?`
+          const readExpr = this.emitter.frameworkName === "Pinocchio"
+            ? `${typeName}::from_account_info(${accountInfo})?`
+            : `${typeName}::read(&${accountInfo}.data.borrow())?`;
+          this.lines.push(`    let ${localVar} = ${readExpr};`);
+          this.lines.push(`    if ${condition} {`);
+          this.lines.push(`        return Err(ProgramError::InvalidAccountData);`);
+          this.lines.push(`    }`);
+          this.bodyRequireConditions.add(normalizeConditionKey(condition));
+          continue;
         }
         if (!condition) continue;
         condition = this.normalizeKeyValueUsages(condition);

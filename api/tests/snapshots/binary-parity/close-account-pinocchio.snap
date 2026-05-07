@@ -186,6 +186,10 @@ pub fn shut(
     }
 
     let _bump_note = bump_seed(program_id, &[b"note", owner.key().as_ref()], note.key())?;
+    let __ha_note = Note::from_account_info(note)?;
+    if __ha_note.owner != *owner.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
     close_program_account(note, receiver)?;
     Ok(())
 
