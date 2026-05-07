@@ -701,7 +701,15 @@ function checkAnchorTypedAccounts(content: string, path: string, target: Detecte
     [/#\[account\s*\]/, "#[account] attribute (Anchor-only)"],
     [/#\[program\s*\]/, "#[program] module attribute (Anchor-only)"],
   ];
-  const lines = content.split("\n");
+  // Strip line comments before testing — the unsalvageable-helper
+  // commentout pass commented out helper signatures that contain the
+  // very Anchor types this check looks for, but that's intentionally
+  // dead code (banner + body commented out, call sites also commented).
+  // Without this strip, every commented-out helper signature falsely
+  // triggers as a leak.
+  const lines = content
+    .split("\n")
+    .map((l) => l.replace(/\/\/.*$/, ""));
   for (const [pattern, label] of patterns) {
     const lineIdx = lines.findIndex((line) => pattern.test(line));
     if (lineIdx >= 0) {
