@@ -168,8 +168,11 @@ export type RustExpr =
    * like `let seeds = &[seed1, seed2, ...]`); the printer formats it
    * with one item per line, indented by `indent + 4` from the
    * surrounding stmt indent. Mirrors struct_literal's multiLine option.
+   * `separator: ";"` produces the repeat form `[value; count]` —
+   * always exactly 2 items in this case (item[0] = value,
+   * item[1] = count).
    */
-  | { kind: "array"; items: RustExpr[]; multiLine?: boolean }
+  | { kind: "array"; items: RustExpr[]; multiLine?: boolean; separator?: "," | ";" }
   /**
    * Tuple expression — `(a, b, c)` or `()` (unit handled via lit).
    * Single-element tuples need a trailing comma `(a,)` per Rust syntax;

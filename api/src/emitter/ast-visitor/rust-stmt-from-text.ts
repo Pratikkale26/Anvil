@@ -154,6 +154,13 @@ const MULTI_LINE_OK = new Set([
   "if_expression",
   "match_expression",
   "block",
+  // Multi-line let/expr-stmt allowed when the value/expr is itself a
+  // mlCall / multi-line struct_literal — the structural printer
+  // reproduces those formats. Each inner stmt's structuralization
+  // still gates on tryStructuralizeExpr returning a structural form;
+  // failure → null → caller falls back to rawLine.
+  "let_declaration",
+  "expression_statement",
 ]);
 
 /**
@@ -226,6 +233,12 @@ function stmtFromNode(node: SyntaxNode, isLast: boolean): RustStmt | null {
       // Assignment as a statement — `LHS = RHS;` (incl. `arr[i] = X`,
       // `state.field = Y`). Route to stmtFromNode → assign() AST.
       if (expr.type === "assignment_expression") {
+        return stmtFromNode(expr, isLast);
+      }
+      // Bare block expression at stmt position — `{ ... }`. Common shape
+      // of typed T22 CPI emits where the entire CPI lives inside an
+      // outer block. Route to stmtFromNode → block AST.
+      if (expr.type === "block") {
         return stmtFromNode(expr, isLast);
       }
       const re = exprFromNode(expr);
@@ -354,6 +367,50 @@ function stmtFromNode(node: SyntaxNode, isLast: boolean): RustStmt | null {
       if (re === null) return null;
       return letStmt(name, re, { mut, ty });
     }
+    case "block": {
+      // Multi-line `{ stmts }` block at stmt position. Recursively
+      // convert the inner stmts via convertBlockStmts (allowing
+      // multi-line). The block AST stmt prints `{\n  stmt1;\n  stmt2;\n}`
+      // at the surrounding stmt indent.
+      const stmts = convertBlockStmts(node, true);
+      if (stmts === null) return null;
+      return { kind: "block", stmts };
+    }
+    case "const_item": {
+      // `const NAME: TYPE = VALUE;` — tree-sitter exposes name,
+      // type, and value as named children. The printer emits the
+      // const_decl AST verbatim.
+      let constName: string | null = null;
+      let constTy: string | null = null;
+      let constValue: SyntaxNode | null = null;
+      for (let i = 0; i < node.namedChildCount; i++) {
+        const c = node.namedChild(i);
+        if (!c) continue;
+        if (c.type === "identifier" && constName === null) {
+          constName = c.text;
+          continue;
+        }
+        if (
+          c.type === "primitive_type" ||
+          c.type === "type_identifier" ||
+          c.type === "scoped_type_identifier" ||
+          c.type === "generic_type" ||
+          c.type === "array_type" ||
+          c.type === "reference_type" ||
+          c.type === "tuple_type"
+        ) {
+          constTy = c.text;
+          continue;
+        }
+        if (constName !== null && constTy !== null) {
+          constValue = c;
+        }
+      }
+      if (constName === null || constTy === null || constValue === null) return null;
+      const re = exprFromNode(constValue);
+      if (re === null) return null;
+      return { kind: "const_decl", name: constName, ty: constTy, value: re };
+    }
     default:
       return null;
   }
@@ -436,6 +493,14 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
         if (ae === null) return null;
         argExprs.push(ae);
       }
+      // Detect multi-line source (call args on their own lines).
+      // Native CPI emits use `mlCall` for invoke / instruction-builder
+      // calls; matching that here keeps binary-parity intact when the
+      // structural converter feeds the multi-line shape back through
+      // the printer.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { mlCall } = require("./nodes.js") as typeof import("./nodes.js");
+      if (node.text.includes("\n")) return mlCall(fnExpr, argExprs);
       return call(fnExpr, argExprs);
     }
     case "match_expression": {
@@ -541,7 +606,17 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       return binaryExpr(op, lhsExpr, rhsExpr);
     }
     case "array_expression": {
-      // `[a, b, c]` — every element must convert; bail otherwise.
+      // `[a, b, c]` (list form) OR `[value; count]` (repeat form).
+      // Distinguish by the unnamed-child separator: `,` is list,
+      // `;` is repeat. Repeat form always has exactly 2 named
+      // children (the value and the count).
+      let separator: "," | ";" | null = null;
+      for (let i = 0; i < node.childCount; i++) {
+        const c = node.child(i);
+        if (!c || c.isNamed) continue;
+        if (c.text === ",") separator = ",";
+        else if (c.text === ";") { separator = ";"; break; }
+      }
       const items: RustExpr[] = [];
       for (let i = 0; i < node.namedChildCount; i++) {
         const c = node.namedChild(i);
@@ -550,7 +625,54 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
         if (e === null) return null;
         items.push(e);
       }
+      if (separator === ";") {
+        if (items.length !== 2) return null;
+        return { kind: "array", items, separator: ";" };
+      }
       return array(items);
+    }
+    case "struct_expression": {
+      // `Type { field: value, ... }` / `Type { field, ... }` (shorthand).
+      // tree-sitter exposes the type name as the first named child
+      // (a type_identifier or scoped_type_identifier), and the body
+      // as a `field_initializer_list` named child containing
+      // `field_initializer` (with `field` + `value` children) or
+      // `shorthand_field_initializer` (just an `identifier`).
+      const tyNode = node.namedChild(0);
+      if (!tyNode) return null;
+      const ty = tyNode.text;
+      let listNode: SyntaxNode | null = null;
+      for (let i = 1; i < node.namedChildCount; i++) {
+        const c = node.namedChild(i);
+        if (c && c.type === "field_initializer_list") { listNode = c; break; }
+      }
+      if (!listNode) return null;
+      const fields: { name: string; value: RustExpr; shorthand?: boolean }[] = [];
+      for (let i = 0; i < listNode.namedChildCount; i++) {
+        const c = listNode.namedChild(i);
+        if (!c) return null;
+        if (c.type === "field_initializer") {
+          // first named is field, second is value
+          const fNode = c.namedChild(0);
+          const vNode = c.namedChild(1);
+          if (!fNode || !vNode) return null;
+          const v = exprFromNode(vNode);
+          if (v === null) return null;
+          fields.push({ name: fNode.text, value: v });
+        } else if (c.type === "shorthand_field_initializer") {
+          const fNode = c.namedChild(0);
+          if (!fNode) return null;
+          fields.push({ name: fNode.text, value: ident(fNode.text), shorthand: true });
+        } else if (c.type === "base_field_initializer") {
+          // `..base` syntax — not modeled in struct_literal AST.
+          return null;
+        }
+      }
+      // Detect multi-line form via newline presence in the source text.
+      const isMultiLine = node.text.includes("\n");
+      return isMultiLine
+        ? { kind: "struct_literal", ty, fields, multiLine: true }
+        : { kind: "struct_literal", ty, fields };
     }
     case "reference_expression": {
       // `&expr` / `&mut expr`. tree-sitter exposes `mutable_specifier`

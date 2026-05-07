@@ -482,6 +482,37 @@ Added `range` AST node + factory `rangeExpr({start?, end?, inclusive?})`
 closes the 30 residual raw_exprs in pda_signer_seeds — 12th kind to
 reach PURE structural ★.
 
+### Typed CPI long-tail port landed 2026-05-07
+
+Generic tree-sitter converter expansion that unlocked 9 typed-CPI
+kinds (cpi_t22_default_account_state_initialize, ...update,
+immutable_owner_initialize, interest_bearing_mint_update_rate,
+non_transferable_mint_initialize, token_metadata_update_authority,
+transfer_fee_set_fee, transfer_checked_with_fee,
+withdraw_withheld_tokens_from_mint) plus pass_through cascade
+(94 → 44 raw_lines).
+
+Five additions to `rust-stmt-from-text.ts`:
+- `case "block"` in stmtFromNode — converts `{ stmts }` at stmt
+  position into a structural block AST stmt.
+- `case "const_item"` in stmtFromNode — converts `const NAME: TY = V;`
+  into const_decl.
+- `case "struct_expression"` in exprFromNode — converts
+  `Type { field: value, ... }` into struct_literal (multi-line when
+  source spans newlines).
+- `case "array_expression"` updated to detect repeat form `[a; n]`
+  via separator detection; produces `array` AST with `separator: ";"`.
+- `case "call_expression"` updated to use `mlCall` when the source
+  spans multiple lines, preserving the multi-line print format that
+  the emitters use for `let X = path::to::fn(\n    arg1,\n    arg2,\n)?;`.
+
+Plus MULTI_LINE_OK expansion to allow `let_declaration` and
+`expression_statement` (since the typed-CPI emits use multi-line
+let-binds for instruction-builder calls).
+
+Net metric: **149 → 75 raw nodes (-50%)**. **21 of 34 IR kinds at
+pure structural**. pass_through dropped 94 → 44 from the cascade.
+
 These are deterministic-shape and would benefit from per-kind structural
 ports following the same template. Each is ~3-5 hrs.
 

@@ -194,7 +194,8 @@ export function printExpr(expr: RustExpr, indent?: string): string {
           .join("\n");
         return `[\n${itemLines}\n${indent}]`;
       }
-      const items = expr.items.map((a) => printExpr(a, indent)).join(", ");
+      const sep = expr.separator ?? ",";
+      const items = expr.items.map((a) => printExpr(a, indent)).join(`${sep} `);
       return `[${items}]`;
     }
     case "tuple": {
