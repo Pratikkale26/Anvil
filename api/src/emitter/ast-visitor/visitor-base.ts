@@ -2281,11 +2281,40 @@ export class AstVisitorBase {
   }
 
   visitCpiMplCreateMetadataV3(stmt: CpiMplCreateMetadataV3): RustStmt[] {
-    return this.runHandlerCapture(handleCpiMplCreateMetadataV3, stmt);
+    return this.captureAndConvert(handleCpiMplCreateMetadataV3, stmt);
   }
 
   visitCpiMplCreateMasterEditionV3(stmt: CpiMplCreateMasterEditionV3): RustStmt[] {
-    return this.runHandlerCapture(handleCpiMplCreateMasterEditionV3, stmt);
+    return this.captureAndConvert(handleCpiMplCreateMasterEditionV3, stmt);
+  }
+
+  /**
+   * M6.2 prep — captures legacy-handler output AND attempts the
+   * tree-sitter structural conversion on each line. Multi-line entries
+   * go through tryStructuralizeMultiLine; single-line entries through
+   * convertPassThroughLine. Lossless: anything that doesn't convert
+   * stays as rawLine. Same lossless guarantee as visitPassThrough's
+   * own routing.
+   *
+   * Used by visit methods whose legacy emit produces commented-out
+   * stub blocks (Metaplex CreateMetadataV3 / CreateMasterEditionV3
+   * etc.) where the comments + scaffold stmts can be structurally
+   * recognized.
+   */
+  protected captureAndConvert<S extends BodyStatement>(
+    handler: (w: BodyWalker, stmt: S) => void,
+    stmt: S,
+  ): RustStmt[] {
+    const w = this.walker;
+    const before = w.lines.length;
+    handler(w, stmt);
+    const captured = w.lines.slice(before);
+    w.lines.length = before;
+    return captured.flatMap((entry) => {
+      const structural = tryStructuralizeMultiLine(entry);
+      if (structural !== null) return structural;
+      return [convertPassThroughLine(entry)];
+    });
   }
 }
 
