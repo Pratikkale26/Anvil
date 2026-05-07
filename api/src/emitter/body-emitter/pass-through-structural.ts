@@ -75,6 +75,11 @@ export interface PassContext {
   /** Number of non-optional named accounts on the instruction — used as
    *  the slice index for the `ctx.remaining_accounts` rewrite. */
   namedAccountCount?: number;
+  /** Local-alias map (e.g. `pool` → `stake_pool` from a source binding
+   *  `let pool = &mut ctx.accounts.stake_pool;`). Used by
+   *  rewriteLocalAliasesStructural to rename references to the alias
+   *  back to its canonical state-var name. Mirrors walker.localAliases. */
+  localAliases?: Map<string, string>;
 }
 
 interface Edit {
@@ -747,6 +752,129 @@ export function rewriteCtxAccountsRefsStructural(code: string): string {
     });
   }
   return applyEdits(code, edits);
+}
+
+// ─── Pass 6a — local-alias identifier rewriting ─────────────────────────────
+
+/**
+ * Rewrite identifier references to local aliases back to their canonical
+ * state-var name. When the Anchor source binds `let pool = &mut
+ * ctx.accounts.stake_pool;`, anvil's parser captures `pool → stake_pool`
+ * in walker.localAliases. Subsequent uses of `pool.field` / `&mut pool` /
+ * bare `pool` (in arg position) need to resolve to `stake_pool` since
+ * the alias's `let` binding is consumed by the parser and never makes
+ * it to the emit. Mirrors walker.transformAccountReferences's
+ * localAliases loop (lines 777-796).
+ *
+ * Match shapes (mirroring the regex's two patterns):
+ *   1. `<alias>.<X>` — alias is the receiver of a field/method chain.
+ *   2. `<alias>` — bare identifier in argument position (or behind
+ *      `&` / `&mut`).
+ *
+ * Skip: alias declaration (`let alias = …;`) — this kept as the existing
+ * regex strip in walker.transformAccountReferences (regex-level multi-line
+ * line removal is awkward in tree-sitter and the regex is already correct).
+ */
+export function rewriteLocalAliasesStructural(code: string, ctx: PassContext): string {
+  if (!ctx.localAliases || ctx.localAliases.size === 0) return code;
+  const aliases = ctx.localAliases;
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  const edits: Edit[] = [];
+  for (const stmt of parsed.stmts) {
+    walk(stmt, (n) => {
+      if (n.type !== "identifier") return true;
+      const canonical = aliases.get(n.text);
+      if (!canonical) return true;
+      const parent = n.parent;
+      if (!parent) return true;
+      // Skip identifiers in let-decl pattern position — that's the alias
+      // BINDING itself (whether or not the regex strip removes it). We
+      // never want to rename the introduced name, only its uses.
+      if (parent.type === "let_declaration") return true;
+      if (parent.type === "mut_pattern" && parent.parent?.type === "let_declaration") return true;
+      // Skip the function-name position of a call (alias() would be a fn call).
+      if (parent.type === "call_expression" && parent.namedChild(0)?.id === n.id) return true;
+      // Skip if path-segment of a scoped_identifier / scoped_type_identifier.
+      if (parent.type === "scoped_identifier" || parent.type === "scoped_type_identifier") return true;
+      // Skip identifiers used as struct-literal field name (would be the
+      // shorthand `Foo { pool }` form — confusing edge case; leave alone).
+      if (parent.type === "shorthand_field_initializer") return true;
+      // Skip the receiver identifier in `<alias>.<X>` is FINE — we want to
+      // rename it. Same for `&<alias>` / `&mut <alias>`. The default path
+      // handles those.
+      const start = n.startIndex - parsed.bodyOffset;
+      const end = n.endIndex - parsed.bodyOffset;
+      edits.push({ start, end, replacement: canonical });
+      return false;
+    });
+  }
+  return applyEdits(code, edits);
+}
+
+// ─── Pass 6d — multi-deref collapse before .key ──────────────────────────────
+
+/**
+ * Collapse `**X.key()` / `***X.key` / etc. (any number of leading
+ * `*`s ≥ 2) down to a single `*X.key()` / `*X.key`. Mirrors the two
+ * tail regexes in walker.transformAccountReferences (lines 850-853).
+ *
+ * Pure text transform — tree-sitter offers no advantage here since the
+ * pattern is purely lexical, no surrounding-context disambiguation
+ * needed. Bundled with S6a in the structural module for completeness.
+ *
+ * Result: idempotent (single-* doesn't match), string-literal safe via
+ * a quick scan that aborts inside `"..."`.
+ */
+export function collapseMultiDerefStructural(code: string): string {
+  if (!code.includes("**")) return code;
+  // Detect string-literal regions and skip them. Cheap state machine.
+  // Anvil's pass_through code rarely embeds `"..**foo.key()"` literals,
+  // but be defensive.
+  const safe = stripStringLiteralsForScan(code);
+  if (!/\*{2,}\w+\.key/.test(safe)) return code;
+  return code
+    .replace(/\*{2,}(\w+)\.key\(\)/g, (m, _name, offset) =>
+      isInsideStringLiteral(code, offset) ? m : `*${_name}.key()`,
+    )
+    .replace(/\*{2,}(\w+)\.key\b/g, (m, _name, offset) =>
+      isInsideStringLiteral(code, offset) ? m : `*${_name}.key`,
+    );
+}
+
+/** Return `code` with string-literal contents replaced by spaces of the
+ *  same length — preserves byte offsets so a subsequent regex test can
+ *  identify whether a candidate match position is in code or in a string. */
+function stripStringLiteralsForScan(code: string): string {
+  let out = "";
+  let inStr: '"' | "'" | null = null;
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i]!;
+    if (inStr) {
+      if (c === "\\") { out += "  "; i++; continue; }
+      if (c === inStr) { inStr = null; out += c; continue; }
+      out += " ";
+    } else {
+      if (c === '"' || c === "'") { inStr = c; out += c; continue; }
+      out += c;
+    }
+  }
+  return out;
+}
+
+/** True if `offset` falls inside a `"..."` string literal in `code`. */
+function isInsideStringLiteral(code: string, offset: number): boolean {
+  let inStr: '"' | "'" | null = null;
+  for (let i = 0; i < offset; i++) {
+    const c = code[i]!;
+    if (inStr) {
+      if (c === "\\") { i++; continue; }
+      if (c === inStr) inStr = null;
+    } else if (c === '"' || c === "'") {
+      inStr = c;
+    }
+  }
+  return inStr !== null;
 }
 
 // ─── Verification helper ────────────────────────────────────────────────────

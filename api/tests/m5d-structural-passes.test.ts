@@ -23,6 +23,8 @@ import {
   normalizeContextNameStructural,
   transformCtxAccountsStructural,
   rewriteCtxAccountsRefsStructural,
+  rewriteLocalAliasesStructural,
+  collapseMultiDerefStructural,
   applySession1Passes,
   type PassContext,
 } from "../src/emitter/body-emitter/pass-through-structural.ts";
@@ -471,6 +473,147 @@ describe("M5d Session 5b — rewriteCtxAccountsRefsStructural", () => {
     const once = rewriteCtxAccountsRefsStructural(input);
     const twice = rewriteCtxAccountsRefsStructural(once);
     expect(twice).toBe(once);
+  });
+});
+
+describe("M5d Session 6a — rewriteLocalAliasesStructural", () => {
+  function buildCtx(aliases: Array<[string, string]>): PassContext {
+    return { ...PIN_CTX, localAliases: new Map(aliases) };
+  }
+
+  test("`alias.field` → `canonical.field`", () => {
+    const ctx = buildCtx([["pool", "stake_pool"]]);
+    expect(rewriteLocalAliasesStructural(`do(pool.amount);`, ctx)).toBe(
+      `do(stake_pool.amount);`,
+    );
+  });
+
+  test("`&mut alias` → `&mut canonical`", () => {
+    const ctx = buildCtx([["pool", "stake_pool"]]);
+    expect(rewriteLocalAliasesStructural(`do(&mut pool, x);`, ctx)).toBe(
+      `do(&mut stake_pool, x);`,
+    );
+  });
+
+  test("`&alias` → `&canonical`", () => {
+    const ctx = buildCtx([["pool", "stake_pool"]]);
+    expect(rewriteLocalAliasesStructural(`do(&pool, x);`, ctx)).toBe(
+      `do(&stake_pool, x);`,
+    );
+  });
+
+  test("bare `alias` arg → `canonical`", () => {
+    const ctx = buildCtx([["pool", "stake_pool"]]);
+    expect(rewriteLocalAliasesStructural(`do(pool, x);`, ctx)).toBe(`do(stake_pool, x);`);
+  });
+
+  test("alias.method() chain — receiver renamed", () => {
+    const ctx = buildCtx([["m", "multisig"]]);
+    expect(rewriteLocalAliasesStructural(`m.owners.iter().count();`, ctx)).toBe(
+      `multisig.owners.iter().count();`,
+    );
+  });
+
+  test("multiple aliases in one block — all rewritten", () => {
+    const ctx = buildCtx([
+      ["m", "multisig"],
+      ["p", "proposal"],
+    ]);
+    const input = `do(&mut m); set(p.field); m.value = p.value;`;
+    const expected = `do(&mut multisig); set(proposal.field); multisig.value = proposal.value;`;
+    expect(rewriteLocalAliasesStructural(input, ctx)).toBe(expected);
+  });
+
+  test("SKIP `let alias = …;` declaration (alias is binding pattern)", () => {
+    const ctx = buildCtx([["pool", "stake_pool"]]);
+    // The let-binding pattern should NOT be renamed — only uses.
+    const input = `let pool = something; do(pool.field);`;
+    const expected = `let pool = something; do(stake_pool.field);`;
+    expect(rewriteLocalAliasesStructural(input, ctx)).toBe(expected);
+  });
+
+  test("SKIP function-name call: `pool()` is not the alias", () => {
+    const ctx = buildCtx([["pool", "stake_pool"]]);
+    expect(rewriteLocalAliasesStructural(`do(pool());`, ctx)).toBe(`do(pool());`);
+  });
+
+  test("SKIP path segment: `Foo::pool` is not the alias", () => {
+    const ctx = buildCtx([["pool", "stake_pool"]]);
+    expect(rewriteLocalAliasesStructural(`do(Foo::pool);`, ctx)).toBe(`do(Foo::pool);`);
+  });
+
+  test("string literal containing alias name NOT rewritten", () => {
+    const ctx = buildCtx([["pool", "stake_pool"]]);
+    expect(rewriteLocalAliasesStructural(`msg!("pool example");`, ctx)).toBe(
+      `msg!("pool example");`,
+    );
+  });
+
+  test("idempotent — second application no-op (aliases already replaced)", () => {
+    const ctx = buildCtx([["pool", "stake_pool"]]);
+    const input = `do(&mut pool, pool.field);`;
+    const once = rewriteLocalAliasesStructural(input, ctx);
+    const twice = rewriteLocalAliasesStructural(once, ctx);
+    expect(twice).toBe(once);
+  });
+
+  test("empty localAliases — no-op", () => {
+    const ctx: PassContext = { ...PIN_CTX };
+    const input = `do(pool.field);`;
+    expect(rewriteLocalAliasesStructural(input, ctx)).toBe(input);
+  });
+});
+
+describe("M5d Session 6d — collapseMultiDerefStructural", () => {
+  test("`**X.key()` → `*X.key()`", () => {
+    expect(collapseMultiDerefStructural(`if **foo.key() == y { }`)).toBe(
+      `if *foo.key() == y { }`,
+    );
+  });
+
+  test("`***X.key()` → `*X.key()`", () => {
+    expect(collapseMultiDerefStructural(`do(***foo.key());`)).toBe(`do(*foo.key());`);
+  });
+
+  test("`**X.key` (no parens) → `*X.key`", () => {
+    expect(collapseMultiDerefStructural(`do(**foo.key);`)).toBe(`do(*foo.key);`);
+  });
+
+  test("single `*X.key()` left alone", () => {
+    expect(collapseMultiDerefStructural(`do(*foo.key());`)).toBe(`do(*foo.key());`);
+  });
+
+  test("`X.key()` (no deref) left alone", () => {
+    expect(collapseMultiDerefStructural(`do(foo.key());`)).toBe(`do(foo.key());`);
+  });
+
+  test("multiple matches in one block", () => {
+    const input = `if **a.key() == b && **c.key() != d { e = ***f.key; }`;
+    const expected = `if *a.key() == b && *c.key() != d { e = *f.key; }`;
+    expect(collapseMultiDerefStructural(input)).toBe(expected);
+  });
+
+  test("string literal containing `**foo.key` NOT collapsed", () => {
+    const input = `msg!("**foo.key example");`;
+    expect(collapseMultiDerefStructural(input)).toBe(input);
+  });
+
+  test("idempotent — second application no-op", () => {
+    const input = `if **foo.key() == y { }`;
+    const once = collapseMultiDerefStructural(input);
+    const twice = collapseMultiDerefStructural(once);
+    expect(twice).toBe(once);
+  });
+
+  test("no `**` in input — fast path returns unchanged", () => {
+    const input = `do(*foo.key());`;
+    expect(collapseMultiDerefStructural(input)).toBe(input);
+  });
+
+  test("`**X.field` (not `.key`) NOT collapsed", () => {
+    // Pattern is gated on `.key` specifically — other fields stay.
+    const input = `do(**foo.bar);`;
+    expect(collapseMultiDerefStructural(input)).toBe(input);
   });
 });
 

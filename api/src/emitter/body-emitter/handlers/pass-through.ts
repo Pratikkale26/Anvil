@@ -21,6 +21,8 @@ import {
   normalizeContextNameStructural,
   transformCtxAccountsStructural,
   rewriteCtxAccountsRefsStructural,
+  rewriteLocalAliasesStructural,
+  collapseMultiDerefStructural,
   type PassContext,
 } from "../pass-through-structural.js";
 
@@ -124,12 +126,25 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // by leaving compound chains untouched. Single AST walk eliminates the
   // sequential regex order-dependence (`&*` → `&` → bare).
   const ctxRefsRewritten = rewriteCtxAccountsRefsStructural(ctxLeafRewritten);
+  // M5d Session 6a — local-alias identifier rewriting runs BEFORE the
+  // regex panel's localAliases loop in transformAccountReferences. Both
+  // rewrite the same identifiers idempotently — once structural has
+  // renamed `pool` → `stake_pool`, the regex sees no `pool` left to
+  // match, so its loop is a no-op fallback. The regex's declaration-line
+  // strip (`let pool = &mut …;` removal) is preserved as text-level work
+  // since multi-line statement removal is awkward in tree-sitter.
+  const ctxAccountsTextRewritten = w.transformCtxAccountsReferences(ctxRefsRewritten);
+  const aliasRewritten = rewriteLocalAliasesStructural(ctxAccountsTextRewritten, structuralCtx);
+  // M5d Session 6d — collapse multi-`*` derefs `**X.key` → `*X.key`.
+  // Pure text transform, runs AFTER walker.transformAccountReferences
+  // since the regex panel's per-account `.key()` rewrites can themselves
+  // introduce `**X.key()` shapes when collapsing wrapped references.
   let transformedRawCode = simplifyPassThroughCode(
     w.transformHelperCalls(
       w.normalizeKeyValueUsages(
         normalizeKeyValueStructural(
-          w.transformAccountReferences(
-            w.transformCtxAccountsReferences(ctxRefsRewritten),
+          collapseMultiDerefStructural(
+            w.transformAccountReferences(aliasRewritten),
           ),
           structuralCtx,
         ),
@@ -346,6 +361,7 @@ function buildPassContext(w: BodyWalker): PassContext {
     accountInfoVars: buildAccountInfoVarsMap(w),
     accountLamportsExprs: buildAccountLamportsExprsMap(w),
     namedAccountCount: w.instr.accounts.filter((a) => !a.isOptional).length,
+    localAliases: w.localAliases,
   };
 }
 
