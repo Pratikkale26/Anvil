@@ -176,8 +176,52 @@ ${extraDeps.replace(/version = "0\.31"/g, `version = "${anchorLangVersion}"`).re
     join(scratch, "src/lib.rs"),
     rewriteDeclareId(opts.anchorSource, opts.programIdBase58),
   );
+  // Warm the cargo registry BEFORE the sandboxed offline cargo-build-sbf
+  // run. Without this, fresh deployments (DigitalOcean / Docker images
+  // with no prior cargo cache) fail with "no matching package named
+  // anchor-lang found ... using offline mode (--offline)" when cargo
+  // metadata can't resolve anchor-lang from the empty registry.
+  // build-runner.ts already does this for non-differential builds; the
+  // workbench differential path needs the same treatment.
+  await warmDifferentialDependencies(scratch, opts);
   await runSandboxedSbf(scratch, opts);
   copySoFromTarget(scratch, outPath);
+}
+
+/**
+ * Pre-fetch crate deps with network access so the subsequent sandboxed
+ * `cargo-build-sbf --offline` run can resolve them from the local
+ * registry. Mirrors `warmDependencies` in build-runner.ts (separate
+ * because that one is private + tailored to its scratch layout).
+ */
+function warmDifferentialDependencies(
+  scratchDir: string,
+  opts: DifferentialBuildOptions,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("cargo", ["fetch", "--quiet"], {
+      cwd: scratchDir,
+      env: { ...sandboxedEnv(), CARGO_NET_OFFLINE: "false" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (c: Buffer) => {
+      stderr += c.toString("utf-8");
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const trimmed = stderr.trim().split("\n").slice(-15).join("\n");
+      const err = new Error(
+        `cargo fetch (warmup) failed (exit ${code}, cwd=${scratchDir})\n${trimmed || "(no stderr)"}`,
+      );
+      opts.onLog?.(`[cargo-fetch] warmup failed: ${err.message}`);
+      reject(err);
+    });
+  });
 }
 
 /**
@@ -255,6 +299,10 @@ async function buildAnvil(opts: DifferentialBuildOptions, outPath: string): Prom
     writeFileSync(p, rewriteDeclareId(f.content, opts.programIdBase58), "utf-8");
   }
   opts.onLog?.(`[anvil] scratch=${scratch}`);
+  // Same warmup fix as buildAnchor — Anvil scaffold deps (pinocchio,
+  // borsh, etc.) also need a populated cargo registry before offline
+  // cargo-build-sbf can resolve them.
+  await warmDifferentialDependencies(scratch, opts);
   await runSandboxedSbf(scratch, opts);
   copySoFromTarget(scratch, outPath);
 }
