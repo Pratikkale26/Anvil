@@ -67,6 +67,12 @@ export class BodyWalker {
   readonly localAliases = new Map<string, string>();
   readonly accountsWithSignerSeeds = new Set<string>();
   readonly emittedBumps: Set<string>;
+  /** Bump-line accumulator for the structural pre-pass side-channel.
+   *  Filled by recordBumpRef (called from replaceBumpRefsStructural via
+   *  PassContext.onBumpRef), drained by flushBumpPrelude. Parallel to
+   *  the local prelude returned by replaceBumpRefs — both ultimately
+   *  push to w.lines, with `emittedBumps` ensuring per-account dedup. */
+  readonly pendingBumpPrelude: string[] = [];
   readonly mutatedAccounts: Set<string>;
   readonly mutableStateAccounts: Set<string>;
   readonly stateAccountNames: string[];
@@ -604,6 +610,33 @@ export class BodyWalker {
             ${seedsWithBump},
         ];
     let signer_seeds = &[&seeds[..]];`;
+  }
+
+  /**
+   * Side-channel for structural passes (M5d). The structural
+   * `replaceBumpRefsStructural` rewrites `ctx.bumps.X` → `bump_X` in the
+   * code itself, then invokes this callback per match so the walker can
+   * accumulate the matching bump scaffolding. Returns the substitution
+   * variable name (the structural pass already knows it but accepting
+   * the return keeps the contract symmetric with the regex closure).
+   *
+   * Dedup is implicit via `normalizedBumpLine` — second call for the
+   * same account returns "" and we skip the push.
+   */
+  recordBumpRef(accountName: string): string {
+    const normalized = snakeCase(accountName);
+    const bumpLine = this.normalizedBumpLine(normalized);
+    if (bumpLine.length > 0) this.pendingBumpPrelude.push(bumpLine);
+    return `bump_${normalized}`;
+  }
+
+  /** Drain `pendingBumpPrelude`. Caller pushes the returned lines to
+   *  `w.lines` alongside the local `prelude` from replaceBumpRefs. */
+  flushBumpPrelude(): string[] {
+    if (this.pendingBumpPrelude.length === 0) return [];
+    const out = this.pendingBumpPrelude.slice();
+    this.pendingBumpPrelude.length = 0;
+    return out;
   }
 
   replaceBumpRefs(code: string): { prelude: string[]; code: string } {

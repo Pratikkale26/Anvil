@@ -17,6 +17,7 @@ import {
   qualifySysvarsStructural,
   stripToAccountInfoStructural,
   normalizeKeyValueStructural,
+  replaceBumpRefsStructural,
   type PassContext,
 } from "../pass-through-structural.js";
 
@@ -76,11 +77,24 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     return;
   }
 
-  const { prelude, code: bumpAdjustedRawCode } = w.replaceBumpRefs(rawCode);
-  // Build pass context once — used by both the structural pre-pass
-  // (key normalization, run before the regex chain) and the post-pass
-  // (sysvar + to_account_info, run after).
+  // Build pass context once — used by all 4 structural passes (bump
+  // refs pre-pass, key normalization mid-pass, sysvar + to_account_info
+  // post-pass).
   const structuralCtx = buildPassContext(w);
+  // M5d Session 4 — structural ctx.bumps rewriter runs BEFORE the
+  // regex `replaceBumpRefs` so any shape the structural pass catches
+  // (4 supported: `ctx.bumps.X`, `&ctx.bumps.X`, `(ctx.bumps).X`,
+  // `(&ctx.bumps).X`) doesn't reach the regex panel. The `onBumpRef`
+  // callback channels the bump-line scaffolding into walker's
+  // pendingBumpPrelude (drained below alongside regex `prelude`).
+  // Dedup via `emittedBumps` ensures structural-then-regex doesn't
+  // double-push if a shape slips past the structural matcher and the
+  // regex catches it on the rewritten text.
+  const preProcessedRawCode = replaceBumpRefsStructural(rawCode, {
+    ...structuralCtx,
+    onBumpRef: (acc) => { w.recordBumpRef(acc); },
+  });
+  const { prelude, code: bumpAdjustedRawCode } = w.replaceBumpRefs(preProcessedRawCode);
   // M5d Session 2 — structural .key normalization runs BEFORE the regex
   // chain so the regex's normalizeKeyValueUsages becomes idempotent
   // (its match patterns require a `[=,(]` or whitespace prefix; once
@@ -122,6 +136,9 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     .replace(/(?<!:)\bRent::get\(\)/g, w.qualifiedRentGetValueExpr());
   for (const preludeLine of prelude) {
     w.lines.push(preludeLine);
+  }
+  for (const structuralPreludeLine of w.flushBumpPrelude()) {
+    w.lines.push(structuralPreludeLine);
   }
   for (const signerSeedsPrelude of w.ensureSignerSeedsForCode(transformedRawCode)) {
     w.lines.push(signerSeedsPrelude);
