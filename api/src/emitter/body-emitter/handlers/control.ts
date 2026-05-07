@@ -167,10 +167,20 @@ export function handlePdaSignerSeeds(w: BodyWalker, stmt: PdaSignerSeedsStmt): v
       ? [...accRef.pdaSeeds.map((s) => w.normalizeSeedExpr(s)), `&[bump_${accountName}]`]
       : stmt.seeds
           .map((seed) =>
-            seed.replace(
-              /ctx\.bumps\.(\w+)/g,
-              (_full, bumpName: string) => `bump_${snakeCase(bumpName)}`,
-            ),
+            seed
+              // Wrapped forms first — `(&ctx.bumps).field`, `(ctx.bumps).field`,
+              // and `&ctx.bumps.field` — surface from impl-method inlining
+              // where `bumps: &Bumps` parameter substitutes to `&ctx.bumps`
+              // at the call site, then the body's `bumps.field` becomes
+              // `(&ctx.bumps).field`. Bare `ctx.bumps.field` runs last so
+              // the broader regex doesn't partial-match a parens form.
+              .replace(/\(\s*&\s*ctx\.bumps\s*\)\.(\w+)/g, (_, bumpName: string) => `bump_${snakeCase(bumpName)}`)
+              .replace(/\(\s*ctx\.bumps\s*\)\.(\w+)/g, (_, bumpName: string) => `bump_${snakeCase(bumpName)}`)
+              .replace(/&\s*ctx\.bumps\.(\w+)/g, (_, bumpName: string) => `bump_${snakeCase(bumpName)}`)
+              .replace(
+                /ctx\.bumps\.(\w+)/g,
+                (_full, bumpName: string) => `bump_${snakeCase(bumpName)}`,
+              ),
           )
           .map((s) => w.normalizeSeedExpr(s));
   const seedStateVar = seedStateAccount
