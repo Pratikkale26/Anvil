@@ -489,6 +489,57 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // anchor_spl::token_interface::transfer_checked_with_fee. The
+  // TransferFee variant of transfer_checked. Token-2022 program
+  // verifies decimals AND that the caller-provided fee matches the
+  // configured rate × amount.
+  z.object({
+    kind: z.literal("cpi_t22_transfer_checked_with_fee"),
+    source: z.string(),
+    mint: z.string(),
+    destination: z.string(),
+    authority: z.string(),
+    tokenProgram: z.string(),
+    /** u64 expression — transfer amount in token units. */
+    amount: z.string(),
+    /** u8 expression — mint decimals (caller-asserted). */
+    decimals: z.string(),
+    /** u64 expression — fee amount the caller computed (matches mint config). */
+    fee: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_interface::withdraw_withheld_tokens_from_mint.
+  // Drains the fees that have been harvested INTO the mint into a
+  // destination token account. Authority is the withdraw_withheld
+  // authority configured at TransferFee init.
+  z.object({
+    kind: z.literal("cpi_t22_withdraw_withheld_tokens_from_mint"),
+    mint: z.string(),
+    destination: z.string(),
+    authority: z.string(),
+    tokenProgram: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_interface::harvest_withheld_tokens_to_mint.
+  // Sweeps fees from a list of source token accounts into the mint's
+  // withheld pool. The source list is `Vec<AccountInfo>` (typically
+  // built from ctx.remaining_accounts), so the source account count
+  // is dynamic.
+  z.object({
+    kind: z.literal("cpi_t22_harvest_withheld_tokens_to_mint"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    /**
+     * Raw expression for the sources arg — `Vec<AccountInfo>` or
+     * `&[AccountInfo]`. The emit reads this at runtime to construct
+     * the metas list dynamically.
+     */
+    sources: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: create_metadata_accounts_v3.
   // First-class IR slot for the Metaplex CPI catalog (#29). Today the
   // emitter still falls back to the walker.ts regex stub for actual

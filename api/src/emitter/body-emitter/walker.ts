@@ -42,6 +42,9 @@ import {
   handleCpiT22TransferFeeInit,
   handleCpiT22TransferFeeSetFee,
   handleCpiT22ImmutableOwnerInit,
+  handleCpiT22TransferCheckedWithFee,
+  handleCpiT22WithdrawWithheldFromMint,
+  handleCpiT22HarvestWithheldToMint,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -247,6 +250,9 @@ export class BodyWalker {
         case "cpi_t22_transfer_fee_initialize": handleCpiT22TransferFeeInit(this, stmt); break;
         case "cpi_t22_transfer_fee_set_fee": handleCpiT22TransferFeeSetFee(this, stmt); break;
         case "cpi_t22_immutable_owner_initialize": handleCpiT22ImmutableOwnerInit(this, stmt); break;
+        case "cpi_t22_transfer_checked_with_fee": handleCpiT22TransferCheckedWithFee(this, stmt); break;
+        case "cpi_t22_withdraw_withheld_tokens_from_mint": handleCpiT22WithdrawWithheldFromMint(this, stmt); break;
+        case "cpi_t22_harvest_withheld_tokens_to_mint": handleCpiT22HarvestWithheldToMint(this, stmt); break;
         case "cpi_ata_create": handleCpiAtaCreate(this, stmt); break;
         case "cpi_memo": handleCpiMemo(this, stmt); break;
         case "cpi_custom": handleCpiCustom(this, stmt); break;

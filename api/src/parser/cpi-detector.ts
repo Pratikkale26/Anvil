@@ -147,6 +147,15 @@ export function detectCpi(
   if (funcText.includes("immutable_owner_initialize")) {
     return extractT22ImmutableOwnerInitialize(callNode, collector);
   }
+  if (funcText.includes("transfer_checked_with_fee")) {
+    return extractT22TransferCheckedWithFee(callNode, collector);
+  }
+  if (funcText.includes("withdraw_withheld_tokens_from_mint")) {
+    return extractT22WithdrawWithheldFromMint(callNode, collector);
+  }
+  if (funcText.includes("harvest_withheld_tokens_to_mint")) {
+    return extractT22HarvestWithheldToMint(callNode, collector);
+  }
 
   // ── SPL Token transfer ──
   if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
@@ -944,6 +953,156 @@ function extractT22ImmutableOwnerInitialize(
     kind: "cpi_t22_immutable_owner_initialize",
     tokenAccount: cleanAccountRef(tokenAccount),
     tokenProgram: cleanAccountRef(tokenProgram),
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 TransferFee — transfer_checked_with_fee (EM2 1b) ────────────
+//
+// Anchor source shape:
+//   transfer_checked_with_fee(
+//       CpiContext::new(token_program, TransferCheckedWithFee {
+//           token_program_id, source, mint, destination, authority,
+//       }),
+//       amount, decimals, fee,
+//   )?;
+function extractT22TransferCheckedWithFee(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 transfer_checked_with_fee", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 transfer_checked_with_fee (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let source = "source";
+  let mint = "mint";
+  let destination = "destination";
+  let authority = "authority";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    source = extractStructField(accountsStruct, "source") ?? source;
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    destination = extractStructField(accountsStruct, "destination") ?? destination;
+    authority = extractStructField(accountsStruct, "authority") ?? authority;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  const amount = cleanAmountExpr(args[1]?.text ?? "0u64");
+  const decimals = cleanAmountExpr(args[2]?.text ?? "0u8");
+  const fee = cleanAmountExpr(args[3]?.text ?? "0u64");
+  return {
+    kind: "cpi_t22_transfer_checked_with_fee",
+    source: cleanAccountRef(source),
+    mint: cleanAccountRef(mint),
+    destination: cleanAccountRef(destination),
+    authority: cleanAccountRef(authority),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    amount,
+    decimals,
+    fee,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 TransferFee — withdraw_withheld_tokens_from_mint (EM2 1b) ───
+function extractT22WithdrawWithheldFromMint(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 withdraw_withheld_tokens_from_mint", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 withdraw_withheld_tokens_from_mint (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let destination = "destination";
+  let authority = "authority";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    destination = extractStructField(accountsStruct, "destination") ?? destination;
+    authority = extractStructField(accountsStruct, "authority") ?? authority;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_withdraw_withheld_tokens_from_mint",
+    mint: cleanAccountRef(mint),
+    destination: cleanAccountRef(destination),
+    authority: cleanAccountRef(authority),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 TransferFee — harvest_withheld_tokens_to_mint (EM2 1b) ──────
+function extractT22HarvestWithheldToMint(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 harvest_withheld_tokens_to_mint", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 harvest_withheld_tokens_to_mint (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  // Second arg = sources expression. Keep raw for the emit to consume
+  // at runtime (Vec<AccountInfo> length isn't known at compile time).
+  const sources = args[1]?.text.trim() ?? "&[]";
+  return {
+    kind: "cpi_t22_harvest_withheld_tokens_to_mint",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    sources,
     signerSeeds,
   };
 }

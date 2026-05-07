@@ -605,6 +605,9 @@ import {
   handleCpiT22TransferFeeInit,
   handleCpiT22TransferFeeSetFee,
   handleCpiT22ImmutableOwnerInit,
+  handleCpiT22TransferCheckedWithFee,
+  handleCpiT22WithdrawWithheldFromMint,
+  handleCpiT22HarvestWithheldToMint,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -644,6 +647,9 @@ type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non
 type CpiT22TransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_initialize" }>;
 type CpiT22TransferFeeSetFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_set_fee" }>;
 type CpiT22ImmutableOwnerInit = Extract<BodyStatement, { kind: "cpi_t22_immutable_owner_initialize" }>;
+type CpiT22TransferCheckedWithFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_checked_with_fee" }>;
+type CpiT22WithdrawWithheldFromMint = Extract<BodyStatement, { kind: "cpi_t22_withdraw_withheld_tokens_from_mint" }>;
+type CpiT22HarvestWithheldToMint = Extract<BodyStatement, { kind: "cpi_t22_harvest_withheld_tokens_to_mint" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -685,6 +691,9 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_t22_transfer_fee_initialize",
   "cpi_t22_transfer_fee_set_fee",
   "cpi_t22_immutable_owner_initialize",
+  "cpi_t22_transfer_checked_with_fee",
+  "cpi_t22_withdraw_withheld_tokens_from_mint",
+  "cpi_t22_harvest_withheld_tokens_to_mint",
   "cpi_ata_create",
   "cpi_memo",
   "cpi_custom",
@@ -731,6 +740,12 @@ export class AstVisitorBase {
         return this.visitCpiT22TransferFeeSetFee(stmt);
       case "cpi_t22_immutable_owner_initialize":
         return this.visitCpiT22ImmutableOwnerInit(stmt);
+      case "cpi_t22_transfer_checked_with_fee":
+        return this.visitCpiT22TransferCheckedWithFee(stmt);
+      case "cpi_t22_withdraw_withheld_tokens_from_mint":
+        return this.visitCpiT22WithdrawWithheldFromMint(stmt);
+      case "cpi_t22_harvest_withheld_tokens_to_mint":
+        return this.visitCpiT22HarvestWithheldToMint(stmt);
       case "cpi_ata_create":       return this.visitCpiAtaCreate(stmt);
       case "cpi_memo":             return this.visitCpiMemo(stmt);
       case "cpi_custom":           return this.visitCpiCustom(stmt);
@@ -2128,6 +2143,18 @@ export class AstVisitorBase {
 
   visitCpiT22ImmutableOwnerInit(stmt: CpiT22ImmutableOwnerInit): RustStmt[] {
     return this.captureAndConvert(handleCpiT22ImmutableOwnerInit, stmt);
+  }
+
+  visitCpiT22TransferCheckedWithFee(stmt: CpiT22TransferCheckedWithFee): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22TransferCheckedWithFee, stmt);
+  }
+
+  visitCpiT22WithdrawWithheldFromMint(stmt: CpiT22WithdrawWithheldFromMint): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22WithdrawWithheldFromMint, stmt);
+  }
+
+  visitCpiT22HarvestWithheldToMint(stmt: CpiT22HarvestWithheldToMint): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22HarvestWithheldToMint, stmt);
   }
 
   /**

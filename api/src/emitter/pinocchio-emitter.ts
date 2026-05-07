@@ -845,6 +845,116 @@ ${invokeCall}
     }`;
   }
 
+  override emitT22TransferCheckedWithFee(
+    source: string,
+    mint: string,
+    destination: string,
+    authority: string,
+    _tokenProgram: string,
+    amount: string,
+    decimals: string,
+    fee: string,
+    signerSeeds?: string,
+  ): string {
+    // TransferFeeExtension(26) → TransferCheckedWithFee(1).
+    // Payload: u64 amount LE + u8 decimals + u64 fee LE = 17 bytes.
+    // Total data: 2 disc + 17 = 19 bytes.
+    const invokeCall = signerSeeds
+      ? `        let __tcwf_seed_refs = ${signerSeeds}[0];
+        let mut __tcwf_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__tcwf_i, __tcwf_s) in __tcwf_seed_refs.iter().enumerate() {
+            if __tcwf_i >= __tcwf_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __tcwf_pda_seeds[__tcwf_i] = pinocchio::instruction::Seed::from(*__tcwf_s);
+        }
+        let __tcwf_signer = pinocchio::instruction::Signer::from(&__tcwf_pda_seeds[..__tcwf_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__tcwf_ix, &[${source}, ${mint}, ${destination}, ${authority}], &[__tcwf_signer])?;`
+      : `        pinocchio::cpi::invoke(&__tcwf_ix, &[${source}, ${mint}, ${destination}, ${authority}])?;`;
+    return `    // Token-2022 TransferFee — transfer_checked_with_fee
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let mut __tcwf_data = [0u8; 19];
+        __tcwf_data[0] = 26;
+        __tcwf_data[1] = 1;
+        let __tcwf_amount: u64 = ${amount};
+        __tcwf_data[2..10].copy_from_slice(&__tcwf_amount.to_le_bytes());
+        let __tcwf_decimals: u8 = ${decimals};
+        __tcwf_data[10] = __tcwf_decimals;
+        let __tcwf_fee: u64 = ${fee};
+        __tcwf_data[11..19].copy_from_slice(&__tcwf_fee.to_le_bytes());
+        let __tcwf_metas = [
+            pinocchio::instruction::AccountMeta::writable(${source}.key()),
+            pinocchio::instruction::AccountMeta::readonly(${mint}.key()),
+            pinocchio::instruction::AccountMeta::writable(${destination}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __tcwf_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__tcwf_metas,
+            data: &__tcwf_data,
+        };
+${invokeCall}
+    }`;
+  }
+
+  override emitT22WithdrawWithheldFromMint(
+    mint: string,
+    destination: string,
+    authority: string,
+    _tokenProgram: string,
+    signerSeeds?: string,
+  ): string {
+    // TransferFeeExtension(26) → WithdrawWithheldTokensFromMint(2).
+    // No payload — 2 bytes total.
+    const invokeCall = signerSeeds
+      ? `        let __wwfm_seed_refs = ${signerSeeds}[0];
+        let mut __wwfm_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__wwfm_i, __wwfm_s) in __wwfm_seed_refs.iter().enumerate() {
+            if __wwfm_i >= __wwfm_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __wwfm_pda_seeds[__wwfm_i] = pinocchio::instruction::Seed::from(*__wwfm_s);
+        }
+        let __wwfm_signer = pinocchio::instruction::Signer::from(&__wwfm_pda_seeds[..__wwfm_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__wwfm_ix, &[${mint}, ${destination}, ${authority}], &[__wwfm_signer])?;`
+      : `        pinocchio::cpi::invoke(&__wwfm_ix, &[${mint}, ${destination}, ${authority}])?;`;
+    return `    // Token-2022 TransferFee — withdraw_withheld_tokens_from_mint
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __wwfm_data = [26u8, 2u8];
+        let __wwfm_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+            pinocchio::instruction::AccountMeta::writable(${destination}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __wwfm_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__wwfm_metas,
+            data: &__wwfm_data,
+        };
+${invokeCall}
+    }`;
+  }
+
+  override emitT22HarvestWithheldToMint(
+    mint: string,
+    _tokenProgram: string,
+    sourcesExpr: string,
+    _signerSeeds?: string,
+  ): string {
+    // pinocchio::cpi::invoke is generic over `const ACCOUNTS: usize` —
+    // the source-list length must be known at compile time. harvest
+    // takes a runtime-length list of source token accounts, so it
+    // doesn't fit pinocchio's invoke API directly. Emit a TODO
+    // commentout so the program compiles; users who need this on
+    // Pinocchio must hand-write per-N invoke branches.
+    // (Native emit fully types this CPI via spl_token_2022 helpers.)
+    return `    // ⚠️ Anvil TODO: harvest_withheld_tokens_to_mint(${mint}, sources=${sourcesExpr})
+    //   pinocchio::cpi::invoke requires compile-time-known account count;
+    //   the runtime-length sources list isn't supported. Native target
+    //   has the typed emit; Pinocchio users should hand-write per-N
+    //   branches if needed. EM2 does NOT block on this gap.`;
+  }
+
   override emitT22ImmutableOwnerInitialize(
     tokenAccount: string,
     _tokenProgram: string,

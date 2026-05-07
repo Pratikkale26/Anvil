@@ -731,6 +731,88 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     )?;`;
   }
 
+  override emitT22TransferCheckedWithFee(
+    source: string,
+    mint: string,
+    destination: string,
+    authority: string,
+    tokenProgram: string,
+    amount: string,
+    decimals: string,
+    fee: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 TransferFee — transfer_checked_with_fee
+    let tcwf_ix = spl_token_2022::extension::transfer_fee::instruction::transfer_checked_with_fee(
+        &spl_token_2022::id(),
+        ${source}.key,
+        ${mint}.key,
+        ${destination}.key,
+        ${authority}.key,
+        &[],
+        ${amount},
+        ${decimals},
+        ${fee},
+    )?;
+    ${invokeType}(
+        &tcwf_ix,
+        &[${source}.clone(), ${mint}.clone(), ${destination}.clone(), ${authority}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22WithdrawWithheldFromMint(
+    mint: string,
+    destination: string,
+    authority: string,
+    tokenProgram: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 TransferFee — withdraw_withheld_tokens_from_mint
+    let wwfm_ix = spl_token_2022::extension::transfer_fee::instruction::withdraw_withheld_tokens_from_mint(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${destination}.key,
+        ${authority}.key,
+        &[],
+    )?;
+    ${invokeType}(
+        &wwfm_ix,
+        &[${mint}.clone(), ${destination}.clone(), ${authority}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22HarvestWithheldToMint(
+    mint: string,
+    tokenProgram: string,
+    sourcesExpr: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    // Native expects &[&Pubkey] for source keys. Build at runtime from
+    // the sources expression (typically a Vec<AccountInfo> or
+    // ctx.remaining_accounts slice). Account list for invoke includes
+    // mint, token_program, then each source AccountInfo.
+    return `    // Token-2022 TransferFee — harvest_withheld_tokens_to_mint
+    let hwtm_sources_vec: Vec<AccountInfo> = (${sourcesExpr}).iter().cloned().collect();
+    let hwtm_source_keys: Vec<&Pubkey> = hwtm_sources_vec.iter().map(|a| a.key).collect();
+    let hwtm_ix = spl_token_2022::extension::transfer_fee::instruction::harvest_withheld_tokens_to_mint(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        &hwtm_source_keys,
+    )?;
+    let mut hwtm_account_infos: Vec<AccountInfo> = vec![${mint}.clone(), ${tokenProgram}.clone()];
+    hwtm_account_infos.extend(hwtm_sources_vec);
+    ${invokeType}(
+        &hwtm_ix,
+        &hwtm_account_infos,${signerArg}
+    )?;`;
+  }
+
   override emitT22TransferFeeSetFee(
     mint: string,
     tokenProgram: string,

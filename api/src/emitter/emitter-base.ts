@@ -194,6 +194,43 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // TransferFee variant of transfer_checked. Required when a mint has
+  // the TransferFee extension — caller asserts decimals + the
+  // expected fee, Token-2022 verifies both.
+  abstract emitT22TransferCheckedWithFee(
+    source: string,
+    mint: string,
+    destination: string,
+    authority: string,
+    tokenProgram: string,
+    amount: string,
+    decimals: string,
+    fee: string,
+    signerSeeds?: string,
+  ): string;
+
+  // Withdraw fees that have been harvested into the mint to a
+  // destination token account. Called by the withdraw_withheld
+  // authority configured at TransferFee init.
+  abstract emitT22WithdrawWithheldFromMint(
+    mint: string,
+    destination: string,
+    authority: string,
+    tokenProgram: string,
+    signerSeeds?: string,
+  ): string;
+
+  // Sweep fees from a list of source token accounts into the mint's
+  // withheld pool. Sources is a runtime-length list (typically
+  // ctx.remaining_accounts), so the emit must build the account-meta
+  // list dynamically.
+  abstract emitT22HarvestWithheldToMint(
+    mint: string,
+    tokenProgram: string,
+    sourcesExpr: string,
+    signerSeeds?: string,
+  ): string;
+
   abstract emitProgramAccountClose(account: string, destination: string): string;
   abstract emitCreateProgramAccount(
     account: string,

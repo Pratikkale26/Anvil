@@ -17,6 +17,9 @@ type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non
 type CpiT22TransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_initialize" }>;
 type CpiT22TransferFeeSetFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_set_fee" }>;
 type CpiT22ImmutableOwnerInit = Extract<BodyStatement, { kind: "cpi_t22_immutable_owner_initialize" }>;
+type CpiT22TransferCheckedWithFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_checked_with_fee" }>;
+type CpiT22WithdrawWithheldFromMint = Extract<BodyStatement, { kind: "cpi_t22_withdraw_withheld_tokens_from_mint" }>;
+type CpiT22HarvestWithheldToMint = Extract<BodyStatement, { kind: "cpi_t22_harvest_withheld_tokens_to_mint" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -270,6 +273,78 @@ export function handleCpiT22TransferFeeInit(
       wwa,
       stmt.basisPoints,
       stmt.maximumFee,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22TransferCheckedWithFee(
+  w: BodyWalker,
+  stmt: CpiT22TransferCheckedWithFee,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: transfer_checked_with_fee(${stmt.source} -> ${stmt.destination})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.authority)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitT22TransferCheckedWithFee(
+      snakeCase(stmt.source),
+      snakeCase(stmt.mint),
+      snakeCase(stmt.destination),
+      snakeCase(stmt.authority),
+      snakeCase(stmt.tokenProgram),
+      stmt.amount,
+      stmt.decimals,
+      stmt.fee,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22WithdrawWithheldFromMint(
+  w: BodyWalker,
+  stmt: CpiT22WithdrawWithheldFromMint,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: withdraw_withheld_tokens_from_mint(${stmt.mint} -> ${stmt.destination})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.authority)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitT22WithdrawWithheldFromMint(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.destination),
+      snakeCase(stmt.authority),
+      snakeCase(stmt.tokenProgram),
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22HarvestWithheldToMint(
+  w: BodyWalker,
+  stmt: CpiT22HarvestWithheldToMint,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: harvest_withheld_tokens_to_mint(${stmt.mint})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.mint)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  // sources expression may reference ctx.accounts.X / ctx.remaining_accounts;
+  // run through the same passes the body emitter uses for value args.
+  const sourcesResolved = w.transformCtxAccountsReferences(stmt.sources);
+  w.lines.push(
+    w.emitter.emitT22HarvestWithheldToMint(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      sourcesResolved,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ),
   );

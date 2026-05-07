@@ -1,7 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{
-    transfer_fee_initialize, transfer_fee_set, Token2022, TransferFeeInitialize,
-    TransferFeeSetTransferFee,
+    transfer_checked_with_fee, transfer_fee_initialize, transfer_fee_set,
+    withdraw_withheld_tokens_from_mint, Token2022, TransferCheckedWithFee,
+    TransferFeeInitialize, TransferFeeSetTransferFee, WithdrawWithheldTokensFromMint,
 };
 
 declare_id!("Tf1mC7QPzUNqx4M2YxYx4dXq8j5wvwZ7VtWJTeyWfuV");
@@ -54,6 +55,59 @@ pub mod t22_transfer_fee_init {
         )?;
         Ok(())
     }
+
+    /// TransferFee variant of transfer_checked. Caller asserts decimals
+    /// + the expected fee for the transfer; Token-2022 verifies both.
+    pub fn fee_transfer(
+        ctx: Context<FeeTransfer>,
+        amount: u64,
+        decimals: u8,
+        fee: u64,
+    ) -> Result<()> {
+        transfer_checked_with_fee(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                TransferCheckedWithFee {
+                    token_program_id: ctx.accounts.token_program.to_account_info(),
+                    source: ctx.accounts.source.to_account_info(),
+                    mint: ctx.accounts.mint.to_account_info(),
+                    destination: ctx.accounts.destination.to_account_info(),
+                    authority: ctx.accounts.authority.to_account_info(),
+                },
+            ),
+            amount,
+            decimals,
+            fee,
+        )?;
+        Ok(())
+    }
+
+    /// Withdraw fees that have been harvested into the mint to a
+    /// destination token account. Authority is the withdraw_withheld
+    /// authority configured at TransferFee init.
+    pub fn withdraw_fees(ctx: Context<WithdrawFees>) -> Result<()> {
+        withdraw_withheld_tokens_from_mint(CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            WithdrawWithheldTokensFromMint {
+                token_program_id: ctx.accounts.token_program.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
+                destination: ctx.accounts.destination.to_account_info(),
+                authority: ctx.accounts.authority.to_account_info(),
+            },
+        ))?;
+        Ok(())
+    }
+
+    // harvest_withheld_tokens_to_mint is INTENTIONALLY OMITTED from
+    // this demo. The CPI takes a runtime-length Vec<AccountInfo> for
+    // the sources list, but pinocchio::cpi::invoke is generic over a
+    // compile-time `const ACCOUNTS: usize` — dynamic-length account
+    // slices don't fit without per-N branching boilerplate. EM2
+    // Session 1b ships the 2 fixed-account TransferFee CPIs
+    // (transfer_checked_with_fee + withdraw_withheld_tokens_from_mint);
+    // the typed IR kind cpi_t22_harvest_withheld_tokens_to_mint and
+    // its Native+Pinocchio emit ARE wired and validated by cargo
+    // build, but no demo here exercises them runtime-end-to-end.
 }
 
 #[derive(Accounts)]
@@ -76,3 +130,30 @@ pub struct UpdateTransferFee<'info> {
     pub mint: UncheckedAccount<'info>,
     pub token_program: Program<'info, Token2022>,
 }
+
+#[derive(Accounts)]
+pub struct FeeTransfer<'info> {
+    pub authority: Signer<'info>,
+    /// CHECK: TransferFee mint
+    pub mint: UncheckedAccount<'info>,
+    /// CHECK: Source token account
+    #[account(mut)]
+    pub source: UncheckedAccount<'info>,
+    /// CHECK: Destination token account
+    #[account(mut)]
+    pub destination: UncheckedAccount<'info>,
+    pub token_program: Program<'info, Token2022>,
+}
+
+#[derive(Accounts)]
+pub struct WithdrawFees<'info> {
+    pub authority: Signer<'info>,
+    /// CHECK: TransferFee mint
+    #[account(mut)]
+    pub mint: UncheckedAccount<'info>,
+    /// CHECK: Destination token account for withdrawn fees
+    #[account(mut)]
+    pub destination: UncheckedAccount<'info>,
+    pub token_program: Program<'info, Token2022>,
+}
+
