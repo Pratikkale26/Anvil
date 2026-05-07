@@ -200,9 +200,19 @@ export function handleStateFieldAssign(w: BodyWalker, stmt: StateFieldAssign): v
     .replace(/(?<!:)\bRent::get\(\)\?/g, w.qualifiedRentGetExpr())
     .replace(/(?<!:)\bClock::get\(\)/g, w.qualifiedClockGetValueExpr())
     .replace(/(?<!:)\bRent::get\(\)/g, w.qualifiedRentGetValueExpr());
-  // Replace ctx.bumps.X with bump derivation call.
-  if (value.includes("ctx.bumps.")) {
-    const bumpAccount = value.match(/ctx\.bumps\.(\w+)/)?.[1] ?? stmt.account;
+  // Replace any of the 4 ctx.bumps shapes — bare, parens-wrapped (with
+  // or without leading `&`), or referenced — with the bump_<account>
+  // local. Parens-wrapped forms surface from impl-method inlining
+  // where a `bumps: &Bumps` parameter substitutes to `&ctx.bumps` at
+  // the call site, leaving `(&ctx.bumps).<field>` in the inlined body.
+  // Mirrors walker.replaceBumpRefs's regex panel.
+  if (value.includes("ctx.bumps")) {
+    const bumpAccount =
+      value.match(/\(\s*&\s*ctx\.bumps\s*\)\.(\w+)/)?.[1] ??
+      value.match(/\(\s*ctx\.bumps\s*\)\.(\w+)/)?.[1] ??
+      value.match(/&\s*ctx\.bumps\.(\w+)/)?.[1] ??
+      value.match(/ctx\.bumps\.(\w+)/)?.[1] ??
+      stmt.account;
     value = `bump_${snakeCase(bumpAccount)}`;
     const bumpLine = w.normalizedBumpLine(snakeCase(bumpAccount));
     if (bumpLine) {

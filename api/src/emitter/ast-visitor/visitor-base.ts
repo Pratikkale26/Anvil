@@ -1021,8 +1021,17 @@ export class AstVisitorBase {
     value = w.transformHelperCalls(value);
     value = applyClockRentRewrites(value, w);
 
-    if (value.includes("ctx.bumps.")) {
-      const bumpAccount = value.match(/ctx\.bumps\.(\w+)/)?.[1] ?? stmt.account;
+    // Recognize all 4 ctx.bumps shapes (bare, &-prefixed, parens-
+    // wrapped with/without &) — same panel as walker.replaceBumpRefs.
+    // Parens-wrapped forms surface from impl-method inlining where
+    // `bumps: &Bumps` substitutes to `&ctx.bumps` at the call site.
+    if (value.includes("ctx.bumps")) {
+      const bumpAccount =
+        value.match(/\(\s*&\s*ctx\.bumps\s*\)\.(\w+)/)?.[1] ??
+        value.match(/\(\s*ctx\.bumps\s*\)\.(\w+)/)?.[1] ??
+        value.match(/&\s*ctx\.bumps\.(\w+)/)?.[1] ??
+        value.match(/ctx\.bumps\.(\w+)/)?.[1] ??
+        stmt.account;
       out.push(...this.emitBumpDerivationStructural(snakeCase(bumpAccount)));
       value = `bump_${snakeCase(bumpAccount)}`;
     }
