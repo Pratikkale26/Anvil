@@ -15,6 +15,7 @@
  */
 import { describe, test, expect, beforeAll } from "bun:test";
 import { getParser } from "../src/parser/ts-init.ts";
+import { snakeCase } from "../src/emitter/emitter-utils.ts";
 import {
   qualifySysvarsStructural,
   stripToAccountInfoStructural,
@@ -25,6 +26,7 @@ import {
   rewriteCtxAccountsRefsStructural,
   rewriteLocalAliasesStructural,
   collapseMultiDerefStructural,
+  rewriteStateBoundFieldsStructural,
   applySession1Passes,
   type PassContext,
 } from "../src/emitter/body-emitter/pass-through-structural.ts";
@@ -614,6 +616,142 @@ describe("M5d Session 6d — collapseMultiDerefStructural", () => {
     // Pattern is gated on `.key` specifically — other fields stay.
     const input = `do(**foo.bar);`;
     expect(collapseMultiDerefStructural(input)).toBe(input);
+  });
+});
+
+describe("M5d Session 6c — rewriteStateBoundFieldsStructural", () => {
+  // Build a context with the state-bound side channel. The callback returns
+  // the canonical local-var name (== account snake-case) and records the
+  // call so tests can assert side-effect ordering.
+  function buildCtx(stateBound: string[]): { ctx: PassContext; calls: string[] } {
+    const calls: string[] = [];
+    const ctx: PassContext = {
+      ...PIN_CTX,
+      stateBoundAccounts: new Set(stateBound),
+      onStateRead: (acc) => {
+        calls.push(acc);
+        return snakeCase(acc);
+      },
+    };
+    return { ctx, calls };
+  }
+
+  test("bare `acct.field` → `acct.field` (rename via state-read)", () => {
+    const { ctx, calls } = buildCtx(["counter"]);
+    expect(rewriteStateBoundFieldsStructural(`counter.value = 5;`, ctx)).toBe(
+      `counter.value = 5;`,
+    );
+    // The localVar happens to equal the account name (canonical state-bound
+    // shape), so text is byte-identical — but the side effect FIRED.
+    expect(calls).toEqual(["counter"]);
+  });
+
+  test("`ctx.accounts.X.field` → `<localVar>.<snake(field)>`", () => {
+    const { ctx, calls } = buildCtx(["counter"]);
+    expect(
+      rewriteStateBoundFieldsStructural(`do(ctx.accounts.counter.value);`, ctx),
+    ).toBe(`do(counter.value);`);
+    expect(calls).toEqual(["counter"]);
+  });
+
+  test("snakeCase normalization on field name (camelCase → snake_case)", () => {
+    const { ctx, calls } = buildCtx(["counter"]);
+    expect(rewriteStateBoundFieldsStructural(`do(counter.fooBar);`, ctx)).toBe(
+      `do(counter.foo_bar);`,
+    );
+    expect(calls).toEqual(["counter"]);
+  });
+
+  test("SKIP `.key` field (handled by S2)", () => {
+    const { ctx, calls } = buildCtx(["counter"]);
+    expect(rewriteStateBoundFieldsStructural(`do(counter.key);`, ctx)).toBe(
+      `do(counter.key);`,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  test("SKIP `.lamports` field (handled by S5a)", () => {
+    const { ctx, calls } = buildCtx(["counter"]);
+    expect(rewriteStateBoundFieldsStructural(`do(counter.lamports);`, ctx)).toBe(
+      `do(counter.lamports);`,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  test("SKIP `.amount` field (handled by tokenLike branch / S5a)", () => {
+    const { ctx, calls } = buildCtx(["counter"]);
+    expect(rewriteStateBoundFieldsStructural(`do(counter.amount);`, ctx)).toBe(
+      `do(counter.amount);`,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  test("SKIP non-state-bound account (not in stateBoundAccounts)", () => {
+    const { ctx, calls } = buildCtx(["counter"]);
+    // `payer` is a known account but NOT in stateBoundAccounts — skip.
+    expect(rewriteStateBoundFieldsStructural(`do(payer.value);`, ctx)).toBe(
+      `do(payer.value);`,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  test("dedup-via-walker: callback fires once per distinct account, not per match", () => {
+    // The structural pass calls onStateRead per match — walker's
+    // ensureStateRead dedups internally. This test verifies the callback
+    // fires per match (the dedup is the walker's job).
+    const { ctx, calls } = buildCtx(["counter"]);
+    const input = `counter.x = 1; counter.y = 2;`;
+    rewriteStateBoundFieldsStructural(input, ctx);
+    expect(calls).toEqual(["counter", "counter"]);
+  });
+
+  test("chained `acct.field.subfield` — inner rewritten, outer chain preserved", () => {
+    const { ctx, calls } = buildCtx(["counter"]);
+    expect(rewriteStateBoundFieldsStructural(`do(counter.inner.subfield);`, ctx)).toBe(
+      `do(counter.inner.subfield);`,
+    );
+    // Inner field_expression matched (counter.inner) — became counter.inner
+    // since localVar == "counter" and snake("inner") == "inner". Side effect fired.
+    expect(calls).toEqual(["counter"]);
+  });
+
+  test("`&acct.field` — & preserved", () => {
+    const { ctx } = buildCtx(["counter"]);
+    expect(rewriteStateBoundFieldsStructural(`do(&counter.value);`, ctx)).toBe(
+      `do(&counter.value);`,
+    );
+  });
+
+  test("`&mut acct.field` — &mut preserved", () => {
+    const { ctx } = buildCtx(["counter"]);
+    expect(rewriteStateBoundFieldsStructural(`do(&mut counter.value);`, ctx)).toBe(
+      `do(&mut counter.value);`,
+    );
+  });
+
+  test("string literal containing acct.field NOT rewritten", () => {
+    const { ctx, calls } = buildCtx(["counter"]);
+    const input = `msg!("counter.value example");`;
+    expect(rewriteStateBoundFieldsStructural(input, ctx)).toBe(input);
+    expect(calls).toEqual([]);
+  });
+
+  test("no stateBoundAccounts in context — no-op", () => {
+    const ctx: PassContext = {
+      ...PIN_CTX,
+      onStateRead: () => "x",
+    };
+    const input = `do(counter.value);`;
+    expect(rewriteStateBoundFieldsStructural(input, ctx)).toBe(input);
+  });
+
+  test("no onStateRead callback — no-op", () => {
+    const ctx: PassContext = {
+      ...PIN_CTX,
+      stateBoundAccounts: new Set(["counter"]),
+    };
+    const input = `do(counter.value);`;
+    expect(rewriteStateBoundFieldsStructural(input, ctx)).toBe(input);
   });
 });
 

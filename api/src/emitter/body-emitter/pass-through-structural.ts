@@ -80,6 +80,24 @@ export interface PassContext {
    *  rewriteLocalAliasesStructural to rename references to the alias
    *  back to its canonical state-var name. Mirrors walker.localAliases. */
   localAliases?: Map<string, string>;
+  /** Snake-case names of accounts whose accountType is a generated state
+   *  struct (i.e. walker.isGeneratedStateType returns true). Used by
+   *  rewriteStateBoundFieldsStructural as the gate before invoking the
+   *  state-read side channel. Pre-computed at PassContext-build time. */
+  stateBoundAccounts?: Set<string>;
+  /**
+   * Side-effect callback for state-bound `.field` rewrites. Walker's
+   * implementation calls ensureStateRead which:
+   *   - self-dedups via stateVars (returns existing localVar if already read)
+   *   - pushes the state-read prelude line(s) directly to walker.lines
+   *   - emits has_one constraint checks inline
+   * The structural pass invokes this callback for each match, gets back
+   * the localVar to substitute, and rewrites `<acct>.field` → `localVar.snakeCase(field)`.
+   *
+   * Mirrors the closure in walker.transformAccountReferences's state-bound
+   * regex (and the parallel one in walker.transformCtxAccountsReferences).
+   */
+  onStateRead?: (accountName: string) => string;
 }
 
 interface Edit {
@@ -875,6 +893,84 @@ function isInsideStringLiteral(code: string, offset: number): boolean {
     }
   }
   return inStr !== null;
+}
+
+// ─── Pass 6c — state-bound .field rewrite via ensureStateRead callback ─────
+
+/**
+ * Rewrite `<state_acct>.<field>` and `ctx.accounts.<state_acct>.<field>`
+ * into `<localVar>.<snakeCase(field)>` for state-bound accounts (those
+ * whose accountType is a generated state struct). The actual state-read
+ * scaffolding (prelude lines, dedup, has_one checks) is delegated to
+ * the walker via PassContext.onStateRead — the structural pass just
+ * triggers it per match.
+ *
+ * Skip-list: `key`, `lamports`, `amount`. The first two are gated out
+ * by the regex panel as well; the third is conservative — tokenLike
+ * `.amount` has its own dedicated rewriter and state-bound `.amount`
+ * fields are extremely rare in Anchor source. Skipping ensures
+ * structural never steps on the tokenLike path.
+ *
+ * Mirrors walker.transformAccountReferences (lines 833-841) AND
+ * walker.transformCtxAccountsReferences (lines 1000-1014) — both
+ * regexes call ensureStateRead and produce the same `localVar.field`
+ * shape. The structural pass converges them into one AST walk.
+ *
+ * Side effect: for every match where ctx.onStateRead is invoked, the
+ * walker pushes prelude lines to walker.lines IMMEDIATELY. Caller is
+ * responsible for invoking the structural pass at the same call-stack
+ * depth where the regex panel would be invoked, so prelude ordering
+ * stays consistent.
+ */
+const STATE_FIELD_SKIP = new Set(["key", "lamports", "amount"]);
+
+export function rewriteStateBoundFieldsStructural(code: string, ctx: PassContext): string {
+  if (!ctx.stateBoundAccounts || ctx.stateBoundAccounts.size === 0) return code;
+  if (!ctx.onStateRead) return code;
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  const edits: Edit[] = [];
+  for (const stmt of parsed.stmts) {
+    walk(stmt, (n) => {
+      if (n.type !== "field_expression") return true;
+      let recv: SyntaxNode | null = null;
+      let fld: SyntaxNode | null = null;
+      for (let i = 0; i < n.namedChildCount; i++) {
+        const c = n.namedChild(i);
+        if (!c) continue;
+        if (c.type === "field_identifier") fld = c;
+        else recv = c;
+      }
+      if (!recv || !fld || fld.type !== "field_identifier") return true;
+      const fieldName = fld.text;
+      if (STATE_FIELD_SKIP.has(fieldName)) return true;
+      // Determine the account name from receiver shape.
+      let accountName: string | null = null;
+      if (recv.type === "identifier") {
+        if (ctx.stateBoundAccounts!.has(snakeCase(recv.text))) {
+          accountName = recv.text;
+        }
+      } else {
+        const X = asCtxAccountsField(recv);
+        if (X !== null && ctx.stateBoundAccounts!.has(snakeCase(X))) {
+          accountName = X;
+        }
+      }
+      if (!accountName) return true;
+      // Trigger the state-read side effect (walker pushes prelude line(s)).
+      const localVar = ctx.onStateRead!(accountName);
+      if (!localVar) return true;
+      const start = n.startIndex - parsed.bodyOffset;
+      const end = n.endIndex - parsed.bodyOffset;
+      edits.push({
+        start,
+        end,
+        replacement: `${localVar}.${snakeCase(fieldName)}`,
+      });
+      return false;
+    });
+  }
+  return applyEdits(code, edits);
 }
 
 // ─── Verification helper ────────────────────────────────────────────────────

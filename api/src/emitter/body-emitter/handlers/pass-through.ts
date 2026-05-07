@@ -23,6 +23,7 @@ import {
   rewriteCtxAccountsRefsStructural,
   rewriteLocalAliasesStructural,
   collapseMultiDerefStructural,
+  rewriteStateBoundFieldsStructural,
   type PassContext,
 } from "../pass-through-structural.js";
 
@@ -133,7 +134,16 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // match, so its loop is a no-op fallback. The regex's declaration-line
   // strip (`let pool = &mut …;` removal) is preserved as text-level work
   // since multi-line statement removal is awkward in tree-sitter.
-  const ctxAccountsTextRewritten = w.transformCtxAccountsReferences(ctxRefsRewritten);
+  // M5d Session 6c — state-bound `.field` rewrite via ensureStateRead
+  // callback. Runs BEFORE walker.transformCtxAccountsReferences (which
+  // also calls ensureStateRead in its state-bound regex closure) so
+  // walker's stateVars map gets populated by structural first; the regex
+  // sees already-rewritten text and its own state-bound matcher
+  // becomes a no-op fallback. Side effect: walker.lines gets the
+  // state-read prelude line(s) appended at the same call-stack depth
+  // the regex panel would use.
+  const stateBoundRewritten = rewriteStateBoundFieldsStructural(ctxRefsRewritten, structuralCtx);
+  const ctxAccountsTextRewritten = w.transformCtxAccountsReferences(stateBoundRewritten);
   const aliasRewritten = rewriteLocalAliasesStructural(ctxAccountsTextRewritten, structuralCtx);
   // M5d Session 6d — collapse multi-`*` derefs `**X.key` → `*X.key`.
   // Pure text transform, runs AFTER walker.transformAccountReferences
@@ -362,7 +372,25 @@ function buildPassContext(w: BodyWalker): PassContext {
     accountLamportsExprs: buildAccountLamportsExprsMap(w),
     namedAccountCount: w.instr.accounts.filter((a) => !a.isOptional).length,
     localAliases: w.localAliases,
+    stateBoundAccounts: buildStateBoundAccountsSet(w),
+    onStateRead: (acc: string) => w.ensureStateRead(acc),
   };
+}
+
+/**
+ * Build the set of snake-case account names whose accountType is a
+ * generated state struct. Mirrors the gate in
+ * walker.transformAccountReferences (`if (!isGeneratedStateType) continue`)
+ * and the inline check in walker.transformCtxAccountsReferences.
+ */
+function buildStateBoundAccountsSet(w: BodyWalker): Set<string> {
+  const out = new Set<string>();
+  for (const acc of w.instr.accounts) {
+    if (w.isGeneratedStateType(acc.accountType)) {
+      out.add(snakeCase(acc.name));
+    }
+  }
+  return out;
 }
 
 /**
