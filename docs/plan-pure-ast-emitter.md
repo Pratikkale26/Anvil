@@ -482,6 +482,17 @@ Added `range` AST node + factory `rangeExpr({start?, end?, inclusive?})`
 closes the 30 residual raw_exprs in pda_signer_seeds — 12th kind to
 reach PURE structural ★.
 
+### bumps_access port landed 2026-05-07
+
+Two `rawExpr(...)` hardcodes in `emitBumpDerivationStructural` swapped
+to `tryStructuralizeExpr ?? rawExpr`:
+- The seeds-array slice `&[seed1, seed2, ...]` (both targets)
+- Native's has_one-style cond `expected_key != *X.key`
+
+Both shapes parse cleanly through tree-sitter now. bumps_access
+becomes the 22nd kind to reach pure structural ★. Total raw nodes:
+75 → 72.
+
 ### Typed CPI long-tail port landed 2026-05-07
 
 Generic tree-sitter converter expansion that unlocked 9 typed-CPI

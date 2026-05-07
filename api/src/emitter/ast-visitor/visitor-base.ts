@@ -1200,31 +1200,34 @@ export class AstVisitorBase {
         out.push(letStmt(varName, methodCall(parseSimpleExpr(m2[1].trim()), "to_le_bytes", [])));
         return `${varName}.as_ref()`;
       });
+      const seedsArrayText = `&[${transformedSeeds.join(", ")}]`;
       out.push(
         letStmt(
           bumpVar,
           tryPostfix(
             call(ident("bump_seed"), [
               ident("program_id"),
-              rawExpr(`&[${transformedSeeds.join(", ")}]`),
+              tryStructuralizeExpr(seedsArrayText) ?? rawExpr(seedsArrayText),
               methodCall(ident(expectedKey), "key", []),
             ]),
           ),
         ),
       );
     } else {
+      const seedsArrayText = `&[${pdaSeeds.join(", ")}]`;
       out.push(
         letStmt(
           `(expected_key, ${bumpVar})`,
           call(path(["Pubkey", "find_program_address"]), [
-            rawExpr(`&[${pdaSeeds.join(", ")}]`),
+            tryStructuralizeExpr(seedsArrayText) ?? rawExpr(seedsArrayText),
             ident("program_id"),
           ]),
         ),
       );
+      const condText = `expected_key != *${expectedKey}.key`;
       out.push(
         ifStmt(
-          rawExpr(`expected_key != *${expectedKey}.key`),
+          tryStructuralizeExpr(condText) ?? rawExpr(condText),
           [
             returnStmt(
               call(path(["Err"]), [path(["ProgramError", "InvalidSeeds"])]),
