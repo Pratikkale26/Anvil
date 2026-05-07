@@ -475,6 +475,20 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // anchor_spl::token_interface::immutable_owner_initialize. Token-
+  // ACCOUNT-level extension (NOT mint-level like NonTransferable /
+  // TransferFee). Locks the account owner so SetAuthority calls
+  // attempting AccountOwner change revert at the Token-2022 program
+  // level. Single instruction, no manage CPIs.
+  z.object({
+    kind: z.literal("cpi_t22_immutable_owner_initialize"),
+    /** AccountInfo binding for the token account being initialized. */
+    tokenAccount: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: create_metadata_accounts_v3.
   // First-class IR slot for the Metaplex CPI catalog (#29). Today the
   // emitter still falls back to the walker.ts regex stub for actual

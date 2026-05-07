@@ -713,6 +713,24 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     )?;`;
   }
 
+  override emitT22ImmutableOwnerInitialize(
+    tokenAccount: string,
+    tokenProgram: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 ImmutableOwner extension init — ${tokenAccount}
+    let immutable_owner_init_ix = spl_token_2022::instruction::initialize_immutable_owner(
+        &spl_token_2022::id(),
+        ${tokenAccount}.key,
+    )?;
+    ${invokeType}(
+        &immutable_owner_init_ix,
+        &[${tokenAccount}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
   override emitT22TransferFeeSetFee(
     mint: string,
     tokenProgram: string,

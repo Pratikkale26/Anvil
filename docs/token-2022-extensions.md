@@ -23,7 +23,7 @@ Statuses:
 | NonTransferable | Y | Y | `transfer_checked` rejects at program level — Y (rejection round-trips); init differential-gated 2026-05-07 |
 | CpiGuard | partial | partial | restricts which CPI calls a token account permits — Y for permitted ops |
 | DefaultAccountState | partial | partial | newly-initialized accounts start frozen — Y for state-aware code |
-| ImmutableOwner | partial | partial | none on base CPIs — Y |
+| ImmutableOwner | Y | Y | none on base CPIs — Y; init differential-gated 2026-05-07 |
 | PermanentDelegate | partial | partial | `transfer_checked` honors the delegate — Y |
 | MetadataPointer | partial | partial | none on base CPIs — Y |
 | TokenMetadata | partial | partial | none on base CPIs — Y |

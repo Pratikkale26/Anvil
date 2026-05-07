@@ -845,6 +845,41 @@ ${invokeCall}
     }`;
   }
 
+  override emitT22ImmutableOwnerInitialize(
+    tokenAccount: string,
+    _tokenProgram: string,
+    signerSeeds?: string,
+  ): string {
+    // Token-2022 InitializeImmutableOwner: discriminator 22, no
+    // payload, accounts = [token_account writable]. Same shape as
+    // NonTransferable but applied to a token account instead of mint.
+    const invokeCall = signerSeeds
+      ? `        let __io_seed_refs = ${signerSeeds}[0];
+        let mut __io_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__io_i, __io_s) in __io_seed_refs.iter().enumerate() {
+            if __io_i >= __io_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __io_pda_seeds[__io_i] = pinocchio::instruction::Seed::from(*__io_s);
+        }
+        let __io_signer = pinocchio::instruction::Signer::from(&__io_pda_seeds[..__io_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__io_ix, &[${tokenAccount}], &[__io_signer])?;`
+      : `        pinocchio::cpi::invoke(&__io_ix, &[${tokenAccount}])?;`;
+    return `    // Token-2022 ImmutableOwner extension init — ${tokenAccount}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __io_data = [22u8];
+        let __io_metas = [
+            pinocchio::instruction::AccountMeta::writable(${tokenAccount}.key()),
+        ];
+        let __io_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__io_metas,
+            data: &__io_data,
+        };
+${invokeCall}
+    }`;
+  }
+
   override emitT22NonTransferableMintInitialize(
     mint: string,
     _tokenProgram: string,

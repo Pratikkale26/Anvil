@@ -16,6 +16,7 @@ type CpiSplSetAuthority = Extract<BodyStatement, { kind: "cpi_spl_set_authority"
 type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non_transferable_mint_initialize" }>;
 type CpiT22TransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_initialize" }>;
 type CpiT22TransferFeeSetFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_set_fee" }>;
+type CpiT22ImmutableOwnerInit = Extract<BodyStatement, { kind: "cpi_t22_immutable_owner_initialize" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -269,6 +270,26 @@ export function handleCpiT22TransferFeeInit(
       wwa,
       stmt.basisPoints,
       stmt.maximumFee,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ),
+  );
+}
+
+export function handleCpiT22ImmutableOwnerInit(
+  w: BodyWalker,
+  stmt: CpiT22ImmutableOwnerInit,
+): void {
+  w.ctx.transformedCount++;
+  w.ctx.details.push(`Transformed: immutable_owner_initialize(${stmt.tokenAccount})`);
+  if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.tokenAccount)) {
+      w.lines.push(preludeLine);
+    }
+  }
+  w.lines.push(
+    w.emitter.emitT22ImmutableOwnerInitialize(
+      snakeCase(stmt.tokenAccount),
+      snakeCase(stmt.tokenProgram),
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ),
   );

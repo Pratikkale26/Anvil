@@ -604,6 +604,7 @@ import {
   handleCpiT22NonTransferableMintInit,
   handleCpiT22TransferFeeInit,
   handleCpiT22TransferFeeSetFee,
+  handleCpiT22ImmutableOwnerInit,
   handleCpiAtaCreate,
   handleCpiMemo,
   handleCpiCustom,
@@ -642,6 +643,7 @@ type CpiSplSetAuthority = Extract<BodyStatement, { kind: "cpi_spl_set_authority"
 type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non_transferable_mint_initialize" }>;
 type CpiT22TransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_initialize" }>;
 type CpiT22TransferFeeSetFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_set_fee" }>;
+type CpiT22ImmutableOwnerInit = Extract<BodyStatement, { kind: "cpi_t22_immutable_owner_initialize" }>;
 type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
@@ -682,6 +684,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_t22_non_transferable_mint_initialize",
   "cpi_t22_transfer_fee_initialize",
   "cpi_t22_transfer_fee_set_fee",
+  "cpi_t22_immutable_owner_initialize",
   "cpi_ata_create",
   "cpi_memo",
   "cpi_custom",
@@ -726,6 +729,8 @@ export class AstVisitorBase {
         return this.visitCpiT22TransferFeeInit(stmt);
       case "cpi_t22_transfer_fee_set_fee":
         return this.visitCpiT22TransferFeeSetFee(stmt);
+      case "cpi_t22_immutable_owner_initialize":
+        return this.visitCpiT22ImmutableOwnerInit(stmt);
       case "cpi_ata_create":       return this.visitCpiAtaCreate(stmt);
       case "cpi_memo":             return this.visitCpiMemo(stmt);
       case "cpi_custom":           return this.visitCpiCustom(stmt);
@@ -2119,6 +2124,10 @@ export class AstVisitorBase {
 
   visitCpiT22TransferFeeSetFee(stmt: CpiT22TransferFeeSetFee): RustStmt[] {
     return this.captureAndConvert(handleCpiT22TransferFeeSetFee, stmt);
+  }
+
+  visitCpiT22ImmutableOwnerInit(stmt: CpiT22ImmutableOwnerInit): RustStmt[] {
+    return this.captureAndConvert(handleCpiT22ImmutableOwnerInit, stmt);
   }
 
   /**

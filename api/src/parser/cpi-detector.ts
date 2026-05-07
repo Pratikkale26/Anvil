@@ -144,6 +144,9 @@ export function detectCpi(
   if (funcText.includes("transfer_fee_set")) {
     return extractT22TransferFeeSet(callNode, collector);
   }
+  if (funcText.includes("immutable_owner_initialize")) {
+    return extractT22ImmutableOwnerInitialize(callNode, collector);
+  }
 
   // ── SPL Token transfer ──
   if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
@@ -889,6 +892,58 @@ function extractT22TransferFeeSet(
     authority: cleanAccountRef(authority),
     basisPoints,
     maximumFee,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 ImmutableOwner extension init (EM2 Session 2) ───────────────
+//
+// Anchor source shape:
+//   immutable_owner_initialize(CpiContext::new(
+//       ctx.accounts.token_program.key(),
+//       ImmutableOwnerInitialize {
+//           token_program_id: ctx.accounts.token_program.to_account_info(),
+//           token_account: ctx.accounts.token_account.to_account_info(),
+//       },
+//   ))?;
+//
+// Token-account-level extension (NOT mint-level). Single instruction,
+// no manage CPIs.
+function extractT22ImmutableOwnerInitialize(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 immutable_owner_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 immutable_owner_initialize (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let tokenAccount = "token_account";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    tokenAccount =
+      extractStructField(accountsStruct, "token_account") ?? tokenAccount;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const signerSeeds = firstArg.text.includes("new_with_signer")
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_immutable_owner_initialize",
+    tokenAccount: cleanAccountRef(tokenAccount),
+    tokenProgram: cleanAccountRef(tokenProgram),
     signerSeeds,
   };
 }

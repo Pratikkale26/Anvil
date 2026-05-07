@@ -184,6 +184,16 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // Initialize the ImmutableOwner extension on a token account. Single
+  // instruction, no manage CPIs. Discriminator 22 (top-level
+  // TokenInstruction enum), no payload, accounts = [token_account
+  // writable].
+  abstract emitT22ImmutableOwnerInitialize(
+    tokenAccount: string,
+    tokenProgram: string,
+    signerSeeds?: string,
+  ): string;
+
   abstract emitProgramAccountClose(account: string, destination: string): string;
   abstract emitCreateProgramAccount(
     account: string,
