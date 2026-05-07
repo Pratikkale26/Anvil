@@ -198,6 +198,20 @@ const MUST_PASS: Case[] = [
     maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
 ];
 
+// reports/external-anchor-sweep-2026-05-07.md round 2 picks
+// (tokens/escrow, tokens/token-swap, oracles/pyth) PASS cargo check
+// via the CLI path but FAIL full cargo build under the regression
+// guard's stricter validator + build pipeline:
+//   - tokens-escrow: 5 + 3 unsafe-marker validator errors
+//     (instructions/make_offer.rs + take_offer.rs)
+//   - token-swap: cargo build failure (likely SPL extension imports)
+//   - oracle-pyth: pyth_solana_receiver_sdk module unresolved + multiple
+//     E0609 "no field price_message on type AccountInfo"
+//
+// Each is a real bug class for follow-up — promote to MUST_PASS only
+// after the underlying emit gap is fixed and cargo build is green
+// under the regression guard.
+
 interface ExternalCase {
   id: string;
   target: Target;
