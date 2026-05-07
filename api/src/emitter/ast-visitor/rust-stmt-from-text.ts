@@ -42,10 +42,12 @@ import {
   comment,
   exprStmt,
   ident,
+  ifStmt,
   letStmt,
   lit,
   methodCall,
   path,
+  returnStmt,
   tailExpr,
   tryPostfix,
 } from "./nodes.js";
@@ -114,13 +116,39 @@ export function tryStructuralizeMultiLine(text: string): RustStmt[] | null {
     const childRaw = block.namedChild(i);
     if (!childRaw) return null;
     const child: SyntaxNode = childRaw;
-    // Skip multi-line statements — the printer doesn't preserve the
-    // original line breaks inside calls / method chains, so converting
-    // them would lose layout and break byte-equality. Caller falls back
-    // to rawLine of the whole entry.
-    if (child.text.includes("\n")) return null;
+    // Refuse multi-line statements that aren't intentionally-multi-line
+    // shapes (if/match/block themselves can be multi-line; arbitrary
+    // multi-line method chains in let bindings can't because the printer
+    // doesn't preserve their line breaks).
+    if (child.text.includes("\n") && !MULTI_LINE_OK.has(child.type)) return null;
     const isLast = i === childCount - 1;
     const stmt = stmtFromNode(child, isLast);
+    if (stmt === null) return null;
+    out.push(stmt);
+  }
+  return out;
+}
+
+const MULTI_LINE_OK = new Set([
+  "if_expression",
+  "match_expression",
+  "block",
+]);
+
+/**
+ * Walk a `block` node's named children and convert each to RustStmt.
+ * Returns null if any child fails or is multi-line. Used for if-then
+ * body blocks where each stmt should be single-line for byte-equality.
+ */
+function convertBlockStmts(block: SyntaxNode, allowMultiLine: boolean): RustStmt[] | null {
+  const out: RustStmt[] = [];
+  const n = block.namedChildCount;
+  for (let i = 0; i < n; i++) {
+    const c = block.namedChild(i);
+    if (!c) return null;
+    if (!allowMultiLine && c.text.includes("\n")) return null;
+    const isLast = i === n - 1;
+    const stmt = stmtFromNode(c, isLast);
     if (stmt === null) return null;
     out.push(stmt);
   }
@@ -138,10 +166,16 @@ function stmtFromNode(node: SyntaxNode, isLast: boolean): RustStmt | null {
     }
     case "expression_statement": {
       // expression_statement either has a trailing `;` (statement) or
-      // not (tail expression). tree-sitter's distinction is whether the
-      // statement node's text ends in `;`. Inspect the child expression.
+      // not (tail expression / control-flow stmt). Inspect the child.
       const expr = node.namedChild(0);
       if (!expr) return null;
+      // Statement-style if/match/return — these don't fit the
+      // exprFromNode mold (no rust expression value semantics in
+      // statement position; the printer expects a different shape
+      // for each). Route to stmtFromNode for direct conversion.
+      if (expr.type === "if_expression" || expr.type === "match_expression" || expr.type === "return_expression") {
+        return stmtFromNode(expr, isLast);
+      }
       const re = exprFromNode(expr);
       if (re === null) return null;
       const endsWithSemi = node.text.trimEnd().endsWith(";");
@@ -150,6 +184,51 @@ function stmtFromNode(node: SyntaxNode, isLast: boolean): RustStmt | null {
       // refuse otherwise.
       if (!isLast) return null;
       return tailExpr(re);
+    }
+    case "if_expression": {
+      // `if COND { BODY } [else { ELSE }]` used as a statement (no
+      // trailing `;`). Common output of handlePassThrough's require!()
+      // rewrite that fell through.
+      // tree-sitter exposes: condition (named), block (named: consequence),
+      // optional else_clause (named: alternative).
+      const cond = node.namedChild(0);
+      if (!cond) return null;
+      const condExpr = exprFromNode(cond);
+      if (condExpr === null) return null;
+      // Find body block + optional else.
+      let body: SyntaxNode | null = null;
+      let elseBlock: SyntaxNode | null = null;
+      for (let i = 1; i < node.namedChildCount; i++) {
+        const c = node.namedChild(i);
+        if (!c) continue;
+        if (c.type === "block" && body === null) body = c;
+        else if (c.type === "else_clause") {
+          // else_clause's only named child is either a block or another if.
+          for (let j = 0; j < c.namedChildCount; j++) {
+            const cc = c.namedChild(j);
+            if (cc?.type === "block") { elseBlock = cc; break; }
+          }
+        }
+      }
+      if (!body) return null;
+      const bodyStmts = convertBlockStmts(body, false);
+      if (bodyStmts === null) return null;
+      if (elseBlock !== null) {
+        const elseStmts = convertBlockStmts(elseBlock, false);
+        if (elseStmts === null) return null;
+        return ifStmt(condExpr, bodyStmts, elseStmts);
+      }
+      return ifStmt(condExpr, bodyStmts);
+    }
+    case "return_expression": {
+      // `return EXPR` (no `;` — the semicolon is on the parent
+      // expression_statement). Rare in pass_through output but handle
+      // for completeness.
+      const inner = node.namedChild(0);
+      if (!inner) return returnStmt();
+      const innerExpr = exprFromNode(inner);
+      if (innerExpr === null) return null;
+      return returnStmt(innerExpr);
     }
     case "let_declaration": {
       // `let [mut] PATTERN[: TYPE] = VALUE;` — only support the simplest
