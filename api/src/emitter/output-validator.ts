@@ -667,7 +667,7 @@ function checkUnsafeMarkers(content: string, path: string): ValidationIssue[] {
     if (!isAnvilMarker) continue;
     // Truly-broken markers contain one of these phrases; the surrounding
     // code is a non-functional stub.
-    const isBroken = /manual rebuild required|manual implementation|could not resolve|not yet supported|TODO\(manual\)|TODO:/i.test(line);
+    const isBroken = /manual rebuild required|manual implementation|could not resolve|not yet supported|TODO\(manual\)|TODO:|__BUMPS_FULL_STRUCT_TODO__|doesn't parse contexts/i.test(line);
     issues.push({
       severity: isBroken ? "error" : "warning",
       message: isBroken

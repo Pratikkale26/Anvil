@@ -211,6 +211,16 @@ emitRoute.post("/", async (req, res) => {
               currentSingleFile = patch.patchedContent;
             }
           }
+          // Multi-file path: regenerate the single-file view by concatenating
+          // patched files so the "Single" tab in the workbench reflects the
+          // accepted patches. Without this the Single tab stays at the pre-
+          // refine emit while the Files tab shows post-refine content — users
+          // perceive this as "refine deleted everything except lib.rs."
+          if (currentFiles.length > 1) {
+            currentSingleFile = currentFiles
+              .map((f) => `// ─── ${f.path} ─────────────────────────────────────────────\n${f.content}`)
+              .join("\n\n");
+          }
           // Re-validate after patching
           validationIssues = validateEmitterOutput(ir, {
             files: currentFiles,
