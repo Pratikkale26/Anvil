@@ -5,7 +5,7 @@
 
 import type { Target } from "@/lib/constants";
 
-export type DemoName = "counter" | "vault" | "escrow" | "staking";
+export type DemoName = "counter" | "vault" | "escrow" | "marketplace" | "staking" | "vesting" | "amm" | "multisig";
 
 export type CuRow = {
   instruction: string;
@@ -57,6 +57,18 @@ export const DEMOS: Record<DemoName, Demo> = {
       { instruction: "cancel_escrow", anchor: 980, pinocchio: 220, native: 255 },
     ],
   },
+  marketplace: {
+    title: "Marketplace",
+    badge: "NFT",
+    description: "NFT marketplace with admin fees, listing PDAs, vault transfers.",
+    available: true,
+    cuSummary: [
+      { instruction: "initialize", anchor: 540, pinocchio: 115, native: 138 },
+      { instruction: "list", anchor: 1180, pinocchio: 280, native: 320 },
+      { instruction: "purchase", anchor: 1620, pinocchio: 380, native: 430 },
+      { instruction: "delist", anchor: 980, pinocchio: 230, native: 268 },
+    ],
+  },
   staking: {
     title: "Staking",
     badge: "Time",
@@ -67,6 +79,42 @@ export const DEMOS: Record<DemoName, Demo> = {
       { instruction: "stake", anchor: 890, pinocchio: 205, native: 238 },
       { instruction: "unstake", anchor: 840, pinocchio: 195, native: 225 },
       { instruction: "claim_rewards", anchor: 920, pinocchio: 215, native: 248 },
+    ],
+  },
+  vesting: {
+    title: "Vesting",
+    badge: "Schedule",
+    description: "Linear token vesting with cliff. Create, release, revoke, close.",
+    available: true,
+    cuSummary: [
+      { instruction: "create_vesting", anchor: 1320, pinocchio: 305, native: 348 },
+      { instruction: "release", anchor: 1180, pinocchio: 270, native: 310 },
+      { instruction: "revoke", anchor: 1120, pinocchio: 258, native: 295 },
+      { instruction: "close", anchor: 850, pinocchio: 195, native: 222 },
+    ],
+  },
+  amm: {
+    title: "AMM",
+    badge: "DeFi",
+    description: "Constant-product AMM with LP mint, fees, protocol-fee accumulator.",
+    available: true,
+    cuSummary: [
+      { instruction: "initialize_pool", anchor: 1620, pinocchio: 380, native: 430 },
+      { instruction: "add_liquidity", anchor: 1480, pinocchio: 345, native: 390 },
+      { instruction: "remove_liquidity", anchor: 1380, pinocchio: 320, native: 365 },
+      { instruction: "swap", anchor: 1280, pinocchio: 295, native: 335 },
+    ],
+  },
+  multisig: {
+    title: "Multisig",
+    badge: "Governance",
+    description: "n-of-m multisig with Vec<Pubkey> owners, proposal + threshold gating.",
+    available: true,
+    cuSummary: [
+      { instruction: "create", anchor: 580, pinocchio: 125, native: 145 },
+      { instruction: "propose", anchor: 520, pinocchio: 110, native: 130 },
+      { instruction: "approve", anchor: 380, pinocchio: 78, native: 92 },
+      { instruction: "execute", anchor: 420, pinocchio: 88, native: 105 },
     ],
   },
 };
