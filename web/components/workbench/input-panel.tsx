@@ -46,6 +46,7 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
     isRunning,
     error,
     demoNames,
+    byteEqualVerified,
     demoName,
     setDemoName,
     sourceText,
@@ -157,12 +158,28 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                 >
                   {groupDemos(demoNames).map((g) => (
                     <optgroup key={g.label} label={g.label}>
-                      {g.items.map((n) => (
-                        <option key={n} value={n}>{n}</option>
-                      ))}
+                      {g.items.map((n) => {
+                        const verified = byteEqualVerified.includes(n);
+                        return (
+                          <option key={n} value={n}>
+                            {verified ? `✓ ${n}` : n}
+                          </option>
+                        );
+                      })}
                     </optgroup>
                   ))}
                 </select>
+                {byteEqualVerified.includes(demoName) && (
+                  <div
+                    className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-anvil-teal"
+                    title="A LiteSVM differential fixture compares Anchor and Anvil emit byte-for-byte under CI."
+                  >
+                    <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[rgba(14,168,128,0.15)] border border-[rgba(14,168,128,0.4)]">
+                      <span className="text-[8px]">✓</span>
+                    </span>
+                    Byte-equal verified
+                  </div>
+                )}
               </div>
             )}
 
@@ -1131,11 +1148,11 @@ function VerifyBuildBody(props: {
 
 const DEMO_GROUPS: Array<{ label: string; matchers: RegExp[] }> = [
   { label: "Quick start", matchers: [/^counter$/, /^has-one$/, /^return-err$/, /^msg-emit$/] },
+  { label: "Application shapes", matchers: [/^vault$/, /^escrow$/, /^multisig$/, /^vesting$/, /^staking$/, /^simple-staking$/, /^amm$/, /^marketplace$/, /^perp-funding$/, /^program-config$/, /^tip-jar$/, /^zero-copy-foo$/] },
   { label: "Account lifecycle", matchers: [/^bumps-access$/, /^init-if-needed$/, /^realloc/, /^close-account$/, /^optional-state$/] },
   { label: "SPL Token", matchers: [/^spl-/, /^ata-mint$/, /^set-authority$/, /^t22-transfer$/] },
   { label: "Sysvars + return data", matchers: [/^sysvar-rent$/, /^return-data$/] },
   { label: "Events + CPIs", matchers: [/^event-emit$/, /^cpi-/] },
-  { label: "Application shapes", matchers: [/^vault$/, /^escrow$/, /^multisig$/, /^vesting$/, /^staking$/, /^simple-staking$/, /^amm$/, /^marketplace$/, /^perp-funding$/, /^program-config$/, /^tip-jar$/] },
 ];
 
 function groupDemos(names: readonly string[]): Array<{ label: string; items: string[] }> {

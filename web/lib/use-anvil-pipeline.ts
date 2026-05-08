@@ -34,6 +34,7 @@ export function useAnvilPipeline() {
 
   // ─── Input state ──────────────────────────────────────────────────────────
   const [demoNames, setDemoNames] = useState<string[]>([]);
+  const [byteEqualVerified, setByteEqualVerified] = useState<string[]>([]);
   const [demoName, setDemoName] = useState("counter");
   const [sourceText, setSourceText] = useState("");
   const [sourceLabel, setSourceLabel] = useState<string | null>(null);
@@ -212,6 +213,9 @@ export function useAnvilPipeline() {
           setDemoName((cur) =>
             demos.includes(cur) ? cur : demos[0] ?? "counter"
           );
+        }
+        if (Array.isArray(p?.byteEqualVerified)) {
+          setByteEqualVerified(p.byteEqualVerified as string[]);
         }
       })
       .catch(() => setDemoNames(["counter", "vault", "escrow", "staking"]));
@@ -1168,6 +1172,7 @@ export function useAnvilPipeline() {
 
     // Input
     demoNames,
+    byteEqualVerified,
     demoName,
     setDemoName,
     sourceText,

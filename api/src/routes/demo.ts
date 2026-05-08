@@ -23,6 +23,53 @@ function discoverDemos(): string[] {
 const VALID_DEMOS = discoverDemos();
 type DemoName = string;
 
+/**
+ * Demo names with a `differential-<name>.test.ts` byte-equal fixture under
+ * api/tests/. Each listed demo passes a per-instruction LiteSVM scenario
+ * comparing the Anchor reference build to the Anvil emit on account data,
+ * lamports, and owner. The workbench renders a "byte-equal verified" badge
+ * next to these in the picker.
+ *
+ * Add a name here when a new differential fixture lands. CI gate at
+ * `realworld-tracking.test.ts` catches drift.
+ */
+const BYTE_EQUAL_VERIFIED_DEMOS: ReadonlySet<string> = new Set([
+  "counter",
+  "vault",
+  "escrow",
+  "amm",
+  "marketplace",
+  "multisig",
+  "vesting",
+  "staking",
+  "simple-staking",
+  "zero-copy-foo",
+  "bumps-access",
+  "has-one",
+  "init-if-needed",
+  "ata-mint",
+  "spl-transfer",
+  "spl-burn",
+  "set-authority",
+  "event-emit",
+  "msg-emit",
+  "return-data",
+  "return-err",
+  "sysvar-rent",
+  "tip-jar",
+  "program-config",
+  "realloc",
+  "realloc-grow",
+  "optional-state",
+  "cpi-custom",
+  "cpi-memo",
+  "close-account",
+  "page-visits",
+  "pda-rent-payer",
+  "favorites",
+  "account-data",
+]);
+
 function fixtureNeedsReparse(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.length === 0 ||
@@ -112,8 +159,13 @@ demoRoute.get("/:name", async (req, res) => {
 
 /**
  * GET /demo
- * List all available demo programs
+ * List all available demo programs + which ones have a byte-equal-verified
+ * differential fixture under api/tests/. The workbench renders a small
+ * "byte-equal verified" badge next to the verified ones in the picker.
  */
 demoRoute.get("/", (_req, res) => {
-  res.json({ demos: VALID_DEMOS });
+  res.json({
+    demos: VALID_DEMOS,
+    byteEqualVerified: VALID_DEMOS.filter((n) => BYTE_EQUAL_VERIFIED_DEMOS.has(n)),
+  });
 });
