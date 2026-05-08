@@ -42,7 +42,7 @@ const FIXTURES: Fixture[] = [
 const STATS = [
   { value: "6", label: "Real-world programs" },
   { value: "0", label: "Byte divergences" },
-  { value: "11", label: "Demos byte-equal" },
+  { value: "37", label: "Demos byte-equal" },
   { value: "36/36", label: "program-examples cargo green" },
 ];
 

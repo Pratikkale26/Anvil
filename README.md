@@ -25,7 +25,7 @@ Cargo green is necessary but not sufficient. This is the actual correctness sign
 
 ## What's verified today
 
-**34 byte-equal differential fixtures** lock these emit shapes against the Anchor reference on every commit. **Data + lamports + owner all byte-compared in a real VM** — not just `cargo build` green, not just IDL match.
+**43 byte-equal differential fixtures** lock these emit shapes against the Anchor reference on every commit. **Data + lamports + owner all byte-compared in a real VM** — not just `cargo build` green, not just IDL match.
 
 ### 6 real-world Anchor programs verified byte-equal
 
@@ -40,7 +40,7 @@ These are externally-authored programs cloned verbatim from public repos. Anvil'
 | `pda-rent-payer` | solana-developers/program-examples | Signer-seeded `system_program::create_account` |
 | `page-visits` | solana-developers/program-examples | Smallest possible PDA-init (5-byte struct) |
 
-### 28 demo byte-equal fixtures (representative subset)
+### 37 demo byte-equal fixtures (representative subset)
 
 | Fixture | Surface |
 |---|---|
@@ -53,15 +53,17 @@ These are externally-authored programs cloned verbatim from public repos. Anvil'
 | `t22-transfer` | Token-2022 `transfer_checked` (mint decimals extraction) |
 | `close` | `close = receiver` rent refund + reap |
 | `set-authority` | Hand-rolled raw SPL `set_authority` on Pinocchio |
-| `escrow` | PDA init + non-ATA token init (`init token::*` vault) + `token::transfer` |
+| `escrow` | PDA init + non-ATA token init (`init token::*` vault) + canonical vault PDA `[b"vault", escrow]` (substitution-attack-proof) + `token::transfer` |
 | `marketplace` | NFT marketplace state shape (admin + fee_bps + treasury) |
 | `event-emit` | `emit!()` discriminator + borsh payload via `sol_log_data` |
-| `staking` | Clock-pinned + `emit!` + msg/return-data triple parity |
-| `multisig` | m-of-n signer enforcement |
+| `staking` | Full SPL pool init — canonical `stake_vault` + `reward_vault` PDAs, `address = pool.reward_mint` constraint, snapshotted reward rate per stake |
+| `simple-staking` | SOL-only stake/claim with clock-pinned + `emit!` + msg/return-data triple parity |
+| `amm` | Constant-product pool with LP mint + protocol-fee accumulator (post-audit shape) |
+| `multisig` | m-of-n signer enforcement, executor-must-be-owner check |
 | `realloc` / `realloc-grow` | Vec resize with rent-delta accounting |
-| `vesting` | Schedule + cliff + claim math |
+| `vesting` | Schedule + cliff + claim math + close-with-empty-vault precondition |
 
-Plus 18 more covering `bumps_access`, `init_if_needed`, `cpi_custom`, `cpi_memo`, sysvars, return data/err, msg logs, and others. `bun test api/tests/differential-*.test.ts` runs the full set.
+Plus 22 more covering `bumps_access`, `init_if_needed`, `cpi_custom`, `cpi_memo`, sysvars, return data/err, msg logs, T22 extension family (NonTransferable, ImmutableOwner, DefaultAccountState, InterestBearingMint, TokenMetadata, TransferFee), and others. `bun test api/tests/differential-*.test.ts` runs the full set.
 
 Plus 50+ deterministic real-world cargo-build regression gates from `solana-developers/program-examples` and the `coral-xyz/anchor` test corpus.
 
