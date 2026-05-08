@@ -161,15 +161,11 @@ pub mod token_vesting {
             vesting.revoked || vesting.released_amount == vesting.total_amount,
             VestingError::NotCloseable
         );
-        // Require an empty vault before close. This means the user must
-        // call release() (or revoke() for revocable schedules) until the
-        // vault is drained before they can call close. Simplifies the
-        // close handler to a single typed CPI and removes ambiguity about
-        // residual-balance ordering.
-        require!(
-            ctx.accounts.vault.amount == 0,
-            VestingError::VaultNotEmpty,
-        );
+        // Require an empty vault before close. The user must call release()
+        // (or revoke() for revocable schedules) until the vault is drained
+        // before they can call close. Single typed CPI; no residual-balance
+        // ordering ambiguity.
+        require!(ctx.accounts.vault.amount == 0, VestingError::VaultNotEmpty);
 
         // Close the vault token account so its rent-exempt SOL
         // (~0.002 SOL) returns to the grantor instead of being orphaned

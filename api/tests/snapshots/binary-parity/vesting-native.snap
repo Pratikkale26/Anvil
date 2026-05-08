@@ -159,6 +159,19 @@ pub fn close_program_account<'a>(
     Ok(())
 }
 
+/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
+pub fn token_account_amount<'a>(account: &AccountInfo<'a>) -> Result<u64, ProgramError> {
+    let data = account.data.borrow();
+    if data.len() < 72 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(u64::from_le_bytes(
+        data[64..72]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidAccountData)?
+    ))
+}
+
 // Carried from source (transformed for Native)
 pub fn vested_amount(
     total: u64,
@@ -236,8 +249,8 @@ pub fn close(
     if !(vesting.revoked || vesting.released_amount == vesting.total_amount) {
         return Err(VestingError::NotCloseable.into());
     }
-    if !(token_account_amount(vault)? == 0, VestingError::VaultNotEmpty) {
-        return Err(.into());
+    if !(token_account_amount(vault)? == 0) {
+        return Err(VestingError::VaultNotEmpty.into());
     }
     let vesting_key = *vesting_account.key;
     let vault_bump = vesting.vault_bump;

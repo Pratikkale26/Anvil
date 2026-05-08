@@ -146,22 +146,35 @@ export function irNeedsTokenAmountHelper(ir: SolanaIR): boolean {
       )
     );
     if (constraintTrigger) return true;
+    // Scan a body-statement text fragment for `<token-like-account>.amount`
+    // references. Used by both the require/state_field_assign branches
+    // and the pass_through branch below — same gating logic, different
+    // input strings.
+    const refsTokenAmount = (text: string): boolean =>
+      instr.accounts.some((account) => {
+        const accountName = snakeCase(account.name);
+        const tokenLike = account.accountType.includes("TokenAccount")
+          || account.constraints.some((c) => c.kind.startsWith("token::") || c.kind.startsWith("associated_token::"));
+        return tokenLike && new RegExp(`\\b${accountName}\\.amount\\b`).test(text);
+      });
     return instr.body.some((stmt) => {
       switch (stmt.kind) {
         case "cpi_spl_transfer":
         case "cpi_spl_mint_to":
         case "cpi_spl_burn":
           return /\.amount$/.test(stmt.amount);
+        case "require":
+          // require!() / if-guards rewriting `<token>.amount` → helper
+          // call need the helper too (e.g. vesting.rs's
+          // `require!(vault.amount == 0, …)`).
+          return refsTokenAmount(stmt.condition);
+        case "state_field_assign":
+          return refsTokenAmount(stmt.value);
         case "pass_through":
           if (/token::(?:transfer|mint_to|burn)\(/.test(stmt.code) && /\.amount\b/.test(stmt.code)) {
             return true;
           }
-          return instr.accounts.some((account) => {
-            const accountName = snakeCase(account.name);
-            const tokenLike = account.accountType.includes("TokenAccount")
-              || account.constraints.some((constraint) => constraint.kind.startsWith("token::") || constraint.kind.startsWith("associated_token::"));
-            return tokenLike && new RegExp(`\\b${accountName}\\.amount\\b`).test(stmt.code);
-          });
+          return refsTokenAmount(stmt.code);
         default:
           return false;
       }
