@@ -42,7 +42,7 @@ import {
 import { createMintIxs, sendSetupTx } from "./differential-setup-helpers.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "amm.rs");
-const PROGRAM_ID = "AMM111111111111111111111111111111111111111111";
+const PROGRAM_ID = "AMM11111111111111111111111111111111111111111";
 
 defineDifferential({
   fixtureName: "amm",
