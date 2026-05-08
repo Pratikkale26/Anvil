@@ -36,10 +36,17 @@ pub mod vault {
     pub fn withdraw(ctx: Context<VaultAction>, amount: u64) -> Result<()> {
         require!(amount > 0, VaultError::InvalidAmount);
         let vault_state = &ctx.accounts.vault_state;
-        require!(
-            ctx.accounts.vault.lamports() >= amount,
-            VaultError::InsufficientFunds
-        );
+
+        // Enforce a rent-exempt floor so the vault PDA never drops below the
+        // minimum balance required for a 0-data system-owned account. Falling
+        // below that threshold makes the PDA garbage-collectable, which would
+        // delete the bump-state we depend on for future signed transfers.
+        let rent = Rent::get()?;
+        let rent_minimum = rent.minimum_balance(0);
+        let post_balance = ctx.accounts.vault.lamports()
+            .checked_sub(amount)
+            .ok_or(VaultError::InsufficientFunds)?;
+        require!(post_balance >= rent_minimum, VaultError::WouldBreakRentExempt);
 
         let seeds = &[
             b"vault",
@@ -123,6 +130,8 @@ pub enum VaultError {
     InvalidAmount,
     #[msg("Insufficient funds in vault")]
     InsufficientFunds,
+    #[msg("Withdrawal would drop the vault below rent-exempt minimum")]
+    WouldBreakRentExempt,
     #[msg("Arithmetic overflow")]
     Overflow,
     #[msg("Arithmetic underflow")]

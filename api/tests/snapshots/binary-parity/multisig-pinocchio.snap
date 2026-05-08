@@ -179,7 +179,7 @@ pub fn create(
             &[bump_multisig],
         ];
     let init_multisig_signer_seeds = &[&init_multisig_seeds[..]];
-    create_program_account(multisig, payer, (8 + 32 + 4 + 32 * 8 + 1 + 8 + 1) as usize, program_id, init_multisig_signer_seeds)?;
+    create_program_account(multisig, payer, (8 + 4 + 32 * 8 + 1 + 8 + 1) as usize, program_id, init_multisig_signer_seeds)?;
     if !(threshold > 0 && (threshold as usize) <= owners.len()) {
         return Err(MultisigError::InvalidThreshold.into());
     }
@@ -241,6 +241,11 @@ pub fn execute(
     }
     if p.executed {
         return Err(MultisigError::AlreadyExecuted.into());
+    }
+    let executor_key = *executor.key();
+    let is_owner = m.owners.iter().any(|o| o == &executor_key);
+    if !is_owner {
+        return Err(MultisigError::NotAnOwner.into());
     }
     let approval_count: u8 = p.approved.iter().filter(|&&a| a).count() as u8;
     if !(approval_count >= m.threshold) {

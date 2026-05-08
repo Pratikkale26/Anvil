@@ -192,13 +192,7 @@ pub mod marketplace {
 
     pub fn update_fee(ctx: Context<UpdateFee>, new_fee_bps: u16) -> Result<()> {
         require!(new_fee_bps <= 10000, MarketplaceError::InvalidFeeBps);
-        require!(
-            ctx.accounts.marketplace.admin == ctx.accounts.admin.key(),
-            MarketplaceError::Unauthorized
-        );
-
         ctx.accounts.marketplace.fee_bps = new_fee_bps;
-
         Ok(())
     }
 }
@@ -210,7 +204,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = admin,
-        space = 8 + Marketplace::LEN,
+        space = 8 + Marketplace::INIT_SPACE,
         seeds = [b"marketplace"],
         bump
     )]
@@ -243,7 +237,7 @@ pub struct List<'info> {
     #[account(
         init,
         payer = seller,
-        space = 8 + Listing::LEN,
+        space = 8 + Listing::INIT_SPACE,
         seeds = [b"listing", seller.key().as_ref(), &seed.to_le_bytes()],
         bump
     )]
@@ -367,6 +361,7 @@ pub struct Purchase<'info> {
 pub struct UpdateFee<'info> {
     #[account(
         mut,
+        has_one = admin @ MarketplaceError::Unauthorized,
         seeds = [b"marketplace"],
         bump = marketplace.bump,
     )]
@@ -379,6 +374,7 @@ pub struct UpdateFee<'info> {
 // ── State ────────────────────────────────────────────────────────────────────
 
 #[account]
+#[derive(InitSpace)]
 pub struct Marketplace {
     pub admin: Pubkey,
     pub fee_bps: u16,
@@ -387,11 +383,8 @@ pub struct Marketplace {
     pub listing_count: u64,
 }
 
-impl Marketplace {
-    pub const LEN: usize = 32 + 2 + 32 + 1 + 8; // = 75
-}
-
 #[account]
+#[derive(InitSpace)]
 pub struct Listing {
     pub seller: Pubkey,
     pub mint: Pubkey,
@@ -401,10 +394,6 @@ pub struct Listing {
     pub marketplace: Pubkey,
     pub vault: Pubkey,
     pub is_active: bool,
-}
-
-impl Listing {
-    pub const LEN: usize = 32 + 32 + 8 + 8 + 1 + 32 + 32 + 1; // = 146
 }
 
 // ── Errors ───────────────────────────────────────────────────────────────────

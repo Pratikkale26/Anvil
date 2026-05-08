@@ -93,17 +93,7 @@ pub fn visit(
         return Err(ProgramError::InvalidAccountData);
     }
 
-    // Args
-    let mut remaining = data;
-    if remaining.len() < 8 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let (arg_bytes, rest) = remaining.split_at(8);
-    remaining = rest;
-    let ts: i64 = i64::from_le_bytes(
-        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
-    );
-    if !remaining.is_empty() {
+    if !data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -121,6 +111,7 @@ pub fn visit(
         let init_profile_signer_seeds = &[&init_profile_seeds[..]];
         create_program_account(profile, user, (8 + VisitProfile::INIT_SPACE) as u64, program_id, init_profile_signer_seeds)?;
     }
+    let clock = solana_program::sysvar::clock::Clock::get()?;
     let profile_account = profile;
     let mut profile = match VisitProfile::from_account_info(profile_account) {
         Ok(__existing) => __existing,
@@ -132,7 +123,7 @@ pub fn visit(
     };
     profile.user = *user.key;
     profile.visit_count = profile.visit_count.checked_add(1).ok_or(VisitError::Overflow)?;
-    profile.last_visit_ts = ts;
+    profile.last_visit_ts = clock.unix_timestamp;
     VisitProfile::write(&mut profile_account.data.borrow_mut(), &profile)?;
     Ok(())
 
@@ -158,6 +149,7 @@ use solana_program::{
     system_instruction,
     sysvar::Sysvar,
 };
+use solana_program::sysvar::clock::Clock;
 
 mod state;
 

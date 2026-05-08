@@ -75,7 +75,7 @@ pub mod token_vesting {
             vesting.cliff_ts,
             vesting.end_ts,
             now,
-        );
+        )?;
 
         let releasable = vested
             .checked_sub(vesting.released_amount)
@@ -123,7 +123,7 @@ pub mod token_vesting {
             vesting.cliff_ts,
             vesting.end_ts,
             now,
-        );
+        )?;
 
         let unvested = vesting.total_amount
             .checked_sub(vested)
@@ -161,27 +161,35 @@ pub mod token_vesting {
             vesting.revoked || vesting.released_amount == vesting.total_amount,
             VestingError::NotCloseable
         );
+        // Require an empty vault before close. This means the user must
+        // call release() (or revoke() for revocable schedules) until the
+        // vault is drained before they can call close. Simplifies the
+        // close handler to a single typed CPI and removes ambiguity about
+        // residual-balance ordering.
+        require!(
+            ctx.accounts.vault.amount == 0,
+            VestingError::VaultNotEmpty,
+        );
 
-        // vault should be empty at this point — any dust goes back to grantor
-        let vault_balance = ctx.accounts.vault.amount;
-        if vault_balance > 0 {
-            let vesting_key = ctx.accounts.vesting.key();
-            let vault_bump = ctx.accounts.vesting.vault_bump;
-            let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];
-
-            token::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: ctx.accounts.vault.to_account_info(),
-                        to: ctx.accounts.grantor_token_account.to_account_info(),
-                        authority: ctx.accounts.vault.to_account_info(),
-                    },
-                    &[seeds],
-                ),
-                vault_balance,
-            )?;
-        }
+        // Close the vault token account so its rent-exempt SOL
+        // (~0.002 SOL) returns to the grantor instead of being orphaned
+        // forever in a now-empty TokenAccount. Without this CPI the
+        // vault PDA stays alive on-chain after the Vesting state is
+        // closed and its rent is permanently locked.
+        let vesting_key = ctx.accounts.vesting.key();
+        let vault_bump = ctx.accounts.vesting.vault_bump;
+        let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];
+        token::close_account(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                token::CloseAccount {
+                    account: ctx.accounts.vault.to_account_info(),
+                    destination: ctx.accounts.grantor.to_account_info(),
+                    authority: ctx.accounts.vault.to_account_info(),
+                },
+                &[seeds],
+            ),
+        )?;
 
         msg!("Vesting account closed.");
         Ok(())
@@ -194,19 +202,25 @@ fn vested_amount(
     cliff_ts: i64,
     end_ts: i64,
     now: i64,
-) -> u64 {
+) -> Result<u64> {
     if now < cliff_ts {
-        return 0;
+        return Ok(0);
     }
     if now >= end_ts {
-        return total;
+        return Ok(total);
     }
-    let elapsed = (now - start_ts) as u64;
-    let duration = (end_ts - start_ts) as u64;
-    total
+    let elapsed = (now - start_ts) as u128;
+    let duration = (end_ts - start_ts) as u128;
+    // Use u128 intermediate so total*elapsed never overflows; division is
+    // safe because end_ts > start_ts is enforced at create time. Propagate
+    // any conversion failure as ArithmeticOverflow rather than silently
+    // returning 0 and zeroing the legitimate release.
+    let scaled = (total as u128)
         .checked_mul(elapsed)
-        .and_then(|v| v.checked_div(duration))
-        .unwrap_or(0)
+        .ok_or(VestingError::ArithmeticOverflow)?
+        .checked_div(duration)
+        .ok_or(VestingError::ArithmeticOverflow)?;
+    u64::try_from(scaled).map_err(|_| VestingError::ArithmeticOverflow.into())
 }
 
 #[derive(Accounts)]
@@ -218,7 +232,7 @@ pub struct CreateVesting<'info> {
     #[account(
         init,
         payer = grantor,
-        space = 8 + Vesting::LEN,
+        space = 8 + Vesting::INIT_SPACE,
         seeds = [VESTING_SEED, grantor.key().as_ref(), beneficiary.as_ref()],
         bump
     )]
@@ -321,25 +335,22 @@ pub struct Close<'info> {
 }
 
 #[account]
+#[derive(InitSpace)]
 pub struct Vesting {
-    pub grantor: Pubkey,        // 32
-    pub beneficiary: Pubkey,    // 32
-    pub mint: Pubkey,           // 32
-    pub vault: Pubkey,          // 32
-    pub total_amount: u64,      // 8
-    pub released_amount: u64,   // 8
-    pub start_ts: i64,          // 8
-    pub cliff_ts: i64,          // 8
-    pub end_ts: i64,            // 8
-    pub revocable: bool,        // 1
-    pub revoked: bool,          // 1
-    pub created_at: i64,        // 8
-    pub bump: u8,               // 1
-    pub vault_bump: u8,         // 1
-}
-
-impl Vesting {
-    pub const LEN: usize = 32 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 8 + 1 + 1; // 180
+    pub grantor: Pubkey,
+    pub beneficiary: Pubkey,
+    pub mint: Pubkey,
+    pub vault: Pubkey,
+    pub total_amount: u64,
+    pub released_amount: u64,
+    pub start_ts: i64,
+    pub cliff_ts: i64,
+    pub end_ts: i64,
+    pub revocable: bool,
+    pub revoked: bool,
+    pub created_at: i64,
+    pub bump: u8,
+    pub vault_bump: u8,
 }
 
 #[error_code]
@@ -362,6 +373,8 @@ pub enum VestingError {
     VestingRevoked,
     #[msg("Vesting is not closeable yet")]
     NotCloseable,
+    #[msg("Vault must be empty before close — call release/revoke first")]
+    VaultNotEmpty,
     #[msg("Arithmetic overflow")]
     ArithmeticOverflow,
 }

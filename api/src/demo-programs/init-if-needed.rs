@@ -18,11 +18,18 @@ declare_id!("initifneeded1111111111111111111111111111111");
 pub mod init_if_needed_demo {
     use super::*;
 
-    pub fn visit(ctx: Context<Visit>, ts: i64) -> Result<()> {
+    pub fn visit(ctx: Context<Visit>) -> Result<()> {
+        // Use the on-chain clock as the timestamp source. The previous
+        // version accepted a `ts: i64` arg, which trusted client input —
+        // production programs must read Clock::get() so timestamps reflect
+        // actual block time, not whatever the caller wants to claim.
+        // Differential tests pin the LiteSVM clock so both Anchor and
+        // Anvil runs read the same value byte-for-byte.
+        let clock = Clock::get()?;
         let profile = &mut ctx.accounts.profile;
         profile.user = ctx.accounts.user.key();
         profile.visit_count = profile.visit_count.checked_add(1).ok_or(VisitError::Overflow)?;
-        profile.last_visit_ts = ts;
+        profile.last_visit_ts = clock.unix_timestamp;
         Ok(())
     }
 }

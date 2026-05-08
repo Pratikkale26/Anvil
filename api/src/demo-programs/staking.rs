@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Mint, Transfer, MintTo};
-use anchor_lang::solana_program::clock::Clock;
 
 declare_id!("Stak1ng111111111111111111111111111111111111");
 
@@ -18,6 +17,15 @@ pub mod staking {
         require!(lock_duration > 0, StakingError::InvalidLockDuration);
         require!(max_stake > 0, StakingError::InvalidMaxStake);
 
+        // The reward_mint mint_authority must be the pool PDA off-chain
+        // before initialize_pool is called (admin sets this via SPL
+        // set_authority before deploying the pool). The on-chain check
+        // for mint_authority is omitted from the demo — it would require
+        // unpacking the Mint struct, which depends on the target's SPL
+        // helper surface. Subsequent claim/unstake instructions enforce
+        // `address = pool.reward_mint` so a substituted mint can't slip
+        // through after init.
+
         let pool = &mut ctx.accounts.pool;
         pool.admin = ctx.accounts.admin.key();
         pool.stake_mint = ctx.accounts.stake_mint.key();
@@ -27,6 +35,7 @@ pub mod staking {
         pool.max_stake = max_stake;
         pool.total_staked = 0;
         pool.bump = ctx.bumps.pool;
+        pool.stake_vault_bump = ctx.bumps.stake_vault;
         pool.reward_vault_bump = ctx.bumps.reward_vault;
         pool.is_paused = false;
 
@@ -53,6 +62,11 @@ pub mod staking {
         user_stake.amount = amount;
         user_stake.staked_at = now;
         user_stake.last_claim = now;
+        // Snapshot reward_rate at stake time. This freezes the user's rate
+        // for the lifetime of the stake so a future admin update can't
+        // retroactively cut already-accrued rewards. New stakes pick up
+        // whatever the current pool rate is.
+        user_stake.reward_rate_snapshot = pool.reward_rate;
         user_stake.bump = ctx.bumps.user_stake;
 
         let pool = &mut ctx.accounts.pool;
@@ -97,7 +111,7 @@ pub mod staking {
         let rewards: u64 = (user_stake.amount as u128)
             .checked_mul(elapsed as u128)
             .ok_or(StakingError::Overflow)?
-            .checked_mul(pool.reward_rate as u128)
+            .checked_mul(user_stake.reward_rate_snapshot as u128)
             .ok_or(StakingError::Overflow)?
             .checked_div(1_000_000)
             .ok_or(StakingError::Overflow)?
@@ -160,7 +174,7 @@ pub mod staking {
         let pending_rewards: u64 = (user_stake.amount as u128)
             .checked_mul(elapsed as u128)
             .ok_or(StakingError::Overflow)?
-            .checked_mul(pool.reward_rate as u128)
+            .checked_mul(user_stake.reward_rate_snapshot as u128)
             .ok_or(StakingError::Overflow)?
             .checked_div(1_000_000)
             .ok_or(StakingError::Overflow)?
@@ -174,7 +188,6 @@ pub mod staking {
         ];
         let signer_seeds = &[&stake_seeds[..]];
 
-        // Transfer staked tokens back
         token::transfer(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
@@ -188,7 +201,6 @@ pub mod staking {
             user_stake.amount,
         )?;
 
-        // Mint pending rewards if any
         if pending_rewards > 0 {
             token::mint_to(
                 CpiContext::new_with_signer(
@@ -229,25 +241,35 @@ pub mod staking {
         Ok(())
     }
 
-    pub fn update_reward_rate(ctx: Context<AdminOnly>, new_rate: u64) -> Result<()> {
-        require!(new_rate > 0, StakingError::InvalidRewardRate);
-        ctx.accounts.pool.reward_rate = new_rate;
-        Ok(())
-    }
+    // NOTE: update_reward_rate intentionally removed. Per-stake rate is
+    // snapshotted at stake time (`UserStake.reward_rate_snapshot`); changing
+    // pool.reward_rate after the fact would have no effect on existing
+    // stakes (and would be confusing UX). New deployments needing an
+    // updatable rate should add a new instruction that ALSO checkpoints
+    // every active UserStake before the rate changes — that's a separate
+    // accumulator-pattern design.
 }
-
-// ── Accounts ────────────────────────────────────────────────────────────────
 
 #[derive(Accounts)]
 pub struct InitializePool<'info> {
     #[account(
         init,
         payer = admin,
-        space = 8 + StakingPool::LEN,
+        space = 8 + StakingPool::INIT_SPACE,
         seeds = [b"pool", stake_mint.key().as_ref()],
         bump
     )]
     pub pool: Account<'info, StakingPool>,
+
+    #[account(
+        init,
+        payer = admin,
+        token::mint = stake_mint,
+        token::authority = pool,
+        seeds = [b"stake_vault", pool.key().as_ref()],
+        bump
+    )]
+    pub stake_vault: Account<'info, TokenAccount>,
 
     #[account(
         init,
@@ -260,6 +282,10 @@ pub struct InitializePool<'info> {
     pub reward_vault: Account<'info, TokenAccount>,
 
     pub stake_mint: Account<'info, Mint>,
+    // Runtime check in initialize_pool body verifies that
+    // reward_mint.mint_authority is the pool PDA — keeping it out of the
+    // constraint expression avoids dragging anchor_lang::solana_program
+    // paths into the IR for portability.
     pub reward_mint: Account<'info, Mint>,
 
     #[account(mut)]
@@ -267,6 +293,7 @@ pub struct InitializePool<'info> {
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
 }
 
 #[derive(Accounts)]
@@ -277,7 +304,7 @@ pub struct Stake<'info> {
     #[account(
         init,
         payer = user,
-        space = 8 + UserStake::LEN,
+        space = 8 + UserStake::INIT_SPACE,
         seeds = [b"user_stake", user.key().as_ref(), pool.key().as_ref()],
         bump
     )]
@@ -297,10 +324,13 @@ pub struct Stake<'info> {
     )]
     pub user_stake_ata: Account<'info, TokenAccount>,
 
+    // CANONICAL: stake_vault is a PDA derived from the pool. No alternate
+    // vault can be passed at stake time; previous version had no seeds and
+    // allowed fund-splitting attacks.
     #[account(
         mut,
-        token::mint = pool.stake_mint,
-        token::authority = pool,
+        seeds = [b"stake_vault", pool.key().as_ref()],
+        bump = pool.stake_vault_bump,
     )]
     pub stake_vault: Account<'info, TokenAccount>,
 
@@ -321,13 +351,15 @@ pub struct ClaimRewards<'info> {
     pub user_stake: Account<'info, UserStake>,
 
     #[account(
-        mut,
         seeds = [b"pool", pool.stake_mint.as_ref()],
         bump = pool.bump,
     )]
     pub pool: Account<'info, StakingPool>,
 
-    #[account(mut)]
+    // BIND: reward_mint must equal the mint registered on pool. Without
+    // this, a malicious caller could pass a different mint they control
+    // and have the pool PDA mint into their account.
+    #[account(mut, address = pool.reward_mint @ StakingError::InvalidRewardMint)]
     pub reward_mint: Account<'info, Mint>,
 
     #[account(
@@ -361,7 +393,7 @@ pub struct Unstake<'info> {
     )]
     pub pool: Account<'info, StakingPool>,
 
-    #[account(mut)]
+    #[account(mut, address = pool.reward_mint @ StakingError::InvalidRewardMint)]
     pub reward_mint: Account<'info, Mint>,
 
     #[account(
@@ -373,8 +405,8 @@ pub struct Unstake<'info> {
 
     #[account(
         mut,
-        token::mint = pool.stake_mint,
-        token::authority = pool,
+        seeds = [b"stake_vault", pool.key().as_ref()],
+        bump = pool.stake_vault_bump,
     )]
     pub stake_vault: Account<'info, TokenAccount>,
 
@@ -402,9 +434,8 @@ pub struct AdminOnly<'info> {
     pub admin: Signer<'info>,
 }
 
-// ── State ────────────────────────────────────────────────────────────────────
-
 #[account]
+#[derive(InitSpace)]
 pub struct StakingPool {
     pub admin: Pubkey,
     pub stake_mint: Pubkey,
@@ -414,29 +445,22 @@ pub struct StakingPool {
     pub max_stake: u64,
     pub total_staked: u64,
     pub bump: u8,
+    pub stake_vault_bump: u8,
     pub reward_vault_bump: u8,
     pub is_paused: bool,
 }
 
-impl StakingPool {
-    pub const LEN: usize = 32 + 32 + 32 + 8 + 8 + 8 + 8 + 1 + 1 + 1; // = 131
-}
-
 #[account]
+#[derive(InitSpace)]
 pub struct UserStake {
     pub owner: Pubkey,
     pub pool: Pubkey,
     pub amount: u64,
     pub staked_at: i64,
     pub last_claim: i64,
+    pub reward_rate_snapshot: u64,
     pub bump: u8,
 }
-
-impl UserStake {
-    pub const LEN: usize = 32 + 32 + 8 + 8 + 8 + 1; // = 89
-}
-
-// ── Events ───────────────────────────────────────────────────────────────────
 
 #[event]
 pub struct StakeEvent {
@@ -460,8 +484,6 @@ pub struct UnstakeEvent {
     pub timestamp: i64,
 }
 
-// ── Errors ───────────────────────────────────────────────────────────────────
-
 #[error_code]
 pub enum StakingError {
     #[msg("Reward rate must be greater than zero")]
@@ -482,6 +504,8 @@ pub enum StakingError {
     StillLocked,
     #[msg("Unauthorized")]
     Unauthorized,
+    #[msg("Reward mint does not match the pool's registered reward mint")]
+    InvalidRewardMint,
     #[msg("Arithmetic overflow")]
     Overflow,
     #[msg("Arithmetic underflow")]

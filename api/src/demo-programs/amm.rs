@@ -27,11 +27,13 @@ pub mod amm {
         pool.lp_supply = 0;
         pool.total_fees_a = 0;
         pool.total_fees_b = 0;
+        pool.protocol_fees_a = 0;
+        pool.protocol_fees_b = 0;
+        pool.protocol_fee_rate = 2000;
         pool.bump = ctx.bumps.pool;
         pool.vault_a_bump = ctx.bumps.vault_a;
         pool.vault_b_bump = ctx.bumps.vault_b;
         pool.is_frozen = false;
-        pool.protocol_fee_rate = 2000;
 
         Ok(())
     }
@@ -365,6 +367,12 @@ pub mod amm {
             pool.total_fees_a = pool.total_fees_a
                 .checked_add(lp_fee)
                 .ok_or(AmmError::Overflow)?;
+            // Track protocol fees explicitly. The vault holds the full
+            // amount_in including this protocol_fee; without an accumulator,
+            // protocol fees become unwithdrawable dust silently diluting LPs.
+            pool.protocol_fees_a = pool.protocol_fees_a
+                .checked_add(protocol_fee)
+                .ok_or(AmmError::Overflow)?;
         } else {
             pool.reserve_b = pool.reserve_b
                 .checked_add(amount_in_after_fee)
@@ -376,6 +384,9 @@ pub mod amm {
                 .ok_or(AmmError::Underflow)?;
             pool.total_fees_b = pool.total_fees_b
                 .checked_add(lp_fee)
+                .ok_or(AmmError::Overflow)?;
+            pool.protocol_fees_b = pool.protocol_fees_b
+                .checked_add(protocol_fee)
                 .ok_or(AmmError::Overflow)?;
         }
 
@@ -391,30 +402,72 @@ pub mod amm {
     }
 
     pub fn freeze_pool(ctx: Context<AdminOnly>) -> Result<()> {
-        require!(
-            ctx.accounts.pool.admin == ctx.accounts.admin.key(),
-            AmmError::Unauthorized
-        );
         ctx.accounts.pool.is_frozen = true;
         Ok(())
     }
 
     pub fn unfreeze_pool(ctx: Context<AdminOnly>) -> Result<()> {
-        require!(
-            ctx.accounts.pool.admin == ctx.accounts.admin.key(),
-            AmmError::Unauthorized
-        );
         ctx.accounts.pool.is_frozen = false;
         Ok(())
     }
 
     pub fn update_fee_rate(ctx: Context<AdminOnly>, new_fee_rate: u64) -> Result<()> {
-        require!(
-            ctx.accounts.pool.admin == ctx.accounts.admin.key(),
-            AmmError::Unauthorized
-        );
         require!(new_fee_rate <= 10000, AmmError::InvalidFeeRate);
         ctx.accounts.pool.fee_rate = new_fee_rate;
+        Ok(())
+    }
+
+    /// Withdraw accumulated protocol fees to a token account chosen by admin.
+    /// Drains `pool.protocol_fees_a` and `pool.protocol_fees_b` to the
+    /// supplied admin destination accounts. Without this, protocol-fee
+    /// share of every swap remained as untracked dust in the vaults.
+    pub fn withdraw_protocol_fees(ctx: Context<WithdrawProtocolFees>) -> Result<()> {
+        let pool = &ctx.accounts.pool;
+        let pool_seeds = &[
+            b"pool",
+            pool.token_mint_a.as_ref(),
+            pool.token_mint_b.as_ref(),
+            &[pool.bump],
+        ];
+        let signer_seeds = &[&pool_seeds[..]];
+
+        let amount_a = pool.protocol_fees_a;
+        let amount_b = pool.protocol_fees_b;
+        require!(amount_a > 0 || amount_b > 0, AmmError::NoProtocolFees);
+
+        if amount_a > 0 {
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.vault_a.to_account_info(),
+                        to: ctx.accounts.admin_token_a.to_account_info(),
+                        authority: ctx.accounts.pool.to_account_info(),
+                    },
+                    signer_seeds,
+                ),
+                amount_a,
+            )?;
+        }
+
+        if amount_b > 0 {
+            token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.vault_b.to_account_info(),
+                        to: ctx.accounts.admin_token_b.to_account_info(),
+                        authority: ctx.accounts.pool.to_account_info(),
+                    },
+                    signer_seeds,
+                ),
+                amount_b,
+            )?;
+        }
+
+        let pool = &mut ctx.accounts.pool;
+        pool.protocol_fees_a = 0;
+        pool.protocol_fees_b = 0;
         Ok(())
     }
 }
@@ -426,7 +479,7 @@ pub struct InitializePool<'info> {
     #[account(
         init,
         payer = admin,
-        space = 8 + AmmPool::LEN,
+        space = 8 + AmmPool::INIT_SPACE,
         seeds = [b"pool", token_mint_a.key().as_ref(), token_mint_b.key().as_ref()],
         bump
     )]
@@ -576,6 +629,7 @@ pub struct Swap<'info> {
 pub struct AdminOnly<'info> {
     #[account(
         mut,
+        has_one = admin @ AmmError::Unauthorized,
         seeds = [b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()],
         bump = pool.bump,
     )]
@@ -585,9 +639,38 @@ pub struct AdminOnly<'info> {
     pub admin: Signer<'info>,
 }
 
+#[derive(Accounts)]
+pub struct WithdrawProtocolFees<'info> {
+    #[account(
+        mut,
+        has_one = admin @ AmmError::Unauthorized,
+        seeds = [b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()],
+        bump = pool.bump,
+    )]
+    pub pool: Account<'info, AmmPool>,
+
+    #[account(mut, seeds = [b"vault_a", pool.key().as_ref()], bump = pool.vault_a_bump)]
+    pub vault_a: Account<'info, TokenAccount>,
+
+    #[account(mut, seeds = [b"vault_b", pool.key().as_ref()], bump = pool.vault_b_bump)]
+    pub vault_b: Account<'info, TokenAccount>,
+
+    #[account(mut, token::mint = pool.token_mint_a, token::authority = admin)]
+    pub admin_token_a: Account<'info, TokenAccount>,
+
+    #[account(mut, token::mint = pool.token_mint_b, token::authority = admin)]
+    pub admin_token_b: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub admin: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
 // ── State ────────────────────────────────────────────────────────────────────
 
 #[account]
+#[derive(InitSpace)]
 pub struct AmmPool {
     pub admin: Pubkey,
     pub token_mint_a: Pubkey,
@@ -600,15 +683,13 @@ pub struct AmmPool {
     pub lp_supply: u64,
     pub total_fees_a: u64,
     pub total_fees_b: u64,
+    pub protocol_fees_a: u64,
+    pub protocol_fees_b: u64,
+    pub protocol_fee_rate: u64,
     pub bump: u8,
     pub vault_a_bump: u8,
     pub vault_b_bump: u8,
     pub is_frozen: bool,
-    pub protocol_fee_rate: u64,
-}
-
-impl AmmPool {
-    pub const LEN: usize = 32 + 32 + 32 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1 + 1 + 1 + 8; // = 196
 }
 
 // ── Events ───────────────────────────────────────────────────────────────────
@@ -656,6 +737,8 @@ pub enum AmmError {
     InsufficientLiquidity,
     #[msg("Unauthorized")]
     Unauthorized,
+    #[msg("No protocol fees accrued")]
+    NoProtocolFees,
     #[msg("Arithmetic overflow")]
     Overflow,
     #[msg("Arithmetic underflow")]

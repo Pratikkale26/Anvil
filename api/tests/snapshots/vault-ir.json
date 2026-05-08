@@ -32,9 +32,9 @@
             }
           ],
           "loc": {
-            "line": 77,
+            "line": 84,
             "column": 4,
-            "endLine": 77,
+            "endLine": 84,
             "endColumn": 47
           }
         },
@@ -63,9 +63,9 @@
             }
           ],
           "loc": {
-            "line": 84,
+            "line": 91,
             "column": 4,
-            "endLine": 84,
+            "endLine": 91,
             "endColumn": 38
           }
         },
@@ -84,9 +84,9 @@
             }
           ],
           "loc": {
-            "line": 86,
+            "line": 93,
             "column": 4,
-            "endLine": 86,
+            "endLine": 93,
             "endColumn": 32
           }
         },
@@ -101,9 +101,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 87,
+            "line": 94,
             "column": 4,
-            "endLine": 87,
+            "endLine": 94,
             "endColumn": 46
           }
         }
@@ -220,9 +220,9 @@
             }
           ],
           "loc": {
-            "line": 98,
+            "line": 105,
             "column": 4,
-            "endLine": 98,
+            "endLine": 105,
             "endColumn": 47
           }
         },
@@ -252,9 +252,9 @@
             }
           ],
           "loc": {
-            "line": 105,
+            "line": 112,
             "column": 4,
-            "endLine": 105,
+            "endLine": 112,
             "endColumn": 38
           }
         },
@@ -273,9 +273,9 @@
             }
           ],
           "loc": {
-            "line": 107,
+            "line": 114,
             "column": 4,
-            "endLine": 107,
+            "endLine": 114,
             "endColumn": 32
           }
         },
@@ -290,9 +290,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 108,
+            "line": 115,
             "column": 4,
-            "endLine": 108,
+            "endLine": 115,
             "endColumn": 46
           }
         }
@@ -401,9 +401,9 @@
             }
           ],
           "loc": {
-            "line": 98,
+            "line": 105,
             "column": 4,
-            "endLine": 98,
+            "endLine": 105,
             "endColumn": 47
           }
         },
@@ -433,9 +433,9 @@
             }
           ],
           "loc": {
-            "line": 105,
+            "line": 112,
             "column": 4,
-            "endLine": 105,
+            "endLine": 112,
             "endColumn": 38
           }
         },
@@ -454,9 +454,9 @@
             }
           ],
           "loc": {
-            "line": 107,
+            "line": 114,
             "column": 4,
-            "endLine": 107,
+            "endLine": 114,
             "endColumn": 32
           }
         },
@@ -471,9 +471,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 108,
+            "line": 115,
             "column": 4,
-            "endLine": 108,
+            "endLine": 115,
             "endColumn": 46
           }
         }
@@ -498,9 +498,24 @@
           "accountType": "VaultState"
         },
         {
+          "kind": "sysvar_rent",
+          "localVar": "rent",
+          "code": "let rent = Rent::get()?;"
+        },
+        {
+          "kind": "pass_through",
+          "code": "let rent_minimum = rent.minimum_balance(0);",
+          "needsReview": false
+        },
+        {
+          "kind": "pass_through",
+          "code": "let post_balance = ctx.accounts.vault.lamports()\n            .checked_sub(amount)\n            .ok_or(VaultError::InsufficientFunds)?;",
+          "needsReview": false
+        },
+        {
           "kind": "require",
-          "condition": "ctx.accounts.vault.lamports() >= amount",
-          "error": "VaultError::InsufficientFunds"
+          "condition": "post_balance >= rent_minimum",
+          "error": "VaultError::WouldBreakRentExempt"
         },
         {
           "kind": "pda_signer_seeds",
@@ -552,43 +567,61 @@
           "endColumn": 52
         },
         {
-          "line": 39,
+          "line": 44,
           "column": 8,
-          "endLine": 42,
-          "endColumn": 10
+          "endLine": 44,
+          "endColumn": 32
+        },
+        {
+          "line": 45,
+          "column": 8,
+          "endLine": 45,
+          "endColumn": 51
+        },
+        {
+          "line": 46,
+          "column": 8,
+          "endLine": 48,
+          "endColumn": 51
         },
         {
           "line": 49,
           "column": 8,
           "endLine": 49,
+          "endColumn": 81
+        },
+        {
+          "line": 56,
+          "column": 8,
+          "endLine": 56,
           "endColumn": 41
         },
         {
-          "line": 59,
+          "line": 66,
           "column": 8,
-          "endLine": 59,
+          "endLine": 66,
           "endColumn": 64
         },
         {
-          "line": 61,
+          "line": 68,
           "column": 8,
-          "endLine": 61,
+          "endLine": 68,
           "endColumn": 56
         },
         {
-          "line": 62,
+          "line": 69,
           "column": 8,
-          "endLine": 63,
+          "endLine": 70,
           "endColumn": 43
         },
         {
-          "line": 64,
+          "line": 71,
           "column": 8,
-          "endLine": 64,
+          "endLine": 71,
           "endColumn": 14
         }
       ],
-      "rawBody": "{\n        require!(amount > 0, VaultError::InvalidAmount);\n        let vault_state = &ctx.accounts.vault_state;\n        require!(\n            ctx.accounts.vault.lamports() >= amount,\n            VaultError::InsufficientFunds\n        );\n\n        let seeds = &[\n            b\"vault\",\n            vault_state.authority.as_ref(),\n            &[vault_state.vault_bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        let cpi_ctx = CpiContext::new_with_signer(\n            ctx.accounts.system_program.to_account_info(),\n            anchor_lang::system_program::Transfer {\n                from: ctx.accounts.vault.to_account_info(),\n                to: ctx.accounts.authority.to_account_info(),\n            },\n            signer_seeds,\n        );\n        anchor_lang::system_program::transfer(cpi_ctx, amount)?;\n\n        let vault_state = &mut ctx.accounts.vault_state;\n        vault_state.total_deposited = vault_state.total_deposited.checked_sub(amount)\n            .ok_or(VaultError::Underflow)?;\n        Ok(())\n    }"
+      "rawBody": "{\n        require!(amount > 0, VaultError::InvalidAmount);\n        let vault_state = &ctx.accounts.vault_state;\n\n        // Enforce a rent-exempt floor so the vault PDA never drops below the\n        // minimum balance required for a 0-data system-owned account. Falling\n        // below that threshold makes the PDA garbage-collectable, which would\n        // delete the bump-state we depend on for future signed transfers.\n        let rent = Rent::get()?;\n        let rent_minimum = rent.minimum_balance(0);\n        let post_balance = ctx.accounts.vault.lamports()\n            .checked_sub(amount)\n            .ok_or(VaultError::InsufficientFunds)?;\n        require!(post_balance >= rent_minimum, VaultError::WouldBreakRentExempt);\n\n        let seeds = &[\n            b\"vault\",\n            vault_state.authority.as_ref(),\n            &[vault_state.vault_bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        let cpi_ctx = CpiContext::new_with_signer(\n            ctx.accounts.system_program.to_account_info(),\n            anchor_lang::system_program::Transfer {\n                from: ctx.accounts.vault.to_account_info(),\n                to: ctx.accounts.authority.to_account_info(),\n            },\n            signer_seeds,\n        );\n        anchor_lang::system_program::transfer(cpi_ctx, amount)?;\n\n        let vault_state = &mut ctx.accounts.vault_state;\n        vault_state.total_deposited = vault_state.total_deposited.checked_sub(amount)\n            .ok_or(VaultError::Underflow)?;\n        Ok(())\n    }"
     }
   ],
   "accounts": [
@@ -630,11 +663,16 @@
     },
     {
       "code": 6002,
+      "name": "WouldBreakRentExempt",
+      "msg": "Withdrawal would drop the vault below rent-exempt minimum"
+    },
+    {
+      "code": 6003,
       "name": "Overflow",
       "msg": "Arithmetic overflow"
     },
     {
-      "code": 6003,
+      "code": 6004,
       "name": "Underflow",
       "msg": "Arithmetic underflow"
     }

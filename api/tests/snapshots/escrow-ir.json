@@ -20,9 +20,9 @@
             }
           ],
           "loc": {
-            "line": 136,
+            "line": 138,
             "column": 4,
-            "endLine": 136,
+            "endLine": 138,
             "endColumn": 28
           }
         },
@@ -37,9 +37,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 137,
+            "line": 139,
             "column": 4,
-            "endLine": 137,
+            "endLine": 139,
             "endColumn": 55
           }
         },
@@ -54,9 +54,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 138,
+            "line": 140,
             "column": 4,
-            "endLine": 138,
+            "endLine": 140,
             "endColumn": 55
           }
         },
@@ -83,9 +83,9 @@
             }
           ],
           "loc": {
-            "line": 144,
+            "line": 146,
             "column": 4,
-            "endLine": 144,
+            "endLine": 146,
             "endColumn": 68
           }
         },
@@ -117,9 +117,9 @@
             }
           ],
           "loc": {
-            "line": 152,
+            "line": 154,
             "column": 4,
-            "endLine": 152,
+            "endLine": 154,
             "endColumn": 38
           }
         },
@@ -130,8 +130,11 @@
           "isMut": true,
           "isInit": true,
           "isOptional": false,
-          "isPda": false,
-          "pdaSeeds": [],
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"vault\"",
+            "escrow.key().as_ref()"
+          ],
           "initPayer": "maker",
           "constraints": [
             {
@@ -144,12 +147,19 @@
             {
               "kind": "token::authority",
               "value": "escrow"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"vault\", escrow.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
             }
           ],
           "loc": {
-            "line": 159,
+            "line": 163,
             "column": 4,
-            "endLine": 159,
+            "endLine": 163,
             "endColumn": 62
           }
         },
@@ -164,9 +174,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 160,
+            "line": 164,
             "column": 4,
-            "endLine": 160,
+            "endLine": 164,
             "endColumn": 46
           }
         },
@@ -181,9 +191,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 161,
+            "line": 165,
             "column": 4,
-            "endLine": 161,
+            "endLine": 165,
             "endColumn": 63
           }
         },
@@ -198,10 +208,27 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 162,
+            "line": 166,
             "column": 4,
-            "endLine": 162,
+            "endLine": 166,
             "endColumn": 95
+          }
+        },
+        {
+          "name": "rent",
+          "accountType": "Sysvar<'info, Rent>",
+          "isSigner": false,
+          "isMut": false,
+          "isInit": false,
+          "isOptional": false,
+          "isPda": false,
+          "pdaSeeds": [],
+          "constraints": [],
+          "loc": {
+            "line": 167,
+            "column": 4,
+            "endLine": 167,
+            "endColumn": 33
           }
         }
       ],
@@ -220,6 +247,16 @@
         }
       ],
       "body": [
+        {
+          "kind": "require",
+          "condition": "deposit_amount > 0",
+          "error": "EscrowError::InvalidAmount"
+        },
+        {
+          "kind": "require",
+          "condition": "receive_amount > 0",
+          "error": "EscrowError::InvalidAmount"
+        },
         {
           "kind": "state_read",
           "account": "escrow",
@@ -244,6 +281,12 @@
           "account": "escrow",
           "field": "mint_b",
           "value": "ctx.accounts.mint_b.key()"
+        },
+        {
+          "kind": "state_field_assign",
+          "account": "escrow",
+          "field": "deposit_amount",
+          "value": "deposit_amount"
         },
         {
           "kind": "state_field_assign",
@@ -282,58 +325,76 @@
           "line": 15,
           "column": 8,
           "endLine": 15,
-          "endColumn": 46
+          "endColumn": 65
         },
         {
           "line": 16,
           "column": 8,
           "endLine": 16,
-          "endColumn": 48
-        },
-        {
-          "line": 17,
-          "column": 8,
-          "endLine": 17,
-          "endColumn": 50
+          "endColumn": 65
         },
         {
           "line": 18,
           "column": 8,
           "endLine": 18,
-          "endColumn": 50
+          "endColumn": 46
         },
         {
           "line": 19,
           "column": 8,
           "endLine": 19,
-          "endColumn": 47
+          "endColumn": 48
         },
         {
           "line": 20,
           "column": 8,
           "endLine": 20,
-          "endColumn": 27
+          "endColumn": 50
         },
         {
           "line": 21,
           "column": 8,
           "endLine": 21,
-          "endColumn": 39
+          "endColumn": 50
+        },
+        {
+          "line": 22,
+          "column": 8,
+          "endLine": 22,
+          "endColumn": 47
+        },
+        {
+          "line": 23,
+          "column": 8,
+          "endLine": 23,
+          "endColumn": 47
         },
         {
           "line": 24,
           "column": 8,
-          "endLine": 34,
+          "endLine": 24,
+          "endColumn": 27
+        },
+        {
+          "line": 25,
+          "column": 8,
+          "endLine": 25,
+          "endColumn": 39
+        },
+        {
+          "line": 27,
+          "column": 8,
+          "endLine": 37,
           "endColumn": 11
         },
         {
-          "line": 35,
+          "line": 38,
           "column": 8,
-          "endLine": 35,
+          "endLine": 38,
           "endColumn": 14
         }
       ],
-      "rawBody": "{\n        let escrow = &mut ctx.accounts.escrow;\n        escrow.maker = ctx.accounts.maker.key();\n        escrow.mint_a = ctx.accounts.mint_a.key();\n        escrow.mint_b = ctx.accounts.mint_b.key();\n        escrow.receive_amount = receive_amount;\n        escrow.seed = seed;\n        escrow.bump = ctx.bumps.escrow;\n\n        // Transfer tokens from maker to vault\n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.maker_ata_a.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.maker.to_account_info(),\n                },\n            ),\n            deposit_amount,\n        )?;\n        Ok(())\n    }"
+      "rawBody": "{\n        require!(deposit_amount > 0, EscrowError::InvalidAmount);\n        require!(receive_amount > 0, EscrowError::InvalidAmount);\n\n        let escrow = &mut ctx.accounts.escrow;\n        escrow.maker = ctx.accounts.maker.key();\n        escrow.mint_a = ctx.accounts.mint_a.key();\n        escrow.mint_b = ctx.accounts.mint_b.key();\n        escrow.deposit_amount = deposit_amount;\n        escrow.receive_amount = receive_amount;\n        escrow.seed = seed;\n        escrow.bump = ctx.bumps.escrow;\n\n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.maker_ata_a.to_account_info(),\n                    to: ctx.accounts.vault.to_account_info(),\n                    authority: ctx.accounts.maker.to_account_info(),\n                },\n            ),\n            deposit_amount,\n        )?;\n        Ok(())\n    }"
     },
     {
       "name": "accept_escrow",
@@ -353,9 +414,9 @@
             }
           ],
           "loc": {
-            "line": 168,
+            "line": 173,
             "column": 4,
-            "endLine": 168,
+            "endLine": 173,
             "endColumn": 28
           }
         },
@@ -363,16 +424,20 @@
           "name": "maker",
           "accountType": "SystemAccount",
           "isSigner": false,
-          "isMut": false,
+          "isMut": true,
           "isInit": false,
           "isOptional": false,
           "isPda": false,
           "pdaSeeds": [],
-          "constraints": [],
+          "constraints": [
+            {
+              "kind": "mut"
+            }
+          ],
           "loc": {
-            "line": 169,
+            "line": 175,
             "column": 4,
-            "endLine": 169,
+            "endLine": 175,
             "endColumn": 35
           }
         },
@@ -387,9 +452,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 170,
+            "line": 176,
             "column": 4,
-            "endLine": 170,
+            "endLine": 176,
             "endColumn": 55
           }
         },
@@ -404,9 +469,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 171,
+            "line": 177,
             "column": 4,
-            "endLine": 171,
+            "endLine": 177,
             "endColumn": 55
           }
         },
@@ -433,9 +498,9 @@
             }
           ],
           "loc": {
-            "line": 177,
+            "line": 183,
             "column": 4,
-            "endLine": 177,
+            "endLine": 183,
             "endColumn": 68
           }
         },
@@ -463,9 +528,9 @@
             }
           ],
           "loc": {
-            "line": 184,
+            "line": 190,
             "column": 4,
-            "endLine": 184,
+            "endLine": 190,
             "endColumn": 68
           }
         },
@@ -493,9 +558,9 @@
             }
           ],
           "loc": {
-            "line": 191,
+            "line": 197,
             "column": 4,
-            "endLine": 191,
+            "endLine": 197,
             "endColumn": 68
           }
         },
@@ -542,9 +607,9 @@
             }
           ],
           "loc": {
-            "line": 201,
+            "line": 207,
             "column": 4,
-            "endLine": 201,
+            "endLine": 207,
             "endColumn": 38
           }
         },
@@ -555,8 +620,11 @@
           "isMut": true,
           "isInit": false,
           "isOptional": false,
-          "isPda": false,
-          "pdaSeeds": [],
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"vault\"",
+            "escrow.key().as_ref()"
+          ],
           "constraints": [
             {
               "kind": "mut"
@@ -568,12 +636,19 @@
             {
               "kind": "token::authority",
               "value": "escrow"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"vault\", escrow.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
             }
           ],
           "loc": {
-            "line": 207,
+            "line": 215,
             "column": 4,
-            "endLine": 207,
+            "endLine": 215,
             "endColumn": 62
           }
         },
@@ -588,9 +663,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 208,
+            "line": 216,
             "column": 4,
-            "endLine": 208,
+            "endLine": 216,
             "endColumn": 46
           }
         },
@@ -605,9 +680,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 209,
+            "line": 217,
             "column": 4,
-            "endLine": 209,
+            "endLine": 217,
             "endColumn": 63
           }
         },
@@ -622,9 +697,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 210,
+            "line": 218,
             "column": 4,
-            "endLine": 210,
+            "endLine": 218,
             "endColumn": 95
           }
         }
@@ -663,7 +738,7 @@
           "from": "vault",
           "to": "taker_ata_a",
           "authority": "escrow",
-          "amount": "vault.amount",
+          "amount": "escrow.deposit_amount",
           "signerSeeds": "signer_seeds",
           "tokenProgram": "token"
         },
@@ -683,27 +758,27 @@
       ],
       "bodyLocs": [
         {
-          "line": 39,
+          "line": 42,
           "column": 8,
-          "endLine": 39,
+          "endLine": 42,
           "endColumn": 42
-        },
-        {
-          "line": 46,
-          "column": 8,
-          "endLine": 46,
-          "endColumn": 41
         },
         {
           "line": 49,
           "column": 8,
-          "endLine": 59,
+          "endLine": 49,
+          "endColumn": 41
+        },
+        {
+          "line": 51,
+          "column": 8,
+          "endLine": 61,
           "endColumn": 11
         },
         {
-          "line": 62,
+          "line": 63,
           "column": 8,
-          "endLine": 73,
+          "endLine": 74,
           "endColumn": 11
         },
         {
@@ -719,7 +794,7 @@
           "endColumn": 14
         }
       ],
-      "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        // Send mint_b from taker to maker\n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.taker_ata_b.to_account_info(),\n                    to: ctx.accounts.maker_ata_b.to_account_info(),\n                    authority: ctx.accounts.taker.to_account_info(),\n                },\n            ),\n            escrow.receive_amount,\n        )?;\n\n        // Send mint_a from vault to taker\n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.taker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?;\n\n        // Close the vault token account and return rent to maker\n        anchor_spl::token::close_account(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::CloseAccount {\n                    account: ctx.accounts.vault.to_account_info(),\n                    destination: ctx.accounts.maker.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n        )?;\n\n        Ok(())\n    }"
+      "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        anchor_spl::token::transfer(\n            CpiContext::new(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.taker_ata_b.to_account_info(),\n                    to: ctx.accounts.maker_ata_b.to_account_info(),\n                    authority: ctx.accounts.taker.to_account_info(),\n                },\n            ),\n            escrow.receive_amount,\n        )?;\n\n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.taker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            escrow.deposit_amount,\n        )?;\n\n        anchor_spl::token::close_account(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::CloseAccount {\n                    account: ctx.accounts.vault.to_account_info(),\n                    destination: ctx.accounts.maker.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n        )?;\n\n        Ok(())\n    }"
     },
     {
       "name": "cancel_escrow",
@@ -739,9 +814,9 @@
             }
           ],
           "loc": {
-            "line": 216,
+            "line": 224,
             "column": 4,
-            "endLine": 216,
+            "endLine": 224,
             "endColumn": 28
           }
         },
@@ -756,9 +831,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 217,
+            "line": 225,
             "column": 4,
-            "endLine": 217,
+            "endLine": 225,
             "endColumn": 55
           }
         },
@@ -785,9 +860,9 @@
             }
           ],
           "loc": {
-            "line": 223,
+            "line": 231,
             "column": 4,
-            "endLine": 223,
+            "endLine": 231,
             "endColumn": 68
           }
         },
@@ -830,9 +905,9 @@
             }
           ],
           "loc": {
-            "line": 232,
+            "line": 240,
             "column": 4,
-            "endLine": 232,
+            "endLine": 240,
             "endColumn": 38
           }
         },
@@ -843,8 +918,11 @@
           "isMut": true,
           "isInit": false,
           "isOptional": false,
-          "isPda": false,
-          "pdaSeeds": [],
+          "isPda": true,
+          "pdaSeeds": [
+            "b\"vault\"",
+            "escrow.key().as_ref()"
+          ],
           "constraints": [
             {
               "kind": "mut"
@@ -856,12 +934,19 @@
             {
               "kind": "token::authority",
               "value": "escrow"
+            },
+            {
+              "kind": "seeds",
+              "value": "[b\"vault\", escrow.key().as_ref()]"
+            },
+            {
+              "kind": "bump"
             }
           ],
           "loc": {
-            "line": 238,
+            "line": 248,
             "column": 4,
-            "endLine": 238,
+            "endLine": 248,
             "endColumn": 62
           }
         },
@@ -876,9 +961,9 @@
           "pdaSeeds": [],
           "constraints": [],
           "loc": {
-            "line": 239,
+            "line": 249,
             "column": 4,
-            "endLine": 239,
+            "endLine": 249,
             "endColumn": 63
           }
         }
@@ -909,7 +994,7 @@
           "from": "vault",
           "to": "maker_ata_a",
           "authority": "escrow",
-          "amount": "vault.amount",
+          "amount": "escrow.deposit_amount",
           "signerSeeds": "signer_seeds",
           "tokenProgram": "token"
         },
@@ -941,25 +1026,25 @@
           "endColumn": 41
         },
         {
-          "line": 102,
+          "line": 101,
           "column": 8,
-          "endLine": 113,
+          "endLine": 112,
           "endColumn": 11
         },
         {
-          "line": 116,
+          "line": 114,
+          "column": 8,
+          "endLine": 124,
+          "endColumn": 11
+        },
+        {
+          "line": 126,
           "column": 8,
           "endLine": 126,
-          "endColumn": 11
-        },
-        {
-          "line": 128,
-          "column": 8,
-          "endLine": 128,
           "endColumn": 14
         }
       ],
-      "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        // Return tokens to maker\n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.maker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            ctx.accounts.vault.amount,\n        )?;\n\n        // Close the vault token account and return rent to maker\n        anchor_spl::token::close_account(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::CloseAccount {\n                    account: ctx.accounts.vault.to_account_info(),\n                    destination: ctx.accounts.maker.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n        )?;\n\n        Ok(())\n    }"
+      "rawBody": "{\n        let escrow = &ctx.accounts.escrow;\n        let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        anchor_spl::token::transfer(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::Transfer {\n                    from: ctx.accounts.vault.to_account_info(),\n                    to: ctx.accounts.maker_ata_a.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n            escrow.deposit_amount,\n        )?;\n\n        anchor_spl::token::close_account(\n            CpiContext::new_with_signer(\n                ctx.accounts.token_program.to_account_info(),\n                anchor_spl::token::CloseAccount {\n                    account: ctx.accounts.vault.to_account_info(),\n                    destination: ctx.accounts.maker.to_account_info(),\n                    authority: ctx.accounts.escrow.to_account_info(),\n                },\n                signer_seeds,\n            ),\n        )?;\n\n        Ok(())\n    }"
     }
   ],
   "accounts": [
@@ -979,6 +1064,10 @@
           "type": "Pubkey"
         },
         {
+          "name": "deposit_amount",
+          "type": "u64"
+        },
+        {
           "name": "receive_amount",
           "type": "u64"
         },
@@ -991,12 +1080,18 @@
           "type": "u8"
         }
       ],
-      "space": 121
+      "space": 129
     }
   ],
   "types": [],
   "constants": [],
-  "errors": [],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidAmount",
+      "msg": "Amount must be greater than zero"
+    }
+  ],
   "helperFns": [],
   "events": [],
   "imports": [

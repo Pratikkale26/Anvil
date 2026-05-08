@@ -58,6 +58,13 @@ pub mod multisig_demo {
         let m = &ctx.accounts.multisig;
         let p = &mut ctx.accounts.proposal;
         require!(!p.executed, MultisigError::AlreadyExecuted);
+        // Gate execute on the executor being one of the multisig owners.
+        // Without this, any signer could call execute once the threshold
+        // was met — fine for a demo, but not idiomatic; real programs
+        // should also enforce executor membership.
+        let executor_key = ctx.accounts.executor.key();
+        let is_owner = m.owners.iter().any(|o| o == &executor_key);
+        require!(is_owner, MultisigError::NotAnOwner);
         let approval_count: u8 = p.approved.iter().filter(|&&a| a).count() as u8;
         require!(approval_count >= m.threshold, MultisigError::NotEnoughApprovals);
         p.executed = true;
@@ -67,10 +74,12 @@ pub mod multisig_demo {
 
 #[derive(Accounts)]
 pub struct Create<'info> {
+    // Space: 8 disc + 4 vec-len + 32*8 owners + 1 threshold + 8 proposal_count + 1 bump.
+    // The previous calc had an extraneous +32 from a now-removed field.
     #[account(
         init,
         payer = payer,
-        space = 8 + 32 + 4 + 32 * 8 + 1 + 8 + 1,
+        space = 8 + 4 + 32 * 8 + 1 + 8 + 1,
         seeds = [b"multisig", payer.key().as_ref()],
         bump
     )]

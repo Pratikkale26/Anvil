@@ -314,7 +314,7 @@ pub fn initialize(
             &[bump_marketplace],
         ];
     let init_marketplace_signer_seeds = &[&init_marketplace_seeds[..]];
-    create_program_account(marketplace, admin, (8 + Marketplace::LEN) as usize, program_id, init_marketplace_signer_seeds)?;
+    create_program_account(marketplace, admin, (8 + Marketplace::INIT_SPACE) as usize, program_id, init_marketplace_signer_seeds)?;
     if !(fee_bps <= 10000) {
         return Err(MarketplaceError::InvalidFeeBps.into());
     }
@@ -401,7 +401,7 @@ pub fn list(
             &[bump_listing],
         ];
     let init_listing_signer_seeds = &[&init_listing_seeds[..]];
-    create_program_account(listing, seller, (8 + Listing::LEN) as usize, program_id, init_listing_signer_seeds)?;
+    create_program_account(listing, seller, (8 + Listing::INIT_SPACE) as usize, program_id, init_listing_signer_seeds)?;
     // Init token account: vault
     {
         const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
@@ -631,13 +631,13 @@ pub fn update_fee(
     }
 
     let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
-    let marketplace_account = marketplace;
-    let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
     if !(new_fee_bps <= 10000) {
         return Err(MarketplaceError::InvalidFeeBps.into());
     }
-    if !(marketplace.admin == *admin.key()) {
-        return Err(MarketplaceError::Unauthorized.into());
+    let marketplace_account = marketplace;
+    let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
+    if marketplace.admin != *admin.key() {
+        return Err(ProgramError::InvalidAccountData);
     }
     marketplace.fee_bps = new_fee_bps;
     Marketplace::save(marketplace_account, &marketplace)?;

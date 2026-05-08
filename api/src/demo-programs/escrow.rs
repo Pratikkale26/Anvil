@@ -12,15 +12,18 @@ pub mod escrow {
         deposit_amount: u64,
         receive_amount: u64,
     ) -> Result<()> {
+        require!(deposit_amount > 0, EscrowError::InvalidAmount);
+        require!(receive_amount > 0, EscrowError::InvalidAmount);
+
         let escrow = &mut ctx.accounts.escrow;
         escrow.maker = ctx.accounts.maker.key();
         escrow.mint_a = ctx.accounts.mint_a.key();
         escrow.mint_b = ctx.accounts.mint_b.key();
+        escrow.deposit_amount = deposit_amount;
         escrow.receive_amount = receive_amount;
         escrow.seed = seed;
         escrow.bump = ctx.bumps.escrow;
 
-        // Transfer tokens from maker to vault
         anchor_spl::token::transfer(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
@@ -45,7 +48,6 @@ pub mod escrow {
         ];
         let signer_seeds = &[&seeds[..]];
 
-        // Send mint_b from taker to maker
         anchor_spl::token::transfer(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
@@ -58,7 +60,6 @@ pub mod escrow {
             escrow.receive_amount,
         )?;
 
-        // Send mint_a from vault to taker
         anchor_spl::token::transfer(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
@@ -69,10 +70,9 @@ pub mod escrow {
                 },
                 signer_seeds,
             ),
-            ctx.accounts.vault.amount,
+            escrow.deposit_amount,
         )?;
 
-        // Close the vault token account and return rent to maker
         anchor_spl::token::close_account(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
@@ -98,7 +98,6 @@ pub mod escrow {
         ];
         let signer_seeds = &[&seeds[..]];
 
-        // Return tokens to maker
         anchor_spl::token::transfer(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
@@ -109,10 +108,9 @@ pub mod escrow {
                 },
                 signer_seeds,
             ),
-            ctx.accounts.vault.amount,
+            escrow.deposit_amount,
         )?;
 
-        // Close the vault token account and return rent to maker
         anchor_spl::token::close_account(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
@@ -129,6 +127,10 @@ pub mod escrow {
     }
 }
 
+// `vault` is now a canonical PDA derived from the escrow account, closing the
+// substitution attack: an attacker cannot pass an arbitrary token-account that
+// happens to have `escrow` as authority, because Anchor enforces seeds on the
+// vault binding in every instruction.
 #[derive(Accounts)]
 #[instruction(seed: u64, deposit_amount: u64)]
 pub struct CreateEscrow<'info> {
@@ -154,18 +156,22 @@ pub struct CreateEscrow<'info> {
         init,
         payer = maker,
         token::mint = mint_a,
-        token::authority = escrow
+        token::authority = escrow,
+        seeds = [b"vault", escrow.key().as_ref()],
+        bump
     )]
     pub vault: Account<'info, anchor_spl::token::TokenAccount>,
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, anchor_spl::token::Token>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
+    pub rent: Sysvar<'info, Rent>,
 }
 
 #[derive(Accounts)]
 pub struct AcceptEscrow<'info> {
     #[account(mut)]
     pub taker: Signer<'info>,
+    #[account(mut)]
     pub maker: SystemAccount<'info>,
     pub mint_a: Account<'info, anchor_spl::token::Mint>,
     pub mint_b: Account<'info, anchor_spl::token::Mint>,
@@ -202,7 +208,9 @@ pub struct AcceptEscrow<'info> {
     #[account(
         mut,
         token::mint = mint_a,
-        token::authority = escrow
+        token::authority = escrow,
+        seeds = [b"vault", escrow.key().as_ref()],
+        bump
     )]
     pub vault: Account<'info, anchor_spl::token::TokenAccount>,
     pub system_program: Program<'info, System>,
@@ -233,7 +241,9 @@ pub struct CancelEscrow<'info> {
     #[account(
         mut,
         token::mint = mint_a,
-        token::authority = escrow
+        token::authority = escrow,
+        seeds = [b"vault", escrow.key().as_ref()],
+        bump
     )]
     pub vault: Account<'info, anchor_spl::token::TokenAccount>,
     pub token_program: Program<'info, anchor_spl::token::Token>,
@@ -245,7 +255,14 @@ pub struct Escrow {
     pub maker: Pubkey,
     pub mint_a: Pubkey,
     pub mint_b: Pubkey,
+    pub deposit_amount: u64,
     pub receive_amount: u64,
     pub seed: u64,
     pub bump: u8,
+}
+
+#[error_code]
+pub enum EscrowError {
+    #[msg("Amount must be greater than zero")]
+    InvalidAmount,
 }
