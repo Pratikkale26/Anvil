@@ -164,7 +164,22 @@ function extractUsedCrates(ir: SolanaIR): Set<string> {
       ) {
         seen.add("spl_token_metadata_interface");
       }
+      // Zero-copy load handlers + struct emit reference `bytemuck::*`
+      // for the unsafe Pod / Zeroable impls and from_bytes_mut casts.
+      if (
+        stmt.kind === "zero_copy_load_init" ||
+        stmt.kind === "zero_copy_load_mut" ||
+        stmt.kind === "zero_copy_load"
+      ) {
+        seen.add("bytemuck");
+      }
     }
+  }
+  // The struct emit itself adds `unsafe impl bytemuck::Pod / Zeroable` even
+  // if no instruction body uses the loader (rare but possible: a program
+  // declaring a zero-copy state type that's only read from off-chain).
+  if (ir.accounts?.some((a) => a.isZeroCopy)) {
+    seen.add("bytemuck");
   }
   return seen;
 }

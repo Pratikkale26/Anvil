@@ -504,6 +504,33 @@ function classifyLetDeclaration(
     }
   }
 
+  // ── Zero-copy AccountLoader: ctx.accounts.X.load_init()? / load_mut()? / load()? ──
+  // `let mut foo = ctx.accounts.foo.load_init()?` returns a `RefMut<Foo>` in
+  // Anchor; emit produces a `&mut <AccountType>` bytemuck-cast handle bound
+  // to localVar. Subsequent `<localVar>.field = ...` statements pass through
+  // verbatim and resolve against that handle.
+  if (valueNode && localVar) {
+    const loadMatch = valueNode.text.match(
+      /^&?\s*mut\s+ctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*(load_init|load_mut|load)\s*\(\s*\)\s*\??\s*$/,
+    ) ??
+      valueNode.text.match(
+        /^ctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*(load_init|load_mut|load)\s*\(\s*\)\s*\??\s*$/,
+      );
+    if (loadMatch?.[1] && loadMatch[2]) {
+      const account = loadMatch[1];
+      const variant = loadMatch[2] as "load_init" | "load_mut" | "load";
+      const kind =
+        variant === "load_init"
+          ? ("zero_copy_load_init" as const)
+          : variant === "load_mut"
+            ? ("zero_copy_load_mut" as const)
+            : ("zero_copy_load" as const);
+      return {
+        stmt: { kind, account, localVar, accountType: "" }, // accountType filled by anchor-parser
+      };
+    }
+  }
+
   // ── ctx.accounts.X access ──
   if (valueNode) {
     const accountName = findDirectCtxAccountsAccess(valueNode);

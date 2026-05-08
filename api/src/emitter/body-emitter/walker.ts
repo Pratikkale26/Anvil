@@ -60,6 +60,11 @@ import {
 } from "./handlers/cpi.js";
 import { handleSysvarClock, handleSysvarRent } from "./handlers/sysvar.js";
 import {
+  handleZeroCopyLoadInit,
+  handleZeroCopyLoadMut,
+  handleZeroCopyLoad,
+} from "./handlers/zero-copy.js";
+import {
   handleRequire,
   handleMsg,
   handleEmit,
@@ -277,6 +282,9 @@ export class BodyWalker {
         case "pda_signer_seeds": handlePdaSignerSeeds(this, stmt); break;
         case "return_ok": handleReturnOk(this); break;
         case "return_err": handleReturnErr(this, stmt); break;
+        case "zero_copy_load_init": handleZeroCopyLoadInit(this, stmt); break;
+        case "zero_copy_load_mut": handleZeroCopyLoadMut(this, stmt); break;
+        case "zero_copy_load": handleZeroCopyLoad(this, stmt); break;
       }
     }
     } // end of !ANVIL_AST_EMIT branch
@@ -1633,6 +1641,10 @@ export class BodyWalker {
       const accRef = this.instr.accounts.find((a) => snakeCase(a.name) === snakeCase(accName));
       const typeName = accRef?.accountType || "Unknown";
       if (accRef?.isOptional) continue;
+      // Zero-copy AccountLoader writes go directly into the buffer through
+      // bytemuck — no end-of-fn save. The struct doesn't even have ::write,
+      // so emitting one would compile-fail.
+      if (accRef?.isZeroCopy) continue;
       if (this.isGeneratedStateType(typeName)) {
         this.lines.push(
           this.emitter.emitStateSave(

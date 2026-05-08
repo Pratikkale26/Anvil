@@ -650,6 +650,11 @@ import {
   handleReturnOk,
   handleReturnErr,
 } from "../body-emitter/handlers/control.js";
+import {
+  handleZeroCopyLoadInit,
+  handleZeroCopyLoadMut,
+  handleZeroCopyLoad,
+} from "../body-emitter/handlers/zero-copy.js";
 
 type StateRead = Extract<BodyStatement, { kind: "state_read" }>;
 type StateFieldAssign = Extract<BodyStatement, { kind: "state_field_assign" }>;
@@ -738,6 +743,9 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_custom",
   "cpi_mpl_create_metadata_v3",
   "cpi_mpl_create_master_edition_v3",
+  "zero_copy_load_init",
+  "zero_copy_load_mut",
+  "zero_copy_load",
 ] as const satisfies readonly BodyStatement["kind"][]);
 
 export class AstVisitorBase {
@@ -806,6 +814,12 @@ export class AstVisitorBase {
         return this.visitCpiMplCreateMetadataV3(stmt);
       case "cpi_mpl_create_master_edition_v3":
         return this.visitCpiMplCreateMasterEditionV3(stmt);
+      case "zero_copy_load_init":
+        return this.runHandlerCapture(handleZeroCopyLoadInit, stmt);
+      case "zero_copy_load_mut":
+        return this.runHandlerCapture(handleZeroCopyLoadMut, stmt);
+      case "zero_copy_load":
+        return this.runHandlerCapture(handleZeroCopyLoad, stmt);
     }
   }
 

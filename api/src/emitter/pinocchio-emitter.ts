@@ -1801,6 +1801,35 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
     const fields = acc.fields
       .map((f) => `    pub ${snakeCase(f.name)}: ${this.rustTypeForFramework(f.type)},`)
       .join("\n");
+
+    if (acc.isZeroCopy) {
+      const bodyLen = acc.fields.reduce(
+        (s, f) => s + this.resolveTypeSize(f.type, f.maxLen),
+        0,
+      );
+      // Same scaffolding as the Native zero-copy struct (see comment on
+      // emitZeroCopyAccountStruct in native-emitter.ts). Pinocchio's
+      // Pubkey is `[u8; 32]` (a type alias) so the manual unsafe Pod /
+      // Zeroable impl is straightforward.
+      return `#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ${acc.name} {
+${fields}
+}
+
+unsafe impl bytemuck::Zeroable for ${acc.name} {}
+unsafe impl bytemuck::Pod for ${acc.name} {}
+
+impl ${acc.name} {
+    pub const DISCRIMINATOR: [u8; 8] = ${accountDiscriminator(acc.name)};
+    pub const LEN: usize = ${bodyLen};
+    pub const INIT_SPACE: usize = ${bodyLen};
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
+}${this.emitInherentImplItems(acc)}`;
+    }
+
     const bodyLen = acc.fields.reduce((s, f) => s + this.resolveTypeSize(f.type, f.maxLen), 0);
     const readLines = this.buildReadLines(acc);
     const writeLines = this.buildWriteLines(acc);

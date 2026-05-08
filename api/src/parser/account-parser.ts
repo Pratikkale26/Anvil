@@ -96,6 +96,7 @@ function parseAccountField(
   const fieldName = nameNode.text;
   const rawType = typeNode.text;
   const accountType = extractAccountType(rawType);
+  const isZeroCopy = /\bAccountLoader\s*<\s*'/.test(rawType);
 
   // Parse all #[account(...)] attributes for this field (there may be multiple)
   const accountAttrParts: string[] = [];
@@ -121,7 +122,11 @@ function parseAccountField(
     initPayer = initMetadata.payer;
     initSpace = initMetadata.space;
     isMut = constraints.some(
-      (c) => c.kind === "mut" || c.kind === "init" || c.kind === "init_if_needed",
+      (c) =>
+        c.kind === "mut" ||
+        c.kind === "init" ||
+        c.kind === "init_if_needed" ||
+        c.kind === "zero",
     );
     isInit = constraints.some(
       (c) => c.kind === "init" || c.kind === "init_if_needed",
@@ -134,7 +139,7 @@ function parseAccountField(
     }
   }
 
-  return {
+  const ref: AccountRef = {
     name: fieldName,
     accountType,
     isSigner,
@@ -148,19 +153,32 @@ function parseAccountField(
     constraints,
     loc: locFromNode(fieldNode),
   };
+  if (isZeroCopy) ref.isZeroCopy = true;
+  return ref;
 }
 
 // ─── Account data struct parsing ────────────────────────────────────────────
 
 export function parseAccountDataStruct(
   structNode: SyntaxNode,
-  _attrs: SyntaxNode[],
+  attrs: SyntaxNode[],
 ): AccountDef {
   const name = extractStructName(structNode) ?? "Unknown";
   const fields = parseStructFields(structNode);
   const space = 8 + fields.reduce((acc, f) => acc + fieldSize(f.type), 0);
 
-  return { name, fields, space };
+  // `#[account(zero_copy)]` and `#[account(zero_copy(unsafe))]` both signal
+  // a struct that must be `#[repr(C)]` + bytemuck-castable. The parser
+  // doesn't distinguish the two on the IR side — emit produces the same
+  // shape (#[repr(C)] + manual unsafe Pod / Zeroable impls) since the byte
+  // layout is identical for non-padded structs (Pubkey + integers, fixed
+  // arrays). Programs needing the legacy packed shape would need a
+  // separate IR flag; deferred until a fixture demands it.
+  const isZeroCopy = attrs.some((a) => /\bzero_copy\b/.test(a.text.replace(/\s+/g, "")));
+
+  const def: AccountDef = { name, fields, space };
+  if (isZeroCopy) def.isZeroCopy = true;
+  return def;
 }
 
 // ─── Struct fields parsing ──────────────────────────────────────────────────
@@ -276,6 +294,11 @@ export function extractAccountType(rawType: string): string {
   // InterfaceAccount is treated the same as Account (covers token_interface types)
   const interfaceMatch = t.match(/^InterfaceAccount\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
   if (interfaceMatch?.[1]) return interfaceMatch[1].split("::").pop() ?? interfaceMatch[1];
+  // AccountLoader<'info, T> — Anchor's zero-copy account wrapper. Inner T
+  // resolves to the same AccountDef the user's struct annotated with
+  // #[account(zero_copy)].
+  const loaderMatch = t.match(/^AccountLoader\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
+  if (loaderMatch?.[1]) return loaderMatch[1].split("::").pop() ?? loaderMatch[1];
   // Token-2022 / token_interface Account types: InterfaceAccount<'info, token_interface::TokenAccount|Mint>
   // Also matches plain Account<'info, token_interface::TokenAccount>
   const tokenAccountMatch = t.match(/^(?:Interface)?Account\s*<\s*'info\s*,\s*(?:token_interface::)?(?:TokenAccount|Mint)\s*>/);

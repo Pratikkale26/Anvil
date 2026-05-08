@@ -123,6 +123,13 @@ export const AccountRefSchema = z.object({
   docs: z.string().optional(),
   /** Source location of the field declaration in the originating Accounts struct. */
   loc: SourceLocSchema.optional(),
+  /**
+   * Set when the field type is `AccountLoader<'info, T>` — Anchor's zero-copy
+   * account wrapper. Pairs with the `isZeroCopy` flag on the corresponding
+   * AccountDef to drive #[repr(C)] + bytemuck emit and `.load*()` handler
+   * recognition in the body classifier.
+   */
+  isZeroCopy: z.boolean().optional(),
 });
 
 export type AccountRef = z.infer<typeof AccountRefSchema>;
@@ -746,6 +753,36 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     kind: z.literal("return_err"),
     error: z.string(),
   }),
+
+  // ── Zero-copy account loaders ──────────────────────────────────────────────
+  // `let foo = ctx.accounts.foo.load_init()?;` and friends.
+  //
+  // `load_init` writes the 8-byte sha256("account:<TypeName>")[..8] discriminator
+  // after verifying the data is all zero (matches Anchor `#[account(zero)]`
+  // pre-state). `load_mut` and `load` verify the existing discriminator and
+  // return a mutable / immutable bytemuck cast onto the underlying buffer.
+  //
+  // Subsequent `<localVar>.field = expr` statements pass through verbatim —
+  // the emitted local binding is a `&mut <AccountType>` so direct field
+  // mutation works in scope.
+  z.object({
+    kind: z.literal("zero_copy_load_init"),
+    account: z.string(),
+    localVar: z.string(),
+    accountType: z.string(),
+  }),
+  z.object({
+    kind: z.literal("zero_copy_load_mut"),
+    account: z.string(),
+    localVar: z.string(),
+    accountType: z.string(),
+  }),
+  z.object({
+    kind: z.literal("zero_copy_load"),
+    account: z.string(),
+    localVar: z.string(),
+    accountType: z.string(),
+  }),
 ]);
 
 export type BodyStatement = z.infer<typeof BodyStatementSchema>;
@@ -831,6 +868,14 @@ export const AccountDefSchema = z.object({
    * so call sites like `Foo::SEED_PREFIX` / `Foo::required_space(...)` resolve.
    */
   implItems: z.array(z.string()).optional(),
+  /**
+   * Set when the source struct carried `#[account(zero_copy)]` or
+   * `#[account(zero_copy(unsafe))]`. Drives #[repr(C)] + manual
+   * `unsafe impl bytemuck::Pod / Zeroable` emit so the struct is byte-castable
+   * onto raw account data. Borsh derives are skipped — zero-copy accounts
+   * never serialize via borsh.
+   */
+  isZeroCopy: z.boolean().optional(),
 });
 
 export type AccountDef = z.infer<typeof AccountDefSchema>;

@@ -1226,6 +1226,8 @@ ${maybeRead}    let seeds = &[
       .map((f) => `    pub ${snakeCase(f.name)}: ${this.rustTypeForFramework(f.type)},`)
       .join("\n");
 
+    if (acc.isZeroCopy) return this.emitZeroCopyAccountStruct(acc, fields);
+
     const bodyLen = acc.fields.reduce((s, f) => s + this.resolveTypeSize(f.type, f.maxLen), 0);
     const readLines = this.buildReadLines(acc);
     const writeLines = this.buildWriteLines(acc);
@@ -1290,6 +1292,42 @@ ${writeLines}
         let data = account.try_borrow_data()?;
         Self::read(&data)
     }
+}${this.emitInherentImplItems(acc)}`;
+  }
+
+  /**
+   * Zero-copy struct emit: `#[repr(C)] + Copy + Clone` and a manual
+   * `unsafe impl bytemuck::Pod / Zeroable` so the buffer can be cast in-place
+   * via `bytemuck::from_bytes_mut`. No borsh derives, no read()/write() —
+   * zero-copy accounts never serialize. Discriminator + size constants stay
+   * so `<Type>::DISCRIMINATOR` / `<Type>::LEN` resolve at the load site.
+   *
+   * Soundness of the manual Pod impl rests on the source struct having no
+   * padding under #[repr(C)] (fields ordered so each is naturally aligned
+   * with no inter-field gaps and no trailing pad). For naturally-aligned
+   * shapes — Pubkey (align 1) followed by u64 (align 8) — this is true.
+   * Programs whose source struct has padding need to either pre-pack their
+   * fields or reach for a different transpile path; deferred until a
+   * fixture surfaces it.
+   */
+  private emitZeroCopyAccountStruct(acc: AccountDef, fields: string): string {
+    const bodyLen = acc.fields.reduce((s, f) => s + this.resolveTypeSize(f.type, f.maxLen), 0);
+    return `#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ${acc.name} {
+${fields}
+}
+
+unsafe impl bytemuck::Zeroable for ${acc.name} {}
+unsafe impl bytemuck::Pod for ${acc.name} {}
+
+impl ${acc.name} {
+    pub const DISCRIMINATOR: [u8; 8] = ${this.accountDiscriminatorExpr(acc.name)};
+    pub const LEN: usize = ${bodyLen};
+    pub const INIT_SPACE: usize = ${bodyLen};
+    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;
 }${this.emitInherentImplItems(acc)}`;
   }
 

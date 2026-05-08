@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 
-const DEMOS = ["counter", "vault", "escrow", "staking", "amm", "marketplace", "vesting", "program-config", "tip-jar"];
+const DEMOS = ["counter", "vault", "escrow", "staking", "amm", "marketplace", "vesting", "program-config", "tip-jar", "zero-copy-foo"];
 
 const PINOCCHIO_CARGO = `[package]
 name = "anvil-test"
@@ -20,6 +20,7 @@ pinocchio = "0.9"
 pinocchio-system = "0.4"
 pinocchio-token = "0.4"
 pinocchio-associated-token-account = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
 `;
 
 const NATIVE_CARGO = `[package]
@@ -36,6 +37,7 @@ spl-token-2022 = { version = "6", features = ["no-entrypoint"] }
 spl-associated-token-account = { version = "6", features = ["no-entrypoint"] }
 spl-memo = { version = "6", features = ["no-entrypoint"] }
 thiserror = "2.0"
+bytemuck = { version = "1", features = ["derive"] }
 `;
 
 const BUILD_DIR = "/tmp/anvil-cargo-tests";

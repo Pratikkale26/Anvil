@@ -180,9 +180,15 @@ function parseInstructionFn(
   const bodyStatements: BodyStatement[] = classified.statements;
   const bodyLocs = classified.locs;
 
-  // ── Enrich state_read with account types from context struct ──
+  // ── Enrich state_read + zero-copy loads with account types from context struct ──
   for (const stmt of bodyStatements) {
-    if (stmt.kind === "state_read" && accounts.length > 0) {
+    if (
+      (stmt.kind === "state_read" ||
+        stmt.kind === "zero_copy_load_init" ||
+        stmt.kind === "zero_copy_load_mut" ||
+        stmt.kind === "zero_copy_load") &&
+      accounts.length > 0
+    ) {
       const matchingAccount = accounts.find((a) => a.name === stmt.account);
       if (matchingAccount) {
         stmt.accountType = matchingAccount.accountType;

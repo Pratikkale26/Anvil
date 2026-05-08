@@ -386,41 +386,21 @@ function analyzeAccounts(ir: SolanaIR, findings: LintFinding[]): void {
     }
   }
 
-  // Zero-copy detection. The IR doesn't preserve the `#[account(zero_copy)]`
-  // attribute directly on AccountDef (parseAccountDataStruct drops attrs), so
-  // we rely on two indirect signals that are 1:1 with zero-copy use:
-  //   1. an account is typed `AccountLoader<'info, T>` (Anchor's zero-copy
-  //      account wrapper)
-  //   2. an instruction body calls `.load()` / `.load_mut()` / `.load_init()`
-  //      on a ctx.accounts member (the only way to get at the inner data of
-  //      a zero-copy account)
-  // Either is a hard blocker — the borsh-based emit won't preserve the
-  // #[repr(C)] byte layout zero-copy requires.
-  const usesAccountLoader = ir.instructions.some((instr) =>
-    instr.accounts.some((a) => /\bAccountLoader\s*</.test(a.accountType)),
-  );
-  const callsLoad = ir.instructions.some((instr) =>
-    instr.body.some(
-      (s) =>
-        ("code" in s && /ctx\.accounts\.\w+\.load(?:_mut|_init)?\s*\(/.test(s.code ?? "")) ||
-        ("rawCode" in s && /ctx\.accounts\.\w+\.load(?:_mut|_init)?\s*\(/.test(s.rawCode ?? "")),
-    ),
-  );
-  // Forward-compat path: parser may eventually preserve `attrs` on AccountDef.
-  // If it does, this branch picks up the explicit attribute.
-  const explicitAttr =
-    ir.accounts?.some((a) =>
-      ((a as unknown as { attrs?: string[] }).attrs ?? []).some((attr) =>
-        attr.includes("zero_copy"),
-      ),
-    ) ?? false;
-  if (usesAccountLoader || callsLoad || explicitAttr) {
+  // Zero-copy is now first-class. AccountDef.isZeroCopy + AccountRef.isZeroCopy
+  // drive #[repr(C)] + bytemuck emit; zero_copy_load{,_init,_mut} body
+  // statements drive handler-side cast-and-write. The earlier blocker finding
+  // is removed — surface a warning instead so users see we recognize the
+  // pattern and emit deliberately.
+  const usesZeroCopy =
+    ir.accounts?.some((a) => a.isZeroCopy) ||
+    ir.instructions.some((instr) => instr.accounts.some((a) => a.isZeroCopy));
+  if (usesZeroCopy) {
     findings.push({
-      level: "blocker",
+      level: "review",
       category: "Account layout",
       title: "#[account(zero_copy)] detected",
       detail:
-        "Zero-copy accounts depend on exact #[repr(C)] byte offsets, which Anvil's borsh-based emit can't preserve. Suggested fix: keep zero-copy accounts in the original Anchor program or rewrite the byte layout manually.",
+        "Zero-copy accounts emit as #[repr(C)] + manual bytemuck::Pod / Zeroable. Verify byte layout against the Anchor reference under a differential fixture before deploying.",
     });
   }
 }
