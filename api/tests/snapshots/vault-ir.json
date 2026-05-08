@@ -142,9 +142,7 @@
           "value": "ctx.bumps.vault"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -329,9 +327,7 @@
           "value": "vault_state.total_deposited.checked_add(amount)\n            .ok_or(VaultError::Overflow)?"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -548,9 +544,7 @@
           "value": "vault_state.total_deposited.checked_sub(amount)\n            .ok_or(VaultError::Underflow)?"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [

@@ -327,6 +327,27 @@ function classifyStatement(
     case "return_expression":
       return { stmt: classifyReturn(node) };
 
+    // Bare `Ok(())` at the body tail — Rust's implicit return. Tree-
+    // sitter parses it as a `call_expression` rather than an
+    // `expression_statement` (no trailing `;`) or `return_expression`
+    // (no `return` keyword), so the existing handlers miss it. Catch
+    // here so `Ok(())` reaches the typed `return_ok` IR kind instead
+    // of falling into `pass_through`. Across the keep-list demo
+    // corpus this single case accounted for 43 of 100 pass_through
+    // statements (counter, vault, escrow, marketplace, staking,
+    // vesting, amm, multisig, init-if-needed, realloc, simple-staking).
+    case "call_expression":
+      if (text.trim() === "Ok(())") return { stmt: { kind: "return_ok" } };
+      // Bare `Err(...)` at tail — same rationale; uncommon in real
+      // Anchor handlers (most use `return Err(...)` explicitly), but
+      // catching it here keeps the contract symmetric with the
+      // expression_statement path.
+      if (/^Err\s*\(/.test(text.trim())) return { stmt: classifyReturn(node) };
+      // Other bare call expressions at body tail (e.g. user helper
+      // returning Result) fall through to the default pass_through
+      // path so the printer carries them verbatim.
+      // fall through
+    // eslint-disable-next-line no-fallthrough
     default: {
       // if/for/while/match/block — pure Rust, pass through
       const hasAnchor = containsAnchorPatterns(text);

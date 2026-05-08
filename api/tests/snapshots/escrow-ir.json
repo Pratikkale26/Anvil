@@ -315,9 +315,7 @@
           "tokenProgram": "token"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -751,9 +749,7 @@
           "tokenProgram": "token"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -1007,9 +1003,7 @@
           "tokenProgram": "token"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [

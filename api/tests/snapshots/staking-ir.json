@@ -329,9 +329,7 @@
           "value": "false"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -735,9 +733,7 @@
           "fields": "user: ctx.accounts.user.key(),\n            amount,\n            timestamp: now,"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -1101,9 +1097,7 @@
           "fields": "user: ctx.accounts.user.key(),\n            rewards,\n            timestamp: now,"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -1537,9 +1531,7 @@
           "fields": "user: ctx.accounts.user.key(),\n            amount: user_stake.amount,\n            rewards: pending_rewards,\n            timestamp: now,"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -1708,9 +1700,7 @@
           "value": "true"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -1795,9 +1785,7 @@
           "value": "false"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [

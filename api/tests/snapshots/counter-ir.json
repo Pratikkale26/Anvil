@@ -110,9 +110,7 @@
           "value": "ctx.bumps.counter"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -227,9 +225,7 @@
           "value": "counter.count.checked_add(amount).ok_or(CounterError::Overflow)?"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -332,9 +328,7 @@
           "value": "counter.count.checked_sub(amount).ok_or(CounterError::Underflow)?"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [
@@ -432,9 +426,7 @@
           "value": "0"
         },
         {
-          "kind": "pass_through",
-          "code": "Ok(())",
-          "needsReview": false
+          "kind": "return_ok"
         }
       ],
       "bodyLocs": [

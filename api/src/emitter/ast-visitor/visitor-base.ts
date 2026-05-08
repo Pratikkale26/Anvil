@@ -1274,11 +1274,17 @@ export class AstVisitorBase {
     w.lines.length = before;
 
     const out: RustStmt[] = helperLines.map((l) => rawLine(l));
-    // Structural `Ok(())` — `expr_stmt(call(path(["Ok"]), [rawExpr("()")]))`.
-    // The empty-tuple arg is rendered as `()` via the rawExpr escape;
-    // a dedicated tuple AST node would be marginally cleaner but isn't
-    // worth the schema growth for a single literal shape.
-    out.push(exprStmt(call(path(["Ok"]), [lit("()")])));
+    // `Ok(())` is a tail expression, not a statement — Rust returns the
+    // last expression of a block as the function's return value, and
+    // `Ok(());` (with semicolon) returns `()` instead of `Result<()>`,
+    // which is a type error on a `Result`-returning fn. The handler
+    // emits `    Ok(())` verbatim (no semicolon) for this reason. Use
+    // rawLine to mirror the exact byte shape and stay byte-identical
+    // to the handler chain. Once the printer grows a tail-expression
+    // AST kind we can lift this back to structural; doing it now would
+    // require either a tail_expr node OR a suppressSemicolon flag on
+    // expr_stmt, both schema growth for a single literal.
+    out.push(rawLine("    Ok(())"));
     return out;
   }
 
