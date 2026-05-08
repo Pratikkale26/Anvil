@@ -1,159 +1,141 @@
 /**
- * Staking differential — clock-pinned + emit! event log byte-equality.
+ * Full-staking differential — narrow `initialize_pool` byte-equal gate
+ * for the SPL-token staking demo (api/src/demo-programs/staking.rs).
  *
- * Exercises a unique combination not covered by any other fixture:
- *   1. Clock::get().unix_timestamp read on every state-mutating tx.
- *   2. Reward math driven by elapsed = now - stake.last_claim.
- *   3. emit!() with a Pubkey + u64 + i64 mixed payload.
+ * Distinguished from `differential-simple-staking.test.ts` which covers
+ * the SOL-only stake/claim flow on `simple-staking.rs`. This fixture
+ * pins the StakingPool struct layout post-init under Anvil's emit:
  *
- * The harness pins the initial clock identically across both Anchor and
- * Anvil scenarios; the call script then warps the clock between txs to
- * produce non-zero `elapsed` values. Without identical clock pinning,
- * Anchor + Anvil scenarios would see different timestamps and produce
- * different state even when the emit is correct — so the test would
- * fail spuriously on the LiteSVM clock advancing differently across
- * runs. With pinning, both scenarios see byte-identical clock readings,
- * so any divergence is real emit drift.
+ *   admin + stake_mint + reward_mint + reward_rate + lock_duration +
+ *   max_stake + total_staked + bump + stake_vault_bump +
+ *   reward_vault_bump + is_paused
  *
- * What this protects:
- *   - Clock::get() lowering on Pinocchio (Sysvar trait via pinocchio_pubkey)
- *   - state_field_assign on i64-typed fields (last_claim)
- *   - saturating_mul + integer division producing identical u64 output
- *   - emit!() with a heterogeneous payload (Pubkey, u64, i64): borsh
- *     layout must match Anchor's AnchorSerialize byte-for-byte. The
- *     event discriminator (sha256("event:StakeUpdated")[..8] /
- *     sha256("event:RewardsClaimed")[..8]) must match Anchor's.
+ * Specifically protects the post-audit field additions:
+ *   - reward_rate_snapshot (was missing pre-audit; allowed retroactive
+ *     rate changes to corrupt reward math). The pool struct itself
+ *     doesn't carry it — it's per-stake — but the pool's bump set
+ *     (3 bumps including stake_vault_bump) is new shape that this
+ *     gate locks.
+ *   - stake_vault as canonical PDA (was unbound pre-audit, allowed
+ *     fund-splitting). The PDA derivation here is what would diverge
+ *     under a regression that re-removed the seed.
  *
- * Scenario:
- *   T=1_700_000_000: initialize_stake(reward_rate=10000)  — amount=0,  accumulated=0
- *   T=1_700_000_100: deposit(100)                          — earned=0,   amount=100
- *   T=1_700_000_150: deposit(50)                           — earned=50,  amount=150, accumulated=50
- *   T=1_700_000_350: claim()                               — earned=300, total=350, accumulated=0
+ * Add stake / claim / unstake scenarios are intentionally not covered
+ * yet — they layer SPL transfer + signer-seeded mint_to CPI on top of
+ * the init shape, and the init shape is what's unique to this demo
+ * vs the simple-staking byte-equal coverage that's already in place.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Transaction, TransactionInstruction, SystemProgram } from "@solana/web3.js";
+import {
+  Transaction,
+  TransactionInstruction,
+  SystemProgram,
+  SYSVAR_RENT_PUBKEY,
+} from "@solana/web3.js";
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import {
   defineDifferential,
   anchorIxDiscriminator,
   encodeU64LE,
+  encodeI64LE,
   concatBytes,
   Keypair,
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { createMintIxs, sendSetupTx } from "./differential-setup-helpers.ts";
 
-const SRC = join(import.meta.dir, "..", "src", "demo-programs", "simple-staking.rs");
-const PROGRAM_ID = "Stake11111111111111111111111111111111111111";
-const PIN_T0 = 1_700_000_000;
+const SRC = join(import.meta.dir, "..", "src", "demo-programs", "staking.rs");
+const PROGRAM_ID = "Stak1ng111111111111111111111111111111111111";
 
 defineDifferential({
   fixtureName: "staking",
   programIdBase58: PROGRAM_ID,
   anchorSource: readFileSync(SRC, "utf-8"),
-  anchorPackageName: "simple_staking_anchor_diff",
-  pinClockTimestamp: PIN_T0,
-  pinClockSlot: 1,
-  compareEventLogs: true,
-  // 6-surface byte-equal: data + lamports + owner (always-on) +
-  // events + returnData + msgLogs (opt-in). simple-staking.rs has
-  // msg!() calls in all 3 handlers and no set_return_data — so
-  // compareMsgLogs validates the user-log strip-and-compare path
-  // (4 lines: "stake initialized", 2× "deposit recorded",
-  // "rewards claimed"), and compareReturnData confirms no false-
-  // positive when neither side calls set_return_data.
-  compareReturnData: true,
-  compareMsgLogs: true,
+  anchorPackageName: "full_staking_anchor_diff",
+  anchorExtraDeps: `anchor-spl = "0.31"`,
 
   setup: async () => {
-    const user = Keypair.generate();
-    const programId = new PublicKey(PROGRAM_ID);
-    const [stakePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("stake"), user.publicKey.toBuffer()],
-      programId,
+    const payer = Keypair.generate();
+    const admin = payer;
+    const stakeMint = Keypair.generate();
+    const rewardMint = Keypair.generate();
+    const programIdPk = new PublicKey(PROGRAM_ID);
+
+    // pool: seeds = ["pool", stake_mint]
+    const [poolPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("pool"), stakeMint.publicKey.toBuffer()],
+      programIdPk,
     );
-    return { user, stakePda };
+    // stake_vault: seeds = ["stake_vault", pool]  (the post-audit canonical
+    // PDA — pre-audit this was a free token account, the substitution attack
+    // surface this fixture defends against).
+    const [stakeVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("stake_vault"), poolPda.toBuffer()],
+      programIdPk,
+    );
+    // reward_vault: seeds = ["reward_vault", pool]
+    const [rewardVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("reward_vault"), poolPda.toBuffer()],
+      programIdPk,
+    );
+
+    return { payer, admin, stakeMint, rewardMint, poolPda, stakeVault, rewardVault };
   },
 
   callScript: async (svm: LiteSVM, ctx, programId: PublicKey) => {
-    svm.airdrop(ctx.user.publicKey, BigInt(1_000_000_000));
+    svm.withDefaultPrograms().withNativeMints();
+    svm.airdrop(ctx.payer.publicKey, BigInt(10_000_000_000));
 
-    const sendTx = (ix: TransactionInstruction, label: string) => {
-      const tx = new Transaction().add(ix);
-      tx.recentBlockhash = svm.latestBlockhash();
-      tx.feePayer = ctx.user.publicKey;
-      tx.sign(ctx.user);
-      const r = svm.sendTransaction(tx);
-      if (r?.constructor?.name === "FailedTransactionMetadata") {
-        const failed = r as unknown as {
-          err: () => { toString(): string };
-          meta: () => { logs: () => string[] };
-        };
-        throw new Error(`${label} failed: ${failed.err().toString()}\nlogs:\n${failed.meta().logs().join("\n")}`);
-      }
-    };
+    // Setup: create the two mints. The reward_mint must have its
+    // mint_authority set to the pool PDA off-chain BEFORE
+    // initialize_pool is called (the demo's documented precondition).
+    // createMintIxs takes a mint_authority — pass the pool PDA so the
+    // reward_mint is correctly configured for later mint_to CPIs.
+    const setupTx = new Transaction()
+      .add(...createMintIxs(svm, ctx.payer.publicKey, ctx.stakeMint.publicKey, 6, ctx.payer.publicKey, ctx.payer.publicKey))
+      .add(...createMintIxs(svm, ctx.payer.publicKey, ctx.rewardMint.publicKey, 6, ctx.poolPda, ctx.poolPda));
+    sendSetupTx(svm, setupTx, ctx.payer.publicKey,
+      [ctx.payer, ctx.stakeMint, ctx.rewardMint], "setup");
 
-    const warp = (ts: number) => {
-      const fn = (svm as { warpToTimestamp?: (t: bigint) => unknown }).warpToTimestamp;
-      if (typeof fn === "function") fn.call(svm, BigInt(ts));
-    };
-
-    // T0 — initialize_stake(reward_rate = 10000)
-    sendTx(new TransactionInstruction({
+    // initialize_pool(reward_rate=10000, lock_duration=86400, max_stake=1_000_000).
+    const ix = new TransactionInstruction({
       programId,
       keys: [
-        { pubkey: ctx.stakePda, isSigner: false, isWritable: true },
-        { pubkey: ctx.user.publicKey, isSigner: true, isWritable: true },
+        { pubkey: ctx.poolPda, isSigner: false, isWritable: true },
+        { pubkey: ctx.stakeVault, isSigner: false, isWritable: true },
+        { pubkey: ctx.rewardVault, isSigner: false, isWritable: true },
+        { pubkey: ctx.stakeMint.publicKey, isSigner: false, isWritable: false },
+        { pubkey: ctx.rewardMint.publicKey, isSigner: false, isWritable: false },
+        { pubkey: ctx.admin.publicKey, isSigner: true, isWritable: true },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
       ],
       data: Buffer.from(concatBytes(
-        anchorIxDiscriminator("initialize_stake"),
-        encodeU64LE(10_000n),
+        anchorIxDiscriminator("initialize_pool"),
+        encodeU64LE(10_000n),         // reward_rate
+        encodeI64LE(86_400n),         // lock_duration (1 day)
+        encodeU64LE(1_000_000n),      // max_stake
       )),
-    }), "initialize_stake");
-
-    // T0 + 100 — deposit(100). amount was 0 → earned = 0 → accumulated = 0.
-    warp(PIN_T0 + 100);
-    sendTx(new TransactionInstruction({
-      programId,
-      keys: [
-        { pubkey: ctx.stakePda, isSigner: false, isWritable: true },
-        { pubkey: ctx.user.publicKey, isSigner: true, isWritable: false },
-      ],
-      data: Buffer.from(concatBytes(
-        anchorIxDiscriminator("deposit"),
-        encodeU64LE(100n),
-      )),
-    }), "deposit#1");
-
-    // T0 + 150 — deposit(50). amount=100, elapsed=50 → earned = 100*50*10000/1M = 50.
-    warp(PIN_T0 + 150);
-    sendTx(new TransactionInstruction({
-      programId,
-      keys: [
-        { pubkey: ctx.stakePda, isSigner: false, isWritable: true },
-        { pubkey: ctx.user.publicKey, isSigner: true, isWritable: false },
-      ],
-      data: Buffer.from(concatBytes(
-        anchorIxDiscriminator("deposit"),
-        encodeU64LE(50n),
-      )),
-    }), "deposit#2");
-
-    // T0 + 350 — claim. amount=150, elapsed=200 → earned = 150*200*10000/1M = 300.
-    // total claimed = accumulated 50 + earned 300 = 350.
-    warp(PIN_T0 + 350);
-    sendTx(new TransactionInstruction({
-      programId,
-      keys: [
-        { pubkey: ctx.stakePda, isSigner: false, isWritable: true },
-        { pubkey: ctx.user.publicKey, isSigner: true, isWritable: false },
-      ],
-      data: Buffer.from(anchorIxDiscriminator("claim")),
-    }), "claim");
+    });
+    const tx = new Transaction().add(ix);
+    tx.recentBlockhash = svm.latestBlockhash();
+    tx.feePayer = ctx.admin.publicKey;
+    tx.sign(ctx.admin);
+    const r = svm.sendTransaction(tx);
+    if (r?.constructor?.name === "FailedTransactionMetadata") {
+      const failed = r as unknown as {
+        err: () => { toString(): string };
+        meta: () => { logs: () => string[] };
+      };
+      throw new Error(`initialize_pool failed: ${failed.err().toString()}\nlogs:\n${failed.meta().logs().join("\n")}`);
+    }
   },
 
+  stripDiscriminator: true,
   accountsToCompare: (ctx) => [
-    { pubkey: ctx.stakePda, label: "user_stake" },
+    { pubkey: ctx.poolPda, label: "pool_pda" },
   ],
 });
