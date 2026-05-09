@@ -22,6 +22,9 @@ const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
   "token::authority": "token::authority",
   "associated_token::mint":      "associated_token::mint",
   "associated_token::authority":  "associated_token::authority",
+  "mint::decimals":         "mint::decimals",
+  "mint::authority":        "mint::authority",
+  "mint::freeze_authority": "mint::freeze_authority",
   realloc:                        "realloc",
 };
 

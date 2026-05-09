@@ -1601,6 +1601,65 @@ ${invokeCall}
     }`;
   }
 
+  override emitCreateMint(
+    account: string, payer: string, decimals: string, mintAuthority: string, freezeAuthority: string | null, signerSeeds?: string,
+  ): string {
+    // SPL Token InitializeMint2 (discriminator 20):
+    //   1 byte disc + 1 byte decimals + 32 bytes mint_authority +
+    //   1 byte COption tag + (32 bytes freeze_authority if Some)
+    // Total length: 35 bytes (None) or 67 bytes (Some).
+    const createInvoke = signerSeeds
+      ? `let __mint_seed_group = ${signerSeeds}.first().ok_or(pinocchio::program_error::ProgramError::InvalidSeeds)?;
+        let mut __mint_seeds: [pinocchio::instruction::Seed<'_>; 8] = core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (i, s) in __mint_seed_group.iter().enumerate() {
+            if i >= __mint_seeds.len() { return Err(pinocchio::program_error::ProgramError::InvalidSeeds); }
+            __mint_seeds[i] = pinocchio::instruction::Seed::from(*s);
+        }
+        let __mint_signer = pinocchio::instruction::Signer::from(&__mint_seeds[..__mint_seed_group.len()]);
+        pinocchio_system::instructions::CreateAccount {
+            from: ${payer},
+            to: ${account},
+            lamports: __mint_rent,
+            space: 82u64,
+            owner: &TOKEN_PROGRAM_ID,
+        }.invoke_signed(&[__mint_signer])?;`
+      : `pinocchio_system::instructions::CreateAccount {
+            from: ${payer},
+            to: ${account},
+            lamports: __mint_rent,
+            space: 82u64,
+            owner: &TOKEN_PROGRAM_ID,
+        }.invoke()?;`;
+    const freezeBlock = freezeAuthority
+      ? `__mint_init_data[34] = 1;
+        __mint_init_data[35..67].copy_from_slice(${freezeAuthority}.key().as_ref());
+        let __mint_init_data_len: usize = 67;`
+      : `__mint_init_data[34] = 0;
+        let __mint_init_data_len: usize = 35;`;
+    return `    // Init mint: ${account}
+    {
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
+        // 1. Allocate + assign to token program (rent-exempt for 82 bytes).
+        let __mint_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(82);
+        ${createInvoke}
+        // 2. InitializeMint2 — discriminator 20, decimals + authority + COption<freeze>.
+        let mut __mint_init_data = [0u8; 67];
+        __mint_init_data[0] = 20;
+        __mint_init_data[1] = (${decimals}) as u8;
+        __mint_init_data[2..34].copy_from_slice(${mintAuthority}.key().as_ref());
+        ${freezeBlock}
+        let __mint_init_metas = [
+            pinocchio::instruction::AccountMeta::new(${account}.key(), true, false),
+        ];
+        let __mint_init_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_PROGRAM_ID,
+            accounts: &__mint_init_metas,
+            data: &__mint_init_data[..__mint_init_data_len],
+        };
+        pinocchio::cpi::invoke(&__mint_init_ix, &[${account}])?;
+    }`;
+  }
+
   override emitMemo(data: string, _signerSeeds?: string): string {
     // No first-party pinocchio_memo crate in the 0.9 ecosystem — hand-roll
     // a CPI against the SPL Memo program ID

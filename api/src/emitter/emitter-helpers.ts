@@ -326,17 +326,20 @@ export function irNeedsMemoHelper(ir: SolanaIR): boolean {
 }
 
 /**
- * Returns true if any instruction needs the inline-token-account init emit
- * (sibling of irNeedsAtaCreationHelper for `init token::*`). Triggered only
- * by the constraint path — there's no body-CPI equivalent (Anchor's macro
- * doesn't expand to a user-visible CPI; the inline-init is the only path).
+ * Returns true if any instruction needs the inline-token-account OR
+ * inline-mint init emit. Both lower to system::create_account +
+ * SPL-Token init CPI and need Rent::get() / rent helper imports —
+ * detection-wise they're a single bucket.
  */
 export function irNeedsTokenAccountInitHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.accounts.some((account) =>
-      account.isInit &&
-      account.constraints.some((c) => c.kind === "token::mint" && c.value) &&
-      account.constraints.some((c) => c.kind === "token::authority" && c.value)
+      account.isInit && (
+        (account.constraints.some((c) => c.kind === "token::mint" && c.value) &&
+         account.constraints.some((c) => c.kind === "token::authority" && c.value)) ||
+        (account.constraints.some((c) => c.kind === "mint::decimals" && c.value) &&
+         account.constraints.some((c) => c.kind === "mint::authority" && c.value))
+      )
     )
   );
 }

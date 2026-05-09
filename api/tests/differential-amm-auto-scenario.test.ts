@@ -44,16 +44,24 @@ describe("AMM auto-scenario differential (workbench Verify Byte-Equal path)", ()
     let anchorSoPath: string | null = null;
     let anvilSoPath: string | null = null;
     try {
-      const { readdirSync } = await import("node:fs");
+      const { readdirSync, statSync } = await import("node:fs");
+      const candidates: { dir: string; mtime: number }[] = [];
       for (const d of readdirSync(CACHE_ROOT, { withFileTypes: true })) {
         if (!d.isDirectory() || !d.name.startsWith(`amm-${sourceHash}-`)) continue;
         const a = join(CACHE_ROOT, d.name, "amm_anchor.so");
         const v = join(CACHE_ROOT, d.name, "amm_anvil.so");
         if (existsSync(a) && existsSync(v)) {
-          anchorSoPath = a;
-          anvilSoPath = v;
-          break;
+          candidates.push({ dir: d.name, mtime: statSync(v).mtimeMs });
         }
+      }
+      // Pick the freshest .so pair — emitter changes invalidate the
+      // emitter-hash suffix so older cached .so files would still match
+      // the source hash but reflect stale emit behavior.
+      candidates.sort((a, b) => b.mtime - a.mtime);
+      const pick = candidates[0];
+      if (pick) {
+        anchorSoPath = join(CACHE_ROOT, pick.dir, "amm_anchor.so");
+        anvilSoPath = join(CACHE_ROOT, pick.dir, "amm_anvil.so");
       }
     } catch { /* CACHE_ROOT may not exist */ }
     if (!anchorSoPath || !anvilSoPath) {
@@ -76,23 +84,9 @@ describe("AMM auto-scenario differential (workbench Verify Byte-Equal path)", ()
     // same scope, so we know byte-equal should hold there. Later steps
     // (add_liquidity etc) need ATA balances that match what the program
     // expects at the CPI layer; we cover those if/when individual demos
-    // are promoted.
-    //
-    // KNOWN BUG — see project memory `mint-init-emit-bug-2026-05-09`:
-    // Anvil's emitter drops `mint::*` init constraints (parser doesn't
-    // know `mint::decimals` / `mint::authority`, emitter has no Mint
-    // branch). Anchor inits lp_mint to 82B; Anvil leaves it 0B.
-    // Until that arc lands, override compare.accounts to the 3 accounts
-    // Anvil DOES init correctly so this test continues to verify the
-    // pieces of the workbench path that work end-to-end.
-    const scenario = {
-      ...out.scenario,
-      steps: out.scenario.steps.slice(0, 1),
-      compare: {
-        ...out.scenario.compare,
-        accounts: ["pool", "vault_a", "vault_b"],
-      },
-    };
+    // are promoted. Compare scope keeps the synthesizer's full set so
+    // pool/vault_a/vault_b/lp_mint all get verified against Anchor.
+    const scenario = { ...out.scenario, steps: out.scenario.steps.slice(0, 1) };
 
     // Resolve context once — both targets share keypairs + PDAs.
     const ctx = resolveScenarioContext(scenario, PROGRAM_ID);

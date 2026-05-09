@@ -1113,6 +1113,36 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     invoke(&__ta_init, &[${account}.clone(), ${mint}.clone()])?;`;
   }
 
+  override emitCreateMint(
+    account: string, payer: string, decimals: string, mintAuthority: string, freezeAuthority: string | null, signerSeeds?: string,
+  ): string {
+    // Two-step: rent-exempt allocate (82 bytes for SPL Mint) + initialize_mint2
+    // (binds decimals + mint_authority + COption<freeze_authority>). Mint2
+    // doesn't need the Rent sysvar in the accounts list.
+    const createInvoke = signerSeeds
+      ? `invoke_signed(&__mint_create, &[${payer}.clone(), ${account}.clone()], ${signerSeeds})?;`
+      : `invoke(&__mint_create, &[${payer}.clone(), ${account}.clone()])?;`;
+    const freezeArg = freezeAuthority ? `Some(${freezeAuthority}.key)` : `None`;
+    return `    // Init mint: ${account}
+    let __mint_lamports = Rent::get()?.minimum_balance(82);
+    let __mint_create = system_instruction::create_account(
+        ${payer}.key,
+        ${account}.key,
+        __mint_lamports,
+        82,
+        &spl_token::id(),
+    );
+    ${createInvoke}
+    let __mint_init = spl_token::instruction::initialize_mint2(
+        &spl_token::id(),
+        ${account}.key,
+        ${mintAuthority}.key,
+        ${freezeArg},
+        (${decimals}) as u8,
+    )?;
+    invoke(&__mint_init, &[${account}.clone()])?;`;
+  }
+
   override emitMemo(data: string, _signerSeeds?: string): string {
     // spl_memo crate exposes build_memo(memo: &[u8], signer_pubkeys: &[&Pubkey]).
     // We coerce string literals to bytes via .as_bytes(); other expressions

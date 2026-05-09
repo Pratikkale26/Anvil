@@ -342,6 +342,24 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  /**
+   * Init an SPL Mint from `init mint::decimals = N, mint::authority = X` plus
+   * optional `mint::freeze_authority = Y`. Two CPIs: system::create_account
+   * (82 bytes, owner=token_program) + Token::initialize_mint2 (discriminator
+   * 20). InitializeMint2 instead of InitializeMint avoids needing the Rent
+   * sysvar in the accounts list (Anchor 0.28+ default). When the mint is a
+   * fresh keypair the create_account is invoke()'d account-as-signer; for
+   * the unusual PDA-mint case the signer seeds are threaded through.
+   */
+  abstract emitCreateMint(
+    account: string,
+    payer: string,
+    decimals: string,
+    mintAuthority: string,
+    freezeAuthority: string | null,
+    signerSeeds?: string,
+  ): string;
+
   // ── Memo CPI ──
   abstract emitMemo(data: string, signerSeeds?: string): string;
 
@@ -993,8 +1011,11 @@ export abstract class BaseEmitter {
     const isInlineTokenInit = (a: Instruction["accounts"][number]) =>
       a.constraints.some((c) => c.kind === "token::mint" && c.value) &&
       a.constraints.some((c) => c.kind === "token::authority" && c.value);
+    const isInlineMintInit = (a: Instruction["accounts"][number]) =>
+      a.constraints.some((c) => c.kind === "mint::decimals" && c.value) &&
+      a.constraints.some((c) => c.kind === "mint::authority" && c.value);
     const isInlineAccountInit = (a: Instruction["accounts"][number]) =>
-      isInlineAtaInit(a) || isInlineTokenInit(a);
+      isInlineAtaInit(a) || isInlineTokenInit(a) || isInlineMintInit(a);
     const initAccountsWithBumps = instr.accounts
       .filter((a) => a.isInit && a.isPda && a.pdaSeeds?.length && (isCustomState(a.accountType) || (a.isPda && a.pdaSeeds?.length)));
     const initPreludes = instr.accounts
@@ -1606,6 +1627,37 @@ ${fields}
       const authority = snakeCase(ataAuthorityConstraint.value);
       const payer = payerName ?? "payer";
       return this.emitCreateAta(accountName, payer, mint, authority);
+    }
+
+    // ── `init mint::*` (Mint creation): SystemProgram::CreateAccount
+    // (82 bytes, owner=token program) + Token::InitializeMint2. AMM's
+    // lp_mint is the canonical fresh-keypair shape; PDA-mints are
+    // possible (some governance programs) and routed through the same
+    // signer-seeds threading as the TokenAccount branch below.
+    const mintDecimalsConstraint = accountRef.constraints.find((c) => c.kind === "mint::decimals" && c.value);
+    const mintAuthorityConstraint = accountRef.constraints.find((c) => c.kind === "mint::authority" && c.value);
+    const mintFreezeConstraint = accountRef.constraints.find((c) => c.kind === "mint::freeze_authority" && c.value);
+    if (mintDecimalsConstraint?.value && mintAuthorityConstraint?.value) {
+      const decimals = mintDecimalsConstraint.value.trim();
+      const mintAuthority = snakeCase(mintAuthorityConstraint.value);
+      const freezeAuthority = mintFreezeConstraint?.value ? snakeCase(mintFreezeConstraint.value) : null;
+      const payer = payerName ?? "payer";
+
+      if (accountRef.isPda && accountRef.pdaSeeds?.length) {
+        const pdaSeeds = accountRef.pdaSeeds.map((seed) => this.normalizeInitSeedExpr(seed));
+        const bumpPrelude = this.emitBumpSeed("program_id", pdaSeeds, accountName)
+          .replace(/\blet bump =/g, `let bump_${accountName} =`)
+          .replace(/\blet\s+\(expected_key,\s*bump\)\s*=/g, `let (expected_key, bump_${accountName}) =`);
+        const seedsPrelude = `    let init_${accountName}_seeds: &[&[u8]] = &[
+            ${[...pdaSeeds, `&[bump_${accountName}]`].join(",\n            ")},
+        ];
+    let init_${accountName}_signer_seeds = &[&init_${accountName}_seeds[..]];`;
+        const signerSeedsExpr = `init_${accountName}_signer_seeds`;
+        const mintCreate = this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, signerSeedsExpr);
+        return `${bumpPrelude}\n${seedsPrelude}\n${mintCreate}`;
+      }
+
+      return this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority);
     }
 
     // ── `init token::*` (non-ATA token account): account is a fresh keypair
