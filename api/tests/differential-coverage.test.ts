@@ -69,6 +69,9 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   "return-err": "return-err.rs",
   "cpi-memo": "cpi-memo.rs",
   "cpi-custom": "cpi-custom.rs",
+  // Perp-funding (this session): hand-rolled differential gating
+  // initialize_market byte-equal + auto-scenario stub.
+  "perp-funding": "perp-funding.rs",
 };
 
 /**

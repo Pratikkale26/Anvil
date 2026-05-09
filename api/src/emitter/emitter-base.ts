@@ -916,12 +916,19 @@ export abstract class BaseEmitter {
     // need to live alongside the rest. emit!() lowering references the
     // typename + ::DISCRIMINATOR const, so the definitions must be in scope.
     if ((ir.events ?? []).length > 0) {
-      // Strip `//!` inner-doc comments (only valid at file-top) and the
+      // Strip `//!` inner-doc comments (only valid at file-top), the
       // `use borsh::...` line (already emitted by emitUseStatements when
-      // events are present, so the inlined re-import would cause E0252).
+      // events are present, so the inlined re-import would cause E0252),
+      // and `use super::*;` (only valid in events.rs as a sub-module
+      // pulling from lib.rs; in single-file mode the code already lives
+      // at lib.rs top-level so super has nothing to reach).
       const eventsContent = this.emitEventsFile(ir)
         .split("\n")
-        .filter((line) => !line.startsWith("//!") && !/^use borsh::/.test(line.trim()))
+        .filter((line) =>
+          !line.startsWith("//!")
+          && !/^use borsh::/.test(line.trim())
+          && line.trim() !== "use super::*;"
+        )
         .join("\n")
         .replace(/\n{3,}/g, "\n\n")
         .trim();
