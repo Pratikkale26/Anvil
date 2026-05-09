@@ -686,12 +686,24 @@ export class BodyWalker {
       }
       return `bump_${normalized}`;
     };
+    // Method-call form: `*ctx.bumps.get("X").unwrap()` — Anchor's bumps
+    // are a HashMap<String, u8>, so the get/unwrap pattern is idiomatic.
+    // Both `*ctx.bumps.get("X").unwrap()` and `ctx.bumps.get("X").unwrap()`
+    // collapse to `bump_X`. Pinocchio + Native both compute bumps per-call
+    // via find_program_address, so the local binding from onMatch's
+    // normalizedBumpLine path resolves correctly. Squads-mpl/roles uses
+    // `ctx.bumps.get("roles_manager")` — pre-fix that leaked through as
+    // `bump_get("roles_manager")` (a u8 called like a function).
+    const onGetMatch = (_full: string, key: string) => onMatch(_full, key);
+    let transformed = code
+      .replace(/\*\s*ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/g, onGetMatch)
+      .replace(/ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/g, onGetMatch);
     // Match the wrapped forms first — `(&ctx.bumps).field`, `(ctx.bumps).field`,
     // and `&ctx.bumps.field` — which arise when the impl-method inliner
     // substitutes a `&ctx.bumps` arg into a body that uses `bumps.field`. The
     // bare form `ctx.bumps.field` runs last so the broader regex doesn't
     // partial-match inside an already-rewritten parens form.
-    let transformed = code
+    transformed = transformed
       .replace(/\(\s*&\s*ctx\.bumps\s*\)\.(\w+)/g, onMatch)
       .replace(/\(\s*ctx\.bumps\s*\)\.(\w+)/g, onMatch)
       .replace(/&\s*ctx\.bumps\.(\w+)/g, onMatch)

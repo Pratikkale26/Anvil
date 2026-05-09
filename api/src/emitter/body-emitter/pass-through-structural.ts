@@ -451,6 +451,13 @@ export function replaceBumpRefsStructural(code: string, ctx: PassContext): strin
       const matchesCtxBumps = isCtxBumpsReceiver(outerReceiver);
       if (!matchesCtxBumps) return true;
       const accountName = outerField.text;
+      // `ctx.bumps.get(...)` parses as field_expression(ctx.bumps, get)
+      // wrapped in a call_expression. If we rewrote `get` to `bump_get`,
+      // the result `bump_get("X")` calls a u8 like a function — E0618.
+      // Skip and let walker.replaceBumpRefs's method-call-form regex
+      // catch the full `*ctx.bumps.get("X").unwrap()` shape and resolve
+      // X (the actual account name) to bump_X.
+      if (accountName === "get") return true;
       const normalized = snakeCase(accountName);
       ctx.onBumpRef?.(accountName);
       // Determine edit range. Default: the outer field_expression itself.

@@ -1371,7 +1371,7 @@ ${fields}
     // returns a generic error. Same fallback shape as the unsalvageable-helper
     // commentout pass but applied at the impl-item level.
     for (const raw of (typeDef.implItems ?? [])) {
-      const stubbed = rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw));
+      const stubbed = rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)));
       items.push(`    ${stubbed}`);
     }
     if (items.length === 0) return "";
@@ -2111,6 +2111,30 @@ export function rewriteTryIntoUnwrap(body: string): string {
   return body.replace(
     /\.try_into\(\)\.unwrap\(\)/g,
     `.try_into().map_err(|_| ProgramError::InvalidAccountData)?`,
+  );
+}
+
+/**
+ * Anchor source uses `Result<T>` as a one-arg alias for
+ * `Result<T, anchor_lang::error::Error>`. Anvil's emit doesn't carry the
+ * anchor_lang prelude, so a verbatim `Result<()>` resolves to the std
+ * 2-arg Result and fails E0107. Rewrite to the explicit 2-arg form
+ * pointing at ProgramError, which both targets ship.
+ *
+ * Applied to user-carried code (impl methods, helper fns) where the
+ * verbatim `Result<...>` shape leaks through. Doesn't touch instruction
+ * handler signatures (those go through emitInstructionFunction which
+ * already targets the correct return type).
+ */
+export function rewriteAnchorResultAlias(body: string): string {
+  return body.replace(
+    /\bResult\s*<\s*([^,<>]+(?:<[^<>]*>)?)\s*>/g,
+    (full, inner: string) => {
+      // Skip already-2-arg shapes (the regex's alternation doesn't see commas
+      // because we capture only the first arg, but a 2-arg Result has a comma
+      // INSIDE the angle bracket — the negative class [^,<>] excludes it).
+      return `Result<${inner.trim()}, ProgramError>`;
+    },
   );
 }
 

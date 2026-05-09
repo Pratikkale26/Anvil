@@ -666,5 +666,18 @@ export function handleCpiCustom(w: BodyWalker, stmt: CpiCustom): void {
     w.lines.push(preludeLine);
   }
   w.lines.push(`    // ⚠️ Anvil: Custom CPI — verify this works with ${w.emitter.frameworkName}`);
-  w.lines.push(`    ${transformedCpiCode}`);
+  // The cpi-detector captured rawCode from the bare call_expression node,
+  // which doesn't include the trailing `?;` of the enclosing statement.
+  // For `invoke` / `invoke_signed` (which always return ProgramResult),
+  // append `?;` so the result is propagated AND the subsequent statement
+  // doesn't parse as a continuation expression. Other custom CPIs (e.g.
+  // user-authored helper calls) get just `;` if the rawCode ended in `)`
+  // — propagating the Result of an unknown-return-type function would
+  // mismatch types if it doesn't return Result.
+  const tail = transformedCpiCode.trimEnd();
+  const isInvoke = /^\s*(?:&)?\s*(?:pinocchio::cpi::)?invoke(?:_signed)?\s*\(/.test(transformedCpiCode);
+  let suffix = "";
+  if (tail.endsWith(")")) suffix = isInvoke ? "?;" : ";";
+  else if (!tail.endsWith(";") && !tail.endsWith("?")) suffix = ";";
+  w.lines.push(`    ${transformedCpiCode}${suffix}`);
 }

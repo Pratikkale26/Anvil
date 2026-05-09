@@ -80,7 +80,7 @@ pub fn raw_transfer(
                 to,
                 system_program,
             ],
-        )
+        )?;
     Ok(())
 
 }

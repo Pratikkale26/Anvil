@@ -2451,27 +2451,11 @@ export class AstVisitorBase {
    * a raw_line until M5 lands the IR extension.
    */
   visitCpiCustom(stmt: CpiCustom): RustStmt[] {
-    const w = this.walker;
-    w.ctx.transformedCount++;
-    w.ctx.warnings.push(
-      `Custom CPI to '${stmt.programAccount}' — passed through as raw code. Verify framework compatibility.`,
-    );
-    const { prelude: cpiPrelude, code: cpiCode } = w.replaceBumpRefs(stmt.rawCode);
-    let transformedCpiCode = w.normalizeKeyValueUsages(
-      w.transformAccountReferences(
-        w.transformCtxAccountsReferences(w.transformNestedAnchorCode(cpiCode)),
-      ),
-    );
-    if (w.emitter.frameworkName !== "Native") {
-      transformedCpiCode = transformedCpiCode.replace(/\.to_account_info\(\)/g, "");
-    }
-    const out: RustStmt[] = [];
-    for (const preludeLine of cpiPrelude) {
-      out.push(rawLine(preludeLine));
-    }
-    out.push(comment(`⚠️ Anvil: Custom CPI — verify this works with ${w.emitter.frameworkName}`));
-    out.push(rawLine(`    ${transformedCpiCode}`));
-    return out;
+    // Handler appends `?;` (or `;`) to the rawCode-derived call. Replicating
+    // that branch in the visitor structurally drifts on transformedCpiCode's
+    // tail-detection — route through runHandlerCapture so output stays
+    // byte-identical to the handler.
+    return this.runHandlerCapture(handleCpiCustom, stmt);
   }
 
   visitCpiMplCreateMetadataV3(stmt: CpiMplCreateMetadataV3): RustStmt[] {
