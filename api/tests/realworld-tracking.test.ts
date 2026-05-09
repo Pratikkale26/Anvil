@@ -26,6 +26,7 @@
  */
 import { describe, test, expect } from "bun:test";
 import { existsSync } from "fs";
+import { spawnSync } from "child_process";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
 import { emitNativeFull } from "../src/emitter/native-emitter.ts";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
@@ -53,6 +54,10 @@ interface TrackedCase {
   maxErrors: number;
   /** Why this case fails today. Update as the underlying gap moves. */
   reason: string;
+  /** Optional: clone parent repo into `cloneRoot` if missing. Mirrors the
+   * EXTERNAL_MUST_PASS auto-clone in realworld-cargo. */
+  repo?: string;
+  cloneRoot?: string;
 }
 
 const TRACKED: TrackedCase[] = [
@@ -147,7 +152,96 @@ const TRACKED: TrackedCase[] = [
   // realworld-cargo.test.ts after emit_cpi! was added as an alias of
   // emit! in body-classifier.ts. Both lower to comment-only on non-Anchor
   // targets and are subject to --ignore-events on the differential CLI.
+
+  // ── 2026-05-09 external probe additions ──
+  //
+  // squads-mpl/roles + futarchy/mint_governor were validator-clean as of
+  // commits 35baec7 + 7ae1af0 + 63dfd77 (enum impl-items carry-over,
+  // has_one against TokenAccount/Mint, .try_into().unwrap() rewrite).
+  // Cargo-build still fails on both because of structural gaps:
+  //
+  //   squads-mpl/roles: imports `squads_mpl` (sibling crate not in scaffold)
+  //                     + cross-module `From<&Transaction>` impl bodies
+  //                     fragment under unsalvageable-helper commentout into
+  //                     parse failures. ~50-55 cargo errors.
+  //
+  //   futarchy/mint_governor: imports `solana_security_txt` macro that
+  //                           Anvil doesn't filter out + cross-module
+  //                           `CommonFields` / `Pubkey` references in
+  //                           events.rs aren't resolved by the per-file
+  //                           emit. ~21-47 cargo errors.
+  //
+  // Tracked here as regression guards. Closing to MUST_PASS requires
+  // sibling-crate import handling (squads-mpl) + cross-module resolution
+  // for events files (futarchy).
+  {
+    id: "squads-mpl-roles",
+    target: "pinocchio",
+    path: "/tmp/squads-mpl/programs/roles/src/lib.rs",
+    source: "Squads-Protocol/squads-mpl (programs/roles)",
+    maxErrors: 51,
+    reason: "Sibling-crate `squads_mpl::*` imports unresolved + From<&Transaction> impl-body commentout fragments into parse fails. Validator-clean as of 2026-05-09.",
+    repo: "https://github.com/Squads-Protocol/squads-mpl",
+    cloneRoot: "/tmp/squads-mpl",
+  },
+  {
+    id: "squads-mpl-roles",
+    target: "native",
+    path: "/tmp/squads-mpl/programs/roles/src/lib.rs",
+    source: "Squads-Protocol/squads-mpl (programs/roles)",
+    maxErrors: 55,
+    reason: "Same sibling-crate gap as pinocchio + auto-import dup of system_instruction. Validator-clean as of 2026-05-09.",
+    repo: "https://github.com/Squads-Protocol/squads-mpl",
+    cloneRoot: "/tmp/squads-mpl",
+  },
+  {
+    id: "futarchy-mint-governor",
+    target: "pinocchio",
+    path: "/tmp/futarchy/programs/mint_governor/src/lib.rs",
+    source: "metaDAOproject/futarchy (programs/mint_governor)",
+    maxErrors: 21,
+    reason: "solana_security_txt import unfiltered + cross-module CommonFields ref in events.rs unresolved. Validator-clean as of 2026-05-09.",
+    repo: "https://github.com/metaDAOproject/futarchy",
+    cloneRoot: "/tmp/futarchy",
+  },
+  {
+    id: "futarchy-mint-governor",
+    target: "native",
+    path: "/tmp/futarchy/programs/mint_governor/src/lib.rs",
+    source: "metaDAOproject/futarchy (programs/mint_governor)",
+    maxErrors: 47,
+    reason: "Same as pinocchio + native auto-import injector misses Pubkey in events.rs. Validator-clean as of 2026-05-09.",
+    repo: "https://github.com/metaDAOproject/futarchy",
+    cloneRoot: "/tmp/futarchy",
+  },
 ];
+
+// Auto-clone parent repos for tracking entries that carry repo metadata.
+// Mirrors the EXTERNAL_MUST_PASS auto-clone in realworld-cargo. Skip when
+// ANVIL_NO_CLONE=1 or when the clone fails (test then skips the case).
+if (process.env.ANVIL_NO_CLONE !== "1") {
+  const seen = new Set<string>();
+  for (const c of TRACKED) {
+    if (!c.cloneRoot || !c.repo) continue;
+    if (seen.has(c.cloneRoot)) continue;
+    seen.add(c.cloneRoot);
+    if (!existsSync(c.cloneRoot)) {
+      console.warn(
+        `[tracking] ${c.cloneRoot} not found — auto-cloning ${c.repo} (depth=1)…`,
+      );
+      const clone = spawnSync(
+        "git",
+        ["clone", "--depth", "1", c.repo, c.cloneRoot],
+        { stdio: "inherit", timeout: 120_000 },
+      );
+      if (clone.status !== 0) {
+        console.warn(
+          `[tracking] auto-clone failed for ${c.repo} (status=${clone.status}). Test will skip.`,
+        );
+      }
+    }
+  }
+}
 
 const anyExist = TRACKED.some((c) => existsSync(c.path));
 
