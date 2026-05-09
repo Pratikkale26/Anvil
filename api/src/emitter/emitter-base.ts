@@ -1283,7 +1283,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
   protected emitUserTraitImpls(ir: SolanaIR): string {
     const impls = ir.userTraitImpls ?? [];
     if (impls.length === 0) return "";
-    return impls.join("\n\n");
+    return impls.map((raw) => commentOutSiblingTraitImpl(raw)).join("\n\n");
   }
 
   protected emitCustomTypes(ir: SolanaIR): string {
@@ -2112,6 +2112,39 @@ export function rewriteTryIntoUnwrap(body: string): string {
     /\.try_into\(\)\.unwrap\(\)/g,
     `.try_into().map_err(|_| ProgramError::InvalidAccountData)?`,
   );
+}
+
+/**
+ * Comment out a `impl <Trait> for <sibling>::<...>` block when the target
+ * type lives in a sibling Anchor program (not a known ecosystem crate).
+ * squads-mpl/roles' lib.rs has `impl From<IncomingInstruction> for
+ * squads_mpl::state::IncomingInstruction { ... }` — without the sibling
+ * crate, that target type is unresolvable. Comment the whole impl with
+ * the same TODO banner as other unsupported-shape stubs.
+ */
+export function commentOutSiblingTraitImpl(raw: string): string {
+  // Match `for <crate>::` to extract the target's outer crate name.
+  const m = raw.match(/\bfor\s+([a-z_][a-z0-9_]*)\s*::/i);
+  if (!m) return raw;
+  const crate = m[1] ?? "";
+  const isKnownExternal =
+    crate === "anchor_lang" ||
+    crate === "anchor_spl" ||
+    crate === "solana_program" ||
+    crate === "pinocchio" ||
+    crate === "core" ||
+    crate === "std" ||
+    crate === "alloc" ||
+    crate.startsWith("spl_") ||
+    crate.startsWith("mpl_") ||
+    crate.startsWith("pyth_") ||
+    crate.startsWith("switchboard_");
+  if (isKnownExternal) return raw;
+  const commented = raw
+    .split("\n")
+    .map((line) => (line.length > 0 ? `// ${line}` : "//"))
+    .join("\n");
+  return `// ⚠️ Anvil TODO: trait impl for sibling-Anchor-program type — sibling crate not in target scaffold; manual port required\n${commented}`;
 }
 
 /**
