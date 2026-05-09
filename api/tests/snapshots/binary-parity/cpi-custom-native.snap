@@ -78,7 +78,6 @@ use solana_program::{
     system_instruction,
     sysvar::Sysvar,
 };
-use solana_program::system_instruction;
 
 mod instructions;
 

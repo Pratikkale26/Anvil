@@ -8,7 +8,7 @@
 
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
-import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias } from "./emitter-base.js";
+import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen } from "./emitter-base.js";
 import {
   instrDiscriminator,
   accountDiscriminator,
@@ -284,7 +284,10 @@ export class PinocchioEmitter extends BaseEmitter {
     const needsRent = _ir.instructions.some(i =>
       i.body.some(s =>
         s.kind === 'sysvar_rent' ||
-        (s.kind === 'pass_through' && /\bRent::get\(\)/.test(s.code))
+        // `\bRent::get\(\)` for explicit forms; the `.minimum_balance|...`
+        // patterns surface the post-rewrite Rent::get()?.method shape via
+        // postProcessInstructionBody (rewriteRentSysvarMethods).
+        (s.kind === 'pass_through' && /\bRent::get\(\)|\.(?:minimum_balance|exempt_minimum|burn_percent)\s*\(/.test(s.code))
       ) ||
       // Realloc prelude (emitReallocPrelude in emitter-base) calls
       // Rent::get() to compute the rent delta. Without this account-side
@@ -1997,7 +2000,7 @@ ${writeLines}
     if (!acc.implItems || acc.implItems.length === 0) return "";
     const filtered = acc.implItems
       .filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw))
-      .map((raw) => rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw))));
+      .map((raw) => rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))));
     if (filtered.length === 0) return "";
     return `\n\nimpl ${acc.name} {\n${filtered.map((s) => `    ${s}`).join("\n\n")}\n}`;
   }

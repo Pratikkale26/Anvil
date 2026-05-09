@@ -8,7 +8,7 @@
 
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
-import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias } from "./emitter-base.js";
+import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen } from "./emitter-base.js";
 import {
   instrDiscriminator,
   snakeCase,
@@ -276,9 +276,16 @@ use solana_program::{
     const needsRent = _ir.instructions.some(i =>
       i.body.some(s =>
         s.kind === 'sysvar_rent' ||
-        (s.kind === 'pass_through' && /\bRent::\w/.test(s.code)) ||
-        (s.kind === 'state_field_assign' && /\bRent::\w/.test(s.value))
-      )
+        // `\bRent::\w` for explicit Rent::get() / Rent::default() in source.
+        // `.minimum_balance|.exempt_minimum|.burn_percent` for `<sysvar>.<method>`
+        // forms which postProcessInstructionBody rewrites to `Rent::get()?.<method>` —
+        // detect the pre-rewrite form so the auto-import fires too.
+        (s.kind === 'pass_through' && /\bRent::\w|\.(?:minimum_balance|exempt_minimum|burn_percent)\s*\(/.test(s.code)) ||
+        (s.kind === 'state_field_assign' && /\bRent::\w|\.(?:minimum_balance|exempt_minimum|burn_percent)\s*\(/.test(s.value))
+      ) ||
+      // Realloc prelude (emitReallocPrelude) emits Rent::get()?.minimum_balance(...)
+      // via the rent-delta computation. Mirrors pinocchio's needsRent check.
+      i.accounts.some(a => a.constraints?.some(c => c.kind === 'realloc'))
     ) || irNeedsTokenAccountInitHelper(_ir);
     if (needsRent) {
       imports.push(`use solana_program::sysvar::rent::Rent;`);
@@ -354,7 +361,7 @@ use solana_program::{
     if (t22ExtImports.length > 0) imports.push(...t22ExtImports);
 
     imports.push(...this.filteredSourceImports(_ir));
-    return imports.join("\n");
+    return dedupImports(imports.join("\n"));
   }
 
   protected override emitPubkeyDeserializeSlice(sliceExpr: string): string {
@@ -1347,7 +1354,7 @@ impl ${acc.name} {
     if (!acc.implItems || acc.implItems.length === 0) return "";
     const filtered = acc.implItems
       .filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw))
-      .map((raw) => rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw))));
+      .map((raw) => rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))));
     if (filtered.length === 0) return "";
     return `\n\nimpl ${acc.name} {\n${filtered.map((s) => `    ${s}`).join("\n\n")}\n}`;
   }
@@ -1705,6 +1712,85 @@ export function emitNativeFull(ir: SolanaIR) {
  * references like `Mint as MintState` need the explicit alias preserved
  * — we hardcode the canonical aliases used across program-examples.
  */
+/**
+ * Dedup imported names across all `use solana_program::*` lines in the
+ * composed import block. Native's auto-import block frequently overlaps
+ * with the source's own `use solana_program::*` (often surfacing as
+ * `system_instruction` defined twice → E0252). This pass parses each
+ * `use solana_program::{X, Y, ...}` or `use solana_program::X;` line,
+ * builds a set of already-seen leaf paths, and either rewrites
+ * subsequent block-imports to drop dup leaves or removes a single-name
+ * import entirely if the leaf was already imported.
+ *
+ * Conservative: only deduplicates within `solana_program::` (the common
+ * conflict source). Other crates pass through unchanged.
+ */
+function dedupImports(joined: string): string {
+  // Fast path: if there's only one `use solana_program::` import (the
+  // most common case), no dedup is possible — pass through unchanged so
+  // existing single-import-block snapshots stay byte-identical.
+  const solanaImportCount = (joined.match(/use\s+solana_program\s*::/g) ?? []).length;
+  if (solanaImportCount <= 1) return joined;
+  // Collapse multi-line `use solana_program::{ ... };` blocks to single
+  // lines so the per-line regex below can extract leaf segments. Only
+  // applied when dedup is actually needed (multiple imports detected).
+  const collapsed = joined.replace(
+    /use\s+solana_program\s*::\s*\{([\s\S]*?)\}\s*;/g,
+    (_full, inner: string) => {
+      const segments = inner
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      return `use solana_program::{${segments.join(", ")}};`;
+    },
+  );
+  const lines = collapsed.split("\n");
+  const seen = new Set<string>(); // leaf paths after `solana_program::`
+  const out: string[] = [];
+  for (const rawLine of lines) {
+    const line = rawLine;
+    const blockMatch = line.match(/^(\s*)use\s+solana_program\s*::\s*\{([^}]+)\}\s*;?\s*$/);
+    if (blockMatch) {
+      const indent = blockMatch[1] ?? "";
+      const segments = (blockMatch[2] ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const kept: string[] = [];
+      for (const seg of segments) {
+        if (!seen.has(seg)) {
+          seen.add(seg);
+          kept.push(seg);
+        }
+      }
+      if (kept.length === 0) continue; // drop fully-redundant block
+      // Restore multi-line format for blocks with 2+ segments — matches
+      // the auto-import style native-emitter's emitUseStatements emits
+      // and keeps existing snapshots byte-identical.
+      if (kept.length >= 2) {
+        const inner = kept.map((s) => `${indent}    ${s},`).join("\n");
+        out.push(`${indent}use solana_program::{\n${inner}\n${indent}};`);
+      } else {
+        out.push(`${indent}use solana_program::${kept[0]};`);
+      }
+      continue;
+    }
+    const singleMatch = line.match(/^(\s*)use\s+solana_program\s*::\s*([\w:]+)\s*;?\s*$/);
+    if (singleMatch) {
+      const indent = singleMatch[1] ?? "";
+      const seg = singleMatch[2] ?? "";
+      if (seen.has(seg)) continue;
+      seen.add(seg);
+      out.push(`${indent}use solana_program::${seg};`);
+      continue;
+    }
+    // Multi-line block import — split blockMatch isn't simple. Pre-track
+    // leaves seen so far and skip if it's a known dup; else keep as-is.
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 function collectT22ExtensionAutoImports(allCarriedText: string, sourceImportsText: string): string[] {
   const out: string[] = [];
   const has = (re: RegExp) => re.test(allCarriedText);

@@ -431,7 +431,23 @@ export abstract class BaseEmitter {
     // stripped. Pinocchio still drops external-Solana crates because its
     // Cargo.toml doesn't ship those deps.
     const isNative = this.frameworkName === "Native";
-    return (ir.imports ?? [])
+    // First pass: extract `solana_program::X` segments from block-imports
+    // so they survive the `anchor_lang::*` blanket filter. squads-mpl/roles'
+    // `use anchor_lang::{prelude::*, solana_program::borsh::get_instance_packed_len};`
+    // would otherwise drop the get_instance_packed_len side effect.
+    const extracted: string[] = [];
+    for (const statement of ir.imports ?? []) {
+      const blockMatch = statement.match(/^use\s+anchor_lang\s*::\s*\{([^}]+)\}/);
+      if (!blockMatch) continue;
+      const inner = blockMatch[1] ?? "";
+      // Find `solana_program::X` segments. These re-exports survive on
+      // native (which ships solana-program); pinocchio's later filter
+      // drops them.
+      for (const m of inner.matchAll(/\bsolana_program::([\w:]+(?:::\*)?)/g)) {
+        if (m[1]) extracted.push(`use solana_program::${m[1]};`);
+      }
+    }
+    return [...extracted, ...(ir.imports ?? [])]
       .map((statement) => {
         const trimmed = statement.trim().replace(/;$/, "");
         const normalized = trimmed.startsWith("use ") || trimmed.startsWith("pub use ")
@@ -1026,7 +1042,13 @@ export abstract class BaseEmitter {
     const bodyHasOkPassThrough = instr.body.some(
       s => s.kind === "pass_through" && s.code.trim() === "Ok(())"
     );
-    const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough;
+    // postProcessInstructionBody (sibling-state stub path) can append
+    // Ok(()) directly into bodyCode after commenting out the user-code
+    // section. The IR-level checks above don't see that, so check the
+    // rendered text too — avoids the double-Ok(()) parse fail.
+    // Match the unit Ok shape `Ok(())` at the trailing edge.
+    const renderedHasOkTail = /\bOk\s*\(\s*\(\s*\)\s*\)\s*;?\s*$/.test(bodyCode.trimEnd());
+    const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough && !renderedHasOkTail;
 
     const preChecks = [signerChecks, writableCheck, ownerChecks].filter(Boolean).join("\n");
 
@@ -1376,7 +1398,7 @@ ${fields}
     // returns a generic error. Same fallback shape as the unsalvageable-helper
     // commentout pass but applied at the impl-item level.
     for (const raw of (typeDef.implItems ?? [])) {
-      const stubbed = rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)));
+      const stubbed = rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw))));
       items.push(`    ${stubbed}`);
     }
     if (items.length === 0) return "";
@@ -2144,6 +2166,44 @@ export function commentOutSiblingStateAccesses(
   accounts: Array<{ name: string; accountType: string }>,
   knownAccountDefNames: Set<string>,
 ): string {
+  // 0-accounts fallback: when the AccountsRef struct parse fails (e.g.
+  // `seeds::program = sibling_crate::ID` constraint trips the splitter),
+  // accounts comes in empty but the body still has `<X>.key()` references
+  // that won't resolve. Stub the whole body to keep the file compile-clean
+  // — same TODO contract as the sibling-state path.
+  if (accounts.length === 0) {
+    // Heuristic: if body has `<ident>.key()` patterns where the ident
+    // isn't bound in the body's prelude (let X = &accounts[N]), the body
+    // depends on an empty accounts list and is unsalvageable.
+    // Match both pinocchio's `<X>.key()` (method) and native's `<X>.key`
+    // (field) shapes. The reference is "unbound" when the local var
+    // isn't declared as `let <X> = &accounts[N]` earlier in the body.
+    const keyRefs: string[] = [];
+    for (const m of body.matchAll(/(?<!\w)(\w+)\.key(?:\(\))?/g)) {
+      if (m[1]) keyRefs.push(m[1]);
+    }
+    const declared = new Set<string>();
+    for (const m of body.matchAll(/let\s+(\w+)\s*=\s*&?\s*accounts\[/g)) {
+      if (m[1]) declared.add(m[1]);
+    }
+    const hasUnboundKeyRef = keyRefs.some((name) => !declared.has(name));
+    if (hasUnboundKeyRef) {
+      const argsMarker = body.indexOf("// Args");
+      const userSectionStart = argsMarker >= 0 ? argsMarker : 0;
+      const prelude = body.slice(0, userSectionStart);
+      const userCode = body.slice(userSectionStart);
+      const stubbed = userCode
+        .split("\n")
+        .map((line) => (line.length > 0 ? `// ${line}` : "//"))
+        .join("\n");
+      return `${prelude}// ⚠️ Anvil TODO: AccountsRef struct parse failed (likely seeds::program = sibling::ID constraint or similar) — body references unresolved accounts. Manual port required.
+${stubbed}
+    Ok(())
+`;
+    }
+    return body;
+  }
+
   const siblingAccounts = accounts.filter((a) => {
     if (knownAccountDefNames.has(a.accountType)) return false;
     if (FRAMEWORK_ACCOUNT_TYPES.has(a.accountType)) return false;
@@ -2196,11 +2256,39 @@ export function commentOutSiblingStateAccesses(
     .map((line) => (line.length > 0 ? `// ${line}` : "//"))
     .join("\n");
   const accountList = siblingAccounts.map((a) => `${a.name}: ${a.accountType}`).join(", ");
-  // Anvil's per-target instruction template already appends `Ok(())` at
-  // the function tail, so don't add another. Just stub the user code
-  // with TODO comments.
+  // Append explicit `Ok(())` — the user's original tail (which Anvil
+  // would otherwise pass through as the function's tail expression) is
+  // now commented out, so without this the function body ends with a
+  // bare if-stmt or commented block and rustc can't infer the return
+  // type (E0317 if-may-be-missing-an-else).
   return `${prelude}// ⚠️ Anvil TODO: sibling-Anchor-program state access — instruction body depends on opaque sibling-crate types (${accountList}); transpile is structural-only. Manual port required.
-${stubbed}`;
+${stubbed}
+    Ok(())
+`;
+}
+
+/**
+ * `get_instance_packed_len(&value)` is a `solana_program::borsh::*` helper.
+ * Pinocchio doesn't ship solana-program; the function is unresolvable.
+ * The standard alternative is `borsh::to_vec(&value).map(|v| v.len())` —
+ * borsh ships in both target scaffolds, so the rewrite works on both
+ * (no-op on native if the import survived; harmless replacement
+ * otherwise).
+ *
+ * Applied to user-carried code (impl methods, helper fns) where the
+ * call leaks through verbatim.
+ */
+export function rewriteGetInstancePackedLen(body: string): string {
+  return body.replace(
+    /\bget_instance_packed_len\s*\(/g,
+    "borsh::to_vec(",
+  ).replace(
+    // After the rewrite the original `.unwrap_or_default()` still works
+    // (Result is unwrapped with default 0). Append `.map(|v| v.len())`
+    // before any postfix — search for `borsh::to_vec(EXPR)` and inject.
+    /borsh::to_vec\(([^()]*(?:\([^()]*\))?[^()]*)\)/g,
+    "borsh::to_vec($1).map(|v| v.len())",
+  );
 }
 
 /**

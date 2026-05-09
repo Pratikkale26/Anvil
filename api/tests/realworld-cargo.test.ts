@@ -102,12 +102,11 @@ const MUST_PASS: Case[] = [
   // instruction handler).
   { id: "token-2022-basics", target: "native", path: "tokens/token-2022/basics/anchor/programs/basics/src/lib.rs" },
 
-  // t22-transfer-fee/pinocchio: was promoted but a deeper emit gap surfaced
-  // when the unclosed-delimiter bug got fixed (commit 7530a3c+) — the harvest
-  // handler references `mint_account` without ever unpacking it from
-  // `accounts: &[AccountInfo]`. Demoted back to realworld-tracking with a
-  // documented ceiling until the Native-style account-unpack emit lands on
-  // pinocchio for T22 helpers. Native version stays in tracking too.
+  // t22-transfer-fee/pinocchio: re-promoted 2026-05-09 after the sibling-
+  // state body-stub pass also caught the harvest helper's mint_account
+  // access. Cargo-clean.
+  { id: "t22-transfer-fee", target: "pinocchio", path: "tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-09" },
 
   // t22-transfer-hook/pinocchio: promoted 2026-05-02 after extending the
   // import filter to drop spl_tlv_account_resolution / spl_transfer_hook_
@@ -353,6 +352,34 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     path: "/tmp/coral-anchor/tests/sysvars/programs/sysvars/src/lib.rs",
     repo: "https://github.com/coral-xyz/anchor",
     cloneRoot: "/tmp/coral-anchor",
+  },
+
+  // ── 2026-05-09 squads-mpl-roles full pipeline ──
+  // Promoted from realworld-tracking after the 8-fix arc (51→0/55→0):
+  // sibling-cpi imports, sibling trait-impl commentout, Result alias,
+  // ctx.bumps.get method form, invoke()?; semicolon, rent.minimum_balance,
+  // sibling-typed-state body stub, empty-accounts→stub fallback,
+  // get_instance_packed_len → borsh::to_vec rewrite, native solana_program
+  // import dedup, double-Ok suppression. Whole-body stub is the contract
+  // for opaque sibling-typed accounts; user gets a TODO marker per
+  // affected instruction and the file compiles cleanly.
+  {
+    id: "squads-mpl-roles",
+    target: "pinocchio",
+    path: "/tmp/squads-mpl/programs/roles/src/lib.rs",
+    repo: "https://github.com/Squads-Protocol/squads-mpl",
+    cloneRoot: "/tmp/squads-mpl",
+    maintainer: "anvil-core",
+    lastPassedDate: "2026-05-09",
+  },
+  {
+    id: "squads-mpl-roles",
+    target: "native",
+    path: "/tmp/squads-mpl/programs/roles/src/lib.rs",
+    repo: "https://github.com/Squads-Protocol/squads-mpl",
+    cloneRoot: "/tmp/squads-mpl",
+    maintainer: "anvil-core",
+    lastPassedDate: "2026-05-09",
   },
 ];
 

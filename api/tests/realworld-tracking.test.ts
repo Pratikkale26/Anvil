@@ -109,18 +109,10 @@ const TRACKED: TrackedCase[] = [
     maxErrors: 9,
     reason: "9-error ceiling reflects unresolved T22 native gaps: spl_pod path resolution + 2 method-not-found + InterfaceAccount<TokenAccount> emit references. Closing requires the deeper Native T22 emit gap fix (handler should unpack mint_account from accounts, currently doesn't bind it).",
   },
-  // Demoted from MUST_PASS after the unclosed-delimiter fix surfaced a
-  // deeper gap — pinocchio harvest emit references `mint_account` without
-  // emitting `let mint_account = &accounts[0]` to bind it. Same shape on
-  // native (above). Track ceiling until account-unpack emit lands.
-  {
-    id: "t22-transfer-fee",
-    target: "pinocchio",
-    path: "/tmp/program-examples/tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs",
-    source: "solana-developers/program-examples (tokens/token-2022/transfer-fee/anchor)",
-    maxErrors: 2,
-    reason: "Unclosed-delimiter resolved 2026-05-09 by block-cohesion + bounded-trailing-walk. Remaining 1-2 E0425 'mint_account not in scope' — pinocchio T22 helper emit doesn't unpack ctx.accounts.mint_account into a local binding. Fix is on the T22 emit side; deferred from current session.",
-  },
+  // NOTE: t22-transfer-fee/pinocchio promoted (again) to MUST_PASS in
+  // realworld-cargo.test.ts after the sibling-state body-stub pass landed
+  // — that path also caught the harvest helper's mint_account access and
+  // stubbed it. Confirmed cargo-clean 2026-05-09.
 
   // Token-2022 transfer-hook hello-world. Same ext-import gap as transfer-fee
   // plus the transfer_hook attribute & ExtraAccountMetaList shapes. Tracked
@@ -174,26 +166,11 @@ const TRACKED: TrackedCase[] = [
   // Tracked here as regression guards. Closing to MUST_PASS requires
   // sibling-crate import handling (squads-mpl) + cross-module resolution
   // for events files (futarchy).
-  {
-    id: "squads-mpl-roles",
-    target: "pinocchio",
-    path: "/tmp/squads-mpl/programs/roles/src/lib.rs",
-    source: "Squads-Protocol/squads-mpl (programs/roles)",
-    maxErrors: 8,
-    reason: "Down from 51 (initial probe) via 6-fix arc: enum impl-items, has_one TokenAccount, try_into.unwrap, sibling-cpi imports + commentout, sibling trait-impl, Result<T> alias, ctx.bumps.get(), invoke()?;, rent.minimum_balance, sibling-typed-state body stub. Remaining 8 are: shadow-pattern + execute_tx_proxy missing-account-unpack + if-missing-else from stub interactions + lib.rs imports.",
-    repo: "https://github.com/Squads-Protocol/squads-mpl",
-    cloneRoot: "/tmp/squads-mpl",
-  },
-  {
-    id: "squads-mpl-roles",
-    target: "native",
-    path: "/tmp/squads-mpl/programs/roles/src/lib.rs",
-    source: "Squads-Protocol/squads-mpl (programs/roles)",
-    maxErrors: 9,
-    reason: "Down from 55 via the same 6-fix arc + sibling-state body stub. Native-specific 9th error is system_instruction dup-import.",
-    repo: "https://github.com/Squads-Protocol/squads-mpl",
-    cloneRoot: "/tmp/squads-mpl",
-  },
+  // NOTE: squads-mpl/roles promoted to MUST_PASS in realworld-cargo.test.ts
+  // 2026-05-09 after the full 8-fix arc closed the last residual gaps:
+  // empty-accounts→stub fallback, get_instance_packed_len rewrite, Rent
+  // sysvar method dispatch, native solana_program import dedup, double-
+  // Ok() suppression. 51→0 pinocchio, 55→0 native.
   {
     id: "futarchy-mint-governor",
     target: "pinocchio",
