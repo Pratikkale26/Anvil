@@ -16,7 +16,6 @@ describe("queueStats", () => {
     const s = queueStats();
     expect(s.depthByTarget.pinocchio).toBeDefined();
     expect(s.depthByTarget.native).toBeDefined();
-    expect(s.depthByTarget.quasar).toBeDefined();
     expect(s.depthByTarget.pinocchio).toBeGreaterThanOrEqual(0);
   });
 
@@ -27,8 +26,9 @@ describe("queueStats", () => {
 
   test("returns mean duration per (target, mode) — 0 when no samples yet", () => {
     const s = queueStats();
-    // 3 targets × 3 modes = 9 entries.
-    expect(Object.keys(s.meanDurationMsByMode)).toHaveLength(9);
+    // 2 targets (pinocchio, native — Quasar deleted 2026-05-05) × 3 modes
+    // (check, build, build-sbf) = 6 entries.
+    expect(Object.keys(s.meanDurationMsByMode)).toHaveLength(6);
     for (const v of Object.values(s.meanDurationMsByMode)) {
       expect(typeof v).toBe("number");
       expect(v).toBeGreaterThanOrEqual(0);
