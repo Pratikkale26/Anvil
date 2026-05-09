@@ -58,6 +58,19 @@ export interface HelperCpiCatalogEntry {
    */
   isInterface?: boolean;
   /**
+   * Whether the helper accepts a local-var name or slice literal as the
+   * signer_seeds argument (true) vs only `None` (false, default).
+   * - false (default): helper signature is `Option<&[&[u8]]>`. Only
+   *   `None` substitutes cleanly; locals/Some(...) require state-bind
+   *   preludes that don't exist yet, so refuse and fall back to
+   *   pass_through.
+   * - true: helper signature is `&[&[&[u8]]]` (AMM-style stack-saving
+   *   helpers). Caller passes a local var built from earlier
+   *   pass_through let-statements; those compile fine on Pinocchio so
+   *   the var name substitutes as-is into the IR's signerSeeds field.
+   */
+  acceptsLocalSignerSeeds?: boolean;
+  /**
    * Positional indices of the helper's parameters mapping onto the
    * SPL CPI's fields. Each entry is the ordinal of the param in
    * the helper's parameter list. -1 = field not provided by this helper
@@ -227,6 +240,184 @@ export function recognizeTransferCheckedHelper(
 }
 
 /**
+ * Recognize a helper as `token::transfer(...)` wrapper (plain SPL Token,
+ * not transfer_checked). Canonical shape:
+ *
+ *   fn <name>(
+ *       token_program: &AccountInfo<'info>,
+ *       from: &AccountInfo<'info>,
+ *       to: &AccountInfo<'info>,
+ *       authority: &AccountInfo<'info>,
+ *       [signer_seeds: &[&[&[u8]]],]   // optional
+ *       amount: u64,
+ *   ) -> Result<()>
+ *
+ * Body must contain `token::transfer(` AND `Transfer {` (capital T).
+ * AMM's stack-saving helpers (transfer_to_vault, transfer_from_vault)
+ * fit this shape.
+ */
+function recognizeTransferHelper(
+  helper: HelperFn,
+): HelperCpiCatalogEntry | null {
+  const params = parseParamList(helper.signature);
+  if (!params) return null;
+  if (params.length !== 5 && params.length !== 6) return null;
+
+  const isAccountInfo = (t: string) => /&\s*AccountInfo\s*</.test(t);
+  const isAmount = (t: string) => /^&?\s*u64\b/.test(t);
+  const isSignerSeeds = (t: string) =>
+    /&\s*\[\s*&\s*\[\s*&\s*\[\s*u8\s*\]/s.test(t);
+
+  if (!isAccountInfo(params[0]!.type)) return null;
+  if (!isAccountInfo(params[1]!.type)) return null;
+  if (!isAccountInfo(params[2]!.type)) return null;
+  if (!isAccountInfo(params[3]!.type)) return null;
+
+  let signerSeedsIdx: number | undefined;
+  let amountIdx: number;
+  if (params.length === 5) {
+    if (!isAmount(params[4]!.type)) return null;
+    amountIdx = 4;
+  } else {
+    if (!isSignerSeeds(params[4]!.type)) return null;
+    if (!isAmount(params[5]!.type)) return null;
+    signerSeedsIdx = 4;
+    amountIdx = 5;
+  }
+
+  if (!/\btoken::transfer\s*\(/.test(helper.body)) return null;
+  if (!/\bTransfer\s*\{/.test(helper.body)) return null;
+  if (/\btransfer_checked\s*\(/.test(helper.body)) return null;
+
+  return {
+    helperName: helper.name,
+    kind: "cpi_spl_transfer",
+    tokenProgram: "token",
+    acceptsLocalSignerSeeds: true,
+    argMap: {
+      from: 1,
+      to: 2,
+      amount: amountIdx,
+      authority: 3,
+      tokenProgram: 0,
+      signerSeeds: signerSeedsIdx,
+    },
+  };
+}
+
+/**
+ * Recognize a helper as `token::mint_to(...)` wrapper. Canonical shape:
+ *
+ *   fn <name>(
+ *       token_program: &AccountInfo<'info>,
+ *       mint: &AccountInfo<'info>,
+ *       to: &AccountInfo<'info>,
+ *       authority: &AccountInfo<'info>,
+ *       [signer_seeds: &[&[&[u8]]],]
+ *       amount: u64,
+ *   ) -> Result<()>
+ */
+function recognizeMintToHelper(
+  helper: HelperFn,
+): HelperCpiCatalogEntry | null {
+  const params = parseParamList(helper.signature);
+  if (!params) return null;
+  if (params.length !== 5 && params.length !== 6) return null;
+
+  const isAccountInfo = (t: string) => /&\s*AccountInfo\s*</.test(t);
+  const isAmount = (t: string) => /^&?\s*u64\b/.test(t);
+  const isSignerSeeds = (t: string) =>
+    /&\s*\[\s*&\s*\[\s*&\s*\[\s*u8\s*\]/s.test(t);
+
+  if (!isAccountInfo(params[0]!.type)) return null;
+  if (!isAccountInfo(params[1]!.type)) return null;
+  if (!isAccountInfo(params[2]!.type)) return null;
+  if (!isAccountInfo(params[3]!.type)) return null;
+
+  let signerSeedsIdx: number | undefined;
+  let amountIdx: number;
+  if (params.length === 5) {
+    if (!isAmount(params[4]!.type)) return null;
+    amountIdx = 4;
+  } else {
+    if (!isSignerSeeds(params[4]!.type)) return null;
+    if (!isAmount(params[5]!.type)) return null;
+    signerSeedsIdx = 4;
+    amountIdx = 5;
+  }
+
+  if (!/\btoken::mint_to\s*\(/.test(helper.body) && !/\bmint_to\s*\(/.test(helper.body)) return null;
+  if (!/\bMintTo\s*\{/.test(helper.body)) return null;
+
+  return {
+    helperName: helper.name,
+    kind: "cpi_spl_mint_to",
+    tokenProgram: "token",
+    acceptsLocalSignerSeeds: true,
+    argMap: {
+      mint: 1,
+      to: 2,
+      amount: amountIdx,
+      authority: 3,
+      tokenProgram: 0,
+      signerSeeds: signerSeedsIdx,
+    },
+  };
+}
+
+/**
+ * Recognize a helper as `token::burn(...)` wrapper. Same shape rules as
+ * recognizeTransferHelper but body must contain `token::burn(` + `Burn {`.
+ */
+function recognizeBurnHelper(
+  helper: HelperFn,
+): HelperCpiCatalogEntry | null {
+  const params = parseParamList(helper.signature);
+  if (!params) return null;
+  if (params.length !== 5 && params.length !== 6) return null;
+
+  const isAccountInfo = (t: string) => /&\s*AccountInfo\s*</.test(t);
+  const isAmount = (t: string) => /^&?\s*u64\b/.test(t);
+  const isSignerSeeds = (t: string) =>
+    /&\s*\[\s*&\s*\[\s*&\s*\[\s*u8\s*\]/s.test(t);
+
+  if (!isAccountInfo(params[0]!.type)) return null;
+  if (!isAccountInfo(params[1]!.type)) return null;
+  if (!isAccountInfo(params[2]!.type)) return null;
+  if (!isAccountInfo(params[3]!.type)) return null;
+
+  let signerSeedsIdx: number | undefined;
+  let amountIdx: number;
+  if (params.length === 5) {
+    if (!isAmount(params[4]!.type)) return null;
+    amountIdx = 4;
+  } else {
+    if (!isSignerSeeds(params[4]!.type)) return null;
+    if (!isAmount(params[5]!.type)) return null;
+    signerSeedsIdx = 4;
+    amountIdx = 5;
+  }
+
+  if (!/\btoken::burn\s*\(/.test(helper.body) && !/\bburn\s*\(/.test(helper.body)) return null;
+  if (!/\bBurn\s*\{/.test(helper.body)) return null;
+
+  return {
+    helperName: helper.name,
+    kind: "cpi_spl_burn",
+    tokenProgram: "token",
+    acceptsLocalSignerSeeds: true,
+    argMap: {
+      mint: 1,
+      from: 2,
+      amount: amountIdx,
+      authority: 3,
+      tokenProgram: 0,
+      signerSeeds: signerSeedsIdx,
+    },
+  };
+}
+
+/**
  * Build the catalog from every helper in the IR. Each helper is offered
  * to every recognizer; the first match wins. Helpers that no recognizer
  * matches don't get a catalog entry and stay pass_through at call sites.
@@ -236,7 +427,9 @@ export function buildHelperCpiCatalog(helpers: HelperFn[]): HelperCpiCatalogEntr
   for (const h of helpers) {
     const recognizers: Array<(h: HelperFn) => HelperCpiCatalogEntry | null> = [
       recognizeTransferCheckedHelper,
-      // Future: mint_to / burn / close_account wrappers register here.
+      recognizeTransferHelper,
+      recognizeMintToHelper,
+      recognizeBurnHelper,
     ];
     for (const r of recognizers) {
       const entry = r(h);

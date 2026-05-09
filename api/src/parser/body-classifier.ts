@@ -788,44 +788,31 @@ function classifyHelperCpiCall(
   );
   if (args.length <= maxRequiredIdx) return null;
 
+  // Resolve signer_seeds slot. Behavior differs by catalog flag:
+  //   - acceptsLocalSignerSeeds=false (default — transfer_checked legacy):
+  //     helper signature is `Option<&[&[u8]]>`. Only `None` substitutes;
+  //     locals/Some(...) refuse so caller falls back to pass_through.
+  //   - acceptsLocalSignerSeeds=true (AMM-style helpers): helper signature
+  //     is `&[&[&[u8]]]`. Local var or slice literal substitutes as-is —
+  //     the let-statements that built it are pass_through and compile fine
+  //     on Pinocchio (no Anchor types).
+  const resolveSignerSeeds = (): { ok: boolean; expr?: string } => {
+    if (entry.argMap.signerSeeds === undefined) return { ok: true };
+    const raw = args[entry.argMap.signerSeeds]!;
+    if (raw === "None") return { ok: true };
+    if (!entry.acceptsLocalSignerSeeds) return { ok: false };
+    return { ok: true, expr: raw };
+  };
+
   if (entry.kind === "cpi_spl_transfer") {
     if (entry.argMap.from === undefined || entry.argMap.to === undefined
       || entry.argMap.amount === undefined || entry.argMap.authority === undefined) {
       return null;
     }
     const mintExpr = entry.argMap.mint !== undefined ? args[entry.argMap.mint]! : undefined;
-    // For Token-Interface / Token-2022 transfers the IR wants `decimals`
-    // expressed as an inline access (`<mint>.decimals`). The emitter
-    // already injects a Mint::unpack prelude when this shape lands.
     const decimalsExpr = mintExpr ? `${mintExpr}.decimals` : undefined;
-    let signerSeedsExpr: string | undefined;
-    if (entry.argMap.signerSeeds !== undefined) {
-      const raw = args[entry.argMap.signerSeeds]!;
-      // Helper signature is Option<&[&[u8]]>. Three observed shapes at
-      // call sites:
-      //   1. `None` — no signer; the no-signer-seeds CPI path. Substitute.
-      //   2. `Some(<inline-expr>)` — explicit signer seeds inline. We
-      //      could substitute the inner expr, but inline expressions
-      //      pulling from `state.bump` etc. don't resolve cleanly on
-      //      pinocchio without state-bind preludes. Refuse for now.
-      //   3. local-var name (e.g. `signers_seeds`) — caller built the
-      //      Option<...> in earlier let-statements. Substituting the var
-      //      name into the IR's signerSeeds field breaks downstream
-      //      because the let-statements that defined it are pass_through
-      //      and may get stripped on pinocchio (anchor-escrow-2025's
-      //      take_offer + refund_offer had this exact shape, breaking
-      //      the build). Refuse.
-      //
-      // Conservative gate: only substitute when raw === "None". For the
-      // other two shapes, return null so the caller falls back to
-      // pass_through (which is what worked pre-Path 2). When state-bind
-      // preludes for signer-seeds land, expand this gate.
-      if (raw !== "None") return null;
-    }
-    // Runtime program-ID dispatch (TokenInterface). When the helper's
-    // signature uses `Interface<TokenInterface>`, the catalog set
-    // isInterface=true; the call-site arg at the tokenProgram slot is
-    // the AccountInfo binding name to read program_id from at runtime.
+    const seeds = resolveSignerSeeds();
+    if (!seeds.ok) return null;
     const tokenProgramArg = entry.isInterface
       ? args[entry.argMap.tokenProgram]
       : undefined;
@@ -838,12 +825,47 @@ function classifyHelperCpiCall(
       tokenProgram: entry.tokenProgram,
       mint: mintExpr,
       decimals: decimalsExpr,
-      signerSeeds: signerSeedsExpr,
+      signerSeeds: seeds.expr,
       tokenProgramArg,
     };
   }
 
-  // Future kinds — mint_to / burn / close_account — register here.
+  if (entry.kind === "cpi_spl_mint_to") {
+    if (entry.argMap.mint === undefined || entry.argMap.to === undefined
+      || entry.argMap.amount === undefined || entry.argMap.authority === undefined) {
+      return null;
+    }
+    const seeds = resolveSignerSeeds();
+    if (!seeds.ok) return null;
+    return {
+      kind: "cpi_spl_mint_to",
+      mint: args[entry.argMap.mint]!,
+      to: args[entry.argMap.to]!,
+      authority: args[entry.argMap.authority]!,
+      amount: args[entry.argMap.amount]!,
+      tokenProgram: entry.tokenProgram,
+      signerSeeds: seeds.expr,
+    };
+  }
+
+  if (entry.kind === "cpi_spl_burn") {
+    if (entry.argMap.mint === undefined || entry.argMap.from === undefined
+      || entry.argMap.amount === undefined || entry.argMap.authority === undefined) {
+      return null;
+    }
+    const seeds = resolveSignerSeeds();
+    if (!seeds.ok) return null;
+    return {
+      kind: "cpi_spl_burn",
+      from: args[entry.argMap.from]!,
+      mint: args[entry.argMap.mint]!,
+      authority: args[entry.argMap.authority]!,
+      amount: args[entry.argMap.amount]!,
+      tokenProgram: entry.tokenProgram,
+      signerSeeds: seeds.expr,
+    };
+  }
+
   return null;
 }
 

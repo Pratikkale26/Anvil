@@ -372,7 +372,12 @@ export function hasResidualAnchorPatterns(value: string): boolean {
 export function hasUnsalvageableHelperSignature(signature: string): boolean {
   return /\bInterfaceAccount\s*<\s*'/.test(signature) ||
     /\bInterface\s*<\s*'/.test(signature) ||
-    /\bAccount\s*<\s*'/.test(signature) ||
+    // `Account<'...>` but NOT `AccountInfo<'...>` / `AccountLoader<'...>`.
+    // Pinocchio targets use raw &AccountInfo<'info> heavily; without the
+    // negative lookahead, AMM-style stack-saving helpers
+    // (`fn transfer(token_program: &AccountInfo<'info>, ...)`) would be
+    // false-flagged as Anchor-only and have their call sites comment-out.
+    /\bAccount(?!Info|Loader)\s*<\s*'/.test(signature) ||
     /\bBox\s*<\s*(?:Interface)?Account\s*</.test(signature) ||
     /\bSigner\s*<\s*'/.test(signature) ||
     /\bSystemAccount\s*<\s*'/.test(signature) ||
