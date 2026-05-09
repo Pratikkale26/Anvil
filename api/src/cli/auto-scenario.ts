@@ -356,6 +356,11 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   // ── (3) Derive PDA seeds for every PDA collected above ──
   const pdaSpecs = new Map<string, { seeds: string[]; sourceIx: string }>();
   for (const ix of ir.instructions) {
+    // Build per-instruction arg-type map so synthesizeSeeds can resolve
+    // arg-derived seed expressions (`<arg>.to_le_bytes()`, `<arg>.as_ref()`)
+    // to typed-int / bytes:0x literals using the auto-defaulted arg values.
+    const ixArgTypes = new Map<string, string>();
+    for (const a of ix.args) ixArgTypes.set(a.name, a.type);
     for (const acc of ix.accounts) {
       if (acc.isPda && !pdaSpecs.has(acc.name)) {
         const seedResult = synthesizeSeeds(
@@ -364,6 +369,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
           allPdaNames,
           mintNames,
           stateFieldMap,
+          ixArgTypes,
           acc.name,
         );
         if (!seedResult.ok) {
@@ -564,6 +570,7 @@ function synthesizeSeeds(
   pdaNames: Set<string>,
   mintNames: Set<string>,
   stateFieldMap: Map<string, Map<string, string>>,
+  argTypes: Map<string, string>,
   accountName: string,
 ): SeedSynthesis {
   if (rawSeeds.length === 0) {
@@ -571,7 +578,9 @@ function synthesizeSeeds(
   }
   const out: string[] = [];
   for (const seed of rawSeeds) {
-    const trimmed = seed.trim();
+    // Strip leading `&` — common in Rust seed-arrays e.g. `&seed.to_le_bytes()`.
+    // Auto-scenario synthesis is value-level, so the borrow is irrelevant.
+    const trimmed = seed.trim().replace(/^&\s*/, "");
 
     // b"literal" → keep
     if (/^b"[^"]+"$/.test(trimmed)) {
@@ -669,16 +678,40 @@ function synthesizeSeeds(
       };
     }
     // <arg>.<chain>: single-segment receiver followed by one or two of
-    // {as_ref(), to_le_bytes()}. anchor-escrow-2025's
-    // `id.to_le_bytes().as_ref()` is the chained form (C8); the simpler
-    // `beneficiary.as_ref()` form is also caught here. State-derived
-    // shapes (`<acc>.<field>.<chain>`) are matched ABOVE this branch.
+    // {as_ref(), to_le_bytes()}. State-derived shapes (`<acc>.<field>.<chain>`)
+    // are matched ABOVE this branch.
+    //
+    // Resolution: if the receiver is an instruction arg, we know its
+    // auto-defaulted value (1 for ints, System program ID for Pubkey, etc).
+    // Emit a typed-int / bytes:0x literal so both targets see the same seed
+    // bytes at runtime. Both targets get the same default args, so the PDA
+    // derived from these seeds is deterministic across runs.
     const argRefMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.(as_ref\(\)|to_le_bytes\(\)|to_le_bytes\(\)\.as_ref\(\))$/);
     if (argRefMatch?.[1]) {
+      const argName = argRefMatch[1];
+      const chain = argRefMatch[2]!;
+      const argType = argTypes.get(argName);
+      if (argType) {
+        // Numeric: <arg>.to_le_bytes() → "u64:1" / "i32:1" / etc.
+        // Both targets serialize the auto-defaulted u64=1 the same way.
+        const intMatch = argType.match(/^([ui])(8|16|32|64|128)$/);
+        if (intMatch && (chain === "to_le_bytes()" || chain === "to_le_bytes().as_ref()")) {
+          out.push(`${argType}:1`);
+          continue;
+        }
+        // Pubkey: <arg>.as_ref() → bytes:0x<system_program_id_bytes>.
+        // Auto-scenario defaults Pubkey args to System program ID — encode
+        // its 32-byte representation as hex.
+        if (argType === "Pubkey" && chain === "as_ref()") {
+          // System program ID is all-zero (32 bytes of 0x00).
+          out.push(`bytes:0x${"00".repeat(32)}`);
+          continue;
+        }
+      }
       return {
         ok: false,
         seeds: [],
-        reason: `seed \`${trimmed}\` is arg-derived (reads instruction arg \`${argRefMatch[1]}\` at call time). Auto-scenario can't synthesize a stable seed for this — replace with an explicit \`bytes:0x…\` of the arg's bytes via "Edit as JSON", or use the CLI for direct control.`,
+        reason: `seed \`${trimmed}\` is arg-derived (reads instruction arg \`${argName}\`, type ${argType ?? "<unknown>"}) and the chain shape \`${chain}\` isn't auto-resolvable yet. Replace with explicit \`bytes:0x…\` via "Edit as JSON".`,
       };
     }
     // Unrecognised shape.

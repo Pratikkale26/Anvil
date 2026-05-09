@@ -66,27 +66,22 @@ describe("auto-scenario: achievable demos synthesise cleanly", () => {
     expect(r.notes.some((n) => n.message.includes("emit!"))).toBe(true);
   });
 
-  test("vesting -> blocks because state/arg-derived seeds are not yet runtime-resolvable", async () => {
+  test("vesting -> synthesises cleanly post-S5 (state-derived + arg-derived seeds resolved)", async () => {
     // Vesting uses `beneficiary.as_ref()` (Pubkey arg in seeds) AND
-    // `vesting.grantor.as_ref()` (state-field reference). Stage 4b previously
-    // emitted $state:/$arg: tags here, but the runtime resolver never
-    // landed — the tags fell through to UTF-8 encoding and produced wrong
-    // PDAs. A1 restores honesty: auto-scenario refuses and the workbench
-    // routes the user to "Edit as JSON" or the CLI.
+    // `vesting.grantor.as_ref()` (state-field reference). Pre-S3/S5 these
+    // blocked with state-/arg-derived errors. S3 maps state-derived seeds
+    // to source-account tags via stateFieldMap; S5 resolves arg-derived
+    // numeric / Pubkey seeds to typed-int / bytes:0x literals using the
+    // auto-defaulted arg values. Both targets see identical seed bytes,
+    // so byte-equal verdict still holds.
     const ir = await parseDemo("vesting.rs");
     const r = synthesizeAutoScenario(ir);
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    // The blocker must explicitly call out state OR arg derivation, NOT a
-    // generic "unsupported shape" message — that's the actionable hint.
-    const hasDerivedBlocker = r.blockers.some(
-      (b) => b.message.includes("state-derived") || b.message.includes("arg-derived"),
-    );
-    expect(hasDerivedBlocker).toBe(true);
-    // And the (rejected) blocker payload must NEVER contain a literal $state:
-    // or $arg: tag — those were the silent-corruption symptoms.
-    expect(JSON.stringify(r.blockers)).not.toContain("$state:");
-    expect(JSON.stringify(r.blockers)).not.toContain("$arg:");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // No $state:/$arg: literals leak into the synthesized scenario — those
+    // were the silent-corruption symptoms before S3/S5.
+    expect(JSON.stringify(r.scenario)).not.toContain("$state:");
+    expect(JSON.stringify(r.scenario)).not.toContain("$arg:");
   });
 
   test("custom struct args -> synthesised by walking TypeDef.fields (Stage 4b)", () => {
@@ -393,7 +388,72 @@ describe("auto-scenario: blockers fire on unsupported shapes", () => {
     expect(r.scenario.steps[1]!.accounts).toContain("$ata:user_token_a");
   });
 
-  test("arg-derived seed -> blocker, no $arg: tag emitted", () => {
+  test("arg-derived numeric seed `<arg>.to_le_bytes()` resolves to typed-int (S5)", () => {
+    const ir = {
+      name: "arg_seed_numeric",
+      instructions: [{
+        name: "init_named",
+        accounts: [
+          { name: "authority", accountType: "Signer", isSigner: true, isMut: true, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+          { name: "named", accountType: "Named", isSigner: false, isMut: true, isInit: true, isOptional: false, isPda: true,
+            pdaSeeds: ['b"named"', "&seed.to_le_bytes()"], constraints: [] },
+        ],
+        args: [{ name: "seed", type: "u64" as const }],
+        body: [],
+        bodyLocs: [],
+      }],
+      accounts: [{ name: "Named", fields: [{ name: "seed", type: "u64" as const }] }],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor" as const, anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scenario.pdas[0]!.seeds).toEqual(['b"named"', "u64:1"]);
+  });
+
+  test("arg-derived Pubkey seed `<arg>.as_ref()` resolves to bytes:0x (S5)", () => {
+    const ir = {
+      name: "arg_seed_pubkey",
+      instructions: [{
+        name: "create_vesting",
+        accounts: [
+          { name: "creator", accountType: "Signer", isSigner: true, isMut: true, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+          { name: "vesting", accountType: "Vesting", isSigner: false, isMut: true, isInit: true, isOptional: false, isPda: true,
+            pdaSeeds: ['b"vesting"', "beneficiary.as_ref()"], constraints: [] },
+        ],
+        args: [{ name: "beneficiary", type: "Pubkey" as const }],
+        body: [],
+        bodyLocs: [],
+      }],
+      accounts: [{ name: "Vesting", fields: [{ name: "beneficiary", type: "Pubkey" as const }] }],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor" as const, anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scenario.pdas[0]!.seeds).toEqual(['b"vesting"', `bytes:0x${"00".repeat(32)}`]);
+  });
+
+  test("arg-derived seed: $arg: tag never leaks (S5 resolves to bytes:0x or typed-int)", () => {
+    // Pre-S5: this returned a blocker. Post-S5: arg-derived Pubkey seeds
+    // resolve to bytes:0x<system_program_id>. Either way, the $arg: literal
+    // tag must not appear in the output (would break the runtime resolver).
     const ir = {
       name: "arg_seed_demo",
       instructions: [{
@@ -425,10 +485,8 @@ describe("auto-scenario: blockers fire on unsupported shapes", () => {
       metadata: { sourceFramework: "anchor" as const, anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
     };
     const r = synthesizeAutoScenario(ir);
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    const blocker = r.blockers.find((b) => b.message.includes("arg-derived"));
-    expect(blocker).toBeDefined();
-    expect(JSON.stringify(r.blockers)).not.toContain("$arg:");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(JSON.stringify(r.scenario)).not.toContain("$arg:");
   });
 });

@@ -112,18 +112,17 @@ describe("auto-scenario seed grammar — explicit blockers", () => {
     expectBlock(["counter.id.as_ref()"], "state-derived");
   });
 
-  test("state-derived chained `<account>.<field>.to_le_bytes().as_ref()` blocks (anchor-escrow-2025 shape)", () => {
-    expectBlock(["counter.id.to_le_bytes().as_ref()"], "state-derived");
+  test("state-derived chained `<account>.<field>.to_le_bytes().as_ref()` blocks (numeric state field)", () => {
+    // Numeric state fields can't be resolved at synthesis time — we'd need
+    // to know the post-init value. Block with a clear hint pointing at
+    // bytes:0x... as the manual override.
+    expectBlock(["counter.id.to_le_bytes().as_ref()"], "numeric state field");
   });
 
-  test("arg-derived `<arg>.as_ref()` blocks with arg-derived hint", () => {
-    // Add the arg to the IR's args list so the heuristic recognises it
-    // as an arg ref, not a misnamed signer.
-    expectBlock(
-      ["beneficiary.as_ref()"],
-      "arg-derived",
-      [{ name: "beneficiary", type: "Pubkey" as const }],
-    );
+  test("arg-derived `<arg>.as_ref()` resolves to bytes:0x<system_program_id> (S5)", () => {
+    expect(
+      expectAccept(["beneficiary.as_ref()"], [{ name: "beneficiary", type: "Pubkey" as const }]),
+    ).toEqual([`bytes:0x${"00".repeat(32)}`]);
   });
 
   test("cross-account `<other>.key().as_ref()` against a non-PDA blocks (likely SPL Mint)", () => {
@@ -140,14 +139,12 @@ describe("auto-scenario seed grammar — explicit blockers", () => {
 
 describe("auto-scenario seed grammar — chained-call shape (C8 extension)", () => {
   // The chained `<X>.to_le_bytes().as_ref()` form for ARGUMENTS
-  // (anchor-escrow-2025's `id.to_le_bytes().as_ref()`) needs to block
-  // the same way `<arg>.as_ref()` does — both are arg-derived and
-  // can't be auto-resolved without the runtime resolver.
-  test("arg-derived chained `<arg>.to_le_bytes().as_ref()` blocks (NOT silently fall through)", () => {
-    expectBlock(
-      ["id.to_le_bytes().as_ref()"],
-      "arg-derived",
-      [{ name: "id", type: "u64" as const }],
-    );
+  // (anchor-escrow-2025's `id.to_le_bytes().as_ref()`) resolves to a
+  // typed-int seed at synthesis time using the auto-defaulted arg value.
+  // Both targets serialize the same default → byte-equal seed at runtime.
+  test("arg-derived chained `<arg>.to_le_bytes().as_ref()` resolves to typed-int (S5)", () => {
+    expect(
+      expectAccept(["id.to_le_bytes().as_ref()"], [{ name: "id", type: "u64" as const }]),
+    ).toEqual(["u64:1"]);
   });
 });
