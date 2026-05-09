@@ -30,7 +30,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@sentry/node": "^10.51.0",
+    "@sentry/node": "^10.52.0",
     "@solana/web3.js": "^1.98.4",
     "@types/express": "^5.0.6",
     "cors": "^2.8.6",
@@ -39,6 +39,6 @@
     "litesvm": "0.7.0",
     "tree-sitter-rust": "^0.24.0",
     "web-tree-sitter": "^0.26.8",
-    "zod": "^4.4.2"
+    "zod": "^4.4.3"
   }
 }
