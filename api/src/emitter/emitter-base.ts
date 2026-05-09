@@ -1816,10 +1816,27 @@ ${fields}
       signerSeedsExpr = `init_${accountName}_signer_seeds`;
     }
 
+    // Anvil's emitted state structs define LEN = body-only (no
+    // discriminator) and TOTAL_LEN = 8 + LEN. Anchor sources fall in
+    // one of two conventions:
+    //   (a) `pub const LEN = 8 + ...; space = Type::LEN`
+    //       → source LEN includes disc; `space = Type::LEN` is the full
+    //       allocation. Anvil's `Type::LEN` is body-only so it under-
+    //       allocates. Rewrite to `Type::TOTAL_LEN`.
+    //   (b) `pub const LEN = ...; space = 8 + Type::LEN`  (or `INIT_SPACE`)
+    //       → source LEN is body-only, allocation is 8 + LEN. Anvil's
+    //       `Type::LEN` matches semantically; leave alone.
+    // Heuristic: rewrite only when initSpace is exactly `Type::LEN`
+    // (optionally wrapped/cast) with no leading `8 +`. Matches (a),
+    // skips (b).
+    const rawSpace = (accountRef.initSpace ?? "").trim();
+    const initSpaceExpr = /^[A-Z][A-Za-z0-9_]*::LEN$/.test(rawSpace)
+      ? rawSpace.replace(/::LEN$/, "::TOTAL_LEN")
+      : rawSpace;
     const createCall = this.emitCreateProgramAccount(
       accountName,
       payerName,
-      accountRef.initSpace,
+      initSpaceExpr,
       signerSeedsExpr,
     );
 
