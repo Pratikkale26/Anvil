@@ -32,6 +32,29 @@ describe("resolveSeedExpression: supported shapes still work", () => {
     expect(out.length).toBe(32);
   });
 
+  test("$mint:foo.pubkey -> 32 bytes when mints map provided", () => {
+    const kp = Keypair.generate();
+    const mints = new Map([[
+      "foo",
+      {
+        keypair: kp,
+        programOwner: PublicKey.default,
+        decimals: 6,
+        mintAuthority: PublicKey.default,
+        supply: 0n,
+      },
+    ]]);
+    const out = resolveSeedExpression("$mint:foo.pubkey", new Map(), new Map(), mints);
+    expect(out.length).toBe(32);
+    expect(out.equals(Buffer.from(kp.publicKey.toBytes()))).toBe(true);
+  });
+
+  test("$mint:foo.pubkey throws when mints map missing the entry", () => {
+    expect(() =>
+      resolveSeedExpression("$mint:absent.pubkey", new Map(), new Map(), new Map()),
+    ).toThrow(/wasn't declared/);
+  });
+
   test("u64:1000 -> 8 little-endian bytes", () => {
     const out = resolveSeedExpression("u64:1000", new Map(), new Map());
     expect(out.length).toBe(8);

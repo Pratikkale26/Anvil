@@ -227,6 +227,58 @@ describe("auto-scenario: blockers fire on unsupported shapes", () => {
     expect(JSON.stringify(r.blockers)).not.toContain("$state:");
   });
 
+  test("non-init Mint accounts -> $mint synthesis (S1)", () => {
+    // AMM-style: token_mint_a is a non-init Account<'info, Mint> referenced
+    // in pool's seeds. S1 makes the synthesizer pre-create the mint and
+    // emit `$mint:token_mint_a.pubkey` in seeds + `$mint:token_mint_a` as
+    // the account ref.
+    const ir = {
+      name: "amm_like",
+      instructions: [{
+        name: "initialize_pool",
+        accounts: [
+          {
+            name: "authority", accountType: "Signer",
+            isSigner: true, isMut: true, isInit: false, isOptional: false, isPda: false,
+            pdaSeeds: [], constraints: [],
+          },
+          {
+            name: "pool", accountType: "Pool",
+            isSigner: false, isMut: true, isInit: true, isOptional: false, isPda: true,
+            pdaSeeds: ['b"pool"', "token_mint_a.key().as_ref()"],
+            constraints: [],
+          },
+          {
+            name: "token_mint_a", accountType: "Mint",
+            isSigner: false, isMut: false, isInit: false, isOptional: false, isPda: false,
+            pdaSeeds: [], constraints: [],
+          },
+        ],
+        args: [],
+        body: [],
+        bodyLocs: [],
+      }],
+      accounts: [{ name: "Pool", fields: [{ name: "token_mint_a", type: "Pubkey" as const }] }],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor" as const, anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scenario.mints.length).toBe(1);
+    expect(r.scenario.mints[0]!.name).toBe("token_mint_a");
+    expect(r.scenario.pdas[0]!.seeds).toContain("$mint:token_mint_a.pubkey");
+    // Account ref in step uses $mint, not $keypair.
+    expect(r.scenario.steps[0]!.accounts).toContain("$mint:token_mint_a");
+  });
+
   test("arg-derived seed -> blocker, no $arg: tag emitted", () => {
     const ir = {
       name: "arg_seed_demo",

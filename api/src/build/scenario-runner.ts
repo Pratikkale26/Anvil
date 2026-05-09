@@ -27,6 +27,7 @@ import {
   TransactionInstruction,
   SystemProgram,
 } from "@solana/web3.js";
+import { MintLayout, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { createHash } from "node:crypto";
 import type { Scenario, ScenarioStep, ScenarioAssertion } from "../ir/scenario.js";
 import type { SolanaIR } from "../ir/schema.js";
@@ -49,6 +50,8 @@ export interface ResolvedScenarioContext {
   programId: PublicKey;
   signers: Map<string, Keypair>;
   pdas: Map<string, { pubkey: PublicKey; bump: number }>;
+  /** Pre-generated SPL Mint keypairs — one per scenario.mints[] entry. */
+  mints: Map<string, { keypair: Keypair; programOwner: PublicKey; decimals: number; mintAuthority: PublicKey; freezeAuthority?: PublicKey; supply: bigint }>;
   /** Throwaway $keypair:foo references — generated lazily on first ref. */
   ephemeralKeypairs: Map<string, Keypair>;
 }
@@ -67,10 +70,28 @@ export function resolveScenarioContext(
     signers.set(decl.name, Keypair.generate());
   }
 
+  // Mints come BEFORE PDAs because PDA seeds may reference $mint:foo.pubkey.
+  const mints: ResolvedScenarioContext["mints"] = new Map();
+  for (const decl of scenario.mints) {
+    const authorityName = decl.mintAuthority ?? scenario.signers[0]?.name;
+    if (!authorityName || !signers.has(authorityName)) {
+      throw new Error(`mint '${decl.name}' has no resolvable mint authority — declare a signer or set mint.mintAuthority`);
+    }
+    const programOwner = decl.program === "token_2022" ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+    mints.set(decl.name, {
+      keypair: Keypair.generate(),
+      programOwner,
+      decimals: decl.decimals,
+      mintAuthority: signers.get(authorityName)!.publicKey,
+      freezeAuthority: decl.freezeAuthority ? signers.get(decl.freezeAuthority)?.publicKey : undefined,
+      supply: typeof decl.supply === "string" ? BigInt(decl.supply) : BigInt(decl.supply),
+    });
+  }
+
   const pdas = new Map<string, { pubkey: PublicKey; bump: number }>();
   for (const decl of scenario.pdas) {
     const seedBytes = decl.seeds.map((seed) =>
-      resolveSeedExpression(seed, signers, pdas),
+      resolveSeedExpression(seed, signers, pdas, mints),
     );
     if (decl.bump !== undefined) {
       // Deterministic bump derivation by createProgramAddress.
@@ -83,7 +104,7 @@ export function resolveScenarioContext(
     }
   }
 
-  return { programId, signers, pdas, ephemeralKeypairs: new Map() };
+  return { programId, signers, pdas, mints, ephemeralKeypairs: new Map() };
 }
 
 /**
@@ -108,6 +129,7 @@ export function resolveSeedExpression(
   seed: string,
   signers: Map<string, Keypair>,
   pdas: Map<string, { pubkey: PublicKey; bump: number }>,
+  mints?: ResolvedScenarioContext["mints"],
 ): Buffer {
   // $signer:name.pubkey
   const signerMatch = seed.match(/^\$signer:([a-zA-Z_][a-zA-Z0-9_]*)\.pubkey$/);
@@ -123,6 +145,14 @@ export function resolveSeedExpression(
     const p = pdas.get(pdaMatch[1]);
     if (!p) throw new Error(`seed references PDA '${pdaMatch[1]}' that wasn't declared earlier in scenario.pdas[]`);
     return Buffer.from(p.pubkey.toBytes());
+  }
+
+  // $mint:name.pubkey
+  const mintMatch = seed.match(/^\$mint:([a-zA-Z_][a-zA-Z0-9_]*)\.pubkey$/);
+  if (mintMatch?.[1]) {
+    const m = mints?.get(mintMatch[1]);
+    if (!m) throw new Error(`seed references mint '${mintMatch[1]}' that wasn't declared in scenario.mints[]`);
+    return Buffer.from(m.keypair.publicKey.toBytes());
   }
 
   // typed integer: `u64:1000`, `i32:-5`, etc.
@@ -211,6 +241,12 @@ export function resolveAccountRef(ref: string, ctx: ResolvedScenarioContext): Pu
     if (!p) throw new Error(`account ref '${ref}' references undeclared PDA '${name}'`);
     return p.pubkey;
   }
+  if (ref.startsWith("$mint:")) {
+    const name = ref.slice("$mint:".length).split(".")[0]!;
+    const m = ctx.mints.get(name);
+    if (!m) throw new Error(`account ref '${ref}' references undeclared mint '${name}'`);
+    return m.keypair.publicKey;
+  }
   if (ref.startsWith("$program:")) {
     const name = ref.slice("$program:".length);
     const id = KNOWN_PROGRAMS[name];
@@ -228,6 +264,45 @@ export function resolveAccountRef(ref: string, ctx: ResolvedScenarioContext): Pu
   }
   // Raw base58 pubkey.
   return new PublicKey(ref);
+}
+
+// ─── SPL Mint pre-creation ──────────────────────────────────────────────────
+//
+// Encode each declared mint as a 82-byte MintLayout buffer, write directly
+// to LiteSVM via setAccount with token-program ownership + rent-exempt
+// lamports. Faster + simpler than running InitializeMint via CPI; both
+// targets see byte-identical mint accounts because resolveScenarioContext
+// generates the same keypairs once and shares ctx across runs.
+
+const MINT_ACCOUNT_SIZE = 82;
+// MINT_ACCOUNT_SIZE bytes * lamports_per_byte_year * 2 years exempt.
+// Fixed value matches what the system program would compute; both sides
+// see byte-identical lamports because resolveScenarioContext is shared.
+const MINT_RENT_EXEMPT_LAMPORTS = 1_461_600;
+
+export function installMintAccounts(svm: LiteSVM, ctx: ResolvedScenarioContext): void {
+  for (const [, mint] of ctx.mints) {
+    const data = Buffer.alloc(MINT_ACCOUNT_SIZE);
+    MintLayout.encode(
+      {
+        mintAuthorityOption: 1,
+        mintAuthority: mint.mintAuthority,
+        supply: mint.supply,
+        decimals: mint.decimals,
+        isInitialized: true,
+        freezeAuthorityOption: mint.freezeAuthority ? 1 : 0,
+        freezeAuthority: mint.freezeAuthority ?? PublicKey.default,
+      },
+      data,
+    );
+    svm.setAccount(mint.keypair.publicKey, {
+      lamports: MINT_RENT_EXEMPT_LAMPORTS,
+      data,
+      owner: mint.programOwner,
+      executable: false,
+      rentEpoch: 0,
+    });
+  }
 }
 
 // ─── Borsh arg serialization ────────────────────────────────────────────────
@@ -503,6 +578,10 @@ export function runScenarioOnSo(
 
   // Deploy the program at scenario's programId (or IR's declared id).
   svm.addProgram(ctx.programId, programSo);
+
+  // Pre-create SPL Mint accounts before step 0 so subsequent CPIs that
+  // touch these mints (transfer_checked, mint_to, burn) succeed.
+  installMintAccounts(svm, ctx);
 
   // Airdrop signers.
   for (const decl of scenario.signers) {
