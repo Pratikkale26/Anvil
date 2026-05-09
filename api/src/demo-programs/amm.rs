@@ -96,51 +96,48 @@ pub mod amm {
 
         require!(lp_tokens > 0, AmmError::InsufficientLiquidity);
 
-        // Transfer token A to vault
-        token::transfer(
-            CpiContext::new(
-                ctx.accounts.token_program.to_account_info(),
-                Transfer {
-                    from: ctx.accounts.user_token_a.to_account_info(),
-                    to: ctx.accounts.vault_a.to_account_info(),
-                    authority: ctx.accounts.user.to_account_info(),
-                },
-            ),
+        // CPIs go through &AccountInfo helpers so each lands in its own
+        // BPF stack frame. Three back-to-back CpiContext::new_with_signer
+        // literals + cloned AccountInfos overflow Anchor 0.31's 4KB
+        // per-frame limit. Anvil's IR classifier recognizes these helpers
+        // (helper-cpi-catalog) and inlines call sites as typed
+        // cpi_spl_transfer / cpi_spl_mint_to IR statements; the helper
+        // bodies themselves get commented out as unsalvageable but the
+        // call sites resolve to Anvil's spl_token_* helpers.
+        let token_program_info = ctx.accounts.token_program.to_account_info();
+        transfer_to_vault(
+            &token_program_info,
+            &ctx.accounts.user_token_a.to_account_info(),
+            &ctx.accounts.vault_a.to_account_info(),
+            &ctx.accounts.user.to_account_info(),
             amount_a,
         )?;
-
-        // Transfer token B to vault
-        token::transfer(
-            CpiContext::new(
-                ctx.accounts.token_program.to_account_info(),
-                Transfer {
-                    from: ctx.accounts.user_token_b.to_account_info(),
-                    to: ctx.accounts.vault_b.to_account_info(),
-                    authority: ctx.accounts.user.to_account_info(),
-                },
-            ),
+        transfer_to_vault(
+            &token_program_info,
+            &ctx.accounts.user_token_b.to_account_info(),
+            &ctx.accounts.vault_b.to_account_info(),
+            &ctx.accounts.user.to_account_info(),
             amount_b,
         )?;
 
         // Mint LP tokens
-        let pool_seeds = &[
+        let token_mint_a = pool.token_mint_a;
+        let token_mint_b = pool.token_mint_b;
+        let pool_bump = pool.bump;
+        let pool_seeds: &[&[u8]] = &[
             b"pool",
-            pool.token_mint_a.as_ref(),
-            pool.token_mint_b.as_ref(),
-            &[pool.bump],
+            token_mint_a.as_ref(),
+            token_mint_b.as_ref(),
+            &[pool_bump],
         ];
-        let signer_seeds = &[&pool_seeds[..]];
+        let signer_seeds: &[&[&[u8]]] = &[pool_seeds];
 
-        token::mint_to(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                MintTo {
-                    mint: ctx.accounts.lp_mint.to_account_info(),
-                    to: ctx.accounts.user_lp_token.to_account_info(),
-                    authority: ctx.accounts.pool.to_account_info(),
-                },
-                signer_seeds,
-            ),
+        mint_lp_to_user(
+            &token_program_info,
+            &ctx.accounts.lp_mint.to_account_info(),
+            &ctx.accounts.user_lp_token.to_account_info(),
+            &ctx.accounts.pool.to_account_info(),
+            signer_seeds,
             lp_tokens,
         )?;
 
@@ -191,52 +188,40 @@ pub mod amm {
         require!(amount_a >= min_amount_a, AmmError::SlippageExceeded);
         require!(amount_b >= min_amount_b, AmmError::SlippageExceeded);
 
-        let pool_seeds = &[
+        // Stack-frame split via helpers (same rationale as add_liquidity).
+        let token_program_info = ctx.accounts.token_program.to_account_info();
+        let token_mint_a = pool.token_mint_a;
+        let token_mint_b = pool.token_mint_b;
+        let pool_bump = pool.bump;
+        let pool_seeds: &[&[u8]] = &[
             b"pool",
-            pool.token_mint_a.as_ref(),
-            pool.token_mint_b.as_ref(),
-            &[pool.bump],
+            token_mint_a.as_ref(),
+            token_mint_b.as_ref(),
+            &[pool_bump],
         ];
-        let signer_seeds = &[&pool_seeds[..]];
+        let signer_seeds: &[&[&[u8]]] = &[pool_seeds];
 
-        // Burn LP tokens
-        token::burn(
-            CpiContext::new(
-                ctx.accounts.token_program.to_account_info(),
-                Burn {
-                    mint: ctx.accounts.lp_mint.to_account_info(),
-                    from: ctx.accounts.user_lp_token.to_account_info(),
-                    authority: ctx.accounts.user.to_account_info(),
-                },
-            ),
+        burn_lp_from_user(
+            &token_program_info,
+            &ctx.accounts.lp_mint.to_account_info(),
+            &ctx.accounts.user_lp_token.to_account_info(),
+            &ctx.accounts.user.to_account_info(),
             lp_amount,
         )?;
-
-        // Return token A
-        token::transfer(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                Transfer {
-                    from: ctx.accounts.vault_a.to_account_info(),
-                    to: ctx.accounts.user_token_a.to_account_info(),
-                    authority: ctx.accounts.pool.to_account_info(),
-                },
-                signer_seeds,
-            ),
+        transfer_from_vault(
+            &token_program_info,
+            &ctx.accounts.vault_a.to_account_info(),
+            &ctx.accounts.user_token_a.to_account_info(),
+            &ctx.accounts.pool.to_account_info(),
+            signer_seeds,
             amount_a,
         )?;
-
-        // Return token B
-        token::transfer(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                Transfer {
-                    from: ctx.accounts.vault_b.to_account_info(),
-                    to: ctx.accounts.user_token_b.to_account_info(),
-                    authority: ctx.accounts.pool.to_account_info(),
-                },
-                signer_seeds,
-            ),
+        transfer_from_vault(
+            &token_program_info,
+            &ctx.accounts.vault_b.to_account_info(),
+            &ctx.accounts.user_token_b.to_account_info(),
+            &ctx.accounts.pool.to_account_info(),
+            signer_seeds,
             amount_b,
         )?;
 
@@ -315,13 +300,18 @@ pub mod amm {
         require!(amount_out >= minimum_amount_out, AmmError::SlippageExceeded);
         require!(amount_out < reserve_out, AmmError::InsufficientLiquidity);
 
-        let pool_seeds = &[
+        // Stack-frame split via helpers.
+        let token_program_info = ctx.accounts.token_program.to_account_info();
+        let token_mint_a = pool.token_mint_a;
+        let token_mint_b = pool.token_mint_b;
+        let pool_bump = pool.bump;
+        let pool_seeds: &[&[u8]] = &[
             b"pool",
-            pool.token_mint_a.as_ref(),
-            pool.token_mint_b.as_ref(),
-            &[pool.bump],
+            token_mint_a.as_ref(),
+            token_mint_b.as_ref(),
+            &[pool_bump],
         ];
-        let signer_seeds = &[&pool_seeds[..]];
+        let signer_seeds: &[&[&[u8]]] = &[pool_seeds];
 
         let (vault_in, vault_out) = if a_to_b {
             (ctx.accounts.vault_a.to_account_info(), ctx.accounts.vault_b.to_account_info())
@@ -329,28 +319,19 @@ pub mod amm {
             (ctx.accounts.vault_b.to_account_info(), ctx.accounts.vault_a.to_account_info())
         };
 
-        token::transfer(
-            CpiContext::new(
-                ctx.accounts.token_program.to_account_info(),
-                Transfer {
-                    from: ctx.accounts.user_token_in.to_account_info(),
-                    to: vault_in,
-                    authority: ctx.accounts.user.to_account_info(),
-                },
-            ),
+        transfer_to_vault(
+            &token_program_info,
+            &ctx.accounts.user_token_in.to_account_info(),
+            &vault_in,
+            &ctx.accounts.user.to_account_info(),
             amount_in,
         )?;
-
-        token::transfer(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                Transfer {
-                    from: vault_out,
-                    to: ctx.accounts.user_token_out.to_account_info(),
-                    authority: ctx.accounts.pool.to_account_info(),
-                },
-                signer_seeds,
-            ),
+        transfer_from_vault(
+            &token_program_info,
+            &vault_out,
+            &ctx.accounts.user_token_out.to_account_info(),
+            &ctx.accounts.pool.to_account_info(),
+            signer_seeds,
             amount_out,
         )?;
 
@@ -423,47 +404,44 @@ pub mod amm {
     /// share of every swap remained as untracked dust in the vaults.
     pub fn withdraw_protocol_fees(ctx: Context<WithdrawProtocolFees>) -> Result<()> {
         let pool = &ctx.accounts.pool;
-        let pool_seeds = &[
-            b"pool",
-            pool.token_mint_a.as_ref(),
-            pool.token_mint_b.as_ref(),
-            &[pool.bump],
-        ];
-        let signer_seeds = &[&pool_seeds[..]];
-
         let amount_a = pool.protocol_fees_a;
         let amount_b = pool.protocol_fees_b;
         require!(amount_a > 0 || amount_b > 0, AmmError::NoProtocolFees);
 
-        if amount_a > 0 {
-            token::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: ctx.accounts.vault_a.to_account_info(),
-                        to: ctx.accounts.admin_token_a.to_account_info(),
-                        authority: ctx.accounts.pool.to_account_info(),
-                    },
-                    signer_seeds,
-                ),
-                amount_a,
-            )?;
-        }
+        let token_program_info = ctx.accounts.token_program.to_account_info();
+        let token_mint_a = pool.token_mint_a;
+        let token_mint_b = pool.token_mint_b;
+        let pool_bump = pool.bump;
+        let pool_seeds: &[&[u8]] = &[
+            b"pool",
+            token_mint_a.as_ref(),
+            token_mint_b.as_ref(),
+            &[pool_bump],
+        ];
+        let signer_seeds: &[&[&[u8]]] = &[pool_seeds];
 
-        if amount_b > 0 {
-            token::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: ctx.accounts.vault_b.to_account_info(),
-                        to: ctx.accounts.admin_token_b.to_account_info(),
-                        authority: ctx.accounts.pool.to_account_info(),
-                    },
-                    signer_seeds,
-                ),
-                amount_b,
-            )?;
-        }
+        // Always issue both transfers (token::transfer with amount=0 is a
+        // no-op). Wrapping in `if amount > 0 {}` would put the call sites
+        // inside an if-expression body, which Anvil's body classifier
+        // treats as opaque pass_through — the helper-cpi-catalog would
+        // then never see the call and wouldn't inline. Cheaper than
+        // lifting if-block recursion into the classifier.
+        transfer_from_vault(
+            &token_program_info,
+            &ctx.accounts.vault_a.to_account_info(),
+            &ctx.accounts.admin_token_a.to_account_info(),
+            &ctx.accounts.pool.to_account_info(),
+            signer_seeds,
+            amount_a,
+        )?;
+        transfer_from_vault(
+            &token_program_info,
+            &ctx.accounts.vault_b.to_account_info(),
+            &ctx.accounts.admin_token_b.to_account_info(),
+            &ctx.accounts.pool.to_account_info(),
+            signer_seeds,
+            amount_b,
+        )?;
 
         let pool = &mut ctx.accounts.pool;
         pool.protocol_fees_a = 0;
@@ -758,4 +736,87 @@ fn integer_sqrt(n: u128) -> u128 {
         y = (x + n / x) / 2;
     }
     x
+}
+
+// CPI helpers — each gets its own BPF stack frame so the Anchor 0.31
+// macro wrapper + cloned AccountInfos in CpiContext::new_with_signer
+// don't blow the 4KB-per-frame limit on add_liquidity / remove_liquidity
+// / swap. Signatures use &AccountInfo<'info> so Anvil's emit:
+//   - matches them in helper-cpi-catalog (recognizeTransferHelper /
+//     recognizeMintToHelper / recognizeBurnHelper);
+//   - inlines call sites as typed cpi_spl_* IR statements that resolve
+//     to Anvil's auto-injected spl_token_transfer / mint_to / burn helpers;
+//   - comments out the helper bodies as unsalvageable (they reference
+//     anchor_spl::token::), but the call sites work via the inlined IR.
+
+#[inline(never)]
+fn transfer_to_vault<'info>(
+    token_program: &AccountInfo<'info>,
+    from: &AccountInfo<'info>,
+    to: &AccountInfo<'info>,
+    authority: &AccountInfo<'info>,
+    amount: u64,
+) -> Result<()> {
+    token::transfer(
+        CpiContext::new(
+            token_program.clone(),
+            Transfer { from: from.clone(), to: to.clone(), authority: authority.clone() },
+        ),
+        amount,
+    )
+}
+
+#[inline(never)]
+fn transfer_from_vault<'info>(
+    token_program: &AccountInfo<'info>,
+    from: &AccountInfo<'info>,
+    to: &AccountInfo<'info>,
+    authority: &AccountInfo<'info>,
+    signer_seeds: &[&[&[u8]]],
+    amount: u64,
+) -> Result<()> {
+    token::transfer(
+        CpiContext::new_with_signer(
+            token_program.clone(),
+            Transfer { from: from.clone(), to: to.clone(), authority: authority.clone() },
+            signer_seeds,
+        ),
+        amount,
+    )
+}
+
+#[inline(never)]
+fn mint_lp_to_user<'info>(
+    token_program: &AccountInfo<'info>,
+    mint: &AccountInfo<'info>,
+    to: &AccountInfo<'info>,
+    authority: &AccountInfo<'info>,
+    signer_seeds: &[&[&[u8]]],
+    amount: u64,
+) -> Result<()> {
+    token::mint_to(
+        CpiContext::new_with_signer(
+            token_program.clone(),
+            MintTo { mint: mint.clone(), to: to.clone(), authority: authority.clone() },
+            signer_seeds,
+        ),
+        amount,
+    )
+}
+
+#[inline(never)]
+fn burn_lp_from_user<'info>(
+    token_program: &AccountInfo<'info>,
+    mint: &AccountInfo<'info>,
+    from: &AccountInfo<'info>,
+    authority: &AccountInfo<'info>,
+    amount: u64,
+) -> Result<()> {
+    token::burn(
+        CpiContext::new(
+            token_program.clone(),
+            Burn { mint: mint.clone(), from: from.clone(), authority: authority.clone() },
+        ),
+        amount,
+    )
 }

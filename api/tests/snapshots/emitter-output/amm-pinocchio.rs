@@ -333,7 +333,7 @@ pub fn add_liquidity(
     let vault_b = &accounts[5];
     let lp_mint = &accounts[6];
     let user_lp_token = &accounts[7];
-    let _token_program = &accounts[8];
+    let token_program = &accounts[8];
     let _system_program = &accounts[9];
 
     if !user.is_signer() {
@@ -434,16 +434,20 @@ pub fn add_liquidity(
     if !(lp_tokens > 0) {
         return Err(AmmError::InsufficientLiquidity.into());
     }
+    let token_program_info = token_program;
     // SPL Token transfer — user_token_a → vault_a
     spl_token_transfer(user_token_a, vault_a, user, amount_a)?;
     // SPL Token transfer — user_token_b → vault_b
     spl_token_transfer(user_token_b, vault_b, user, amount_b)?;
+    let token_mint_a = pool.token_mint_a;
+    let token_mint_b = pool.token_mint_b;
+    let pool_bump = pool.bump;
     // PDA signer seeds for 'pool'
     let seeds = &[
         b"pool",
-        pool.token_mint_a.as_ref(),
-        pool.token_mint_b.as_ref(),
-        &[pool.bump],
+        token_mint_a.as_ref(),
+        token_mint_b.as_ref(),
+        &[pool_bump],
     ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token mint_to — lp_mint → user_lp_token
@@ -483,7 +487,7 @@ pub fn remove_liquidity(
     let vault_b = &accounts[5];
     let lp_mint = &accounts[6];
     let user_lp_token = &accounts[7];
-    let _token_program = &accounts[8];
+    let token_program = &accounts[8];
 
     if !user.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -549,12 +553,16 @@ pub fn remove_liquidity(
     if !(amount_b >= min_amount_b) {
         return Err(AmmError::SlippageExceeded.into());
     }
+    let token_program_info = token_program;
+    let token_mint_a = pool.token_mint_a;
+    let token_mint_b = pool.token_mint_b;
+    let pool_bump = pool.bump;
     // PDA signer seeds for 'pool'
     let seeds = &[
         b"pool",
-        pool.token_mint_a.as_ref(),
-        pool.token_mint_b.as_ref(),
-        &[pool.bump],
+        token_mint_a.as_ref(),
+        token_mint_b.as_ref(),
+        &[pool_bump],
     ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token burn — user_lp_token
@@ -596,7 +604,7 @@ pub fn swap(
     let user_token_out = &accounts[3];
     let vault_a = &accounts[4];
     let vault_b = &accounts[5];
-    let _token_program = &accounts[6];
+    let token_program = &accounts[6];
 
     if !user.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -675,12 +683,16 @@ pub fn swap(
     if !(amount_out < reserve_out) {
         return Err(AmmError::InsufficientLiquidity.into());
     }
+    let token_program_info = token_program;
+    let token_mint_a = pool.token_mint_a;
+    let token_mint_b = pool.token_mint_b;
+    let pool_bump = pool.bump;
     // PDA signer seeds for 'pool'
     let seeds = &[
         b"pool",
-        pool.token_mint_a.as_ref(),
-        pool.token_mint_b.as_ref(),
-        &[pool.bump],
+        token_mint_a.as_ref(),
+        token_mint_b.as_ref(),
+        &[pool_bump],
     ];
     let signer_seeds = &[&seeds[..]];
     let (vault_in, vault_out) = if a_to_b {
@@ -866,7 +878,7 @@ pub fn withdraw_protocol_fees(
     let admin_token_a = &accounts[3];
     let admin_token_b = &accounts[4];
     let admin = &accounts[5];
-    let _token_program = &accounts[6];
+    let token_program = &accounts[6];
 
     if !admin.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -890,25 +902,27 @@ pub fn withdraw_protocol_fees(
     let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
     let _bump_vault_a = bump_seed(program_id, &[b"vault_a", pool_account.key().as_ref()], vault_a.key())?;
     let _bump_vault_b = bump_seed(program_id, &[b"vault_b", pool_account.key().as_ref()], vault_b.key())?;
-    // PDA signer seeds for 'pool'
-    let seeds = &[
-        b"pool",
-        pool.token_mint_a.as_ref(),
-        pool.token_mint_b.as_ref(),
-        &[pool.bump],
-    ];
-    let signer_seeds = &[&seeds[..]];
     let amount_a = pool.protocol_fees_a;
     let amount_b = pool.protocol_fees_b;
     if !(amount_a > 0 || amount_b > 0) {
         return Err(AmmError::NoProtocolFees.into());
     }
-    if amount_a > 0 {
-            spl_token_transfer_signed(vault_a, admin_token_a, pool_account, amount_a, signer_seeds)?;
-        }
-    if amount_b > 0 {
-            spl_token_transfer_signed(vault_b, admin_token_b, pool_account, amount_b, signer_seeds)?;
-        }
+    let token_program_info = token_program;
+    let token_mint_a = pool.token_mint_a;
+    let token_mint_b = pool.token_mint_b;
+    let pool_bump = pool.bump;
+    // PDA signer seeds for 'pool'
+    let seeds = &[
+        b"pool",
+        token_mint_a.as_ref(),
+        token_mint_b.as_ref(),
+        &[pool_bump],
+    ];
+    let signer_seeds = &[&seeds[..]];
+    // SPL Token transfer (PDA signed) — vault_a → admin_token_a
+    spl_token_transfer_signed(vault_a, admin_token_a, pool_account, amount_a, signer_seeds)?;
+    // SPL Token transfer (PDA signed) — vault_b → admin_token_b
+    spl_token_transfer_signed(vault_b, admin_token_b, pool_account, amount_b, signer_seeds)?;
     pool.protocol_fees_a = 0;
     pool.protocol_fees_b = 0;
     AmmPool::save(pool_account, &pool)?;
@@ -1212,6 +1226,98 @@ pub fn integer_sqrt(n: u128) -> u128 {
     }
     x
 }
+
+// ╔════════════════════════════════════════════════════════════════════════════╗
+// ║  ⚠️  ANVIL TODO: helper 'transfer_to_vault' uses Anchor-only types
+// ║  (InterfaceAccount, Interface<TokenInterface>, Box<Account>, etc.) that
+// ║  don't exist on Pinocchio. Body commented out below; instruction call sites
+// ║  are also commented out so the program compiles. MANUAL PORT REQUIRED.
+// ╚════════════════════════════════════════════════════════════════════════════╝
+// fn transfer_to_vault<'info>(
+//     token_program: &AccountInfo<'info>,
+//     from: &AccountInfo<'info>,
+//     to: &AccountInfo<'info>,
+//     authority: &AccountInfo<'info>,
+//     amount: u64,
+// ) -> Result<()> {
+//     token::transfer(
+//         CpiContext::new(
+//             token_program.clone(),
+//             Transfer { from: from.clone(), to: to.clone(), authority: authority.clone() },
+//         ),
+//         amount,
+//     )
+// }
+
+// ╔════════════════════════════════════════════════════════════════════════════╗
+// ║  ⚠️  ANVIL TODO: helper 'transfer_from_vault' uses Anchor-only types
+// ║  (InterfaceAccount, Interface<TokenInterface>, Box<Account>, etc.) that
+// ║  don't exist on Pinocchio. Body commented out below; instruction call sites
+// ║  are also commented out so the program compiles. MANUAL PORT REQUIRED.
+// ╚════════════════════════════════════════════════════════════════════════════╝
+// fn transfer_from_vault<'info>(
+//     token_program: &AccountInfo<'info>,
+//     from: &AccountInfo<'info>,
+//     to: &AccountInfo<'info>,
+//     authority: &AccountInfo<'info>,
+//     signer_seeds: &[&[&[u8]]],
+//     amount: u64,
+// ) -> Result<()> {
+//     token::transfer(
+//         CpiContext::new_with_signer(
+//             token_program.clone(),
+//             Transfer { from: from.clone(), to: to.clone(), authority: authority.clone() },
+//             signer_seeds,
+//         ),
+//         amount,
+//     )
+// }
+
+// ╔════════════════════════════════════════════════════════════════════════════╗
+// ║  ⚠️  ANVIL TODO: helper 'mint_lp_to_user' uses Anchor-only types
+// ║  (InterfaceAccount, Interface<TokenInterface>, Box<Account>, etc.) that
+// ║  don't exist on Pinocchio. Body commented out below; instruction call sites
+// ║  are also commented out so the program compiles. MANUAL PORT REQUIRED.
+// ╚════════════════════════════════════════════════════════════════════════════╝
+// fn mint_lp_to_user<'info>(
+//     token_program: &AccountInfo<'info>,
+//     mint: &AccountInfo<'info>,
+//     to: &AccountInfo<'info>,
+//     authority: &AccountInfo<'info>,
+//     signer_seeds: &[&[&[u8]]],
+//     amount: u64,
+// ) -> Result<()> {
+//     token::mint_to(
+//         CpiContext::new_with_signer(
+//             token_program.clone(),
+//             MintTo { mint: mint.clone(), to: to.clone(), authority: authority.clone() },
+//             signer_seeds,
+//         ),
+//         amount,
+//     )
+// }
+
+// ╔════════════════════════════════════════════════════════════════════════════╗
+// ║  ⚠️  ANVIL TODO: helper 'burn_lp_from_user' uses Anchor-only types
+// ║  (InterfaceAccount, Interface<TokenInterface>, Box<Account>, etc.) that
+// ║  don't exist on Pinocchio. Body commented out below; instruction call sites
+// ║  are also commented out so the program compiles. MANUAL PORT REQUIRED.
+// ╚════════════════════════════════════════════════════════════════════════════╝
+// fn burn_lp_from_user<'info>(
+//     token_program: &AccountInfo<'info>,
+//     mint: &AccountInfo<'info>,
+//     from: &AccountInfo<'info>,
+//     authority: &AccountInfo<'info>,
+//     amount: u64,
+// ) -> Result<()> {
+//     token::burn(
+//         CpiContext::new(
+//             token_program.clone(),
+//             Burn { mint: mint.clone(), from: from.clone(), authority: authority.clone() },
+//         ),
+//         amount,
+//     )
+// }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(u32)]
