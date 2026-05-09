@@ -526,7 +526,6 @@ export function buildStepInstruction(
   const keys = step.accounts.map((ref, slotIdx) => {
     const pubkey = resolveAccountRef(ref, ctx);
     const isProgram = ref.startsWith("$program:");
-    const isSigner = ref.startsWith("$signer:");
     // B5 — consult IR.AccountRef.isMut when the slot index lines up with
     // the IR's account list AND the slot isn't a program. This closes
     // the class of "should-have-failed-but-didn't" scenarios — Anchor
@@ -538,15 +537,27 @@ export function buildStepInstruction(
     // Programs are always read-only. Signers default to writable (most
     // are fee payers) but yield to the IR when it says otherwise.
     let isWritable: boolean;
+    let isSigner: boolean;
     if (isProgram) {
       isWritable = false;
+      isSigner = false;
     } else if (slotIdx < irIx.accounts.length) {
       const irAcc = irIx.accounts[slotIdx]!;
       isWritable = irAcc.isMut;
+      // Init'd non-PDA accounts (e.g. AMM's lp_mint) need signer privilege
+      // — Anchor's init does create_account via CPI which requires the new
+      // account's keypair to sign. Init'd PDA accounts (vault_a, vault_b,
+      // pool) are signed via CPI signer_seeds; the outer TX must NOT mark
+      // them is_signer (no private key available).
+      isSigner =
+        irAcc.isSigner ||
+        (irAcc.isInit && !irAcc.isPda) ||
+        ref.startsWith("$signer:");
     } else {
       // Step has more accounts than IR knows (extra remaining_accounts):
-      // default to writable, the program will choose what to do.
+      // default to writable, defer signer to ref shape.
       isWritable = true;
+      isSigner = ref.startsWith("$signer:");
     }
     return { pubkey, isSigner, isWritable };
   });
@@ -788,15 +799,34 @@ export function runScenarioOnSo(
     }
     const feePayer = ctx.signers.get(feePayerName)!;
     // All signer refs in the step's accounts list need to sign.
-    const signerKps = step.accounts
-      .filter((a) => a.startsWith("$signer:"))
-      .map((a) => ctx.signers.get(a.slice("$signer:".length).split(".")[0]!)!)
-      .filter((kp, idx, arr) => arr.findIndex((k) => k.publicKey.equals(kp.publicKey)) === idx);
+    // Include init'd $keypair refs (their keypairs need to sign for
+    // create_account CPIs that Anchor's init constraint generates).
+    const signerKps: Keypair[] = [];
+    const irIxForSign = ir.instructions.find((i) => i.name === step.ix);
+    for (let slotIdx = 0; slotIdx < step.accounts.length; slotIdx++) {
+      const ref = step.accounts[slotIdx]!;
+      if (ref.startsWith("$signer:")) {
+        const kp = ctx.signers.get(ref.slice("$signer:".length).split(".")[0]!);
+        if (kp) signerKps.push(kp);
+      } else if (ref.startsWith("$keypair:")) {
+        // Only sign if the IR says this slot is_signer or is an init'd
+        // non-PDA (PDA inits are signed via CPI seeds, not outer TX).
+        const irAcc = irIxForSign?.accounts[slotIdx];
+        if (irAcc && (irAcc.isSigner || (irAcc.isInit && !irAcc.isPda))) {
+          const kp = ctx.ephemeralKeypairs.get(ref.slice("$keypair:".length).split(".")[0]!);
+          if (kp) signerKps.push(kp);
+        }
+      }
+    }
+    // Dedupe by publicKey (same keypair can appear in multiple slots).
+    const uniqSignerKps = signerKps.filter(
+      (kp, idx, arr) => arr.findIndex((k) => k.publicKey.equals(kp.publicKey)) === idx,
+    );
 
     const tx = new Transaction().add(ix);
     tx.recentBlockhash = svm.latestBlockhash();
     tx.feePayer = feePayer.publicKey;
-    tx.sign(...signerKps);
+    tx.sign(...uniqSignerKps);
 
     const r = svm.sendTransaction(tx);
     const failed = r?.constructor?.name === "FailedTransactionMetadata";
