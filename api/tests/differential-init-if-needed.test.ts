@@ -17,8 +17,6 @@ import { Transaction, TransactionInstruction, SystemProgram } from "@solana/web3
 import {
   defineDifferential,
   anchorIxDiscriminator,
-  encodeI64LE,
-  concatBytes,
   Keypair,
   PublicKey,
   LiteSVM,
@@ -51,7 +49,8 @@ defineDifferential({
   callScript: async (svm: LiteSVM, ctx, programId: PublicKey) => {
     svm.airdrop(ctx.user.publicKey, BigInt(1_000_000_000));
 
-    const visitIx = (ts: bigint) =>
+    // Source reads Clock::get() — no instruction args. Discriminator only.
+    const visitIx = () =>
       new TransactionInstruction({
         programId,
         keys: [
@@ -59,19 +58,27 @@ defineDifferential({
           { pubkey: ctx.user.publicKey, isSigner: true, isWritable: true },
           { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
-        data: Buffer.from(concatBytes(anchorIxDiscriminator("visit"), encodeI64LE(ts))),
+        data: Buffer.from(anchorIxDiscriminator("visit")),
       });
 
     // Two visits: first inits, second exercises the init_if_needed branch.
     // If the runtime branch is missing, the second call default-inits and
     // resets visit_count back to 1 → byte-mismatch on the post-state.
-    for (const ts of [1_700_000_100n, 1_700_000_200n]) {
-      const tx = new Transaction().add(visitIx(ts));
+    //
+    // Between calls we expire the blockhash so the second tx isn't deduped
+    // as AlreadyProcessed (TransactionError 6) — LiteSVM doesn't auto-
+    // advance slots between sendTransaction calls.
+    for (let i = 0; i < 2; i++) {
+      if (i > 0) {
+        const expire = (svm as unknown as { expireBlockhash?: () => void }).expireBlockhash;
+        if (typeof expire === "function") expire.call(svm);
+      }
+      const tx = new Transaction().add(visitIx());
       tx.recentBlockhash = svm.latestBlockhash();
       tx.feePayer = ctx.user.publicKey;
       tx.sign(ctx.user);
       const r = svm.sendTransaction(tx);
-      if ("err" in r) throw new Error(`tx failed: ${JSON.stringify(r.err)}`);
+      if ("err" in r) throw new Error(`tx failed (iter ${i}): ${JSON.stringify(r.err)}`);
     }
   },
 
