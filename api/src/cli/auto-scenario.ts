@@ -360,6 +360,10 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
 
   // Pass B — non-init user-side TokenAccounts (existing logic).
   for (const ix of ir.instructions) {
+    // Per-instruction tracker: how many unconstrained TAs we've routed.
+    // Drives swap-shape mint routing (alternate through declared mints
+    // when there are multiple, instead of defaulting all to the first).
+    let unconstrainedRoutingCounter = 0;
     for (const acc of ix.accounts) {
       if (acc.accountType !== "TokenAccount") continue;
       if (acc.isInit || acc.isPda) continue;
@@ -385,16 +389,21 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       if (!mintTag) {
         // No explicit token::mint constraint, OR an unrecognised expression.
         // Common pattern: user-side TokenAccounts where the program checks
-        // mint identity manually in the body (spl-transfer/spl-burn/swap).
-        // Default to the first declared mint so the scenario synthesizes;
-        // both targets see the same default, byte-equal verdict still holds.
+        // mint identity manually in the body (spl-transfer / spl-burn / AMM swap).
+        // Routing strategy: when multiple mints are declared, alternate
+        // through them in declared order (first unconstrained TA → mintNames[0],
+        // second → mintNames[1], etc., wrapping). AMM swap's user_token_in /
+        // user_token_out → token_mint_a / token_mint_b in this order.
+        // When only one mint is declared, all default to it (existing behavior).
         // If no Mint is declared anywhere, synthesize an implicit default mint.
-        let firstMint = [...mintNames][0];
-        if (!firstMint) {
-          firstMint = "__default_mint";
-          mintNames.add(firstMint);
+        const declaredMints = [...mintNames];
+        if (declaredMints.length === 0) {
+          declaredMints.push("__default_mint");
+          mintNames.add("__default_mint");
         }
-        mintTag = `$mint:${firstMint}`;
+        const pickedMint = declaredMints[unconstrainedRoutingCounter % declaredMints.length]!;
+        unconstrainedRoutingCounter++;
+        mintTag = `$mint:${pickedMint}`;
         mintWasDefaulted = true;
       }
 
