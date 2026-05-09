@@ -18,6 +18,7 @@ use solana_program::{
     system_instruction,
     sysvar::Sysvar,
 };
+use solana_program::sysvar::rent::Rent;
 
 entrypoint!(process_instruction);
 
@@ -224,15 +225,18 @@ pub fn withdraw(
     if vault_state.authority != *authority.key {
         return Err(ProgramError::InvalidAccountData);
     }
-    if !(vault.lamports() >= amount) {
-        return Err(VaultError::InsufficientFunds.into());
+    let rent = solana_program::sysvar::rent::Rent::get()?;
+    let rent_minimum = Rent::get()?.minimum_balance(0);
+    let post_balance = vault.lamports().checked_sub(amount).ok_or(VaultError::InsufficientFunds)?;
+    if !(post_balance >= rent_minimum) {
+        return Err(VaultError::WouldBreakRentExempt.into());
     }
     // PDA signer seeds for 'vault'
     let seeds = &[
-            b"vault",
-            vault_state.authority.as_ref(),
-            &[vault_state.vault_bump],
-        ];
+        b"vault",
+        vault_state.authority.as_ref(),
+        &[vault_state.vault_bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // System transfer with PDA signer
     let transfer_ix = system_instruction::transfer(vault.key, authority.key, amount);
@@ -383,10 +387,12 @@ pub enum VaultError {
     InvalidAmount = 6000,
     /// Insufficient funds in vault
     InsufficientFunds = 6001,
+    /// Withdrawal would drop the vault below rent-exempt minimum
+    WouldBreakRentExempt = 6002,
     /// Arithmetic overflow
-    Overflow = 6002,
+    Overflow = 6003,
     /// Arithmetic underflow
-    Underflow = 6003,
+    Underflow = 6004,
 }
 
 pub use VaultError::*;

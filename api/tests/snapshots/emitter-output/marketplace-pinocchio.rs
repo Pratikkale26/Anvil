@@ -96,7 +96,7 @@ pub fn initialize(
             &[bump_marketplace],
         ];
     let init_marketplace_signer_seeds = &[&init_marketplace_seeds[..]];
-    create_program_account(marketplace, admin, (8 + Marketplace::LEN) as usize, program_id, init_marketplace_signer_seeds)?;
+    create_program_account(marketplace, admin, (8 + Marketplace::INIT_SPACE) as usize, program_id, init_marketplace_signer_seeds)?;
     if !(fee_bps <= 10000) {
         return Err(MarketplaceError::InvalidFeeBps.into());
     }
@@ -179,13 +179,10 @@ pub fn list(
             &[bump_listing],
         ];
     let init_listing_signer_seeds = &[&init_listing_seeds[..]];
-    create_program_account(listing, seller, (8 + Listing::LEN) as usize, program_id, init_listing_signer_seeds)?;
+    create_program_account(listing, seller, (8 + Listing::INIT_SPACE) as usize, program_id, init_listing_signer_seeds)?;
     // Init token account: vault
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
-            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
-        ];
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
         // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
         pinocchio_system::instructions::CreateAccount {
@@ -300,11 +297,11 @@ pub fn delist(
     // PDA signer seeds for 'listing'
     let seed_bytes = listing.seed.to_le_bytes();
     let seeds = &[
-            b"listing",
-            listing.seller.as_ref(),
-            &seed_bytes,
-            &[listing.bump],
-        ];
+        b"listing",
+        listing.seller.as_ref(),
+        &seed_bytes,
+        &[listing.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → seller_ata
     spl_token_transfer_signed(vault, seller_ata, listing_account, 1, signer_seeds)?;
@@ -359,10 +356,7 @@ pub fn purchase(
 
     // Create Associated Token Account: buyer_ata
     {
-        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131,
-            11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89,
-        ];
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];
         let __ata_metas = [
             pinocchio::instruction::AccountMeta::new(buyer.key(), true, true),
             pinocchio::instruction::AccountMeta::new(buyer_ata.key(), true, false),
@@ -408,11 +402,11 @@ pub fn purchase(
     // PDA signer seeds for 'listing'
     let seed_bytes = listing.seed.to_le_bytes();
     let seeds = &[
-            b"listing",
-            listing.seller.as_ref(),
-            &seed_bytes,
-            &[listing.bump],
-        ];
+        b"listing",
+        listing.seller.as_ref(),
+        &seed_bytes,
+        &[listing.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → buyer_ata
     spl_token_transfer_signed(vault, buyer_ata, listing_account, 1, signer_seeds)?;
@@ -462,13 +456,13 @@ pub fn update_fee(
     }
 
     let _bump_marketplace = bump_seed(program_id, &[b"marketplace"], marketplace.key())?;
-    let marketplace_account = marketplace;
-    let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
     if !(new_fee_bps <= 10000) {
         return Err(MarketplaceError::InvalidFeeBps.into());
     }
-    if !(marketplace.admin == *admin.key()) {
-        return Err(MarketplaceError::Unauthorized.into());
+    let marketplace_account = marketplace;
+    let mut marketplace = Marketplace::from_account_info(marketplace_account)?;
+    if marketplace.admin != *admin.key() {
+        return Err(ProgramError::InvalidAccountData);
     }
     marketplace.fee_bps = new_fee_bps;
     Marketplace::save(marketplace_account, &marketplace)?;

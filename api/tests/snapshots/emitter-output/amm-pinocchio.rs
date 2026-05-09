@@ -89,6 +89,7 @@ fn router(
         [211, 216, 1, 216, 54, 191, 102, 150] => freeze_pool(program_id, accounts, data),
         [236, 22, 34, 179, 44, 68, 15, 108] => unfreeze_pool(program_id, accounts, data),
         [195, 241, 226, 216, 102, 1, 5, 122] => update_fee_rate(program_id, accounts, data),
+        [11, 68, 165, 98, 18, 208, 134, 73] => withdraw_protocol_fees(program_id, accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
@@ -149,7 +150,7 @@ pub fn initialize_pool(
             &[bump_pool],
         ];
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
-    create_program_account(pool, admin, (8 + AmmPool::LEN) as usize, program_id, init_pool_signer_seeds)?;
+    create_program_account(pool, admin, (8 + AmmPool::INIT_SPACE) as usize, program_id, init_pool_signer_seeds)?;
     let bump_vault_a = bump_seed(program_id, &[b"vault_a", pool.key().as_ref()], vault_a.key())?;
     let init_vault_a_seeds: &[&[u8]] = &[
             b"vault_a",
@@ -159,10 +160,7 @@ pub fn initialize_pool(
     let init_vault_a_signer_seeds = &[&init_vault_a_seeds[..]];
     // Init token account: vault_a
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
-            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
-        ];
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
         // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
         // PDA-signed create — build a Signer<Seed> from the threaded seeds.
@@ -204,10 +202,7 @@ pub fn initialize_pool(
     let init_vault_b_signer_seeds = &[&init_vault_b_seeds[..]];
     // Init token account: vault_b
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
-            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
-        ];
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
         // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
         // PDA-signed create — build a Signer<Seed> from the threaded seeds.
@@ -240,6 +235,35 @@ pub fn initialize_pool(
         };
         pinocchio::cpi::invoke(&__ta_init_ix, &[vault_b, token_mint_b])?;
     }
+    // Init mint: lp_mint
+    {
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
+        // 1. Allocate + assign to token program (rent-exempt for 82 bytes).
+        let __mint_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(82);
+        pinocchio_system::instructions::CreateAccount {
+            from: admin,
+            to: lp_mint,
+            lamports: __mint_rent,
+            space: 82u64,
+            owner: &TOKEN_PROGRAM_ID,
+        }.invoke()?;
+        // 2. InitializeMint2 — discriminator 20, decimals + authority + COption<freeze>.
+        let mut __mint_init_data = [0u8; 67];
+        __mint_init_data[0] = 20;
+        __mint_init_data[1] = (6) as u8;
+        __mint_init_data[2..34].copy_from_slice(pool.key().as_ref());
+        __mint_init_data[34] = 0;
+        let __mint_init_data_len: usize = 35;
+        let __mint_init_metas = [
+            pinocchio::instruction::AccountMeta::new(lp_mint.key(), true, false),
+        ];
+        let __mint_init_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_PROGRAM_ID,
+            accounts: &__mint_init_metas,
+            data: &__mint_init_data[..__mint_init_data_len],
+        };
+        pinocchio::cpi::invoke(&__mint_init_ix, &[lp_mint])?;
+    }
     if !(fee_rate <= 10000) {
         return Err(AmmError::InvalidFeeRate.into());
     }
@@ -259,11 +283,13 @@ pub fn initialize_pool(
         lp_supply: 0,
         total_fees_a: 0,
         total_fees_b: 0,
+        protocol_fees_a: 0,
+        protocol_fees_b: 0,
+        protocol_fee_rate: 0,
         bump: 0,
         vault_a_bump: 0,
         vault_b_bump: 0,
         is_frozen: false,
-        protocol_fee_rate: 0,
     };
     pool.admin = *admin.key();
     pool.token_mint_a = *token_mint_a.key();
@@ -276,11 +302,13 @@ pub fn initialize_pool(
     pool.lp_supply = 0;
     pool.total_fees_a = 0;
     pool.total_fees_b = 0;
+    pool.protocol_fees_a = 0;
+    pool.protocol_fees_b = 0;
+    pool.protocol_fee_rate = 2000;
     pool.bump = bump_pool;
     pool.vault_a_bump = bump_vault_a;
     pool.vault_b_bump = bump_vault_b;
     pool.is_frozen = false;
-    pool.protocol_fee_rate = 2000;
     AmmPool::save(pool_account, &pool)?;
     Ok(())
 
@@ -410,11 +438,11 @@ pub fn add_liquidity(
     spl_token_transfer(user_token_b, vault_b, user, amount_b)?;
     // PDA signer seeds for 'pool'
     let seeds = &[
-            b"pool",
-            pool.token_mint_a.as_ref(),
-            pool.token_mint_b.as_ref(),
-            &[pool.bump],
-        ];
+        b"pool",
+        pool.token_mint_a.as_ref(),
+        pool.token_mint_b.as_ref(),
+        &[pool.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token mint_to — lp_mint → user_lp_token
     spl_token_mint_to_signed(lp_mint, user_lp_token, pool_account, lp_tokens, signer_seeds)?;
@@ -521,11 +549,11 @@ pub fn remove_liquidity(
     }
     // PDA signer seeds for 'pool'
     let seeds = &[
-            b"pool",
-            pool.token_mint_a.as_ref(),
-            pool.token_mint_b.as_ref(),
-            &[pool.bump],
-        ];
+        b"pool",
+        pool.token_mint_a.as_ref(),
+        pool.token_mint_b.as_ref(),
+        &[pool.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token burn — user_lp_token
     spl_token_burn(user_lp_token, lp_mint, user, lp_amount)?;
@@ -647,11 +675,11 @@ pub fn swap(
     }
     // PDA signer seeds for 'pool'
     let seeds = &[
-            b"pool",
-            pool.token_mint_a.as_ref(),
-            pool.token_mint_b.as_ref(),
-            &[pool.bump],
-        ];
+        b"pool",
+        pool.token_mint_a.as_ref(),
+        pool.token_mint_b.as_ref(),
+        &[pool.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     let (vault_in, vault_out) = if a_to_b {
             (vault_a, vault_b)
@@ -667,11 +695,16 @@ pub fn swap(
                 .checked_add(lp_fee).ok_or(AmmError::Overflow)?;
             pool.reserve_b = pool.reserve_b.checked_sub(amount_out).ok_or(AmmError::Underflow)?;
             pool.total_fees_a = pool.total_fees_a.checked_add(lp_fee).ok_or(AmmError::Overflow)?;
+            
+            
+            
+            pool.protocol_fees_a = pool.protocol_fees_a.checked_add(protocol_fee).ok_or(AmmError::Overflow)?;
         } else {
             pool.reserve_b = pool.reserve_b.checked_add(amount_in_after_fee).ok_or(AmmError::Overflow)?
                 .checked_add(lp_fee).ok_or(AmmError::Overflow)?;
             pool.reserve_a = pool.reserve_a.checked_sub(amount_out).ok_or(AmmError::Underflow)?;
             pool.total_fees_b = pool.total_fees_b.checked_add(lp_fee).ok_or(AmmError::Overflow)?;
+            pool.protocol_fees_b = pool.protocol_fees_b.checked_add(protocol_fee).ok_or(AmmError::Overflow)?;
         }
     {
         let __evt = Swapped { user: *user.key(),
@@ -717,10 +750,10 @@ pub fn freeze_pool(
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
-    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
-    if !(pool.admin == *admin.key()) {
-        return Err(AmmError::Unauthorized.into());
+    if pool.admin != *admin.key() {
+        return Err(ProgramError::InvalidAccountData);
     }
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
     pool.is_frozen = true;
     AmmPool::save(pool_account, &pool)?;
     Ok(())
@@ -755,10 +788,10 @@ pub fn unfreeze_pool(
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
-    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
-    if !(pool.admin == *admin.key()) {
-        return Err(AmmError::Unauthorized.into());
+    if pool.admin != *admin.key() {
+        return Err(ProgramError::InvalidAccountData);
     }
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
     pool.is_frozen = false;
     AmmPool::save(pool_account, &pool)?;
     Ok(())
@@ -803,14 +836,79 @@ pub fn update_fee_rate(
 
     let pool_account = pool;
     let mut pool = AmmPool::from_account_info(pool_account)?;
-    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
-    if !(pool.admin == *admin.key()) {
-        return Err(AmmError::Unauthorized.into());
+    if pool.admin != *admin.key() {
+        return Err(ProgramError::InvalidAccountData);
     }
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
     if !(new_fee_rate <= 10000) {
         return Err(AmmError::InvalidFeeRate.into());
     }
     pool.fee_rate = new_fee_rate;
+    AmmPool::save(pool_account, &pool)?;
+    Ok(())
+
+}
+
+pub fn withdraw_protocol_fees(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() < 7 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let pool = &accounts[0];
+    let vault_a = &accounts[1];
+    let vault_b = &accounts[2];
+    let admin_token_a = &accounts[3];
+    let admin_token_b = &accounts[4];
+    let admin = &accounts[5];
+    let _token_program = &accounts[6];
+
+    if !admin.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !pool.is_writable() || !vault_a.is_writable() || !vault_b.is_writable() || !admin_token_a.is_writable() || !admin_token_b.is_writable() || !admin.is_writable() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if pool.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if !data.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let pool_account = pool;
+    let mut pool = AmmPool::from_account_info(pool_account)?;
+    if pool.admin != *admin.key() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let _bump_pool = bump_seed(program_id, &[b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()], pool_account.key())?;
+    let _bump_vault_a = bump_seed(program_id, &[b"vault_a", pool_account.key().as_ref()], vault_a.key())?;
+    let _bump_vault_b = bump_seed(program_id, &[b"vault_b", pool_account.key().as_ref()], vault_b.key())?;
+    // PDA signer seeds for 'pool'
+    let seeds = &[
+        b"pool",
+        pool.token_mint_a.as_ref(),
+        pool.token_mint_b.as_ref(),
+        &[pool.bump],
+    ];
+    let signer_seeds = &[&seeds[..]];
+    let amount_a = pool.protocol_fees_a;
+    let amount_b = pool.protocol_fees_b;
+    if !(amount_a > 0 || amount_b > 0) {
+        return Err(AmmError::NoProtocolFees.into());
+    }
+    if amount_a > 0 {
+            spl_token_transfer_signed(vault_a, admin_token_a, pool_account, amount_a, signer_seeds)?;
+        }
+    if amount_b > 0 {
+            spl_token_transfer_signed(vault_b, admin_token_b, pool_account, amount_b, signer_seeds)?;
+        }
+    pool.protocol_fees_a = 0;
+    pool.protocol_fees_b = 0;
     AmmPool::save(pool_account, &pool)?;
     Ok(())
 
@@ -829,17 +927,19 @@ pub struct AmmPool {
     pub lp_supply: u64,
     pub total_fees_a: u64,
     pub total_fees_b: u64,
+    pub protocol_fees_a: u64,
+    pub protocol_fees_b: u64,
+    pub protocol_fee_rate: u64,
     pub bump: u8,
     pub vault_a_bump: u8,
     pub vault_b_bump: u8,
     pub is_frozen: bool,
-    pub protocol_fee_rate: u64,
 }
 
 impl AmmPool {
     pub const DISCRIMINATOR: [u8; 8] = [54, 82, 185, 138, 179, 191, 211, 169];
-    pub const INIT_SPACE: usize = 196;
-    pub const LEN: usize = 196;
+    pub const INIT_SPACE: usize = 212;
+    pub const LEN: usize = 212;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;
@@ -888,6 +988,18 @@ impl AmmPool {
             data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
+        let protocol_fees_a: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let protocol_fees_b: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
+        let protocol_fee_rate: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
         let bump: u8 = data[offset];
         offset += 1;
         let vault_a_bump: u8 = data[offset];
@@ -899,11 +1011,7 @@ impl AmmPool {
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
         };
-        offset += 1;
-        let protocol_fee_rate: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
-        );
-        Ok(Self { admin, token_mint_a, token_mint_b, lp_mint, fee_rate, initial_price, reserve_a, reserve_b, lp_supply, total_fees_a, total_fees_b, bump, vault_a_bump, vault_b_bump, is_frozen, protocol_fee_rate })
+        Ok(Self { admin, token_mint_a, token_mint_b, lp_mint, fee_rate, initial_price, reserve_a, reserve_b, lp_supply, total_fees_a, total_fees_b, protocol_fees_a, protocol_fees_b, protocol_fee_rate, bump, vault_a_bump, vault_b_bump, is_frozen })
     }
 
     pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
@@ -934,6 +1042,12 @@ impl AmmPool {
         offset += 8;
         data[offset..offset + 8].copy_from_slice(&value.total_fees_b.to_le_bytes());
         offset += 8;
+        data[offset..offset + 8].copy_from_slice(&value.protocol_fees_a.to_le_bytes());
+        offset += 8;
+        data[offset..offset + 8].copy_from_slice(&value.protocol_fees_b.to_le_bytes());
+        offset += 8;
+        data[offset..offset + 8].copy_from_slice(&value.protocol_fee_rate.to_le_bytes());
+        offset += 8;
         data[offset] = value.bump as u8;
         offset += 1;
         data[offset] = value.vault_a_bump as u8;
@@ -941,8 +1055,6 @@ impl AmmPool {
         data[offset] = value.vault_b_bump as u8;
         offset += 1;
         data[offset] = if value.is_frozen { 1 } else { 0 };
-        offset += 1;
-        data[offset..offset + 8].copy_from_slice(&value.protocol_fee_rate.to_le_bytes());
         Ok(())
     }
 
@@ -1116,10 +1228,12 @@ pub enum AmmError {
     InsufficientLiquidity = 6005,
     /// Unauthorized
     Unauthorized = 6006,
+    /// No protocol fees accrued
+    NoProtocolFees = 6007,
     /// Arithmetic overflow
-    Overflow = 6007,
+    Overflow = 6008,
     /// Arithmetic underflow
-    Underflow = 6008,
+    Underflow = 6009,
 }
 
 pub use AmmError::*;

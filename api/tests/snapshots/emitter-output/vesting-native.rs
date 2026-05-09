@@ -148,7 +148,7 @@ pub fn create_vesting(
             &[bump_vesting],
         ];
     let init_vesting_signer_seeds = &[&init_vesting_seeds[..]];
-    create_program_account(vesting, grantor, (8 + Vesting::LEN) as u64, program_id, init_vesting_signer_seeds)?;
+    create_program_account(vesting, grantor, (8 + Vesting::INIT_SPACE) as u64, program_id, init_vesting_signer_seeds)?;
     let (expected_key, bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting.key.as_ref()], program_id);
     if expected_key != *vault.key {
         return Err(ProgramError::InvalidSeeds);
@@ -298,7 +298,7 @@ pub fn release(
             vesting.cliff_ts,
             vesting.end_ts,
             now,
-        );
+        )?;
     let releasable = vested.checked_sub(vesting.released_amount).ok_or(VestingError::ArithmeticOverflow)?;
     if !(releasable > 0) {
         return Err(VestingError::NothingToRelease.into());
@@ -308,10 +308,10 @@ pub fn release(
     let vault_bump = vesting.vault_bump;
     // PDA signer seeds for 'vesting_key'
     let seeds = &[
-            VAULT_SEED,
-            vesting_key.as_ref(),
-            &[vault_bump],
-        ];
+        VAULT_SEED,
+        vesting_key.as_ref(),
+        &[vault_bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → beneficiary_token_account
     let transfer_ix = spl_token::instruction::transfer(
@@ -389,7 +389,7 @@ pub fn revoke(
             vesting.cliff_ts,
             vesting.end_ts,
             now,
-        );
+        )?;
     let unvested = vesting.total_amount.checked_sub(vested).ok_or(VestingError::ArithmeticOverflow)?;
     vesting.revoked = true;
     if unvested > 0 {
@@ -450,14 +450,31 @@ pub fn close(
     if !(vesting.revoked || vesting.released_amount == vesting.total_amount) {
         return Err(VestingError::NotCloseable.into());
     }
-    let vault_balance = token_account_amount(vault)?;
-    if vault_balance > 0 {
-            let vesting_key = *vesting_account.key;
-            let vault_bump = vesting.vault_bump;
-            let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];
-
-            spl_token_transfer_signed(vault, grantor_token_account, vault, vault_balance, &[seeds])?;
-        }
+    if !(token_account_amount(vault)? == 0) {
+        return Err(VestingError::VaultNotEmpty.into());
+    }
+    let vesting_key = *vesting_account.key;
+    let vault_bump = vesting.vault_bump;
+    // PDA signer seeds for 'vesting_key'
+    let seeds = &[
+        VAULT_SEED,
+        vesting_key.as_ref(),
+        &[vault_bump],
+    ];
+    let signer_seeds = &[&seeds[..]];
+    // SPL Token close account — vault
+    let close_ix = spl_token::instruction::close_account(
+        &spl_token::id(),
+        vault.key,
+        grantor.key,
+        vault.key,
+        &[],
+    )?;
+    invoke_signed(
+        &close_ix,
+        &[vault.clone(), grantor.clone(), vault.clone()],
+        signer_seeds,
+    )?;
     msg!("Vesting account closed.");
     close_program_account(vesting_account, grantor)?;
     Ok(())
@@ -689,6 +706,27 @@ pub fn spl_token_transfer_signed<'a>(
     Ok(())
 }
 
+pub fn spl_token_close_account_signed<'a>(
+    account: &AccountInfo<'a>,
+    destination: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let close_ix = spl_token::instruction::close_account(
+        &spl_token::id(),
+        account.key,
+        destination.key,
+        authority.key,
+        &[],
+    )?;
+    invoke_signed(
+        &close_ix,
+        &[account.clone(), destination.clone(), authority.clone()],
+        signer_seeds,
+    )?;
+    Ok(())
+}
+
 pub fn close_program_account<'a>(
     account: &AccountInfo<'a>,
     destination: &AccountInfo<'a>,
@@ -726,19 +764,25 @@ pub fn vested_amount(
     cliff_ts: i64,
     end_ts: i64,
     now: i64,
-) -> u64 {
+) -> Result<u64, ProgramError> {
     if now < cliff_ts {
-        return 0;
+        return Ok(0);
     }
     if now >= end_ts {
-        return total;
+        return Ok(total);
     }
-    let elapsed = (now - start_ts) as u64;
-    let duration = (end_ts - start_ts) as u64;
-    total
+    let elapsed = (now - start_ts) as u128;
+    let duration = (end_ts - start_ts) as u128;
+    // Use u128 intermediate so total*elapsed never overflows; division is
+    // safe because end_ts > start_ts is enforced at create time. Propagate
+    // any conversion failure as ArithmeticOverflow rather than silently
+    // returning 0 and zeroing the legitimate release.
+    let scaled = (total as u128)
         .checked_mul(elapsed)
-        .and_then(|v| v.checked_div(duration))
-        .unwrap_or(0)
+        .ok_or(VestingError::ArithmeticOverflow)?
+        .checked_div(duration)
+        .ok_or(VestingError::ArithmeticOverflow)?;
+    u64::try_from(scaled).map_err(|_| VestingError::ArithmeticOverflow.into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -762,8 +806,10 @@ pub enum VestingError {
     VestingRevoked = 6007,
     /// Vesting is not closeable yet
     NotCloseable = 6008,
+    /// Vault must be empty before close — call release/revoke first
+    VaultNotEmpty = 6009,
     /// Arithmetic overflow
-    ArithmeticOverflow = 6009,
+    ArithmeticOverflow = 6010,
 }
 
 pub use VestingError::*;

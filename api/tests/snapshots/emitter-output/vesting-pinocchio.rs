@@ -18,6 +18,7 @@ use pinocchio::{
 use pinocchio::instruction::{Seed, Signer};
 use pinocchio_system::create_account_with_minimum_balance_signed;
 use pinocchio_token::instructions::Transfer as TokenTransfer;
+use pinocchio_token::instructions::CloseAccount as TokenCloseAccount;
 use pinocchio::sysvars::clock::Clock;
 use pinocchio::sysvars::rent::Rent;
 use pinocchio::sysvars::Sysvar;
@@ -145,7 +146,7 @@ pub fn create_vesting(
             &[bump_vesting],
         ];
     let init_vesting_signer_seeds = &[&init_vesting_seeds[..]];
-    create_program_account(vesting, grantor, (8 + Vesting::LEN) as usize, program_id, init_vesting_signer_seeds)?;
+    create_program_account(vesting, grantor, (8 + Vesting::INIT_SPACE) as usize, program_id, init_vesting_signer_seeds)?;
     let bump_vault = bump_seed(program_id, &[VAULT_SEED, vesting.key().as_ref()], vault.key())?;
     let init_vault_seeds: &[&[u8]] = &[
             VAULT_SEED,
@@ -155,10 +156,7 @@ pub fn create_vesting(
     let init_vault_signer_seeds = &[&init_vault_seeds[..]];
     // Init token account: vault
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [
-            6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172,
-            28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169,
-        ];
+        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
         // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
         // PDA-signed create — build a Signer<Seed> from the threaded seeds.
@@ -240,8 +238,26 @@ pub fn create_vesting(
     vesting.vault_bump = bump_vault;
     // SPL Token transfer — grantor_token_account → vault
     spl_token_transfer(grantor_token_account, vault, grantor, total_amount)?;
-    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio
-    pinocchio::log::sol_log("Vesting created: {} tokens for {}");
+    {
+        let mut __log_buf = [0u8; 256];
+        let mut __log_len = 0usize;
+        let __seg0 = b"Vesting created: ";
+        __log_buf[__log_len..__log_len + __seg0.len()].copy_from_slice(__seg0);
+        __log_len += __seg0.len();
+        let (__a1, __o1) = u64_to_ascii(total_amount as u64);
+        let __ab1 = &__a1[__o1..];
+        __log_buf[__log_len..__log_len + __ab1.len()].copy_from_slice(__ab1);
+        __log_len += __ab1.len();
+        let __seg2 = b" tokens for ";
+        __log_buf[__log_len..__log_len + __seg2.len()].copy_from_slice(__seg2);
+        __log_len += __seg2.len();
+        let (__a3, __o3) = pubkey_to_base58(&beneficiary);
+        let __ab3 = &__a3[__o3..];
+        __log_buf[__log_len..__log_len + __ab3.len()].copy_from_slice(__ab3);
+        __log_len += __ab3.len();
+        let __log_str = unsafe { core::str::from_utf8_unchecked(&__log_buf[..__log_len]) };
+        pinocchio::log::sol_log(__log_str);
+    }
     Vesting::save(vesting_account, &vesting)?;
     Ok(())
 
@@ -297,7 +313,7 @@ pub fn release(
             vesting.cliff_ts,
             vesting.end_ts,
             now,
-        );
+        )?;
     let releasable = vested.checked_sub(vesting.released_amount).ok_or(VestingError::ArithmeticOverflow)?;
     if !(releasable > 0) {
         return Err(VestingError::NothingToRelease.into());
@@ -307,15 +323,29 @@ pub fn release(
     let vault_bump = vesting.vault_bump;
     // PDA signer seeds for 'vesting_key'
     let seeds = &[
-            VAULT_SEED,
-            vesting_key.as_ref(),
-            &[vault_bump],
-        ];
+        VAULT_SEED,
+        vesting_key.as_ref(),
+        &[vault_bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → beneficiary_token_account
     spl_token_transfer_signed(vault, beneficiary_token_account, vault, releasable, signer_seeds)?;
-    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio
-    pinocchio::log::sol_log("Released {} tokens to beneficiary");
+    {
+        let mut __log_buf = [0u8; 256];
+        let mut __log_len = 0usize;
+        let __seg0 = b"Released ";
+        __log_buf[__log_len..__log_len + __seg0.len()].copy_from_slice(__seg0);
+        __log_len += __seg0.len();
+        let (__a1, __o1) = u64_to_ascii(releasable as u64);
+        let __ab1 = &__a1[__o1..];
+        __log_buf[__log_len..__log_len + __ab1.len()].copy_from_slice(__ab1);
+        __log_len += __ab1.len();
+        let __seg2 = b" tokens to beneficiary";
+        __log_buf[__log_len..__log_len + __seg2.len()].copy_from_slice(__seg2);
+        __log_len += __seg2.len();
+        let __log_str = unsafe { core::str::from_utf8_unchecked(&__log_buf[..__log_len]) };
+        pinocchio::log::sol_log(__log_str);
+    }
     Vesting::save(vesting_account, &vesting)?;
     Ok(())
 
@@ -371,7 +401,7 @@ pub fn revoke(
             vesting.cliff_ts,
             vesting.end_ts,
             now,
-        );
+        )?;
     let unvested = vesting.total_amount.checked_sub(vested).ok_or(VestingError::ArithmeticOverflow)?;
     vesting.revoked = true;
     if unvested > 0 {
@@ -381,8 +411,22 @@ pub fn revoke(
 
             spl_token_transfer_signed(vault, grantor_token_account, vault, unvested, &[seeds])?;
         }
-    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio
-    pinocchio::log::sol_log("Vesting revoked. {} unvested tokens returned to grantor.");
+    {
+        let mut __log_buf = [0u8; 256];
+        let mut __log_len = 0usize;
+        let __seg0 = b"Vesting revoked. ";
+        __log_buf[__log_len..__log_len + __seg0.len()].copy_from_slice(__seg0);
+        __log_len += __seg0.len();
+        let (__a1, __o1) = u64_to_ascii(unvested as u64);
+        let __ab1 = &__a1[__o1..];
+        __log_buf[__log_len..__log_len + __ab1.len()].copy_from_slice(__ab1);
+        __log_len += __ab1.len();
+        let __seg2 = b" unvested tokens returned to grantor.";
+        __log_buf[__log_len..__log_len + __seg2.len()].copy_from_slice(__seg2);
+        __log_len += __seg2.len();
+        let __log_str = unsafe { core::str::from_utf8_unchecked(&__log_buf[..__log_len]) };
+        pinocchio::log::sol_log(__log_str);
+    }
     Vesting::save(vesting_account, &vesting)?;
     Ok(())
 
@@ -427,14 +471,20 @@ pub fn close(
     if !(vesting.revoked || vesting.released_amount == vesting.total_amount) {
         return Err(VestingError::NotCloseable.into());
     }
-    let vault_balance = token_account_amount(vault)?;
-    if vault_balance > 0 {
-            let vesting_key = *vesting_account.key();
-            let vault_bump = vesting.vault_bump;
-            let seeds: &[&[u8]] = &[VAULT_SEED, vesting_key.as_ref(), &[vault_bump]];
-
-            spl_token_transfer_signed(vault, grantor_token_account, vault, vault_balance, &[seeds])?;
-        }
+    if !(token_account_amount(vault)? == 0) {
+        return Err(VestingError::VaultNotEmpty.into());
+    }
+    let vesting_key = *vesting_account.key();
+    let vault_bump = vesting.vault_bump;
+    // PDA signer seeds for 'vesting_key'
+    let seeds = &[
+        VAULT_SEED,
+        vesting_key.as_ref(),
+        &[vault_bump],
+    ];
+    let signer_seeds = &[&seeds[..]];
+    // SPL Token close account — vault
+    spl_token_close_account_signed(vault, grantor, vault, signer_seeds)?;
     pinocchio::log::sol_log("Vesting account closed.");
     close_program_account(vesting_account, grantor)?;
     Ok(())
@@ -572,6 +622,100 @@ impl Vesting {
     }
 }
 
+/// Stack-allocated u64 → ASCII decimal helper.
+///
+/// Returns a fixed [u8; 20] buffer plus the offset where the printable
+/// bytes start. Slice via `&buf[offset..]` to get the ASCII bytes. No
+/// alloc dep, no panic branches. `const fn` so call sites with literal
+/// args fold at compile time.
+///
+/// u64::MAX = 18446744073709551615 — 20 ASCII digits, fits the buffer.
+pub const fn u64_to_ascii(mut n: u64) -> ([u8; 20], usize) {
+    let mut buf = [b'0'; 20];
+    if n == 0 {
+        return (buf, 19);
+    }
+    let mut i = 20usize;
+    while n > 0 {
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    (buf, i)
+}
+
+/// Convenience wrapper around `u64_to_ascii` for i64. The sign byte
+/// goes immediately before the digits in the buffer (or absent for
+/// non-negative). Returns the same (buf, offset) shape; offset points
+/// at the sign byte when negative, at the first digit otherwise.
+pub const fn i64_to_ascii(n: i64) -> ([u8; 21], usize) {
+    let mut out = [b'0'; 21];
+    let (digits, dig_off) = u64_to_ascii(if n < 0 { n.unsigned_abs() } else { n as u64 });
+    // Copy the digit bytes to out[1..] — leave out[0] available for the sign.
+    let mut k = 0usize;
+    while k < 20 {
+        out[1 + k] = digits[k];
+        k += 1;
+    }
+    if n < 0 {
+        out[dig_off] = b'-';
+        (out, dig_off)
+    } else {
+        (out, dig_off + 1)
+    }
+}
+
+
+/// 32-byte Pubkey → base58 ASCII helper (no_std, stack-only).
+///
+/// Returns ([u8; 44], usize) — slice via `&buf[offset..]` for the
+/// printable bytes. `offset` points at the first base58 char; the
+/// prefix [0..offset) is unused. u64::MAX-style longest cases fit
+/// in 44 bytes (32-byte all-FF input encodes to 44 chars).
+///
+/// Bitcoin's base58 alphabet (no '0', 'O', 'I', 'l').
+pub fn pubkey_to_base58(input: &[u8; 32]) -> ([u8; 44], usize) {
+    const ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let mut buf = [0u8; 44];
+    // Count leading zero bytes — each maps 1:1 to a leading '1'.
+    let mut leading_zeros = 0usize;
+    while leading_zeros < 32 && input[leading_zeros] == 0 {
+        leading_zeros += 1;
+    }
+    // Big-int division by 58 over a working copy of the input.
+    // `scratch` holds the remaining big-int; `out_idx` walks down
+    // from the end of buf, writing one base58 char per division.
+    let mut scratch = *input;
+    let mut out_idx = 44usize;
+    let mut start = leading_zeros;
+    while start < 32 {
+        // One pass of long division: scratch = scratch / 58, remainder = digit.
+        let mut remainder = 0u32;
+        let mut i = start;
+        while i < 32 {
+            let acc = (remainder << 8) | (scratch[i] as u32);
+            scratch[i] = (acc / 58) as u8;
+            remainder = acc % 58;
+            i += 1;
+        }
+        out_idx -= 1;
+        buf[out_idx] = ALPHABET[remainder as usize];
+        // Skip newly-zero leading bytes for next iter.
+        while start < 32 && scratch[start] == 0 {
+            start += 1;
+        }
+    }
+    // Prepend the leading-zero '1' chars.
+    let mut k = 0usize;
+    while k < leading_zeros {
+        out_idx -= 1;
+        buf[out_idx] = b'1';
+        k += 1;
+    }
+    (buf, out_idx)
+}
+
+
 pub fn bump_seed(
     program_id: &Pubkey,
     seeds: &[&[u8]],
@@ -662,6 +806,27 @@ pub fn spl_token_transfer_signed(
     .invoke_signed(&[signer])
 }
 
+pub fn spl_token_close_account_signed(
+    account: &AccountInfo,
+    destination: &AccountInfo,
+    authority: &AccountInfo,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let seed_group = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+    let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+    for (i, seed) in seed_group.iter().enumerate() {
+        if i >= seeds.len() { return Err(ProgramError::InvalidSeeds); }
+        seeds[i] = Seed::from(*seed);
+    }
+    let signer = Signer::from(&seeds[..seed_group.len()]);
+    TokenCloseAccount {
+        account,
+        destination,
+        authority,
+    }
+    .invoke_signed(&[signer])
+}
+
 pub fn close_program_account(
     account: &AccountInfo,
     destination: &AccountInfo,
@@ -711,19 +876,25 @@ pub fn vested_amount(
     cliff_ts: i64,
     end_ts: i64,
     now: i64,
-) -> u64 {
+) -> Result<u64, ProgramError> {
     if now < cliff_ts {
-        return 0;
+        return Ok(0);
     }
     if now >= end_ts {
-        return total;
+        return Ok(total);
     }
-    let elapsed = (now - start_ts) as u64;
-    let duration = (end_ts - start_ts) as u64;
-    total
+    let elapsed = (now - start_ts) as u128;
+    let duration = (end_ts - start_ts) as u128;
+    // Use u128 intermediate so total*elapsed never overflows; division is
+    // safe because end_ts > start_ts is enforced at create time. Propagate
+    // any conversion failure as ArithmeticOverflow rather than silently
+    // returning 0 and zeroing the legitimate release.
+    let scaled = (total as u128)
         .checked_mul(elapsed)
-        .and_then(|v| v.checked_div(duration))
-        .unwrap_or(0)
+        .ok_or(VestingError::ArithmeticOverflow)?
+        .checked_div(duration)
+        .ok_or(VestingError::ArithmeticOverflow)?;
+    u64::try_from(scaled).map_err(|_| VestingError::ArithmeticOverflow.into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -747,8 +918,10 @@ pub enum VestingError {
     VestingRevoked = 6007,
     /// Vesting is not closeable yet
     NotCloseable = 6008,
+    /// Vault must be empty before close — call release/revoke first
+    VaultNotEmpty = 6009,
     /// Arithmetic overflow
-    ArithmeticOverflow = 6009,
+    ArithmeticOverflow = 6010,
 }
 
 pub use VestingError::*;

@@ -55,7 +55,7 @@ pub fn create_escrow(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if accounts.len() < 9 {
+    if accounts.len() < 10 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
 
@@ -68,6 +68,7 @@ pub fn create_escrow(
     let _system_program = &accounts[6];
     let _token_program = &accounts[7];
     let _associated_token_program = &accounts[8];
+    let _rent = &accounts[9];
 
     if !maker.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -119,6 +120,16 @@ pub fn create_escrow(
         ];
     let init_escrow_signer_seeds = &[&init_escrow_seeds[..]];
     create_program_account(escrow, maker, (8 + Escrow::INIT_SPACE) as u64, program_id, init_escrow_signer_seeds)?;
+    let (expected_key, bump_vault) = Pubkey::find_program_address(&[b"vault", escrow.key.as_ref()], program_id);
+    if expected_key != *vault.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let init_vault_seeds: &[&[u8]] = &[
+            b"vault",
+            escrow.key.as_ref(),
+            &[bump_vault],
+        ];
+    let init_vault_signer_seeds = &[&init_vault_seeds[..]];
     // Init token account: vault
     let __ta_lamports = Rent::get()?.minimum_balance(165);
     let __ta_create = system_instruction::create_account(
@@ -128,7 +139,7 @@ pub fn create_escrow(
         165,
         &spl_token::id(),
     );
-    invoke(&__ta_create, &[maker.clone(), vault.clone()])?;
+    invoke_signed(&__ta_create, &[maker.clone(), vault.clone()], init_vault_signer_seeds)?;
     let __ta_init = spl_token::instruction::initialize_account3(
         &spl_token::id(),
         vault.key,
@@ -136,11 +147,18 @@ pub fn create_escrow(
         escrow.key,
     )?;
     invoke(&__ta_init, &[vault.clone(), mint_a.clone()])?;
+    if !(deposit_amount > 0) {
+        return Err(EscrowError::InvalidAmount.into());
+    }
+    if !(receive_amount > 0) {
+        return Err(EscrowError::InvalidAmount.into());
+    }
     let escrow_account = escrow;
     let mut escrow = Escrow {
         maker: Pubkey::default(),
         mint_a: Pubkey::default(),
         mint_b: Pubkey::default(),
+        deposit_amount: 0,
         receive_amount: 0,
         seed: 0,
         bump: 0,
@@ -148,6 +166,7 @@ pub fn create_escrow(
     escrow.maker = *maker.key;
     escrow.mint_a = *mint_a.key;
     escrow.mint_b = *mint_b.key;
+    escrow.deposit_amount = deposit_amount;
     escrow.receive_amount = receive_amount;
     escrow.seed = seed;
     escrow.bump = bump_escrow;
@@ -194,7 +213,7 @@ pub fn accept_escrow(
     if !taker.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    if !taker.is_writable || !taker_ata_b.is_writable || !taker_ata_a.is_writable || !maker_ata_b.is_writable || !escrow.is_writable || !vault.is_writable {
+    if !taker.is_writable || !maker.is_writable || !taker_ata_b.is_writable || !taker_ata_a.is_writable || !maker_ata_b.is_writable || !escrow.is_writable || !vault.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
     if escrow.owner != program_id {
@@ -242,13 +261,17 @@ pub fn accept_escrow(
     if expected_key != *escrow_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
+    let (expected_key, _bump_vault) = Pubkey::find_program_address(&[b"vault", escrow_account.key.as_ref()], program_id);
+    if expected_key != *vault.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
     // PDA signer seeds for 'escrow'
     let seeds = &[
-            b"escrow",
-            escrow.maker.as_ref(),
-            &escrow.seed.to_le_bytes(),
-            &[escrow.bump],
-        ];
+        b"escrow",
+        escrow.maker.as_ref(),
+        &escrow.seed.to_le_bytes(),
+        &[escrow.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer — taker_ata_b → maker_ata_b
     let transfer_ix = spl_token::instruction::transfer(
@@ -270,7 +293,7 @@ pub fn accept_escrow(
         taker_ata_a.key,
         escrow_account.key,
         &[],
-        token_account_amount(vault)?,
+        escrow.deposit_amount,
     )?;
     invoke_signed(
         &transfer_ix,
@@ -350,13 +373,17 @@ pub fn cancel_escrow(
     if expected_key != *escrow_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
+    let (expected_key, _bump_vault) = Pubkey::find_program_address(&[b"vault", escrow_account.key.as_ref()], program_id);
+    if expected_key != *vault.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
     // PDA signer seeds for 'escrow'
     let seeds = &[
-            b"escrow",
-            escrow.maker.as_ref(),
-            &escrow.seed.to_le_bytes(),
-            &[escrow.bump],
-        ];
+        b"escrow",
+        escrow.maker.as_ref(),
+        &escrow.seed.to_le_bytes(),
+        &[escrow.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → maker_ata_a
     let transfer_ix = spl_token::instruction::transfer(
@@ -365,7 +392,7 @@ pub fn cancel_escrow(
         maker_ata_a.key,
         escrow_account.key,
         &[],
-        token_account_amount(vault)?,
+        escrow.deposit_amount,
     )?;
     invoke_signed(
         &transfer_ix,
@@ -408,6 +435,7 @@ pub struct Escrow {
     pub maker: Pubkey,
     pub mint_a: Pubkey,
     pub mint_b: Pubkey,
+    pub deposit_amount: u64,
     pub receive_amount: u64,
     pub seed: u64,
     pub bump: u8,
@@ -415,8 +443,8 @@ pub struct Escrow {
 
 impl Escrow {
     pub const DISCRIMINATOR: [u8; 8] = [31, 213, 123, 187, 186, 22, 218, 155];
-    pub const INIT_SPACE: usize = 113;
-    pub const LEN: usize = 113;
+    pub const INIT_SPACE: usize = 121;
+    pub const LEN: usize = 121;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;
@@ -447,6 +475,10 @@ impl Escrow {
                 .map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 32;
+        let deposit_amount: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
         let receive_amount: u64 = u64::from_le_bytes(
             data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
@@ -456,7 +488,7 @@ impl Escrow {
         );
         offset += 8;
         let bump: u8 = data[offset];
-        Ok(Self { maker, mint_a, mint_b, receive_amount, seed, bump })
+        Ok(Self { maker, mint_a, mint_b, deposit_amount, receive_amount, seed, bump })
     }
 
     pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
@@ -471,6 +503,8 @@ impl Escrow {
         offset += 32;
         data[offset..offset + 32].copy_from_slice(&value.mint_b.as_ref());
         offset += 32;
+        data[offset..offset + 8].copy_from_slice(&value.deposit_amount.to_le_bytes());
+        offset += 8;
         data[offset..offset + 8].copy_from_slice(&value.receive_amount.to_le_bytes());
         offset += 8;
         data[offset..offset + 8].copy_from_slice(&value.seed.to_le_bytes());
@@ -606,15 +640,25 @@ pub fn close_program_account<'a>(
     Ok(())
 }
 
-/// Read the amount field from an SPL Token Account (offset 64, 8 bytes LE u64)
-pub fn token_account_amount<'a>(account: &AccountInfo<'a>) -> Result<u64, ProgramError> {
-    let data = account.data.borrow();
-    if data.len() < 72 {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    Ok(u64::from_le_bytes(
-        data[64..72]
-            .try_into()
-            .map_err(|_| ProgramError::InvalidAccountData)?
-    ))
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u32)]
+pub enum EscrowError {
+    /// Amount must be greater than zero
+    InvalidAmount = 6000,
 }
+
+pub use EscrowError::*;
+
+impl From<EscrowError> for ProgramError {
+    fn from(error: EscrowError) -> Self {
+        ProgramError::Custom(error as u32)
+    }
+}
+
+impl std::fmt::Display for EscrowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for EscrowError {}

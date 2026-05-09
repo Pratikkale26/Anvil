@@ -84,7 +84,6 @@ fn router(
         [90, 95, 107, 42, 205, 124, 50, 225] => unstake(program_id, accounts, data),
         [160, 15, 12, 189, 160, 0, 243, 245] => pause_pool(program_id, accounts, data),
         [52, 182, 28, 44, 146, 165, 190, 119] => resume_pool(program_id, accounts, data),
-        [105, 157, 0, 185, 21, 144, 163, 159] => update_reward_rate(program_id, accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
@@ -94,22 +93,24 @@ pub fn initialize_pool(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if accounts.len() < 7 {
+    if accounts.len() < 9 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
 
     let pool = &accounts[0];
-    let reward_vault = &accounts[1];
-    let stake_mint = &accounts[2];
-    let reward_mint = &accounts[3];
-    let admin = &accounts[4];
-    let _token_program = &accounts[5];
-    let _system_program = &accounts[6];
+    let stake_vault = &accounts[1];
+    let reward_vault = &accounts[2];
+    let stake_mint = &accounts[3];
+    let reward_mint = &accounts[4];
+    let admin = &accounts[5];
+    let _token_program = &accounts[6];
+    let _system_program = &accounts[7];
+    let _rent = &accounts[8];
 
     if !admin.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    if !pool.is_writable || !reward_vault.is_writable || !admin.is_writable {
+    if !pool.is_writable || !stake_vault.is_writable || !reward_vault.is_writable || !admin.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
 
@@ -153,7 +154,34 @@ pub fn initialize_pool(
             &[bump_pool],
         ];
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
-    create_program_account(pool, admin, (8 + StakingPool::LEN) as u64, program_id, init_pool_signer_seeds)?;
+    create_program_account(pool, admin, (8 + StakingPool::INIT_SPACE) as u64, program_id, init_pool_signer_seeds)?;
+    let (expected_key, bump_stake_vault) = Pubkey::find_program_address(&[b"stake_vault", pool.key.as_ref()], program_id);
+    if expected_key != *stake_vault.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let init_stake_vault_seeds: &[&[u8]] = &[
+            b"stake_vault",
+            pool.key.as_ref(),
+            &[bump_stake_vault],
+        ];
+    let init_stake_vault_signer_seeds = &[&init_stake_vault_seeds[..]];
+    // Init token account: stake_vault
+    let __ta_lamports = Rent::get()?.minimum_balance(165);
+    let __ta_create = system_instruction::create_account(
+        admin.key,
+        stake_vault.key,
+        __ta_lamports,
+        165,
+        &spl_token::id(),
+    );
+    invoke_signed(&__ta_create, &[admin.clone(), stake_vault.clone()], init_stake_vault_signer_seeds)?;
+    let __ta_init = spl_token::instruction::initialize_account3(
+        &spl_token::id(),
+        stake_vault.key,
+        stake_mint.key,
+        pool.key,
+    )?;
+    invoke(&__ta_init, &[stake_vault.clone(), stake_mint.clone()])?;
     let (expected_key, bump_reward_vault) = Pubkey::find_program_address(&[b"reward_vault", pool.key.as_ref()], program_id);
     if expected_key != *reward_vault.key {
         return Err(ProgramError::InvalidSeeds);
@@ -200,6 +228,7 @@ pub fn initialize_pool(
         max_stake: 0,
         total_staked: 0,
         bump: 0,
+        stake_vault_bump: 0,
         reward_vault_bump: 0,
         is_paused: false,
     };
@@ -211,6 +240,7 @@ pub fn initialize_pool(
     pool.max_stake = max_stake;
     pool.total_staked = 0;
     pool.bump = bump_pool;
+    pool.stake_vault_bump = bump_stake_vault;
     pool.reward_vault_bump = bump_reward_vault;
     pool.is_paused = false;
     StakingPool::write(&mut pool_account.data.borrow_mut(), &pool)?;
@@ -270,11 +300,15 @@ pub fn stake(
             &[bump_user_stake],
         ];
     let init_user_stake_signer_seeds = &[&init_user_stake_seeds[..]];
-    create_program_account(user_stake, user, (8 + UserStake::LEN) as u64, program_id, init_user_stake_signer_seeds)?;
+    create_program_account(user_stake, user, (8 + UserStake::INIT_SPACE) as u64, program_id, init_user_stake_signer_seeds)?;
     let pool_account = pool;
     let mut pool = StakingPool::read(&pool_account.data.borrow())?;
     let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
     if expected_key != *pool_account.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let (expected_key, _bump_stake_vault) = Pubkey::find_program_address(&[b"stake_vault", pool_account.key.as_ref()], program_id);
+    if expected_key != *stake_vault.key {
         return Err(ProgramError::InvalidSeeds);
     }
     if pool.is_paused {
@@ -295,6 +329,7 @@ pub fn stake(
         amount: 0,
         staked_at: 0,
         last_claim: 0,
+        reward_rate_snapshot: 0,
         bump: 0,
     };
     user_stake.owner = *user.key;
@@ -302,6 +337,7 @@ pub fn stake(
     user_stake.amount = amount;
     user_stake.staked_at = now;
     user_stake.last_claim = now;
+    user_stake.reward_rate_snapshot = pool.reward_rate;
     user_stake.bump = bump_user_stake;
     pool.total_staked = pool.total_staked.checked_add(amount).ok_or(StakingError::Overflow)?;
     // SPL Token transfer — user_stake_ata → stake_vault
@@ -351,13 +387,10 @@ pub fn claim_rewards(
     if !user.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    if !user_stake.is_writable || !pool.is_writable || !reward_mint.is_writable || !user_reward_ata.is_writable {
+    if !user_stake.is_writable || !reward_mint.is_writable || !user_reward_ata.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
     if user_stake.owner != program_id {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    if pool.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -380,6 +413,9 @@ pub fn claim_rewards(
     if !(user_stake.owner == *user.key) {
         return Err(ProgramError::InvalidAccountData.into());
     }
+    if !(*reward_mint.key == pool.reward_mint) {
+        return Err(ProgramError::InvalidAccountData.into());
+    }
     if pool.is_paused {
         return Err(StakingError::PoolPaused.into());
     }
@@ -387,7 +423,7 @@ pub fn claim_rewards(
     let now = clock.unix_timestamp;
     let elapsed = now.checked_sub(user_stake.last_claim).ok_or(StakingError::Underflow)? as u64;
     let rewards: u64 = (user_stake.amount as u128).checked_mul(elapsed as u128).ok_or(StakingError::Overflow)?
-            .checked_mul(pool.reward_rate as u128).ok_or(StakingError::Overflow)?
+            .checked_mul(user_stake.reward_rate_snapshot as u128).ok_or(StakingError::Overflow)?
             .checked_div(1_000_000).ok_or(StakingError::Overflow)?
             .try_into().map_err(|_| ProgramError::from(StakingError::Overflow))?;
     if !(rewards > 0) {
@@ -395,10 +431,10 @@ pub fn claim_rewards(
     }
     // PDA signer seeds for 'pool'
     let seeds = &[
-            b"pool",
-            pool.stake_mint.as_ref(),
-            &[pool.bump],
-        ];
+        b"pool",
+        pool.stake_mint.as_ref(),
+        &[pool.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token mint_to — reward_mint → user_reward_ata
     let mint_ix = spl_token::instruction::mint_to(
@@ -475,9 +511,16 @@ pub fn unstake(
     if expected_key != *pool_account.key {
         return Err(ProgramError::InvalidSeeds);
     }
+    let (expected_key, _bump_stake_vault) = Pubkey::find_program_address(&[b"stake_vault", pool_account.key.as_ref()], program_id);
+    if expected_key != *stake_vault.key {
+        return Err(ProgramError::InvalidSeeds);
+    }
     let user_stake_account = user_stake;
     let user_stake = UserStake::read(&user_stake_account.data.borrow())?;
     if !(user_stake.owner == *user.key) {
+        return Err(ProgramError::InvalidAccountData.into());
+    }
+    if !(*reward_mint.key == pool.reward_mint) {
         return Err(ProgramError::InvalidAccountData.into());
     }
     if pool.is_paused {
@@ -491,15 +534,15 @@ pub fn unstake(
     }
     let elapsed = now.checked_sub(user_stake.last_claim).ok_or(StakingError::Underflow)? as u64;
     let pending_rewards: u64 = (user_stake.amount as u128).checked_mul(elapsed as u128).ok_or(StakingError::Overflow)?
-            .checked_mul(pool.reward_rate as u128).ok_or(StakingError::Overflow)?
+            .checked_mul(user_stake.reward_rate_snapshot as u128).ok_or(StakingError::Overflow)?
             .checked_div(1_000_000).ok_or(StakingError::Overflow)?
             .try_into().map_err(|_| ProgramError::from(StakingError::Overflow))?;
     // PDA signer seeds for 'pool'
     let seeds = &[
-            b"pool",
-            pool.stake_mint.as_ref(),
-            &[pool.bump],
-        ];
+        b"pool",
+        pool.stake_mint.as_ref(),
+        &[pool.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — stake_vault → user_stake_ata
     let transfer_ix = spl_token::instruction::transfer(
@@ -617,60 +660,6 @@ pub fn resume_pool(
 
 }
 
-pub fn update_reward_rate(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    data: &[u8],
-) -> ProgramResult {
-    if accounts.len() < 2 {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-
-    let pool = &accounts[0];
-    let admin = &accounts[1];
-
-    if !admin.is_signer {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-    if !pool.is_writable {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    if pool.owner != program_id {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-
-    // Args
-    let mut remaining = data;
-    if remaining.len() < 8 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let (arg_bytes, rest) = remaining.split_at(8);
-    remaining = rest;
-    let new_rate: u64 = u64::from_le_bytes(
-        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
-    );
-    if !remaining.is_empty() {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-
-    let pool_account = pool;
-    let mut pool = StakingPool::read(&pool_account.data.borrow())?;
-    if pool.admin != *admin.key {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);
-    if expected_key != *pool_account.key {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    if !(new_rate > 0) {
-        return Err(StakingError::InvalidRewardRate.into());
-    }
-    pool.reward_rate = new_rate;
-    StakingPool::write(&mut pool_account.data.borrow_mut(), &pool)?;
-    Ok(())
-
-}
-
 #[repr(C)]
 pub struct StakingPool {
     pub admin: Pubkey,
@@ -681,14 +670,15 @@ pub struct StakingPool {
     pub max_stake: u64,
     pub total_staked: u64,
     pub bump: u8,
+    pub stake_vault_bump: u8,
     pub reward_vault_bump: u8,
     pub is_paused: bool,
 }
 
 impl StakingPool {
     pub const DISCRIMINATOR: [u8; 8] = [203, 19, 214, 220, 220, 154, 24, 102];
-    pub const INIT_SPACE: usize = 131;
-    pub const LEN: usize = 131;
+    pub const INIT_SPACE: usize = 132;
+    pub const LEN: usize = 132;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;
@@ -737,6 +727,8 @@ impl StakingPool {
         offset += 8;
         let bump: u8 = data[offset];
         offset += 1;
+        let stake_vault_bump: u8 = data[offset];
+        offset += 1;
         let reward_vault_bump: u8 = data[offset];
         offset += 1;
         let is_paused: bool = match data[offset] {
@@ -744,7 +736,7 @@ impl StakingPool {
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
         };
-        Ok(Self { admin, stake_mint, reward_mint, reward_rate, lock_duration, max_stake, total_staked, bump, reward_vault_bump, is_paused })
+        Ok(Self { admin, stake_mint, reward_mint, reward_rate, lock_duration, max_stake, total_staked, bump, stake_vault_bump, reward_vault_bump, is_paused })
     }
 
     pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
@@ -768,6 +760,8 @@ impl StakingPool {
         data[offset..offset + 8].copy_from_slice(&value.total_staked.to_le_bytes());
         offset += 8;
         data[offset] = value.bump as u8;
+        offset += 1;
+        data[offset] = value.stake_vault_bump as u8;
         offset += 1;
         data[offset] = value.reward_vault_bump as u8;
         offset += 1;
@@ -803,13 +797,14 @@ pub struct UserStake {
     pub amount: u64,
     pub staked_at: i64,
     pub last_claim: i64,
+    pub reward_rate_snapshot: u64,
     pub bump: u8,
 }
 
 impl UserStake {
     pub const DISCRIMINATOR: [u8; 8] = [102, 53, 163, 107, 9, 138, 87, 153];
-    pub const INIT_SPACE: usize = 89;
-    pub const LEN: usize = 89;
+    pub const INIT_SPACE: usize = 97;
+    pub const LEN: usize = 97;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;
@@ -846,8 +841,12 @@ impl UserStake {
             data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
+        let reward_rate_snapshot: u64 = u64::from_le_bytes(
+            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+        );
+        offset += 8;
         let bump: u8 = data[offset];
-        Ok(Self { owner, pool, amount, staked_at, last_claim, bump })
+        Ok(Self { owner, pool, amount, staked_at, last_claim, reward_rate_snapshot, bump })
     }
 
     pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
@@ -865,6 +864,8 @@ impl UserStake {
         data[offset..offset + 8].copy_from_slice(&value.staked_at.to_le_bytes());
         offset += 8;
         data[offset..offset + 8].copy_from_slice(&value.last_claim.to_le_bytes());
+        offset += 8;
+        data[offset..offset + 8].copy_from_slice(&value.reward_rate_snapshot.to_le_bytes());
         offset += 8;
         data[offset] = value.bump as u8;
         Ok(())
@@ -1033,10 +1034,12 @@ pub enum StakingError {
     StillLocked = 6007,
     /// Unauthorized
     Unauthorized = 6008,
+    /// Reward mint does not match the pool's registered reward mint
+    InvalidRewardMint = 6009,
     /// Arithmetic overflow
-    Overflow = 6009,
+    Overflow = 6010,
     /// Arithmetic underflow
-    Underflow = 6010,
+    Underflow = 6011,
 }
 
 pub use StakingError::*;

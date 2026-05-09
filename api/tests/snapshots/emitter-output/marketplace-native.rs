@@ -96,7 +96,7 @@ pub fn initialize(
             &[bump_marketplace],
         ];
     let init_marketplace_signer_seeds = &[&init_marketplace_seeds[..]];
-    create_program_account(marketplace, admin, (8 + Marketplace::LEN) as u64, program_id, init_marketplace_signer_seeds)?;
+    create_program_account(marketplace, admin, (8 + Marketplace::INIT_SPACE) as u64, program_id, init_marketplace_signer_seeds)?;
     if !(fee_bps <= 10000) {
         return Err(MarketplaceError::InvalidFeeBps.into());
     }
@@ -181,7 +181,7 @@ pub fn list(
             &[bump_listing],
         ];
     let init_listing_signer_seeds = &[&init_listing_seeds[..]];
-    create_program_account(listing, seller, (8 + Listing::LEN) as u64, program_id, init_listing_signer_seeds)?;
+    create_program_account(listing, seller, (8 + Listing::INIT_SPACE) as u64, program_id, init_listing_signer_seeds)?;
     // Init token account: vault
     let __ta_lamports = Rent::get()?.minimum_balance(165);
     let __ta_create = system_instruction::create_account(
@@ -307,11 +307,11 @@ pub fn delist(
     }
     // PDA signer seeds for 'listing'
     let seeds = &[
-            b"listing",
-            listing.seller.as_ref(),
-            &listing.seed.to_le_bytes(),
-            &[listing.bump],
-        ];
+        b"listing",
+        listing.seller.as_ref(),
+        &listing.seed.to_le_bytes(),
+        &[listing.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → seller_ata
     let transfer_ix = spl_token::instruction::transfer(
@@ -439,11 +439,11 @@ pub fn purchase(
     )?;
     // PDA signer seeds for 'listing'
     let seeds = &[
-            b"listing",
-            listing.seller.as_ref(),
-            &listing.seed.to_le_bytes(),
-            &[listing.bump],
-        ];
+        b"listing",
+        listing.seller.as_ref(),
+        &listing.seed.to_le_bytes(),
+        &[listing.bump],
+    ];
     let signer_seeds = &[&seeds[..]];
     // SPL Token transfer (PDA signed) — vault → buyer_ata
     let transfer_ix = spl_token::instruction::transfer(
@@ -519,13 +519,13 @@ pub fn update_fee(
     if expected_key != *marketplace.key {
         return Err(ProgramError::InvalidSeeds);
     }
-    let marketplace_account = marketplace;
-    let mut marketplace = Marketplace::read(&marketplace_account.data.borrow())?;
     if !(new_fee_bps <= 10000) {
         return Err(MarketplaceError::InvalidFeeBps.into());
     }
-    if !(marketplace.admin == *admin.key) {
-        return Err(MarketplaceError::Unauthorized.into());
+    let marketplace_account = marketplace;
+    let mut marketplace = Marketplace::read(&marketplace_account.data.borrow())?;
+    if marketplace.admin != *admin.key {
+        return Err(ProgramError::InvalidAccountData);
     }
     marketplace.fee_bps = new_fee_bps;
     Marketplace::write(&mut marketplace_account.data.borrow_mut(), &marketplace)?;
