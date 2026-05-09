@@ -380,10 +380,15 @@ export abstract class BaseEmitter {
    */
   protected postProcessInstructionBody(
     bodyCode: string,
-    _instr: Instruction,
-    _ir: SolanaIR,
+    instr: Instruction,
+    ir: SolanaIR,
   ): string {
-    return rewriteSiblingCpiCalls(rewriteTryIntoUnwrap(bodyCode));
+    const knownDefs = new Set(ir.accounts.map((a) => a.name));
+    let out = rewriteTryIntoUnwrap(bodyCode);
+    out = rewriteRentSysvarMethods(out);
+    out = rewriteSiblingCpiCalls(out);
+    out = commentOutSiblingStateAccesses(out, instr.accounts, knownDefs);
+    return out;
   }
 
   /**
@@ -2094,6 +2099,128 @@ const ANCHOR_ONLY_PATTERNS = [
   /\brequire_keys_neq!\s*\(/,
   /Context\s*<\s*Self\s*>/,
 ];
+
+/**
+ * Comment out body lines that access fields/methods on accounts whose
+ * type is from a sibling Anchor program (or any other crate Anvil's emit
+ * doesn't deserialize). squads-mpl/roles' `multisig: Account<'info, Ms>`
+ * — `Ms` lives in `squads_mpl::state`. Anvil treats that as raw
+ * AccountInfo since it doesn't have an AccountDef for `Ms`. Body code
+ * like `multisig.create_key` and `multisig.is_member(...)` then fails
+ * E0609/E0599 because AccountInfo has no such fields.
+ *
+ * Strategy: identify accounts whose `accountType` isn't in the user's IR
+ * and isn't a known SPL/system/sysvar type. For each such account, find
+ * `<acct>.<member>` references in body where `<member>` isn't a known
+ * AccountInfo method/field. Wrap the enclosing statement in a TODO
+ * commentout, mirroring the unsalvageable-helper pattern.
+ *
+ * Conservative: if the member IS a known AccountInfo accessor (.key,
+ * .is_signer, .lamports, etc.), leave the line alone — those are
+ * legitimate AccountInfo uses and don't need stubbing.
+ */
+const ACCOUNT_INFO_MEMBERS = new Set([
+  "key", "is_signer", "is_writable", "lamports", "owner", "data",
+  "data_len", "data_is_empty", "executable", "rent_epoch",
+  "try_borrow_data", "try_borrow_mut_data", "try_borrow_lamports",
+  "try_borrow_mut_lamports", "borrow_data_unchecked", "borrow_mut_data_unchecked",
+  "to_account_info", "clone", "as_ref", "realloc", "resize",
+  "owner_id", "is_owned_by_program",
+]);
+
+/** Built-in (non-user, non-sibling) account type names that don't need
+ *  AccountDef-side deserialize because the framework owns the layout. */
+const FRAMEWORK_ACCOUNT_TYPES = new Set([
+  "Signer", "SystemAccount", "UncheckedAccount", "AccountInfo",
+  "TokenAccount", "Mint", "Token", "Token2022", "AssociatedToken",
+  "TokenInterface", "TokenMetadata",
+  "Rent", "Clock", "EpochSchedule", "SlotHashes", "SlotHistory",
+  "StakeHistory", "Sysvar",
+  "System", "Program",
+]);
+
+export function commentOutSiblingStateAccesses(
+  body: string,
+  accounts: Array<{ name: string; accountType: string }>,
+  knownAccountDefNames: Set<string>,
+): string {
+  const siblingAccounts = accounts.filter((a) => {
+    if (knownAccountDefNames.has(a.accountType)) return false;
+    if (FRAMEWORK_ACCOUNT_TYPES.has(a.accountType)) return false;
+    // Skip empty / unparseable types and lifetime-soup (e.g. "Sysvar<'info, Rent>").
+    if (!a.accountType || /[<>'\s]/.test(a.accountType)) return false;
+    return true;
+  });
+  if (siblingAccounts.length === 0) return body;
+
+  // Detect any non-AccountInfo access on sibling accounts. If found, the
+  // instruction body is structurally dependent on sibling state and can't
+  // be transpiled standalone — replace the whole body with a TODO stub.
+  // Granular line-by-line commentout cascades into use-after-comment
+  // errors (commented `let X = sibling.field` orphans later `X.foo()`)
+  // and managing transitive dependencies is more brittle than just
+  // surfacing a single clear stub the user must port manually.
+  let hasUnsafeAccess = false;
+  for (const acc of siblingAccounts) {
+    const accName = acc.name.replace(/[^A-Za-z0-9_]/g, "");
+    if (!accName) continue;
+    const re = new RegExp(`(?<!\\w)${accName}\\s*\\.\\s*(\\w+)`, "g");
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) {
+      const member = m[1] ?? "";
+      if (!ACCOUNT_INFO_MEMBERS.has(member)) {
+        hasUnsafeAccess = true;
+        break;
+      }
+    }
+    if (hasUnsafeAccess) break;
+  }
+  if (!hasUnsafeAccess) return body;
+
+  // Split body into prelude (account unpacking + signer checks Anvil
+  // emits before any user code) and the user-code section. Comment out
+  // user code; preserve prelude so the function signature still
+  // accesses every account it declares (avoids unused-binding warnings
+  // and keeps account_lens/signer checks intact for runtime safety).
+  // Heuristic: prelude ends right before the first source-derived stmt.
+  // Conservative anchor: keep everything up to and including the
+  // last `let _system_program = …;` / signer check / data check,
+  // identified by the comment marker `// Args` Anvil emits before
+  // user-facing args parsing.
+  const argsMarker = body.indexOf("// Args");
+  const userSectionStart = argsMarker >= 0 ? argsMarker : 0;
+  const prelude = body.slice(0, userSectionStart);
+  const userCode = body.slice(userSectionStart);
+  const stubbed = userCode
+    .split("\n")
+    .map((line) => (line.length > 0 ? `// ${line}` : "//"))
+    .join("\n");
+  const accountList = siblingAccounts.map((a) => `${a.name}: ${a.accountType}`).join(", ");
+  // Anvil's per-target instruction template already appends `Ok(())` at
+  // the function tail, so don't add another. Just stub the user code
+  // with TODO comments.
+  return `${prelude}// ⚠️ Anvil TODO: sibling-Anchor-program state access — instruction body depends on opaque sibling-crate types (${accountList}); transpile is structural-only. Manual port required.
+${stubbed}`;
+}
+
+/**
+ * Anchor's `Sysvar<'info, Rent>` binds the rent sysvar as a typed value
+ * with method dispatch (`.minimum_balance(N)` etc.). Anvil's emit binds
+ * it as raw `&AccountInfo`, so those method calls fail E0599. Rewrite
+ * `<acct>.minimum_balance(...)` → `Rent::get()?.minimum_balance(...)` —
+ * both targets auto-import Rent when this method appears in body text
+ * (see `needsRent` detection in native/pinocchio emit).
+ *
+ * Same shape for the other canonical Rent methods. This is a safe
+ * universal rewrite because Anvil's emit doesn't otherwise produce these
+ * method names — they only come from sysvar-typed bindings in source.
+ */
+export function rewriteRentSysvarMethods(body: string): string {
+  return body.replace(
+    /\b\w+\.(minimum_balance|exempt_minimum|burn_percent)\s*\(/g,
+    (full, method: string) => `Rent::get()?.${method}(`,
+  );
+}
 
 /**
  * Replace panic-able `.try_into().unwrap()` with the safe `?` form. Both

@@ -89,7 +89,7 @@ pub fn append_four(
         let __state_for_realloc = GrowState::from_account_info(state)?;
         let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 4) as usize;
         let __rent = solana_program::sysvar::rent::Rent::get()?;
-        let __new_lamports = __rent.minimum_balance(__new_size);
+        let __new_lamports = Rent::get()?.minimum_balance(__new_size);
         let __delta = __new_lamports.saturating_sub(state.lamports());
         if __delta > 0 {
             let __ix = solana_program::system_instruction::transfer(
@@ -161,7 +161,7 @@ pub fn append_one(
         let __state_for_realloc = GrowState::from_account_info(state)?;
         let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 1) as usize;
         let __rent = solana_program::sysvar::rent::Rent::get()?;
-        let __new_lamports = __rent.minimum_balance(__new_size);
+        let __new_lamports = Rent::get()?.minimum_balance(__new_size);
         let __delta = __new_lamports.saturating_sub(state.lamports());
         if __delta > 0 {
             let __ix = solana_program::system_instruction::transfer(
@@ -236,7 +236,7 @@ pub fn append_two(
         let __state_for_realloc = GrowState::from_account_info(state)?;
         let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 2) as usize;
         let __rent = solana_program::sysvar::rent::Rent::get()?;
-        let __new_lamports = __rent.minimum_balance(__new_size);
+        let __new_lamports = Rent::get()?.minimum_balance(__new_size);
         let __delta = __new_lamports.saturating_sub(state.lamports());
         if __delta > 0 {
             let __ix = solana_program::system_instruction::transfer(
