@@ -2874,7 +2874,24 @@ function commentOutT22Ranges(body: string, ranges: StmtRange[]): string {
   // forward in `body` until the imbalance closes AND we hit the next `;` at
   // depth 0. The whole multi-line let-with-if-else then becomes a single
   // commented unit.
+  // Track the furthest stmtEnd seen as we extend ranges forward. Subsequent
+  // ranges whose stmtStart falls inside that watermark are already subsumed
+  // by a prior extension — running their depth<0 backward walk would chase
+  // a `}` whose matching `{` is in the prior range, then keep walking back
+  // looking for a preceding `;` (none exists) all the way to file start,
+  // pulling unrelated outer code (fn signature, prior statements) into the
+  // commentout. Skipping subsumed ranges is safe: their text will be covered
+  // by the prior extended range during remerge.
+  let coveredEnd = 0;
   for (const r of merged) {
+    if (r.stmtStart < coveredEnd) {
+      // Subsumed by a prior extended range. Pin start to coveredEnd so the
+      // remerge pass collapses cleanly (remerge handles overlap when next
+      // range's stmtStart <= last.stmtEnd). Skip extension — depth<0
+      // backward walk would chase a `}` whose `{` lives in the prior range.
+      r.stmtStart = coveredEnd;
+      continue;
+    }
     let depth = 0;
     let inString = false;
     let inLine = false;
@@ -2918,9 +2935,13 @@ function commentOutT22Ranges(body: string, ranges: StmtRange[]): string {
       if (k < 0) k = 0;
       while (k < r.stmtStart && /\s/.test(body[k] ?? "")) k++;
       r.stmtStart = k;
+      if (r.stmtEnd > coveredEnd) coveredEnd = r.stmtEnd;
       continue;
     }
-    if (depth === 0) continue;
+    if (depth === 0) {
+      if (r.stmtEnd > coveredEnd) coveredEnd = r.stmtEnd;
+      continue;
+    }
     // Note: depth==0 mid-statement (struct-literal field-init lines)
     // remains a known-residual gap on Marinade's event-emit blocks. A
     // generic "snap to enclosing block" fix over-extends into the next
@@ -2941,6 +2962,49 @@ function commentOutT22Ranges(body: string, ranges: StmtRange[]): string {
       else if (ch === "}") depth--;
       j++;
     }
+    // After the depth-walker closes the imbalance, the close `}` may be
+    // followed by an `else` clause whose body the marker didn't cover. If
+    // we leave the `else { … }` orphaned, two failure modes hit: (a) the
+    // commented `}` and the uncommented ` else {` share one output line,
+    // pulling `else {` into a `//` line comment and orphaning its `};`;
+    // (b) `else` with no preceding `if` is an outright syntax error. Walk
+    // through any `else [if (...)] { … }` chain.
+    while (true) {
+      let la = j;
+      while (la < body.length && /\s/.test(body[la] ?? "")) la++;
+      if (la + 4 > body.length) break;
+      if (body.slice(la, la + 4) !== "else") break;
+      const after = body[la + 4];
+      if (after !== undefined && /\w/.test(after)) break; // word boundary — `elsewhere`, `else_branch` etc.
+      // Skip past `else` and any `if (…)` / `if let X = … ` clause to the next `{`.
+      j = la + 4;
+      while (j < body.length && body[j] !== "{") {
+        const ch = body[j];
+        const next = body[j + 1];
+        if (inLine) { if (ch === "\n") inLine = false; j++; continue; }
+        if (inBlock) { if (ch === "*" && next === "/") { inBlock = false; j += 2; continue; } j++; continue; }
+        if (inString) { if (ch === "\\") { j += 2; continue; } if (ch === '"') inString = false; j++; continue; }
+        if (ch === "/" && next === "/") { inLine = true; j += 2; continue; }
+        if (ch === "/" && next === "*") { inBlock = true; j += 2; continue; }
+        if (ch === '"') { inString = true; j++; continue; }
+        j++;
+      }
+      if (j >= body.length) break;
+      // Depth-walk through the else block to its matching close.
+      let d = 0;
+      for (; j < body.length; j++) {
+        const ch = body[j];
+        const next = body[j + 1];
+        if (inLine) { if (ch === "\n") inLine = false; continue; }
+        if (inBlock) { if (ch === "*" && next === "/") { inBlock = false; j++; } continue; }
+        if (inString) { if (ch === "\\") { j++; continue; } if (ch === '"') inString = false; continue; }
+        if (ch === "/" && next === "/") { inLine = true; j++; continue; }
+        if (ch === "/" && next === "*") { inBlock = true; j++; continue; }
+        if (ch === '"') { inString = true; continue; }
+        if (ch === "{") d++;
+        else if (ch === "}") { d--; if (d === 0) { j++; break; } }
+      }
+    }
     // Trailing `;` walk — for `let X = if cond { ... } else { ... };` shape
     // we want to consume the terminating `;`. Bounded: only check the
     // immediate next non-whitespace char. If it's `;`, take it. If it's
@@ -2956,6 +3020,7 @@ function commentOutT22Ranges(body: string, ranges: StmtRange[]): string {
       j = lookahead + 1;
     }
     r.stmtEnd = j;
+    if (r.stmtEnd > coveredEnd) coveredEnd = r.stmtEnd;
   }
   // Re-merge overlapping ranges introduced by extension.
   const remerged: StmtRange[] = [];

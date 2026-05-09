@@ -62,11 +62,12 @@ ${ACCOUNTS}
     // Either way args.length is 1; we validate the body shape instead.
     expect(run!.body.length).toBeGreaterThan(0);
     // After wrapper resolution, the body is the wrapper's tail expression
-    // `Ok(())`. The classifier carries tail expressions as pass_through with
-    // the literal source — not as kind="return_ok" (that requires a `return`
-    // keyword today). Assert against the source the wrapper actually had,
-    // proving resolution swapped in the wrapper body.
-    expect(JSON.stringify(run!.body)).toContain("Ok(())");
+    // `Ok(())`. EM1 M5 (commit 4422599) lifts bare `Ok(())` tail expressions
+    // to the typed `return_ok` IR kind — assert that shape, proving resolution
+    // swapped in the wrapper body (rather than carrying the outer delegating
+    // call as pass_through, which would land here as a string containing
+    // "inner::handler").
+    expect(JSON.stringify(run!.body)).toContain('"kind":"return_ok"');
     // Conversely, verify the OUTER call expression isn't carried verbatim —
     // i.e. the wrapper truly did substitute. The outer call mentions `inner`.
     expect(JSON.stringify(run!.body)).not.toContain("inner::handler");
@@ -93,7 +94,7 @@ ${ACCOUNTS}
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const run = r.ir.instructions.find((i) => i.name === "run")!;
-    expect(JSON.stringify(run.body)).toContain("Ok(())");
+    expect(JSON.stringify(run.body)).toContain('"kind":"return_ok"');
     expect(JSON.stringify(run.body)).not.toContain("inner::handler");
   });
 
