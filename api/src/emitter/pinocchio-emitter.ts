@@ -8,7 +8,7 @@
 
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
-import { BaseEmitter, stubAnchorOnlyImplItem } from "./emitter-base.js";
+import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap } from "./emitter-base.js";
 import {
   instrDiscriminator,
   accountDiscriminator,
@@ -184,8 +184,9 @@ export class PinocchioEmitter extends BaseEmitter {
   protected override postProcessInstructionBody(
     bodyCode: string,
     instr: Instruction,
-    _ir: SolanaIR,
+    ir: SolanaIR,
   ): string {
+    bodyCode = super.postProcessInstructionBody(bodyCode, instr, ir);
     const accountNames = instr.accounts.map((a) => snakeCase(a.name));
     const mintsHit: string[] = [];
     for (const name of accountNames) {
@@ -1996,7 +1997,7 @@ ${writeLines}
     if (!acc.implItems || acc.implItems.length === 0) return "";
     const filtered = acc.implItems
       .filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw))
-      .map((raw) => stubAnchorOnlyImplItem(raw));
+      .map((raw) => rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)));
     if (filtered.length === 0) return "";
     return `\n\nimpl ${acc.name} {\n${filtered.map((s) => `    ${s}`).join("\n\n")}\n}`;
   }

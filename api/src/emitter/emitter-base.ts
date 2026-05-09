@@ -383,7 +383,7 @@ export abstract class BaseEmitter {
     _instr: Instruction,
     _ir: SolanaIR,
   ): string {
-    return bodyCode;
+    return rewriteTryIntoUnwrap(bodyCode);
   }
 
   /**
@@ -1344,7 +1344,7 @@ ${fields}
     // returns a generic error. Same fallback shape as the unsalvageable-helper
     // commentout pass but applied at the impl-item level.
     for (const raw of (typeDef.implItems ?? [])) {
-      const stubbed = stubAnchorOnlyImplItem(raw);
+      const stubbed = rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw));
       items.push(`    ${stubbed}`);
     }
     if (items.length === 0) return "";
@@ -2067,6 +2067,25 @@ const ANCHOR_ONLY_PATTERNS = [
   /\brequire_keys_neq!\s*\(/,
   /Context\s*<\s*Self\s*>/,
 ];
+
+/**
+ * Replace panic-able `.try_into().unwrap()` with the safe `?` form. Both
+ * SBF targets must surface conversion errors as ProgramError::Invalid-
+ * AccountData rather than panicking on-chain. Anchor source carries this
+ * pattern frequently (squads-mpl, marinade, helium); the rewrite keeps
+ * the emit's control flow sound without rewriting the user's source.
+ *
+ * Targets the exact `.try_into().unwrap()` form. Plain `.unwrap()` after
+ * other Result-producing calls is left alone (warning-only); we only
+ * automatically rewrite when the upstream `.try_into()` makes the
+ * intent unambiguous.
+ */
+export function rewriteTryIntoUnwrap(body: string): string {
+  return body.replace(
+    /\.try_into\(\)\.unwrap\(\)/g,
+    `.try_into().map_err(|_| ProgramError::InvalidAccountData)?`,
+  );
+}
 
 export function stubAnchorOnlyImplItem(raw: string): string {
   if (!ANCHOR_ONLY_PATTERNS.some((re) => re.test(raw))) return raw;
