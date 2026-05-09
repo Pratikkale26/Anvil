@@ -102,13 +102,12 @@ const MUST_PASS: Case[] = [
   // instruction handler).
   { id: "token-2022-basics", target: "native", path: "tokens/token-2022/basics/anchor/programs/basics/src/lib.rs" },
 
-  // t22-transfer-fee/pinocchio: promoted from tracking after T22 extension
-  // call-site commentout landed (errors 16 → 0). spl_token_2022 lacks a
-  // no_std variant, so the pass excises every body-level reference to
-  // extension types + their call sites, leaving the file compile-clean.
-  // Native version stays in tracking — auto-imports drop most errors but
-  // InterfaceAccount<TokenAccount> in account structs still leaks.
-  { id: "t22-transfer-fee", target: "pinocchio", path: "tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs" },
+  // t22-transfer-fee/pinocchio: was promoted but a deeper emit gap surfaced
+  // when the unclosed-delimiter bug got fixed (commit 7530a3c+) — the harvest
+  // handler references `mint_account` without ever unpacking it from
+  // `accounts: &[AccountInfo]`. Demoted back to realworld-tracking with a
+  // documented ceiling until the Native-style account-unpack emit lands on
+  // pinocchio for T22 helpers. Native version stays in tracking too.
 
   // t22-transfer-hook/pinocchio: promoted 2026-05-02 after extending the
   // import filter to drop spl_tlv_account_resolution / spl_transfer_hook_

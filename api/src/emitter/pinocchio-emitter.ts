@@ -2548,6 +2548,95 @@ function commentOutT22ExtensionCallSites(body: string): string {
   }
 
   if (markedSpanIdx.size === 0) return body;
+
+  // Block-cohesion pass: when a marked span sits inside an emitted T22
+  // inline block (e.g. cpi_t22_harvest emits `{ const ...; let __hwtm_srcs;
+  // for ... { } match ... { ... } }` as one logical unit), we must mark
+  // ALL sibling spans from the enclosing `{` through the matching `}`.
+  // Without this, fragmentary marks of e.g. `let __hwtm_srcs = ...` (which
+  // hits TYPE_BLACKLIST via InterfaceAccount in user-passed sourcesExpr)
+  // produce a comment-out that leaves dangling delimiters: the outer `{`
+  // and inner sub-block opens stay live, their closes get commented, and
+  // tree-sitter parse fails with "unclosed delimiter".
+  //
+  // Strategy: for each marked span, walk backward through prior spans
+  // counting brace balance; the first unmatched `{` marks the enclosing
+  // block's open. Walk forward to find its matching `}`. Mark every span
+  // in that block range. Repeat until no new marks added.
+  // Strip comments + strings ONCE for the whole body so brace counting in
+  // the cohesion pass below ignores delimiters inside string literals or
+  // comment text. Per-span stripping (in spanCodeText) loses absolute
+  // offsets needed for body-wide depth scans.
+  const codeBody = stripCommentsAndStrings(body);
+  let changed2 = true;
+  while (changed2) {
+    changed2 = false;
+    for (const idx of [...markedSpanIdx]) {
+      const span = stmtSpans[idx];
+      if (!span) continue;
+      // Find the position of the most-recent unmatched `{` BEFORE this
+      // span starts. Walk codeBody right-to-left from span.stmtStart,
+      // counting `}` (treat as opens-pending) and `{` (matches a pending
+      // close, OR if no pending, we've found our enclosing block open).
+      let depthBack = 0;
+      let openPos = -1;
+      for (let p = span.stmtStart - 1; p >= 0; p--) {
+        const ch = codeBody[p];
+        if (ch === "}") depthBack++;
+        else if (ch === "{") {
+          if (depthBack === 0) { openPos = p; break; }
+          depthBack--;
+        }
+      }
+      if (openPos === -1) continue;
+      // Walk forward from openPos+1 through codeBody, depth starts at 1
+      // (we just opened a block at openPos). When depth returns to 0 at a
+      // `}`, that `}`'s position is the matching close.
+      let depthFwd = 1;
+      let closePos = -1;
+      for (let p = openPos + 1; p < codeBody.length; p++) {
+        const ch = codeBody[p];
+        if (ch === "{") depthFwd++;
+        else if (ch === "}") {
+          depthFwd--;
+          if (depthFwd === 0) { closePos = p; break; }
+        }
+      }
+      if (closePos === -1) continue;
+      // Refuse to expand to the function-body block. The function body's
+      // `{` is the outermost block in the file; if openPos is inside the
+      // function signature line (or at the function open), we'd over-mark
+      // the entire body. Detect by checking whether codeBody[openPos-N..openPos]
+      // matches a fn signature pattern. Conservative: if the enclosing
+      // open is preceded by a `)` (any function/method/closure signature),
+      // require that the open be at depth >= 2 from file start to be a
+      // real inner block. fn body open is at depth 1; inner blocks at 2+.
+      let depthAtOpen = 0;
+      for (let p = 0; p < openPos; p++) {
+        const ch = codeBody[p];
+        if (ch === "{") depthAtOpen++;
+        else if (ch === "}") depthAtOpen--;
+      }
+      if (depthAtOpen < 1) continue; // openPos is the function-body `{` itself
+      // Translate openPos / closePos into span indices.
+      let openIdx = -1;
+      let closeIdx = -1;
+      for (let j = 0; j < stmtSpans.length; j++) {
+        const s = stmtSpans[j];
+        if (!s) continue;
+        if (openIdx === -1 && s.stmtStart <= openPos && openPos < s.stmtEnd) openIdx = j;
+        if (s.stmtStart <= closePos && closePos < s.stmtEnd) { closeIdx = j; break; }
+      }
+      if (openIdx === -1 || closeIdx === -1) continue;
+      for (let j = openIdx; j <= closeIdx; j++) {
+        if (!markedSpanIdx.has(j)) {
+          markedSpanIdx.add(j);
+          changed2 = true;
+        }
+      }
+    }
+  }
+
   const ranges: StmtRange[] = [];
   for (const i of [...markedSpanIdx].sort((a, b) => a - b)) {
     const span = stmtSpans[i];
@@ -2789,20 +2878,19 @@ function commentOutT22Ranges(body: string, ranges: StmtRange[]): string {
       else if (ch === "}") depth--;
       j++;
     }
-    let trailingDepth = 0;
-    while (j < body.length) {
-      const ch = body[j];
-      const next = body[j + 1];
-      if (inLine) { if (ch === "\n") inLine = false; j++; continue; }
-      if (inBlock) { if (ch === "*" && next === "/") { inBlock = false; j += 2; continue; } j++; continue; }
-      if (inString) { if (ch === "\\") { j += 2; continue; } if (ch === '"') inString = false; j++; continue; }
-      if (ch === "/" && next === "/") { inLine = true; j += 2; continue; }
-      if (ch === "/" && next === "*") { inBlock = true; j += 2; continue; }
-      if (ch === '"') { inString = true; j++; continue; }
-      if (ch === "{") trailingDepth++;
-      else if (ch === "}") trailingDepth--;
-      else if (ch === ";" && trailingDepth === 0) { j++; break; }
-      j++;
+    // Trailing `;` walk — for `let X = if cond { ... } else { ... };` shape
+    // we want to consume the terminating `;`. Bounded: only check the
+    // immediate next non-whitespace char. If it's `;`, take it. If it's
+    // anything else (next statement, another `}`, EOF), STOP at the
+    // close `}` boundary. The prior implementation walked to next `;` at
+    // trailingDepth 0 unbounded — but trailingDepth could go NEGATIVE on
+    // outer-block closes, never returning to 0, so the walk would chew
+    // past the matching close and consume tail expressions like Ok(())
+    // that have no `;` between them.
+    let lookahead = j;
+    while (lookahead < body.length && /\s/.test(body[lookahead] ?? "")) lookahead++;
+    if (lookahead < body.length && body[lookahead] === ";") {
+      j = lookahead + 1;
     }
     r.stmtEnd = j;
   }
