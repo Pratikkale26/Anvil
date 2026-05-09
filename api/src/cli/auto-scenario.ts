@@ -413,6 +413,28 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     });
   }
 
+  // ── (3a) Build state-numeric-field map: `<acc>.<field> = <arg>` body
+  // assignments where <arg> is a numeric instruction arg. Seeds shaped
+  // `<acc>.<field>.to_le_bytes()` resolve to the arg's auto-defaulted
+  // value (Track 3 — numeric state-field seed resolution).
+  const stateNumericFieldMap = new Map<string, Map<string, { argName: string; argType: string; defaultValue: number }>>();
+  for (const ix of ir.instructions) {
+    const argByName = new Map<string, string>();
+    for (const a of ix.args) argByName.set(a.name, a.type);
+    for (const stmt of ix.body) {
+      if (stmt.kind !== "state_field_assign") continue;
+      const argName = stmt.value.trim();
+      const argType = argByName.get(argName);
+      if (!argType) continue;
+      if (!/^([ui])(8|16|32|64)$/.test(argType)) continue;
+      const tsDefault = defaultForTimestampArg(argName);
+      const defaultValue = tsDefault ?? 1;
+      let inner = stateNumericFieldMap.get(stmt.account);
+      if (!inner) { inner = new Map(); stateNumericFieldMap.set(stmt.account, inner); }
+      if (!inner.has(stmt.field)) inner.set(stmt.field, { argName, argType, defaultValue });
+    }
+  }
+
   // ── (3) Derive PDA seeds for every PDA collected above ──
   const pdaSpecs = new Map<string, { seeds: string[]; sourceIx: string }>();
   for (const ix of ir.instructions) {
@@ -431,6 +453,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
           stateFieldMap,
           ixArgTypes,
           acc.name,
+          stateNumericFieldMap,
         );
         if (!seedResult.ok) {
           blockers.push({
@@ -670,7 +693,17 @@ function synthesizeSeeds(
   stateFieldMap: Map<string, Map<string, string>>,
   argTypes: Map<string, string>,
   accountName: string,
+  stateNumericFieldMap: Map<string, Map<string, { argName: string; argType: string; defaultValue: number }>>,
 ): SeedSynthesis {
+  const resolveStateNumericField = (
+    accName: string,
+    fieldName: string,
+  ): string | undefined => {
+    const entry = stateNumericFieldMap.get(accName)?.get(fieldName);
+    if (!entry) return undefined;
+    return `${entry.argType}:${entry.defaultValue}`;
+  };
+
   if (rawSeeds.length === 0) {
     return { ok: false, seeds: [], reason: `account \`${accountName}\` has no seeds in its IR (PDAs need at least one seed)` };
   }
@@ -766,13 +799,21 @@ function synthesizeSeeds(
       };
     }
     // <state>.field.to_le_bytes() / <state>.field.to_le_bytes().as_ref() —
-    // numeric state field. Synthesizer can't know the post-init value.
+    // numeric state field. Resolve at synthesis time when the source
+    // assignment in any instruction's body is `<state>.<field> = <arg>`
+    // and <arg> is an instruction arg with a known auto-defaulted value
+    // — both targets serialize that value identically, byte-equal seed.
     const stateNumericMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\.(to_le_bytes\(\)|to_le_bytes\(\)\.as_ref\(\))$/);
     if (stateNumericMatch?.[1] && stateNumericMatch[2]) {
+      const resolved = resolveStateNumericField(stateNumericMatch[1], stateNumericMatch[2]);
+      if (resolved) {
+        out.push(resolved);
+        continue;
+      }
       return {
         ok: false,
         seeds: [],
-        reason: `seed \`${trimmed}\` reads numeric state field \`${stateNumericMatch[2]}\` of account \`${stateNumericMatch[1]}\` whose value is set at runtime. Auto-scenario can't synthesize a stable seed; replace with explicit \`bytes:0x…\` via "Edit as JSON".`,
+        reason: `seed \`${trimmed}\` reads numeric state field \`${stateNumericMatch[2]}\` of account \`${stateNumericMatch[1]}\`; auto-scenario could not trace its value to a defaulted instruction arg. Replace with explicit \`bytes:0x…\` via "Edit as JSON".`,
       };
     }
     // <arg>.<chain>: single-segment receiver followed by one or two of

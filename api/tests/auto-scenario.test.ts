@@ -564,6 +564,62 @@ describe("auto-scenario: associated_token init -> derived ATA (marketplace patte
   });
 });
 
+describe("auto-scenario: numeric state-field seed resolution (Track 3)", () => {
+  test("`<acc>.<numeric_field>.to_le_bytes()` resolves via traced arg assignment", () => {
+    // <state>.id is set to instruction arg `id: u64` in init.
+    // A later instruction's seeds reference state.id.to_le_bytes() —
+    // resolves to u64:<defaulted_value> (auto-default 1).
+    const ir = {
+      name: "p",
+      instructions: [
+        {
+          name: "init",
+          accounts: [
+            { name: "user", accountType: "Signer", isSigner: true, isMut: true, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+            { name: "state", accountType: "State", isSigner: false, isMut: true, isInit: true, isOptional: false, isPda: true,
+              pdaSeeds: ['b"state"'], constraints: [{ kind: "init" as const }] },
+          ],
+          args: [{ name: "id", type: "u64" as const }],
+          body: [{ kind: "state_field_assign" as const, account: "state", field: "id", value: "id" }],
+          bodyLocs: [],
+        },
+        {
+          name: "use_id",
+          accounts: [
+            { name: "user", accountType: "Signer", isSigner: true, isMut: true, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+            { name: "child", accountType: "Child", isSigner: false, isMut: true, isInit: true, isOptional: false, isPda: true,
+              pdaSeeds: ['b"child"', "state.id.to_le_bytes()"], constraints: [{ kind: "init" as const }] },
+            { name: "state", accountType: "State", isSigner: false, isMut: false, isInit: false, isOptional: false, isPda: true,
+              pdaSeeds: ['b"state"'], constraints: [] },
+          ],
+          args: [],
+          body: [],
+          bodyLocs: [],
+        },
+      ],
+      accounts: [
+        { name: "State", fields: [{ name: "id", type: "u64" as const }] },
+        { name: "Child", fields: [] as never },
+      ],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor" as const, anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const child = r.scenario.pdas.find((p) => p.name === "child");
+    expect(child).toBeDefined();
+    expect(child!.seeds).toEqual(['b"child"', "u64:1"]);
+  });
+});
+
 describe("auto-scenario: Sysvar accounts route to $program: tags (escrow Sysvar<Rent>)", () => {
   test("Sysvar<Rent> in IR resolves to $program:rent (not $keypair:rent)", () => {
     const ir = {
