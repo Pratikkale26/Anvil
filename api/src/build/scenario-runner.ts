@@ -53,10 +53,9 @@ export interface ResolvedScenarioContext {
   /** Pre-generated SPL Mint keypairs — one per scenario.mints[] entry. */
   mints: Map<string, { keypair: Keypair; programOwner: PublicKey; decimals: number; mintAuthority: PublicKey; freezeAuthority?: PublicKey; supply: bigint }>;
   /** Pre-generated SPL Token Account keypairs — one per scenario.tokenAccounts[] entry.
-   *  When `derived` is true, `keypair` is unused (the runner doesn't sign with it; the
-   *  ATA program creates the account at the deterministic address) and the
-   *  `pubkey` is the derived ATA address. */
-  tokenAccounts: Map<string, { keypair: Keypair; pubkey: PublicKey; mint: PublicKey; owner: PublicKey; balance: bigint; programOwner: PublicKey; derived: boolean }>;
+   *  When `derived` is true, `keypair` is unused for address purposes (`pubkey`
+   *  carries the deterministic ATA derivation) but kept for typing parity. */
+  tokenAccounts: Map<string, { keypair: Keypair; pubkey: PublicKey; mint: PublicKey; owner: PublicKey; balance: bigint; programOwner: PublicKey; derived: boolean; programInits: boolean }>;
   /** Throwaway $keypair:foo references — generated lazily on first ref. */
   ephemeralKeypairs: Map<string, Keypair>;
 }
@@ -150,6 +149,7 @@ export function resolveScenarioContext(
       balance: typeof decl.balance === "string" ? BigInt(decl.balance) : BigInt(decl.balance),
       programOwner,
       derived: decl.derived,
+      programInits: decl.programInits,
     });
   }
 
@@ -413,10 +413,12 @@ const TOKEN_ACCOUNT_RENT_EXEMPT_LAMPORTS = 2_039_280;
 
 export function installTokenAccounts(svm: LiteSVM, ctx: ResolvedScenarioContext): void {
   for (const [, ta] of ctx.tokenAccounts) {
-    // Derived ATAs are NOT pre-installed — Anchor's `init associated_token::*`
-    // creates them via CPI at runtime, and pre-installing would conflict
-    // with the ATA program's create_account check.
-    if (ta.derived) continue;
+    // Skip when the program creates the account at runtime — Anchor's `init
+    // associated_token::*` lowers to the AT program's create_account CPI
+    // and pre-installing would conflict. Non-init derived ATAs (escrow's
+    // maker_ata_a) still need install at the derived address so the program
+    // sees the pre-existing balance.
+    if (ta.programInits) continue;
     const data = Buffer.alloc(TOKEN_ACCOUNT_SIZE);
     AccountLayout.encode(
       {

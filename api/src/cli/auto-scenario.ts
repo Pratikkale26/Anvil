@@ -273,7 +273,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   // Mint resolution: read the `token::mint` constraint. Direct ident → tagFor(name).
   // State-derived (`pool.token_mint_a`) → look up stateFieldMap.
   // Owner: `token::authority` constraint or first signer fallback.
-  const tokenAccountSpecs = new Map<string, { mint: string; owner: string; sourceIx: string; derived: boolean }>();
+  const tokenAccountSpecs = new Map<string, { mint: string; owner: string; sourceIx: string; derived: boolean; programInits: boolean }>();
   const taBlockers: AutoScenarioBlocker[] = [];
 
   const tagFor = (name: string): string | undefined => {
@@ -326,7 +326,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
         return resolveStateDerivedTag(v);
       })();
       if (!mintTagOpt || !ownerTagOpt) continue;
-      tokenAccountSpecs.set(acc.name, { mint: mintTagOpt, owner: ownerTagOpt, sourceIx: ix.name, derived: true });
+      tokenAccountSpecs.set(acc.name, { mint: mintTagOpt, owner: ownerTagOpt, sourceIx: ix.name, derived: true, programInits: true });
       notes.push({
         message: `Detected associated_token init on \`${acc.name}\` (in \`${ix.name}\`). Pre-deriving the ATA address from (owner=${ownerTagOpt}, mint=${mintTagOpt}); the program's init CPI creates the account at runtime.`,
         context: { instruction: ix.name, account: acc.name },
@@ -397,7 +397,14 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
         ownerTag = `$signer:${firstSigner}`;
       }
 
-      tokenAccountSpecs.set(acc.name, { mint: mintTag, owner: ownerTag, sourceIx: ix.name, derived: false });
+      // ATA-shape detection: when the user-side TokenAccount carries
+      // associated_token::* constraints (vs token::*), Anchor verifies the
+      // supplied address equals the deterministic ATA derivation on every
+      // CPI. Mark derived=true so the runner installs at the derived
+      // address rather than a random keypair (escrow's maker_ata_a).
+      const isAtaShape = acc.constraints.some((c) => c.kind === "associated_token::mint")
+        && acc.constraints.some((c) => c.kind === "associated_token::authority");
+      tokenAccountSpecs.set(acc.name, { mint: mintTag, owner: ownerTag, sourceIx: ix.name, derived: isAtaShape, programInits: false });
       if (mintWasDefaulted) {
         notes.push({
           message: `Defaulted token::mint for \`${acc.name}\` to \`${mintTag}\` (no explicit constraint in source). Both targets see the same default — byte-equal verdict still valid. Edit scenario.tokenAccounts[].mint if your test needs a specific mint.`,
@@ -633,9 +640,13 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       name,
       mint: spec.mint,
       owner: spec.owner,
-      balance: spec.derived ? 0 : 1_000_000_000,
+      // Program-creates accounts start at 0 (the init CPI sets up the layout).
+      // Pre-installed accounts (whether derived ATA or random keypair) get
+      // the default 1B balance so transfer_checked / mint_to CPIs succeed.
+      balance: spec.programInits ? 0 : 1_000_000_000,
       program: "token",
       derived: spec.derived,
+      programInits: spec.programInits,
     })),
     steps,
     compare: {

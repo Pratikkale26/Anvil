@@ -117,12 +117,17 @@ export const TokenAccountDeclSchema = z.object({
   balance: z.union([z.number().int().min(0), z.string()]).default(1_000_000_000),
   /** Token program owner. Default "token" (matches the corresponding mint). */
   program: z.enum(["token", "token_2022"]).default("token"),
-  /** When true, this entry represents an associated_token-derived ATA: the
-   *  pubkey is `findProgramAddress([owner, token_program, mint], ATA_PROGRAM)`,
-   *  and the runner does NOT pre-install the account (the program's `init`
-   *  CPI creates it). Used for `init` accounts with `associated_token::*`
-   *  constraints — marketplace's buyer_ata pattern. */
+  /** When true, this entry's pubkey is the deterministic associated_token
+   *  derivation `getAssociatedTokenAddress(mint, owner)`, not a fresh
+   *  keypair. Required for any TokenAccount with `associated_token::*`
+   *  constraints — Anchor verifies the supplied address matches the
+   *  derivation on every CPI. */
   derived: z.boolean().default(false),
+  /** When true, the runner does NOT pre-install this account — the program's
+   *  init CPI creates it at runtime (Anchor's `init` with `associated_token::*`).
+   *  When false, the runner installs the account before step 0 so the
+   *  program reads it as a pre-existing balance (escrow's maker_ata_a). */
+  programInits: z.boolean().default(false),
 });
 
 // ─── Instruction args ───────────────────────────────────────────────────────
