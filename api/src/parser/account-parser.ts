@@ -306,11 +306,18 @@ export function extractAccountType(rawType: string): string {
     const innerMatch = t.match(/(?:token_interface::)?(TokenAccount|Mint)/);
     if (innerMatch?.[1]) return innerMatch[1];
   }
-  const programMatch = t.match(/^Program\s*<\s*'info\s*,\s*(\w+)\s*>/);
-  if (programMatch?.[1]) return programMatch[1];
+  const programMatch = t.match(/^Program\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
+  if (programMatch?.[1]) return programMatch[1].split("::").pop() ?? programMatch[1];
   // Interface<'info, T> for Token-2022 program references
-  const interfaceProgramMatch = t.match(/^Interface\s*<\s*'info\s*,\s*(\w+)\s*>/);
-  if (interfaceProgramMatch?.[1]) return interfaceProgramMatch[1];
+  const interfaceProgramMatch = t.match(/^Interface\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
+  if (interfaceProgramMatch?.[1]) return interfaceProgramMatch[1].split("::").pop() ?? interfaceProgramMatch[1];
+  // Sysvar<'info, T> — older Anchor accounts list shape (modern Anchor
+  // uses Sysvar::get() syscall and drops the slot from the IDL).
+  const sysvarMatch = t.match(/^Sysvar\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
+  if (sysvarMatch?.[1]) {
+    const inner = sysvarMatch[1].split("::").pop() ?? sysvarMatch[1];
+    return `Sysvar<${inner}>`;
+  }
   if (t.startsWith("Signer")) return "Signer";
   if (t.startsWith("SystemAccount")) return "SystemAccount";
   if (t.startsWith("UncheckedAccount")) return "UncheckedAccount";

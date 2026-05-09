@@ -526,3 +526,74 @@ describe("auto-scenario: compare scope widening (snapshot integrity)", () => {
   });
 });
 
+describe("auto-scenario: timestamp-arg defaults (vesting pattern)", () => {
+  test("start_ts / cliff_ts / end_ts get strictly-increasing defaults above pinned clock", async () => {
+    const ir = await parseDemo("vesting.rs");
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const create = r.scenario.steps.find((s) => s.ix === "create_vesting");
+    expect(create).toBeDefined();
+    const startTs = create!.args.start_ts as number;
+    const cliffTs = create!.args.cliff_ts as number;
+    const endTs = create!.args.end_ts as number;
+    // require!(start_ts >= clock.unix_timestamp) — clock pinned to 1_700_000_000
+    expect(startTs).toBeGreaterThanOrEqual(1_700_000_000);
+    // require!(cliff_ts >= start_ts)
+    expect(cliffTs).toBeGreaterThanOrEqual(startTs);
+    // require!(end_ts > cliff_ts)
+    expect(endTs).toBeGreaterThan(cliffTs);
+  });
+});
+
+describe("auto-scenario: associated_token init -> derived ATA (marketplace pattern)", () => {
+  test("init associated_token::* on a TokenAccount marks it derived in scenario.tokenAccounts", async () => {
+    const ir = await parseDemo("marketplace.rs");
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // marketplace.purchase has buyer_ata init via associated_token::*.
+    const buyerAta = r.scenario.tokenAccounts.find((t) => t.name === "buyer_ata");
+    expect(buyerAta).toBeDefined();
+    expect(buyerAta!.derived).toBe(true);
+    // The step's accounts list emits $ata:buyer_ata (which the runner
+    // resolves to the deterministic ATA address, not a fresh keypair).
+    const purchase = r.scenario.steps.find((s) => s.ix === "purchase");
+    expect(purchase).toBeDefined();
+    expect(purchase!.accounts).toContain("$ata:buyer_ata");
+  });
+});
+
+describe("auto-scenario: Sysvar accounts route to $program: tags (escrow Sysvar<Rent>)", () => {
+  test("Sysvar<Rent> in IR resolves to $program:rent (not $keypair:rent)", () => {
+    const ir = {
+      name: "p",
+      instructions: [{
+        name: "ix",
+        accounts: [
+          { name: "user", accountType: "Signer", isSigner: true, isMut: true, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+          { name: "rent", accountType: "Sysvar<Rent>", isSigner: false, isMut: false, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+        ],
+        args: [],
+        body: [],
+        bodyLocs: [],
+      }],
+      accounts: [],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor" as const, anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scenario.steps[0]!.accounts).toContain("$program:rent");
+    expect(r.scenario.steps[0]!.accounts).not.toContain("$keypair:rent");
+  });
+});
+

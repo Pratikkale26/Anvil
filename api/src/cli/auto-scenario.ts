@@ -75,6 +75,28 @@ const DEFAULT_VALUES: Record<string, unknown> = {
   Pubkey: "11111111111111111111111111111111", // System program ID -- harmless placeholder
 };
 
+/** Auto-scenario pins clock.timestamp to this when any handler reads
+ *  Clock::get(). Timestamp args ride on top of this so `require!(start_ts >=
+ *  clock.unix_timestamp)` and `require!(end_ts > cliff_ts)` patterns pass
+ *  without manual editing. Mirrors the value at scenario.clock.timestamp. */
+const PINNED_CLOCK_TIMESTAMP = 1_700_000_000;
+
+/** Resolve a more contextually-useful default for ordered timestamp args
+ *  by scanning the arg name. start < cliff < end ordering covers the AMM /
+ *  vesting / lock-up shape; generic _ts / _time / _at args nudge above
+ *  the pinned clock so the typical `require!(ts >= clock.unix_timestamp)`
+ *  passes. Returns undefined when no name pattern matches — caller falls
+ *  back to DEFAULT_VALUES. */
+function defaultForTimestampArg(argName: string): number | undefined {
+  const n = argName.toLowerCase();
+  // start = clock + 1 — must satisfy `start_ts >= clock.unix_timestamp`.
+  if (/(^|_)(start)(_ts|_time|_at|_unix|_seconds|_secs)?$/.test(n)) return PINNED_CLOCK_TIMESTAMP + 1;
+  if (/(^|_)(cliff)(_ts|_time|_at|_unix|_seconds|_secs)?$/.test(n)) return PINNED_CLOCK_TIMESTAMP + 100;
+  if (/(^|_)(end|expiry|expiration|deadline|finish|maturity|unlock)(_ts|_time|_at|_unix|_seconds|_secs)?$/.test(n)) return PINNED_CLOCK_TIMESTAMP + 1000;
+  if (/_(ts|time|at|unix|seconds|secs)$/.test(n) || /^(timestamp|time|now)$/.test(n)) return PINNED_CLOCK_TIMESTAMP + 10;
+  return undefined;
+}
+
 /**
  * Recursively synthesise a default value for a custom struct / enum arg
  * by walking its TypeDef.fields. Returns undefined when the type isn't
@@ -124,13 +146,19 @@ function synthesizeCustomTypeDefault(
   return out;
 }
 
-/** Well-known program-account types that resolve to $program:<X>. */
+/** Well-known program-account types that resolve to $program:<X>.
+ *  `Sysvar<X>` shapes resolve via the same $program: tag — the runner's
+ *  KNOWN_PROGRAMS map already includes rent + clock pubkeys. Older
+ *  Anchor programs (escrow.rs uses one) explicitly list these in their
+ *  accounts struct. */
 const KNOWN_PROGRAM_TYPES: Record<string, string> = {
   System: "system",
   Token: "token",
   TokenInterface: "token_2022",
   AssociatedToken: "associated_token",
   Memo: "memo",
+  "Sysvar<Rent>": "rent",
+  "Sysvar<Clock>": "clock",
 };
 
 /** Account types Anvil knows how to handle in scenarios. */
@@ -245,7 +273,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   // Mint resolution: read the `token::mint` constraint. Direct ident → tagFor(name).
   // State-derived (`pool.token_mint_a`) → look up stateFieldMap.
   // Owner: `token::authority` constraint or first signer fallback.
-  const tokenAccountSpecs = new Map<string, { mint: string; owner: string; sourceIx: string }>();
+  const tokenAccountSpecs = new Map<string, { mint: string; owner: string; sourceIx: string; derived: boolean }>();
   const taBlockers: AutoScenarioBlocker[] = [];
 
   const tagFor = (name: string): string | undefined => {
@@ -275,6 +303,38 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     }
   }
 
+  // Pass A — derived ATAs: accounts init'd with associated_token::*. The
+  // ATA program derives the address from (owner, mint, token_program); the
+  // runner pre-derives the pubkey and does NOT pre-install (the program's
+  // init CPI creates it). marketplace's buyer_ata is the canonical case.
+  for (const ix of ir.instructions) {
+    for (const acc of ix.accounts) {
+      if (acc.accountType !== "TokenAccount") continue;
+      if (!acc.isInit) continue;
+      if (tokenAccountSpecs.has(acc.name)) continue;
+      const ataMint = acc.constraints.find((c) => c.kind === "associated_token::mint" && c.value);
+      const ataAuth = acc.constraints.find((c) => c.kind === "associated_token::authority" && c.value);
+      if (!ataMint?.value || !ataAuth?.value) continue;
+      const mintTagOpt = (() => {
+        const v = ataMint.value.trim();
+        if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(v)) return tagFor(v) ?? `$keypair:${v}`;
+        return resolveStateDerivedTag(v);
+      })();
+      const ownerTagOpt = (() => {
+        const v = ataAuth.value.trim();
+        if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(v)) return tagFor(v) ?? `$keypair:${v}`;
+        return resolveStateDerivedTag(v);
+      })();
+      if (!mintTagOpt || !ownerTagOpt) continue;
+      tokenAccountSpecs.set(acc.name, { mint: mintTagOpt, owner: ownerTagOpt, sourceIx: ix.name, derived: true });
+      notes.push({
+        message: `Detected associated_token init on \`${acc.name}\` (in \`${ix.name}\`). Pre-deriving the ATA address from (owner=${ownerTagOpt}, mint=${mintTagOpt}); the program's init CPI creates the account at runtime.`,
+        context: { instruction: ix.name, account: acc.name },
+      });
+    }
+  }
+
+  // Pass B — non-init user-side TokenAccounts (existing logic).
   for (const ix of ir.instructions) {
     for (const acc of ix.accounts) {
       if (acc.accountType !== "TokenAccount") continue;
@@ -337,7 +397,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
         ownerTag = `$signer:${firstSigner}`;
       }
 
-      tokenAccountSpecs.set(acc.name, { mint: mintTag, owner: ownerTag, sourceIx: ix.name });
+      tokenAccountSpecs.set(acc.name, { mint: mintTag, owner: ownerTag, sourceIx: ix.name, derived: false });
       if (mintWasDefaulted) {
         notes.push({
           message: `Defaulted token::mint for \`${acc.name}\` to \`${mintTag}\` (no explicit constraint in source). Both targets see the same default — byte-equal verdict still valid. Edit scenario.tokenAccounts[].mint if your test needs a specific mint.`,
@@ -428,7 +488,14 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   const steps: ScenarioStep[] = orderedInstructions.map((ix) => {
     const args: Record<string, unknown> = {};
     for (const arg of ix.args) {
-      if (DEFAULT_VALUES[arg.type] !== undefined) {
+      // Timestamp args (`*_ts`, `start`, `cliff`, `end`, etc.) get
+      // ordering-aware defaults derived from the pinned clock so the
+      // common `require!(start_ts >= clock.unix_timestamp)` /
+      // `require!(end_ts > cliff_ts)` patterns pass without editing.
+      const tsDefault = /^([ui])(8|16|32|64)$/.test(arg.type) ? defaultForTimestampArg(arg.name) : undefined;
+      if (tsDefault !== undefined) {
+        args[arg.name] = tsDefault;
+      } else if (DEFAULT_VALUES[arg.type] !== undefined) {
         args[arg.name] = DEFAULT_VALUES[arg.type];
       } else if (/^([ui])(8|16|32|64|128)$/.test(arg.type)) {
         args[arg.name] = 1;
@@ -451,8 +518,13 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       if (acc.accountType === "Mint" && !acc.isInit && mintNames.has(acc.name)) {
         return `$mint:${acc.name}`;
       }
-      if (acc.accountType === "TokenAccount" && !acc.isInit && tokenAccountSpecs.has(acc.name)) {
-        return `$ata:${acc.name}`;
+      if (acc.accountType === "TokenAccount" && tokenAccountSpecs.has(acc.name)) {
+        // Init'd-non-derived TokenAccounts that are in tokenAccountSpecs
+        // shouldn't reach here — the spec is only populated for derived
+        // ATAs (init'd) or non-init user TAs. But guard the !isInit ||
+        // derived shape just in case future synth changes loosen it.
+        const spec = tokenAccountSpecs.get(acc.name)!;
+        if (!acc.isInit || spec.derived) return `$ata:${acc.name}`;
       }
       const knownProg = KNOWN_PROGRAM_TYPES[acc.accountType];
       if (knownProg) return `$program:${knownProg}`;
@@ -538,8 +610,9 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       name,
       mint: spec.mint,
       owner: spec.owner,
-      balance: 1_000_000_000,
+      balance: spec.derived ? 0 : 1_000_000_000,
       program: "token",
+      derived: spec.derived,
     })),
     steps,
     compare: {

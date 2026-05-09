@@ -182,7 +182,7 @@
         },
         {
           "name": "token_program",
-          "accountType": "Program<'info, anchor_spl::token::Token>",
+          "accountType": "Token",
           "isSigner": false,
           "isMut": false,
           "isInit": false,
@@ -199,7 +199,7 @@
         },
         {
           "name": "associated_token_program",
-          "accountType": "Program<'info, anchor_spl::associated_token::AssociatedToken>",
+          "accountType": "AssociatedToken",
           "isSigner": false,
           "isMut": false,
           "isInit": false,
@@ -216,7 +216,7 @@
         },
         {
           "name": "rent",
-          "accountType": "Sysvar<'info, Rent>",
+          "accountType": "Sysvar<Rent>",
           "isSigner": false,
           "isMut": false,
           "isInit": false,
@@ -669,7 +669,7 @@
         },
         {
           "name": "token_program",
-          "accountType": "Program<'info, anchor_spl::token::Token>",
+          "accountType": "Token",
           "isSigner": false,
           "isMut": false,
           "isInit": false,
@@ -686,7 +686,7 @@
         },
         {
           "name": "associated_token_program",
-          "accountType": "Program<'info, anchor_spl::associated_token::AssociatedToken>",
+          "accountType": "AssociatedToken",
           "isSigner": false,
           "isMut": false,
           "isInit": false,
@@ -948,7 +948,7 @@
         },
         {
           "name": "token_program",
-          "accountType": "Program<'info, anchor_spl::token::Token>",
+          "accountType": "Token",
           "isSigner": false,
           "isMut": false,
           "isInit": false,

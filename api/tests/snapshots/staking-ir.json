@@ -209,7 +209,7 @@
         },
         {
           "name": "rent",
-          "accountType": "Sysvar<'info, Rent>",
+          "accountType": "Sysvar<Rent>",
           "isSigner": false,
           "isMut": false,
           "isInit": false,

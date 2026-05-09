@@ -27,7 +27,7 @@ import {
   TransactionInstruction,
   SystemProgram,
 } from "@solana/web3.js";
-import { MintLayout, AccountLayout, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { MintLayout, AccountLayout, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { createHash } from "node:crypto";
 import type { Scenario, ScenarioStep, ScenarioAssertion } from "../ir/scenario.js";
 import type { SolanaIR } from "../ir/schema.js";
@@ -52,8 +52,11 @@ export interface ResolvedScenarioContext {
   pdas: Map<string, { pubkey: PublicKey; bump: number }>;
   /** Pre-generated SPL Mint keypairs — one per scenario.mints[] entry. */
   mints: Map<string, { keypair: Keypair; programOwner: PublicKey; decimals: number; mintAuthority: PublicKey; freezeAuthority?: PublicKey; supply: bigint }>;
-  /** Pre-generated SPL Token Account keypairs — one per scenario.tokenAccounts[] entry. */
-  tokenAccounts: Map<string, { keypair: Keypair; mint: PublicKey; owner: PublicKey; balance: bigint; programOwner: PublicKey }>;
+  /** Pre-generated SPL Token Account keypairs — one per scenario.tokenAccounts[] entry.
+   *  When `derived` is true, `keypair` is unused (the runner doesn't sign with it; the
+   *  ATA program creates the account at the deterministic address) and the
+   *  `pubkey` is the derived ATA address. */
+  tokenAccounts: Map<string, { keypair: Keypair; pubkey: PublicKey; mint: PublicKey; owner: PublicKey; balance: bigint; programOwner: PublicKey; derived: boolean }>;
   /** Throwaway $keypair:foo references — generated lazily on first ref. */
   ephemeralKeypairs: Map<string, Keypair>;
 }
@@ -130,12 +133,23 @@ export function resolveScenarioContext(
   const tokenAccounts: ResolvedScenarioContext["tokenAccounts"] = new Map();
   for (const decl of scenario.tokenAccounts) {
     const programOwner = decl.program === "token_2022" ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+    const mintPk = resolvePubkeyTag(decl.mint, signers, pdas, mints, ephemeralKeypairs, decl.name, "mint");
+    const ownerPk = resolvePubkeyTag(decl.owner, signers, pdas, mints, ephemeralKeypairs, decl.name, "owner");
+    const keypair = Keypair.generate();
+    // Derived ATAs use the deterministic associated_token derivation. The
+    // `keypair` field stays generated (unused, but typed) so callers don't
+    // crash on `keypair.publicKey` access.
+    const pubkey = decl.derived
+      ? getAssociatedTokenAddressSync(mintPk, ownerPk, true, programOwner, ASSOCIATED_TOKEN_PROGRAM_ID)
+      : keypair.publicKey;
     tokenAccounts.set(decl.name, {
-      keypair: Keypair.generate(),
-      mint: resolvePubkeyTag(decl.mint, signers, pdas, mints, ephemeralKeypairs, decl.name, "mint"),
-      owner: resolvePubkeyTag(decl.owner, signers, pdas, mints, ephemeralKeypairs, decl.name, "owner"),
+      keypair,
+      pubkey,
+      mint: mintPk,
+      owner: ownerPk,
       balance: typeof decl.balance === "string" ? BigInt(decl.balance) : BigInt(decl.balance),
       programOwner,
+      derived: decl.derived,
     });
   }
 
@@ -325,7 +339,7 @@ export function resolveAccountRef(ref: string, ctx: ResolvedScenarioContext): Pu
     const name = ref.slice("$ata:".length).split(".")[0]!;
     const ta = ctx.tokenAccounts.get(name);
     if (!ta) throw new Error(`account ref '${ref}' references undeclared tokenAccount '${name}'`);
-    return ta.keypair.publicKey;
+    return ta.pubkey;
   }
   if (ref.startsWith("$program:")) {
     const name = ref.slice("$program:".length);
@@ -399,6 +413,10 @@ const TOKEN_ACCOUNT_RENT_EXEMPT_LAMPORTS = 2_039_280;
 
 export function installTokenAccounts(svm: LiteSVM, ctx: ResolvedScenarioContext): void {
   for (const [, ta] of ctx.tokenAccounts) {
+    // Derived ATAs are NOT pre-installed — Anchor's `init associated_token::*`
+    // creates them via CPI at runtime, and pre-installing would conflict
+    // with the ATA program's create_account check.
+    if (ta.derived) continue;
     const data = Buffer.alloc(TOKEN_ACCOUNT_SIZE);
     AccountLayout.encode(
       {
@@ -416,7 +434,7 @@ export function installTokenAccounts(svm: LiteSVM, ctx: ResolvedScenarioContext)
       },
       data,
     );
-    svm.setAccount(ta.keypair.publicKey, {
+    svm.setAccount(ta.pubkey, {
       lamports: TOKEN_ACCOUNT_RENT_EXEMPT_LAMPORTS,
       data,
       owner: ta.programOwner,
@@ -886,12 +904,12 @@ export function runScenarioOnSo(
     if (name.startsWith("$signer:")) return ctx.signers.get(name.slice("$signer:".length))?.publicKey;
     if (name.startsWith("$pda:"))    return ctx.pdas.get(name.slice("$pda:".length))?.pubkey;
     if (name.startsWith("$mint:"))   return ctx.mints.get(name.slice("$mint:".length))?.keypair.publicKey;
-    if (name.startsWith("$ata:"))    return ctx.tokenAccounts.get(name.slice("$ata:".length))?.keypair.publicKey;
+    if (name.startsWith("$ata:"))    return ctx.tokenAccounts.get(name.slice("$ata:".length))?.pubkey;
     if (name.startsWith("$keypair:"))return ctx.ephemeralKeypairs.get(name.slice("$keypair:".length))?.publicKey;
     if (ctx.signers.has(name))         return ctx.signers.get(name)!.publicKey;
     if (ctx.pdas.has(name))            return ctx.pdas.get(name)!.pubkey;
     if (ctx.mints.has(name))           return ctx.mints.get(name)!.keypair.publicKey;
-    if (ctx.tokenAccounts.has(name))   return ctx.tokenAccounts.get(name)!.keypair.publicKey;
+    if (ctx.tokenAccounts.has(name))   return ctx.tokenAccounts.get(name)!.pubkey;
     if (ctx.ephemeralKeypairs.has(name)) return ctx.ephemeralKeypairs.get(name)!.publicKey;
     return undefined;
   };
