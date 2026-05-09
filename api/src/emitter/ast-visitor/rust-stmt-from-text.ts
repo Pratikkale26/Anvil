@@ -506,9 +506,24 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       // calls; matching that here keeps binary-parity intact when the
       // structural converter feeds the multi-line shape back through
       // the printer.
+      //
+      // mlCall's printer always emits args at outer.column + 4. If the
+      // source uses a different indent (vesting / cpi-custom programs
+      // have args at outer.column + 8 — extra-indented for readability),
+      // structural re-emit drops byte-equality. Refuse the conversion
+      // in that case so the caller falls back to rawLine (verbatim).
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { mlCall } = require("./nodes.js") as typeof import("./nodes.js");
-      if (node.text.includes("\n")) return mlCall(fnExpr, argExprs);
+      if (node.text.includes("\n")) {
+        if (args.namedChildCount > 0) {
+          const firstArg = args.namedChild(0);
+          if (firstArg && firstArg.startPosition.row > node.startPosition.row) {
+            const expected = node.startPosition.column + 4;
+            if (firstArg.startPosition.column !== expected) return null;
+          }
+        }
+        return mlCall(fnExpr, argExprs);
+      }
       return call(fnExpr, argExprs);
     }
     case "match_expression": {

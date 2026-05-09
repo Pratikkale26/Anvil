@@ -2149,8 +2149,11 @@ export class AstVisitorBase {
     if (w.emitter.frameworkName !== "Native") {
       // Pinocchio path emits a hand-rolled CPI block with const +
       // multiple lets + match expression that the AST doesn't model.
-      // Defer until match support lands.
-      return this.captureAndConvert(handleCpiSplSetAuthority, stmt);
+      // captureAndConvert's per-line tryStructuralizeMultiLine collapses
+      // multi-line array literals + drops trailing semicolons, both of
+      // which break byte-equality with the handler. runHandlerCapture
+      // captures verbatim.
+      return this.runHandlerCapture(handleCpiSplSetAuthority, stmt);
     }
     w.ctx.transformedCount++;
     w.ctx.details.push(
@@ -2418,10 +2421,7 @@ export class AstVisitorBase {
         constDecl(
           "MEMO_PROGRAM_ID",
           "pinocchio::pubkey::Pubkey",
-          rawExpr(`[
-            5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124,
-            124, 53, 181, 221, 188, 146, 187, 129, 228, 31, 168, 64, 65, 5, 68, 141,
-        ]`),
+          rawExpr(`[5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124, 124, 53, 181, 221, 188, 146, 187, 129, 228, 31, 168, 64, 65, 5, 68, 141]`),
         ),
         letStmt(
           "__memo_ix",
