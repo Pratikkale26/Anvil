@@ -1266,10 +1266,10 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // used inside structs that derive BorshSerialize/BorshDeserialize.
         const rawCode = typeDef.rawCode.trim();
         const alreadyHasDerive = /^#\[derive\(/.test(rawCode);
-        if (alreadyHasDerive) {
-          return rawCode;
-        }
-        return `#[derive(Clone, Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = true)]\n${rawCode}`;
+        const decl = alreadyHasDerive
+          ? rawCode
+          : `#[derive(Clone, Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = true)]\n${rawCode}`;
+        return `${decl}${this.emitTypeInherentImpl(typeDef)}`;
       }
       if (typeDef.kind === "enum") {
         const variants = (typeDef.variants ?? []).map((variant, index) => `    ${variant} = ${index},`).join("\n");
@@ -1290,7 +1290,7 @@ ${arms}
             _ => Err(()),
         }
     }
-}`;
+}${this.emitTypeInherentImpl(typeDef)}`;
       }
 
       const fields = (typeDef.fields ?? [])
