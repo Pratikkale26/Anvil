@@ -383,7 +383,7 @@ export abstract class BaseEmitter {
     _instr: Instruction,
     _ir: SolanaIR,
   ): string {
-    return rewriteTryIntoUnwrap(bodyCode);
+    return rewriteSiblingCpiCalls(rewriteTryIntoUnwrap(bodyCode));
   }
 
   /**
@@ -473,14 +473,41 @@ export abstract class BaseEmitter {
         if (/^use\s*\{[\s\S]*\banchor_spl::/.test(statement)) return false;
         if (/\banchor_spl\b/.test(statement)) return false;
         // Sibling Anchor program imports — `use <crate>::cpi::*`,
-        // `<crate>::accounts::*`, `<crate>::program::*` are Anchor's
-        // auto-generated cross-program-invocation surface for a sibling
-        // program in the same workspace. The standalone Anvil emit doesn't
-        // ship those crates, and the corresponding CPI call sites in the
-        // body are emitted as TODO stubs (see pass-through.ts handler).
-        // Drop the imports so the file compiles. Affects fixtures like
-        // cpi-hand → cpi-lever.
-        if (/^use\s+\w+::(?:cpi|accounts|program)(?:::|;)/.test(statement)) return false;
+        // `<crate>::accounts::*`, `<crate>::program::*`, `<crate>::state::*`,
+        // `<crate>::errors::*` are Anchor's auto-generated cross-program-
+        // invocation surface for a sibling program in the same workspace.
+        // The standalone Anvil emit doesn't ship those crates, and the
+        // corresponding CPI call sites in the body are commented out as
+        // TODO stubs by commentOutSiblingCpiCalls. Drop the imports so the
+        // file compiles. Affects fixtures like cpi-hand → cpi-lever and
+        // squads-mpl/roles → squads-mpl.
+        if (/^use\s+\w+::(?:cpi|accounts|program|state|errors|error)(?:::|;)/.test(statement)) return false;
+        // Block-import form: `use <crate>::{state::..., errors::..., program::...};`
+        // Detect by looking for `<crate>::` followed by a submodule name we
+        // recognize as Anchor-program-internal. Excludes known external
+        // ecosystem crates that legitimately export those submodule names
+        // (e.g. mpl_token_metadata::state, anchor_lang::error).
+        const siblingBlockMatch = statement.match(/^use\s+(\w+)\s*::\s*\{/);
+        if (siblingBlockMatch) {
+          const crate = siblingBlockMatch[1] ?? "";
+          const isKnownExternal =
+            crate === "anchor_lang" ||
+            crate === "anchor_spl" ||
+            crate === "solana_program" ||
+            crate.startsWith("spl_") ||
+            crate.startsWith("mpl_") ||
+            crate.startsWith("pyth_") ||
+            crate.startsWith("switchboard_") ||
+            crate === "borsh" ||
+            crate === "bytemuck" ||
+            crate === "thiserror" ||
+            crate === "num_derive" ||
+            crate === "num_traits" ||
+            crate === "fixed";
+          if (!isKnownExternal && /\b(?:cpi|accounts|state|errors|error|program)\b/.test(statement)) {
+            return false;
+          }
+        }
         // solana_program imports are valid on native (which deps it) but
         // not on pinocchio (which uses its own crate). Drop on
         // non-native. The anchor_lang::solana_program rewrite above means
@@ -2085,6 +2112,88 @@ export function rewriteTryIntoUnwrap(body: string): string {
     /\.try_into\(\)\.unwrap\(\)/g,
     `.try_into().map_err(|_| ProgramError::InvalidAccountData)?`,
   );
+}
+
+/**
+ * Comment out call sites referencing sibling-Anchor-program CPI helpers —
+ * `<crate>::cpi::<fn>(...)` shapes where `<crate>` isn't a known external
+ * Solana ecosystem crate. squads-mpl/roles' proxy handlers call
+ * `squads_mpl::cpi::create_transaction(...)` which needs the sibling
+ * crate's CpiContext machinery; both targets strip the import and the
+ * call. Same TODO-stub pattern as solana_program::invoke commentout.
+ */
+export function rewriteSiblingCpiCalls(body: string): string {
+  const SIBLING_CPI_RE = /\b([a-z_][a-z0-9_]*)\s*::\s*cpi\s*::\s*[a-z_][a-z0-9_]*\s*\(/gi;
+  // Walk left to right; for each match, find the enclosing statement bounds
+  // (back to previous `;` or `{` at depth 0; forward to next `;` or `}` at
+  // depth 0) and replace the whole statement with a TODO-comment block.
+  type Range = { start: number; end: number };
+  const ranges: Range[] = [];
+  let m: RegExpExecArray | null;
+  SIBLING_CPI_RE.lastIndex = 0;
+  while ((m = SIBLING_CPI_RE.exec(body)) !== null) {
+    const crate = m[1] ?? "";
+    const isKnownExternal =
+      crate === "anchor_lang" ||
+      crate === "anchor_spl" ||
+      crate === "solana_program" ||
+      crate === "pinocchio" ||
+      crate.startsWith("spl_") ||
+      crate.startsWith("mpl_") ||
+      crate.startsWith("pyth_") ||
+      crate.startsWith("switchboard_");
+    if (isKnownExternal) continue;
+    // Walk back to `;` or `{` at paren-depth 0.
+    let pd = 0;
+    let start = 0;
+    for (let i = m.index - 1; i >= 0; i--) {
+      const ch = body[i];
+      if (ch === ")" || ch === "}" || ch === "]") pd++;
+      else if (ch === "(" || ch === "[") {
+        if (pd === 0) { start = i + 1; break; }
+        pd--;
+      } else if (ch === "{") {
+        if (pd === 0) { start = i + 1; break; }
+        pd--;
+      } else if (ch === ";" && pd === 0) { start = i + 1; break; }
+    }
+    // Walk forward to first `;` at paren-depth 0.
+    let depth = 0;
+    let end = body.length;
+    for (let i = m.index; i < body.length; i++) {
+      const ch = body[i];
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") {
+        if (depth === 0) { end = i; break; }
+        depth--;
+      } else if (ch === ";" && depth === 0) { end = i + 1; break; }
+    }
+    while (start < end && (body[start] === "\n" || body[start] === " ")) start++;
+    ranges.push({ start, end });
+  }
+  if (ranges.length === 0) return body;
+  // Merge overlapping ranges (defensive).
+  ranges.sort((a, b) => a.start - b.start);
+  const merged: Range[] = [];
+  for (const r of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+    else merged.push({ ...r });
+  }
+  let out = "";
+  let cursor = 0;
+  for (const r of merged) {
+    out += body.slice(cursor, r.start);
+    const stmt = body.slice(r.start, r.end);
+    const commented = stmt
+      .split("\n")
+      .map((line) => (line.length > 0 ? `// ${line}` : "//"))
+      .join("\n");
+    out += `// ⚠️ Anvil TODO: sibling-Anchor-program CPI — sibling crate not in target scaffold; manual port required\n${commented}`;
+    cursor = r.end;
+  }
+  out += body.slice(cursor);
+  return out;
 }
 
 export function stubAnchorOnlyImplItem(raw: string): string {
