@@ -218,6 +218,30 @@ function Section(props: { title: string; defaultOpen?: boolean; children: React.
 
 // ─── Step row ───────────────────────────────────────────────────────────────
 
+// Surface the most diagnostic lines from a BPF program log:
+//  - "Program log: <text>"  — anchor's emitErr / msg! goes here
+//  - "panicked at ..."       — Rust panics
+//  - "Error: ..." / "left: " — assertion failures inside the program
+//  - "ProgramFailedToComplete" callers usually leave their reason in the
+//     last "Program log:" line before the exit, so we keep a small tail.
+function ProgramLogPreview({ logs }: { logs: string[] | undefined }) {
+  if (!logs || logs.length === 0) return null;
+  const interesting = logs.filter((line) =>
+    /Program log: /.test(line) ||
+    /panicked at/i.test(line) ||
+    /^Error: /.test(line) ||
+    /AnchorError|Custom program error/i.test(line),
+  );
+  const tail = (interesting.length > 0 ? interesting : logs).slice(-4);
+  return (
+    <div className="mt-1 pl-2 border-l border-anvil-border-dim text-anvil-text-dim font-mono text-[9px] leading-tight whitespace-pre-wrap break-words">
+      {tail.map((line, i) => (
+        <div key={i}>{line}</div>
+      ))}
+    </div>
+  );
+}
+
 function StepRow({ idx, anchor, anvil }: { idx: number; anchor: StepOutcome; anvil?: StepOutcome }) {
   const bothOk = anchor.ok && anvil?.ok;
   const bothFailed = !anchor.ok && !anvil?.ok;
@@ -244,12 +268,19 @@ function StepRow({ idx, anchor, anvil }: { idx: number; anchor: StepOutcome; anv
         <div className="text-[10px] mt-0.5 leading-relaxed">
           {bothOk && <span className="text-anvil-teal">Both targets succeeded</span>}
           {bothFailed && expectedFail && <span className="text-anvil-teal">Both reverted as expected</span>}
-          {bothFailed && !expectedFail && <span className="text-anvil-amber-light">Both reverted unexpectedly: <span className="font-mono">{anchor.error?.slice(0, 80)}</span></span>}
+          {bothFailed && !expectedFail && (
+            <div>
+              <span className="text-anvil-amber-light">Both reverted unexpectedly: <span className="font-mono">{anchor.error?.slice(0, 80)}</span></span>
+              <ProgramLogPreview logs={anchor.logs} />
+            </div>
+          )}
           {oneFailed && (
             <div className="text-[#ffb5b5]">
               Targets disagreed: anchor {anchor.ok ? "succeeded" : "reverted"}, anvil {anvil?.ok ? "succeeded" : "reverted"}
               {!anchor.ok && <div className="text-anvil-text-dim mt-0.5 font-mono text-[9px]">anchor: {anchor.error}</div>}
               {anvil && !anvil.ok && <div className="text-anvil-text-dim mt-0.5 font-mono text-[9px]">anvil: {anvil.error}</div>}
+              {!anchor.ok && <ProgramLogPreview logs={anchor.logs} />}
+              {anvil && !anvil.ok && <ProgramLogPreview logs={anvil.logs} />}
             </div>
           )}
         </div>

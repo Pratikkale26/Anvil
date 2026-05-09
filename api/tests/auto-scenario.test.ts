@@ -490,3 +490,39 @@ describe("auto-scenario: blockers fire on unsupported shapes", () => {
     expect(JSON.stringify(r.scenario)).not.toContain("$arg:");
   });
 });
+
+describe("auto-scenario: compare scope widening (snapshot integrity)", () => {
+  test("compare.accounts includes $mint, $ata, and init'd $keypair refs", async () => {
+    // AMM has every shape: pool/vault PDAs, lp_mint init'd-non-PDA,
+    // user_token_a/b/lp_token ATAs, token_mint_a/b external $mints.
+    // Pre-widening this set was just the 4 PDAs and emit-bug-class
+    // divergences in the rest stayed hidden.
+    const ir = await parseDemo("amm.rs");
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const compare = r.scenario.compare.accounts;
+    // PDAs (bare names).
+    expect(compare).toContain("pool");
+    expect(compare).toContain("vault_a");
+    expect(compare).toContain("vault_b");
+    // $mint refs for non-init Mints.
+    expect(compare).toContain("$mint:token_mint_a");
+    expect(compare).toContain("$mint:token_mint_b");
+    // $ata refs for synthesized user TokenAccounts.
+    expect(compare).toContain("$ata:user_token_a");
+    expect(compare).toContain("$ata:user_token_b");
+    expect(compare).toContain("$ata:user_lp_token");
+    // Init'd-non-PDA $keypair (lp_mint pattern).
+    expect(compare).toContain("$keypair:lp_mint");
+  });
+
+  test("counter compare scope is unchanged (no SPL accounts in source)", async () => {
+    const ir = await parseDemo("counter.rs");
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scenario.compare.accounts).toEqual(["counter"]);
+  });
+});
+

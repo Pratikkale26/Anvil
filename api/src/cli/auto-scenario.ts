@@ -463,9 +463,34 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   });
 
   // ── (7) Comparison config ──
-  // Compare every PDA + every Signer that gets mutated (post-state lamports).
+  // Compare every PDA + every program-managed account whose state can
+  // diverge between targets:
+  //   - PDAs (state, vaults) — emit-quality of state writes
+  //   - Mints we synthesize ($mint:foo) — pre-state is byte-identical, but
+  //     a program may mint/burn against them, shifting supply
+  //   - ATAs we synthesize ($ata:foo) — most common divergence surface
+  //     (transfer_checked / mint_to / burn results)
+  //   - $keypair:foo refs that are init'd by some instruction (AMM's
+  //     lp_mint pattern) — without these, an emitter that drops Mint init
+  //     entirely produces a passing verdict because nothing in the compare
+  //     set looked at the un-init'd account
+  // Use tagged names ($mint:foo etc) so the runner's snapshot lookup can
+  // disambiguate buckets when names overlap.
   const comparedAccounts = new Set<string>();
   for (const pdaName of pdaSpecs.keys()) comparedAccounts.add(pdaName);
+  for (const mintName of mintNames) comparedAccounts.add(`$mint:${mintName}`);
+  for (const taName of tokenAccountSpecs.keys()) comparedAccounts.add(`$ata:${taName}`);
+  // Init'd-non-PDA accounts referenced in any step come back as $keypair:foo
+  // — capture those too. Excludes mint/ata names already added above.
+  const initdKeypairCompareNames = new Set<string>();
+  for (const ix of ir.instructions) {
+    for (const acc of ix.accounts) {
+      if (acc.isInit && !acc.isPda && !mintNames.has(acc.name) && !tokenAccountSpecs.has(acc.name)) {
+        initdKeypairCompareNames.add(acc.name);
+      }
+    }
+  }
+  for (const name of initdKeypairCompareNames) comparedAccounts.add(`$keypair:${name}`);
   // Detect emit/msg usage to suggest opt-in compares.
   let usesEmit = false;
   let usesMsg = false;

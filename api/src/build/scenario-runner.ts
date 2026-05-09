@@ -728,6 +728,18 @@ export function runScenarioOnSo(
   // execution. Lazy generation in resolveAccountRef gives the keypair
   // a publicKey but zero lamports. Mirror the signer-airdrop default
   // (1 SOL each).
+  //
+  // EXCEPT: keypairs that are init'd-non-PDA in any instruction (AMM's
+  // lp_mint pattern). Anchor's `init` lowering invokes
+  // SystemProgram::CreateAccount, which requires lamports=0 on the
+  // destination — pre-funding the keypair makes that CPI fail. The init
+  // CPI pays the rent itself, so an airdrop is unnecessary and harmful.
+  const initdNonPdaKeypairNames = new Set<string>();
+  for (const insn of ir.instructions) {
+    for (const acc of insn.accounts) {
+      if (acc.isInit && !acc.isPda) initdNonPdaKeypairNames.add(acc.name);
+    }
+  }
   const keypairRefNames = new Set<string>();
   for (const step of scenario.steps) {
     for (const ref of step.accounts) {
@@ -737,8 +749,10 @@ export function runScenarioOnSo(
     }
   }
   for (const name of keypairRefNames) {
-    // Force lazy generation by calling resolveAccountRef, then airdrop.
+    // Force lazy generation by calling resolveAccountRef, then airdrop
+    // (unless this keypair is going to be init'd, which requires lamports=0).
     const pk = resolveAccountRef(`$keypair:${name}`, ctx);
+    if (initdNonPdaKeypairNames.has(name)) continue;
     svm.airdrop(pk, BigInt(1_000_000_000));
   }
 
@@ -863,13 +877,28 @@ export function runScenarioOnSo(
     }
   }
 
-  // Snapshot the compare accounts.
+  // Snapshot the compare accounts. Names can resolve via signers, PDAs,
+  // mints, ATAs, or ephemeral keypair refs — all carry pubkeys that
+  // SVM may have written state to over the course of the scenario.
+  // Bare names match a unique resolution; "$mint:foo" / "$ata:foo" /
+  // "$keypair:foo" tags pin a specific bucket when names overlap.
+  const resolveCompareName = (name: string): PublicKey | undefined => {
+    if (name.startsWith("$signer:")) return ctx.signers.get(name.slice("$signer:".length))?.publicKey;
+    if (name.startsWith("$pda:"))    return ctx.pdas.get(name.slice("$pda:".length))?.pubkey;
+    if (name.startsWith("$mint:"))   return ctx.mints.get(name.slice("$mint:".length))?.keypair.publicKey;
+    if (name.startsWith("$ata:"))    return ctx.tokenAccounts.get(name.slice("$ata:".length))?.keypair.publicKey;
+    if (name.startsWith("$keypair:"))return ctx.ephemeralKeypairs.get(name.slice("$keypair:".length))?.publicKey;
+    if (ctx.signers.has(name))         return ctx.signers.get(name)!.publicKey;
+    if (ctx.pdas.has(name))            return ctx.pdas.get(name)!.pubkey;
+    if (ctx.mints.has(name))           return ctx.mints.get(name)!.keypair.publicKey;
+    if (ctx.tokenAccounts.has(name))   return ctx.tokenAccounts.get(name)!.keypair.publicKey;
+    if (ctx.ephemeralKeypairs.has(name)) return ctx.ephemeralKeypairs.get(name)!.publicKey;
+    return undefined;
+  };
   const snapshots = new Map<string, AccountSnapshot>();
   for (const accName of scenario.compare.accounts) {
-    let pubkey: PublicKey;
-    if (ctx.signers.has(accName)) pubkey = ctx.signers.get(accName)!.publicKey;
-    else if (ctx.pdas.has(accName)) pubkey = ctx.pdas.get(accName)!.pubkey;
-    else continue; // lint should have caught this
+    const pubkey = resolveCompareName(accName);
+    if (!pubkey) continue; // lint should have caught this
     const acct = svm.getAccount(pubkey);
     if (acct) {
       snapshots.set(accName, {

@@ -347,14 +347,46 @@ export function lintScenario(scenario: Scenario): ScenarioLintIssue[] {
     }
   }
 
-  // (3) compare.accounts must reference declared signers / PDAs.
+  // (3) compare.accounts must reference a declared bucket. Bare names map
+  // to signers/PDAs/mints/tokenAccounts; tagged names ($mint:foo, $ata:foo,
+  // $keypair:foo) pin a bucket — useful when names overlap or when a
+  // $keypair ref only appears inside step.accounts (e.g. AMM's lp_mint
+  // is init'd via $keypair, not declared in scenario.mints).
   for (const acc of scenario.compare.accounts) {
-    if (!signerNames.has(acc) && !pdaNames.has(acc)) {
-      issues.push({
-        severity: "error",
-        message: `compare.accounts references '${acc}' which isn't a declared signer or PDA.`,
-      });
+    if (acc.startsWith("$signer:")) {
+      const n = acc.slice("$signer:".length);
+      if (!signerNames.has(n)) issues.push({ severity: "error", message: `compare.accounts references '${acc}' but no signer '${n}' is declared.` });
+      continue;
     }
+    if (acc.startsWith("$pda:")) {
+      const n = acc.slice("$pda:".length);
+      if (!pdaNames.has(n)) issues.push({ severity: "error", message: `compare.accounts references '${acc}' but no PDA '${n}' is declared.` });
+      continue;
+    }
+    if (acc.startsWith("$mint:")) {
+      const n = acc.slice("$mint:".length);
+      if (!mintNames.has(n)) issues.push({ severity: "error", message: `compare.accounts references '${acc}' but no mint '${n}' is declared.` });
+      continue;
+    }
+    if (acc.startsWith("$ata:")) {
+      const n = acc.slice("$ata:".length);
+      if (!tokenAccountNames.has(n)) issues.push({ severity: "error", message: `compare.accounts references '${acc}' but no tokenAccount '${n}' is declared.` });
+      continue;
+    }
+    if (acc.startsWith("$keypair:")) {
+      // $keypair refs are dynamic (pre-materialized at runtime from
+      // step.accounts). Lint accepts them; runtime resolution catches
+      // missing names at that point.
+      continue;
+    }
+    if (signerNames.has(acc)) continue;
+    if (pdaNames.has(acc)) continue;
+    if (mintNames.has(acc)) continue;
+    if (tokenAccountNames.has(acc)) continue;
+    issues.push({
+      severity: "error",
+      message: `compare.accounts references '${acc}' which isn't a declared signer, PDA, mint, or tokenAccount.`,
+    });
   }
 
   // (4) assertions reference declared accounts and an in-range step.
