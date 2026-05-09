@@ -97,6 +97,30 @@ function defaultForTimestampArg(argName: string): number | undefined {
   return undefined;
 }
 
+/** Default for token-amount args. Names matching `amount`, `_in`, `size`,
+ *  `qty`, `value`, `tokens` get bumped to 1 unit at 6dp (1_000_000) so
+ *  AMM-style scenarios actually exercise transfers + don't drain reserves
+ *  after a single round trip. Slippage / lower-bound args (`_min`, `min_`)
+ *  stay at the default 1 so the bounds checks pass. The `lp_amount` /
+ *  `amount_*_min` shapes deliberately fall through (default 1) so a
+ *  remove_liquidity step doesn't withdraw every token deposited.
+ *  Returns undefined when no pattern matches — caller falls through to
+ *  DEFAULT_VALUES. */
+function defaultForAmountArg(argName: string): number | undefined {
+  const n = argName.toLowerCase();
+  // Keep small: lower-bound / minimum-out / lp burn shapes.
+  if (/^min_|_min$|^minimum_|_minimum$/.test(n)) return undefined;
+  if (n === "lp_amount" || /_lp_amount$/.test(n)) return undefined;
+  if (/^max_|_max$|^maximum_|_maximum$/.test(n)) return undefined;
+  // Fee/rate/bps patterns are basis-point shaped; small values are correct.
+  if (/_rate$|^rate_|_bps$|^bps_|fee_rate|_fee$/.test(n)) return undefined;
+  // Bump: amount-ish, size-ish, supply-ish.
+  if (/(^|_)(amount|amt|size|qty|tokens?|value|supply|balance|deposit|stake|liquidity|reserve|notional|collateral)(_|$)/.test(n)) return 1_000_000;
+  if (/_(in|out)$/.test(n)) return 1_000_000;
+  if (/_desired$/.test(n)) return 1_000_000;
+  return undefined;
+}
+
 /**
  * Recursively synthesise a default value for a custom struct / enum arg
  * by walking its TypeDef.fields. Returns undefined when the type isn't
@@ -522,9 +546,15 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       // ordering-aware defaults derived from the pinned clock so the
       // common `require!(start_ts >= clock.unix_timestamp)` /
       // `require!(end_ts > cliff_ts)` patterns pass without editing.
-      const tsDefault = /^([ui])(8|16|32|64)$/.test(arg.type) ? defaultForTimestampArg(arg.name) : undefined;
+      // Amount-shaped args (`amount`, `_in`, `size`, etc.) bump to 1
+      // unit at 6dp so AMM-style flows don't drain reserves.
+      const isInt = /^([ui])(8|16|32|64)$/.test(arg.type);
+      const tsDefault = isInt ? defaultForTimestampArg(arg.name) : undefined;
+      const amountDefault = isInt && tsDefault === undefined ? defaultForAmountArg(arg.name) : undefined;
       if (tsDefault !== undefined) {
         args[arg.name] = tsDefault;
+      } else if (amountDefault !== undefined) {
+        args[arg.name] = amountDefault;
       } else if (DEFAULT_VALUES[arg.type] !== undefined) {
         args[arg.name] = DEFAULT_VALUES[arg.type];
       } else if (/^([ui])(8|16|32|64|128)$/.test(arg.type)) {
