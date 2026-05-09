@@ -40,6 +40,7 @@ import type {
   SignerDecl,
   PdaDecl,
   MintDecl,
+  TokenAccountDecl,
 } from "../ir/scenario.js";
 
 export interface AutoScenarioBlocker {
@@ -188,12 +189,19 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   // SPL Mints that must be pre-created before step 0. The runner reads
   // scenario.mints[] and writes a real MintLayout-encoded account via
   // setAccount so transfer_checked / mint_to / burn CPIs succeed.
-  // Init'd Mints (lp_mint with init constraint) are excluded — the program
-  // itself creates those.
+  // Mints that are `init` in *any* instruction are excluded — the program
+  // creates those (AMM's lp_mint is init in initialize_pool but referenced
+  // as bare Account<'info, Mint> in add_liquidity/swap/etc).
+  const initdMintNames = new Set<string>();
+  for (const ix of ir.instructions) {
+    for (const acc of ix.accounts) {
+      if (acc.accountType === "Mint" && acc.isInit) initdMintNames.add(acc.name);
+    }
+  }
   const mintNames = new Set<string>();
   for (const ix of ir.instructions) {
     for (const acc of ix.accounts) {
-      if (acc.accountType === "Mint" && !acc.isInit && !acc.isPda) {
+      if (acc.accountType === "Mint" && !acc.isInit && !acc.isPda && !initdMintNames.has(acc.name)) {
         mintNames.add(acc.name);
       }
     }
@@ -204,26 +212,160 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     });
   }
 
-  // ── (3) Collect every PDA across all instructions, derive seeds ──
-  //
-  // Pre-pass: gather every PDA NAME first so synthesizeSeeds can verify
-  // that `<other>.key().as_ref()` references resolve to a real PDA in the
-  // scenario, not silently route to a non-existent one. Without this,
-  // AMM-style `init_pool` with seeds = [b"pool", token_mint_a.key().as_ref(),
-  // token_mint_b.key().as_ref()] emitted `$pda:token_mint_a.pubkey` even
-  // though token_mint_a is a Mint account (not a PDA), and the resulting
-  // scenario failed lint with a confusing post-hoc error.
+  // ── (2-pre) Pre-compute PDA names so tagFor() in (2d) can reference them.
   const allPdaNames = new Set<string>();
   for (const ix of ir.instructions) {
     for (const acc of ix.accounts) {
       if (acc.isPda) allPdaNames.add(acc.name);
     }
   }
+
+  // ── (2c) Build state-field-map: for each `<acc>.<field> = ctx.accounts.<src>.key()`
+  // body assignment, record what `<src>` resolves to. Lets us translate state-derived
+  // PDA seeds (`pool.token_mint_a.as_ref()`) AND state-derived ATA mint constraints
+  // (`token::mint = pool.token_mint_a`) back to their source-account tags.
+  // Without this, AMM's add_liquidity / swap PDAs would block with "state-derived"
+  // errors even though the post-init value is statically determinable from
+  // initialize_pool's body.
+  const stateFieldMap = new Map<string, Map<string, string>>(); // account → field → source-name
+  for (const ix of ir.instructions) {
+    for (const stmt of ix.body) {
+      if (stmt.kind !== "state_field_assign") continue;
+      const m = stmt.value.trim().match(/^ctx\.accounts\.([a-zA-Z_][a-zA-Z0-9_]*)\.key\(\)$/);
+      if (!m?.[1]) continue;
+      let inner = stateFieldMap.get(stmt.account);
+      if (!inner) { inner = new Map(); stateFieldMap.set(stmt.account, inner); }
+      if (!inner.has(stmt.field)) inner.set(stmt.field, m[1]);
+    }
+  }
+
+  // ── (2d) Collect non-init non-PDA TokenAccount accounts. These are user-side
+  // ATAs (or generic SPL token accounts) that must be pre-created with a starting
+  // balance so transfer_checked CPIs succeed.
+  // Mint resolution: read the `token::mint` constraint. Direct ident → tagFor(name).
+  // State-derived (`pool.token_mint_a`) → look up stateFieldMap.
+  // Owner: `token::authority` constraint or first signer fallback.
+  const tokenAccountSpecs = new Map<string, { mint: string; owner: string; sourceIx: string }>();
+  const taBlockers: AutoScenarioBlocker[] = [];
+
+  const tagFor = (name: string): string | undefined => {
+    if (signerNames.has(name)) return `$signer:${name}`;
+    if (allPdaNames.has(name)) return `$pda:${name}`;
+    if (mintNames.has(name)) return `$mint:${name}`;
+    return undefined;
+  };
+
+  const resolveStateDerivedTag = (expr: string): string | undefined => {
+    const m = expr.trim().match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)$/);
+    if (!m?.[1] || !m[2]) return undefined;
+    const src = stateFieldMap.get(m[1])?.get(m[2]);
+    if (!src) return undefined;
+    return tagFor(src);
+  };
+
+  // Pre-scan: TokenAccount names that are init'd in *any* instruction. These
+  // are program-created and shouldn't be pre-synthesized as ATAs even when
+  // a later instruction references them as non-init (marketplace's `vault`).
+  const initdTokenAccountNames = new Set<string>();
+  for (const ix of ir.instructions) {
+    for (const acc of ix.accounts) {
+      if (acc.accountType === "TokenAccount" && acc.isInit) {
+        initdTokenAccountNames.add(acc.name);
+      }
+    }
+  }
+
+  for (const ix of ir.instructions) {
+    for (const acc of ix.accounts) {
+      if (acc.accountType !== "TokenAccount") continue;
+      if (acc.isInit || acc.isPda) continue;
+      if (initdTokenAccountNames.has(acc.name)) continue;
+      if (tokenAccountSpecs.has(acc.name)) continue;
+
+      const mintConstraint = acc.constraints.find((c) => c.kind === "token::mint" || c.kind === "associated_token::mint");
+      const authorityConstraint = acc.constraints.find((c) => c.kind === "token::authority" || c.kind === "associated_token::authority");
+
+      // Resolve mint
+      let mintTag: string | undefined;
+      let mintWasDefaulted = false;
+      if (mintConstraint?.value) {
+        const v = mintConstraint.value.trim();
+        // Direct ident: lp_mint, token_mint_a, etc.
+        if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(v)) {
+          mintTag = tagFor(v) ?? `$keypair:${v}`;
+        } else {
+          // State-derived: pool.token_mint_a → look up in stateFieldMap.
+          mintTag = resolveStateDerivedTag(v);
+        }
+      }
+      if (!mintTag) {
+        // No explicit token::mint constraint, OR an unrecognised expression.
+        // Common pattern: user-side TokenAccounts where the program checks
+        // mint identity manually in the body (spl-transfer/spl-burn/swap).
+        // Default to the first declared mint so the scenario synthesizes;
+        // both targets see the same default, byte-equal verdict still holds.
+        // If no Mint is declared anywhere, synthesize an implicit default mint.
+        let firstMint = [...mintNames][0];
+        if (!firstMint) {
+          firstMint = "__default_mint";
+          mintNames.add(firstMint);
+        }
+        mintTag = `$mint:${firstMint}`;
+        mintWasDefaulted = true;
+      }
+
+      // Resolve owner
+      let ownerTag: string | undefined;
+      if (authorityConstraint?.value) {
+        const v = authorityConstraint.value.trim();
+        if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(v)) {
+          ownerTag = tagFor(v) ?? `$keypair:${v}`;
+        } else {
+          ownerTag = resolveStateDerivedTag(v);
+        }
+      }
+      if (!ownerTag) {
+        // Fall back to first signer (typical user-token-account pattern).
+        const firstSigner = [...signerNames][0];
+        if (!firstSigner) {
+          taBlockers.push({
+            message: `Token account \`${acc.name}\` (in instruction \`${ix.name}\`) has no \`token::authority\` constraint and no signer is declared in the scenario.`,
+            context: { instruction: ix.name, account: acc.name },
+          });
+          continue;
+        }
+        ownerTag = `$signer:${firstSigner}`;
+      }
+
+      tokenAccountSpecs.set(acc.name, { mint: mintTag, owner: ownerTag, sourceIx: ix.name });
+      if (mintWasDefaulted) {
+        notes.push({
+          message: `Defaulted token::mint for \`${acc.name}\` to \`${mintTag}\` (no explicit constraint in source). Both targets see the same default — byte-equal verdict still valid. Edit scenario.tokenAccounts[].mint if your test needs a specific mint.`,
+          context: { instruction: ix.name, account: acc.name },
+        });
+      }
+    }
+  }
+  if (taBlockers.length > 0) blockers.push(...taBlockers);
+  if (tokenAccountSpecs.size > 0) {
+    notes.push({
+      message: `Auto-synthesized ${tokenAccountSpecs.size} SPL Token Account(s): ${[...tokenAccountSpecs.keys()].join(", ")}. Pre-created with balance=1_000_000_000 each. Edit scenario.tokenAccounts[] for different balances.`,
+    });
+  }
+
+  // ── (3) Derive PDA seeds for every PDA collected above ──
   const pdaSpecs = new Map<string, { seeds: string[]; sourceIx: string }>();
   for (const ix of ir.instructions) {
     for (const acc of ix.accounts) {
       if (acc.isPda && !pdaSpecs.has(acc.name)) {
-        const seedResult = synthesizeSeeds(acc.pdaSeeds, signerNames, allPdaNames, mintNames, acc.name);
+        const seedResult = synthesizeSeeds(
+          acc.pdaSeeds,
+          signerNames,
+          allPdaNames,
+          mintNames,
+          stateFieldMap,
+          acc.name,
+        );
         if (!seedResult.ok) {
           blockers.push({
             message: `PDA \`${acc.name}\` (in instruction \`${ix.name}\`) has seeds Anvil can't auto-derive: ${seedResult.reason}. Provide the seeds via "Edit as JSON".`,
@@ -245,6 +387,8 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       if (SUPPORTED_NON_PROGRAM_TYPES.has(acc.accountType)) continue;
       // Non-init Mints are handled by $mint synthesis (S1).
       if (acc.accountType === "Mint" && !acc.isInit) continue;
+      // Non-init TokenAccounts are handled by $ata synthesis (S2).
+      if (acc.accountType === "TokenAccount" && !acc.isInit && tokenAccountSpecs.has(acc.name)) continue;
       // It's a custom account type without an `init`-derived PDA.
       // Could be: an existing PDA from an earlier handler, OR an externally-
       // created account the user must provide. We can't tell from the IR
@@ -301,6 +445,9 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       if (acc.accountType === "Mint" && !acc.isInit && mintNames.has(acc.name)) {
         return `$mint:${acc.name}`;
       }
+      if (acc.accountType === "TokenAccount" && !acc.isInit && tokenAccountSpecs.has(acc.name)) {
+        return `$ata:${acc.name}`;
+      }
       const knownProg = KNOWN_PROGRAM_TYPES[acc.accountType];
       if (knownProg) return `$program:${knownProg}`;
       // Fallback: ephemeral keypair (lazy-generated by the runner).
@@ -356,6 +503,13 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       program: "token",
       // mintAuthority defaults to first signer at runtime.
     })),
+    tokenAccounts: [...tokenAccountSpecs.entries()].map<TokenAccountDecl>(([name, spec]) => ({
+      name,
+      mint: spec.mint,
+      owner: spec.owner,
+      balance: 1_000_000_000,
+      program: "token",
+    })),
     steps,
     compare: {
       accounts: [...comparedAccounts],
@@ -409,6 +563,7 @@ function synthesizeSeeds(
   signerNames: Set<string>,
   pdaNames: Set<string>,
   mintNames: Set<string>,
+  stateFieldMap: Map<string, Map<string, string>>,
   accountName: string,
 ): SeedSynthesis {
   if (rawSeeds.length === 0) {
@@ -478,18 +633,39 @@ function synthesizeSeeds(
       // Skip -- find_program_address will derive the canonical bump.
       continue;
     }
-    // <state>.field.as_ref() / <state>.field.to_le_bytes() -- state-dependent
-    // seed reference. The runtime resolver was authored speculatively but
-    // never landed (resolveSeedExpression refuses these tags). Block here
-    // instead of emitting a tag the runner will reject -- gives the user a
-    // clear "this PDA needs manual seeds" message in the workbench rather
-    // than a runtime error after they hit Run.
-    const stateFieldMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\.(as_ref\(\)|to_le_bytes\(\)|to_le_bytes\(\)\.as_ref\(\))$/);
+    // <state>.field.as_ref() / <state>.field.to_le_bytes() -- state-derived
+    // seed reference. We resolve at synthesis time by walking the IR's
+    // body for `<state>.<field> = ctx.accounts.<src>.key()` assignments and
+    // mapping back to the source account's tag. AMM's add_liquidity has
+    // seeds = [b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()]
+    // — initialize_pool's body sets pool.token_mint_a = ctx.accounts.token_mint_a.key(),
+    // so we emit `$mint:token_mint_a.pubkey` (same value the program will
+    // see at runtime).
+    //
+    // .to_le_bytes() shapes (numeric state fields) aren't handled — those
+    // would need to know the value at synthesis time, which we don't.
+    const stateFieldMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\.as_ref\(\)$/);
     if (stateFieldMatch?.[1] && stateFieldMatch[2]) {
+      const src = stateFieldMap.get(stateFieldMatch[1])?.get(stateFieldMatch[2]);
+      if (src) {
+        if (signerNames.has(src)) { out.push(`$signer:${src}.pubkey`); continue; }
+        if (pdaNames.has(src)) { out.push(`$pda:${src}.pubkey`); continue; }
+        if (mintNames.has(src)) { out.push(`$mint:${src}.pubkey`); continue; }
+      }
       return {
         ok: false,
         seeds: [],
-        reason: `seed \`${trimmed}\` is state-derived (reads field \`${stateFieldMatch[2]}\` of account \`${stateFieldMatch[1]}\` after a prior step). Auto-scenario can't synthesize a stable seed for this — the field's value depends on runtime execution. Author the seed manually via "Edit as JSON" with an explicit \`bytes:0x…\` of the expected post-init value, or use the CLI \`anvil-sol differential\` for direct control.`,
+        reason: `seed \`${trimmed}\` is state-derived (reads field \`${stateFieldMatch[2]}\` of account \`${stateFieldMatch[1]}\`). Auto-scenario traced the source assignment but couldn't resolve it to a known signer/PDA/mint. Author the seed manually via "Edit as JSON".`,
+      };
+    }
+    // <state>.field.to_le_bytes() / <state>.field.to_le_bytes().as_ref() —
+    // numeric state field. Synthesizer can't know the post-init value.
+    const stateNumericMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\.(to_le_bytes\(\)|to_le_bytes\(\)\.as_ref\(\))$/);
+    if (stateNumericMatch?.[1] && stateNumericMatch[2]) {
+      return {
+        ok: false,
+        seeds: [],
+        reason: `seed \`${trimmed}\` reads numeric state field \`${stateNumericMatch[2]}\` of account \`${stateNumericMatch[1]}\` whose value is set at runtime. Auto-scenario can't synthesize a stable seed; replace with explicit \`bytes:0x…\` via "Edit as JSON".`,
       };
     }
     // <arg>.<chain>: single-segment receiver followed by one or two of

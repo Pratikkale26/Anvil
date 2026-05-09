@@ -279,6 +279,120 @@ describe("auto-scenario: blockers fire on unsupported shapes", () => {
     expect(r.scenario.steps[0]!.accounts).toContain("$mint:token_mint_a");
   });
 
+  test("state-derived seed `<acc>.<field>.as_ref()` resolves via stateFieldMap (S3)", () => {
+    // initialize_pool sets pool.token_mint_a = ctx.accounts.token_mint_a.key().
+    // add_liquidity's pool PDA seeds reference pool.token_mint_a.as_ref().
+    // Synthesizer should map back to the original token_mint_a → $mint.
+    const ir = {
+      name: "amm_like_state",
+      instructions: [
+        {
+          name: "initialize_pool",
+          accounts: [
+            { name: "authority", accountType: "Signer", isSigner: true, isMut: true, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+            { name: "pool", accountType: "Pool", isSigner: false, isMut: true, isInit: true, isOptional: false, isPda: true,
+              pdaSeeds: ['b"pool"', "token_mint_a.key().as_ref()"], constraints: [] },
+            { name: "token_mint_a", accountType: "Mint", isSigner: false, isMut: false, isInit: false, isOptional: false, isPda: false,
+              pdaSeeds: [], constraints: [] },
+          ],
+          args: [],
+          body: [
+            { kind: "state_field_assign" as const, account: "pool", field: "token_mint_a", value: "ctx.accounts.token_mint_a.key()" },
+          ],
+          bodyLocs: [],
+        },
+        {
+          name: "add_liquidity",
+          accounts: [
+            { name: "user", accountType: "Signer", isSigner: true, isMut: true, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+            { name: "pool", accountType: "Pool", isSigner: false, isMut: true, isInit: false, isOptional: false, isPda: true,
+              pdaSeeds: ['b"pool"', "pool.token_mint_a.as_ref()"], constraints: [] },
+          ],
+          args: [],
+          body: [],
+          bodyLocs: [],
+        },
+      ],
+      accounts: [{ name: "Pool", fields: [{ name: "token_mint_a", type: "Pubkey" as const }] }],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor" as const, anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const poolPda = r.scenario.pdas.find((p) => p.name === "pool");
+    expect(poolPda).toBeDefined();
+    expect(poolPda!.seeds).toEqual(['b"pool"', "$mint:token_mint_a.pubkey"]);
+  });
+
+  test("non-init TokenAccount with token::mint state-derived -> $ata synthesis (S2)", () => {
+    const ir = {
+      name: "ata_state",
+      instructions: [
+        {
+          name: "initialize_pool",
+          accounts: [
+            { name: "authority", accountType: "Signer", isSigner: true, isMut: true, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+            { name: "pool", accountType: "Pool", isSigner: false, isMut: true, isInit: true, isOptional: false, isPda: true,
+              pdaSeeds: ['b"pool"', "token_mint_a.key().as_ref()"], constraints: [] },
+            { name: "token_mint_a", accountType: "Mint", isSigner: false, isMut: false, isInit: false, isOptional: false, isPda: false,
+              pdaSeeds: [], constraints: [] },
+          ],
+          args: [],
+          body: [
+            { kind: "state_field_assign" as const, account: "pool", field: "token_mint_a", value: "ctx.accounts.token_mint_a.key()" },
+          ],
+          bodyLocs: [],
+        },
+        {
+          name: "add_liquidity",
+          accounts: [
+            { name: "user", accountType: "Signer", isSigner: true, isMut: true, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+            { name: "pool", accountType: "Pool", isSigner: false, isMut: true, isInit: false, isOptional: false, isPda: true,
+              pdaSeeds: ['b"pool"', "pool.token_mint_a.as_ref()"], constraints: [] },
+            { name: "user_token_a", accountType: "TokenAccount", isSigner: false, isMut: true, isInit: false, isOptional: false, isPda: false,
+              pdaSeeds: [],
+              constraints: [
+                { kind: "mut" as const },
+                { kind: "token::mint" as const, value: "pool.token_mint_a" },
+                { kind: "token::authority" as const, value: "user" },
+              ],
+            },
+          ],
+          args: [],
+          body: [],
+          bodyLocs: [],
+        },
+      ],
+      accounts: [{ name: "Pool", fields: [{ name: "token_mint_a", type: "Pubkey" as const }] }],
+      types: [],
+      constants: [],
+      errors: [],
+      helperFns: [],
+      events: [],
+      imports: [],
+      userTraitImpls: [],
+      warnings: [],
+      metadata: { sourceFramework: "anchor" as const, anvilVersion: "0.2.0", parsedAt: new Date().toISOString() },
+    };
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scenario.tokenAccounts.length).toBe(1);
+    const userAta = r.scenario.tokenAccounts[0]!;
+    expect(userAta.name).toBe("user_token_a");
+    expect(userAta.mint).toBe("$mint:token_mint_a");
+    expect(userAta.owner).toBe("$signer:user");
+    expect(r.scenario.steps[1]!.accounts).toContain("$ata:user_token_a");
+  });
+
   test("arg-derived seed -> blocker, no $arg: tag emitted", () => {
     const ir = {
       name: "arg_seed_demo",

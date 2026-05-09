@@ -12,7 +12,9 @@ import { MintLayout, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import {
   resolveScenarioContext,
   installMintAccounts,
+  installTokenAccounts,
 } from "../src/build/scenario-runner.ts";
+import { AccountLayout } from "@solana/spl-token";
 import { ScenarioSchema } from "../src/ir/scenario.ts";
 
 describe("installMintAccounts: pre-creates real SPL Mints", () => {
@@ -75,6 +77,38 @@ describe("installMintAccounts: pre-creates real SPL Mints", () => {
       programId,
     );
     expect(pool!.pubkey.equals(expected)).toBe(true);
+  });
+
+  test("declared tokenAccount becomes a 165-byte AccountLayout-encoded account (S2)", () => {
+    const scenario = ScenarioSchema.parse({
+      version: 1,
+      signers: [{ name: "user" }],
+      mints: [{ name: "usdc", decimals: 6, supply: 0, program: "token" }],
+      tokenAccounts: [
+        { name: "user_usdc", mint: "$mint:usdc", owner: "$signer:user", balance: 5_000_000, program: "token" },
+      ],
+      pdas: [],
+      steps: [{ ix: "noop", args: {}, accounts: [] }],
+    });
+    const programId = Keypair.generate().publicKey;
+    const ctx = resolveScenarioContext(scenario, programId);
+
+    const svm = new LiteSVM();
+    installMintAccounts(svm, ctx);
+    installTokenAccounts(svm, ctx);
+
+    const ta = ctx.tokenAccounts.get("user_usdc");
+    expect(ta).toBeDefined();
+    const info = svm.getAccount(ta!.keypair.publicKey);
+    expect(info).not.toBeNull();
+    expect(info!.data.length).toBe(165);
+    expect(new PublicKey(info!.owner).equals(TOKEN_PROGRAM_ID)).toBe(true);
+
+    const decoded = AccountLayout.decode(Buffer.from(info!.data));
+    expect(decoded.amount).toBe(5_000_000n);
+    expect(decoded.mint.equals(ctx.mints.get("usdc")!.keypair.publicKey)).toBe(true);
+    expect(decoded.owner.equals(ctx.signers.get("user")!.publicKey)).toBe(true);
+    expect(decoded.state).toBe(1); // Initialized
   });
 
   test("token_2022 program declaration installs with TOKEN_2022_PROGRAM_ID owner", async () => {

@@ -42,7 +42,7 @@ import { z } from "zod";
 // before the request fires.
 
 const AccountRefSchema = z.string().regex(
-  /^(?:\$signer:[a-zA-Z_][a-zA-Z0-9_]*|\$pda:[a-zA-Z_][a-zA-Z0-9_]*|\$program:(?:system|token|token_2022|associated_token|memo|rent|clock)|\$keypair:[a-zA-Z_][a-zA-Z0-9_]*|\$mint:[a-zA-Z_][a-zA-Z0-9_]*|\$state:[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*|\$arg:[a-zA-Z_][a-zA-Z0-9_]*|[1-9A-HJ-NP-Za-km-z]{32,44})$/,
+  /^(?:\$signer:[a-zA-Z_][a-zA-Z0-9_]*|\$pda:[a-zA-Z_][a-zA-Z0-9_]*|\$program:(?:system|token|token_2022|associated_token|memo|rent|clock)|\$keypair:[a-zA-Z_][a-zA-Z0-9_]*|\$mint:[a-zA-Z_][a-zA-Z0-9_]*|\$ata:[a-zA-Z_][a-zA-Z0-9_]*|\$state:[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*|\$arg:[a-zA-Z_][a-zA-Z0-9_]*|[1-9A-HJ-NP-Za-km-z]{32,44})$/,
 );
 
 // ─── Signer declaration ─────────────────────────────────────────────────────
@@ -93,6 +93,29 @@ export const MintDeclSchema = z.object({
   /** Optional freeze authority signer name. Default: none. */
   freezeAuthority: z.string().optional(),
   /** Token program owner. Default "token" (Token-2022 deferred). */
+  program: z.enum(["token", "token_2022"]).default("token"),
+});
+
+// ─── SPL Token Account (ATA) declaration ────────────────────────────────────
+//
+// Pre-create an SPL Token Account before step 0 with a starting balance, so
+// transfer_checked / mint_to / burn CPIs against this account succeed at
+// runtime. The runner writes a 165-byte AccountLayout-encoded account owned
+// by the token program.
+//
+// `mint` and `owner` are tag references (`$mint:foo` / `$pda:foo` / `$signer:foo`).
+// Auto-scenario derives them from the source's `token::mint = X` and
+// `token::authority = X` constraints.
+
+export const TokenAccountDeclSchema = z.object({
+  name: z.string().min(1),
+  /** Mint reference tag, e.g. `$mint:token_mint_a` or `$pda:lp_mint`. */
+  mint: z.string(),
+  /** Owner reference tag, e.g. `$signer:authority` or `$pda:pool`. */
+  owner: z.string(),
+  /** Initial token balance (raw amount, not decimals-adjusted). Default 1_000_000_000. */
+  balance: z.union([z.number().int().min(0), z.string()]).default(1_000_000_000),
+  /** Token program owner. Default "token" (matches the corresponding mint). */
   program: z.enum(["token", "token_2022"]).default("token"),
 });
 
@@ -197,6 +220,10 @@ export const ScenarioSchema = z.object({
   /** SPL Mints the runtime pre-creates before step 0. Auto-scenario synthesizes
    *  these from non-init `Account<'info, Mint>` references. */
   mints: z.array(MintDeclSchema).default([]),
+  /** SPL Token Accounts the runtime pre-creates before step 0 with a starting
+   *  balance. Auto-scenario synthesizes these from non-init `Account<'info, TokenAccount>`
+   *  references using their token::mint / token::authority constraints. */
+  tokenAccounts: z.array(TokenAccountDeclSchema).default([]),
   /** Ordered instruction sequence. Steps execute in array order. */
   steps: z.array(ScenarioStepSchema).min(1),
   compare: CompareConfigSchema.default({
@@ -215,6 +242,7 @@ export type Scenario = z.infer<typeof ScenarioSchema>;
 export type SignerDecl = z.infer<typeof SignerDeclSchema>;
 export type PdaDecl = z.infer<typeof PdaDeclSchema>;
 export type MintDecl = z.infer<typeof MintDeclSchema>;
+export type TokenAccountDecl = z.infer<typeof TokenAccountDeclSchema>;
 export type CompareConfig = z.infer<typeof CompareConfigSchema>;
 export type ScenarioAssertion = z.infer<typeof ScenarioAssertionSchema>;
 export type ClockPin = z.infer<typeof ClockPinSchema>;
@@ -268,6 +296,13 @@ export function lintScenario(scenario: Scenario): ScenarioLintIssue[] {
       issues.push({ severity: "error", message: `Mint '${m.name}' references freezeAuthority signer '${m.freezeAuthority}' which isn't declared.` });
     }
   }
+  const tokenAccountNames = new Set<string>();
+  for (const ta of scenario.tokenAccounts) {
+    if (tokenAccountNames.has(ta.name)) {
+      issues.push({ severity: "error", message: `Duplicate tokenAccount name '${ta.name}'.` });
+    }
+    tokenAccountNames.add(ta.name);
+  }
 
   // (2) Every $signer / $pda / $mint reference must resolve to a declared name.
   const isRef = (s: string, prefix: string) => s.startsWith(`${prefix}:`);
@@ -288,6 +323,11 @@ export function lintScenario(scenario: Scenario): ScenarioLintIssue[] {
       const name = refName(acc, "$mint");
       if (!mintNames.has(name)) {
         issues.push({ severity: "error", message: `Account reference '${acc}' points at mint '${name}' which isn't declared in scenario.mints[].`, ...location });
+      }
+    } else if (isRef(acc, "$ata")) {
+      const name = refName(acc, "$ata");
+      if (!tokenAccountNames.has(name)) {
+        issues.push({ severity: "error", message: `Account reference '${acc}' points at tokenAccount '${name}' which isn't declared in scenario.tokenAccounts[].`, ...location });
       }
     } else if (isRef(acc, "$keypair")) {
       // $keypair is a runtime-generated throwaway -- no need to declare.

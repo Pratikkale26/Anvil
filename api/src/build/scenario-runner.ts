@@ -27,7 +27,7 @@ import {
   TransactionInstruction,
   SystemProgram,
 } from "@solana/web3.js";
-import { MintLayout, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { MintLayout, AccountLayout, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { createHash } from "node:crypto";
 import type { Scenario, ScenarioStep, ScenarioAssertion } from "../ir/scenario.js";
 import type { SolanaIR } from "../ir/schema.js";
@@ -52,6 +52,8 @@ export interface ResolvedScenarioContext {
   pdas: Map<string, { pubkey: PublicKey; bump: number }>;
   /** Pre-generated SPL Mint keypairs — one per scenario.mints[] entry. */
   mints: Map<string, { keypair: Keypair; programOwner: PublicKey; decimals: number; mintAuthority: PublicKey; freezeAuthority?: PublicKey; supply: bigint }>;
+  /** Pre-generated SPL Token Account keypairs — one per scenario.tokenAccounts[] entry. */
+  tokenAccounts: Map<string, { keypair: Keypair; mint: PublicKey; owner: PublicKey; balance: bigint; programOwner: PublicKey }>;
   /** Throwaway $keypair:foo references — generated lazily on first ref. */
   ephemeralKeypairs: Map<string, Keypair>;
 }
@@ -104,7 +106,79 @@ export function resolveScenarioContext(
     }
   }
 
-  return { programId, signers, pdas, mints, ephemeralKeypairs: new Map() };
+  // Pre-materialize ephemeral keypairs for any $keypair:X seen anywhere in the
+  // scenario (steps' accounts[] / tokenAccounts[].mint / .owner). Without this,
+  // tokenAccount resolution would fail for cases like AMM's user_lp_token whose
+  // mint references a Mint that the program init's at step 0 (the runner emits
+  // `$keypair:lp_mint` rather than `$mint:lp_mint`).
+  const ephemeralKeypairs = new Map<string, Keypair>();
+  const ensureEphemeral = (name: string): Keypair => {
+    let kp = ephemeralKeypairs.get(name);
+    if (!kp) { kp = Keypair.generate(); ephemeralKeypairs.set(name, kp); }
+    return kp;
+  };
+  const collectKeypairRefs = (ref: string): void => {
+    if (ref.startsWith("$keypair:")) ensureEphemeral(ref.slice("$keypair:".length).split(".")[0]!);
+  };
+  for (const step of scenario.steps) for (const ref of step.accounts) collectKeypairRefs(ref);
+  for (const ta of scenario.tokenAccounts) {
+    collectKeypairRefs(ta.mint);
+    collectKeypairRefs(ta.owner);
+  }
+
+  // Token accounts depend on mints/pdas/signers/ephemeralKeypairs being resolved already.
+  const tokenAccounts: ResolvedScenarioContext["tokenAccounts"] = new Map();
+  for (const decl of scenario.tokenAccounts) {
+    const programOwner = decl.program === "token_2022" ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+    tokenAccounts.set(decl.name, {
+      keypair: Keypair.generate(),
+      mint: resolvePubkeyTag(decl.mint, signers, pdas, mints, ephemeralKeypairs, decl.name, "mint"),
+      owner: resolvePubkeyTag(decl.owner, signers, pdas, mints, ephemeralKeypairs, decl.name, "owner"),
+      balance: typeof decl.balance === "string" ? BigInt(decl.balance) : BigInt(decl.balance),
+      programOwner,
+    });
+  }
+
+  return { programId, signers, pdas, mints, tokenAccounts, ephemeralKeypairs };
+}
+
+/** Resolve a `$signer:name` / `$pda:name` / `$mint:name` / `$keypair:name` tag
+ *  to its pubkey for use in tokenAccounts[].mint / .owner declarations. */
+function resolvePubkeyTag(
+  tag: string,
+  signers: Map<string, Keypair>,
+  pdas: Map<string, { pubkey: PublicKey; bump: number }>,
+  mints: ResolvedScenarioContext["mints"],
+  ephemeralKeypairs: Map<string, Keypair>,
+  taName: string,
+  field: "mint" | "owner",
+): PublicKey {
+  if (tag.startsWith("$signer:")) {
+    const n = tag.slice("$signer:".length);
+    const kp = signers.get(n);
+    if (!kp) throw new Error(`tokenAccount '${taName}' ${field}='${tag}' references undeclared signer '${n}'`);
+    return kp.publicKey;
+  }
+  if (tag.startsWith("$pda:")) {
+    const n = tag.slice("$pda:".length);
+    const p = pdas.get(n);
+    if (!p) throw new Error(`tokenAccount '${taName}' ${field}='${tag}' references PDA '${n}' that wasn't declared earlier`);
+    return p.pubkey;
+  }
+  if (tag.startsWith("$mint:")) {
+    const n = tag.slice("$mint:".length);
+    const m = mints.get(n);
+    if (!m) throw new Error(`tokenAccount '${taName}' ${field}='${tag}' references mint '${n}' that wasn't declared`);
+    return m.keypair.publicKey;
+  }
+  if (tag.startsWith("$keypair:")) {
+    const n = tag.slice("$keypair:".length);
+    const kp = ephemeralKeypairs.get(n);
+    if (!kp) throw new Error(`tokenAccount '${taName}' ${field}='${tag}' references keypair '${n}' that wasn't pre-materialized`);
+    return kp.publicKey;
+  }
+  // Raw base58 fallback.
+  return new PublicKey(tag);
 }
 
 /**
@@ -247,6 +321,12 @@ export function resolveAccountRef(ref: string, ctx: ResolvedScenarioContext): Pu
     if (!m) throw new Error(`account ref '${ref}' references undeclared mint '${name}'`);
     return m.keypair.publicKey;
   }
+  if (ref.startsWith("$ata:")) {
+    const name = ref.slice("$ata:".length).split(".")[0]!;
+    const ta = ctx.tokenAccounts.get(name);
+    if (!ta) throw new Error(`account ref '${ref}' references undeclared tokenAccount '${name}'`);
+    return ta.keypair.publicKey;
+  }
   if (ref.startsWith("$program:")) {
     const name = ref.slice("$program:".length);
     const id = KNOWN_PROGRAMS[name];
@@ -299,6 +379,47 @@ export function installMintAccounts(svm: LiteSVM, ctx: ResolvedScenarioContext):
       lamports: MINT_RENT_EXEMPT_LAMPORTS,
       data,
       owner: mint.programOwner,
+      executable: false,
+      rentEpoch: 0,
+    });
+  }
+}
+
+// ─── SPL Token Account pre-creation ─────────────────────────────────────────
+//
+// Same pattern as installMintAccounts but for SPL Token Account state:
+// 165-byte AccountLayout (mint + owner + amount + delegate + state +
+// is_native + delegated_amount + close_authority). State byte = 1
+// (Initialized). All COption flags zeroed (no delegate, not native, no
+// close authority).
+
+const TOKEN_ACCOUNT_SIZE = 165;
+// Same approximate rent value the system program would compute for 165 bytes.
+const TOKEN_ACCOUNT_RENT_EXEMPT_LAMPORTS = 2_039_280;
+
+export function installTokenAccounts(svm: LiteSVM, ctx: ResolvedScenarioContext): void {
+  for (const [, ta] of ctx.tokenAccounts) {
+    const data = Buffer.alloc(TOKEN_ACCOUNT_SIZE);
+    AccountLayout.encode(
+      {
+        mint: ta.mint,
+        owner: ta.owner,
+        amount: ta.balance,
+        delegateOption: 0,
+        delegate: PublicKey.default,
+        state: 1, // Initialized
+        isNativeOption: 0,
+        isNative: BigInt(0),
+        delegatedAmount: BigInt(0),
+        closeAuthorityOption: 0,
+        closeAuthority: PublicKey.default,
+      },
+      data,
+    );
+    svm.setAccount(ta.keypair.publicKey, {
+      lamports: TOKEN_ACCOUNT_RENT_EXEMPT_LAMPORTS,
+      data,
+      owner: ta.programOwner,
       executable: false,
       rentEpoch: 0,
     });
@@ -579,9 +700,10 @@ export function runScenarioOnSo(
   // Deploy the program at scenario's programId (or IR's declared id).
   svm.addProgram(ctx.programId, programSo);
 
-  // Pre-create SPL Mint accounts before step 0 so subsequent CPIs that
-  // touch these mints (transfer_checked, mint_to, burn) succeed.
+  // Pre-create SPL Mint + Token Account state before step 0 so subsequent
+  // CPIs (transfer_checked, mint_to, burn) succeed against real layouts.
   installMintAccounts(svm, ctx);
+  installTokenAccounts(svm, ctx);
 
   // Airdrop signers.
   for (const decl of scenario.signers) {
