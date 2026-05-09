@@ -1564,6 +1564,50 @@ export class BodyWalker {
           if (hasBodyStateAccess) continue;
           const accountInfo = this.resolveAccountInfoVar(accountName);
           const typeName = account.accountType;
+          // SPL TokenAccount + Mint have well-known layouts and read APIs.
+          // Anchor's `Account<'info, TokenAccount>` / `InterfaceAccount<'info,
+          // TokenAccount>` cases hit here — they aren't `isGeneratedStateType`
+          // (TokenAccount lives in spl_token, not the user's program) but
+          // has_one against their `.mint` / `.owner` fields is still
+          // load-bearing (mint mismatches are a classic exploit vector).
+          // Special-case the read with target-specific SPL deserialize.
+          if (typeName === "TokenAccount" || typeName === "Mint") {
+            // Only enforce has_one on the canonical Pubkey fields. Other
+            // fields (amount, supply, decimals, ...) wouldn't ever be a
+            // has_one target — Anchor would reject the parse.
+            const validFields = typeName === "TokenAccount"
+              ? new Set(["mint", "owner", "delegate", "close_authority"])
+              : new Set(["mint_authority", "freeze_authority"]);
+            if (!validFields.has(targetField)) continue;
+            const localVar = `__ha_${accountName}`;
+            const targetKeyExpr = this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(targetField));
+            // Pinocchio's pinocchio_token state structs expose fields via
+            // method calls (`.mint()` returning `&Pubkey`), Native via
+            // bare field access (`.mint` of type Pubkey).
+            const fieldAccess = this.emitter.frameworkName === "Pinocchio"
+              ? `*${localVar}.${targetField}()`
+              : `${localVar}.${targetField}`;
+            const targetForCompare = this.emitter.frameworkName === "Pinocchio"
+              ? `*${targetKeyExpr.startsWith("*") ? targetKeyExpr.slice(1) : targetKeyExpr}`
+              : targetKeyExpr;
+            condition = this.normalizeKeyValueUsages(`${fieldAccess} != ${targetForCompare}`);
+            if (this.bodyRequireConditions.has(normalizeConditionKey(condition))) {
+              continue;
+            }
+            const readExpr = this.emitter.frameworkName === "Pinocchio"
+              ? (typeName === "Mint"
+                  ? `pinocchio_token::state::Mint::from_account_info(${accountInfo})?`
+                  : `pinocchio_token::state::TokenAccount::from_account_info(${accountInfo})?`)
+              : (typeName === "Mint"
+                  ? `spl_token::state::Mint::unpack(&${accountInfo}.data.borrow())?`
+                  : `spl_token::state::Account::unpack(&${accountInfo}.data.borrow())?`);
+            this.lines.push(`    let ${localVar} = ${readExpr};`);
+            this.lines.push(`    if ${condition} {`);
+            this.lines.push(`        return Err(ProgramError::InvalidAccountData);`);
+            this.lines.push(`    }`);
+            this.bodyRequireConditions.add(normalizeConditionKey(condition));
+            continue;
+          }
           if (!typeName || !this.isGeneratedStateType(typeName)) continue;
           const localVar = `__ha_${accountName}`;
           // Push the deserialize prelude + comparison as a single
