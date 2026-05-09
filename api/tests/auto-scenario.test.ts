@@ -564,6 +564,28 @@ describe("auto-scenario: associated_token init -> derived ATA (marketplace patte
   });
 });
 
+describe("auto-scenario: perp-funding synth shape (no e2e build yet)", () => {
+  test("perp-funding synthesizes cleanly — 11 steps, 13 PDAs, no blockers", async () => {
+    const ir = await parseDemo("perp-funding.rs");
+    const r = synthesizeAutoScenario(ir);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.scenario.steps.length).toBe(11);
+    expect(r.scenario.pdas.length).toBe(13);
+    expect(r.scenario.signers.length).toBeGreaterThan(0);
+    // Sanity: initialize_market is sequenced first (only init-bearing handler).
+    expect(r.scenario.steps[0]!.ix).toBe("initialize_market");
+    // Spot-check argument shape: u64 max_open_interest defaults to 1
+    // (no timestamp pattern match), u8 base_decimals to 1, u16 market_index
+    // to 1. Pubkey oracle_price_feed defaults to System program ID.
+    const init = r.scenario.steps[0]!.args;
+    expect(init.market_index).toBe(1);
+    expect(init.max_open_interest).toBe(1);
+    expect(init.base_decimals).toBe(1);
+    expect(init.oracle_price_feed).toBe("11111111111111111111111111111111");
+  });
+});
+
 describe("auto-scenario: numeric state-field seed resolution (Track 3)", () => {
   test("`<acc>.<numeric_field>.to_le_bytes()` resolves via traced arg assignment", () => {
     // <state>.id is set to instruction arg `id: u64` in init.
