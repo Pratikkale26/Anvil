@@ -769,6 +769,14 @@ export abstract class BaseEmitter {
     sections.push(`//! via borsh and sol_log_data the result so off-chain indexers see a`);
     sections.push(`//! payload byte-identical to Anchor's macro expansion.\n`);
     sections.push(`use borsh::{BorshDeserialize, BorshSerialize};`);
+    // Pull in user-defined types from lib.rs so event fields whose type
+    // is a custom enum/struct (perp-funding's SignedAmount in
+    // PositionClosed.price_pnl / funding_pnl) resolve cleanly. Without
+    // this, cargo errors with E0412 "cannot find type X" — events.rs
+    // is a sibling module of lib.rs at src/, so super::* brings every
+    // top-level type into scope. Same import that instructions/*.rs
+    // get via `use crate::*;` in instructions/mod.rs.
+    sections.push(`use super::*;`);
 
     for (const ev of (ir.events ?? [])) {
       const fieldDecls = ev.fields
@@ -1341,9 +1349,16 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // used inside structs that derive BorshSerialize/BorshDeserialize.
         const rawCode = typeDef.rawCode.trim();
         const alreadyHasDerive = /^#\[derive\(/.test(rawCode);
+        // Include Copy when every tuple-variant payload is Copy-safe — i.e.
+        // primitives + Pubkey only, no String/Vec/Box/HashMap. Without
+        // Copy, `let x = compute(); apply(x); emit!(... x ...)` fails E0382
+        // because Anvil's emit drops user-source Copy derives by re-stamping
+        // its own derive list.
+        const hasNonCopyField = /\b(String|Vec|Box|HashMap|BTreeMap|Rc|Arc)\b/.test(rawCode);
+        const copyDerive = hasNonCopyField ? "" : "Copy, ";
         const decl = alreadyHasDerive
           ? rawCode
-          : `#[derive(Clone, Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = true)]\n${rawCode}`;
+          : `#[derive(Clone, ${copyDerive}Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = true)]\n${rawCode}`;
         return `${decl}${this.emitTypeInherentImpl(typeDef)}`;
       }
       if (typeDef.kind === "enum") {

@@ -22,6 +22,8 @@ use solana_program::{
 use solana_program::sysvar::clock::Clock;
 use solana_program::sysvar::rent::Rent;
 
+use super::*;
+
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct StakeEvent {
     pub user: Pubkey,

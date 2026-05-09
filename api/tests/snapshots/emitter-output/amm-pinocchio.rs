@@ -23,6 +23,8 @@ use pinocchio_token::instructions::Burn as TokenBurn;
 use pinocchio::sysvars::rent::Rent;
 use pinocchio::sysvars::Sysvar;
 
+use super::*;
+
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct LiquidityAdded {
     pub user: [u8; 32],
