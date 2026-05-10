@@ -1290,6 +1290,17 @@ export function compareScenarioRuns(
     // the scenario steps (which know their own account refs) rather than
     // the IR's instruction account list — the user's scenario may pass
     // signers/PDAs the IR doesn't enumerate (e.g. fee-payer).
+    // Strip ALL bucket prefixes ($signer:/$pda:/$keypair:/$mint:/$ata:) so
+    // touched and compared sets normalize to the same name. Without
+    // stripping $mint:/$ata:, an account compared as $keypair:lp_mint
+    // would mismatch the bare lp_mint in touched and false-positive
+    // as uncompared.
+    const stripPrefix = (ref: string): string => {
+      for (const p of ["$signer:", "$pda:", "$keypair:", "$mint:", "$ata:"] as const) {
+        if (ref.startsWith(p)) return ref.slice(p.length).split(".")[0]!;
+      }
+      return ref;
+    };
     const touchedAccountRefs = new Set<string>();
     for (const step of scenario.steps) {
       const irIx = ir.instructions.find((i) => i.name === step.ix);
@@ -1298,16 +1309,10 @@ export function compareScenarioRuns(
         // Skip program refs ($program:system / token / etc.) — those are
         // protocol primitives, not state worth byte-comparing.
         if (ref.startsWith("$program:")) continue;
-        // For $signer:name / $pda:name / $keypair:name — extract the
-        // bare name (drop the prefix + the optional `.pubkey` suffix).
-        let bareName = ref;
-        if (ref.startsWith("$signer:")) bareName = ref.slice("$signer:".length).split(".")[0]!;
-        else if (ref.startsWith("$pda:")) bareName = ref.slice("$pda:".length).split(".")[0]!;
-        else if (ref.startsWith("$keypair:")) bareName = ref.slice("$keypair:".length);
-        touchedAccountRefs.add(bareName);
+        touchedAccountRefs.add(stripPrefix(ref));
       }
     }
-    const compared = new Set(scenario.compare.accounts);
+    const compared = new Set(scenario.compare.accounts.map(stripPrefix));
     const uncompared = [...touchedAccountRefs].filter((n) => !compared.has(n));
     // Also a real warning when NO compare.accounts are listed at all but
     // the steps did touch state-bearing accounts. (no_compare_targets

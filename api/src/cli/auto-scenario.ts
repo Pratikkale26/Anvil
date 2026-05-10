@@ -632,6 +632,10 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     }
   }
   for (const name of initdKeypairCompareNames) comparedAccounts.add(`$keypair:${name}`);
+  // Signers — both targets pay rent for init'd accounts and the same fees,
+  // so post-step lamport balance is deterministic. Adding them widens the
+  // verifiable claim to the full account set the scenario touches.
+  for (const name of signerNames) comparedAccounts.add(`$signer:${name}`);
   // Detect emit/msg usage to suggest opt-in compares.
   let usesEmit = false;
   let usesMsg = false;
