@@ -517,8 +517,25 @@ function serializeOne(value: unknown, type: string, fieldName: string): Buffer {
     lenBuf.writeUInt32LE(bytes.length, 0);
     return Buffer.concat([lenBuf, bytes]);
   }
+  // Generic Vec<T> — borsh: u32 length prefix, then T-encoded elements.
+  // Recurses on the inner type so Vec<Pubkey> / Vec<u64> / Vec<i32> etc.
+  // all serialize without needing a per-shape branch. The outer Vec<u8>
+  // shortcut above handles the byte-string optimization.
+  const vecMatch = type.match(/^Vec<(.+)>$/);
+  if (vecMatch?.[1]) {
+    if (!Array.isArray(value)) {
+      throw new Error(`arg '${fieldName}' is ${type} but value isn't an array`);
+    }
+    const inner = vecMatch[1];
+    const lenBuf = Buffer.alloc(4);
+    lenBuf.writeUInt32LE(value.length, 0);
+    const elemBufs = (value as unknown[]).map((v, i) =>
+      serializeOne(v, inner, `${fieldName}[${i}]`),
+    );
+    return Buffer.concat([lenBuf, ...elemBufs]);
+  }
   throw new Error(
-    `arg '${fieldName}' has unsupported type '${type}' -- V1 supports u8..u128, i8..i128, bool, Pubkey, String, Vec<u8>. Custom structs deferred.`,
+    `arg '${fieldName}' has unsupported type '${type}' -- V1 supports u8..u128, i8..i128, bool, Pubkey, String, Vec<T>. Custom structs deferred.`,
   );
 }
 

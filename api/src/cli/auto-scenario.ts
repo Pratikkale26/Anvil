@@ -568,6 +568,8 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
         args[arg.name] = DEFAULT_VALUES[arg.type];
       } else if (/^([ui])(8|16|32|64|128)$/.test(arg.type)) {
         args[arg.name] = 1;
+      } else if (/^Vec<(.+)>$/.test(arg.type) && isPrimitiveType(arg.type)) {
+        args[arg.name] = defaultPrimitiveValue(arg.type);
       } else {
         // Custom type -- attempt to walk the TypeDef. synthesizeCustomTypeDefault
         // returns undefined when the type isn't in IR.types; the (1) blocker
@@ -712,7 +714,32 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
 function isPrimitiveType(t: string): boolean {
   if (DEFAULT_VALUES[t] !== undefined) return true;
   // Numeric primitive shapes Anvil's IR may emit
-  return /^([ui])(8|16|32|64|128)$/.test(t);
+  if (/^([ui])(8|16|32|64|128)$/.test(t)) return true;
+  // Vec<T> where T is itself a primitive — synth can default these
+  // (empty array for Vec<integer>, single-element placeholder for
+  // Vec<Pubkey>). Inner type is checked recursively.
+  const vecMatch = t.match(/^Vec<(.+)>$/);
+  if (vecMatch?.[1]) return isPrimitiveType(vecMatch[1]);
+  return false;
+}
+
+/** Synthesize a default value for a primitive type. Mirrors DEFAULT_VALUES
+ *  but handles generic Vec<T> recursively. Vec<Pubkey> gets a single
+ *  System-program placeholder so multisig-style threshold checks
+ *  (threshold ≤ owners.len()) at least pass at step 0; downstream steps
+ *  whose semantics expect specific pubkeys still need manual edits. */
+function defaultPrimitiveValue(type: string): unknown {
+  if (DEFAULT_VALUES[type] !== undefined) return DEFAULT_VALUES[type];
+  if (/^([ui])(8|16|32|64|128)$/.test(type)) {
+    return /128$/.test(type) ? "1" : 1;
+  }
+  const vecMatch = type.match(/^Vec<(.+)>$/);
+  if (vecMatch?.[1]) {
+    const inner = vecMatch[1];
+    if (inner === "Pubkey") return ["11111111111111111111111111111111"];
+    return [];
+  }
+  return undefined;
 }
 
 function isSignerAccount(accountType: string): boolean {
