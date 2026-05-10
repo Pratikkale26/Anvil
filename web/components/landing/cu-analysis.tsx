@@ -18,7 +18,7 @@ export function CuAnalysis({
   isMobile: boolean;
 }) {
   return (
-    <section id="cu-analysis" className="anvil-container pb-20">
+    <section id="cu-analysis" className="anvil-container pb-20 scroll-mt-20">
       <div className="text-eyebrow">Compute unit analysis</div>
       <h2 className="text-h1 text-anvil-text mt-2 mb-3">
         {DEMOS[demo].title} — savings per instruction

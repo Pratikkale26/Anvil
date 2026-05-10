@@ -15,12 +15,24 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-anvil-bg text-anvil-text">
-      {/* Single ambient gradient — replaces the previous 3 radials + dot grid */}
+      {/* Layered ambient: warm top wash + cool side accent + faint grid */}
       <div
         className="fixed inset-0 -z-10 pointer-events-none"
         style={{
-          background:
-            "radial-gradient(60% 50% at 50% -10%, rgba(245,166,35,0.06) 0%, transparent 70%)",
+          background: [
+            "radial-gradient(55% 45% at 50% -8%, rgba(245,166,35,0.07) 0%, transparent 70%)",
+            "radial-gradient(40% 30% at 90% 12%, rgba(107,123,255,0.05) 0%, transparent 70%)",
+            "radial-gradient(35% 25% at 8% 38%, rgba(14,168,128,0.04) 0%, transparent 70%)",
+          ].join(", "),
+        }}
+      />
+      <div
+        aria-hidden
+        className="fixed inset-0 -z-10 pointer-events-none opacity-[0.025] mix-blend-screen"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(255,255,255,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.6) 1px, transparent 1px)",
+          backgroundSize: "44px 44px",
         }}
       />
 

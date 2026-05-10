@@ -113,9 +113,11 @@ const STEPS: Step[] = [
 
 export function HowItWorks() {
   return (
-    <section className="anvil-container pb-16">
+    <section id="how" className="anvil-container pb-16 scroll-mt-20">
       <div className="text-eyebrow">How it works</div>
-      <h2 className="sr-only">How Anvil works</h2>
+      <h2 className="text-h2 text-anvil-text mt-2 max-w-[640px]">
+        Five stages from Anchor source to verified emit.
+      </h2>
 
       <div className="mt-5 grid gap-px rounded-2xl overflow-hidden border border-anvil-card-border bg-anvil-card-border [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
         {STEPS.map(({ icon: Icon, step, title, desc, tint, iconColor, artifact }, i) => (

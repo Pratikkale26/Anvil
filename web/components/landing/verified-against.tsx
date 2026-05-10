@@ -42,7 +42,7 @@ const FIXTURES: Fixture[] = [
 const STATS = [
   { value: "6", label: "Real-world programs" },
   { value: "0", label: "Byte divergences" },
-  { value: "37", label: "Demos byte-equal" },
+  { value: "11", label: "Demos byte-equal" },
   { value: "36/36", label: "program-examples cargo green" },
 ];
 
@@ -136,7 +136,7 @@ function StatStrip() {
 
 export function VerifiedAgainst() {
   return (
-    <section id="verified" className="anvil-container pb-20">
+    <section id="verified" className="anvil-container pb-20 scroll-mt-20">
       <div className="text-eyebrow">Verified against</div>
       <h2 className="text-h1 text-anvil-text mt-2">
         Byte-equal across 6 real-world programs.

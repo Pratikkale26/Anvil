@@ -14,6 +14,9 @@ import {
 import { DEMOS, LANDING_TARGETS, LANDING_STAGES, LANDING_STAGE_ORDER, type DemoName } from "@/data/demos";
 import type { LandingPipelineState } from "@/lib/use-landing-pipeline";
 
+// Curated landing showcase — workbench retains the full catalog.
+const LANDING_DEMOS: DemoName[] = ["counter", "vault", "escrow", "marketplace"];
+
 const MONACO_OPTS = {
   readOnly: true,
   minimap: { enabled: false },
@@ -39,7 +42,7 @@ export function Playground({ state }: { state: LandingPipelineState }) {
   const outputHeight = isMobile ? 420 : 560;
 
   return (
-    <section id="playground" className="anvil-container pb-20">
+    <section id="playground" className="anvil-container pb-20 scroll-mt-20">
       <div className="mb-7">
         <div className="text-eyebrow">Compiler playground</div>
         <h2 className="text-h1 text-anvil-text mt-2">
@@ -63,7 +66,7 @@ export function Playground({ state }: { state: LandingPipelineState }) {
           <Panel>
             <PanelHead icon={FileCode2} title="Program" />
             <div className="flex flex-col p-3 gap-2">
-              {(Object.keys(DEMOS) as DemoName[]).map((d) => {
+              {LANDING_DEMOS.map((d) => {
                 const info = DEMOS[d];
                 const active = d === demo;
                 return (
