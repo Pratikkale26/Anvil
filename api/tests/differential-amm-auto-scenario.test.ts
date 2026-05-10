@@ -80,22 +80,11 @@ describe("AMM auto-scenario differential (workbench Verify Byte-Equal path)", ()
     expect(out.ok).toBe(true);
     if (!out.ok) return;
 
-    // Restrict to initialize_pool only. Anvil successfully runs all of
-    // initialize_pool/add_liquidity/remove_liquidity past the auto-scenario
-    // pipeline, but Anchor's compiled .so for this AMM crashes on
-    // add_liquidity with "Access violation in stack frame 5" — a BPF stack
-    // overflow in Anchor 0.31's generated code (the inline pool_seeds +
-    // CpiContext::new_with_signer pattern is stack-tight). Anvil's emit
-    // happens to use less stack so it survives. This means we CAN'T
-    // verify byte-equal past initialize_pool until the AMM source is
-    // refactored or Anchor is upgraded; expanding compare scope here
-    // would put the test in a permanently-red state for a problem
-    // outside the auto-scenario's domain.
-    //
-    // Compare scope keeps the synthesizer's full set so pool/vault_a/
-    // vault_b/lp_mint AND every $mint/$ata get byte-compared at the
-    // step-0 boundary — strong coverage despite the single step.
-    const scenario = { ...out.scenario, steps: out.scenario.steps.slice(0, 1) };
+    // Run all steps. Anchor's compiled .so previously busted BPF stack
+    // on add_liquidity (Anchor 0.31 macro-level stack pressure); the
+    // amm.rs source now wraps the SPL Account fields in Box<> to
+    // heap-allocate the deserialized state and free the entry frame.
+    const scenario = { ...out.scenario };
 
     // Resolve context once — both targets share keypairs + PDAs.
     const ctx = resolveScenarioContext(scenario, PROGRAM_ID);

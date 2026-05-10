@@ -506,38 +506,45 @@ pub struct AddLiquidity<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
+    // Box<Account<...>> heap-allocates the deserialized state to relieve
+    // BPF stack pressure. Anchor 0.31's macro-level try_accounts builds
+    // every Account inline on the entry frame; with 7 SPL accounts +
+    // pool + LP-token math + signer_seeds + CPI temporaries, the 4KB
+    // per-frame budget overflows several frames into the CPI invoke.
+    // Anvil's parser strips Box<> in extractAccountType so emit is
+    // unaffected by this wrapper.
     #[account(
         mut,
         seeds = [b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()],
         bump = pool.bump,
     )]
-    pub pool: Account<'info, AmmPool>,
+    pub pool: Box<Account<'info, AmmPool>>,
 
     #[account(mut, token::mint = pool.token_mint_a, token::authority = user)]
-    pub user_token_a: Account<'info, TokenAccount>,
+    pub user_token_a: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, token::mint = pool.token_mint_b, token::authority = user)]
-    pub user_token_b: Account<'info, TokenAccount>,
+    pub user_token_b: Box<Account<'info, TokenAccount>>,
 
     #[account(
         mut,
         seeds = [b"vault_a", pool.key().as_ref()],
         bump = pool.vault_a_bump,
     )]
-    pub vault_a: Account<'info, TokenAccount>,
+    pub vault_a: Box<Account<'info, TokenAccount>>,
 
     #[account(
         mut,
         seeds = [b"vault_b", pool.key().as_ref()],
         bump = pool.vault_b_bump,
     )]
-    pub vault_b: Account<'info, TokenAccount>,
+    pub vault_b: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, address = pool.lp_mint)]
-    pub lp_mint: Account<'info, Mint>,
+    pub lp_mint: Box<Account<'info, Mint>>,
 
     #[account(mut, token::mint = lp_mint, token::authority = user)]
-    pub user_lp_token: Account<'info, TokenAccount>,
+    pub user_lp_token: Box<Account<'info, TokenAccount>>,
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
@@ -553,25 +560,25 @@ pub struct RemoveLiquidity<'info> {
         seeds = [b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()],
         bump = pool.bump,
     )]
-    pub pool: Account<'info, AmmPool>,
+    pub pool: Box<Account<'info, AmmPool>>,
 
     #[account(mut, token::mint = pool.token_mint_a, token::authority = user)]
-    pub user_token_a: Account<'info, TokenAccount>,
+    pub user_token_a: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, token::mint = pool.token_mint_b, token::authority = user)]
-    pub user_token_b: Account<'info, TokenAccount>,
+    pub user_token_b: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, seeds = [b"vault_a", pool.key().as_ref()], bump = pool.vault_a_bump)]
-    pub vault_a: Account<'info, TokenAccount>,
+    pub vault_a: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, seeds = [b"vault_b", pool.key().as_ref()], bump = pool.vault_b_bump)]
-    pub vault_b: Account<'info, TokenAccount>,
+    pub vault_b: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, address = pool.lp_mint)]
-    pub lp_mint: Account<'info, Mint>,
+    pub lp_mint: Box<Account<'info, Mint>>,
 
     #[account(mut, token::mint = lp_mint, token::authority = user)]
-    pub user_lp_token: Account<'info, TokenAccount>,
+    pub user_lp_token: Box<Account<'info, TokenAccount>>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -586,19 +593,19 @@ pub struct Swap<'info> {
         seeds = [b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()],
         bump = pool.bump,
     )]
-    pub pool: Account<'info, AmmPool>,
+    pub pool: Box<Account<'info, AmmPool>>,
 
     #[account(mut, token::authority = user)]
-    pub user_token_in: Account<'info, TokenAccount>,
+    pub user_token_in: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, token::authority = user)]
-    pub user_token_out: Account<'info, TokenAccount>,
+    pub user_token_out: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, seeds = [b"vault_a", pool.key().as_ref()], bump = pool.vault_a_bump)]
-    pub vault_a: Account<'info, TokenAccount>,
+    pub vault_a: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, seeds = [b"vault_b", pool.key().as_ref()], bump = pool.vault_b_bump)]
-    pub vault_b: Account<'info, TokenAccount>,
+    pub vault_b: Box<Account<'info, TokenAccount>>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -625,19 +632,19 @@ pub struct WithdrawProtocolFees<'info> {
         seeds = [b"pool", pool.token_mint_a.as_ref(), pool.token_mint_b.as_ref()],
         bump = pool.bump,
     )]
-    pub pool: Account<'info, AmmPool>,
+    pub pool: Box<Account<'info, AmmPool>>,
 
     #[account(mut, seeds = [b"vault_a", pool.key().as_ref()], bump = pool.vault_a_bump)]
-    pub vault_a: Account<'info, TokenAccount>,
+    pub vault_a: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, seeds = [b"vault_b", pool.key().as_ref()], bump = pool.vault_b_bump)]
-    pub vault_b: Account<'info, TokenAccount>,
+    pub vault_b: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, token::mint = pool.token_mint_a, token::authority = admin)]
-    pub admin_token_a: Account<'info, TokenAccount>,
+    pub admin_token_a: Box<Account<'info, TokenAccount>>,
 
     #[account(mut, token::mint = pool.token_mint_b, token::authority = admin)]
-    pub admin_token_b: Account<'info, TokenAccount>,
+    pub admin_token_b: Box<Account<'info, TokenAccount>>,
 
     #[account(mut)]
     pub admin: Signer<'info>,

@@ -21,8 +21,6 @@ use solana_program::{
 };
 use solana_program::sysvar::rent::Rent;
 
-use super::*;
-
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct LiquidityAdded {
     pub user: Pubkey,

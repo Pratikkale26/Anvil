@@ -23,8 +23,6 @@ use pinocchio::sysvars::clock::Clock;
 use pinocchio::sysvars::rent::Rent;
 use pinocchio::sysvars::Sysvar;
 
-use super::*;
-
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct StakeEvent {
     pub user: [u8; 32],
