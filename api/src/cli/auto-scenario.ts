@@ -586,6 +586,15 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     const accounts: string[] = ix.accounts.map((acc) => {
       if (isSignerAccount(acc.accountType)) return `$signer:${acc.name}`;
       if (acc.isPda) return `$pda:${acc.name}`;
+      // Same-named PDA reused across instructions: when an earlier ix
+      // declared `market` with `seeds=[…]` and a later ix references
+      // `pub market: Account<'info, Market>` (no seeds — Anchor just
+      // needs a perp-funding-owned account), the later slot lacks the
+      // PDA flag but still refers to the same on-chain pubkey. Without
+      // this, the synthesizer routes the second slot to $keypair:market
+      // (fresh random pubkey) and Anchor rejects with
+      // AccountOwnedByWrongProgram (Left=system, Right=program).
+      if (pdaSpecs.has(acc.name)) return `$pda:${acc.name}`;
       if (acc.accountType === "Mint" && !acc.isInit && mintNames.has(acc.name)) {
         return `$mint:${acc.name}`;
       }
