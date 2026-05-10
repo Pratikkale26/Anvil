@@ -145,6 +145,13 @@ async function buildAnchor(opts: DifferentialBuildOptions, outPath: string): Pro
   // explicit anchorExtraDeps and override this.
   const sniffed = sniffAnchorExtraDeps(opts.anchorSource);
   const extraDeps = opts.anchorExtraDeps ?? sniffed;
+  // Workbench callers also don't send anchorLangFeatures. Sniff
+  // init-if-needed usage; without it, derive(Accounts) silently
+  // skips emitting Bumps/etc. for structs whose constraints reference
+  // init_if_needed and the caller fails with cryptic "trait Bumps
+  // not satisfied" errors at handler signatures.
+  const sniffedLangFeatures = sniffAnchorLangFeatures(opts.anchorSource);
+  const langFeatures = opts.anchorLangFeatures ?? sniffedLangFeatures;
   // B3 — anchor-lang version sniff. Hard-pinning to 0.31 fails for
   // programs targeting 0.30 / 0.29 with confusing rustc errors
   // (deprecated APIs, dep resolution drift). Sniff a `// anchor-lang
@@ -166,8 +173,8 @@ no-log-ix-name = []
 cpi = ["no-entrypoint"]
 default = []
 [dependencies]
-${opts.anchorLangFeatures && opts.anchorLangFeatures.length > 0
-  ? `anchor-lang = { version = "${anchorLangVersion}", features = ["${opts.anchorLangFeatures.join('", "')}"] }`
+${langFeatures.length > 0
+  ? `anchor-lang = { version = "${anchorLangVersion}", features = ["${langFeatures.join('", "')}"] }`
   : `anchor-lang = "${anchorLangVersion}"`}
 ${extraDeps.replace(/version = "0\.31"/g, `version = "${anchorLangVersion}"`).replace(/anchor-spl = "0\.31"/g, `anchor-spl = "${anchorLangVersion}"`)}
 `;
@@ -261,6 +268,21 @@ export function sniffAnchorLangVersion(source: string): string {
     if (ALLOWED.has(minor)) return minor;
   }
   return "0.31";
+}
+
+/**
+ * Detect anchor-lang cargo features the source needs but the workbench
+ * caller didn't declare. Currently scans for `init_if_needed` inside
+ * `#[account(...)]` annotations — Anchor gates that constraint behind
+ * the `init-if-needed` feature; without it, derive(Accounts) skips
+ * emitting Bumps/AccountsExit/etc. for affected structs and the build
+ * fails with "the trait `Bumps` is not implemented for X<'_>" at the
+ * handler signature, several layers removed from the actual cause.
+ */
+function sniffAnchorLangFeatures(source: string): string[] {
+  const features: string[] = [];
+  if (/\binit_if_needed\b/.test(source)) features.push("init-if-needed");
+  return features;
 }
 
 function sniffAnchorExtraDeps(source: string): string {
