@@ -524,9 +524,12 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       // alone -- block.
       const isStateType = ir.accounts.some((a) => a.name === acc.accountType);
       if (isStateType) {
-        // State-typed account, not declared as PDA. Probably should have
-        // been; or it's an externally-created account. Warn but don't block --
-        // the workbench can let the user paste a pubkey.
+        // State-typed account, not declared as PDA in this slot. If an
+        // earlier instruction did declare it as a PDA, we'll route to
+        // $pda:name at scenario-build time (cross-instruction PDA reuse)
+        // — no warning needed. Otherwise it's an externally-created
+        // account the user must point at; warn but don't block.
+        if (pdaSpecs.has(acc.name)) continue;
         notes.push({
           message: `Account \`${acc.name}\` (type \`${acc.accountType}\`) in instruction \`${ix.name}\` isn't declared as a PDA in the source. Auto-scenario will treat it as an ephemeral keypair; for byte-equal verification you may need to point it at an existing on-chain pubkey or an earlier-init'd PDA.`,
           context: { instruction: ix.name, account: acc.name },
