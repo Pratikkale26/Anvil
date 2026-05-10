@@ -569,9 +569,18 @@ export function buildStepInstruction(
       // account's keypair to sign. Init'd PDA accounts (vault_a, vault_b,
       // pool) are signed via CPI signer_seeds; the outer TX must NOT mark
       // them is_signer (no private key available).
+      //
+      // ATA-derived and mint-bucket refs ($ata:foo / $mint:foo) are NEVER
+      // signers regardless of IR isInit. Init'd ATAs (escrow's
+      // init_if_needed for taker_ata_a/maker_ata_b) are PDAs of the ATA
+      // program — created via the program's create_idempotent CPI, not
+      // by the outer transaction, so they have no private key. The IR's
+      // isPda flag only catches Anchor PDAs (with explicit `seeds=[]`),
+      // not ATA-derived addresses, so we gate on the ref prefix here.
+      const isProgramDerivedRef = ref.startsWith("$ata:") || ref.startsWith("$mint:");
       isSigner =
         irAcc.isSigner ||
-        (irAcc.isInit && !irAcc.isPda) ||
+        (irAcc.isInit && !irAcc.isPda && !isProgramDerivedRef) ||
         ref.startsWith("$signer:");
     } else {
       // Step has more accounts than IR knows (extra remaining_accounts):
