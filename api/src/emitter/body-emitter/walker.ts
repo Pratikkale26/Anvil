@@ -449,6 +449,30 @@ export class BodyWalker {
       (acc) => snakeCase(acc.name) === normalized,
     );
     const typeName = accountRef?.accountType ?? "Unknown";
+    // #26 — zero-copy accounts: if the body has a zero_copy_load_* for
+    // this account, that handler emits the canonical bytemuck cast
+    // (`let foo: &mut Foo = bytemuck::from_bytes_mut(...)`). Auto-emitting
+    // `Foo::from_account_info(...)` upfront produces a bogus second
+    // binding that fails at cargo (E0599 "no method from_account_info on
+    // zero-copy type"). Skip and let the body handler register the real
+    // binding. We still record the localVar so downstream callers see a
+    // consistent name; the body handler's registerHandle() will fill in
+    // accountInfoVar later.
+    if (accountRef?.isZeroCopy) {
+      const hasZeroCopyLoad = this.statements.some(
+        (s) =>
+          (s.kind === "zero_copy_load_init"
+            || s.kind === "zero_copy_load_mut"
+            || s.kind === "zero_copy_load") &&
+          snakeCase(s.account) === normalized,
+      );
+      if (hasZeroCopyLoad) {
+        // Don't push any line — return the name so constraint-emission
+        // produces `foo.<field>` references. They'll resolve to the
+        // bytemuck-cast `&mut Foo` binding the body handler emits later.
+        return normalized;
+      }
+    }
     if (!this.isGeneratedStateType(typeName)) {
       // SPL TokenAccount / Mint short-circuit — Anchor's
       // `Account<'info, TokenAccount>` auto-deserializes via SPL's
@@ -1572,16 +1596,19 @@ export class BodyWalker {
           );
           if (isInitOrInitIfNeeded) continue;
           // Skip if the body's statements include a state_read OR
-          // state_field_assign for this account — both call into
-          // ensureStateRead which emits the has_one check inline.
-          // Also bumps_access reads bump_<account> derivation; the
-          // state's data isn't deserialized in that path though, so
-          // it doesn't trigger the check — include here for safety
-          // since the bump derivation resolveAccountInfoVar reads
-          // the same AccountInfo.
+          // state_field_assign OR any zero_copy_load_* for this
+          // account — all of those have their own deserialize path
+          // that emits the has_one check inline. Without this check
+          // for the zero_copy_load_* kinds (#26), the pre-emit pass
+          // wrongly emits `Foo::from_account_info(...)` for a
+          // zero-copy account, which has no such method → E0599.
           const hasBodyStateAccess = this.statements.some(
             (s) =>
-              (s.kind === "state_read" || s.kind === "state_field_assign") &&
+              (s.kind === "state_read"
+                || s.kind === "state_field_assign"
+                || s.kind === "zero_copy_load_init"
+                || s.kind === "zero_copy_load_mut"
+                || s.kind === "zero_copy_load") &&
               snakeCase(s.account) === accountName,
           );
           if (hasBodyStateAccess) continue;
