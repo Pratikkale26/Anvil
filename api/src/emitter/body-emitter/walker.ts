@@ -932,6 +932,31 @@ export class BodyWalker {
             },
           );
         }
+        // #37 — local-binding form. When the body did
+        // `let pool_a = ctx.accounts.pool_a_account.to_account_info()`
+        // (or handleStateRead synthesized the binding), pass-through code
+        // references `pool_a.amount` / `pool_a.owner` etc. against the
+        // localVar, not the accountName. pinocchio_token's TokenAccount
+        // exposes ALL fields as methods. Rewrite the local-var form
+        // independently of the accountName form above.
+        if (this.emitter.frameworkName === "Pinocchio") {
+          const localVar = this.stateVars.get(accountName);
+          if (localVar && localVar !== accountName) {
+            // .amount → .amount() (returns u64 value)
+            transformed = transformed.replace(
+              new RegExp(`(^|[^\\w.])${localVar}\\.amount\\b(?!\\s*\\()`, "g"),
+              (_full, prefix: string) => `${prefix}${localVar}.amount()`,
+            );
+            // Pubkey-shaped fields. Pinocchio returns &Pubkey; deref so
+            // call sites comparing against another Pubkey work.
+            for (const field of splPubkeyFields) {
+              transformed = transformed.replace(
+                new RegExp(`(^|[^\\w.])&?${localVar}\\.${field}\\b(?!\\s*\\()`, "g"),
+                (_full, prefix: string) => `${prefix}*${localVar}.${field}()`,
+              );
+            }
+          }
+        }
       }
       if (!this.isGeneratedStateType(account.accountType)) continue;
       transformed = transformed.replace(
