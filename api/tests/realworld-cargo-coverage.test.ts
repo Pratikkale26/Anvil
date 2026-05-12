@@ -23,7 +23,15 @@
  * shape.
  */
 import { describe, test, expect } from "bun:test";
-import { existsSync, readFileSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  statSync,
+  readdirSync,
+} from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { parseAnchor } from "../src/parser/anchor-parser.js";
@@ -31,14 +39,54 @@ import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.js";
 import { buildProjectScaffold } from "../src/emitter/project-scaffold.js";
 import { validateEmitterOutput } from "../src/emitter/output-validator.js";
 import { runCargoCheckGate, cargoAvailable } from "../src/build/cargo-gate.js";
+import {
+  buildProjectSource,
+  collectProjectFilesFromEntry,
+  getProjectEntryPath,
+} from "../src/parser/project-source.js";
 
 const FIXTURE_DIR = join(import.meta.dir, "fixtures", "realworld");
+// Per-repo shallow-clone cache — kept outside the repo tree (mirrors the
+// differential-harness CACHE_ROOT layout). 7-day TTL applied at module
+// load below; entries older than that get rmdir'd to avoid GB accumulation.
+const CACHE_ROOT = join(process.env.HOME ?? "/tmp", ".anvil-realworld-cache");
+const CACHE_TTL_DAYS = 7;
+
+// TTL sweep at module load. Mirrors api/tests/differential-harness.ts:80-112
+// and api/src/build/differential-build.ts. Best-effort; failures don't
+// block test boot.
+(() => {
+  if (!existsSync(CACHE_ROOT)) return;
+  const cutoffMs = Date.now() - CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
+  try {
+    for (const entry of readdirSync(CACHE_ROOT, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const p = join(CACHE_ROOT, entry.name);
+      try {
+        const s = statSync(p);
+        if (s.mtimeMs < cutoffMs) rmSync(p, { recursive: true, force: true });
+      } catch { /* skip */ }
+    }
+  } catch { /* swallow */ }
+})();
 
 interface RealworldCase {
   /** Stable identifier; used in test names + scratch dir paths. */
   id: string;
-  /** Source URL (raw GitHub). */
-  url: string;
+  /**
+   * Single-file fetch: raw GitHub URL for lib.rs. Used for self-contained
+   * single-file Anchor programs (the original pattern).
+   */
+  url?: string;
+  /**
+   * Multi-file fetch (#33): shallow-clone a repo and flatten via
+   * project-source. Set `repo` to the git URL, `lib` to the path-from-
+   * repo-root of the entry lib.rs. The flattener walks `pub mod` /
+   * `use crate::*` chains so multi-instruction programs with
+   * src/instructions/X.rs files become a single buildable source for
+   * the parser.
+   */
+  repo?: { url: string; lib: string };
   /**
    * Expected outcome:
    *   - "cargo-clean": validator + cargo both green
@@ -46,7 +94,6 @@ interface RealworldCase {
    *   - "cargo-refuse": validator passes, cargo refuses (the headline gap)
    */
   expected: "cargo-clean" | "validator-refuse" | "cargo-refuse";
-  /** Pre-fetch the source via curl; only run when offline copy is missing. */
   description: string;
 }
 
@@ -89,14 +136,14 @@ const CASES: readonly RealworldCase[] = [
   },
   {
     id: "spl-token-minter",
-    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/tokens/spl-token-minter/anchor/programs/spl-token-minter/src/lib.rs",
-    // Multi-file Anchor program — entrypoint delegates to
-    // `instructions::create::*` / `instructions::mint::*` modules that
-    // aren't fetched by the single-file curl above. Not an emit bug;
-    // the source is incomplete by design. To run end-to-end this needs
-    // the project-source flattener (api/src/parser/project-source.ts).
-    expected: "cargo-refuse",
-    description: "multi-file delegate (entrypoint only — needs project-source flatten to be complete)",
+    // #33 — multi-file via project-source flatten. Was cargo-refuse
+    // (entrypoint-only); now full source flattened from the upstream repo.
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "tokens/spl-token-minter/anchor/programs/spl-token-minter/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "multi-file SPL token minter (project-source flattened)",
   },
   {
     id: "zero-copy",
@@ -125,15 +172,21 @@ const CASES: readonly RealworldCase[] = [
   },
   {
     id: "close-account",
-    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/basics/close-account/anchor/programs/close-account/src/lib.rs",
-    expected: "cargo-refuse",
-    description: "multi-file delegate (entrypoint only — needs project-source flatten)",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/close-account/anchor/programs/close-account/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "close-account flow (project-source flattened, #33)",
   },
   {
     id: "account-data",
-    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/basics/account-data/anchor/programs/anchor-program-example/src/lib.rs",
-    expected: "cargo-refuse",
-    description: "multi-file delegate (entrypoint only — needs project-source flatten)",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/account-data/anchor/programs/anchor-program-example/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "account-data with custom struct (project-source flattened, #33)",
   },
   {
     id: "create-account",
@@ -185,15 +238,21 @@ const CASES: readonly RealworldCase[] = [
   },
   {
     id: "carnival-pe",
-    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/basics/repository-layout/anchor/programs/carnival/src/lib.rs",
-    expected: "cargo-refuse",
-    description: "carnival — multi-file entrypoint (pub mod error/instructions/state)",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/repository-layout/anchor/programs/carnival/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "carnival — multi-file with pub mod error/state/instructions (project-source flattened, #33)",
   },
   {
     id: "transfer-tokens-pe",
-    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/tokens/transfer-tokens/anchor/programs/transfer-tokens/src/lib.rs",
-    expected: "cargo-refuse",
-    description: "transfer-tokens — multi-file entrypoint (delegates to ::create / ::mint / ::transfer modules)",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "tokens/transfer-tokens/anchor/programs/transfer-tokens/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "transfer-tokens — multi-file SPL transfer wrapper (project-source flattened, #33)",
   },
 ];
 
@@ -201,10 +260,49 @@ function fixturePath(id: string): string {
   return join(FIXTURE_DIR, `${id}.rs`);
 }
 
+function repoSlug(url: string): string {
+  // github.com/org/name(.git) → org__name
+  const m = url.replace(/\.git$/, "").match(/github\.com\/([^/]+)\/([^/]+)/);
+  return m ? `${m[1]}__${m[2]}` : url.replace(/[^A-Za-z0-9]/g, "_");
+}
+
 function ensureFixture(c: RealworldCase): string | null {
+  // Multi-file path (#33): shallow-clone the repo into the cache root,
+  // then flatten via project-source. The flattener walks `pub mod` +
+  // `use crate::*` chains so multi-instruction programs become a single
+  // buildable source for the parser.
+  if (c.repo) {
+    const slug = repoSlug(c.repo.url);
+    const clonePath = join(CACHE_ROOT, slug);
+    const libPath = join(clonePath, c.repo.lib);
+    if (!existsSync(libPath)) {
+      mkdirSync(CACHE_ROOT, { recursive: true });
+      // Wipe any partial prior clone before retrying.
+      rmSync(clonePath, { recursive: true, force: true });
+      const r = spawnSync(
+        "git",
+        ["clone", "--depth=1", "--filter=blob:none", c.repo.url, clonePath],
+        { encoding: "utf-8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      if (r.status !== 0 || !existsSync(libPath)) {
+        console.warn(`[realworld-cargo] ${c.id}: clone failed or lib path missing (${libPath})`);
+        return null;
+      }
+    }
+    try {
+      const entry = getProjectEntryPath(libPath);
+      const files = collectProjectFilesFromEntry(libPath);
+      return buildProjectSource(entry, files);
+    } catch (err) {
+      console.warn(`[realworld-cargo] ${c.id}: project-source flatten failed: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  }
+
+  // Single-file path (original): curl one lib.rs into fixtures/realworld/.
+  if (!c.url) return null;
   const p = fixturePath(c.id);
   if (existsSync(p)) return readFileSync(p, "utf-8");
-  // Lazy fetch — only on first run. Network unavailable = skip.
   mkdirSync(FIXTURE_DIR, { recursive: true });
   const r = spawnSync("curl", ["-sSL", "-m", "15", "-o", p, c.url], { encoding: "utf-8" });
   if (r.status !== 0 || !existsSync(p)) {

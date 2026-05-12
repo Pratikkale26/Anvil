@@ -1699,8 +1699,18 @@ ${fields}
     const mintFreezeConstraint = accountRef.constraints.find((c) => c.kind === "mint::freeze_authority" && c.value);
     if (mintDecimalsConstraint?.value && mintAuthorityConstraint?.value) {
       const decimals = mintDecimalsConstraint.value.trim();
-      const mintAuthority = snakeCase(mintAuthorityConstraint.value);
-      const freezeAuthority = mintFreezeConstraint?.value ? snakeCase(mintFreezeConstraint.value) : null;
+      // emitCreateMint expects an AccountInfo BINDING name and synthesises
+      // `${binding}.key().as_ref()` itself. The source value can be either:
+      //   `mint::authority = payer`       → binding name (correct shape)
+      //   `mint::authority = payer.key()` → expression yielding a Pubkey
+      // Without stripping the trailing `.key()`/`.key`, the emit produces
+      // `payer.key().key().as_ref()` and cargo refuses with E0599 (no
+      // .key on &[u8; 32]). Strip the suffix so both shapes converge.
+      // Surfaced by spl-token-minter (real-world, #33 follow-up, task #34).
+      const stripKey = (raw: string): string =>
+        snakeCase(raw.trim().replace(/\.\s*key\s*\(\s*\)\s*$/, "").replace(/\.\s*key\s*$/, "").trim());
+      const mintAuthority = stripKey(mintAuthorityConstraint.value);
+      const freezeAuthority = mintFreezeConstraint?.value ? stripKey(mintFreezeConstraint.value) : null;
       const payer = payerName ?? "payer";
 
       if (accountRef.isPda && accountRef.pdaSeeds?.length) {
