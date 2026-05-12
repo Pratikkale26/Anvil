@@ -70,7 +70,7 @@ const CACHE_TTL_DAYS = 7;
   } catch { /* swallow */ }
 })();
 
-interface RealworldCase {
+export interface RealworldCase {
   /** Stable identifier; used in test names + scratch dir paths. */
   id: string;
   /**
@@ -97,7 +97,7 @@ interface RealworldCase {
   description: string;
 }
 
-const CASES: readonly RealworldCase[] = [
+export const CASES: readonly RealworldCase[] = [
   {
     id: "typescript-test",
     url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/typescript/programs/typescript/src/lib.rs",
@@ -446,7 +446,7 @@ function repoSlug(url: string): string {
   return m ? `${m[1]}__${m[2]}` : url.replace(/[^A-Za-z0-9]/g, "_");
 }
 
-function ensureFixture(c: RealworldCase): string | null {
+export function ensureFixture(c: RealworldCase): string | null {
   // Multi-file path (#33): shallow-clone the repo into the cache root,
   // then flatten via project-source. The flattener walks `pub mod` +
   // `use crate::*` chains so multi-instruction programs become a single
