@@ -912,6 +912,26 @@ export class BodyWalker {
           new RegExp(`(^|[^\\w.])${accountName}\\.amount\\b`, "g"),
           (_full, prefix: string) => `${prefix}token_account_amount(${accountInfoVar})?`,
         );
+        // #32 — Pubkey-shaped fields on SPL TokenAccount (owner, mint,
+        // delegate, close_authority). Constraint expressions like
+        // `vault.owner == check_signer.key` carry these field accesses
+        // through verbatim. AccountInfo doesn't have those fields, and
+        // pinocchio_token's TokenAccount exposes them as methods returning
+        // &Pubkey. Rewrite to a from_account_info+method-call form for
+        // Pinocchio; Native gets bare-field access since spl_token::state
+        // has them as fields.
+        const splPubkeyFields = ["owner", "mint", "delegate", "close_authority"];
+        for (const field of splPubkeyFields) {
+          transformed = transformed.replace(
+            new RegExp(`(^|[^\\w.])&?${accountName}\\.${field}\\b(?!\\s*\\()`, "g"),
+            (_full, prefix: string) => {
+              if (this.emitter.frameworkName === "Pinocchio") {
+                return `${prefix}*pinocchio_token::state::TokenAccount::from_account_info(${accountInfoVar})?.${field}()`;
+              }
+              return `${prefix}spl_token::state::Account::unpack(&${accountInfoVar}.data.borrow())?.${field}`;
+            },
+          );
+        }
       }
       if (!this.isGeneratedStateType(account.accountType)) continue;
       transformed = transformed.replace(

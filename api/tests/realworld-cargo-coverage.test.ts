@@ -153,6 +153,27 @@ const CASES: readonly RealworldCase[] = [
     expected: "cargo-clean",
     description: "Anchor sysvars fixture — Clock/Rent reads",
   },
+  {
+    id: "cashiers-check",
+    url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/cashiers-check/programs/cashiers-check/src/lib.rs",
+    // 2026-05-12: 3 emit gaps tracked separately (#30 Transfer not in
+    // scope, #31 seeds binding lost in some PDA-signing paths, #32
+    // AccountInfo.owner accessed as field on Pinocchio).
+    expected: "cargo-refuse",
+    description: "cashier's check — SPL transfer + PDA seeds (#30-32)",
+  },
+  {
+    id: "custom-discriminator",
+    url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/custom-discriminator/programs/custom-discriminator/src/lib.rs",
+    expected: "cargo-clean",
+    description: "custom-discriminator — non-default 8-byte ix discriminators",
+  },
+  {
+    id: "anchor-bench",
+    url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/bench/programs/bench/src/lib.rs",
+    expected: "cargo-clean",
+    description: "Anchor bench — 87 instructions, broad surface area",
+  },
 ];
 
 function fixturePath(id: string): string {
