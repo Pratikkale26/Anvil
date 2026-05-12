@@ -730,6 +730,12 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       message:
         "Auto-scenario added a synthetic `__fee_payer` signer because the program declares no Signer<'info> accounts. This signer pays the transaction fee but isn't referenced by any instruction handler.",
     });
+    // Compare the synthetic fee payer too — without this, trivial
+    // single-step programs report "byte-equal 0 accts compared" which
+    // is a false-positive (nothing was compared, so equality is
+    // trivial). The fee payer's lamport balance after the step is the
+    // smallest non-trivial verifiable invariant.
+    comparedAccounts.add(`$signer:__fee_payer`);
   }
   const scenario: Scenario = {
     version: 1,
