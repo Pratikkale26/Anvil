@@ -878,8 +878,15 @@ export function runScenarioOnSo(
         }
       }
     }
+    // Always include the feePayer in the signer list — Solana requires
+    // the fee payer to sign even when no instruction-level signer ref
+    // is present (e.g. counter-pe's `increment` ix has no signer in its
+    // accounts list, only a $keypair PDA-counter). Without this,
+    // tx.sign(...emptyArr) leaves the tx unsigned and LiteSVM rejects
+    // with "No signers".
+    const signerKpsWithFee = [feePayer, ...signerKps];
     // Dedupe by publicKey (same keypair can appear in multiple slots).
-    const uniqSignerKps = signerKps.filter(
+    const uniqSignerKps = signerKpsWithFee.filter(
       (kp, idx, arr) => arr.findIndex((k) => k.publicKey.equals(kp.publicKey)) === idx,
     );
 
