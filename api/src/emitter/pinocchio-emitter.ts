@@ -1875,6 +1875,28 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
       // emitZeroCopyAccountStruct in native-emitter.ts). Pinocchio's
       // Pubkey is `[u8; 32]` (a type alias) so the manual unsafe Pod /
       // Zeroable impl is straightforward.
+      //
+      // #25 — accessor methods. For every field with `#[accessor(T)]`,
+      // emit `get_X(&self) -> T` and `set_X(&mut self, &T)`. In Pinocchio
+      // where Pubkey is [u8; 32], the bridge is a direct copy. For other
+      // accessor types this path may need bespoke conversion; today only
+      // Pubkey is observed in the wild (anchor/tests/zero-copy).
+      const accessorMethods = acc.fields
+        .filter((f) => f.accessorType)
+        .map((f) => {
+          const name = snakeCase(f.name);
+          const t = f.accessorType!;
+          if (t === "Pubkey") {
+            return [
+              `    pub fn get_${name}(&self) -> ${t} { self.${name} }`,
+              `    pub fn set_${name}(&mut self, value: &${t}) { self.${name} = *value; }`,
+            ].join("\n");
+          }
+          // Unknown accessor type — emit a TODO so the user sees the gap.
+          return `    // ⚠️ Anvil TODO: accessor(${t}) on field ${name} — only Pubkey is supported today; hand-port the get/set methods.`;
+        })
+        .join("\n");
+      const accessorBlock = accessorMethods ? `\n${accessorMethods}` : "";
       return `#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ${acc.name} {
@@ -1890,7 +1912,7 @@ impl ${acc.name} {
     pub const INIT_SPACE: usize = ${bodyLen};
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
-    pub const SIZE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;${accessorBlock}
 }${this.emitInherentImplItems(acc)}`;
     }
 

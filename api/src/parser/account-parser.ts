@@ -231,8 +231,8 @@ export function parseAccountDataStruct(
 
 export function parseStructFields(
   structNode: SyntaxNode,
-): { name: string; type: string; maxLen?: number[] }[] {
-  const fields: { name: string; type: string; maxLen?: number[] }[] = [];
+): { name: string; type: string; maxLen?: number[]; accessorType?: string }[] {
+  const fields: { name: string; type: string; maxLen?: number[]; accessorType?: string }[] = [];
   const bodyNode = structNode.childForFieldName("body");
   if (!bodyNode) return fields;
 
@@ -285,12 +285,17 @@ export function parseStructFields(
       continue;
     }
 
-    const field: { name: string; type: string; maxLen?: number[] } = {
+    const field: { name: string; type: string; maxLen?: number[]; accessorType?: string } = {
       name,
       type: normalizeSolanaType(typeNode.text),
     };
     const maxLen = extractMaxLen(pendingAttrs);
     if (maxLen) field.maxLen = maxLen;
+    // #25 — capture `#[accessor(T)]` on zero-copy byte-array fields so
+    // emit can auto-generate get_X / set_X methods that bridge the
+    // user-visible T to the on-disk byte representation.
+    const accessorType = extractAccessorType(pendingAttrs);
+    if (accessorType) field.accessorType = accessorType;
     fields.push(field);
     pendingAttrs = [];
   }
@@ -308,6 +313,20 @@ export function parseStructFields(
  * args (e.g. `#[max_len(MAX_LEN)]` referencing a const) are skipped —
  * resolveTypeSize falls back to its existing default in that case.
  */
+/**
+ * Extract the inner type T from `#[accessor(T)]`. Returns the raw type
+ * string (e.g. "Pubkey") or undefined when the attribute isn't present.
+ * Used for zero-copy field accessor generation (#25).
+ */
+function extractAccessorType(attrs: SyntaxNode[]): string | undefined {
+  for (const attr of attrs) {
+    const text = attr.text.replace(/\s+/g, "");
+    const m = text.match(/^#\[accessor\(([^)]+)\)\]/);
+    if (m?.[1]) return m[1];
+  }
+  return undefined;
+}
+
 function extractMaxLen(attrs: SyntaxNode[]): number[] | undefined {
   for (const attr of attrs) {
     const text = attr.text.replace(/\s+/g, "");

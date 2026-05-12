@@ -865,6 +865,16 @@ export const AccountFieldSchema = z.object({
    * decide how to apply each entry based on field type.
    */
   maxLen: z.array(z.number()).optional(),
+  /**
+   * `#[accessor(T)]` — Anchor's macro for zero-copy fields whose on-disk
+   * representation is bytes (e.g. `[u8; 32]`) but whose user-visible API
+   * uses a different type (e.g. Pubkey). Source: `#[accessor(Pubkey)]
+   * pub second_authority: [u8; 32]` generates `get_second_authority(&self)
+   * -> Pubkey` and `set_second_authority(&mut self, &Pubkey)` methods on
+   * the struct. Carried verbatim so emit can auto-generate the accessor
+   * methods (#25, surfaced by anchor/tests/zero-copy on 2026-05-12).
+   */
+  accessorType: z.string().optional(),
 });
 
 export type AccountField = z.infer<typeof AccountFieldSchema>;
