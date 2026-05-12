@@ -177,6 +177,24 @@ const CASES: readonly RealworldCase[] = [
     expected: "cargo-clean",
     description: "Anchor bench — 87 instructions, broad surface area",
   },
+  {
+    id: "favorites-pe",
+    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/basics/favorites/anchor/programs/favorites/src/lib.rs",
+    expected: "cargo-clean",
+    description: "favorites — single-ix String + Vec<String> state (max_len)",
+  },
+  {
+    id: "carnival-pe",
+    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/basics/repository-layout/anchor/programs/carnival/src/lib.rs",
+    expected: "cargo-refuse",
+    description: "carnival — multi-file entrypoint (pub mod error/instructions/state)",
+  },
+  {
+    id: "transfer-tokens-pe",
+    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/tokens/transfer-tokens/anchor/programs/transfer-tokens/src/lib.rs",
+    expected: "cargo-refuse",
+    description: "transfer-tokens — multi-file entrypoint (delegates to ::create / ::mint / ::transfer modules)",
+  },
 ];
 
 function fixturePath(id: string): string {
