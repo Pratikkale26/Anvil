@@ -260,7 +260,7 @@ export async function parseAnchor(
 
     // ── Parse custom types ──
     const types = topLevel.customTypes.map((t) => {
-      const def = parseCustomType(t.node, t.kind);
+      const def = parseCustomType(t.node, t.kind, t.attrs);
       // Same impl-items attachment as accounts above. Plain Rust types like
       // carnival's `Ride`/`Game` carry `impl X { fn new(...) }` constructors
       // that the helpers/instructions reference.

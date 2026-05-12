@@ -931,6 +931,16 @@ export const TypeDefSchema = z.object({
    * sites like `Ride::new(...)` resolve. Most relevant for plain Rust state
    * (carnival's `Ride`/`Game`/`FoodStand`) and instruction-data wrappers. */
   implItems: z.array(z.string()).optional(),
+  /**
+   * Set when the source struct carried `#[zero_copy]` (standalone, NOT paired
+   * with `#[account(zero_copy)]`). Anchor's zero-copy types are used as
+   * field types inside zero-copy account structs (e.g. `events: [Event; N]`
+   * where Event is `#[zero_copy]`). Emit must produce `#[repr(C)] #[derive(Copy,
+   * Clone)] + bytemuck::Pod/Zeroable` so the containing AccountDef's bytemuck
+   * cast doesn't fail with E0204 (cannot impl Copy for type with non-Copy
+   * fields). Surfaced by the real-world zero-copy fixture (2026-05-12, #27).
+   */
+  isZeroCopy: z.boolean().optional(),
 });
 
 export type TypeDef = z.infer<typeof TypeDefSchema>;

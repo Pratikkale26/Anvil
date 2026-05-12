@@ -81,6 +81,7 @@ export function parseHelperFn(fnNode: SyntaxNode): HelperFn {
 export function parseCustomType(
   node: SyntaxNode,
   kind: "struct" | "enum",
+  attrs?: SyntaxNode[],
 ): SolanaIR["types"][0] {
   const name = (node.childForFieldName("name")?.text) ?? "Unknown";
   // Capture `<'info>` / `<T: Clone>` so structs whose fields reference a
@@ -90,9 +91,18 @@ export function parseCustomType(
   const genericsNode = node.childForFieldName("type_parameters");
   const generics = genericsNode?.text;
 
+  // #27 — detect `#[zero_copy]` standalone attribute. When a struct is
+  // tagged with `#[zero_copy]` (not paired with `#[account(zero_copy)]`,
+  // which lands in accountDataStructs), it's used as a field type inside
+  // zero-copy account structs. Emit must produce repr(C) + Pod so the
+  // containing account's bytemuck cast doesn't fail with E0204.
+  const isZeroCopy = attrs?.some(
+    (a) => /^#\[\s*zero_copy(\s*\([^\)]*\))?\s*\]/.test(a.text.replace(/\s+/g, " ")),
+  );
+
   if (kind === "struct") {
     const fields = parseStructFields(node);
-    return { name, kind: "struct", fields, rawCode: node.text, generics };
+    return { name, kind: "struct", fields, rawCode: node.text, generics, ...(isZeroCopy ? { isZeroCopy } : {}) };
   }
 
   // Enum variants
@@ -118,7 +128,7 @@ export function parseCustomType(
     }
   }
 
-  return { name, kind: "enum", variants, rawCode: node.text, generics };
+  return { name, kind: "enum", variants, rawCode: node.text, generics, ...(isZeroCopy ? { isZeroCopy } : {}) };
 }
 
 // ─── Import extraction ──────────────────────────────────────────────────────

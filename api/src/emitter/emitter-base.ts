@@ -1397,6 +1397,27 @@ ${arms}
       // Preserve `<'info>` / generic params on the struct decl so fields
       // that reference them (e.g. `MarketAccounts<'info>`) compile.
       const generics = typeDef.generics ?? "";
+
+      // #27 — standalone `#[zero_copy]` struct: emit Pod-shape so the
+      // containing account's bytemuck cast doesn't fail with E0204.
+      // Mirrors the AccountDef zero-copy branch in pinocchio-emitter +
+      // native-emitter. Skip borsh derives (zero-copy never serializes
+      // via borsh) and add #[repr(C)] + Copy/Clone + unsafe Pod/Zeroable.
+      // Surfaced by real-world zero-copy fixture (anchor/tests/zero-copy:
+      // the `Event` struct is `#[zero_copy]` and used as `events:
+      // [Event; 25000]` inside EventQ; without this emit, EventQ's
+      // derive(Copy) fails because Event isn't Copy.
+      if (typeDef.isZeroCopy) {
+        return `#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ${typeDef.name}${generics} {
+${fields}
+}
+
+unsafe impl bytemuck::Zeroable for ${typeDef.name} {}
+unsafe impl bytemuck::Pod for ${typeDef.name} {}${implBlock}`;
+      }
+
       return `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
 pub struct ${typeDef.name}${generics} {
 ${fields}
