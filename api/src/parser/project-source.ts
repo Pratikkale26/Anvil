@@ -719,17 +719,26 @@ function rewriteProgramModuleBody(
 
   let body = progMatch[2]!;
 
-  // Strip any pre-existing `use super::*;` — irrelevant once flattened,
-  // and the explicit prelude inject below covers what it was bringing in.
-  body = body.replace(/^\s*use\s+super::\*;\s*$/gm, "");
-  // Always inject `use anchor_lang::prelude::*;` at the top of the program
-  // body. This ensures `Result`, `Context`, and the other Anchor prelude
-  // items resolve inside the `#[program] pub mod` block. Without this, a
-  // program that doesn't carry `use super::*;` in its original source (e.g.
-  // solana-developers/program-examples basics/account-data) fails to
-  // compile under the differential reference build with E0107 on
-  // `Result<()>`.
-  body = `\n    use anchor_lang::prelude::*;\n${body}`;
+  // Strip any pre-existing `use super::*;` / `use anchor_lang::prelude::*;`
+  // — we re-add them canonically below to ensure both are always present
+  // (the original source may have neither, one, or both depending on the
+  // program-examples flavor).
+  body = body
+    .replace(/^\s*use\s+super::\*;\s*$/gm, "")
+    .replace(/^\s*use\s+anchor_lang::prelude::\*;\s*$/gm, "");
+  // Always inject BOTH `use anchor_lang::prelude::*;` and `use super::*;`
+  // at the top of the program body:
+  //   - prelude::* brings in `Result`, `Context`, etc. so handlers inside
+  //     #[program] resolve those types (else E0107 on `Result<()>`).
+  //   - super::* brings in the user-defined types/structs/handlers that
+  //     live at crate-root after flattening (#[derive(Accounts)] structs,
+  //     module-scope handler fns the #[program] body re-exports as ix
+  //     entry points). Without it, E0412/E0425 on user-defined idents.
+  // Both surfaced from program-examples basics/account-data which doesn't
+  // carry these imports in its original source — Anchor's `#[program]`
+  // macro normally synthesizes them, but project-source flattening
+  // disrupts that, so we make them explicit.
+  body = `\n    use anchor_lang::prelude::*;\n    use super::*;\n${body}`;
 
   // Rewrite module-qualified calls like `instructions::initialize::handler(...)`
   body = body.replace(
