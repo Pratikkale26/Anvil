@@ -120,6 +120,14 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<
   // regex check below. They are caught instead by checkUnsafeMarkers() and
   // checkManualTodos() which operate on raw content with comments intact.
   {
+    // #40 — Anchor's Account<'info, T>.reload() re-deserializes the account
+    // buffer after a CPI mutates it. Pinocchio AccountInfo has no reload()
+    // method; the user must re-bind via T::from_account_info(account_info).
+    // Refuse loud so the cargo gate doesn't have to surface a generic E0599.
+    pattern: /\.reload\s*\(\s*\)\s*\??/,
+    message: "Account.reload() has no equivalent in the stripped-down target — re-bind the deserialized state from the AccountInfo buffer after the CPI (e.g. `let state = T::from_account_info(account_info)?;` on Pinocchio, `T::try_from_slice(&account_info.data.borrow())` on native) or split the instruction so the post-CPI read happens in a separate call.",
+  },
+  {
     pattern: /\b[A-Z][A-Za-z0-9_]*CpiBuilder::new\s*\(/,
     message: "Third-party Anchor CPI builder leaked into a non-native target; this target cannot safely carry external Anchor-style builder CPIs.",
     targets: ["pinocchio"],

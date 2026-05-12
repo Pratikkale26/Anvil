@@ -307,11 +307,12 @@ const CASES: readonly RealworldCase[] = [
       url: "https://github.com/solana-developers/program-examples",
       lib: "tokens/token-swap/anchor/programs/token-swap/src/lib.rs",
     },
-    // 22KB AMM. 3 distinct emit gaps surfaced 2026-05-12 (tracked
-    // separately as #35 signer_seeds in deep CPI sites, #36 .key()
-    // called on bare Pubkey, #37 TokenAccount.amount as field).
-    expected: "cargo-refuse",
-    description: "token-swap — 22KB AMM (validator-clean, cargo refused; #35-37 tracked)",
+    // 22KB AMM. Surfaced 4 emit gaps 2026-05-12 (#35/#36/#37/#39 fixed).
+    // Final residual is Account.reload() (#40) which now refuses at the
+    // validator with actionable guidance — moved from cargo-refuse →
+    // validator-refuse on the same date.
+    expected: "validator-refuse",
+    description: "token-swap — 22KB AMM (validator refuses .reload(); #40 tracked)",
   },
   {
     id: "t22-non-transferable",
