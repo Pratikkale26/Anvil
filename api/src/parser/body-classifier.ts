@@ -683,12 +683,28 @@ function classifyExpressionStatement(
   }
 
   // ── Default: pass through ──
+  //
+  // INTENTIONALLY does NOT emit a parser warning even when
+  // `containsAnchorPatterns(text)` is true. The walker.ts regex
+  // post-process handles many if-block / nested-control-flow CPI
+  // patterns successfully (staking + vesting demo programs cargo-build
+  // green despite their bodies tripping containsAnchorPatterns).
+  //
+  // The ground truth for whether the emit is broken is cargo check —
+  // not a parser-time heuristic. Issue #22 (cargo-as-accept-gate) is
+  // the durable fix. Until then, real broken cases (e.g. token-proxy's
+  // if-let-Some on ctx.accounts where the regex post-process leaves
+  // an undefined `cpi_context` reference) will still slip through the
+  // validator but will fail at cargo. See
+  // api/tests/fixture-if-let-ctx-accounts.test.ts for the known-gap
+  // documentation.
+  const hasAnchor = containsAnchorPatterns(text);
   return {
     stmt: {
       kind: "pass_through",
       code: text,
-      needsReview: containsAnchorPatterns(text),
-      reviewReason: containsAnchorPatterns(text) ? "Contains possible Anchor-specific pattern" : undefined,
+      needsReview: hasAnchor,
+      reviewReason: hasAnchor ? "Contains possible Anchor-specific pattern" : undefined,
     },
   };
 }
