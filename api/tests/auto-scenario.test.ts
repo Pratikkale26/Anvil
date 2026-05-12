@@ -517,12 +517,18 @@ describe("auto-scenario: compare scope widening (snapshot integrity)", () => {
     expect(compare).toContain("$keypair:lp_mint");
   });
 
-  test("counter compare scope is unchanged (no SPL accounts in source)", async () => {
+  test("counter compare scope (no SPL accounts) — PDA + signer", async () => {
+    // 2026-05-10 widening (commit 8c7c3a4): signers were added to the
+    // compare set regardless of SPL presence — both targets see
+    // identical airdrop + fees + rent so post-step lamports are
+    // deterministic. Counter therefore compares both `counter` PDA
+    // AND `$signer:authority`. Previous test name "unchanged" referred
+    // to the SPL-specific widening which is still gated.
     const ir = await parseDemo("counter.rs");
     const r = synthesizeAutoScenario(ir);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.scenario.compare.accounts).toEqual(["counter"]);
+    expect(r.scenario.compare.accounts).toEqual(["counter", "$signer:authority"]);
   });
 });
 
