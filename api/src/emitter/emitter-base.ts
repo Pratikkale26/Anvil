@@ -719,6 +719,14 @@ export abstract class BaseEmitter {
     if (ir.instructions.length > 0) {
       sections.push("use instructions::*;");
     }
+    // #42 — re-export the error enum at the crate root so bodies that
+    // reference `crate::FundraiserError::X` (a common shape when the
+    // source has `pub use error::*;` in its lib.rs and references stay
+    // un-aliased) resolve. The instruction-file `use crate::errors::*;`
+    // already handles `FundraiserError::X` without the crate:: prefix.
+    if (ir.errors.length > 0) {
+      sections.push("pub use errors::*;");
+    }
     // User trait impls land AFTER `mod state;` so account-struct types
     // emitted into state.rs resolve when referenced. We pull them into
     // lib.rs scope with `use state::*;` since trait-impl bodies often
