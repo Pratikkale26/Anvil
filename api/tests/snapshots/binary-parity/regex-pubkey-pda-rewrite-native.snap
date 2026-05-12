@@ -95,6 +95,8 @@ mod errors;
 
 use instructions::*;
 
+pub use errors::*;
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
