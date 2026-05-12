@@ -67,3 +67,7 @@ api/tests/snapshots/emitter-output/*.actual.rs
 api/tests/snapshots/binary-parity/*.snap.actual
 # anvil-sol prepack output (regenerated on each npm publish)
 cli/src/
+# Real-world cargo coverage fetches public Anchor sources on first run
+# into this dir (offline-repeatable after that). The test file holds the
+# pointer + sha; committing the source verbatim would mirror upstream.
+api/tests/fixtures/realworld/

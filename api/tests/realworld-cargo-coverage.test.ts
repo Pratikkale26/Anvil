@@ -291,6 +291,46 @@ const CASES: readonly RealworldCase[] = [
     expected: "cargo-clean",
     description: "checking-accounts (single-ix manual account checks)",
   },
+  // Surface diversification — Token-2022, NFT, DeFi-shaped programs.
+  {
+    id: "t22-basics",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "tokens/token-2022/basics/anchor/programs/basics/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "Token-2022 basics — 5 ix wrappers via token_interface",
+  },
+  {
+    id: "token-swap",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "tokens/token-swap/anchor/programs/token-swap/src/lib.rs",
+    },
+    // 22KB AMM. 3 distinct emit gaps surfaced 2026-05-12 (tracked
+    // separately as #35 signer_seeds in deep CPI sites, #36 .key()
+    // called on bare Pubkey, #37 TokenAccount.amount as field).
+    expected: "cargo-refuse",
+    description: "token-swap — 22KB AMM (validator-clean, cargo refused; #35-37 tracked)",
+  },
+  {
+    id: "t22-non-transferable",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "tokens/token-2022/non-transferable/anchor/programs/non-transferable/src/lib.rs",
+    },
+    expected: "validator-refuse",
+    description: "T22 non-transferable extension — validator refuses unsupported shape",
+  },
+  {
+    id: "nft-minter",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "tokens/nft-minter/anchor/programs/nft-minter/src/lib.rs",
+    },
+    expected: "validator-refuse",
+    description: "NFT minter — Metaplex CPI (#mpl_create_metadata family); validator refuses",
+  },
 ];
 
 function fixturePath(id: string): string {
