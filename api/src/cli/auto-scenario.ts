@@ -327,6 +327,40 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     }
   }
 
+  // B2f bucket fix — accounts that are init'd in some instruction AND not
+  // themselves PDAs need a fresh ephemeral keypair at scenario-run time
+  // (the program creates the account with this keypair as signer). When
+  // such an account is referenced in a PDA's seed (e.g. nft-minter's
+  // `metadata` PDA is seeded by `mint_account.key().as_ref()` where
+  // `mint_account` is init'd with a fresh keypair), the seed must resolve
+  // to that keypair's pubkey. We pass this set into synthesizeSeeds so it
+  // can emit `$keypair:<name>.pubkey` instead of blocking.
+  const initdEphemeralNames = new Set<string>();
+  for (const ix of ir.instructions) {
+    for (const acc of ix.accounts) {
+      if (!acc.isInit) continue;
+      if (acc.isPda) continue; // PDA init'd accounts go through find_program_address
+      initdEphemeralNames.add(acc.name);
+    }
+  }
+
+  // B2f bucket fix (state-account form) — when a seed references a state-typed
+  // account (e.g. zero-copy: `seeds = [authority.key().as_ref(), foo.key().as_ref()]`
+  // where `foo: AccountLoader<Foo>` and Foo is a user-defined state struct in
+  // ir.accounts), the scenario runner pre-creates a fresh keypair for that
+  // account regardless of whether any instruction marks it `init`. Both
+  // targets see the same keypair pubkey → same derived PDA → byte-equal.
+  // Names of accounts whose type matches a user-defined state struct.
+  const stateAccountTypes = new Set(ir.accounts.map((a) => a.name));
+  const stateTypeNames = new Set<string>();
+  for (const ix of ir.instructions) {
+    for (const acc of ix.accounts) {
+      if (acc.isPda) continue;
+      if (acc.isInit) continue; // already in initdEphemeralNames
+      if (stateAccountTypes.has(acc.accountType)) stateTypeNames.add(acc.name);
+    }
+  }
+
   // Pass A — derived ATAs: accounts init'd with associated_token::*. The
   // ATA program derives the address from (owner, mint, token_program); the
   // runner pre-derives the pubkey and does NOT pre-install (the program's
@@ -494,6 +528,8 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
           ixArgTypes,
           acc.name,
           stateNumericFieldMap,
+          initdEphemeralNames,
+          stateTypeNames,
         );
         if (!seedResult.ok) {
           blockers.push({
@@ -787,6 +823,8 @@ function synthesizeSeeds(
   argTypes: Map<string, string>,
   accountName: string,
   stateNumericFieldMap: Map<string, Map<string, { argName: string; argType: string; defaultValue: number }>>,
+  initdEphemeralNames: Set<string> = new Set(),
+  stateTypeNames: Set<string> = new Set(),
 ): SeedSynthesis {
   const resolveStateNumericField = (
     accName: string,
@@ -850,6 +888,23 @@ function synthesizeSeeds(
       }
       if (mintNames.has(name)) {
         out.push(`$mint:${name}.pubkey`);
+        continue;
+      }
+      // B2f fix — init'd Mint / TokenAccount / state account referenced in
+      // a seed. The program creates the account at scenario-run time with
+      // a fresh ephemeral keypair as signer; the seed must resolve to that
+      // keypair's pubkey. Common shape: nft-minter / pda-mint-authority
+      // where `mint_account` is init'd and `metadata` is a PDA seeded by
+      // `mint_account.key().as_ref()`.
+      if (initdEphemeralNames.has(name)) {
+        out.push(`$keypair:${name}.pubkey`);
+        continue;
+      }
+      // B2f fix (state-account form) — zero-copy / similar: `foo: AccountLoader<Foo>`
+      // where Foo is a user-defined state struct. Scenario runner pre-creates a
+      // fresh keypair. Both targets see the same pubkey → byte-equal PDA derivation.
+      if (stateTypeNames.has(name)) {
+        out.push(`$keypair:${name}.pubkey`);
         continue;
       }
       // Cross-account seed reference to something that is neither a signer,
