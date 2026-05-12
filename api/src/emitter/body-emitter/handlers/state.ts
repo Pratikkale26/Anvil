@@ -167,8 +167,20 @@ export function handleStateFieldAssign(w: BodyWalker, stmt: StateFieldAssign): v
   const stateAccountName = w.canonicalAccountName(stmt.account);
   w.mutatedAccounts.add(stateAccountName);
   w.ensureStateRead(stateAccountName, true);
+  // #43 — ir.accounts entries are TYPE definitions (named after the user's
+  // `#[account]` struct, e.g. "Contributor"), not the per-instruction
+  // account refs (named like "contributor_account"). Looking up by
+  // stateAccountName directly missed token-fundraiser's Contributor.amount
+  // and left __compound_+=__amount placeholder text in the emitted state
+  // assign. Hop through the ix-account-ref's accountType to find the
+  // canonical AccountDef.
+  const ixAccountRef = w.instr.accounts.find(
+    (a) => snakeCase(a.name) === stateAccountName,
+  );
   const stateAccountDef = w.ir.accounts.find(
-    (account) => snakeCase(account.name) === stateAccountName,
+    (account) =>
+      snakeCase(account.name) === stateAccountName
+      || (ixAccountRef && account.name === ixAccountRef.accountType),
   );
   const fieldDef = stateAccountDef?.fields.find(
     (field) => snakeCase(field.name) === snakeCase(stmt.field),
