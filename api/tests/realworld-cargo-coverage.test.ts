@@ -419,6 +419,21 @@ const CASES: readonly RealworldCase[] = [
     expected: "cargo-clean",
     description: "processing-instructions — msg!() with format args + conditional",
   },
+  {
+    id: "nft-operations",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "tokens/nft-operations/anchor/programs/mint-nft/src/lib.rs",
+    },
+    // Metaplex builder-pattern (CreateMetadataAccountV3Cpi::new(...)
+    // .invoke_signed(...)) is rejected by the validator with an actionable
+    // rewrite hint. The typed IR for #45 covers the function-call shape but
+    // the builder also carries Creator[] / Collection / CollectionDetails
+    // which the IR doesn't model. Promoting cargo-clean without those
+    // fields would silently ship a broken NFT — refuse instead.
+    expected: "validator-refuse",
+    description: "nft-operations — Metaplex builder shape (CreateMetadataAccountV3Cpi::new), refused pending IR extension",
+  },
 ];
 
 function fixturePath(id: string): string {

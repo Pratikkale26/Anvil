@@ -128,6 +128,18 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<
     message: "Account.reload() has no equivalent in the stripped-down target — re-bind the deserialized state from the AccountInfo buffer after the CPI (e.g. `let state = T::from_account_info(account_info)?;` on Pinocchio, `T::try_from_slice(&account_info.data.borrow())` on native) or split the instruction so the post-CPI read happens in a separate call.",
   },
   {
+    // Metaplex builder-shape CPI. The typed IR (#45) handles the
+    // function-call form (create_metadata_accounts_v3(CpiContext::new(...),
+    // DataV2{...}, ...)) but NOT the builder form
+    // (CreateMetadataAccountV3Cpi::new(...).invoke_signed(...)). The
+    // builder carries Creator[] / Collection / CollectionDetails which the
+    // typed IR doesn't currently model — promoting silently would ship an
+    // NFT missing those fields. Refuse loudly with a rewrite hint until
+    // the IR is extended.
+    pattern: /\b(?:CreateMetadataAccountV3Cpi|CreateMasterEditionV3Cpi)::new\s*\(/,
+    message: "Metaplex builder-pattern CPI (CreateMetadataAccountV3Cpi::new(...).invoke_signed(...)) is not yet supported — Anvil only handles the function-call form: create_metadata_accounts_v3(CpiContext::new_with_signer(prog, CreateMetadataAccountsV3{...}, seeds), DataV2{...}, is_mutable, update_authority_is_signer, collection_details). Rewrite the call site, or open an issue if creators/collection/collection_details fidelity is required.",
+  },
+  {
     pattern: /\b[A-Z][A-Za-z0-9_]*CpiBuilder::new\s*\(/,
     message: "Third-party Anchor CPI builder leaked into a non-native target; this target cannot safely carry external Anchor-style builder CPIs.",
     targets: ["pinocchio"],
