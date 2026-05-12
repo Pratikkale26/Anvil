@@ -135,6 +135,19 @@ interface CliArgs {
    */
   strict: boolean;
   /**
+   * --cargo-check on `compile`: after writing the emit, run `cargo
+   * check` in the output dir and refuse to declare success if cargo
+   * rejects the emit. This is the durable accept gate (#22): the
+   * validator's heuristic shape coverage is a fast-fail layer; cargo
+   * is ground truth. Exit code 3 on cargo failure, distinct from 1
+   * (parse/emit error) and 2 (--strict refusal).
+   *
+   * Requires `cargo` on PATH; first run downloads pinocchio/native
+   * crate deps so the first invocation is slow (~30-60s) and
+   * subsequent ones are fast (~3-5s warm).
+   */
+  cargoCheck: boolean;
+  /**
    * `differential --scenario path/to/scenario.json` — drives the byte-equal
    * compare against the Anchor reference using a user-supplied JSON
    * scenario. Without --scenario, the differential subcommand only builds
@@ -248,6 +261,7 @@ function parseArgs(argv: string[]): CliArgs {
     thresholdAbs: 10,
     snapshotPath: null,
     strict: false,
+    cargoCheck: false,
     scenario: null,
     anchorSo: null,
     anvilSo: null,
@@ -346,6 +360,12 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--strict") {
       args.strict = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--cargo-check") {
+      args.cargoCheck = true;
       i++;
       continue;
     }
@@ -545,12 +565,18 @@ function printCompileHelp(): void {
                             errors or the emit contains TODO(manual) /
                             "manual rebuild required" stub markers. Use
                             this gate before deploy. Exit code 2 on refusal.
+    --cargo-check           After writing, run \`cargo check\` in the output
+                            directory and refuse to declare success if cargo
+                            rejects the emit. The validator is a fast
+                            heuristic; cargo is the ground truth. Requires
+                            \`cargo\` on PATH. Exit code 3 on cargo failure.
 
   ${c.bold}EXAMPLES${c.reset}
 
     anvil compile program.rs --target pinocchio
     anvil compile ./my-program --target native --output ./dist
     anvil compile ./my-program --target pinocchio --strict
+    anvil compile ./my-program --target pinocchio --cargo-check
 `);
 }
 
@@ -1079,6 +1105,38 @@ async function cmdCompile(args: CliArgs): Promise<void> {
   progress(`Writing to ${outputDir}/...`);
   writeOutputFiles(output, outputDir, args.singleFile, inputName, ir, target);
   console.log();
+
+  // 7. cargo check accept gate (--cargo-check)
+  // The validator is a fast heuristic; cargo is the ground truth. Run
+  // it after write so the gate sees exactly what the user gets.
+  if (args.cargoCheck) {
+    const { runCargoCheckGate, cargoAvailable } = await import(
+      "../api/src/build/cargo-gate.js"
+    );
+    if (!cargoAvailable()) {
+      error("--cargo-check requires `cargo` on PATH. Install rustup, then retry.");
+      process.exit(3);
+    }
+    progress("Running cargo check (this can take 30-60s on first run)…");
+    const result = await runCargoCheckGate(outputDir);
+    if (result.ok) {
+      success(`cargo check: clean (${result.durationMs}ms${result.warnings.length ? `, ${result.warnings.length} warning${result.warnings.length !== 1 ? "s" : ""}` : ""})`);
+    } else {
+      error(`cargo check: ${result.errors.length} error${result.errors.length !== 1 ? "s" : ""} (${result.durationMs}ms)`);
+      for (const e of result.errors.slice(0, 12)) {
+        console.log(`    ${c.red}E${c.reset} ${e}`);
+      }
+      if (result.errors.length > 12) {
+        console.log(`    ${c.dim}… and ${result.errors.length - 12} more${c.reset}`);
+      }
+      console.log();
+      console.log(
+        `  ${c.dim}The emit was written to ${outputDir}/ — inspect and run cargo manually for full output.${c.reset}`,
+      );
+      process.exit(3);
+    }
+    console.log();
+  }
 }
 
 async function cmdParse(args: CliArgs): Promise<void> {
