@@ -1027,6 +1027,8 @@ export const ParserWarningCodeSchema = z.enum([
   "signer_seeds_lost_variable_binding",
   /** Pass-through statement detected as containing Anchor patterns that won't carry. */
   "anchor_pattern_in_passthrough",
+  /** #[derive(Accounts)] struct field whose type is another Accounts struct (composite shape). */
+  "composite_accounts_field",
 ]);
 
 export type ParserWarningCode = z.infer<typeof ParserWarningCodeSchema>;

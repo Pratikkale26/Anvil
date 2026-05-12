@@ -100,8 +100,15 @@ function parseInstructionFn(
 
   // ── Resolve accounts from the Context<T> struct ──
   const accountsStruct = accountsStructs.find((s) => s.name === contextType);
+  // Composite-Accounts detection (#21) — pass the full set of
+  // #[derive(Accounts)] struct names so parseAccountsStructFields can flag
+  // fields whose type is itself another Accounts struct.
+  const accountsStructNames = new Set(accountsStructs.map((s) => s.name));
   const accounts = accountsStruct
-    ? parseAccountsStructFields(accountsStruct.node, accountsStruct.attrs)
+    ? parseAccountsStructFields(accountsStruct.node, accountsStruct.attrs, {
+        accountsStructNames,
+        collector,
+      })
     : [];
 
   // ── Reconcile #[instruction(...)] attr arg names with the wrapper handler

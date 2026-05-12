@@ -14,16 +14,28 @@ import { extractAccountAttrInner } from "./ast-helpers.js";
 import { parseConstraints, parseInitMetadata } from "./constraint-parser.js";
 import { normalizeSolanaType } from "./utils.js";
 import { locFromNode } from "./warning-collector.js";
+import type { WarningCollector } from "./warning-collector.js";
 
 // ─── Accounts context struct parsing ────────────────────────────────────────
 
 export function parseAccountsStructFields(
   structNode: SyntaxNode,
   outerAttrs: SyntaxNode[],
+  opts?: {
+    /** Names of every #[derive(Accounts)] struct in the source. Used to
+     *  detect composite Accounts shape (a field whose type is itself
+     *  another Accounts struct — Anchor flattens at IDL gen, Anvil's
+     *  parser/emitter does not yet). */
+    accountsStructNames?: ReadonlySet<string>;
+    /** Where composite-detection warnings land. */
+    collector?: WarningCollector;
+  },
 ): AccountRef[] {
   const accounts: AccountRef[] = [];
   const bodyNode = structNode.childForFieldName("body");
   if (!bodyNode) return accounts;
+
+  const parentStructName = structNode.childForFieldName("name")?.text ?? "<anonymous>";
 
   let currentAttrs: SyntaxNode[] = [];
 
@@ -38,7 +50,41 @@ export function parseAccountsStructFields(
 
     if (child.type === "field_declaration") {
       const account = parseAccountField(child, currentAttrs);
-      if (account) accounts.push(account);
+      if (account) {
+        // Composite-Accounts detection (#21): if the field's accountType
+        // matches the name of another #[derive(Accounts)] struct in the
+        // source, Anchor flattens at IDL gen but Anvil emits the field
+        // as a regular AccountInfo binding. Downstream
+        // `ctx.accounts.<field>.<subfield>` references compile-refuse
+        // with E0609 "no field <subfield> on type AccountInfo".
+        //
+        // Emit a loud parser warning so the validator can refuse the
+        // emit before users hit cargo. Skip uppercase Anchor wrapper
+        // types (Signer, Account, Program, etc.) which never appear in
+        // the Accounts-struct-names set.
+        // accountType may carry generics: `Foo<'info>`, `Foo<'info, T>`.
+        // Strip them before checking against the Set of Accounts struct
+        // names (which contains bare identifiers).
+        const accountTypeBase = account.accountType.split("<")[0]!.trim();
+        if (
+          opts?.accountsStructNames?.has(accountTypeBase)
+          && opts.collector
+        ) {
+          opts.collector.add({
+            code: "composite_accounts_field",
+            message:
+              `${parentStructName}.${account.name}: composite Accounts struct field ` +
+              `(type '${accountTypeBase}' is itself a #[derive(Accounts)] struct). ` +
+              `Anchor flattens this at IDL generation; Anvil's parser does not yet flatten ` +
+              `nested Accounts structs, so the field is emitted as a single AccountInfo binding ` +
+              `and downstream chained-field access fails to compile. ` +
+              `Workaround: inline ${account.accountType}'s fields into ${parentStructName} directly.`,
+            snippet: child.text.slice(0, 200),
+            loc: locFromNode(child),
+          });
+        }
+        accounts.push(account);
+      }
       currentAttrs = [];
     }
   }

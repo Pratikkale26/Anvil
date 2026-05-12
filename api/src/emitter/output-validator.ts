@@ -824,8 +824,16 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     // / CLI can render "your Anchor source at L:C will not transpile" rather
     // than "your emitted Rust contains a leaked pattern". Same correctness
     // posture either way; better UX.
+    // Codes that block emit:
+    //   - anchor_pattern_in_passthrough (H2): Anchor construct riding
+    //     through verbatim into a target that can't satisfy it.
+    //   - composite_accounts_field (#21): nested #[derive(Accounts)] field
+    //     that Anvil's parser does not flatten — chained access compiles
+    //     against AccountInfo and rustc refuses with E0609.
     const severity: ValidationSeverity =
-      w.code === "anchor_pattern_in_passthrough" ? "error" : "warning";
+      w.code === "anchor_pattern_in_passthrough" || w.code === "composite_accounts_field"
+        ? "error"
+        : "warning";
     issues.push({
       severity,
       message: `${where}[parser:${w.code}] ${w.message}`,
