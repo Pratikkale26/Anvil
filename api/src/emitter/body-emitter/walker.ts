@@ -289,19 +289,11 @@ export class BodyWalker {
     }
     } // end of !ANVIL_AST_EMIT branch
 
-    const result = this.lines.join("\n");
+    // Stacked-star collapse first — must run BEFORE the comparison-context
+    // strips below, since those expect a single `*` prefix. See
+    // collapseStackedKeyDerefs() at class top for the shared regex.
+    const result = this.collapseStackedKeyDerefs(this.lines.join("\n"));
     return result
-      // Collapse double-deref `**X.key[()]` → single `*X.key[()]`. Use
-      // `\*{2,}` (two-or-more) instead of `\*\*` (exactly two): upstream
-      // transforms can stack stars when source had `*ctx.accounts.X.key`
-      // and `transformAccountReferences` re-prepends another `*` via
-      // `emitAccountKeyExpr`. A literal-two-stars pattern would only strip
-      // one pair per pass, leaving `**X.key` for the `***X.key` shape. The
-      // `\*{2,}` greedy match eats all leading stars except one in a single
-      // pass. Must run BEFORE the comparison-context strips below, since
-      // those expect a single `*` prefix.
-      .replace(/\*{2,}(\w+)\.key\(\)/g, "*$1.key()")
-      .replace(/\*{2,}(\w+)\.key\b(?!\()/g, "*$1.key")
       // Strip the deref on `*<X>.key` / `*<X>.key()` when its sibling in a
       // comparison is already `&<expr>` — keeps both sides as `&Pubkey`
       // instead of mixing `&Pubkey` with `Pubkey`. Triggers in iter-chain
@@ -371,6 +363,20 @@ export class BodyWalker {
       ) return true;
       return false;
     });
+  }
+
+  /**
+   * N2 Phase 2c — collapse stacked `*` derefs on Pubkey/key access.
+   * Upstream rewrites can stack stars when source had `*ctx.accounts.X.key`
+   * and `transformAccountReferences` re-prepends another `*` via
+   * `emitAccountKeyExpr`. `\*{2,}` (two-or-more) eats all leading stars
+   * except one in a single pass. Used at end of walk() AND end of
+   * transformAccountReferences — two call sites, same logic.
+   */
+  collapseStackedKeyDerefs(code: string): string {
+    return code
+      .replace(/\*{2,}(\w+)\.key\(\)/g, "*$1.key()")
+      .replace(/\*{2,}(\w+)\.key\b(?!\()/g, "*$1.key");
   }
 
   /**
@@ -1085,11 +1091,8 @@ export class BodyWalker {
         (_full, prefix: string) => `${prefix}${this.emitter.emitAccountKeyExpr(accountInfoVar)}`,
       );
     }
-    // `\*{2,}` (not `\*\*`) so a single pass collapses any number of leading
-    // stars to one — see the matching note in `walk()`'s end-of-pass.
-    transformed = transformed.replace(/\*{2,}(\w+)\.key\(\)/g, "*$1.key()");
-    transformed = transformed.replace(/\*{2,}(\w+)\.key\b/g, "*$1.key");
-    return transformed;
+    // Stacked-star collapse — see collapseStackedKeyDerefs() at class top.
+    return this.collapseStackedKeyDerefs(transformed);
   }
 
   normalizeKeyValueUsages(code: string): string {
