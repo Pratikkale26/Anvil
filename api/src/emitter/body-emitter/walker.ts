@@ -1186,6 +1186,19 @@ export class BodyWalker {
       (_, name: string) =>
         this.emitter.emitAccountKeyAsRefExpr(this.resolveAccountInfoVar(snakeCase(name))),
     );
+    // #39 — `ctx.accounts.X.key().to_bytes()` must be rewritten BEFORE the
+    // bare `.key()` rewrite below. Anchor's Pubkey has ToBytes returning
+    // [u8; 32]; Pinocchio's Pubkey is [u8; 32] with no .to_bytes() method.
+    // The naïve `<acc>.key()` → `*<acc>.key()` rewrite leaves
+    // `*acc.key().to_bytes()` which parses as `*(acc.key().to_bytes())`
+    // by Rust's method-call precedence — `.to_bytes()` runs on `&Pubkey`
+    // and fails E0599. Strip `.to_bytes()` and yield the Pubkey value
+    // directly via emitAccountKeyExpr.
+    transformed = transformed.replace(
+      /ctx\.accounts\.(\w+)\.key\(\)\.to_bytes\(\)/g,
+      (_, name: string) =>
+        this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(name))),
+    );
     transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\(\)/g, (_, name: string) =>
       this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(name))),
     );
