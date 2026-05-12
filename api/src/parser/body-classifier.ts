@@ -159,6 +159,16 @@ export function classifyBody(
   // before the statement that references `seeds` (otherwise we either
   // shadow nothing or produce a `seeds not in scope` E0425).
   let pendingSeedsIndex: number | null = null;
+
+  // #31-followup — dropped let-bindings that may need to be spliced back
+  // if a later pass_through stmt references the ident. Triggered by
+  // coral-multisig: `let signer = &[&seeds[..]]` is dropped by #31 on
+  // the assumption that the consumer is a typed CPI (cashiers-check
+  // pattern), but coral-multisig's consumer is raw
+  // `solana_program::program::invoke_signed(&ix, &accounts, signer)?`
+  // (pass_through). When pass_through still references `signer`, splice
+  // back.
+  const droppedBindings: Array<{ ident: string; rawCode: string; index: number }> = [];
   for (const child of flatChildren) {
     if (!child) continue;
 
@@ -182,7 +192,22 @@ export function classifyBody(
 
     // #31 — drop plumbing let-decls (e.g. `let signer = &[&seeds[..]]`)
     // whose effect is carried by the downstream typed CPI's signerSeeds.
+    // Track the raw text + ident so we can splice it back if a later
+    // pass_through stmt references the ident (coral-multisig regression
+    // 2026-05-12). The ident is the let's localVar; we need a let_decl
+    // node to extract it cheaply, so derive from child node.
     if (classified._dropStmt) {
+      if (child.type === "let_declaration") {
+        const pat = child.childForFieldName("pattern");
+        const ident = pat ? extractPatternName(pat) : "";
+        if (ident) {
+          droppedBindings.push({
+            ident,
+            rawCode: child.text,
+            index: statements.length,
+          });
+        }
+      }
       continue;
     }
 
@@ -260,6 +285,32 @@ export function classifyBody(
     // Splice loc as undefined — the synthesised re-insert has no single
     // source line; the user will see it as "unknown" in the validator.
     locs.splice(pendingSeedsIndex, 0, undefined);
+  }
+
+  // #31-followup — splice back any dropped let-bindings whose ident is
+  // still referenced by a downstream pass_through stmt. The reference
+  // check is whole-word on the ident inside the stmt's code property
+  // (not perfectly accurate for shadowed names but coral-multisig's
+  // `signer` is unique within the body). Walk droppedBindings in reverse
+  // so successive splices don't shift earlier indices.
+  for (let i = droppedBindings.length - 1; i >= 0; i--) {
+    const b = droppedBindings[i]!;
+    // Adjust index for any prior splice-ins (pendingSeeds above).
+    const adjustedIndex = (pendingSeeds && pendingSeedsIndex !== null && pendingSeedsIndex <= b.index)
+      ? b.index + 1 : b.index;
+    const identRe = new RegExp(`\\b${b.ident.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+    const stillReferenced = statements.slice(adjustedIndex).some((s) => {
+      if (s.kind !== "pass_through") return false;
+      const code = (s as { code?: string }).code ?? "";
+      return identRe.test(code);
+    });
+    if (!stillReferenced) continue;
+    statements.splice(adjustedIndex, 0, {
+      kind: "pass_through",
+      code: b.rawCode,
+      needsReview: false,
+    });
+    locs.splice(adjustedIndex, 0, undefined);
   }
 
   return { statements, locs };
