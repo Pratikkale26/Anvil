@@ -104,9 +104,12 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     hasOutput,
     strictValidated,
     hasAppliedRefine,
+    pendingRefine,
     cuEstimates,
     refineResult,
     showCompare,
+    acceptRefine,
+    rejectRefine,
     activeRefinePatch,
     compareOriginalContent,
     comparePatchedContent,
@@ -372,6 +375,30 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
         <PipelineStrip pipelineStage={pipelineStage} />
       </div>
 
+      {/* #11 B2 — Pending-refine banner. Shows while AI patches are
+          staged for user review (post-server-acceptance, pre-user-accept).
+          Distinct from the AI-applied banner below: nothing in the active
+          output has changed yet. Closing the diff view via Reject discards
+          the patches; Accept commits them. */}
+      {pendingRefine && (
+        <div
+          className="px-5 py-2.5 border-b text-[12px] flex items-start gap-2.5"
+          style={{
+            background: "rgba(99,102,241,0.07)",
+            borderColor: "rgba(99,102,241,0.25)",
+            color: "#a5b4fc",
+          }}
+          role="status"
+        >
+          <span aria-hidden="true" className="font-bold leading-snug">?</span>
+          <div className="leading-snug">
+            <span className="font-semibold">AI patches pending review.</span>{" "}
+            The diff overlay shows what would change — click <strong>Accept</strong> to apply,
+            <strong> Reject</strong> to discard. Active output is unchanged until you accept.
+          </div>
+        </div>
+      )}
+
       {/* AI-patched audit banner. Surfaced whenever an AI-refine result has
           been applied to the active output. Distinct from the small "AI
           refined" badge in the header — this one is large + yellow + non-
@@ -557,14 +584,42 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
               <span className="text-[10px] text-anvil-text-dim hidden sm:inline">
                 {isMobile ? "inline diff" : "side-by-side"}
               </span>
-              <button
-                type="button"
-                onClick={() => setShowCompare(false)}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold text-anvil-text-sub hover:text-anvil-text hover:bg-white/[0.05] transition-colors cursor-pointer border border-anvil-card-border"
-                aria-label="Close diff view"
-              >
-                <X size={12} /> Close
-              </button>
+              {/* #11 B2 — Accept / Reject when a refine result is pending
+                  user review. Once accepted, these collapse back to the
+                  bare Close button (post-apply state). */}
+              {pendingRefine ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => acceptRefine()}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold text-white transition-colors cursor-pointer"
+                    style={{ background: "rgba(14,168,128,0.85)", border: "1px solid rgba(14,168,128,1)" }}
+                    aria-label="Accept AI refine patches"
+                    title="Apply these patches to the active output"
+                  >
+                    Accept
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => rejectRefine()}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold text-white transition-colors cursor-pointer"
+                    style={{ background: "rgba(224,90,90,0.7)", border: "1px solid rgba(224,90,90,0.85)" }}
+                    aria-label="Reject AI refine patches"
+                    title="Discard these patches; active output stays as-is"
+                  >
+                    Reject
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowCompare(false)}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold text-anvil-text-sub hover:text-anvil-text hover:bg-white/[0.05] transition-colors cursor-pointer border border-anvil-card-border"
+                  aria-label="Close diff view"
+                >
+                  <X size={12} /> Close
+                </button>
+              )}
             </div>
           </div>
           {/* Column labels — only render in side-by-side mode */}

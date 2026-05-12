@@ -180,6 +180,21 @@ export function useAnvilPipeline() {
     validationIssues: ValidationIssue[];
     reviewReport: ReviewReport | null;
   } | null>(null);
+  // Explicit-accept gate (#11 B2). AI-refine no longer auto-applies its
+  // patched output — patches land here and the user clicks Accept / Reject
+  // in the diff overlay before the active output changes. Distinguishes
+  // "AI patches pending review" (pendingRefine !== null) from
+  // "AI-applied patches" (hasAppliedRefine === true). Auto-fix multi-iter
+  // path (runAutoFix) is intentionally unchanged — it's a cargo-driven
+  // loop, not a single suggestion the user reviews.
+  const [pendingRefine, setPendingRefine] = useState<{
+    code: string;
+    files: EmitFile[];
+    validationIssues: ValidationIssue[];
+    reviewReport: ReviewReport | null;
+    warnings: string[];
+    refined: boolean;
+  } | null>(null);
 
   // ─── Refs ─────────────────────────────────────────────────────────────────
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -448,6 +463,7 @@ export function useAnvilPipeline() {
     setRefineResult(null);
     setRefineError(null);
     setHasAppliedRefine(false);
+    setPendingRefine(null);
     setShowCompare(false);
     setPreRefineSnapshot(null);
     setBuildResults({ check: null, build: null, "build-sbf": null });
@@ -620,24 +636,16 @@ export function useAnvilPipeline() {
           }))
         : undefined;
 
-    // Snapshot the pre-refine state *once per pipeline run*. Retries must not
-    // overwrite this — the "before" we're reverting to is the deterministic
-    // emit output, not the most recent AI attempt.
-    if (preRefineSnapshot === null) {
-      setPreRefineSnapshot({
-        singleFileCode,
-        outputFiles,
-        validationIssues,
-        reviewReport,
-      });
-    }
+    // #11 B2 — no pre-call snapshot needed: explicit-accept means the active
+    // output stays put until the user clicks Accept. Snapshot happens
+    // inside acceptRefine() so post-accept Revert still works.
 
     try {
       setRefineBusy(true);
       setRefineError(null);
       setRefineErrorCategory(null);
       setRefineResult(null);
-      setHasAppliedRefine(false);
+      setPendingRefine(null);
       setPreRefineErrorCount(errors.length);
 
       const ir = JSON.parse(irText);
@@ -670,17 +678,24 @@ export function useAnvilPipeline() {
 
       if (emitted.refineResult) {
         setRefineResult(emitted.refineResult);
-        setSingleFileCode(emitted.code);
-        setOutputFiles(emitted.files ?? []);
-        setActiveFilePath(emitted.files?.[0]?.path ?? "");
-        setWarnings(emitted.warnings ?? []);
-        setValidationIssues(emitted.validationIssues ?? []);
-        setReviewReport(emitted.reviewReport ?? null);
-        setHasAppliedRefine(emitted.refined === true);
+        // #11 B2 — stage the patched output in pendingRefine instead of
+        // overwriting the active output. The diff overlay reads from
+        // refineResult.patches[].originalContent/patchedContent (independent
+        // of active output), so it renders correctly without touching what
+        // the user is looking at. Accept/Reject buttons in the overlay
+        // commit or discard via acceptRefine() / rejectRefine().
+        setPendingRefine({
+          code: emitted.code,
+          files: emitted.files ?? [],
+          validationIssues: emitted.validationIssues ?? [],
+          reviewReport: emitted.reviewReport ?? null,
+          warnings: emitted.warnings ?? [],
+          refined: emitted.refined === true,
+        });
         setShowCompare(true);
         setActivePane("files");
         if (!emitted.refined) {
-          setRefineError("AI returned patches but none were accepted by re-validation.");
+          setRefineError("AI returned patches but none were accepted by re-validation. Review the diff and Accept if you want to apply anyway.");
         }
       } else {
         setRefineError("AI refine ran but produced no patches.");
@@ -704,10 +719,49 @@ export function useAnvilPipeline() {
     setRefineError(null);
     setRefineErrorCategory(null);
     setHasAppliedRefine(false);
+    setPendingRefine(null);
     setShowCompare(false);
     setActivePane("single");
     // Keep preRefineErrorCount so the UI can still show "reverted — errors
     // back to N" if the user runs refine again afterwards.
+  }
+
+  /**
+   * #11 B2 — Commit a pending refine result. Snapshots the current output
+   * first so revertRefine can roll back post-accept. This is the only
+   * path that flips active output to AI-patched content (other than
+   * runAutoFix, which is its own multi-iter loop and keeps auto-apply).
+   */
+  function acceptRefine() {
+    if (!pendingRefine) return;
+    if (preRefineSnapshot === null) {
+      setPreRefineSnapshot({
+        singleFileCode,
+        outputFiles,
+        validationIssues,
+        reviewReport,
+      });
+    }
+    setSingleFileCode(pendingRefine.code);
+    setOutputFiles(pendingRefine.files);
+    setActiveFilePath(pendingRefine.files[0]?.path ?? "");
+    setWarnings(pendingRefine.warnings);
+    setValidationIssues(pendingRefine.validationIssues);
+    setReviewReport(pendingRefine.reviewReport);
+    setHasAppliedRefine(pendingRefine.refined);
+    setPendingRefine(null);
+  }
+
+  /**
+   * #11 B2 — Discard a pending refine result. Active output is unchanged
+   * (was never touched). Closes the diff overlay.
+   */
+  function rejectRefine() {
+    setPendingRefine(null);
+    setRefineResult(null);
+    setRefineError(null);
+    setRefineErrorCategory(null);
+    setShowCompare(false);
   }
 
   /**
@@ -1220,6 +1274,7 @@ export function useAnvilPipeline() {
     refineError,
     refineErrorCategory,
     hasAppliedRefine,
+    pendingRefine,
     preRefineErrorCount,
     showCompare,
     setShowCompare,
@@ -1243,6 +1298,8 @@ export function useAnvilPipeline() {
     // Actions
     runPipeline,
     runRefine,
+    acceptRefine,
+    rejectRefine,
     revertRefine,
     canRevertRefine: preRefineSnapshot !== null && hasAppliedRefine,
     runBuild,
