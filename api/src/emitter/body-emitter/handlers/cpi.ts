@@ -617,55 +617,30 @@ export function handleCpiMplCreateMetadataV3(w: BodyWalker, stmt: CpiMplCreateMe
   const mintAuthority = resolve(stmt.mintAuthority);
   const payer = resolve(stmt.payer);
   const updateAuthority = resolve(stmt.updateAuthority);
-  if (w.emitter.frameworkName === "Pinocchio") {
-    w.lines.push(`    mpl_create_metadata_accounts_v3(`);
-    w.lines.push(`        ${metadata},`);
-    w.lines.push(`        ${mint},`);
-    w.lines.push(`        ${mintAuthority},`);
-    w.lines.push(`        ${payer},`);
-    w.lines.push(`        ${updateAuthority},`);
-    w.lines.push(`        system_program,`);
-    w.lines.push(`        rent,`);
-    w.lines.push(`        token_metadata_program,`);
-    w.lines.push(`        &${stmt.name},`);
-    w.lines.push(`        &${stmt.symbol},`);
-    w.lines.push(`        &${stmt.uri},`);
-    w.lines.push(`        ${stmt.sellerFeeBasisPoints},`);
-    w.lines.push(`        ${stmt.isMutable},`);
-    w.lines.push(`        ${stmt.updateAuthorityIsSigner},`);
-    // #45 — PDA-authority shape (e.g. pda-mint-authority fixture) passes
-    // signer_seeds to invoke_signed; None means plain invoke.
-    if (stmt.signerSeeds) {
-      w.lines.push(`        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`);
-    } else {
-      w.lines.push(`        None,`);
-    }
-    w.lines.push(`    )?;`);
-    return;
+  // Both Pinocchio + Native emit the real helper call (#45 follow-up).
+  // Native uses the same hand-rolled byte layout because the
+  // mpl-token-metadata crate pins borsh < 1.0 (scaffold uses borsh 1.6).
+  w.lines.push(`    mpl_create_metadata_accounts_v3(`);
+  w.lines.push(`        ${metadata},`);
+  w.lines.push(`        ${mint},`);
+  w.lines.push(`        ${mintAuthority},`);
+  w.lines.push(`        ${payer},`);
+  w.lines.push(`        ${updateAuthority},`);
+  w.lines.push(`        system_program,`);
+  w.lines.push(`        rent,`);
+  w.lines.push(`        token_metadata_program,`);
+  w.lines.push(`        &${stmt.name},`);
+  w.lines.push(`        &${stmt.symbol},`);
+  w.lines.push(`        &${stmt.uri},`);
+  w.lines.push(`        ${stmt.sellerFeeBasisPoints},`);
+  w.lines.push(`        ${stmt.isMutable},`);
+  w.lines.push(`        ${stmt.updateAuthorityIsSigner},`);
+  if (stmt.signerSeeds) {
+    w.lines.push(`        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`);
+  } else {
+    w.lines.push(`        None,`);
   }
-  // Native target keeps the stub for now — needs mpl-token-metadata dep
-  // in scaffold Cargo.toml. Tracked separately; Pinocchio is the
-  // immediate unblocker for the 4 validator-refuse fixtures.
-  w.ctx.warnings.push(
-    `Metaplex create_metadata_accounts_v3 on Native still stub — add mpl-token-metadata to Cargo.toml + use the builder.`,
-  );
-  const lines = [
-    `    // ⚠️ Anvil: Metaplex create_metadata_accounts_v3 CPI — manual rebuild required (Native)`,
-    `    // Pinocchio target has the typed helper; Native still wants mpl-token-metadata crate.`,
-    `    //   metadata          = ${stmt.metadata}`,
-    `    //   mint              = ${stmt.mint}`,
-    `    //   mint_authority    = ${stmt.mintAuthority}`,
-    `    //   payer             = ${stmt.payer}`,
-    `    //   update_authority  = ${stmt.updateAuthority}`,
-    `    //   name              = ${stmt.name}`,
-    `    //   symbol            = ${stmt.symbol}`,
-    `    //   uri               = ${stmt.uri}`,
-    `    //   seller_fee_bps    = ${stmt.sellerFeeBasisPoints}`,
-    `    //   is_mutable        = ${stmt.isMutable}`,
-    `    //   update_auth_signer= ${stmt.updateAuthorityIsSigner}`,
-    `    // TODO(manual): rebuild against mpl_token_metadata builder.`,
-  ];
-  for (const line of lines) w.lines.push(line);
+  w.lines.push(`    )?;`);
 }
 
 /**
@@ -681,43 +656,25 @@ export function handleCpiMplCreateMasterEditionV3(w: BodyWalker, stmt: CpiMplCre
   const resolve = (e: string) => w.normalizeKeyValueUsages(
     w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
   );
-  if (w.emitter.frameworkName === "Pinocchio") {
-    w.lines.push(`    mpl_create_master_edition_v3(`);
-    w.lines.push(`        ${resolve(stmt.edition)},`);
-    w.lines.push(`        ${resolve(stmt.mint)},`);
-    w.lines.push(`        ${resolve(stmt.updateAuthority)},`);
-    w.lines.push(`        ${resolve(stmt.mintAuthority)},`);
-    w.lines.push(`        ${resolve(stmt.payer)},`);
-    w.lines.push(`        ${resolve(stmt.metadata)},`);
-    w.lines.push(`        token_program,`);
-    w.lines.push(`        system_program,`);
-    w.lines.push(`        rent,`);
-    w.lines.push(`        token_metadata_program,`);
-    w.lines.push(`        ${stmt.maxSupply},`);
-    if (stmt.signerSeeds) {
-      w.lines.push(`        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`);
-    } else {
-      w.lines.push(`        None,`);
-    }
-    w.lines.push(`    )?;`);
-    return;
+  // Both targets emit the real helper call (#45 follow-up).
+  w.lines.push(`    mpl_create_master_edition_v3(`);
+  w.lines.push(`        ${resolve(stmt.edition)},`);
+  w.lines.push(`        ${resolve(stmt.mint)},`);
+  w.lines.push(`        ${resolve(stmt.updateAuthority)},`);
+  w.lines.push(`        ${resolve(stmt.mintAuthority)},`);
+  w.lines.push(`        ${resolve(stmt.payer)},`);
+  w.lines.push(`        ${resolve(stmt.metadata)},`);
+  w.lines.push(`        token_program,`);
+  w.lines.push(`        system_program,`);
+  w.lines.push(`        rent,`);
+  w.lines.push(`        token_metadata_program,`);
+  w.lines.push(`        ${stmt.maxSupply},`);
+  if (stmt.signerSeeds) {
+    w.lines.push(`        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`);
+  } else {
+    w.lines.push(`        None,`);
   }
-  w.ctx.warnings.push(
-    `Metaplex create_master_edition_v3 on Native still stub — add mpl-token-metadata to Cargo.toml + use the builder.`,
-  );
-  const lines = [
-    `    // ⚠️ Anvil: Metaplex create_master_edition_v3 CPI — manual rebuild required (Native)`,
-    `    // Pinocchio target has the typed helper; Native still wants mpl-token-metadata crate.`,
-    `    //   edition           = ${stmt.edition}`,
-    `    //   mint              = ${stmt.mint}`,
-    `    //   mint_authority    = ${stmt.mintAuthority}`,
-    `    //   payer             = ${stmt.payer}`,
-    `    //   metadata          = ${stmt.metadata}`,
-    `    //   update_authority  = ${stmt.updateAuthority}`,
-    `    //   max_supply        = ${stmt.maxSupply}`,
-    `    // TODO(manual): rebuild against mpl_token_metadata builder.`,
-  ];
-  for (const line of lines) w.lines.push(line);
+  w.lines.push(`    )?;`);
 }
 
 export function handleCpiCustom(w: BodyWalker, stmt: CpiCustom): void {

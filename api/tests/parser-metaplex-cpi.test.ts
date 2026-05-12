@@ -131,27 +131,20 @@ pub struct MakeNft<'info> {
     const r = await parseAnchor(src);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    // Pinocchio: #45 shipped — real hand-rolled invoke via
-    // mpl_create_metadata_accounts_v3 helper. Still names every account
-    // arg, no TODO(manual) marker.
-    {
-      const out = emitPinocchioFull(r.ir);
+    // #45 — both Pinocchio + Native emit the real hand-rolled invoke
+    // (Native target keeps same byte layout because mpl-token-metadata
+    // pins borsh < 1.0, incompatible with scaffold's borsh 1.6).
+    for (const emit of [emitPinocchioFull, emitNativeFull]) {
+      const out = emit(r.ir);
       const allText = out.singleFile + out.files.map((f) => f.content).join("\n");
       expect(allText).toContain("mpl_create_metadata_accounts_v3(");
       expect(allText).toContain("metadata_account");
       expect(allText).toContain("mint_account");
       expect(allText).not.toContain("TODO(manual)");
       // Helper body uses the verified mpl-token-metadata 5.1.1 layout.
-      expect(allText).toContain("// CreateMetadataAccountV3 discriminator");
-    }
-    // Native: still structured stub (Tier 2.2 — needs mpl-token-metadata
-    // dep in scaffold Cargo.toml + builder pattern).
-    {
-      const out = emitNativeFull(r.ir);
-      const allText = out.singleFile + out.files.map((f) => f.content).join("\n");
-      expect(allText).toContain("create_metadata_accounts_v3 CPI");
-      expect(allText).toContain("metadata_account");
-      expect(allText).toContain("TODO(manual)");
+      // Comment style differs per target; just verify the discriminator
+      // value appears (33 for create_metadata_accounts_v3).
+      expect(allText).toMatch(/data\.push\(33\)/);
     }
   });
 });
