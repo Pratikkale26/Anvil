@@ -101,12 +101,15 @@ const CASES: readonly RealworldCase[] = [
   {
     id: "zero-copy",
     url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/zero-copy/programs/zero-copy/src/lib.rs",
-    // 2026-05-12 findings (tracked separately as tasks #25-27):
-    //   - emit drops user impl methods on the bytemuck-Pod struct (#25)
-    //   - emit uses Foo::from_account_info on zero-copy instead of .load_mut() (#26)
-    //   - emit auto-derives Copy on non-Copy fields (#27)
-    expected: "cargo-refuse",
-    description: "Anchor zero-copy AccountLoader — multiple emit gaps (tracked #25-27)",
+    // Initially classified cargo-refuse on 2026-05-12 with 3 distinct
+    // emit gaps. All four landed in the same session:
+    //   #25 (#[accessor(T)] macro expansion)
+    //   #26 (zero-copy skip from_account_info auto-binding)
+    //   #27 (standalone #[zero_copy] struct as Pod)
+    //   #29 (.load()? in constraint expressions)
+    // Now cargo-clean end-to-end.
+    expected: "cargo-clean",
+    description: "Anchor zero-copy AccountLoader (full real-world program; #25-29 closed)",
   },
   {
     id: "hello-world",

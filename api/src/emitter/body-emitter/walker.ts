@@ -1556,13 +1556,52 @@ export class BodyWalker {
   // ─── Auto-emitted blocks ──────────────────────────────────────────────────
 
   emitAccountConstraintChecks(): void {
+    // #29 — zero-copy account `.load()?` views. Track which accounts
+    // already have an inline bytemuck-cast view emitted at this point
+    // in the constraint-checks block, so a second constraint on the
+    // same account doesn't double-emit. Map from accountName → viewVar.
+    const zeroCopyViewsEmitted = new Map<string, string>();
     for (const account of this.instr.accounts) {
       for (const constraint of account.constraints) {
         if (!constraint.value) continue;
         let condition: string | null = null;
         if (constraint.kind === "constraint") {
+          let raw = stripAnchorConstraintError(constraint.value);
+          // Pre-rewrite `<zero-copy-acc>.load()?` → `__<acc>_view` and
+          // emit the bytemuck-cast binding above the constraint check.
+          // AccountInfo doesn't have a .load() method, so without this
+          // the emit fails cargo with E0599. Surfaced by anchor/tests/
+          // zero-copy real-world fixture (UpdateFooSecond constraint).
+          for (const acc of this.instr.accounts) {
+            if (!acc.isZeroCopy) continue;
+            const accName = snakeCase(acc.name);
+            const loadRe = new RegExp(`\\b${accName}\\.load\\s*\\(\\s*\\)\\s*\\?`, "g");
+            if (!loadRe.test(raw)) continue;
+            const viewVar = `__${accName}_view`;
+            if (!zeroCopyViewsEmitted.has(accName)) {
+              const accountInfo = this.resolveAccountInfoVar(accName);
+              const typeName = acc.accountType;
+              const dataVar = `__${accName}_view_data`;
+              this.lines.push(
+                this.emitter.frameworkName === "Pinocchio"
+                  ? `    let ${dataVar} = unsafe { ${accountInfo}.borrow_data_unchecked() };`
+                  : `    let ${dataVar} = ${accountInfo}.try_borrow_data()?;`,
+              );
+              this.lines.push(`    if ${dataVar}.len() < ${typeName}::TOTAL_LEN {`);
+              this.lines.push(`        return Err(ProgramError::AccountDataTooSmall);`);
+              this.lines.push(`    }`);
+              this.lines.push(`    if ${dataVar}[..8] != ${typeName}::DISCRIMINATOR {`);
+              this.lines.push(`        return Err(ProgramError::InvalidAccountData);`);
+              this.lines.push(`    }`);
+              this.lines.push(
+                `    let ${viewVar}: &${typeName} = bytemuck::from_bytes(&${dataVar}[8..8 + ${typeName}::LEN]);`,
+              );
+              zeroCopyViewsEmitted.set(accName, viewVar);
+            }
+            raw = raw.replace(loadRe, viewVar);
+          }
           condition = this.transformAccountReferences(
-            this.transformCtxAccountsReferences(stripAnchorConstraintError(constraint.value)),
+            this.transformCtxAccountsReferences(raw),
           );
         } else if (constraint.kind === "address") {
           condition = `${this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(account.name)))} == ${this.transformAccountReferences(

@@ -1887,9 +1887,13 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
           const name = snakeCase(f.name);
           const t = f.accessorType!;
           if (t === "Pubkey") {
+            // Pinocchio's Pubkey is `[u8; 32]` (Copy). Accept by value so
+            // call sites like `foo.set_X(authority.key)` (which Pinocchio
+            // transforms to `*authority.key()` returning a Pubkey value)
+            // work without the caller needing an extra `&`.
             return [
               `    pub fn get_${name}(&self) -> ${t} { self.${name} }`,
-              `    pub fn set_${name}(&mut self, value: &${t}) { self.${name} = *value; }`,
+              `    pub fn set_${name}(&mut self, value: ${t}) { self.${name} = value; }`,
             ].join("\n");
           }
           // Unknown accessor type — emit a TODO so the user sees the gap.
