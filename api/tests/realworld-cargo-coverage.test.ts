@@ -377,6 +377,25 @@ const CASES: readonly RealworldCase[] = [
     expected: "validator-refuse",
     description: "pda-mint-authority — PDA-owned mint + Metaplex CPI; validator refuses",
   },
+  {
+    id: "anchor-realloc",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/realloc/anchor/programs/anchor-realloc/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "anchor-realloc — realloc on String field (init + update)",
+  },
+  {
+    id: "create-token",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "tokens/create-token/anchor/programs/create-token/src/lib.rs",
+    },
+    // Metaplex create_metadata_accounts_v3 — family validator-refuses.
+    expected: "validator-refuse",
+    description: "create-token — Metaplex create_metadata_accounts_v3 CPI; validator refuses",
+  },
 ];
 
 function fixturePath(id: string): string {
