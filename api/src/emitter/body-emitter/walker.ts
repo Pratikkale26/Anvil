@@ -351,12 +351,23 @@ export class BodyWalker {
       "set", "replace",
     ];
     const mutMethodAlt = MUT_METHODS.join("|");
+    // Normalize whitespace before matching so multi-line method chains
+    // (`ctx.accounts\n  .sample\n  .data\n  .resize_with(...)`, common in
+    // real-world Anchor code) reach the regex as a single-line chain.
+    // Two normalizations needed: collapse runs of whitespace, AND strip
+    // whitespace immediately around the `.` operator (anchor sources
+    // commonly format chained accesses as `obj\n  .field\n  .method(...)`,
+    // so even after flattening the `.` is surrounded by spaces). Without
+    // this, the `\.\w+` repeated group misses real-world realloc-style
+    // patterns and emits `let sample` (non-mut), cargo refuses with
+    // E0596. Surfaced by realloc-array on 2026-05-12.
+    const flat = code.replace(/\s+/g, " ").replace(/\s*\.\s*/g, ".");
     return this.stateAccountNames.filter((accountName) => {
       if (
-        new RegExp(`\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\s*[+\\-*/]?=(?!=)`).test(code)
+        new RegExp(`\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\s*[+\\-*/]?=(?!=)`).test(flat)
       ) return true;
       if (
-        new RegExp(`\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\.(?:${mutMethodAlt})\\s*\\(`).test(code)
+        new RegExp(`\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\.(?:${mutMethodAlt})\\s*\\(`).test(flat)
       ) return true;
       return false;
     });

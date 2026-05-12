@@ -72,11 +72,8 @@ const CASES: readonly RealworldCase[] = [
   {
     id: "realloc-array",
     url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/realloc/programs/realloc/src/lib.rs",
-    // 2026-05-12 finding: emitter binds state_read as `let sample` (not
-    // `let mut sample`) even when the source body does `sample.data.push(...)`.
-    // cargo refuses with E0596. Tracked as task #24.
-    expected: "cargo-refuse",
-    description: "Vec<T> realloc — bound state needs `mut` (tracked: #24)",
+    expected: "cargo-clean",
+    description: "Vec<T> realloc (#24 fixed: detectPassThroughMutations now handles multi-line chains)",
   },
   {
     id: "composite",
