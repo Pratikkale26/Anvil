@@ -325,22 +325,42 @@ export function sniffAnchorLangVersion(source: string): string {
 function sniffAnchorLangFeatures(source: string): string[] {
   const features: string[] = [];
   if (/\binit_if_needed\b/.test(source)) features.push("init-if-needed");
+  // event-cpi feature gates the #[event_cpi] attribute + emit_cpi! macro.
+  // Without it, derive macros silently skip emitting the event-cpi
+  // plumbing and the build fails with "cannot find attribute `event_cpi`".
+  if (/#\[event_cpi\]|\bemit_cpi!/.test(source)) features.push("event-cpi");
+  // idl-build feature is needed when source carries IDL-build glue. Rare
+  // but surfaces in some Anchor 0.30+ programs that ship IDL hooks.
+  if (/\bidl_build\b/.test(source)) features.push("idl-build");
   return features;
 }
 
 function sniffAnchorExtraDeps(source: string): string {
-  if (!/\banchor_spl\b/.test(source)) return "";
-  const features: string[] = [];
-  if (/\banchor_spl::associated_token\b/.test(source)) features.push("associated_token");
-  if (/\banchor_spl::memo\b/.test(source)) features.push("memo");
-  if (/\banchor_spl::metadata\b/.test(source)) features.push("metadata");
-  if (/\banchor_spl::token_2022\b/.test(source) || /\btoken_interface\b/.test(source)) {
-    features.push("token_2022");
+  const deps: string[] = [];
+  // anchor-spl with feature flags
+  if (/\banchor_spl\b/.test(source)) {
+    const features: string[] = [];
+    if (/\banchor_spl::associated_token\b/.test(source)) features.push("associated_token");
+    if (/\banchor_spl::memo\b/.test(source)) features.push("memo");
+    if (/\banchor_spl::metadata\b/.test(source)) features.push("metadata");
+    if (/\banchor_spl::token_2022\b/.test(source) || /\btoken_interface\b/.test(source)) {
+      features.push("token_2022");
+    }
+    deps.push(
+      features.length === 0
+        ? `anchor-spl = "0.31"`
+        : `anchor-spl = { version = "0.31", features = ["${features.join('", "')}"] }`,
+    );
   }
-  if (features.length === 0) {
-    return `anchor-spl = "0.31"`;
+  // bytemuck — zero-copy / chat program pattern (bytemuck::from_bytes etc.)
+  // Anchor 0.31 internally re-exports bytemuck but the user-facing `bytemuck::`
+  // path requires the explicit dep.
+  if (/\bbytemuck::/.test(source)) {
+    deps.push(`bytemuck = { version = "1.13", features = ["derive"] }`);
   }
-  return `anchor-spl = { version = "0.31", features = ["${features.join('", "')}"] }`;
+  // Note: solana-program is brought in transitively by anchor-lang; users
+  // don't need to declare it directly. Avoid re-adding it here.
+  return deps.join("\n");
 }
 
 async function buildAnvil(opts: DifferentialBuildOptions, outPath: string): Promise<void> {
