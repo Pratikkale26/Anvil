@@ -1915,9 +1915,25 @@ ${fields}
     // (optionally wrapped/cast) with no leading `8 +`. Matches (a),
     // skips (b).
     const rawSpace = (accountRef.initSpace ?? "").trim();
-    const initSpaceExpr = /^[A-Z][A-Za-z0-9_]*::LEN$/.test(rawSpace)
-      ? rawSpace.replace(/::LEN$/, "::TOTAL_LEN")
-      : rawSpace;
+    const initSpaceExpr = (() => {
+      // (a) `space = Type::LEN` → rewrite to Type::TOTAL_LEN (8 + body).
+      if (/^[A-Z][A-Za-z0-9_]*::LEN$/.test(rawSpace)) {
+        return rawSpace.replace(/::LEN$/, "::TOTAL_LEN");
+      }
+      // (c) `space = Type::INIT_SPACE` (no leading `8 +`) — Anchor 0.30+
+      // convention where INIT_SPACE *includes* the discriminator. Anvil's
+      // emitted INIT_SPACE const is body-only, so we add the 8 explicitly.
+      // Surfaced by close-account (program-examples): source writes
+      // `space = UserState::INIT_SPACE`; without this Anvil under-allocates
+      // by 8 bytes and create_user reverts with InvalidAccountData.
+      if (/^[A-Z][A-Za-z0-9_]*::INIT_SPACE$/.test(rawSpace)) {
+        return `8 + ${rawSpace}`;
+      }
+      // (b) Any explicit form (`8 + Type::INIT_SPACE`, `ANCHOR_DISC + ...`,
+      // numeric, etc.) — assume user already accounted for the disc. Leave
+      // as-is.
+      return rawSpace;
+    })();
     const createCall = this.emitCreateProgramAccount(
       accountName,
       payerName,
