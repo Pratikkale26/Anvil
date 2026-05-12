@@ -87,18 +87,36 @@ describe("if-let-Some on ctx.accounts — known gap (#23)", () => {
     expect(emit.singleFile.length).toBeGreaterThan(0);
   });
 
-  test("KNOWN GAP: emit references undefined `cpi_context` identifier", async () => {
+  test("KNOWN GAP: emit references `cpi_context` without a matching `let cpi_context = ...`", async () => {
     // The walker.ts regex post-process leaves the `cpi_context` binding
     // unresolved because it doesn't expand inside if-let blocks. This
-    // test pins the current broken behavior — when #22 (cargo gate)
-    // lands, this fixture becomes the proof point that the cargo gate
-    // catches what the validator doesn't.
+    // test pins the current broken behavior in a non-tautological way:
+    // it asserts that the emit USES `cpi_context` as an identifier in
+    // a call site (e.g. `token::transfer(cpi_context, ...)`) WITHOUT
+    // a corresponding `let cpi_context = ...` binding surviving in
+    // the same file. When the parser learns to unwrap if-let blocks
+    // or the walker's post-process learns to expand them, this test
+    // flips green and the gap is closed.
     const parsed = await parseAnchor(IF_LET_SOURCE);
     if (!parsed.ok) throw new Error(`parse failed: ${parsed.error}`);
     const emit = emitPinocchioFull(parsed.ir);
-    // The emit refers to `cpi_context` as the first argument to
-    // token::transfer, but no `let cpi_context = ...` survives the
-    // rewrite. cargo refuses this with E0425.
-    expect(emit.singleFile).toContain("cpi_context");
+    const usesIdent = /\b\w+\s*\(\s*cpi_context\b|\bcpi_context\s*[,.)]/.test(emit.singleFile);
+    const hasBinding = /\blet\s+cpi_context\s*=/.test(emit.singleFile);
+    if (usesIdent && !hasBinding) {
+      // The current broken state: `cpi_context` is referenced but never
+      // bound. cargo would refuse with E0425. The cargo-gate fixture
+      // (fixture-cargo-gate.test.ts) is the actual safety net.
+      expect(usesIdent && !hasBinding).toBe(true);
+      return;
+    }
+    // If we get here, the walker or parser now resolves cpi_context
+    // properly. Flip the assertion so the test fails loudly until
+    // someone deletes this fixture (the gap closed).
+    throw new Error(
+      "Expected the known gap: `cpi_context` referenced without binding in if-let " +
+        "emit. Either the parser now unwraps if-let blocks or the walker's " +
+        "regex post-process learned to expand them — in either case this " +
+        "fixture is stale and should be deleted.",
+    );
   });
 });

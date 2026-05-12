@@ -135,18 +135,23 @@ interface CliArgs {
    */
   strict: boolean;
   /**
-   * --cargo-check on `compile`: after writing the emit, run `cargo
-   * check` in the output dir and refuse to declare success if cargo
-   * rejects the emit. This is the durable accept gate (#22): the
-   * validator's heuristic shape coverage is a fast-fail layer; cargo
-   * is ground truth. Exit code 3 on cargo failure, distinct from 1
-   * (parse/emit error) and 2 (--strict refusal).
+   * Cargo accept gate (#22). Defaults to ON when `cargo` is on PATH —
+   * after writing the emit, run `cargo check` in the output dir and
+   * refuse to declare success if cargo rejects the emit. The
+   * validator is a fast heuristic; cargo is ground truth.
    *
-   * Requires `cargo` on PATH; first run downloads pinocchio/native
-   * crate deps so the first invocation is slow (~30-60s) and
-   * subsequent ones are fast (~3-5s warm).
+   *   --cargo-check       — force gate ON. If cargo isn't available,
+   *                         exit 3 (loud failure).
+   *   --no-cargo-check    — force gate OFF. Skip silently regardless
+   *                         of cargo availability.
+   *   neither (default)   — auto: gate runs when cargo is on PATH,
+   *                         skipped with a one-line warning when not.
+   *
+   * Exit code 3 on cargo failure, distinct from 1 (parse/emit error)
+   * and 2 (--strict refusal). First run downloads crate deps so it's
+   * slow (~30-60s); subsequent runs are fast (~3-5s warm).
    */
-  cargoCheck: boolean;
+  cargoCheck: "force-on" | "force-off" | "auto";
   /**
    * `differential --scenario path/to/scenario.json` — drives the byte-equal
    * compare against the Anchor reference using a user-supplied JSON
@@ -261,7 +266,7 @@ function parseArgs(argv: string[]): CliArgs {
     thresholdAbs: 10,
     snapshotPath: null,
     strict: false,
-    cargoCheck: false,
+    cargoCheck: "auto",
     scenario: null,
     anchorSo: null,
     anvilSo: null,
@@ -365,7 +370,13 @@ function parseArgs(argv: string[]): CliArgs {
     }
 
     if (arg === "--cargo-check") {
-      args.cargoCheck = true;
+      args.cargoCheck = "force-on";
+      i++;
+      continue;
+    }
+
+    if (arg === "--no-cargo-check") {
+      args.cargoCheck = "force-off";
       i++;
       continue;
     }
@@ -565,11 +576,13 @@ function printCompileHelp(): void {
                             errors or the emit contains TODO(manual) /
                             "manual rebuild required" stub markers. Use
                             this gate before deploy. Exit code 2 on refusal.
-    --cargo-check           After writing, run \`cargo check\` in the output
-                            directory and refuse to declare success if cargo
-                            rejects the emit. The validator is a fast
-                            heuristic; cargo is the ground truth. Requires
-                            \`cargo\` on PATH. Exit code 3 on cargo failure.
+    --cargo-check           Force the cargo accept gate ON. After writing,
+                            \`cargo check\` runs in the output directory and
+                            non-zero exit refuses success. Errors on
+                            cargo-not-on-PATH. Exit code 3 on cargo failure.
+    --no-cargo-check        Force the cargo accept gate OFF (skip silently).
+                            Default behavior is auto: gate runs when cargo
+                            is on PATH, skipped with a warning when not.
 
   ${c.bold}EXAMPLES${c.reset}
 
@@ -1106,34 +1119,60 @@ async function cmdCompile(args: CliArgs): Promise<void> {
   writeOutputFiles(output, outputDir, args.singleFile, inputName, ir, target);
   console.log();
 
-  // 7. cargo check accept gate (--cargo-check)
-  // The validator is a fast heuristic; cargo is the ground truth. Run
-  // it after write so the gate sees exactly what the user gets.
-  if (args.cargoCheck) {
+  // 7. cargo check accept gate (#22)
+  //
+  // Default-on when cargo is on PATH. The validator is a fast heuristic;
+  // cargo is the ground truth. Three policies:
+  //
+  //   force-on   (--cargo-check):    gate MUST run; missing cargo = exit 3
+  //   force-off  (--no-cargo-check): skip silently
+  //   auto       (default):          run when available, warn when not
+  if (args.cargoCheck !== "force-off") {
     const { runCargoCheckGate, cargoAvailable } = await import(
       "../api/src/build/cargo-gate.js"
     );
-    if (!cargoAvailable()) {
-      error("--cargo-check requires `cargo` on PATH. Install rustup, then retry.");
-      process.exit(3);
-    }
-    progress("Running cargo check (this can take 30-60s on first run)…");
-    const result = await runCargoCheckGate(outputDir);
-    if (result.ok) {
-      success(`cargo check: clean (${result.durationMs}ms${result.warnings.length ? `, ${result.warnings.length} warning${result.warnings.length !== 1 ? "s" : ""}` : ""})`);
-    } else {
-      error(`cargo check: ${result.errors.length} error${result.errors.length !== 1 ? "s" : ""} (${result.durationMs}ms)`);
-      for (const e of result.errors.slice(0, 12)) {
-        console.log(`    ${c.red}E${c.reset} ${e}`);
+    const cargoHere = cargoAvailable();
+    if (!cargoHere) {
+      if (args.cargoCheck === "force-on") {
+        error("--cargo-check requires `cargo` on PATH. Install rustup, then retry.");
+        process.exit(3);
       }
-      if (result.errors.length > 12) {
-        console.log(`    ${c.dim}… and ${result.errors.length - 12} more${c.reset}`);
-      }
-      console.log();
-      console.log(
-        `  ${c.dim}The emit was written to ${outputDir}/ — inspect and run cargo manually for full output.${c.reset}`,
+      // auto + cargo-missing: loud warning, no fail. The validator already
+      // ran above; user has been told the emit is not cargo-verified.
+      warn(
+        "cargo not on PATH — emit was NOT verified against rustc. " +
+          "Install rustup (https://rustup.rs) and re-run, or pass --no-cargo-check to silence.",
       );
-      process.exit(3);
+    } else {
+      progress("Running cargo check (this can take 30-60s on first run)…");
+      const result = await runCargoCheckGate(outputDir);
+      if (result.ok) {
+        success(
+          `cargo check: clean (${result.durationMs}ms` +
+            (result.warnings.length
+              ? `, ${result.warnings.length} warning${result.warnings.length !== 1 ? "s" : ""}`
+              : "") +
+            ")",
+        );
+      } else {
+        error(
+          `cargo check: ${result.errors.length} error${result.errors.length !== 1 ? "s" : ""} (${result.durationMs}ms)`,
+        );
+        for (const e of result.errors.slice(0, 12)) {
+          console.log(`    ${c.red}E${c.reset} ${e}`);
+        }
+        if (result.errors.length > 12) {
+          console.log(`    ${c.dim}… and ${result.errors.length - 12} more${c.reset}`);
+        }
+        console.log();
+        console.log(
+          `  ${c.dim}The emit was written to ${outputDir}/ — inspect and run cargo manually for full output.${c.reset}`,
+        );
+        console.log(
+          `  ${c.dim}Pass --no-cargo-check to skip this gate (NOT recommended for deploy paths).${c.reset}`,
+        );
+        process.exit(3);
+      }
     }
     console.log();
   }
