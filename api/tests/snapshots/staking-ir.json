@@ -1069,7 +1069,7 @@
             "&[pool.bump]"
           ],
           "bumpField": "&[pool.bump]",
-          "rawCode": "let pool_seeds = &[\n            b\"pool\",\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];"
+          "rawCode": "let pool_seeds = &[\n            b\"pool\",\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\nlet signer_seeds = &[&pool_seeds[..]];"
         },
         {
           "kind": "cpi_spl_mint_to",
@@ -1152,10 +1152,10 @@
           "endColumn": 55
         },
         {
-          "line": 130,
+          "line": 128,
           "column": 8,
-          "endLine": 141,
-          "endColumn": 11
+          "endLine": 128,
+          "endColumn": 46
         },
         {
           "line": 130,
@@ -1498,7 +1498,7 @@
             "&[pool.bump]"
           ],
           "bumpField": "&[pool.bump]",
-          "rawCode": "let stake_seeds = &[\n            b\"pool\",\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];"
+          "rawCode": "let stake_seeds = &[\n            b\"pool\",\n            pool.stake_mint.as_ref(),\n            &[pool.bump],\n        ];\nlet signer_seeds = &[&stake_seeds[..]];"
         },
         {
           "kind": "cpi_spl_transfer",
@@ -1593,10 +1593,10 @@
           "endColumn": 70
         },
         {
-          "line": 191,
+          "line": 189,
           "column": 8,
-          "endLine": 202,
-          "endColumn": 11
+          "endLine": 189,
+          "endColumn": 47
         },
         {
           "line": 191,

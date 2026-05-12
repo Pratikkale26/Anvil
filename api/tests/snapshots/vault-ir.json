@@ -523,7 +523,7 @@
             "vault_state.authority.as_ref()",
             "&[vault_state.vault_bump]"
           ],
-          "rawCode": "let seeds = &[\n            b\"vault\",\n            vault_state.authority.as_ref(),\n            &[vault_state.vault_bump],\n        ];"
+          "rawCode": "let seeds = &[\n            b\"vault\",\n            vault_state.authority.as_ref(),\n            &[vault_state.vault_bump],\n        ];\nlet signer_seeds = &[&seeds[..]];"
         },
         {
           "kind": "cpi_system_transfer",
@@ -587,10 +587,10 @@
           "endColumn": 81
         },
         {
-          "line": 66,
+          "line": 56,
           "column": 8,
-          "endLine": 66,
-          "endColumn": 64
+          "endLine": 56,
+          "endColumn": 41
         },
         {
           "line": 66,
