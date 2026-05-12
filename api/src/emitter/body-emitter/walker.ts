@@ -931,8 +931,13 @@ export class BodyWalker {
     for (const account of this.instr.accounts) {
       const accountName = snakeCase(account.name);
       const accountInfoVar = this.resolveAccountInfoVar(accountName);
+      // #44-followup — negative lookahead avoids matching `X.key().as_ref()`,
+      // which is correctly handled by the earlier `(?:ctx\.accounts\.)?\w+
+      // \.key(?:\(\))?\.as_ref\(\)` regex / split-rewrites below. Without
+      // the lookahead, `*X.key().as_ref()` gets emitted — token-fundraiser
+      // refund seeds.
       transformed = transformed.replace(
-        new RegExp(`\\b${accountName}\\.key\\(\\)`, "g"),
+        new RegExp(`\\b${accountName}\\.key\\(\\)(?!\\.as_ref\\b)`, "g"),
         () => `${this.emitter.emitAccountKeyExpr(accountInfoVar)}`,
       );
       transformed = transformed.replace(
@@ -940,7 +945,7 @@ export class BodyWalker {
         () => `${this.emitter.emitAccountKeyExpr(accountInfoVar)}`,
       );
       transformed = transformed.replace(
-        new RegExp(`\\b${this.resolveStateVar(accountName)}\\.key\\(\\)`, "g"),
+        new RegExp(`\\b${this.resolveStateVar(accountName)}\\.key\\(\\)(?!\\.as_ref\\b)`, "g"),
         () => `${this.emitter.emitAccountKeyExpr(accountInfoVar)}`,
       );
       transformed = transformed.replace(

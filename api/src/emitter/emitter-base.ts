@@ -380,8 +380,8 @@ export abstract class BaseEmitter {
   abstract emitEmit(event: string, fields: string): string;
 
   // ── Sysvar transforms ──
-  abstract emitClockGet(localVar: string): string;
-  abstract emitRentGet(localVar: string): string;
+  abstract emitClockGet(localVar: string, field?: string): string;
+  abstract emitRentGet(localVar: string, field?: string): string;
 
   // ── Type mapping ──
   abstract rustTypeForFramework(typeName: string): string;

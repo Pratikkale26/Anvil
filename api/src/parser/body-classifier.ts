@@ -548,23 +548,35 @@ function classifyLetDeclaration(
   }
 
   // ── Clock::get() sysvar ──
+  // Source patterns:
+  //   let X = Clock::get()?;
+  //   let X = Clock::get()?.unix_timestamp;
+  //   let X = Clock::get()?.slot;
+  // The optional `.<field>` is captured separately so emitters can
+  // bind directly to the primitive value (Pinocchio's Clock exposes
+  // methods, not fields). Without this, emit produces `let X = Clock`
+  // and downstream arithmetic fails with E0369 (#44, token-fundraiser).
   if (valueNode && /^Clock::get\(\)/.test(valueNode.text.trim())) {
+    const fieldMatch = valueNode.text.trim().match(/^Clock::get\(\)\?\.(\w+)\s*$/);
     return {
       stmt: {
         kind: "sysvar_clock",
         localVar,
         code: text,
+        ...(fieldMatch?.[1] ? { field: fieldMatch[1] } : {}),
       },
     };
   }
 
   // ── Rent::get() sysvar ──
   if (valueNode && /^Rent::get\(\)/.test(valueNode.text.trim())) {
+    const fieldMatch = valueNode.text.trim().match(/^Rent::get\(\)\?\.(\w+)\s*$/);
     return {
       stmt: {
         kind: "sysvar_rent",
         localVar,
         code: text,
+        ...(fieldMatch?.[1] ? { field: fieldMatch[1] } : {}),
       },
     };
   }

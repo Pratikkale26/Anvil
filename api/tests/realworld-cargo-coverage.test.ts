@@ -349,12 +349,13 @@ const CASES: readonly RealworldCase[] = [
       lib: "tokens/token-fundraiser/anchor/programs/fundraiser/src/lib.rs",
     },
     // 4 ix: initialize + contribute + check_contributions + refund.
-    // Surfaced 4 distinct emit gaps 2026-05-12 (tracked separately):
-    //   #42 — sub-module FundraiserError prefix not detected
-    //   #43 — impl-method body inliner leaks __compound_/ __amount  placeholders
-    //   #44 — Clock - i64 arithmetic (clock.unix_timestamp - duration)
-    expected: "cargo-refuse",
-    description: "token-fundraiser — Anchor escrow w/ impl-method dispatch (4 ix); #42-44 tracked",
+    // Surfaced 4 emit gaps fixed same day (2026-05-12):
+    //   #42 — sub-module FundraiserError prefix detection (lib.rs re-export)
+    //   #43 — state_field_assign fieldDef lookup via accountType
+    //   #44 — sysvar_clock chained `.unix_timestamp` preservation
+    //   #44-followup — `\bX.key().as_ref()` lookahead in transformAccountReferences
+    expected: "cargo-clean",
+    description: "token-fundraiser — Anchor escrow w/ impl-method dispatch (4 ix)",
   },
   {
     id: "cpi-lever",

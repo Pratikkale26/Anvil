@@ -1226,12 +1226,14 @@ ${maybeRead}    let seeds = &[
     }`;
   }
 
-  override emitClockGet(localVar: string): string {
-    return `    let ${localVar} = solana_program::sysvar::clock::Clock::get()?;`;
+  override emitClockGet(localVar: string, field?: string): string {
+    const tail = field ? `.${field}` : "";
+    return `    let ${localVar} = solana_program::sysvar::clock::Clock::get()?${tail};`;
   }
 
-  override emitRentGet(localVar: string): string {
-    return `    let ${localVar} = solana_program::sysvar::rent::Rent::get()?;`;
+  override emitRentGet(localVar: string, field?: string): string {
+    const tail = field ? `.${field}` : "";
+    return `    let ${localVar} = solana_program::sysvar::rent::Rent::get()?${tail};`;
   }
 
   override rustTypeForFramework(typeName: string): string {

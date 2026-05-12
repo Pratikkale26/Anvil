@@ -1632,7 +1632,11 @@ export class AstVisitorBase {
       this.walker.emitter.frameworkName === "Pinocchio"
         ? ["pinocchio", "sysvars", "clock", "Clock", "get"]
         : ["solana_program", "sysvar", "clock", "Clock", "get"];
-    return [letStmt(stmt.localVar, tryPostfix(call(path(segments), [])))];
+    const base = tryPostfix(call(path(segments), []));
+    // #44 — chained `.unix_timestamp` etc. from source preserved when
+    // the classifier captured a field.
+    const value = stmt.field ? field(base, stmt.field) : base;
+    return [letStmt(stmt.localVar, value)];
   }
 
   /**
@@ -1645,7 +1649,9 @@ export class AstVisitorBase {
       this.walker.emitter.frameworkName === "Pinocchio"
         ? ["pinocchio", "sysvars", "rent", "Rent", "get"]
         : ["solana_program", "sysvar", "rent", "Rent", "get"];
-    return [letStmt(stmt.localVar, tryPostfix(call(path(segments), [])))];
+    const base = tryPostfix(call(path(segments), []));
+    const value = stmt.field ? field(base, stmt.field) : base;
+    return [letStmt(stmt.localVar, value)];
   }
 
   /**

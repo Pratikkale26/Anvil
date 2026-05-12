@@ -1821,12 +1821,18 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
     }`;
   }
 
-  override emitClockGet(localVar: string): string {
-    return `    let ${localVar} = pinocchio::sysvars::clock::Clock::get()?;`;
+  override emitClockGet(localVar: string, field?: string): string {
+    // Pinocchio's Clock struct exposes unix_timestamp / slot / epoch /
+    // leader_schedule_epoch as i64 / u64 fields (same shape as Anchor).
+    // When the source chained `.unix_timestamp` etc., preserve it so
+    // downstream arithmetic sees the primitive value, not the struct.
+    const tail = field ? `.${field}` : "";
+    return `    let ${localVar} = pinocchio::sysvars::clock::Clock::get()?${tail};`;
   }
 
-  override emitRentGet(localVar: string): string {
-    return `    let ${localVar} = pinocchio::sysvars::rent::Rent::get()?;`;
+  override emitRentGet(localVar: string, field?: string): string {
+    const tail = field ? `.${field}` : "";
+    return `    let ${localVar} = pinocchio::sysvars::rent::Rent::get()?${tail};`;
   }
 
   override rustTypeForFramework(typeName: string): string {

@@ -725,18 +725,24 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
-  // Clock::get() sysvar access
+  // Clock::get() sysvar access. `field` set when the source chained a
+  // field access like `Clock::get()?.unix_timestamp` — emitters can then
+  // bind directly to the primitive value rather than the Clock struct
+  // (Pinocchio's Clock has methods, not fields; native has fields).
   z.object({
     kind: z.literal("sysvar_clock"),
     localVar: z.string(),
     code: z.string(),
+    field: z.string().optional(),
   }),
 
-  // Rent::get() sysvar access
+  // Rent::get() sysvar access. `field` mirrors sysvar_clock — typically
+  // unused since Rent is consumed whole by minimum_balance().
   z.object({
     kind: z.literal("sysvar_rent"),
     localVar: z.string(),
     code: z.string(),
+    field: z.string().optional(),
   }),
 
   // PDA signer seeds definition (let seeds = &[...]; let signer_seeds = ...)
