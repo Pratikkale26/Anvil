@@ -36,6 +36,8 @@ impl From<EventError> for ProgramError {
 
 use borsh::{BorshDeserialize, BorshSerialize};
 
+use super::*;
+
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct Incremented {
     pub new_value: u64,
