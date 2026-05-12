@@ -87,6 +87,39 @@ const CASES: readonly RealworldCase[] = [
     expected: "validator-refuse",
     description: "Result<u64> typed return — validator refuses per #20",
   },
+  {
+    id: "spl-token-minter",
+    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/tokens/spl-token-minter/anchor/programs/spl-token-minter/src/lib.rs",
+    // Multi-file Anchor program — entrypoint delegates to
+    // `instructions::create::*` / `instructions::mint::*` modules that
+    // aren't fetched by the single-file curl above. Not an emit bug;
+    // the source is incomplete by design. To run end-to-end this needs
+    // the project-source flattener (api/src/parser/project-source.ts).
+    expected: "cargo-refuse",
+    description: "multi-file delegate (entrypoint only — needs project-source flatten to be complete)",
+  },
+  {
+    id: "zero-copy",
+    url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/zero-copy/programs/zero-copy/src/lib.rs",
+    // 2026-05-12 findings (tracked separately as tasks #25-27):
+    //   - emit drops user impl methods on the bytemuck-Pod struct (#25)
+    //   - emit uses Foo::from_account_info on zero-copy instead of .load_mut() (#26)
+    //   - emit auto-derives Copy on non-Copy fields (#27)
+    expected: "cargo-refuse",
+    description: "Anchor zero-copy AccountLoader — multiple emit gaps (tracked #25-27)",
+  },
+  {
+    id: "hello-world",
+    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/basics/hello-solana/anchor/programs/hello-solana/src/lib.rs",
+    expected: "cargo-clean",
+    description: "smallest possible Anchor program",
+  },
+  {
+    id: "anchor-misc",
+    url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/misc/programs/misc/src/lib.rs",
+    expected: "validator-refuse",
+    description: "Anchor's omnibus 67-ix smoke test — contains many unsupported shapes",
+  },
 ];
 
 function fixturePath(id: string): string {
