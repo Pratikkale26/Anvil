@@ -90,6 +90,10 @@ pub fn initialize(
         ];
     let init_counter_signer_seeds = &[&init_counter_seeds[..]];
     create_program_account(counter, authority, (8 + CounterAccount::INIT_SPACE) as usize, program_id, init_counter_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { counter.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&CounterAccount::DISCRIMINATOR);
+    }
     let counter_account = counter;
     let mut counter = CounterAccount {
         authority: [0u8; 32],

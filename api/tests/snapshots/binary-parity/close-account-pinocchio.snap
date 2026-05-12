@@ -143,6 +143,10 @@ pub fn open(
         ];
     let init_note_signer_seeds = &[&init_note_seeds[..]];
     create_program_account(note, owner, (8 + 32 + 8) as usize, program_id, init_note_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { note.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&Note::DISCRIMINATOR);
+    }
     let note_account = note;
     let mut note = Note {
         owner: [0u8; 32],

@@ -97,6 +97,10 @@ pub fn initialize(
         ];
     let init_marketplace_signer_seeds = &[&init_marketplace_seeds[..]];
     create_program_account(marketplace, admin, (8 + Marketplace::INIT_SPACE) as u64, program_id, init_marketplace_signer_seeds)?;
+    {
+        let mut __init_data = marketplace.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&Marketplace::DISCRIMINATOR);
+    }
     if !(fee_bps <= 10000) {
         return Err(MarketplaceError::InvalidFeeBps.into());
     }
@@ -182,6 +186,10 @@ pub fn list(
         ];
     let init_listing_signer_seeds = &[&init_listing_seeds[..]];
     create_program_account(listing, seller, (8 + Listing::INIT_SPACE) as u64, program_id, init_listing_signer_seeds)?;
+    {
+        let mut __init_data = listing.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&Listing::DISCRIMINATOR);
+    }
     // Init token account: vault
     let __ta_lamports = Rent::get()?.minimum_balance(165);
     let __ta_create = system_instruction::create_account(

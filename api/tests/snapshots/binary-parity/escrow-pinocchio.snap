@@ -420,6 +420,10 @@ pub fn create_escrow(
         ];
     let init_escrow_signer_seeds = &[&init_escrow_seeds[..]];
     create_program_account(escrow, maker, (8 + Escrow::INIT_SPACE) as usize, program_id, init_escrow_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { escrow.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&Escrow::DISCRIMINATOR);
+    }
     let bump_vault = bump_seed(program_id, &[b"vault", escrow.key().as_ref()], vault.key())?;
     let init_vault_seeds: &[&[u8]] = &[
             b"vault",

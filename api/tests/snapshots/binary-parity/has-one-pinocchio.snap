@@ -134,6 +134,10 @@ pub fn initialize(
     }
 
     create_program_account(safe, owner, (8 + 32 + 8) as usize, program_id, &[])?;
+    {
+        let mut __init_data = unsafe { safe.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&Safe::DISCRIMINATOR);
+    }
     let safe_account = safe;
     let mut safe = Safe {
         owner: [0u8; 32],

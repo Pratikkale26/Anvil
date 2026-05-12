@@ -475,6 +475,10 @@ pub fn create_vesting(
         ];
     let init_vesting_signer_seeds = &[&init_vesting_seeds[..]];
     create_program_account(vesting, grantor, (8 + Vesting::INIT_SPACE) as usize, program_id, init_vesting_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { vesting.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&Vesting::DISCRIMINATOR);
+    }
     let bump_vault = bump_seed(program_id, &[VAULT_SEED, vesting.key().as_ref()], vault.key())?;
     let init_vault_seeds: &[&[u8]] = &[
             VAULT_SEED,

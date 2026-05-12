@@ -115,6 +115,10 @@ pub fn always_fails(
             ];
         let init_state_signer_seeds = &[&init_state_seeds[..]];
         create_program_account(state, authority, (8 + StateAccount::INIT_SPACE) as usize, program_id, init_state_signer_seeds)?;
+        {
+            let mut __init_data = unsafe { state.borrow_mut_data_unchecked() };
+            __init_data[..8].copy_from_slice(&StateAccount::DISCRIMINATOR);
+        }
     }
     return Err(DemoError::ZeroNotAllowed.into());
 
@@ -183,6 +187,10 @@ pub fn try_set(
             ];
         let init_state_signer_seeds = &[&init_state_seeds[..]];
         create_program_account(state, authority, (8 + StateAccount::INIT_SPACE) as usize, program_id, init_state_signer_seeds)?;
+        {
+            let mut __init_data = unsafe { state.borrow_mut_data_unchecked() };
+            __init_data[..8].copy_from_slice(&StateAccount::DISCRIMINATOR);
+        }
     }
     if value == 0 {
             return Err(DemoError::ZeroNotAllowed.into());

@@ -1083,6 +1083,13 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     return `    create_program_account(${account}, ${payer}, (${spaceExpr}) as u64, program_id, ${signerSeeds ?? "&[]"})?;`;
   }
 
+  override emitDiscriminatorWrite(accountName: string, typeName: string): string {
+    return `    {
+        let mut __init_data = ${accountName}.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&${typeName}::DISCRIMINATOR);
+    }`;
+  }
+
   override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string): string {
     return `    // Create Associated Token Account: ${ata}
     let create_ata_ix = spl_create_ata_ix(

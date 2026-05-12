@@ -152,6 +152,10 @@ pub fn initialize_pool(
         ];
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
     create_program_account(pool, admin, (8 + AmmPool::INIT_SPACE) as u64, program_id, init_pool_signer_seeds)?;
+    {
+        let mut __init_data = pool.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&AmmPool::DISCRIMINATOR);
+    }
     let (expected_key, bump_vault_a) = Pubkey::find_program_address(&[b"vault_a", pool.key.as_ref()], program_id);
     if expected_key != *vault_a.key {
         return Err(ProgramError::InvalidSeeds);

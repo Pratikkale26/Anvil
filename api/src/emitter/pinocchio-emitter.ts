@@ -1514,6 +1514,13 @@ ${invokeCall}
     return `    create_program_account(${account}, ${payer}, (${spaceExpr}) as usize, program_id, ${signerSeeds ?? "&[]"})?;`;
   }
 
+  override emitDiscriminatorWrite(accountName: string, typeName: string): string {
+    return `    {
+        let mut __init_data = unsafe { ${accountName}.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&${typeName}::DISCRIMINATOR);
+    }`;
+  }
+
   override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string): string {
     // pinocchio_associated_token_account 0.4 takes &AccountView, but pinocchio
     // 0.9's account slice gives us &AccountInfo. Different types, no automatic

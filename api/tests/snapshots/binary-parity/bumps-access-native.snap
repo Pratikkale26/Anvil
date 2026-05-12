@@ -66,6 +66,10 @@ pub fn initialize(
         ];
     let init_state_signer_seeds = &[&init_state_seeds[..]];
     create_program_account(state, authority, (8 + StateAccount::INIT_SPACE) as u64, program_id, init_state_signer_seeds)?;
+    {
+        let mut __init_data = state.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&StateAccount::DISCRIMINATOR);
+    }
     let bump = bump_state;
     let state_account = state;
     let mut state = StateAccount {

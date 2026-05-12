@@ -200,6 +200,10 @@ pub fn init(
         ];
     let init_vault_signer_seeds = &[&init_vault_seeds[..]];
     create_program_account(vault, owner, (256) as u64, program_id, init_vault_signer_seeds)?;
+    {
+        let mut __init_data = vault.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&OptVault::DISCRIMINATOR);
+    }
     let mut v = OptVault {
         owner: Pubkey::default(),
         delegate: Option::<Pubkey>::default(),

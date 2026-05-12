@@ -301,6 +301,10 @@ pub fn init(
         ];
     let init_state_signer_seeds = &[&init_state_seeds[..]];
     create_program_account(state, owner, (8 + 1 + 4) as u64, program_id, init_state_signer_seeds)?;
+    {
+        let mut __init_data = state.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&GrowState::DISCRIMINATOR);
+    }
     let mut s = GrowState {
         bump: 0,
         log: Vec::new(),

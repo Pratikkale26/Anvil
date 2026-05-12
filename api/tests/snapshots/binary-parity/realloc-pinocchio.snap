@@ -153,6 +153,10 @@ pub fn init(
         ];
     let init_state_signer_seeds = &[&init_state_seeds[..]];
     create_program_account(state, owner, (8 + 1 + 4) as usize, program_id, init_state_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { state.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&LogState::DISCRIMINATOR);
+    }
     let mut s = LogState {
         bump: 0,
         log: Vec::new(),

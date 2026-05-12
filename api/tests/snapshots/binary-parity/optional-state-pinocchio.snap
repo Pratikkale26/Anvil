@@ -211,6 +211,10 @@ pub fn init(
         ];
     let init_vault_signer_seeds = &[&init_vault_seeds[..]];
     create_program_account(vault, owner, (256) as usize, program_id, init_vault_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { vault.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&OptVault::DISCRIMINATOR);
+    }
     let mut v = OptVault {
         owner: [0u8; 32],
         delegate: Option::<Pubkey>::default(),

@@ -320,6 +320,18 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  /**
+   * Write the 8-byte discriminator to a freshly-init'd state account.
+   * Called by emitInitAccountPrelude immediately after the
+   * create_program_account CPI when the account type is a user-defined
+   * state struct (Account<'info, T>). Mirrors Anchor's #[account] macro
+   * which writes the discriminator atomically with init. Targets differ
+   * in how they get a &mut [u8] to the account data buffer:
+   *   Pinocchio: `unsafe { account.borrow_mut_data_unchecked() }`
+   *   Native:    `account.data.borrow_mut()` (RefMut from RefCell)
+   */
+  abstract emitDiscriminatorWrite(accountName: string, typeName: string): string;
+
   // ── ATA creation ──
   abstract emitCreateAta(
     ata: string,
@@ -1913,6 +1925,22 @@ ${fields}
       signerSeedsExpr,
     );
 
+    // Anchor's `#[account]` macro writes an 8-byte discriminator to the
+    // freshly-created account immediately after the system::create_account
+    // CPI. The discriminator IS the value our emitted `T::DISCRIMINATOR`
+    // constant in state.rs. Without writing it here, any later instruction
+    // that calls `T::from_account_info(account)` fails with
+    // InvalidAccountData (disc mismatch). Surfaced by counter-pe/cpi-lever
+    // byte-divergence in Phase 2 v7: init succeeded but the next ix
+    // (increment) couldn't deserialize. Only applies when the account
+    // type is a user-defined state struct (Account<'info, T>) — Mint /
+    // TokenAccount / ATA use SPL layouts and are excluded.
+    let discriminatorWrite = "";
+    const stateType = ir.accounts.find((a) => a.name === accountRef.accountType);
+    if (stateType) {
+      discriminatorWrite = this.emitDiscriminatorWrite(accountName, stateType.name);
+    }
+
     // `init_if_needed` means: only allocate if the account doesn't already
     // exist on-chain. An empty data buffer + zero lamports is the standard
     // heuristic. The seeds bookkeeping + create call are gated, but the
@@ -1925,7 +1953,7 @@ ${fields}
       (c) => c.kind === "init_if_needed",
     );
     if (isIfNeeded) {
-      const inner = [seedsPrelude, createCall].filter(Boolean).join("\n");
+      const inner = [seedsPrelude, createCall, discriminatorWrite].filter(Boolean).join("\n");
       // Indent body so the emitted block stays readable.
       const indented = inner.replace(/^/gm, "    ");
       const block = `    // init_if_needed: only allocate when the account is empty.
@@ -1935,7 +1963,7 @@ ${indented}
       return [bumpPrelude, block].filter(Boolean).join("\n");
     }
 
-    return [bumpPrelude, seedsPrelude, createCall].filter(Boolean).join("\n");
+    return [bumpPrelude, seedsPrelude, createCall, discriminatorWrite].filter(Boolean).join("\n");
   }
 
   /**

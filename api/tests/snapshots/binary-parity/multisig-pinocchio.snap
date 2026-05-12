@@ -180,6 +180,10 @@ pub fn create(
         ];
     let init_multisig_signer_seeds = &[&init_multisig_seeds[..]];
     create_program_account(multisig, payer, (8 + 4 + 32 * 8 + 1 + 8 + 1) as usize, program_id, init_multisig_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { multisig.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&MultisigAccount::DISCRIMINATOR);
+    }
     if !(threshold > 0 && (threshold as usize) <= owners.len()) {
         return Err(MultisigError::InvalidThreshold.into());
     }
@@ -334,6 +338,10 @@ pub fn propose(
         ];
     let init_proposal_signer_seeds = &[&init_proposal_seeds[..]];
     create_program_account(proposal, proposer, (256) as usize, program_id, init_proposal_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { proposal.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&ProposalAccount::DISCRIMINATOR);
+    }
     let _bump_multisig = bump_seed(program_id, &[b"multisig", multisig_payer.key().as_ref()], multisig.key())?;
     let _ = proposal_id;
     let m = MultisigAccount::from_account_info(multisig)?;

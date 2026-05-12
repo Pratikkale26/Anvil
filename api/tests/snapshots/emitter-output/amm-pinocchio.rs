@@ -151,6 +151,10 @@ pub fn initialize_pool(
         ];
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
     create_program_account(pool, admin, (8 + AmmPool::INIT_SPACE) as usize, program_id, init_pool_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { pool.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&AmmPool::DISCRIMINATOR);
+    }
     let bump_vault_a = bump_seed(program_id, &[b"vault_a", pool.key().as_ref()], vault_a.key())?;
     let init_vault_a_seeds: &[&[u8]] = &[
             b"vault_a",

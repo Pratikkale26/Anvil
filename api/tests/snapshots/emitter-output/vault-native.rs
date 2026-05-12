@@ -85,6 +85,10 @@ pub fn initialize(
         ];
     let init_vault_state_signer_seeds = &[&init_vault_state_seeds[..]];
     create_program_account(vault_state, authority, (8 + VaultState::INIT_SPACE) as u64, program_id, init_vault_state_signer_seeds)?;
+    {
+        let mut __init_data = vault_state.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&VaultState::DISCRIMINATOR);
+    }
     let (expected_key, bump_vault) = Pubkey::find_program_address(&[b"vault", authority.key.as_ref()], program_id);
     if expected_key != *vault.key {
         return Err(ProgramError::InvalidSeeds);

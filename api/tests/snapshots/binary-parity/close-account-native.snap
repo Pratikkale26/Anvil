@@ -106,6 +106,10 @@ pub fn open(
         ];
     let init_note_signer_seeds = &[&init_note_seeds[..]];
     create_program_account(note, owner, (8 + 32 + 8) as u64, program_id, init_note_signer_seeds)?;
+    {
+        let mut __init_data = note.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&Note::DISCRIMINATOR);
+    }
     let note_account = note;
     let mut note = Note {
         owner: Pubkey::default(),

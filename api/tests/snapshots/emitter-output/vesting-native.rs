@@ -149,6 +149,10 @@ pub fn create_vesting(
         ];
     let init_vesting_signer_seeds = &[&init_vesting_seeds[..]];
     create_program_account(vesting, grantor, (8 + Vesting::INIT_SPACE) as u64, program_id, init_vesting_signer_seeds)?;
+    {
+        let mut __init_data = vesting.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&Vesting::DISCRIMINATOR);
+    }
     let (expected_key, bump_vault) = Pubkey::find_program_address(&[VAULT_SEED, vesting.key.as_ref()], program_id);
     if expected_key != *vault.key {
         return Err(ProgramError::InvalidSeeds);

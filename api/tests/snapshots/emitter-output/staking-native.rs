@@ -155,6 +155,10 @@ pub fn initialize_pool(
         ];
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
     create_program_account(pool, admin, (8 + StakingPool::INIT_SPACE) as u64, program_id, init_pool_signer_seeds)?;
+    {
+        let mut __init_data = pool.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&StakingPool::DISCRIMINATOR);
+    }
     let (expected_key, bump_stake_vault) = Pubkey::find_program_address(&[b"stake_vault", pool.key.as_ref()], program_id);
     if expected_key != *stake_vault.key {
         return Err(ProgramError::InvalidSeeds);
@@ -301,6 +305,10 @@ pub fn stake(
         ];
     let init_user_stake_signer_seeds = &[&init_user_stake_seeds[..]];
     create_program_account(user_stake, user, (8 + UserStake::INIT_SPACE) as u64, program_id, init_user_stake_signer_seeds)?;
+    {
+        let mut __init_data = user_stake.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&UserStake::DISCRIMINATOR);
+    }
     let pool_account = pool;
     let mut pool = StakingPool::read(&pool_account.data.borrow())?;
     let (expected_key, _bump_pool) = Pubkey::find_program_address(&[b"pool", pool.stake_mint.as_ref()], program_id);

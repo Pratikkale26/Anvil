@@ -153,6 +153,10 @@ pub fn initialize_pool(
         ];
     let init_pool_signer_seeds = &[&init_pool_seeds[..]];
     create_program_account(pool, admin, (8 + StakingPool::INIT_SPACE) as usize, program_id, init_pool_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { pool.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&StakingPool::DISCRIMINATOR);
+    }
     let bump_stake_vault = bump_seed(program_id, &[b"stake_vault", pool.key().as_ref()], stake_vault.key())?;
     let init_stake_vault_seeds: &[&[u8]] = &[
             b"stake_vault",
@@ -326,6 +330,10 @@ pub fn stake(
         ];
     let init_user_stake_signer_seeds = &[&init_user_stake_seeds[..]];
     create_program_account(user_stake, user, (8 + UserStake::INIT_SPACE) as usize, program_id, init_user_stake_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { user_stake.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&UserStake::DISCRIMINATOR);
+    }
     let pool_account = pool;
     let mut pool = StakingPool::from_account_info(pool_account)?;
     let _bump_pool = bump_seed(program_id, &[b"pool", pool.stake_mint.as_ref()], pool_account.key())?;

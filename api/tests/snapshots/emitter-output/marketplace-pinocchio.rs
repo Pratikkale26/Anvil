@@ -97,6 +97,10 @@ pub fn initialize(
         ];
     let init_marketplace_signer_seeds = &[&init_marketplace_seeds[..]];
     create_program_account(marketplace, admin, (8 + Marketplace::INIT_SPACE) as usize, program_id, init_marketplace_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { marketplace.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&Marketplace::DISCRIMINATOR);
+    }
     if !(fee_bps <= 10000) {
         return Err(MarketplaceError::InvalidFeeBps.into());
     }
@@ -180,6 +184,10 @@ pub fn list(
         ];
     let init_listing_signer_seeds = &[&init_listing_seeds[..]];
     create_program_account(listing, seller, (8 + Listing::INIT_SPACE) as usize, program_id, init_listing_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { listing.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&Listing::DISCRIMINATOR);
+    }
     // Init token account: vault
     {
         const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];

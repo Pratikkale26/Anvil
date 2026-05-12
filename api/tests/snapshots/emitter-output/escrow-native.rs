@@ -120,6 +120,10 @@ pub fn create_escrow(
         ];
     let init_escrow_signer_seeds = &[&init_escrow_seeds[..]];
     create_program_account(escrow, maker, (8 + Escrow::INIT_SPACE) as u64, program_id, init_escrow_signer_seeds)?;
+    {
+        let mut __init_data = escrow.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&Escrow::DISCRIMINATOR);
+    }
     let (expected_key, bump_vault) = Pubkey::find_program_address(&[b"vault", escrow.key.as_ref()], program_id);
     if expected_key != *vault.key {
         return Err(ProgramError::InvalidSeeds);

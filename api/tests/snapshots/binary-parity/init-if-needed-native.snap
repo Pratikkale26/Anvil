@@ -110,6 +110,10 @@ pub fn visit(
             ];
         let init_profile_signer_seeds = &[&init_profile_seeds[..]];
         create_program_account(profile, user, (8 + VisitProfile::INIT_SPACE) as u64, program_id, init_profile_signer_seeds)?;
+        {
+            let mut __init_data = profile.data.borrow_mut();
+            __init_data[..8].copy_from_slice(&VisitProfile::DISCRIMINATOR);
+        }
     }
     let clock = solana_program::sysvar::clock::Clock::get()?;
     let profile_account = profile;

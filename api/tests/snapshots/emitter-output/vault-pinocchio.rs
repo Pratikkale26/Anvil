@@ -83,6 +83,10 @@ pub fn initialize(
         ];
     let init_vault_state_signer_seeds = &[&init_vault_state_seeds[..]];
     create_program_account(vault_state, authority, (8 + VaultState::INIT_SPACE) as usize, program_id, init_vault_state_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { vault_state.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&VaultState::DISCRIMINATOR);
+    }
     let bump_vault = bump_seed(program_id, &[b"vault", authority.key().as_ref()], vault.key())?;
     let vault_state_account = vault_state;
     let mut vault_state = VaultState {

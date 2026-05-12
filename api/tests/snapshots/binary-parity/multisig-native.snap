@@ -166,6 +166,10 @@ pub fn create(
         ];
     let init_multisig_signer_seeds = &[&init_multisig_seeds[..]];
     create_program_account(multisig, payer, (8 + 4 + 32 * 8 + 1 + 8 + 1) as u64, program_id, init_multisig_signer_seeds)?;
+    {
+        let mut __init_data = multisig.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&MultisigAccount::DISCRIMINATOR);
+    }
     if !(threshold > 0 && (threshold as usize) <= owners.len()) {
         return Err(MultisigError::InvalidThreshold.into());
     }
@@ -325,6 +329,10 @@ pub fn propose(
         ];
     let init_proposal_signer_seeds = &[&init_proposal_seeds[..]];
     create_program_account(proposal, proposer, (256) as u64, program_id, init_proposal_signer_seeds)?;
+    {
+        let mut __init_data = proposal.data.borrow_mut();
+        __init_data[..8].copy_from_slice(&ProposalAccount::DISCRIMINATOR);
+    }
     let (expected_key, _bump_multisig) = Pubkey::find_program_address(&[b"multisig", multisig_payer.key.as_ref()], program_id);
     if expected_key != *multisig.key {
         return Err(ProgramError::InvalidSeeds);

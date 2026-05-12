@@ -127,6 +127,10 @@ pub fn visit(
             ];
         let init_profile_signer_seeds = &[&init_profile_seeds[..]];
         create_program_account(profile, user, (8 + VisitProfile::INIT_SPACE) as usize, program_id, init_profile_signer_seeds)?;
+        {
+            let mut __init_data = unsafe { profile.borrow_mut_data_unchecked() };
+            __init_data[..8].copy_from_slice(&VisitProfile::DISCRIMINATOR);
+        }
     }
     let clock = pinocchio::sysvars::clock::Clock::get()?;
     let profile_account = profile;

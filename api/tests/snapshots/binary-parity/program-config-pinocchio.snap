@@ -134,6 +134,10 @@ pub fn initialize(
         ];
     let init_config_signer_seeds = &[&init_config_seeds[..]];
     create_program_account(config, authority, (8 + ProgramConfig::INIT_SPACE) as usize, program_id, init_config_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { config.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&ProgramConfig::DISCRIMINATOR);
+    }
     let config_account = config;
     let mut config = ProgramConfig {
         authority: [0u8; 32],

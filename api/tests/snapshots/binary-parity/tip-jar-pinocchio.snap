@@ -199,6 +199,10 @@ pub fn create_jar(
         ];
     let init_jar_signer_seeds = &[&init_jar_seeds[..]];
     create_program_account(jar, owner, (8 + TipJar::INIT_SPACE) as usize, program_id, init_jar_signer_seeds)?;
+    {
+        let mut __init_data = unsafe { jar.borrow_mut_data_unchecked() };
+        __init_data[..8].copy_from_slice(&TipJar::DISCRIMINATOR);
+    }
     let jar_account = jar;
     let mut jar = TipJar {
         owner: [0u8; 32],
