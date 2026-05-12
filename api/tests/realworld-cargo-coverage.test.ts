@@ -356,6 +356,26 @@ const CASES: readonly RealworldCase[] = [
     expected: "cargo-refuse",
     description: "token-fundraiser — Anchor escrow w/ impl-method dispatch (4 ix); #42-44 tracked",
   },
+  {
+    id: "cpi-lever",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/cross-program-invocation/anchor/programs/lever/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "cpi-lever — boolean toggle + match arm msg! (the callee program)",
+  },
+  {
+    id: "pda-mint-authority",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "tokens/pda-mint-authority/anchor/programs/token-minter/src/lib.rs",
+    },
+    // Metaplex CPI (create_metadata_accounts_v3 family) — same shape
+    // family as nft-minter. Expect validator-refuse.
+    expected: "validator-refuse",
+    description: "pda-mint-authority — PDA-owned mint + Metaplex CPI; validator refuses",
+  },
 ];
 
 function fixturePath(id: string): string {
