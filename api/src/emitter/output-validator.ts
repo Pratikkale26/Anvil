@@ -757,8 +757,21 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     // ValidationIssue carries `path` per emitted file, but parser warnings
     // pre-date emit so they reference the source file (or undefined for a
     // single-source parse — the consumer falls back to the input filename).
+    //
+    // H2 — escalation policy: anchor_pattern_in_passthrough is an Anchor
+    // construct (ctx.accounts / CpiContext / anchor_spl:: / require! / emit!)
+    // riding through verbatim into a target that doesn't understand it. The
+    // post-emit ERROR_PATTERNS regex catches the emit-side leak but loses
+    // source-line attribution — the validator only knows the emitted file's
+    // line, not the Anchor source line. Escalating the parser warning to
+    // ERROR carries the source location all the way through so the workbench
+    // / CLI can render "your Anchor source at L:C will not transpile" rather
+    // than "your emitted Rust contains a leaked pattern". Same correctness
+    // posture either way; better UX.
+    const severity: ValidationSeverity =
+      w.code === "anchor_pattern_in_passthrough" ? "error" : "warning";
     issues.push({
-      severity: "warning",
+      severity,
       message: `${where}[parser:${w.code}] ${w.message}`,
       ...(w.loc?.path ? { path: w.loc.path } : {}),
       ...(w.loc?.line ? { line: w.loc.line } : {}),
