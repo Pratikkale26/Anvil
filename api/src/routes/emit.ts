@@ -13,6 +13,14 @@ import { buildProjectScaffold } from "../emitter/project-scaffold.js";
 import { AnvilError, ErrorCode } from "../errors.js";
 import { metrics } from "../metrics.js";
 import { z } from "zod";
+import {
+  runBuild,
+  QueueFullError,
+  QueueWaitTimeoutError,
+  PerIpQueueFullError,
+  type BuildTarget,
+  type BuildFile,
+} from "../build/build-runner.js";
 
 export const emitRoute = Router();
 
@@ -62,6 +70,14 @@ emitRoute.post("/", async (req, res) => {
   };
   const strict = Boolean((req.body as { strict?: boolean }).strict);
   const refine = req.query.refine === "1";
+  // ?gate=cargo (B2 backend) — run `cargo check` against the emit before
+  // returning. The validator is a fast heuristic; cargo is ground truth.
+  // The CLI's --cargo-check (default-on) wraps the same cargo-gate module
+  // via spawnSync; here we use the existing runBuild path so the route
+  // inherits the build queue, per-IP cap, and sandbox layer. Returns
+  // `cargoGate: { ok, errors, warnings, durationMs }` on the response so
+  // the workbench can render a verdict next to the validator output.
+  const gateCargo = req.query.gate === "cargo";
   // projectScaffold: when true the response includes Cargo.toml + README.md
   // + .gitignore + anvil-manifest.json, and the emitted .rs files are
   // rewritten to live under src/ so the whole thing is `cargo build`-able.
@@ -291,6 +307,78 @@ emitRoute.post("/", async (req, res) => {
         response.projectScaffold = true;
       } else {
         response.files = currentFiles;
+      }
+    }
+
+    // ── ?gate=cargo: cargo check accept gate (B2 backend) ──
+    if (gateCargo) {
+      // runBuild owns the scratch project — it writes its own Cargo.toml
+      // (target-specific, hard-coded deps) and unwraps file paths into
+      // scratchDir/src/. We pass the bare emitted files (paths like
+      // "lib.rs", "instructions/mod.rs") without any src/ prefix or
+      // scaffold; runBuild handles both. This matches routes/build.ts
+      // which calls runBuild with the same shape.
+      const gateFiles: BuildFile[] = currentFiles.map((f) => ({
+        path: f.path,
+        content: f.content,
+      }));
+      const callerIp = req.ip ?? req.socket.remoteAddress ?? "unknown";
+      try {
+        const r = await runBuild(
+          target as BuildTarget,
+          gateFiles,
+          ir.name,
+          "check",
+          { callerIp },
+        );
+        response.cargoGate = {
+          ok: r.ok,
+          durationMs: r.durationMs,
+          errors: r.errors,
+          warnings: r.warnings,
+          stderrTail: r.stderrTail,
+          unsupported: r.unsupported,
+        };
+        // Mirror cargo errors into validationIssues so existing UI paths
+        // that aggregate validator + cargo signals see a unified list.
+        // Marked with a `cargo:` prefix so callers can distinguish.
+        if (!r.ok) {
+          const cargoIssues = r.errors.map((e) => ({
+            severity: "error" as const,
+            message: `cargo: ${e.message}`,
+            path: e.filePath || undefined,
+            line: e.line || undefined,
+          }));
+          response.validationIssues = [
+            ...(response.validationIssues as typeof validationIssues),
+            ...cargoIssues,
+          ];
+        }
+      } catch (e) {
+        // Queue full / timeout / per-IP cap: surface as a non-fatal
+        // cargoGate.error so the caller knows the gate didn't run.
+        // The emit itself is still valid; the user can retry the gate.
+        if (
+          e instanceof QueueFullError
+          || e instanceof PerIpQueueFullError
+          || e instanceof QueueWaitTimeoutError
+        ) {
+          response.cargoGate = {
+            ok: false,
+            durationMs: 0,
+            errors: [],
+            warnings: [],
+            stderrTail: "",
+            queueError: e instanceof QueueFullError
+              ? "queue_full"
+              : e instanceof PerIpQueueFullError
+                ? "per_ip_cap"
+                : "wait_timeout",
+            queueMessage: e.message,
+          };
+        } else {
+          throw e;
+        }
       }
     }
 
