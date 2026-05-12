@@ -768,6 +768,11 @@ function isPrimitiveType(t: string): boolean {
   // Vec<Pubkey>). Inner type is checked recursively.
   const vecMatch = t.match(/^Vec<(.+)>$/);
   if (vecMatch?.[1]) return isPrimitiveType(vecMatch[1]);
+  // Option<T> where T is primitive — synth defaults to None (1 byte
+  // borsh tag = 0x00). cashiers-check uses Option<String>. Both
+  // targets serialize None identically.
+  const optMatch = t.match(/^Option<(.+)>$/);
+  if (optMatch?.[1]) return isPrimitiveType(optMatch[1]);
   return false;
 }
 
@@ -787,6 +792,9 @@ function defaultPrimitiveValue(type: string): unknown {
     if (inner === "Pubkey") return ["11111111111111111111111111111111"];
     return [];
   }
+  // Option<T> → None (null in the synthesized JSON; borsh serializes
+  // None as a single 0x00 tag byte. Both targets produce identical bytes.)
+  if (/^Option<(.+)>$/.test(type)) return null;
   return undefined;
 }
 
