@@ -120,6 +120,24 @@ const CASES: readonly RealworldCase[] = [
     expected: "validator-refuse",
     description: "Anchor's omnibus 67-ix smoke test — contains many unsupported shapes",
   },
+  {
+    id: "close-account",
+    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/basics/close-account/anchor/programs/close-account/src/lib.rs",
+    expected: "cargo-refuse",
+    description: "multi-file delegate (entrypoint only — needs project-source flatten)",
+  },
+  {
+    id: "account-data",
+    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/basics/account-data/anchor/programs/anchor-program-example/src/lib.rs",
+    expected: "cargo-refuse",
+    description: "multi-file delegate (entrypoint only — needs project-source flatten)",
+  },
+  {
+    id: "create-account",
+    url: "https://raw.githubusercontent.com/solana-developers/program-examples/main/basics/create-account/anchor/programs/create-system-account/src/lib.rs",
+    expected: "cargo-clean",
+    description: "system_program::create_account via CPI",
+  },
 ];
 
 function fixturePath(id: string): string {
