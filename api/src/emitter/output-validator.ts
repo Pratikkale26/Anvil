@@ -15,6 +15,33 @@ function normalizedConstraintValue(value: string): string {
   return value.replace(/\s*@\s*[\w:]+(?:::\w+)*/g, "").trim();
 }
 
+/**
+ * Parse the inner T from a return-type expression of shape `Result<T>` or
+ * `-> Result<T>` (depth-aware so `Result<Vec<u8>>` and `Result<Foo<'info>>`
+ * round-trip correctly). Returns null when the input isn't a Result<>
+ * shape (e.g. ProgramResult, or no explicit return type).
+ *
+ * Exported for unit testing.
+ */
+export function extractResultInnerType(returnType: string): string | null {
+  const t = returnType.replace(/^->\s*/, "").trim();
+  const m = t.match(/^Result\s*<\s*/);
+  if (!m) return null;
+  let depth = 1;
+  let i = m[0].length;
+  const start = i;
+  while (i < t.length && depth > 0) {
+    const ch = t[i];
+    if (ch === "<") depth++;
+    else if (ch === ">") {
+      depth--;
+      if (depth === 0) return t.slice(start, i).trim();
+    }
+    i++;
+  }
+  return null;
+}
+
 function extractInstructionBody(content: string, fnName: string): string | null {
   const fnStart = content.indexOf(`fn ${fnName}(`);
   if (fnStart === -1) return null;
@@ -740,6 +767,35 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     issues.push({
       severity: "warning",
       message: warning,
+    });
+  }
+
+  // ── Typed-Result instruction return refusal (#20) ──
+  //
+  // Anchor's `pub fn ix(...) -> Result<T>` for non-unit T relies on the
+  // anchor_lang macro expanding to a set_return_data() call. Anvil
+  // doesn't reproduce that wire format end-to-end on Pinocchio/Native
+  // (the documented design choice — see api/src/demo-programs/
+  // return-data.rs:8-12, which recommends explicit set_return_data
+  // instead). Silently dropping the typed return produces broken emit:
+  //   Ok(value);   // discarded statement, E inference fails
+  //   Ok(())       // unit tail from emitter
+  // which cargo refuses with E0282 "cannot infer type parameter E".
+  //
+  // Refuse the emit and point users at the supported workaround.
+  for (const ix of ir.instructions) {
+    if (!ix.returnType) continue;
+    const innerT = extractResultInnerType(ix.returnType);
+    if (innerT === null) continue; // not a Result-shaped return
+    if (innerT === "()" || innerT === "") continue; // unit Result is fine
+    issues.push({
+      severity: "error",
+      message:
+        `instruction '${ix.name}': typed Result<${innerT}> return is not supported. ` +
+        `Anchor's macro wires set_return_data() for non-unit T; Anvil does not reproduce ` +
+        `that wire format. Workaround: change the source to return Result<()> and call ` +
+        `set_return_data(&value_bytes) explicitly inside the handler body (see ` +
+        `api/src/demo-programs/return-data.rs for the supported pattern).`,
     });
   }
 

@@ -183,7 +183,8 @@
           "endColumn": 14
         }
       ],
-      "rawBody": "{\n        let vault_state = &mut ctx.accounts.vault_state;\n        vault_state.authority = ctx.accounts.authority.key();\n        vault_state.total_deposited = 0;\n        vault_state.bump = ctx.bumps.vault_state;\n        vault_state.vault_bump = ctx.bumps.vault;\n        Ok(())\n    }"
+      "rawBody": "{\n        let vault_state = &mut ctx.accounts.vault_state;\n        vault_state.authority = ctx.accounts.authority.key();\n        vault_state.total_deposited = 0;\n        vault_state.bump = ctx.bumps.vault_state;\n        vault_state.vault_bump = ctx.bumps.vault;\n        Ok(())\n    }",
+      "returnType": "Result<()>"
     },
     {
       "name": "deposit",
@@ -362,7 +363,8 @@
           "endColumn": 14
         }
       ],
-      "rawBody": "{\n        require!(amount > 0, VaultError::InvalidAmount);\n        let vault_state = &mut ctx.accounts.vault_state;\n\n        let cpi_ctx = CpiContext::new(\n            ctx.accounts.system_program.to_account_info(),\n            anchor_lang::system_program::Transfer {\n                from: ctx.accounts.authority.to_account_info(),\n                to: ctx.accounts.vault.to_account_info(),\n            },\n        );\n        anchor_lang::system_program::transfer(cpi_ctx, amount)?;\n\n        vault_state.total_deposited = vault_state.total_deposited.checked_add(amount)\n            .ok_or(VaultError::Overflow)?;\n        Ok(())\n    }"
+      "rawBody": "{\n        require!(amount > 0, VaultError::InvalidAmount);\n        let vault_state = &mut ctx.accounts.vault_state;\n\n        let cpi_ctx = CpiContext::new(\n            ctx.accounts.system_program.to_account_info(),\n            anchor_lang::system_program::Transfer {\n                from: ctx.accounts.authority.to_account_info(),\n                to: ctx.accounts.vault.to_account_info(),\n            },\n        );\n        anchor_lang::system_program::transfer(cpi_ctx, amount)?;\n\n        vault_state.total_deposited = vault_state.total_deposited.checked_add(amount)\n            .ok_or(VaultError::Overflow)?;\n        Ok(())\n    }",
+      "returnType": "Result<()>"
     },
     {
       "name": "withdraw",
@@ -615,7 +617,8 @@
           "endColumn": 14
         }
       ],
-      "rawBody": "{\n        require!(amount > 0, VaultError::InvalidAmount);\n        let vault_state = &ctx.accounts.vault_state;\n\n        // Enforce a rent-exempt floor so the vault PDA never drops below the\n        // minimum balance required for a 0-data system-owned account. Falling\n        // below that threshold makes the PDA garbage-collectable, which would\n        // delete the bump-state we depend on for future signed transfers.\n        let rent = Rent::get()?;\n        let rent_minimum = rent.minimum_balance(0);\n        let post_balance = ctx.accounts.vault.lamports()\n            .checked_sub(amount)\n            .ok_or(VaultError::InsufficientFunds)?;\n        require!(post_balance >= rent_minimum, VaultError::WouldBreakRentExempt);\n\n        let seeds = &[\n            b\"vault\",\n            vault_state.authority.as_ref(),\n            &[vault_state.vault_bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        let cpi_ctx = CpiContext::new_with_signer(\n            ctx.accounts.system_program.to_account_info(),\n            anchor_lang::system_program::Transfer {\n                from: ctx.accounts.vault.to_account_info(),\n                to: ctx.accounts.authority.to_account_info(),\n            },\n            signer_seeds,\n        );\n        anchor_lang::system_program::transfer(cpi_ctx, amount)?;\n\n        let vault_state = &mut ctx.accounts.vault_state;\n        vault_state.total_deposited = vault_state.total_deposited.checked_sub(amount)\n            .ok_or(VaultError::Underflow)?;\n        Ok(())\n    }"
+      "rawBody": "{\n        require!(amount > 0, VaultError::InvalidAmount);\n        let vault_state = &ctx.accounts.vault_state;\n\n        // Enforce a rent-exempt floor so the vault PDA never drops below the\n        // minimum balance required for a 0-data system-owned account. Falling\n        // below that threshold makes the PDA garbage-collectable, which would\n        // delete the bump-state we depend on for future signed transfers.\n        let rent = Rent::get()?;\n        let rent_minimum = rent.minimum_balance(0);\n        let post_balance = ctx.accounts.vault.lamports()\n            .checked_sub(amount)\n            .ok_or(VaultError::InsufficientFunds)?;\n        require!(post_balance >= rent_minimum, VaultError::WouldBreakRentExempt);\n\n        let seeds = &[\n            b\"vault\",\n            vault_state.authority.as_ref(),\n            &[vault_state.vault_bump],\n        ];\n        let signer_seeds = &[&seeds[..]];\n\n        let cpi_ctx = CpiContext::new_with_signer(\n            ctx.accounts.system_program.to_account_info(),\n            anchor_lang::system_program::Transfer {\n                from: ctx.accounts.vault.to_account_info(),\n                to: ctx.accounts.authority.to_account_info(),\n            },\n            signer_seeds,\n        );\n        anchor_lang::system_program::transfer(cpi_ctx, amount)?;\n\n        let vault_state = &mut ctx.accounts.vault_state;\n        vault_state.total_deposited = vault_state.total_deposited.checked_sub(amount)\n            .ok_or(VaultError::Underflow)?;\n        Ok(())\n    }",
+      "returnType": "Result<()>"
     }
   ],
   "accounts": [

@@ -823,6 +823,17 @@ export const InstructionSchema = z.object({
   bodyLocs: z.array(SourceLocSchema.nullish()).default([]),
   /** Original Rust function body text (for debugging & fallback) */
   rawBody: z.string().optional(),
+  /**
+   * Source-declared return type after the `->` arrow. Captured verbatim
+   * from the AST (e.g. "Result<()>", "Result<u64>", "Result<MyType>"). Used
+   * by the validator to refuse instructions that return Result<T> for non-
+   * unit T — Anchor's macro wires those through set_return_data() which
+   * Anvil doesn't reproduce end-to-end (per the explicit-set_return_data
+   * design choice documented in api/src/demo-programs/return-data.rs:8-12).
+   * Undefined when the parser couldn't extract a return type (e.g. handler
+   * lacked an explicit `-> X`).
+   */
+  returnType: z.string().optional(),
   /** Access control expression from #[access_control(...)] attribute */
   accessControl: z.string().optional(),
   docs: z.string().optional(),

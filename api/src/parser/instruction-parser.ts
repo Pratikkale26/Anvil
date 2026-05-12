@@ -199,6 +199,15 @@ function parseInstructionFn(
   // ── Raw body text ──
   const rawBody = expandedWrapper?.rawBody ?? bodyNode?.text ?? "";
 
+  // ── Source-declared return type ──
+  // Captured from the original handler fn (not the expanded wrapper, since
+  // method-inlining synthesises a new fn with a different signature). Used
+  // by the validator to refuse Result<T> for non-unit T — Anchor's macro
+  // wires set_return_data() for those and we don't reproduce it end-to-end
+  // (see api/src/demo-programs/return-data.rs:8-12).
+  const returnTypeNode = bodyFnNode.childForFieldName("return_type");
+  const returnType = returnTypeNode?.text?.trim() || undefined;
+
   return {
     name: fnName,
     accounts,
@@ -206,6 +215,7 @@ function parseInstructionFn(
     body: bodyStatements,
     bodyLocs,
     rawBody,
+    ...(returnType ? { returnType } : {}),
     ...(accessControl ? { accessControl } : {}),
   };
 }
