@@ -401,6 +401,24 @@ const CASES: readonly RealworldCase[] = [
     expected: "cargo-clean",
     description: "create-token — Metaplex create_metadata_accounts_v3 (#45)",
   },
+  {
+    id: "transfer-sol",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/transfer-sol/anchor/programs/transfer-sol/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "transfer-sol — system_program::transfer CPI + direct lamport manipulation (2 ix)",
+  },
+  {
+    id: "processing-instructions",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/processing-instructions/anchor/programs/processing-instructions/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "processing-instructions — msg!() with format args + conditional",
+  },
 ];
 
 function fixturePath(id: string): string {
