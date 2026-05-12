@@ -18,7 +18,7 @@
 import { describe, test } from "bun:test";
 import { parseAnchor } from "../src/parser/anchor-parser.js";
 import { synthesizeAutoScenario } from "../src/cli/auto-scenario.js";
-import { CASES, ensureFixture, type RealworldCase } from "./realworld-cargo-coverage.test.ts";
+import { CASES, ensureFixture, type RealworldCase } from "./realworld-fixtures.ts";
 
 type FixtureVerdict =
   | { id: string; status: "synth-ok"; instructions: number; notes: number }

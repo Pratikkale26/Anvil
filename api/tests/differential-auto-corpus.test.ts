@@ -31,7 +31,7 @@ import {
   resolveScenarioContext,
   runScenarioOnSo,
 } from "../src/build/scenario-runner.js";
-import { CASES, ensureFixture } from "./realworld-cargo-coverage.test.ts";
+import { CASES, ensureFixture } from "./realworld-fixtures.ts";
 
 /** Fixed deploy-id for all fixtures. buildBothSos rewrites declare_id! so
  * the source's original program-id doesn't matter for the build. Cache key
@@ -59,6 +59,7 @@ describe("Phase 2 — generic byte-equal over auto-synth corpus", () => {
     const verdicts: Verdict[] = [];
 
     for (const c of cargoClean) {
+      process.stderr.write(`[phase2] starting ${c.id}\n`);
       const source = ensureFixture(c);
       if (!source) {
         verdicts.push({ id: c.id, kind: "skip-no-source" });
