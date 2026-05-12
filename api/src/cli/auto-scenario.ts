@@ -875,7 +875,10 @@ function synthesizeSeeds(
       continue;
     }
     // <signer>.key().as_ref() / <signer>.key.as_ref() / <pda>.key().as_ref() / <mint>.key().as_ref()
-    const signerKeyMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.key(?:\(\))?\.as_ref\(\)$/);
+    // Also accept the .to_account_info().key shape (cashiers-check pattern):
+    // `check.to_account_info().key.as_ref()` is semantically identical to
+    // `check.key().as_ref()` — both yield the account's pubkey.
+    const signerKeyMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)(?:\.to_account_info\(\))?\.key(?:\(\))?\.as_ref\(\)$/);
     if (signerKeyMatch?.[1]) {
       const name = signerKeyMatch[1];
       if (signerNames.has(name)) {
@@ -973,7 +976,7 @@ function synthesizeSeeds(
     // Emit a typed-int / bytes:0x literal so both targets see the same seed
     // bytes at runtime. Both targets get the same default args, so the PDA
     // derived from these seeds is deterministic across runs.
-    const argRefMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.(as_ref\(\)|to_le_bytes\(\)|to_le_bytes\(\)\.as_ref\(\))$/);
+    const argRefMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.(as_ref\(\)|to_le_bytes\(\)|to_le_bytes\(\)\.as_ref\(\)|as_bytes\(\))$/);
     if (argRefMatch?.[1]) {
       const argName = argRefMatch[1];
       const chain = argRefMatch[2]!;
@@ -992,6 +995,15 @@ function synthesizeSeeds(
         if (argType === "Pubkey" && chain === "as_ref()") {
           // System program ID is all-zero (32 bytes of 0x00).
           out.push(`bytes:0x${"00".repeat(32)}`);
+          continue;
+        }
+        // String: <arg>.as_bytes() → bytes:0x<utf8 bytes of default string>.
+        // Auto-scenario defaults String args to "test" (4 bytes). t22-basics
+        // uses `_token_name.as_bytes()` in its mint PDA seed.
+        if (argType === "String" && chain === "as_bytes()") {
+          const defaultStr = "test";
+          const hex = [...defaultStr].map((c) => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+          out.push(`bytes:0x${hex}`);
           continue;
         }
       }
