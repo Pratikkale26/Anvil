@@ -21,7 +21,7 @@
  */
 import { getRedis, isRedisEnabled } from "../redis-store.js";
 
-const DEFAULT_DAILY_CAP = 3;
+const DEFAULT_DAILY_CAP = 10;
 
 interface DayBucket {
   count: number;

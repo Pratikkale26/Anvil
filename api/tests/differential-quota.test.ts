@@ -20,20 +20,19 @@ beforeEach(() => {
 });
 
 describe("differential-quota", () => {
-  test("default cap is 3 per IP per day", async () => {
+  test("default cap is 10 per IP per day", async () => {
     const ip = "203.0.113.5";
-    const r1 = await consumeQuota(ip);
-    const r2 = await consumeQuota(ip);
-    const r3 = await consumeQuota(ip);
-    const r4 = await consumeQuota(ip);
-    expect(r1.allowed).toBe(true);
-    expect(r1.used).toBe(1);
-    expect(r1.cap).toBe(3);
-    expect(r2.used).toBe(2);
-    expect(r3.used).toBe(3);
-    expect(r3.allowed).toBe(true);
-    expect(r4.allowed).toBe(false);
-    expect(r4.reason).toContain("3/3");
+    const results: Awaited<ReturnType<typeof consumeQuota>>[] = [];
+    for (let i = 0; i < 11; i++) {
+      results.push(await consumeQuota(ip));
+    }
+    expect(results[0]!.allowed).toBe(true);
+    expect(results[0]!.used).toBe(1);
+    expect(results[0]!.cap).toBe(10);
+    expect(results[9]!.used).toBe(10);
+    expect(results[9]!.allowed).toBe(true);
+    expect(results[10]!.allowed).toBe(false);
+    expect(results[10]!.reason).toContain("10/10");
   });
 
   test("env override changes cap", async () => {
@@ -50,11 +49,13 @@ describe("differential-quota", () => {
     const r1 = await consumeQuota("203.0.113.5");
     const r2 = await consumeQuota("203.0.113.99");
     const r3 = await consumeQuota("203.0.113.200");
-    const r4 = await consumeQuota("203.0.113.42");
     expect(r1.used).toBe(1);
     expect(r2.used).toBe(2);
     expect(r3.used).toBe(3);
-    expect(r4.allowed).toBe(false);
+    // Exhaust the rest of the /24's cap.
+    for (let i = 0; i < 7; i++) await consumeQuota("203.0.113.123");
+    const overflow = await consumeQuota("203.0.113.42");
+    expect(overflow.allowed).toBe(false);
   });
 
   test("different /24 -> separate quota", async () => {
