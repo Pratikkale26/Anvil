@@ -438,6 +438,14 @@ function classifyLetDeclaration(
     if (
       /^&?\[\s*&\w+(?:\[\s*\.\.\s*\])?\s*\]$/.test(v)
       && (pendingSeeds !== null || /seeds/.test(v))
+      // #35 — exception: when localVar IS `signer_seeds` / `*_signer_seeds`,
+      // the pda_signer_seeds path below (line 514) is the correct handler.
+      // It captures into a pda_signer_seeds IR stmt whose emit-time handler
+      // synthesizes a fresh `let seeds = …; let signer_seeds = …` prelude.
+      // Dropping here loses that path and pass-through CPI sites that
+      // reference `signer_seeds` end up with E0425 not-in-scope.
+      && localVar !== "signer_seeds"
+      && !localVar.endsWith("_signer_seeds")
     ) {
       return {
         stmt: { kind: "pass_through", code: "", needsReview: false },
