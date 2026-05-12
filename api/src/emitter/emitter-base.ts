@@ -380,8 +380,18 @@ export abstract class BaseEmitter {
   abstract emitEmit(event: string, fields: string): string;
 
   // ── Sysvar transforms ──
+  // emit*Get → full let-binding statement (`    let X = path::Sysvar::get()?;`).
+  // emit*GetExpr → bare expression form (`path::Sysvar::get()?<.field>`); used by
+  //   walker post-processors that substitute `Clock::get()?` / `Rent::get()?` text
+  //   inside pass-through bodies.
+  // emit*GetExprNoTry → same without the `?` suffix; for the rare source form
+  //   that wrote `Clock::get()` (no try) and wants the `Result<Clock>` value.
   abstract emitClockGet(localVar: string, field?: string): string;
   abstract emitRentGet(localVar: string, field?: string): string;
+  abstract emitClockGetExpr(field?: string): string;
+  abstract emitClockGetExprNoTry(field?: string): string;
+  abstract emitRentGetExpr(field?: string): string;
+  abstract emitRentGetExprNoTry(field?: string): string;
 
   // ── Type mapping ──
   abstract rustTypeForFramework(typeName: string): string;

@@ -1826,13 +1826,31 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
     // leader_schedule_epoch as i64 / u64 fields (same shape as Anchor).
     // When the source chained `.unix_timestamp` etc., preserve it so
     // downstream arithmetic sees the primitive value, not the struct.
-    const tail = field ? `.${field}` : "";
-    return `    let ${localVar} = pinocchio::sysvars::clock::Clock::get()?${tail};`;
+    return `    let ${localVar} = ${this.emitClockGetExpr(field)};`;
   }
 
   override emitRentGet(localVar: string, field?: string): string {
+    return `    let ${localVar} = ${this.emitRentGetExpr(field)};`;
+  }
+
+  override emitClockGetExpr(field?: string): string {
     const tail = field ? `.${field}` : "";
-    return `    let ${localVar} = pinocchio::sysvars::rent::Rent::get()?${tail};`;
+    return `pinocchio::sysvars::clock::Clock::get()?${tail}`;
+  }
+
+  override emitClockGetExprNoTry(field?: string): string {
+    const tail = field ? `.${field}` : "";
+    return `pinocchio::sysvars::clock::Clock::get()${tail}`;
+  }
+
+  override emitRentGetExpr(field?: string): string {
+    const tail = field ? `.${field}` : "";
+    return `pinocchio::sysvars::rent::Rent::get()?${tail}`;
+  }
+
+  override emitRentGetExprNoTry(field?: string): string {
+    const tail = field ? `.${field}` : "";
+    return `pinocchio::sysvars::rent::Rent::get()${tail}`;
   }
 
   override rustTypeForFramework(typeName: string): string {

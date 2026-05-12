@@ -400,28 +400,25 @@ export class BodyWalker {
 
   // ─── Sysvar expression accessors ──────────────────────────────────────────
 
+  // Thin wrappers over the emitter's expression-form sysvar methods.
+  // The 6 `.replace()` strips that used to extract the bare expression
+  // from the full let-statement (line 407/408/415/416/420/424) are gone
+  // — the emitter exposes the expression form directly via
+  // emit{Clock,Rent}Get{,NoTry}Expr.
   qualifiedClockGetExpr(): string {
-    return this.emitter
-      .emitClockGet("__anvil_clock")
-      .trim()
-      .replace(/^let\s+__anvil_clock\s*=\s*/, "")
-      .replace(/;$/, "");
+    return this.emitter.emitClockGetExpr();
   }
 
   qualifiedRentGetExpr(): string {
-    return this.emitter
-      .emitRentGet("__anvil_rent")
-      .trim()
-      .replace(/^let\s+__anvil_rent\s*=\s*/, "")
-      .replace(/;$/, "");
+    return this.emitter.emitRentGetExpr();
   }
 
   qualifiedClockGetValueExpr(): string {
-    return this.qualifiedClockGetExpr().replace(/\?$/, "");
+    return this.emitter.emitClockGetExprNoTry();
   }
 
   qualifiedRentGetValueExpr(): string {
-    return this.qualifiedRentGetExpr().replace(/\?$/, "");
+    return this.emitter.emitRentGetExprNoTry();
   }
 
   // State-aware amount expression resolver. If X.amount references a program

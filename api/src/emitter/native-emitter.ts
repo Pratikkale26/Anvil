@@ -1227,13 +1227,31 @@ ${maybeRead}    let seeds = &[
   }
 
   override emitClockGet(localVar: string, field?: string): string {
-    const tail = field ? `.${field}` : "";
-    return `    let ${localVar} = solana_program::sysvar::clock::Clock::get()?${tail};`;
+    return `    let ${localVar} = ${this.emitClockGetExpr(field)};`;
   }
 
   override emitRentGet(localVar: string, field?: string): string {
+    return `    let ${localVar} = ${this.emitRentGetExpr(field)};`;
+  }
+
+  override emitClockGetExpr(field?: string): string {
     const tail = field ? `.${field}` : "";
-    return `    let ${localVar} = solana_program::sysvar::rent::Rent::get()?${tail};`;
+    return `solana_program::sysvar::clock::Clock::get()?${tail}`;
+  }
+
+  override emitClockGetExprNoTry(field?: string): string {
+    const tail = field ? `.${field}` : "";
+    return `solana_program::sysvar::clock::Clock::get()${tail}`;
+  }
+
+  override emitRentGetExpr(field?: string): string {
+    const tail = field ? `.${field}` : "";
+    return `solana_program::sysvar::rent::Rent::get()?${tail}`;
+  }
+
+  override emitRentGetExprNoTry(field?: string): string {
+    const tail = field ? `.${field}` : "";
+    return `solana_program::sysvar::rent::Rent::get()${tail}`;
   }
 
   override rustTypeForFramework(typeName: string): string {

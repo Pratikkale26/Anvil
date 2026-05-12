@@ -74,8 +74,12 @@ export interface BodyEmitterCallbacks {
   emitRequire(condition: string, error: string): string;
   emitMsg(message: string): string;
   emitEmit(event: string, fields: string): string;
-  emitClockGet(localVar: string): string;
-  emitRentGet(localVar: string): string;
+  emitClockGet(localVar: string, field?: string): string;
+  emitRentGet(localVar: string, field?: string): string;
+  emitClockGetExpr(field?: string): string;
+  emitClockGetExprNoTry(field?: string): string;
+  emitRentGetExpr(field?: string): string;
+  emitRentGetExprNoTry(field?: string): string;
   emitSystemTransfer(from: string, to: string, amount: string, signerSeeds?: string): string;
   emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string;
   emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string;
