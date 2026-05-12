@@ -254,6 +254,43 @@ const CASES: readonly RealworldCase[] = [
     expected: "cargo-clean",
     description: "transfer-tokens — multi-file SPL transfer wrapper (project-source flattened, #33)",
   },
+  // Single-clone wave — same upstream repo, more program-examples basics.
+  {
+    id: "pda-rent-payer-pe",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/pda-rent-payer/anchor/programs/anchor-program-example/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "pda-rent-payer (2 ix, PDA + system_program::create_account)",
+  },
+  {
+    id: "counter-pe",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/counter/anchor/programs/counter_anchor/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "counter (program-examples flavor, 2 ix)",
+  },
+  {
+    id: "pda-derived-addresses-pe",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/program-derived-addresses/anchor/programs/anchor-program-example/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "program-derived-addresses (2 ix, PDA init + read)",
+  },
+  {
+    id: "checking-accounts-pe",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/checking-accounts/anchor/programs/anchor-program-example/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "checking-accounts (single-ix manual account checks)",
+  },
 ];
 
 function fixturePath(id: string): string {
