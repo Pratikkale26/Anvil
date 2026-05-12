@@ -574,8 +574,10 @@ function printCompileHelp(): void {
     --json                  Output the IR as JSON instead of writing files
     --strict                Refuse to write output if the validator finds
                             errors or the emit contains TODO(manual) /
-                            "manual rebuild required" stub markers. Use
-                            this gate before deploy. Exit code 2 on refusal.
+                            "manual rebuild required" stub markers. Also
+                            implies --cargo-check (deploy-grade requires
+                            both gates). Exit code 2 on validator refusal,
+                            3 on cargo refusal.
     --cargo-check           Force the cargo accept gate ON. After writing,
                             \`cargo check\` runs in the output directory and
                             non-zero exit refuses success. Errors on
@@ -1075,6 +1077,15 @@ async function cmdCompile(args: CliArgs): Promise<void> {
   // Errors are already enumerated above; we re-scan for the stub patterns
   // here because the validator catches them but some users only see this
   // exit-code signal.
+  //
+  // --strict also forces the cargo gate to force-on (N3): deploy-grade
+  // means BOTH the validator and cargo must agree, and cargo-missing
+  // becomes a loud error instead of an auto-skip warning. If the user
+  // explicitly passed --no-cargo-check alongside --strict, honor their
+  // override (probably a niche debugging case).
+  if (args.strict && args.cargoCheck === "auto") {
+    args.cargoCheck = "force-on";
+  }
   if (args.strict) {
     const allText = (output.files.length > 0 ? output.files.map((f) => f.content) : [output.singleFile]).join("\n");
     const stubMarkers = [
