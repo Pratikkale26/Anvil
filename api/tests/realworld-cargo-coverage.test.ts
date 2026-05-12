@@ -372,10 +372,12 @@ const CASES: readonly RealworldCase[] = [
       url: "https://github.com/solana-developers/program-examples",
       lib: "tokens/pda-mint-authority/anchor/programs/token-minter/src/lib.rs",
     },
-    // Metaplex CPI (create_metadata_accounts_v3 family) — same shape
-    // family as nft-minter. Expect validator-refuse.
-    expected: "validator-refuse",
-    description: "pda-mint-authority — PDA-owned mint + Metaplex CPI; validator refuses",
+    // #45 — Metaplex create_metadata_accounts_v3 typed IR + Pinocchio
+    // helper closed the validator-refuse. The Anchor source uses plain
+    // CpiContext::new (no signer_seeds) for create_metadata in this
+    // fixture so the helper invokes the unsigned path.
+    expected: "cargo-clean",
+    description: "pda-mint-authority — PDA-owned mint + Metaplex create_metadata (#45)",
   },
   {
     id: "anchor-realloc",
@@ -392,9 +394,10 @@ const CASES: readonly RealworldCase[] = [
       url: "https://github.com/solana-developers/program-examples",
       lib: "tokens/create-token/anchor/programs/create-token/src/lib.rs",
     },
-    // Metaplex create_metadata_accounts_v3 — family validator-refuses.
-    expected: "validator-refuse",
-    description: "create-token — Metaplex create_metadata_accounts_v3 CPI; validator refuses",
+    // #45 — Metaplex create_metadata_accounts_v3 typed IR + Pinocchio
+    // helper closed the validator-refuse.
+    expected: "cargo-clean",
+    description: "create-token — Metaplex create_metadata_accounts_v3 (#45)",
   },
 ];
 

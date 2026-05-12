@@ -598,12 +598,60 @@ export function handleCpiMemo(w: BodyWalker, stmt: CpiMemo): void {
  */
 export function handleCpiMplCreateMetadataV3(w: BodyWalker, stmt: CpiMplCreateMetadataV3): void {
   w.ctx.transformedCount++;
+  // #45 — Pinocchio emits a hand-rolled invoke via the
+  // `mpl_create_metadata_accounts_v3` helper (see pinocchio-emitter
+  // emitHelpers + irNeedsMplCreateMetadataV3Helper). Args limited to
+  // common Anchor shape: creators/collection/uses/collection_details
+  // all None — extend if a real fixture surfaces non-None usage.
+  //
+  // ctx.accounts.* references in the IR fields are resolved to the
+  // local AccountInfo bindings via the same transforms pass_through
+  // CPI bodies use. Token Metadata Program account name resolves the
+  // same way; default to the literal `token_metadata_program` since
+  // every fixture binds the program AccountInfo with that name.
+  const resolve = (e: string) => w.normalizeKeyValueUsages(
+    w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+  );
+  const metadata = resolve(stmt.metadata);
+  const mint = resolve(stmt.mint);
+  const mintAuthority = resolve(stmt.mintAuthority);
+  const payer = resolve(stmt.payer);
+  const updateAuthority = resolve(stmt.updateAuthority);
+  if (w.emitter.frameworkName === "Pinocchio") {
+    w.lines.push(`    mpl_create_metadata_accounts_v3(`);
+    w.lines.push(`        ${metadata},`);
+    w.lines.push(`        ${mint},`);
+    w.lines.push(`        ${mintAuthority},`);
+    w.lines.push(`        ${payer},`);
+    w.lines.push(`        ${updateAuthority},`);
+    w.lines.push(`        system_program,`);
+    w.lines.push(`        rent,`);
+    w.lines.push(`        token_metadata_program,`);
+    w.lines.push(`        &${stmt.name},`);
+    w.lines.push(`        &${stmt.symbol},`);
+    w.lines.push(`        &${stmt.uri},`);
+    w.lines.push(`        ${stmt.sellerFeeBasisPoints},`);
+    w.lines.push(`        ${stmt.isMutable},`);
+    w.lines.push(`        ${stmt.updateAuthorityIsSigner},`);
+    // #45 — PDA-authority shape (e.g. pda-mint-authority fixture) passes
+    // signer_seeds to invoke_signed; None means plain invoke.
+    if (stmt.signerSeeds) {
+      w.lines.push(`        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`);
+    } else {
+      w.lines.push(`        None,`);
+    }
+    w.lines.push(`    )?;`);
+    return;
+  }
+  // Native target keeps the stub for now — needs mpl-token-metadata dep
+  // in scaffold Cargo.toml. Tracked separately; Pinocchio is the
+  // immediate unblocker for the 4 validator-refuse fixtures.
   w.ctx.warnings.push(
-    `Metaplex create_metadata_accounts_v3 emitted as structured stub — see TODO(manual) in output for the field map.`,
+    `Metaplex create_metadata_accounts_v3 on Native still stub — add mpl-token-metadata to Cargo.toml + use the builder.`,
   );
   const lines = [
-    `    // ⚠️ Anvil: Metaplex create_metadata_accounts_v3 CPI — manual rebuild required`,
-    `    // Anvil parsed the call into these typed fields:`,
+    `    // ⚠️ Anvil: Metaplex create_metadata_accounts_v3 CPI — manual rebuild required (Native)`,
+    `    // Pinocchio target has the typed helper; Native still wants mpl-token-metadata crate.`,
     `    //   metadata          = ${stmt.metadata}`,
     `    //   mint              = ${stmt.mint}`,
     `    //   mint_authority    = ${stmt.mintAuthority}`,
@@ -615,10 +663,7 @@ export function handleCpiMplCreateMetadataV3(w: BodyWalker, stmt: CpiMplCreateMe
     `    //   seller_fee_bps    = ${stmt.sellerFeeBasisPoints}`,
     `    //   is_mutable        = ${stmt.isMutable}`,
     `    //   update_auth_signer= ${stmt.updateAuthorityIsSigner}`,
-    `    // TODO(manual): rebuild against mpl_token_metadata for ${w.emitter.frameworkName}.`,
-    `    //   Add 'mpl-token-metadata' to Cargo.toml on Native; pinocchio`,
-    `    //   need a hand-rolled invoke against the Token Metadata program ID.`,
-    `    //   See N1-DEDUP-DESIGN-NOTE for the per-target vocab pattern.`,
+    `    // TODO(manual): rebuild against mpl_token_metadata builder.`,
   ];
   for (const line of lines) w.lines.push(line);
 }

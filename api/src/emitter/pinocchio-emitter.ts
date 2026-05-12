@@ -33,6 +33,7 @@ import {
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
   irNeedsTokenAccountInitHelper,
+  irNeedsMplCreateMetadataV3Helper,
 } from "./emitter-helpers.js";
 
 /**
@@ -2457,6 +2458,94 @@ pub fn spl_token_transfer_signed(
         }
     }
     Ok(())
+}`);
+    }
+
+    // #45 — Metaplex Token Metadata: create_metadata_accounts_v3 hand-rolled
+    // helper. Pinocchio has no mpl-token-metadata crate (mpl uses
+    // solana_program::Pubkey, not pinocchio's [u8;32]). Layout verified
+    // against mpl-token-metadata 5.1.1 source: discriminator = 33, args =
+    // borsh(DataV2 { name, symbol, uri, seller_fee_basis_points, creators?,
+    // collection?, uses? }, is_mutable, collection_details?). Helper assumes
+    // creators/collection/uses/collection_details all None — the four
+    // fixtures that drive this (nft-minter, pda-mint-authority, create-token,
+    // spl-token-minter) all pass None for these. Extend signature if a real
+    // user fixture surfaces with non-None values.
+    if (irNeedsMplCreateMetadataV3Helper(ir)) {
+      helpers.push(`/// Metaplex Token Metadata: create_metadata_accounts_v3 (discriminator 33).
+/// Hand-rolled invoke — mpl-token-metadata is not no_std + alloc compatible
+/// for Pinocchio. Args limited to common Anchor-side shape: creators /
+/// collection / uses / collection_details are all None.
+pub fn mpl_create_metadata_accounts_v3(
+    metadata: &AccountInfo,
+    mint: &AccountInfo,
+    mint_authority: &AccountInfo,
+    payer: &AccountInfo,
+    update_authority: &AccountInfo,
+    system_program: &AccountInfo,
+    rent: &AccountInfo,
+    token_metadata_program: &AccountInfo,
+    name: &str,
+    symbol: &str,
+    uri: &str,
+    seller_fee_basis_points: u16,
+    is_mutable: bool,
+    update_authority_is_signer: bool,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut data: Vec<u8> =
+        Vec::with_capacity(64 + name.len() + symbol.len() + uri.len());
+    // CreateMetadataAccountV3 discriminator
+    data.push(33);
+    // DataV2.name: borsh String = u32 LE len + bytes
+    data.extend_from_slice(&(name.len() as u32).to_le_bytes());
+    data.extend_from_slice(name.as_bytes());
+    // DataV2.symbol
+    data.extend_from_slice(&(symbol.len() as u32).to_le_bytes());
+    data.extend_from_slice(symbol.as_bytes());
+    // DataV2.uri
+    data.extend_from_slice(&(uri.len() as u32).to_le_bytes());
+    data.extend_from_slice(uri.as_bytes());
+    // DataV2.seller_fee_basis_points: u16 LE
+    data.extend_from_slice(&seller_fee_basis_points.to_le_bytes());
+    // DataV2.creators: Option<Vec<Creator>> = None
+    data.push(0);
+    // DataV2.collection: Option<Collection> = None
+    data.push(0);
+    // DataV2.uses: Option<Uses> = None
+    data.push(0);
+    // is_mutable: bool
+    data.push(if is_mutable { 1 } else { 0 });
+    // collection_details: Option<CollectionDetails> = None
+    data.push(0);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(metadata.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(mint.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(mint_authority.key(), false, true),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(update_authority.key(), false, update_authority_is_signer),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(rent.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: token_metadata_program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [metadata, mint, mint_authority, payer, update_authority, system_program, rent];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
 }`);
     }
 

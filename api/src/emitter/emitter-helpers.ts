@@ -101,6 +101,18 @@ export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
   return false;
 }
 
+/**
+ * #45 — `cpi_mpl_create_metadata_v3` IR statements need the
+ * `mpl_create_metadata_accounts_v3` helper (Pinocchio-side hand-rolled
+ * invoke against the Metaplex Token Metadata program). One helper covers
+ * all instances in the IR.
+ */
+export function irNeedsMplCreateMetadataV3Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_create_metadata_v3")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>
