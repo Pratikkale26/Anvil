@@ -35,6 +35,49 @@ const CACHE_ROOT =
   process.env.ANVIL_DIFF_CACHE ??
   join(process.env.HOME ?? "/tmp", ".anvil-diff-cache");
 
+// Cache TTL sweep at module load. Mirrors the harness IIFE
+// (api/tests/differential-harness.ts:80-112) so the production
+// /build/differential path doesn't accumulate unbounded .so artifacts.
+// Each cache dir is ~150-300 KB; over a long-running prod deploy this
+// grows to GBs without eviction. Default 7d retention; operators can
+// override via ANVIL_DIFF_CACHE_TTL_DAYS (set to 0 to disable).
+const CACHE_TTL_DAYS = (() => {
+  const raw = process.env.ANVIL_DIFF_CACHE_TTL_DAYS;
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : 7;
+})();
+
+(() => {
+  if (CACHE_TTL_DAYS === 0) return;
+  if (!existsSync(CACHE_ROOT)) return;
+  const cutoffMs = Date.now() - CACHE_TTL_DAYS * 24 * 60 * 60 * 1000;
+  let evicted = 0;
+  let skipped = 0;
+  try {
+    for (const entry of readdirSync(CACHE_ROOT, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const p = join(CACHE_ROOT, entry.name);
+      try {
+        const s = statSync(p);
+        if (s.mtimeMs < cutoffMs) {
+          rmSync(p, { recursive: true, force: true });
+          evicted++;
+        }
+      } catch {
+        skipped++;
+      }
+    }
+    if (evicted > 0) {
+      console.log(
+        `[diff-cache] evicted ${evicted} dir(s) older than ${CACHE_TTL_DAYS}d from ${CACHE_ROOT}` +
+          (skipped ? ` (${skipped} skipped)` : ""),
+      );
+    }
+  } catch (err) {
+    console.warn(`[diff-cache] sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+})();
+
 export interface BuildArtifacts {
   anchorSoPath: string;
   anvilSoPath: string;

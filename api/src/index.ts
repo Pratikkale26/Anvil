@@ -88,6 +88,20 @@ if (process.env.NODE_ENV === "production") {
     );
     process.exit(1);
   }
+  // /metrics full snapshot must be token-gated in prod. The aggregate-only
+  // /metrics/public view stays open. Without a token, the unauthenticated
+  // /metrics path leaks per-IP-prefix spend behavior (mitigated by /24
+  // masking but still observable). Same loud-fail-on-misconfig posture as
+  // the sandbox guard above.
+  if (!process.env.ANVIL_METRICS_TOKEN && process.env.ANVIL_ALLOW_OPEN_METRICS !== "1") {
+    console.error(
+      "[startup] FATAL: NODE_ENV=production and ANVIL_METRICS_TOKEN is unset.\n" +
+      "  /metrics exposes per-IP-prefix spend behavior; without a token the data is publicly readable.\n" +
+      "  Set ANVIL_METRICS_TOKEN to a strong random value, or set ANVIL_ALLOW_OPEN_METRICS=1 to override.\n" +
+      "  The aggregate-only /metrics/public view remains open either way.",
+    );
+    process.exit(1);
+  }
 }
 
 const app = express();
@@ -515,7 +529,7 @@ app.use(
     if (err && err.type === "entity.too.large") {
       const aerr = new AnvilError(
         ErrorCode.SOURCE_TOO_LARGE,
-        "Request body too large (limit 2 MB)",
+        "Request body too large (limit 8 MB)",
         err.message,
         413,
       );
