@@ -958,6 +958,36 @@ export class BodyWalker {
             constraint.kind.startsWith("token::") ||
             constraint.kind.startsWith("associated_token::"),
         );
+      // Mint-shaped: similar treatment for .supply / .decimals fields.
+      // Anchor's Account<'info, Mint> auto-deserializes; Anvil's emit
+      // needs to bridge AccountInfo → pinocchio_token::state::Mint.
+      const mintLike =
+        account.accountType.includes("Mint") ||
+        account.constraints.some((c) => c.kind.startsWith("mint::"));
+      if (mintLike) {
+        // .supply / .decimals on a Mint account. pinocchio_token's Mint
+        // exposes supply() -> u64 and decimals() -> u8.
+        const mintU64Fields = ["supply"];
+        const mintU8Fields = ["decimals"];
+        for (const field of mintU64Fields) {
+          transformed = transformed.replace(
+            new RegExp(`(^|[^\\w.])${accountName}\\.${field}\\b(?!\\s*\\()`, "g"),
+            (_full, prefix: string) =>
+              this.emitter.frameworkName === "Pinocchio"
+                ? `${prefix}pinocchio_token::state::Mint::from_account_info(${accountInfoVar})?.${field}()`
+                : `${prefix}spl_token::state::Mint::unpack(&${accountInfoVar}.data.borrow())?.${field}`,
+          );
+        }
+        for (const field of mintU8Fields) {
+          transformed = transformed.replace(
+            new RegExp(`(^|[^\\w.])${accountName}\\.${field}\\b(?!\\s*\\()`, "g"),
+            (_full, prefix: string) =>
+              this.emitter.frameworkName === "Pinocchio"
+                ? `${prefix}pinocchio_token::state::Mint::from_account_info(${accountInfoVar})?.${field}()`
+                : `${prefix}spl_token::state::Mint::unpack(&${accountInfoVar}.data.borrow())?.${field}`,
+          );
+        }
+      }
       if (tokenLike) {
         transformed = transformed.replace(
           new RegExp(`(^|[^\\w.])${accountName}\\.amount\\b`, "g"),
