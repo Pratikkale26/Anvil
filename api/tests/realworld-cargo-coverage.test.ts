@@ -156,11 +156,14 @@ const CASES: readonly RealworldCase[] = [
   {
     id: "cashiers-check",
     url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/cashiers-check/programs/cashiers-check/src/lib.rs",
-    // 2026-05-12: 3 emit gaps tracked separately (#30 Transfer not in
-    // scope, #31 seeds binding lost in some PDA-signing paths, #32
-    // AccountInfo.owner accessed as field on Pinocchio).
-    expected: "cargo-refuse",
-    description: "cashier's check — SPL transfer + PDA seeds (#30-32)",
+    // Initially cargo-refuse on 2026-05-12 with 4 distinct error
+    // classes. All four landed in the same session:
+    //   #30 (Transfer/MintTo/Burn let-stmt dropped at classify)
+    //   #31 (let signer = &[&seeds[..]] dropped at classify)
+    //   #32 (SPL TokenAccount Pubkey-field rewriting)
+    //   plus helper-fn-aware error enum prefix detection
+    expected: "cargo-clean",
+    description: "cashier's check — full SPL transfer + PDA seeds (#30-32 closed)",
   },
   {
     id: "custom-discriminator",

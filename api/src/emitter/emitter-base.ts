@@ -1301,6 +1301,22 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         }
       }
     }
+    // Also scan helper fn bodies — programs commonly factor error returns
+    // into helpers like `fn not_burned(check: &Check) -> Result<()> {
+    //   if check.burned { return err!(ErrorCode::AlreadyBurned); } }`
+    // which the prior code missed, causing the prefix detection to fall
+    // back to `${PascalCase(name)}Error` and produce a mismatch between
+    // the emitted enum name and the helper's preserved references.
+    // Surfaced by cashiers-check (2026-05-12).
+    for (const helper of ir.helperFns ?? []) {
+      recordPrefixes(helper.rawCode);
+      recordPrefixes(helper.body);
+    }
+    // Scan user trait impl bodies too — same factoring pattern via
+    // `impl From<X> for ProgramError` chains uses ErrorCode::Y inline.
+    for (const impl of ir.userTraitImpls ?? []) {
+      recordPrefixes(impl);
+    }
 
     const ranked = [...prefixes.entries()].sort((a, b) => b[1] - a[1]);
     return ranked[0]?.[0] ?? `${toPascalCase(ir.name)}Error`;

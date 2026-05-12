@@ -713,6 +713,14 @@
           "accountType": "Escrow"
         },
         {
+          "kind": "cpi_spl_transfer",
+          "from": "taker_ata_b",
+          "to": "maker_ata_b",
+          "authority": "taker",
+          "amount": "escrow.receive_amount",
+          "tokenProgram": "token"
+        },
+        {
           "kind": "pda_signer_seeds",
           "account": "escrow",
           "seeds": [
@@ -722,15 +730,7 @@
             "&[escrow.bump]"
           ],
           "bumpField": "&[escrow.bump]",
-          "rawCode": "let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\nlet signer_seeds = &[&seeds[..]];"
-        },
-        {
-          "kind": "cpi_spl_transfer",
-          "from": "taker_ata_b",
-          "to": "maker_ata_b",
-          "authority": "taker",
-          "amount": "escrow.receive_amount",
-          "tokenProgram": "token"
+          "rawCode": "let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];"
         },
         {
           "kind": "cpi_spl_transfer",
@@ -761,15 +761,15 @@
           "endColumn": 42
         },
         {
-          "line": 49,
-          "column": 8,
-          "endLine": 49,
-          "endColumn": 41
-        },
-        {
           "line": 51,
           "column": 8,
           "endLine": 61,
+          "endColumn": 11
+        },
+        {
+          "line": 63,
+          "column": 8,
+          "endLine": 74,
           "endColumn": 11
         },
         {
@@ -985,7 +985,7 @@
             "&[escrow.bump]"
           ],
           "bumpField": "&[escrow.bump]",
-          "rawCode": "let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];\nlet signer_seeds = &[&seeds[..]];"
+          "rawCode": "let seeds = &[\n            b\"escrow\",\n            escrow.maker.as_ref(),\n            &escrow.seed.to_le_bytes(),\n            &[escrow.bump],\n        ];"
         },
         {
           "kind": "cpi_spl_transfer",
@@ -1016,10 +1016,10 @@
           "endColumn": 42
         },
         {
-          "line": 99,
+          "line": 101,
           "column": 8,
-          "endLine": 99,
-          "endColumn": 41
+          "endLine": 112,
+          "endColumn": 11
         },
         {
           "line": 101,

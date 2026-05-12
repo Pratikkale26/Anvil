@@ -180,6 +180,12 @@ export function classifyBody(
       pendingSeedsIndex = null;
     }
 
+    // #31 — drop plumbing let-decls (e.g. `let signer = &[&seeds[..]]`)
+    // whose effect is carried by the downstream typed CPI's signerSeeds.
+    if (classified._dropStmt) {
+      continue;
+    }
+
     // Track CPI context variables — don't emit the let statement
     if (classified._cpiContext) {
       cpiContexts.set(classified._cpiContext.varName, classified._cpiContext);
@@ -189,14 +195,19 @@ export function classifyBody(
     // Track CPI accounts struct bindings (H2-followup). These are pure
     // text bindings (`let X = Transfer{...};`) that downstream
     // CpiContext::new(prog, X) calls reference; once tracked, the
-    // chain resolves at extractCpiContextInfo time. We still emit the
-    // let-stmt as pass_through because the emitter rewrites its content
-    // when the surrounding CPI consolidates; but its IR fields drive
-    // signer_seeds rescue at the call site.
+    // chain resolves at extractCpiContextInfo time.
+    //
+    // #30 — drop the let-stmt entirely. The Transfer / MintTo / Burn
+    // struct literals reference anchor_spl::token types that don't exist
+    // on Pinocchio. The previous behavior left the let in pass_through,
+    // hoping for an emitter-side consolidator that was never built; the
+    // result was cargo failing with "Transfer not in scope". The
+    // downstream cpi_spl_* IR statement carries all the fields we need,
+    // so the let is dead once tracked. Surfaced by cashiers-check
+    // (2026-05-12).
     if (classified._cpiAccountsBinding) {
       cpiAccountsByVar.set(classified._cpiAccountsBinding.varName, classified._cpiAccountsBinding);
-      // Don't `continue` -- we still want the let statement in the IR
-      // (emitter consolidator will collapse it together with the CPI).
+      continue;
     }
 
     if (
@@ -286,6 +297,13 @@ interface ClassifyResult {
   extraStmts?: BodyStatement[];
   _seedsData?: { seeds: string[]; bumpField?: string; rawCode: string };
   _signerSeedsConsumed?: boolean;
+  /** Drop the statement from the IR entirely. The loop won't push it.
+   *  Use this for plumbing let-decls (e.g. `let signer = &[&seeds[..]]`)
+   *  whose effect is absorbed by a downstream typed CPI's signerSeeds
+   *  field. Distinct from _signerSeedsConsumed (which still pushes the
+   *  resulting pda_signer_seeds stmt) and _cpiContext (which registers
+   *  a real ctx mapping for resolveCpiFields). */
+  _dropStmt?: boolean;
   _cpiContext?: CpiContextInfo;
   /** H2-followup (#35): `let X = Transfer{...}`-style binding tracked
    *  separately so a downstream `let cpi_ctx = CpiContext::new(prog, X)`
@@ -394,6 +412,36 @@ function classifyLetDeclaration(
       return {
         stmt: { kind: "pass_through", code: "", needsReview: false }, // placeholder, won't be emitted
         _cpiContext: cpiInfo,
+      };
+    }
+  }
+
+  // ── Signer-seeds plumbing — `let signer = &[&seeds[..]];` ──
+  // #31. Source authors often write:
+  //   let seeds = &[..., &[bump]];
+  //   let signer = &[&seeds[..]];
+  //   let cpi_ctx = CpiContext::new_with_signer(prog, accounts, signer);
+  // The seeds let-decl gets consumed into pendingSeeds; the CpiContext
+  // let-decl gets consumed into _cpiContext. The middle `let signer =
+  // &[&seeds[..]]` is plumbing the typed cpi_spl_* IR statement carries
+  // via signerSeeds. Leaving it as pass_through emits a reference to
+  // `seeds` before the pda_signer_seeds emit defines it → E0425.
+  // Drop it; the typed CPI handles the signer info.
+  //
+  // Pattern is shape-restricted to `&[ &<ident>[..]? ]` so we don't
+  // accidentally drop unrelated let-decls. Drop via _signerSeedsConsumed
+  // — the loop sees this and skips push without registering a fake
+  // CpiContext that would pollute the resolution map (initial attempt
+  // did that and stole the real CpiContext's from/to fields).
+  if (valueNode) {
+    const v = valueNode.text.replace(/\s+/g, "");
+    if (
+      /^&?\[\s*&\w+(?:\[\s*\.\.\s*\])?\s*\]$/.test(v)
+      && (pendingSeeds !== null || /seeds/.test(v))
+    ) {
+      return {
+        stmt: { kind: "pass_through", code: "", needsReview: false },
+        _dropStmt: true,
       };
     }
   }
