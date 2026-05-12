@@ -596,6 +596,24 @@ export class BodyWalker {
       (_full, name: string) =>
         this.emitter.emitAccountKeyAsRefExpr(this.resolveAccountInfoVar(snakeCase(name))),
     );
+    // #36/#38 — `ctx.accounts.X.key().to_bytes()` (Anchor's Pubkey
+    // .to_bytes() returns [u8; 32]; Pinocchio's Pubkey IS [u8; 32], so
+    // strip `.to_bytes()` and emit the Pubkey value directly via
+    // emitAccountKeyExpr). Handle BEFORE the bare `.key` regex below,
+    // which would strip `.key` and leave orphan `().to_bytes()`.
+    normalized = normalized.replace(
+      /ctx\.accounts\.(\w+)\.key\(\)\.to_bytes\(\)/g,
+      (_full, name: string) =>
+        this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(name))),
+    );
+    // `ctx.accounts.X.key()` standalone (no .as_ref / .to_bytes suffix)
+    // also needs paren-aware handling, otherwise the bare `.key` regex
+    // strips `.key` and leaves `(...)` as if X were a function.
+    normalized = normalized.replace(
+      /ctx\.accounts\.(\w+)\.key\(\)/g,
+      (_full, name: string) =>
+        this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(name))),
+    );
     normalized = normalized.replace(
       /ctx\.accounts\.(\w+)\.(\w+)/g,
       (_full, name: string, field: string) => {
@@ -623,6 +641,29 @@ export class BodyWalker {
           return `${localVar}.${snakeCase(field)}`;
         },
       );
+      // #36/#38 — strip `.key()` / `.to_bytes()` off state Pubkey fields.
+      // Source seeds like `pool.mint_a.key().as_ref()` reach normalize
+      // via the IR's pdaSeeds list. After the localVar rewrite above the
+      // shape is `<localVar>.mint_a.key().as_ref()`. Pinocchio's Pubkey
+      // (= [u8; 32]) has neither method, so drop them; .as_ref() works
+      // directly on [u8; 32] and returns &[u8].
+      if (this.emitter.frameworkName === "Pinocchio") {
+        const accDef = this.ir.accounts.find((a) => a.name === account.accountType);
+        if (accDef) {
+          const pubkeyFields = accDef.fields.filter((f) => f.type === "Pubkey").map((f) => snakeCase(f.name));
+          const localVar = this.stateVars.get(accountName) ?? accountName;
+          for (const f of pubkeyFields) {
+            normalized = normalized.replace(
+              new RegExp(`\\b${localVar}\\.${f}\\.key\\s*\\(\\s*\\)`, "g"),
+              `${localVar}.${f}`,
+            );
+            normalized = normalized.replace(
+              new RegExp(`\\b${localVar}\\.${f}\\.to_bytes\\s*\\(\\s*\\)`, "g"),
+              `${localVar}.${f}`,
+            );
+          }
+        }
+      }
     }
     for (const account of this.instr.accounts) {
       const accountName = snakeCase(account.name);
@@ -639,6 +680,16 @@ export class BodyWalker {
       normalized = normalized
         .split(`${this.resolveStateVar(accountName)}.key.as_ref()`)
         .join(this.emitter.emitAccountKeyAsRefExpr(accountInfoVar));
+      // #36/#38 — bare-account variant. `mint_a.key().to_bytes()` on an
+      // AccountInfo: .key() returns &Pubkey, .to_bytes() doesn't exist
+      // on Pinocchio's [u8; 32]. Rewrite to the Pubkey value via
+      // emitAccountKeyExpr (Pinocchio: `*mint_a.key()` returns Pubkey).
+      normalized = normalized
+        .split(`${accountName}.key().to_bytes()`)
+        .join(this.emitter.emitAccountKeyExpr(accountInfoVar));
+      normalized = normalized
+        .split(`${accountName}.key.to_bytes()`)
+        .join(this.emitter.emitAccountKeyExpr(accountInfoVar));
     }
     return normalized;
   }
@@ -967,6 +1018,36 @@ export class BodyWalker {
           return `${prefix}${localVar}.${snakeCase(field)}`;
         },
       );
+      // #36 / #38 — Anchor's Key + ToBytes traits provide .key() and
+      // .to_bytes() on Pubkey itself. Pinocchio's Pubkey is [u8; 32]
+      // with neither method. After the field-access rewrite above,
+      // source like `pool.mint_a.key().as_ref()` lands as
+      // `<localVar>.mint_a.key().as_ref()` where mint_a is a Pubkey
+      // field. Strip `.key()` and `.to_bytes()` when they follow a
+      // state-field access whose field type is Pubkey (per the IR's
+      // AccountDef fields list).
+      if (this.emitter.frameworkName === "Pinocchio") {
+        const accDef = this.ir.accounts.find((a) => a.name === account.accountType);
+        if (accDef) {
+          const pubkeyFields = accDef.fields.filter((f) => f.type === "Pubkey").map((f) => snakeCase(f.name));
+          if (pubkeyFields.length > 0) {
+            const localVar = this.stateVars.get(accountName) ?? accountName;
+            for (const f of pubkeyFields) {
+              // `<localVar>.<f>.key()` → `<localVar>.<f>`
+              transformed = transformed.replace(
+                new RegExp(`\\b${localVar}\\.${f}\\.key\\s*\\(\\s*\\)`, "g"),
+                `${localVar}.${f}`,
+              );
+              // `<localVar>.<f>.to_bytes()` → `<localVar>.<f>` (Pinocchio
+              // Pubkey IS [u8; 32] so to_bytes is identity).
+              transformed = transformed.replace(
+                new RegExp(`\\b${localVar}\\.${f}\\.to_bytes\\s*\\(\\s*\\)`, "g"),
+                `${localVar}.${f}`,
+              );
+            }
+          }
+        }
+      }
     }
     for (const account of this.instr.accounts) {
       const accountInfoVar = this.resolveAccountInfoVar(snakeCase(account.name));
