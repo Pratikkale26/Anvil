@@ -16,6 +16,8 @@
     "test:api": "bun test tests/api.test.ts",
     "test:snapshots": "bun test tests/emitter-snapshots.test.ts",
     "test:cargo": "bun test tests/cargo-build.test.ts --timeout 600000",
+    "test:fast": "bun test $(ls tests/*.test.ts | grep -vE '(differential-|realworld-|cargo-build|auto-scenario-amm-integration)' | tr '\\n' ' ')",
+    "test:slow": "bun test --timeout 600000 $(ls tests/differential-*.test.ts tests/realworld-*.test.ts tests/cargo-build.test.ts tests/auto-scenario-amm-integration.test.ts | tr '\\n' ' ')",
     "test:all": "bun test tests/",
     "test:update-snapshots": "find tests/snapshots/emitter-output -maxdepth 1 -name '*.rs' -not -name '*.actual.rs' -delete && bun test tests/emitter-snapshots.test.ts",
     "test:check-clean": "bun scripts/check-clean-snapshots.ts"
