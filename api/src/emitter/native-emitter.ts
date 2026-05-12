@@ -9,6 +9,7 @@
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen } from "./emitter-base.js";
+import { promoteImplFnVisibility } from "./emitter-base-utils.js";
 import {
   instrDiscriminator,
   snakeCase,
@@ -1384,7 +1385,11 @@ impl ${acc.name} {
     if (!acc.implItems || acc.implItems.length === 0) return "";
     const filtered = acc.implItems
       .filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw))
-      .map((raw) => rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))));
+      .map((raw) =>
+        promoteImplFnVisibility(
+          rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))),
+        ),
+      );
     if (filtered.length === 0) return "";
     return `\n\nimpl ${acc.name} {\n${filtered.map((s) => `    ${s}`).join("\n\n")}\n}`;
   }

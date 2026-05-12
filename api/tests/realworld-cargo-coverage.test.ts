@@ -138,6 +138,18 @@ const CASES: readonly RealworldCase[] = [
     expected: "cargo-clean",
     description: "system_program::create_account via CPI",
   },
+  {
+    id: "anchor-chat",
+    url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/chat/programs/chat/src/lib.rs",
+    expected: "cargo-clean",
+    description: "Anchor chat fixture — 3 ix, Vec/String state, init flow",
+  },
+  {
+    id: "anchor-sysvars",
+    url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/sysvars/programs/sysvars/src/lib.rs",
+    expected: "cargo-clean",
+    description: "Anchor sysvars fixture — Clock/Rent reads",
+  },
 ];
 
 function fixturePath(id: string): string {

@@ -214,3 +214,24 @@ export function promoteFreeFnVisibility(code: string): string {
     "$1pub fn$2",
   );
 }
+
+/**
+ * Promote a leading `fn NAME(...)` to `pub(crate) fn NAME(...)` inside an
+ * impl item. Source authors often write `fn append(&mut self, ...)` as a
+ * private method, which is fine in single-file Anchor code but breaks in
+ * Anvil's multi-file emit: state.rs declares `impl Foo { fn append }`,
+ * but src/instructions/X.rs needs to call `foo.append(...)` across the
+ * module boundary. Without promotion, cargo refuses with E0624 "method
+ * is private". Use `pub(crate)` so the visibility stays scoped to the
+ * crate (matches single-file Anchor's effective visibility) instead of
+ * full `pub`.
+ *
+ * Skips items already prefixed with `pub`/`pub(crate)`/`pub(super)` etc.
+ * Surfaced by anchor-chat real-world fixture (2026-05-12, task #28).
+ */
+export function promoteImplFnVisibility(code: string): string {
+  return code.replace(
+    /^((?:\s*(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/|#\[[^\]]*\])\n?)*\s*)fn(\s+[A-Za-z_]\w*\s*[<(])/,
+    "$1pub(crate) fn$2",
+  );
+}

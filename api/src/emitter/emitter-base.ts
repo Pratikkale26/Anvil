@@ -98,6 +98,7 @@ import {
   stripTrailingOffsetBump,
   prefixUnusedProphylacticBindings,
   promoteFreeFnVisibility,
+  promoteImplFnVisibility,
 } from "./emitter-base-utils.js";
 
 // ─── Abstract Emitter Interface ──────────────────────────────────────────────
