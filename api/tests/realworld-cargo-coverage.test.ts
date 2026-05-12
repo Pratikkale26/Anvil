@@ -332,6 +332,30 @@ const CASES: readonly RealworldCase[] = [
     expected: "validator-refuse",
     description: "NFT minter — Metaplex CPI (#mpl_create_metadata family); validator refuses",
   },
+  // Corpus expansion 2026-05-12 — common Anchor shapes not yet covered.
+  {
+    id: "rent-pe",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "basics/rent/anchor/programs/rent-example/src/lib.rs",
+    },
+    expected: "cargo-clean",
+    description: "rent-example — Rent::get() + minimum_balance + create_system_account CPI",
+  },
+  {
+    id: "token-fundraiser",
+    repo: {
+      url: "https://github.com/solana-developers/program-examples",
+      lib: "tokens/token-fundraiser/anchor/programs/fundraiser/src/lib.rs",
+    },
+    // 4 ix: initialize + contribute + check_contributions + refund.
+    // Surfaced 4 distinct emit gaps 2026-05-12 (tracked separately):
+    //   #42 — sub-module FundraiserError prefix not detected
+    //   #43 — impl-method body inliner leaks __compound_/ __amount  placeholders
+    //   #44 — Clock - i64 arithmetic (clock.unix_timestamp - duration)
+    expected: "cargo-refuse",
+    description: "token-fundraiser — Anchor escrow w/ impl-method dispatch (4 ix); #42-44 tracked",
+  },
 ];
 
 function fixturePath(id: string): string {
