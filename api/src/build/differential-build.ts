@@ -224,7 +224,7 @@ ${extraDeps.replace(/version = "0\.31"/g, `version = "${anchorLangVersion}"`).re
   writeFileSync(join(scratch, "Cargo.toml"), cargoToml);
   writeFileSync(
     join(scratch, "src/lib.rs"),
-    rewriteDeclareId(opts.anchorSource, opts.programIdBase58),
+    patchAnchorSourceCompat(rewriteDeclareId(opts.anchorSource, opts.programIdBase58)),
   );
   // Warm the cargo registry BEFORE the sandboxed offline cargo-build-sbf
   // run. Without this, fresh deployments (DigitalOcean / Docker images
@@ -410,6 +410,25 @@ async function buildAnvil(opts: DifferentialBuildOptions, outPath: string): Prom
  * the upgrade is to parse with tree-sitter + walk the AST for the macro
  * invocation node — a non-trivial change for a benign edge case.
  */
+/**
+ * Patch upstream Anchor source incompatibilities with crates.io 0.31.
+ * Some program-examples / coral-xyz fixtures use Anchor APIs that work
+ * with workspace path-deps (Anchor master) but fail with 0.31:
+ *
+ *   - `CpiContext::new(<X>.key(), ...)` — 0.31 wants AccountInfo, not
+ *     Pubkey. Rewrite to `<X>.to_account_info()`. Same for
+ *     `new_with_signer`.
+ *
+ * Only fires when the FIRST arg of `CpiContext::new` is a `.key()` call;
+ * doesn't touch valid AccountInfo-shaped first args.
+ */
+function patchAnchorSourceCompat(source: string): string {
+  return source.replace(
+    /\b(CpiContext::new(?:_with_signer)?\s*\(\s*)([a-zA-Z_][a-zA-Z0-9_.]*)\.key\(\)/g,
+    "$1$2.to_account_info()",
+  );
+}
+
 export { rewriteDeclareId as rewriteDeclareIdForTest };
 function rewriteDeclareId(source: string, programIdBase58?: string): string {
   if (!programIdBase58) return source;
