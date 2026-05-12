@@ -329,8 +329,10 @@ const CASES: readonly RealworldCase[] = [
       url: "https://github.com/solana-developers/program-examples",
       lib: "tokens/nft-minter/anchor/programs/nft-minter/src/lib.rs",
     },
-    expected: "validator-refuse",
-    description: "NFT minter — Metaplex CPI (#mpl_create_metadata family); validator refuses",
+    // #45 — both Metaplex CPIs (create_metadata_accounts_v3 +
+    // create_master_edition_v3) shipped as Pinocchio hand-rolled helpers.
+    expected: "cargo-clean",
+    description: "NFT minter — Metaplex create_metadata + create_master_edition (#45)",
   },
   // Corpus expansion 2026-05-12 — common Anchor shapes not yet covered.
   {

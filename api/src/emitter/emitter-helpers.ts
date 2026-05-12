@@ -113,6 +113,12 @@ export function irNeedsMplCreateMetadataV3Helper(ir: SolanaIR): boolean {
   );
 }
 
+export function irNeedsMplCreateMasterEditionV3Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_create_master_edition_v3")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

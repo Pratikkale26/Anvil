@@ -34,6 +34,7 @@ import {
   irNeedsAtaCreationHelper,
   irNeedsTokenAccountInitHelper,
   irNeedsMplCreateMetadataV3Helper,
+  irNeedsMplCreateMasterEditionV3Helper,
 } from "./emitter-helpers.js";
 
 /**
@@ -2533,6 +2534,71 @@ pub fn mpl_create_metadata_accounts_v3(
         data: &data,
     };
     let infos = [metadata, mint, mint_authority, payer, update_authority, system_program, rent];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    // #45 — Metaplex create_master_edition_v3 hand-rolled helper. Layout
+    // verified against mpl-token-metadata 5.1.1: discriminator 17, args =
+    // Option<u64> max_supply. 9 accounts (edition, mint, update_authority,
+    // mint_authority, payer, metadata, token_program, system_program, rent).
+    if (irNeedsMplCreateMasterEditionV3Helper(ir)) {
+      helpers.push(`/// Metaplex Token Metadata: create_master_edition_v3 (discriminator 17).
+/// Hand-rolled invoke; max_supply is the only arg.
+pub fn mpl_create_master_edition_v3(
+    edition: &AccountInfo,
+    mint: &AccountInfo,
+    update_authority: &AccountInfo,
+    mint_authority: &AccountInfo,
+    payer: &AccountInfo,
+    metadata: &AccountInfo,
+    token_program: &AccountInfo,
+    system_program: &AccountInfo,
+    rent: &AccountInfo,
+    token_metadata_program: &AccountInfo,
+    max_supply: Option<u64>,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut data: Vec<u8> = Vec::with_capacity(16);
+    // CreateMasterEditionV3 discriminator
+    data.push(17);
+    // Option<u64> max_supply
+    match max_supply {
+        Some(n) => {
+            data.push(1);
+            data.extend_from_slice(&n.to_le_bytes());
+        }
+        None => data.push(0),
+    }
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(edition.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(mint.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(update_authority.key(), false, true),
+        pinocchio::instruction::AccountMeta::new(mint_authority.key(), false, true),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(metadata.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(rent.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: token_metadata_program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [edition, mint, update_authority, mint_authority, payer, metadata, token_program, system_program, rent];
     match signer_seeds {
         Some(seeds) => {
             let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;

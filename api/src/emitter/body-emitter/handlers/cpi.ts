@@ -674,12 +674,40 @@ export function handleCpiMplCreateMetadataV3(w: BodyWalker, stmt: CpiMplCreateMe
  */
 export function handleCpiMplCreateMasterEditionV3(w: BodyWalker, stmt: CpiMplCreateMasterEditionV3): void {
   w.ctx.transformedCount++;
+  // #45 — Pinocchio gets the real helper; Native keeps the stub (needs
+  // mpl-token-metadata dep added separately). The IR doesn't capture
+  // token_program/system_program/rent — they're assumed to be in scope
+  // by canonical name. True for all 4 fixtures we care about.
+  const resolve = (e: string) => w.normalizeKeyValueUsages(
+    w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+  );
+  if (w.emitter.frameworkName === "Pinocchio") {
+    w.lines.push(`    mpl_create_master_edition_v3(`);
+    w.lines.push(`        ${resolve(stmt.edition)},`);
+    w.lines.push(`        ${resolve(stmt.mint)},`);
+    w.lines.push(`        ${resolve(stmt.updateAuthority)},`);
+    w.lines.push(`        ${resolve(stmt.mintAuthority)},`);
+    w.lines.push(`        ${resolve(stmt.payer)},`);
+    w.lines.push(`        ${resolve(stmt.metadata)},`);
+    w.lines.push(`        token_program,`);
+    w.lines.push(`        system_program,`);
+    w.lines.push(`        rent,`);
+    w.lines.push(`        token_metadata_program,`);
+    w.lines.push(`        ${stmt.maxSupply},`);
+    if (stmt.signerSeeds) {
+      w.lines.push(`        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`);
+    } else {
+      w.lines.push(`        None,`);
+    }
+    w.lines.push(`    )?;`);
+    return;
+  }
   w.ctx.warnings.push(
-    `Metaplex create_master_edition_v3 emitted as structured stub — see TODO(manual) in output for the field map.`,
+    `Metaplex create_master_edition_v3 on Native still stub — add mpl-token-metadata to Cargo.toml + use the builder.`,
   );
   const lines = [
-    `    // ⚠️ Anvil: Metaplex create_master_edition_v3 CPI — manual rebuild required`,
-    `    // Anvil parsed the call into these typed fields:`,
+    `    // ⚠️ Anvil: Metaplex create_master_edition_v3 CPI — manual rebuild required (Native)`,
+    `    // Pinocchio target has the typed helper; Native still wants mpl-token-metadata crate.`,
     `    //   edition           = ${stmt.edition}`,
     `    //   mint              = ${stmt.mint}`,
     `    //   mint_authority    = ${stmt.mintAuthority}`,
@@ -687,7 +715,7 @@ export function handleCpiMplCreateMasterEditionV3(w: BodyWalker, stmt: CpiMplCre
     `    //   metadata          = ${stmt.metadata}`,
     `    //   update_authority  = ${stmt.updateAuthority}`,
     `    //   max_supply        = ${stmt.maxSupply}`,
-    `    // TODO(manual): rebuild against mpl_token_metadata for ${w.emitter.frameworkName}.`,
+    `    // TODO(manual): rebuild against mpl_token_metadata builder.`,
   ];
   for (const line of lines) w.lines.push(line);
 }
