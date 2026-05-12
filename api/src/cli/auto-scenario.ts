@@ -718,9 +718,22 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     });
   }
 
+  // Ensure at least one signer exists — every Solana tx needs a fee
+  // payer. Programs with zero Signer<'info> accounts in their handlers
+  // (hello-world, anchor-sysvars, processing-instructions, etc.) still
+  // need someone to sign the outer transaction, otherwise the runner
+  // refuses with "no signer available to pay fees".
+  const allSigners = [...signerNames];
+  if (allSigners.length === 0) {
+    allSigners.push("__fee_payer");
+    notes.push({
+      message:
+        "Auto-scenario added a synthetic `__fee_payer` signer because the program declares no Signer<'info> accounts. This signer pays the transaction fee but isn't referenced by any instruction handler.",
+    });
+  }
   const scenario: Scenario = {
     version: 1,
-    signers: [...signerNames].map<SignerDecl>((name) => ({ name, airdrop: 2_000_000_000 })),
+    signers: allSigners.map<SignerDecl>((name) => ({ name, airdrop: 2_000_000_000 })),
     pdas: [...pdaSpecs.entries()].map<PdaDecl>(([name, spec]) => ({ name, seeds: spec.seeds })),
     mints: [...mintNames].map<MintDecl>((name) => ({
       name,
