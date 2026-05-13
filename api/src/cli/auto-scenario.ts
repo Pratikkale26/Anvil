@@ -739,7 +739,12 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   }
   const scenario: Scenario = {
     version: 1,
-    signers: allSigners.map<SignerDecl>((name) => ({ name, airdrop: 2_000_000_000 })),
+    // 10 SOL airdrop per signer. The 2 SOL default surfaced as InsufficientFunds
+    // on programs that init multiple large accounts via system::create_account
+    // (pda-rent-payer-pe, anchor-bench-style benchmarks). Each rent-exempt
+    // account costs ~1-7M lamports; 10 SOL is comfortably above the realistic
+    // worst case for the 32-fixture corpus.
+    signers: allSigners.map<SignerDecl>((name) => ({ name, airdrop: 10_000_000_000 })),
     pdas: [...pdaSpecs.entries()].map<PdaDecl>(([name, spec]) => ({ name, seeds: spec.seeds })),
     mints: [...mintNames].map<MintDecl>((name) => ({
       name,
