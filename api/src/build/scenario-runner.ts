@@ -92,27 +92,10 @@ export function resolveScenarioContext(
     });
   }
 
-  const pdas = new Map<string, { pubkey: PublicKey; bump: number }>();
-  for (const decl of scenario.pdas) {
-    const seedBytes = decl.seeds.map((seed) =>
-      resolveSeedExpression(seed, signers, pdas, mints),
-    );
-    if (decl.bump !== undefined) {
-      // Deterministic bump derivation by createProgramAddress.
-      const seedsWithBump = [...seedBytes, Buffer.from([decl.bump])];
-      const pubkey = PublicKey.createProgramAddressSync(seedsWithBump, programId);
-      pdas.set(decl.name, { pubkey, bump: decl.bump });
-    } else {
-      const [pubkey, bump] = PublicKey.findProgramAddressSync(seedBytes, programId);
-      pdas.set(decl.name, { pubkey, bump });
-    }
-  }
-
-  // Pre-materialize ephemeral keypairs for any $keypair:X seen anywhere in the
-  // scenario (steps' accounts[] / tokenAccounts[].mint / .owner). Without this,
-  // tokenAccount resolution would fail for cases like AMM's user_lp_token whose
-  // mint references a Mint that the program init's at step 0 (the runner emits
-  // `$keypair:lp_mint` rather than `$mint:lp_mint`).
+  // Pre-materialize ephemeral keypairs for any $keypair:X seen in the
+  // scenario (steps' accounts[] / tokenAccounts[].mint / .owner / PDA seeds).
+  // Materialize BEFORE PDA derivation so seeds can resolve $keypair:X.pubkey
+  // (B2f synth fix — see auto-scenario.ts line ~960).
   const ephemeralKeypairs = new Map<string, Keypair>();
   const ensureEphemeral = (name: string): Keypair => {
     let kp = ephemeralKeypairs.get(name);
@@ -126,6 +109,24 @@ export function resolveScenarioContext(
   for (const ta of scenario.tokenAccounts) {
     collectKeypairRefs(ta.mint);
     collectKeypairRefs(ta.owner);
+  }
+  // Also collect from PDA seeds (e.g. seeds = [b"...", $keypair:check.pubkey])
+  for (const decl of scenario.pdas) for (const seed of decl.seeds) collectKeypairRefs(seed);
+
+  const pdas = new Map<string, { pubkey: PublicKey; bump: number }>();
+  for (const decl of scenario.pdas) {
+    const seedBytes = decl.seeds.map((seed) =>
+      resolveSeedExpression(seed, signers, pdas, mints, ephemeralKeypairs),
+    );
+    if (decl.bump !== undefined) {
+      // Deterministic bump derivation by createProgramAddress.
+      const seedsWithBump = [...seedBytes, Buffer.from([decl.bump])];
+      const pubkey = PublicKey.createProgramAddressSync(seedsWithBump, programId);
+      pdas.set(decl.name, { pubkey, bump: decl.bump });
+    } else {
+      const [pubkey, bump] = PublicKey.findProgramAddressSync(seedBytes, programId);
+      pdas.set(decl.name, { pubkey, bump });
+    }
   }
 
   // Token accounts depend on mints/pdas/signers/ephemeralKeypairs being resolved already.
@@ -218,6 +219,7 @@ export function resolveSeedExpression(
   signers: Map<string, Keypair>,
   pdas: Map<string, { pubkey: PublicKey; bump: number }>,
   mints?: ResolvedScenarioContext["mints"],
+  ephemeralKeypairs?: Map<string, Keypair>,
 ): Buffer {
   // $signer:name.pubkey
   const signerMatch = seed.match(/^\$signer:([a-zA-Z_][a-zA-Z0-9_]*)\.pubkey$/);
@@ -284,9 +286,19 @@ export function resolveSeedExpression(
       `seed '${seed}': arg-derived seeds (\`<arg>.as_ref()\` shape) are not yet supported by the runtime resolver. Replace with an explicit \`bytes:0x…\` of the arg's pubkey/bytes, or use the CLI for full control.`,
     );
   }
-  if (seed.startsWith("$keypair:") || seed.startsWith("$program:")) {
+  // $keypair:name.pubkey — ephemeral keypair created lazily by the runner.
+  // Used when auto-scenario synth maps init'd non-PDA / state-type accounts
+  // to a fresh keypair (B2f synth fix). The keypair is the same one that
+  // signs init'd account creation, so seeding by its pubkey is well-defined.
+  const keypairMatch = seed.match(/^\$keypair:([a-zA-Z_][a-zA-Z0-9_]*)\.pubkey$/);
+  if (keypairMatch?.[1]) {
+    const kp = ephemeralKeypairs?.get(keypairMatch[1]);
+    if (!kp) throw new Error(`seed references ephemeral keypair '${keypairMatch[1]}' that wasn't materialized — caller forgot to pre-generate or pass ephemeralKeypairs to resolveSeedExpression`);
+    return Buffer.from(kp.publicKey.toBytes());
+  }
+  if (seed.startsWith("$program:")) {
     throw new Error(
-      `seed '${seed}': '$keypair' / '$program' tags are valid as account refs but not as PDA seeds. PDAs derive from signer pubkeys, earlier-declared PDAs, byte literals, or typed ints.`,
+      `seed '${seed}': '$program' tag is valid as an account ref but not as a PDA seed. PDAs derive from signer pubkeys, earlier-declared PDAs, byte literals, or typed ints.`,
     );
   }
   // Reserved sigil that didn't match any known form: refuse rather than
