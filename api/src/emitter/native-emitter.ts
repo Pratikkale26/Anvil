@@ -1793,6 +1793,13 @@ pub fn mpl_create_metadata_accounts_v3<'a>(
     data.push(0);
     data.push(if is_mutable { 1 } else { 0 });
     data.push(0);
+    // Anchor's anchor_spl::metadata::create_metadata_accounts_v3 wrapper
+    // hard-codes \`rent: None\` in the builder — the rent sysvar slot is
+    // OMITTED from the account meta list. Matching that produces byte-
+    // equal CPI invocations. The \`rent\` param is kept for ABI
+    // compatibility with existing call sites; the local _ binding makes
+    // the unused-variable check happy.
+    let _ = rent;
     let accounts = vec![
         AccountMeta::new(*metadata.key, false),
         AccountMeta::new_readonly(*mint.key, false),
@@ -1800,7 +1807,6 @@ pub fn mpl_create_metadata_accounts_v3<'a>(
         AccountMeta::new(*payer.key, true),
         AccountMeta::new_readonly(*update_authority.key, update_authority_is_signer),
         AccountMeta::new_readonly(*system_program.key, false),
-        AccountMeta::new_readonly(*rent.key, false),
     ];
     let ix = Instruction {
         program_id: *token_metadata_program.key,
@@ -1809,7 +1815,7 @@ pub fn mpl_create_metadata_accounts_v3<'a>(
     };
     let infos = [
         metadata.clone(), mint.clone(), mint_authority.clone(), payer.clone(),
-        update_authority.clone(), system_program.clone(), rent.clone(),
+        update_authority.clone(), system_program.clone(),
     ];
     match signer_seeds {
         Some(seeds) => invoke_signed(&ix, &infos, seeds),

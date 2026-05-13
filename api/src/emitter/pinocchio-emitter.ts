@@ -2530,6 +2530,11 @@ pub fn mpl_create_metadata_accounts_v3(
     data.push(if is_mutable { 1 } else { 0 });
     // collection_details: Option<CollectionDetails> = None
     data.push(0);
+    // Anchor's anchor_spl::metadata::create_metadata_accounts_v3 wrapper
+    // hard-codes \`rent: None\` — the rent slot is OMITTED from the account
+    // list. Matching that produces byte-equal CPI invocations. The \`rent\`
+    // param stays for ABI compat; the let _ binding silences unused.
+    let _ = rent;
     let metas = [
         pinocchio::instruction::AccountMeta::new(metadata.key(), true, false),
         pinocchio::instruction::AccountMeta::new(mint.key(), false, false),
@@ -2537,14 +2542,13 @@ pub fn mpl_create_metadata_accounts_v3(
         pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
         pinocchio::instruction::AccountMeta::new(update_authority.key(), false, update_authority_is_signer),
         pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
-        pinocchio::instruction::AccountMeta::new(rent.key(), false, false),
     ];
     let ix = pinocchio::instruction::Instruction {
         program_id: token_metadata_program.key(),
         accounts: &metas,
         data: &data,
     };
-    let infos = [metadata, mint, mint_authority, payer, update_authority, system_program, rent];
+    let infos = [metadata, mint, mint_authority, payer, update_authority, system_program];
     match signer_seeds {
         Some(seeds) => {
             let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;

@@ -14,6 +14,7 @@ const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
   has_one:          "has_one",
   owner:            "owner",
   seeds:            "seeds",
+  "seeds::program": "seeds::program",
   bump:             "bump",
   close:            "close",
   constraint:       "constraint",

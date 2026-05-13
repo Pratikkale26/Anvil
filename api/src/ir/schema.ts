@@ -78,6 +78,7 @@ export const ConstraintKindSchema = z.enum([
   "has_one",
   "owner",
   "seeds",
+  "seeds::program",
   "bump",
   "close",
   "constraint",

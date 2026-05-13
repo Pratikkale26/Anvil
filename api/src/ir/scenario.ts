@@ -70,6 +70,13 @@ export const PdaDeclSchema = z.object({
   /** Optional explicit bump. When undefined the runtime calls
    *  find_program_address and uses the canonical bump. */
   bump: z.number().int().min(0).max(255).optional(),
+  /** Optional override of the program ID used for find_program_address.
+   *  Anchor's \`seeds::program = X\` constraint sets this — typical for
+   *  Metaplex metadata PDAs derived against the Metaplex Token Metadata
+   *  program ID rather than the current program. Same tag shapes as
+   *  seed values (\`$program:<tag>.pubkey\`, base58 literal). When
+   *  undefined the scenario uses the scenario's programId. */
+  programOverride: z.string().optional(),
 });
 
 // ─── SPL Mint declaration ───────────────────────────────────────────────────

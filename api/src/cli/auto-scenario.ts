@@ -547,7 +547,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   for (const ad of ir.accounts) collectConsts(ad.name, ad.implItems);
   for (const td of ir.types) collectConsts(td.name, td.implItems);
 
-  const pdaSpecs = new Map<string, { seeds: string[]; sourceIx: string }>();
+  const pdaSpecs = new Map<string, { seeds: string[]; sourceIx: string; programOverride?: string }>();
   // Pre-compute known-program account-name → program-tag map. PDA seeds
   // shaped `token_metadata_program.key().as_ref()` route through this so
   // the seed encoder can emit `$program:mpl_token_metadata.pubkey`
@@ -591,7 +591,23 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
           });
           continue;
         }
-        pdaSpecs.set(acc.name, { seeds: seedResult.seeds, sourceIx: ix.name });
+        // Detect `seeds::program = <expr>` constraint and resolve to a
+        // program-tag override (Metaplex metadata PDAs are derived
+        // against the Metaplex Token Metadata program ID, not the
+        // current program).
+        const seedsProgramC = acc.constraints?.find((c) => c.kind === "seeds::program");
+        let programOverride: string | undefined;
+        if (seedsProgramC?.value) {
+          const v = seedsProgramC.value.trim();
+          // Common shape: `<account_name>.key()`. Resolve to the known
+          // program tag if the account is a known program.
+          const m = v.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.key\(\)$/);
+          if (m?.[1]) {
+            const tag = knownProgramAccountNames.get(m[1]);
+            if (tag) programOverride = `$program:${tag}.pubkey`;
+          }
+        }
+        pdaSpecs.set(acc.name, { seeds: seedResult.seeds, sourceIx: ix.name, programOverride });
       }
     }
   }
@@ -905,7 +921,10 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
           ? 5_000
           : 10_000_000_000,
     })),
-    pdas: [...pdaSpecs.entries()].map<PdaDecl>(([name, spec]) => ({ name, seeds: spec.seeds })),
+    pdas: [...pdaSpecs.entries()].map<PdaDecl>(([name, spec]) =>
+      spec.programOverride
+        ? { name, seeds: spec.seeds, programOverride: spec.programOverride }
+        : { name, seeds: spec.seeds }),
     mints: [...mintNames].map<MintDecl>((name) => ({
       name,
       decimals: 6,

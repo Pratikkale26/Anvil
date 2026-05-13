@@ -132,13 +132,28 @@ export function resolveScenarioContext(
     const seedBytes = decl.seeds.map((seed) =>
       resolveSeedExpression(seed, signers, pdas, mints, ephemeralKeypairs),
     );
+    // PDA may declare a program ID override (Anchor's `seeds::program =
+    // X`). The Metaplex metadata PDA is the canonical case — derived
+    // against the Metaplex Token Metadata program ID rather than the
+    // current program ID. Resolve the override tag to a real pubkey;
+    // fall back to the scenario's programId.
+    let derivProgId = programId;
+    if (decl.programOverride) {
+      const ov = decl.programOverride;
+      const m = ov.match(/^\$program:([a-zA-Z_][a-zA-Z0-9_]*)\.pubkey$/);
+      if (m?.[1]) {
+        const id = KNOWN_PROGRAMS[m[1]];
+        if (id) derivProgId = new PublicKey(id);
+      } else if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(ov)) {
+        derivProgId = new PublicKey(ov);
+      }
+    }
     if (decl.bump !== undefined) {
-      // Deterministic bump derivation by createProgramAddress.
       const seedsWithBump = [...seedBytes, Buffer.from([decl.bump])];
-      const pubkey = PublicKey.createProgramAddressSync(seedsWithBump, programId);
+      const pubkey = PublicKey.createProgramAddressSync(seedsWithBump, derivProgId);
       pdas.set(decl.name, { pubkey, bump: decl.bump });
     } else {
-      const [pubkey, bump] = PublicKey.findProgramAddressSync(seedBytes, programId);
+      const [pubkey, bump] = PublicKey.findProgramAddressSync(seedBytes, derivProgId);
       pdas.set(decl.name, { pubkey, bump });
     }
   }
