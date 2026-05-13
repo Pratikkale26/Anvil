@@ -597,6 +597,66 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // anchor_spl::token_2022_extensions::group_pointer::
+  // group_pointer_initialize. Mint-level extension recording a pointer
+  // to a TokenGroup account. Parent disc 40, sub 0; payload = 2×
+  // OptionalNonZeroPubkey (flat 32B each). Same wire shape as
+  // TransferHook init; different parent disc.
+  z.object({
+    kind: z.literal("cpi_t22_group_pointer_initialize"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    /** Source expression for the pointer authority (Option<Pubkey>). */
+    authority: z.string(),
+    /** Source expression for the group account address
+     *  (Option<Pubkey>). */
+    groupAddress: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_2022_extensions::group_pointer::
+  // group_pointer_update. Parent disc 40, sub 1; payload = single
+  // OptionalNonZeroPubkey. Requires existing authority as signer.
+  z.object({
+    kind: z.literal("cpi_t22_group_pointer_update"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    /** AccountInfo binding for the current pointer authority. */
+    authority: z.string(),
+    /** Source expression for the new group account address
+     *  (Option<Pubkey>). */
+    groupAddress: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_2022_extensions::group_member_pointer::
+  // group_member_pointer_initialize. Mint-level extension recording a
+  // pointer to a TokenGroupMember account. Parent disc 41, sub 0;
+  // payload = 2× OptionalNonZeroPubkey.
+  z.object({
+    kind: z.literal("cpi_t22_group_member_pointer_initialize"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    authority: z.string(),
+    /** Source expression for the group-member account address
+     *  (Option<Pubkey>). */
+    memberAddress: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_2022_extensions::group_member_pointer::
+  // group_member_pointer_update. Parent disc 41, sub 1; payload =
+  // single OptionalNonZeroPubkey. Requires existing authority as
+  // signer.
+  z.object({
+    kind: z.literal("cpi_t22_group_member_pointer_update"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    authority: z.string(),
+    memberAddress: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // anchor_spl::token_interface::transfer_checked_with_fee. The
   // TransferFee variant of transfer_checked. Token-2022 program
   // verifies decimals AND that the caller-provided fee matches the

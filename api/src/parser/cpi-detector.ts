@@ -162,6 +162,18 @@ export function detectCpi(
   if (funcText.includes("metadata_pointer_initialize")) {
     return extractT22MetadataPointerInitialize(callNode, collector);
   }
+  if (funcText.includes("group_pointer_initialize")) {
+    return extractT22GroupPointerInitialize(callNode, collector);
+  }
+  if (funcText.includes("group_pointer_update")) {
+    return extractT22GroupPointerUpdate(callNode, collector);
+  }
+  if (funcText.includes("group_member_pointer_initialize")) {
+    return extractT22GroupMemberPointerInitialize(callNode, collector);
+  }
+  if (funcText.includes("group_member_pointer_update")) {
+    return extractT22GroupMemberPointerUpdate(callNode, collector);
+  }
   if (funcText.includes("transfer_checked_with_fee")) {
     return extractT22TransferCheckedWithFee(callNode, collector);
   }
@@ -1284,6 +1296,203 @@ function extractT22MetadataPointerInitialize(
     tokenProgram: cleanAccountRef(tokenProgram),
     authority,
     metadataAddress,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 GroupPointer extension init/update (EM2 Session 3) ──────────
+//
+// Anchor source shapes (anchor_spl::token_2022_extensions::group_pointer):
+//   group_pointer_initialize(ctx, authority: Option<Pubkey>, group_address: Option<Pubkey>)
+//   group_pointer_update(ctx, group_address: Option<Pubkey>)
+//
+// Both use OptionalNonZeroPubkey wire layout (flat 32B per Option;
+// all-zero = None). Parent disc 40 (TokenInstruction::GroupPointer-
+// Extension), sub 0 = Initialize, sub 1 = Update.
+//
+// NOTE: anchor-spl 0.31 + 0.32 `group_pointer_update` is upstream-
+// broken — passes `&[ctx.accounts.authority.key]` as signers but only
+// forwards `[token_program_id, mint]` to invoke_signed, producing a
+// 3-account ix with only 2 accounts available at runtime ("Instruction
+// references an unknown account"). The companion
+// `group_member_pointer_update` wrapper is correctly written. Our IR
+// + emit for the update path is itself correct (verified via direct
+// raw-CPI shape); the differential demo simply skips invoking
+// `update_group_pointer` so the broken wrapper isn't exercised in
+// byte-equal. If upstream ships a fix, extend the differential to
+// exercise update.
+function extractT22GroupPointerInitialize(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 group_pointer_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 group_pointer_initialize (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const authority = args[1]?.text.trim() ?? "None";
+  const groupAddress = args[2]?.text.trim() ?? "None";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_group_pointer_initialize",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    authority,
+    groupAddress,
+    signerSeeds,
+  };
+}
+
+function extractT22GroupPointerUpdate(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 group_pointer_update", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 group_pointer_update (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  let authority = "authority";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+    authority =
+      extractStructField(accountsStruct, "authority") ?? authority;
+  }
+  const groupAddress = args[1]?.text.trim() ?? "None";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_group_pointer_update",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    authority: cleanAccountRef(authority),
+    groupAddress,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 GroupMemberPointer init/update (EM2 Session 3) ──────────────
+//
+// Identical shape to GroupPointer, parent disc 41
+// (TokenInstruction::GroupMemberPointerExtension).
+function extractT22GroupMemberPointerInitialize(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 group_member_pointer_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 group_member_pointer_initialize (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const authority = args[1]?.text.trim() ?? "None";
+  const memberAddress = args[2]?.text.trim() ?? "None";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_group_member_pointer_initialize",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    authority,
+    memberAddress,
+    signerSeeds,
+  };
+}
+
+function extractT22GroupMemberPointerUpdate(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 group_member_pointer_update", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 group_member_pointer_update (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  let authority = "authority";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+    authority =
+      extractStructField(accountsStruct, "authority") ?? authority;
+  }
+  const memberAddress = args[1]?.text.trim() ?? "None";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_group_member_pointer_update",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    authority: cleanAccountRef(authority),
+    memberAddress,
     signerSeeds,
   };
 }

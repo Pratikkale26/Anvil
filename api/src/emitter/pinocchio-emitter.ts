@@ -94,6 +94,115 @@ function unwrapSomeRef(expr: string): string {
   return m[1].trim().replace(/^&/, "");
 }
 
+// Shared Pinocchio body for the OptionalNonZeroPubkey-pointer Init
+// shape (TransferHook init, MetadataPointer init, GroupPointer init,
+// GroupMemberPointer init). Wire layout = [parent_disc, 0,
+// authority_or_zero(32), addr_or_zero(32)] = 66 bytes; accounts =
+// [writable mint]. The `prefix` is a short unique tag used in local
+// bindings to avoid colliding when multiple init CPIs appear in the
+// same instruction body.
+function emitT22FlatOptionPointerInit(
+  prefix: string,
+  label: string,
+  parentDisc: number,
+  mint: string,
+  authority: string,
+  address: string,
+  signerSeeds: string | undefined,
+): string {
+  const isAuthorityNone = authority.trim() === "None";
+  const isAddrNone = address.trim() === "None";
+  const authBlock = isAuthorityNone
+    ? `        // authority None: leave d[2..34] zero (OptionalNonZeroPubkey None)`
+    : `        d[2..34].copy_from_slice((${unwrapSomeRef(authority)}).as_ref());`;
+  const addrBlock = isAddrNone
+    ? `        // address None: leave d[34..66] zero`
+    : `        d[34..66].copy_from_slice((${unwrapSomeRef(address)}).as_ref());`;
+  const invokeCall = signerSeeds
+    ? `        let __${prefix}_seed_refs = ${signerSeeds}[0];
+        let mut __${prefix}_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__${prefix}_i, __${prefix}_s) in __${prefix}_seed_refs.iter().enumerate() {
+            if __${prefix}_i >= __${prefix}_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __${prefix}_pda_seeds[__${prefix}_i] = pinocchio::instruction::Seed::from(*__${prefix}_s);
+        }
+        let __${prefix}_signer = pinocchio::instruction::Signer::from(&__${prefix}_pda_seeds[..__${prefix}_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__${prefix}_ix, &[${mint}], &[__${prefix}_signer])?;`
+    : `        pinocchio::cpi::invoke(&__${prefix}_ix, &[${mint}])?;`;
+  return `    // Token-2022 ${label} extension init — ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __${prefix}_data: [u8; 66] = {
+            let mut d = [0u8; 66];
+            d[0] = ${parentDisc}u8; // parent disc TokenInstruction::${label}Extension
+            d[1] = 0u8;  // sub-disc Initialize
+${authBlock}
+${addrBlock}
+            d
+        };
+        let __${prefix}_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+        ];
+        let __${prefix}_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__${prefix}_metas,
+            data: &__${prefix}_data,
+        };
+${invokeCall}
+    }`;
+}
+
+// Shared Pinocchio body for the Update shape (TransferHook update,
+// GroupPointer update, GroupMemberPointer update). Wire layout =
+// [parent_disc, 1, addr_or_zero(32)] = 34 bytes; accounts = [writable
+// mint, readonly+signer authority].
+function emitT22FlatOptionPointerUpdate(
+  prefix: string,
+  label: string,
+  parentDisc: number,
+  mint: string,
+  authority: string,
+  address: string,
+  signerSeeds: string | undefined,
+): string {
+  const isAddrNone = address.trim() === "None";
+  const addrBlock = isAddrNone
+    ? `        // address None: leave d[2..34] zero`
+    : `        d[2..34].copy_from_slice((${unwrapSomeRef(address)}).as_ref());`;
+  const invokeCall = signerSeeds
+    ? `        let __${prefix}_seed_refs = ${signerSeeds}[0];
+        let mut __${prefix}_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__${prefix}_i, __${prefix}_s) in __${prefix}_seed_refs.iter().enumerate() {
+            if __${prefix}_i >= __${prefix}_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __${prefix}_pda_seeds[__${prefix}_i] = pinocchio::instruction::Seed::from(*__${prefix}_s);
+        }
+        let __${prefix}_signer = pinocchio::instruction::Signer::from(&__${prefix}_pda_seeds[..__${prefix}_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__${prefix}_ix, &[${mint}, ${authority}], &[__${prefix}_signer])?;`
+    : `        pinocchio::cpi::invoke(&__${prefix}_ix, &[${mint}, ${authority}])?;`;
+  return `    // Token-2022 ${label} update — ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __${prefix}_data: [u8; 34] = {
+            let mut d = [0u8; 34];
+            d[0] = ${parentDisc}u8; // parent disc TokenInstruction::${label}Extension
+            d[1] = 1u8;  // sub-disc Update
+${addrBlock}
+            d
+        };
+        let __${prefix}_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __${prefix}_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__${prefix}_metas,
+            data: &__${prefix}_data,
+        };
+${invokeCall}
+    }`;
+}
+
 /**
  * Build the Token-2022 invoke line. The IR-level `signerSeeds` string is a
  * variable name in scope holding `[&[&[u8]]; N]` (set up by the seeds
@@ -1750,6 +1859,46 @@ ${metadataBlock}
         };
 ${invokeCall}
     }`;
+  }
+
+  override emitT22GroupPointerInitialize(
+    mint: string,
+    _tokenProgram: string,
+    authority: string,
+    groupAddress: string,
+    signerSeeds?: string,
+  ): string {
+    return emitT22FlatOptionPointerInit("gpi", "GroupPointer", 40, mint, authority, groupAddress, signerSeeds);
+  }
+
+  override emitT22GroupPointerUpdate(
+    mint: string,
+    _tokenProgram: string,
+    authority: string,
+    groupAddress: string,
+    signerSeeds?: string,
+  ): string {
+    return emitT22FlatOptionPointerUpdate("gpu", "GroupPointer", 40, mint, authority, groupAddress, signerSeeds);
+  }
+
+  override emitT22GroupMemberPointerInitialize(
+    mint: string,
+    _tokenProgram: string,
+    authority: string,
+    memberAddress: string,
+    signerSeeds?: string,
+  ): string {
+    return emitT22FlatOptionPointerInit("gmpi", "GroupMemberPointer", 41, mint, authority, memberAddress, signerSeeds);
+  }
+
+  override emitT22GroupMemberPointerUpdate(
+    mint: string,
+    _tokenProgram: string,
+    authority: string,
+    memberAddress: string,
+    signerSeeds?: string,
+  ): string {
+    return emitT22FlatOptionPointerUpdate("gmpu", "GroupMemberPointer", 41, mint, authority, memberAddress, signerSeeds);
   }
 
   override emitT22NonTransferableMintInitialize(

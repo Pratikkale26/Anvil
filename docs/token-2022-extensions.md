@@ -27,7 +27,7 @@ Statuses:
 | PermanentDelegate | Y (init) | Y (init) | `transfer_checked` honors the delegate — Y; init differential-gated 2026-05-13 (EM2 S1) |
 | MetadataPointer | Y (init) | Y (init) | none on base CPIs — Y; init differential-gated 2026-05-13 (EM2 S2); update wrapper not exposed by anchor-spl 0.31/0.32 |
 | TokenMetadata | Y (init+update_field+update_authority) | Y (init+update_field+update_authority) | none on base CPIs — Y; init+update_field+update_authority differential-gated 2026-05-07 across both targets via 4-instruction byte-equal harness exercising Field::Name + Field::Key("...") + OptionalNonZeroPubkey::None |
-| GroupPointer / MemberPointer | partial | partial | none on base CPIs — Y |
+| GroupPointer / MemberPointer | Y | Y | none on base CPIs — Y; differential-gated 2026-05-13 (EM2 S3): GroupPointer init + MemberPointer init+update byte-equal. GroupPointer update IR+emit shipped but not byte-equal-gated (anchor-spl 0.31/0.32 `group_pointer_update` wrapper is upstream-broken — signers slot vs invoke-accounts mismatch) |
 | TransferHook | Y (init+update) | Y (init+update) | base `transfer_checked` triggers the hook program — Y if hook program is co-deployed; init+update differential-gated 2026-05-13 (EM2 S2) |
 | ConfidentialTransferMint | lint | lint | requires zk-proofs path; `transfer_checked` doesn't apply to encrypted balances |
 

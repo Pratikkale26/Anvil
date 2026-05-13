@@ -1093,6 +1093,96 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     )?;`;
   }
 
+  override emitT22GroupPointerInitialize(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    groupAddress: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 GroupPointer extension init — ${mint}
+    let gpi_ix = spl_token_2022::extension::group_pointer::instruction::initialize(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${authority},
+        ${groupAddress},
+    )?;
+    ${invokeType}(
+        &gpi_ix,
+        &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22GroupPointerUpdate(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    groupAddress: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 GroupPointer update — ${mint}
+    let gpu_ix = spl_token_2022::extension::group_pointer::instruction::update(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${authority}.key,
+        &[],
+        ${groupAddress},
+    )?;
+    ${invokeType}(
+        &gpu_ix,
+        &[${mint}.clone(), ${authority}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22GroupMemberPointerInitialize(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    memberAddress: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 GroupMemberPointer extension init — ${mint}
+    let gmpi_ix = spl_token_2022::extension::group_member_pointer::instruction::initialize(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${authority},
+        ${memberAddress},
+    )?;
+    ${invokeType}(
+        &gmpi_ix,
+        &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22GroupMemberPointerUpdate(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    memberAddress: string,
+    signerSeeds?: string,
+  ): string {
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 GroupMemberPointer update — ${mint}
+    let gmpu_ix = spl_token_2022::extension::group_member_pointer::instruction::update(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${authority}.key,
+        &[],
+        ${memberAddress},
+    )?;
+    ${invokeType}(
+        &gmpu_ix,
+        &[${mint}.clone(), ${authority}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
   override emitT22TransferCheckedWithFee(
     source: string,
     mint: string,

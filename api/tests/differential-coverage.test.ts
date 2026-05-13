@@ -97,6 +97,9 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   // EM2 Session 2 — TransferHook (init + update) + MetadataPointer (init).
   "t22-transfer-hook": "t22-transfer-hook.rs",
   "t22-metadata-pointer": "t22-metadata-pointer.rs",
+  // EM2 Session 3 — GroupPointer (init + update) + GroupMemberPointer (init + update).
+  "t22-group-pointer": "t22-group-pointer.rs",
+  "t22-group-member-pointer": "t22-group-member-pointer.rs",
   // Zero-copy AccountLoader handle (zero_copy_load_init/_mut/_).
   "zero-copy-foo": "zero-copy-foo.rs",
 };

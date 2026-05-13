@@ -254,6 +254,43 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // GroupPointer init/update. Parent disc 40, sub 0/1. Init payload =
+  // 2× OptionalNonZeroPubkey; Update payload = 1× OptionalNonZeroPubkey
+  // and requires the authority signer.
+  abstract emitT22GroupPointerInitialize(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    groupAddress: string,
+    signerSeeds?: string,
+  ): string;
+
+  abstract emitT22GroupPointerUpdate(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    groupAddress: string,
+    signerSeeds?: string,
+  ): string;
+
+  // GroupMemberPointer init/update. Same shape as GroupPointer, parent
+  // disc 41.
+  abstract emitT22GroupMemberPointerInitialize(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    memberAddress: string,
+    signerSeeds?: string,
+  ): string;
+
+  abstract emitT22GroupMemberPointerUpdate(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    memberAddress: string,
+    signerSeeds?: string,
+  ): string;
+
   // TransferFee variant of transfer_checked. Required when a mint has
   // the TransferFee extension — caller asserts decimals + the
   // expected fee, Token-2022 verifies both.

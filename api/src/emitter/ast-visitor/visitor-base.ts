@@ -695,6 +695,10 @@ type CpiT22PermanentDelegateInit = Extract<BodyStatement, { kind: "cpi_t22_perma
 type CpiT22TransferHookInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_hook_initialize" }>;
 type CpiT22TransferHookUpdate = Extract<BodyStatement, { kind: "cpi_t22_transfer_hook_update" }>;
 type CpiT22MetadataPointerInit = Extract<BodyStatement, { kind: "cpi_t22_metadata_pointer_initialize" }>;
+type CpiT22GroupPointerInit = Extract<BodyStatement, { kind: "cpi_t22_group_pointer_initialize" }>;
+type CpiT22GroupPointerUpdate = Extract<BodyStatement, { kind: "cpi_t22_group_pointer_update" }>;
+type CpiT22GroupMemberPointerInit = Extract<BodyStatement, { kind: "cpi_t22_group_member_pointer_initialize" }>;
+type CpiT22GroupMemberPointerUpdate = Extract<BodyStatement, { kind: "cpi_t22_group_member_pointer_update" }>;
 type CpiT22TransferCheckedWithFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_checked_with_fee" }>;
 type CpiT22WithdrawWithheldFromMint = Extract<BodyStatement, { kind: "cpi_t22_withdraw_withheld_tokens_from_mint" }>;
 type CpiT22HarvestWithheldToMint = Extract<BodyStatement, { kind: "cpi_t22_harvest_withheld_tokens_to_mint" }>;
@@ -754,6 +758,10 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_t22_transfer_hook_initialize",
   "cpi_t22_transfer_hook_update",
   "cpi_t22_metadata_pointer_initialize",
+  "cpi_t22_group_pointer_initialize",
+  "cpi_t22_group_pointer_update",
+  "cpi_t22_group_member_pointer_initialize",
+  "cpi_t22_group_member_pointer_update",
   "cpi_t22_transfer_checked_with_fee",
   "cpi_t22_withdraw_withheld_tokens_from_mint",
   "cpi_t22_harvest_withheld_tokens_to_mint",
@@ -823,6 +831,14 @@ export class AstVisitorBase {
         return this.visitCpiT22TransferHookUpdate(stmt);
       case "cpi_t22_metadata_pointer_initialize":
         return this.visitCpiT22MetadataPointerInit(stmt);
+      case "cpi_t22_group_pointer_initialize":
+        return this.visitCpiT22GroupPointerInit(stmt);
+      case "cpi_t22_group_pointer_update":
+        return this.visitCpiT22GroupPointerUpdate(stmt);
+      case "cpi_t22_group_member_pointer_initialize":
+        return this.visitCpiT22GroupMemberPointerInit(stmt);
+      case "cpi_t22_group_member_pointer_update":
+        return this.visitCpiT22GroupMemberPointerUpdate(stmt);
       case "cpi_t22_transfer_checked_with_fee":
         return this.visitCpiT22TransferCheckedWithFee(stmt);
       case "cpi_t22_withdraw_withheld_tokens_from_mint":
@@ -2427,6 +2443,72 @@ export class AstVisitorBase {
       snakeCase(stmt.tokenProgram),
       authorityResolved,
       metadataResolved,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22GroupPointerInit(stmt: CpiT22GroupPointerInit): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: group_pointer_initialize(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    const authorityResolved = w.transformCtxAccountsReferences(stmt.authority);
+    const groupResolved = w.transformCtxAccountsReferences(stmt.groupAddress);
+    lines.push(w.emitter.emitT22GroupPointerInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      authorityResolved,
+      groupResolved,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22GroupPointerUpdate(stmt: CpiT22GroupPointerUpdate): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: group_pointer_update(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    const groupResolved = w.transformCtxAccountsReferences(stmt.groupAddress);
+    lines.push(w.emitter.emitT22GroupPointerUpdate(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      snakeCase(stmt.authority),
+      groupResolved,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22GroupMemberPointerInit(stmt: CpiT22GroupMemberPointerInit): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: group_member_pointer_initialize(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    const authorityResolved = w.transformCtxAccountsReferences(stmt.authority);
+    const memberResolved = w.transformCtxAccountsReferences(stmt.memberAddress);
+    lines.push(w.emitter.emitT22GroupMemberPointerInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      authorityResolved,
+      memberResolved,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22GroupMemberPointerUpdate(stmt: CpiT22GroupMemberPointerUpdate): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: group_member_pointer_update(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    const memberResolved = w.transformCtxAccountsReferences(stmt.memberAddress);
+    lines.push(w.emitter.emitT22GroupMemberPointerUpdate(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      snakeCase(stmt.authority),
+      memberResolved,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ));
     return this.applyStructuralize(lines);
