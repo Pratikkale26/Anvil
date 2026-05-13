@@ -1356,6 +1356,31 @@ export class AstVisitorBase {
     const captured = w.lines.slice(before);
     w.lines.length = before;
     return captured.flatMap((entry) => {
+      // Brace-balance gate: ensureStateRead pushes if-block constraint
+      // checks as 3 separate w.lines entries (`if X {`, body line, `}`).
+      // Feeding any one alone to tryStructuralizeMultiLine produces
+      // unbalanced Rust — tree-sitter recovers but produces a misleading
+      // structural conversion (the opening becomes a rawLine, the closing
+      // gets dropped, and the surrounding context misaligns).
+      const opens = (entry.match(/\{/g) ?? []).length;
+      const closes = (entry.match(/\}/g) ?? []).length;
+      if (opens !== closes) return [rawLine(entry)];
+
+      // Nesting-depth gate: tryStructuralizeMultiLine strips a 4-space
+      // indent each line carries (assuming top-level) and the printer
+      // re-adds 4 when rendering — that's a no-op only when the source
+      // line was at top-level body depth. When the entry is a single
+      // body line at NESTED depth (e.g. `        return Err(...);` —
+      // an 8-space-indented return inside a has_one if-block pushed as
+      // its own entry), the strip-then-re-add collapses 8 → 4, losing
+      // the nesting. Detect via leading whitespace count and rawLine.
+      // Allow entries that span multiple lines (full block bodies) — the
+      // converter's strip applies uniformly so byte equality holds.
+      if (!entry.includes("\n")) {
+        const leading = /^( *)/.exec(entry)?.[1].length ?? 0;
+        if (leading > 4) return [rawLine(entry)];
+      }
+
       // M5d slice 1 — try the tree-sitter-backed converter on every
       // entry first. Recognizes multi-arg calls that parseSimpleExpr
       // (regex) doesn't, and handles entries that are multiple
