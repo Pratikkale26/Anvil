@@ -427,10 +427,13 @@ impl GrowState {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named `data` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
-        let bump: u8 = data[offset];
+        let bump: u8 = __data_buf[offset];
         offset += 1;
-        let mut log_bytes: &[u8] = &data[offset..];
+        let mut log_bytes: &[u8] = &__data_buf[offset..];
         let __log_before = log_bytes.len();
         let log: Vec<u8> = BorshDeserialize::deserialize(&mut log_bytes)
             .map_err(|_| ProgramError::InvalidAccountData)?;
@@ -443,12 +446,13 @@ impl GrowState {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
-        data[offset] = value.bump as u8;
+        __data_buf[offset] = value.bump as u8;
         offset += 1;
         let __log_serialized = ::borsh::to_vec(&value.log)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        data[offset..offset + __log_serialized.len()].copy_from_slice(&__log_serialized);
+        __data_buf[offset..offset + __log_serialized.len()].copy_from_slice(&__log_serialized);
         offset += __log_serialized.len();
         Ok(())
     }

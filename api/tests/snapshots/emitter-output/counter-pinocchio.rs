@@ -264,14 +264,17 @@ impl CounterAccount {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named `data` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
         let authority: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
         offset += 32;
         let count: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
-        let bump: u8 = data[offset];
+        let bump: u8 = __data_buf[offset];
         Ok(Self { authority, count, bump })
     }
 
@@ -280,12 +283,13 @@ impl CounterAccount {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
-        data[offset..offset + 32].copy_from_slice(&value.authority);
+        __data_buf[offset..offset + 32].copy_from_slice(&value.authority);
         offset += 32;
-        data[offset..offset + 8].copy_from_slice(&value.count.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.count.to_le_bytes());
         offset += 8;
-        data[offset] = value.bump as u8;
+        __data_buf[offset] = value.bump as u8;
         Ok(())
     }
 

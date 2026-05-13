@@ -1978,6 +1978,9 @@ impl ${acc.name} {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named \`data\` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
 ${readLines}
         Ok(Self { ${ctorFields} })
@@ -1988,6 +1991,7 @@ ${readLines}
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
 ${writeLines}
         Ok(())

@@ -463,19 +463,22 @@ impl MultisigAccount {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named `data` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
-        let mut owners_bytes: &[u8] = &data[offset..];
+        let mut owners_bytes: &[u8] = &__data_buf[offset..];
         let __owners_before = owners_bytes.len();
         let owners: Vec<Pubkey> = BorshDeserialize::deserialize(&mut owners_bytes)
             .map_err(|_| ProgramError::InvalidAccountData)?;
         offset += __owners_before - owners_bytes.len();
-        let threshold: u8 = data[offset];
+        let threshold: u8 = __data_buf[offset];
         offset += 1;
         let proposal_count: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
-        let bump: u8 = data[offset];
+        let bump: u8 = __data_buf[offset];
         Ok(Self { owners, threshold, proposal_count, bump })
     }
 
@@ -484,16 +487,17 @@ impl MultisigAccount {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
         let __owners_serialized = ::borsh::to_vec(&value.owners)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        data[offset..offset + __owners_serialized.len()].copy_from_slice(&__owners_serialized);
+        __data_buf[offset..offset + __owners_serialized.len()].copy_from_slice(&__owners_serialized);
         offset += __owners_serialized.len();
-        data[offset] = value.threshold as u8;
+        __data_buf[offset] = value.threshold as u8;
         offset += 1;
-        data[offset..offset + 8].copy_from_slice(&value.proposal_count.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.proposal_count.to_le_bytes());
         offset += 8;
-        data[offset] = value.bump as u8;
+        __data_buf[offset] = value.bump as u8;
         Ok(())
     }
 
@@ -532,25 +536,28 @@ impl ProposalAccount {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named `data` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
         let multisig: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
         offset += 32;
         let amount: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
-        let mut approved_bytes: &[u8] = &data[offset..];
+        let mut approved_bytes: &[u8] = &__data_buf[offset..];
         let __approved_before = approved_bytes.len();
         let approved: Vec<bool> = BorshDeserialize::deserialize(&mut approved_bytes)
             .map_err(|_| ProgramError::InvalidAccountData)?;
         offset += __approved_before - approved_bytes.len();
-        let executed: bool = match data[offset] {
+        let executed: bool = match __data_buf[offset] {
             0 => false,
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
         };
         offset += 1;
-        let bump: u8 = data[offset];
+        let bump: u8 = __data_buf[offset];
         Ok(Self { multisig, amount, approved, executed, bump })
     }
 
@@ -559,18 +566,19 @@ impl ProposalAccount {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
-        data[offset..offset + 32].copy_from_slice(&value.multisig);
+        __data_buf[offset..offset + 32].copy_from_slice(&value.multisig);
         offset += 32;
-        data[offset..offset + 8].copy_from_slice(&value.amount.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.amount.to_le_bytes());
         offset += 8;
         let __approved_serialized = ::borsh::to_vec(&value.approved)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        data[offset..offset + __approved_serialized.len()].copy_from_slice(&__approved_serialized);
+        __data_buf[offset..offset + __approved_serialized.len()].copy_from_slice(&__approved_serialized);
         offset += __approved_serialized.len();
-        data[offset] = if value.executed { 1 } else { 0 };
+        __data_buf[offset] = if value.executed { 1 } else { 0 };
         offset += 1;
-        data[offset] = value.bump as u8;
+        __data_buf[offset] = value.bump as u8;
         Ok(())
     }
 

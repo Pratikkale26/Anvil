@@ -661,6 +661,9 @@ impl StakingPool {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named `data` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
         let admin: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
         offset += 32;
@@ -669,28 +672,28 @@ impl StakingPool {
         let reward_mint: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
         offset += 32;
         let reward_rate: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let lock_duration: i64 = i64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let max_stake: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let total_staked: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
-        let bump: u8 = data[offset];
+        let bump: u8 = __data_buf[offset];
         offset += 1;
-        let stake_vault_bump: u8 = data[offset];
+        let stake_vault_bump: u8 = __data_buf[offset];
         offset += 1;
-        let reward_vault_bump: u8 = data[offset];
+        let reward_vault_bump: u8 = __data_buf[offset];
         offset += 1;
-        let is_paused: bool = match data[offset] {
+        let is_paused: bool = match __data_buf[offset] {
             0 => false,
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
@@ -703,28 +706,29 @@ impl StakingPool {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
-        data[offset..offset + 32].copy_from_slice(&value.admin);
+        __data_buf[offset..offset + 32].copy_from_slice(&value.admin);
         offset += 32;
-        data[offset..offset + 32].copy_from_slice(&value.stake_mint);
+        __data_buf[offset..offset + 32].copy_from_slice(&value.stake_mint);
         offset += 32;
-        data[offset..offset + 32].copy_from_slice(&value.reward_mint);
+        __data_buf[offset..offset + 32].copy_from_slice(&value.reward_mint);
         offset += 32;
-        data[offset..offset + 8].copy_from_slice(&value.reward_rate.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.reward_rate.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.lock_duration.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.lock_duration.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.max_stake.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.max_stake.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.total_staked.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.total_staked.to_le_bytes());
         offset += 8;
-        data[offset] = value.bump as u8;
+        __data_buf[offset] = value.bump as u8;
         offset += 1;
-        data[offset] = value.stake_vault_bump as u8;
+        __data_buf[offset] = value.stake_vault_bump as u8;
         offset += 1;
-        data[offset] = value.reward_vault_bump as u8;
+        __data_buf[offset] = value.reward_vault_bump as u8;
         offset += 1;
-        data[offset] = if value.is_paused { 1 } else { 0 };
+        __data_buf[offset] = if value.is_paused { 1 } else { 0 };
         Ok(())
     }
 
@@ -765,28 +769,31 @@ impl UserStake {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named `data` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
         let owner: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
         offset += 32;
         let pool: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
         offset += 32;
         let amount: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let staked_at: i64 = i64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let last_claim: i64 = i64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let reward_rate_snapshot: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
-        let bump: u8 = data[offset];
+        let bump: u8 = __data_buf[offset];
         Ok(Self { owner, pool, amount, staked_at, last_claim, reward_rate_snapshot, bump })
     }
 
@@ -795,20 +802,21 @@ impl UserStake {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
-        data[offset..offset + 32].copy_from_slice(&value.owner);
+        __data_buf[offset..offset + 32].copy_from_slice(&value.owner);
         offset += 32;
-        data[offset..offset + 32].copy_from_slice(&value.pool);
+        __data_buf[offset..offset + 32].copy_from_slice(&value.pool);
         offset += 32;
-        data[offset..offset + 8].copy_from_slice(&value.amount.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.amount.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.staked_at.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.staked_at.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.last_claim.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.last_claim.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.reward_rate_snapshot.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.reward_rate_snapshot.to_le_bytes());
         offset += 8;
-        data[offset] = value.bump as u8;
+        __data_buf[offset] = value.bump as u8;
         Ok(())
     }
 

@@ -777,6 +777,9 @@ impl Vesting {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named `data` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
         let grantor: Pubkey = Pubkey::new_from_array(
             data[offset..offset + 32]
@@ -803,44 +806,44 @@ impl Vesting {
         );
         offset += 32;
         let total_amount: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let released_amount: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let start_ts: i64 = i64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let cliff_ts: i64 = i64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let end_ts: i64 = i64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
-        let revocable: bool = match data[offset] {
+        let revocable: bool = match __data_buf[offset] {
             0 => false,
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
         };
         offset += 1;
-        let revoked: bool = match data[offset] {
+        let revoked: bool = match __data_buf[offset] {
             0 => false,
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
         };
         offset += 1;
         let created_at: i64 = i64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
-        let bump: u8 = data[offset];
+        let bump: u8 = __data_buf[offset];
         offset += 1;
-        let vault_bump: u8 = data[offset];
+        let vault_bump: u8 = __data_buf[offset];
         Ok(Self { grantor, beneficiary, mint, vault, total_amount, released_amount, start_ts, cliff_ts, end_ts, revocable, revoked, created_at, bump, vault_bump })
     }
 
@@ -849,34 +852,35 @@ impl Vesting {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
-        data[offset..offset + 32].copy_from_slice(&value.grantor.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.grantor.as_ref());
         offset += 32;
-        data[offset..offset + 32].copy_from_slice(&value.beneficiary.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.beneficiary.as_ref());
         offset += 32;
-        data[offset..offset + 32].copy_from_slice(&value.mint.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.mint.as_ref());
         offset += 32;
-        data[offset..offset + 32].copy_from_slice(&value.vault.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.vault.as_ref());
         offset += 32;
-        data[offset..offset + 8].copy_from_slice(&value.total_amount.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.total_amount.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.released_amount.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.released_amount.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.start_ts.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.start_ts.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.cliff_ts.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.cliff_ts.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.end_ts.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.end_ts.to_le_bytes());
         offset += 8;
-        data[offset] = if value.revocable { 1 } else { 0 };
+        __data_buf[offset] = if value.revocable { 1 } else { 0 };
         offset += 1;
-        data[offset] = if value.revoked { 1 } else { 0 };
+        __data_buf[offset] = if value.revoked { 1 } else { 0 };
         offset += 1;
-        data[offset..offset + 8].copy_from_slice(&value.created_at.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.created_at.to_le_bytes());
         offset += 8;
-        data[offset] = value.bump as u8;
+        __data_buf[offset] = value.bump as u8;
         offset += 1;
-        data[offset] = value.vault_bump as u8;
+        __data_buf[offset] = value.vault_bump as u8;
         Ok(())
     }
 

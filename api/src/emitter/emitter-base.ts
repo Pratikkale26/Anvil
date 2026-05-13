@@ -1581,23 +1581,23 @@ ${fields}
         offset += ${size};`;
     }
     if (/^\[\s*u8\s*;\s*\d+\s*\]$/.test(typeName)) {
-      return `        let ${fieldName}: ${typeName} = data[offset..offset + ${size}]
+      return `        let ${fieldName}: ${typeName} = __data_buf[offset..offset + ${size}]
             .try_into().map_err(|_| ProgramError::InvalidAccountData)?;
         offset += ${size};`;
     }
     if (fixedArray || typeDef?.kind === "struct") {
-      return `        let mut ${fieldName}_bytes = &data[offset..offset + ${size}];
+      return `        let mut ${fieldName}_bytes = &__data_buf[offset..offset + ${size}];
         let ${fieldName}: ${typeName} = BorshDeserialize::deserialize(&mut ${fieldName}_bytes)
             .map_err(|_| ProgramError::InvalidAccountData)?;
         offset += ${size};`;
     }
     if (typeDef?.kind === "enum") {
-      return `        let ${fieldName}: ${typeName} = ${typeName}::try_from(data[offset])
+      return `        let ${fieldName}: ${typeName} = ${typeName}::try_from(__data_buf[offset])
             .map_err(|_| ProgramError::InvalidAccountData)?;
         offset += 1;`;
     }
     if (typeName === "bool") {
-      return `        let ${fieldName}: bool = match data[offset] {
+      return `        let ${fieldName}: bool = match __data_buf[offset] {
             0 => false,
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
@@ -1605,11 +1605,11 @@ ${fields}
         offset += 1;`;
     }
     if (typeName === "u8") {
-      return `        let ${fieldName}: u8 = data[offset];
+      return `        let ${fieldName}: u8 = __data_buf[offset];
         offset += 1;`;
     }
     if (typeName === "i8") {
-      return `        let ${fieldName}: i8 = data[offset] as i8;
+      return `        let ${fieldName}: i8 = __data_buf[offset] as i8;
         offset += 1;`;
     }
     // Dynamically-sized / borsh-native types — String and Vec<T> are
@@ -1624,14 +1624,14 @@ ${fields}
     // to Borsh, let it consume length-prefix + content, and advance offset
     // by exactly what Borsh read.
     if (typeName === "String" || /^Vec<.+>$/.test(typeName) || /^Option<.+>$/.test(typeName)) {
-      return `        let mut ${fieldName}_bytes: &[u8] = &data[offset..];
+      return `        let mut ${fieldName}_bytes: &[u8] = &__data_buf[offset..];
         let __${fieldName}_before = ${fieldName}_bytes.len();
         let ${fieldName}: ${typeName} = BorshDeserialize::deserialize(&mut ${fieldName}_bytes)
             .map_err(|_| ProgramError::InvalidAccountData)?;
         offset += __${fieldName}_before - ${fieldName}_bytes.len();`;
     }
     return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(
-            data[offset..offset + ${size}].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + ${size}].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += ${size};`;
   }
@@ -1642,27 +1642,27 @@ ${fields}
     const fixedArray = parseFixedArrayType(typeName);
 
     if (typeName === "Pubkey" || /^\[\s*u8\s*;\s*\d+\s*\]$/.test(typeName)) {
-      return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName}${this.emitPubkeyFieldAsRef()});
+      return `        __data_buf[offset..offset + ${size}].copy_from_slice(&value.${fieldName}${this.emitPubkeyFieldAsRef()});
         offset += ${size};`;
     }
     if (fixedArray || typeDef?.kind === "struct") {
       return `        {
-            let mut ${fieldName}_bytes = &mut data[offset..offset + ${size}];
+            let mut ${fieldName}_bytes = &mut __data_buf[offset..offset + ${size}];
             BorshSerialize::serialize(&value.${fieldName}, &mut ${fieldName}_bytes)
                 .map_err(|_| ProgramError::InvalidAccountData)?;
         }
         offset += ${size};`;
     }
     if (typeDef?.kind === "enum") {
-      return `        data[offset] = value.${fieldName} as u8;
+      return `        __data_buf[offset] = value.${fieldName} as u8;
         offset += 1;`;
     }
     if (typeName === "bool") {
-      return `        data[offset] = if value.${fieldName} { 1 } else { 0 };
+      return `        __data_buf[offset] = if value.${fieldName} { 1 } else { 0 };
         offset += 1;`;
     }
     if (typeName === "u8" || typeName === "i8") {
-      return `        data[offset] = value.${fieldName} as u8;
+      return `        __data_buf[offset] = value.${fieldName} as u8;
         offset += 1;`;
     }
     // Dynamically-sized / borsh-native types — mirror the buildReadLine
@@ -1675,10 +1675,10 @@ ${fields}
     if (typeName === "String" || /^Vec<.+>$/.test(typeName) || /^Option<.+>$/.test(typeName)) {
       return `        let __${fieldName}_serialized = ::borsh::to_vec(&value.${fieldName})
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        data[offset..offset + __${fieldName}_serialized.len()].copy_from_slice(&__${fieldName}_serialized);
+        __data_buf[offset..offset + __${fieldName}_serialized.len()].copy_from_slice(&__${fieldName}_serialized);
         offset += __${fieldName}_serialized.len();`;
     }
-    return `        data[offset..offset + ${size}].copy_from_slice(&value.${fieldName}.to_le_bytes());
+    return `        __data_buf[offset..offset + ${size}].copy_from_slice(&value.${fieldName}.to_le_bytes());
         offset += ${size};`;
   }
 
@@ -1688,7 +1688,7 @@ ${fields}
    * Native keeps it as Pubkey::new_from_array(...).
    */
   protected emitPubkeyFieldRead(_size: number): string {
-    return `data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?`;
+    return `__data_buf[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?`;
   }
 
   /**

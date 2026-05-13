@@ -344,24 +344,27 @@ impl OptVault {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named `data` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
         let owner: [u8; 32] = data[offset..offset + 32].try_into().map_err(|_| ProgramError::InvalidAccountData)?;
         offset += 32;
-        let mut delegate_bytes: &[u8] = &data[offset..];
+        let mut delegate_bytes: &[u8] = &__data_buf[offset..];
         let __delegate_before = delegate_bytes.len();
         let delegate: Option<Pubkey> = BorshDeserialize::deserialize(&mut delegate_bytes)
             .map_err(|_| ProgramError::InvalidAccountData)?;
         offset += __delegate_before - delegate_bytes.len();
-        let mut expiry_bytes: &[u8] = &data[offset..];
+        let mut expiry_bytes: &[u8] = &__data_buf[offset..];
         let __expiry_before = expiry_bytes.len();
         let expiry: Option<i64> = BorshDeserialize::deserialize(&mut expiry_bytes)
             .map_err(|_| ProgramError::InvalidAccountData)?;
         offset += __expiry_before - expiry_bytes.len();
         let balance: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
-        let bump: u8 = data[offset];
+        let bump: u8 = __data_buf[offset];
         Ok(Self { owner, delegate, expiry, balance, bump })
     }
 
@@ -370,20 +373,21 @@ impl OptVault {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
-        data[offset..offset + 32].copy_from_slice(&value.owner);
+        __data_buf[offset..offset + 32].copy_from_slice(&value.owner);
         offset += 32;
         let __delegate_serialized = ::borsh::to_vec(&value.delegate)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        data[offset..offset + __delegate_serialized.len()].copy_from_slice(&__delegate_serialized);
+        __data_buf[offset..offset + __delegate_serialized.len()].copy_from_slice(&__delegate_serialized);
         offset += __delegate_serialized.len();
         let __expiry_serialized = ::borsh::to_vec(&value.expiry)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        data[offset..offset + __expiry_serialized.len()].copy_from_slice(&__expiry_serialized);
+        __data_buf[offset..offset + __expiry_serialized.len()].copy_from_slice(&__expiry_serialized);
         offset += __expiry_serialized.len();
-        data[offset..offset + 8].copy_from_slice(&value.balance.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.balance.to_le_bytes());
         offset += 8;
-        data[offset] = value.bump as u8;
+        __data_buf[offset] = value.bump as u8;
         Ok(())
     }
 

@@ -565,6 +565,9 @@ impl Marketplace {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named `data` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
         let admin: Pubkey = Pubkey::new_from_array(
             data[offset..offset + 32]
@@ -573,7 +576,7 @@ impl Marketplace {
         );
         offset += 32;
         let fee_bps: u16 = u16::from_le_bytes(
-            data[offset..offset + 2].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 2].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 2;
         let treasury: Pubkey = Pubkey::new_from_array(
@@ -582,10 +585,10 @@ impl Marketplace {
                 .map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 32;
-        let bump: u8 = data[offset];
+        let bump: u8 = __data_buf[offset];
         offset += 1;
         let listing_count: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         Ok(Self { admin, fee_bps, treasury, bump, listing_count })
     }
@@ -595,16 +598,17 @@ impl Marketplace {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
-        data[offset..offset + 32].copy_from_slice(&value.admin.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.admin.as_ref());
         offset += 32;
-        data[offset..offset + 2].copy_from_slice(&value.fee_bps.to_le_bytes());
+        __data_buf[offset..offset + 2].copy_from_slice(&value.fee_bps.to_le_bytes());
         offset += 2;
-        data[offset..offset + 32].copy_from_slice(&value.treasury.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.treasury.as_ref());
         offset += 32;
-        data[offset] = value.bump as u8;
+        __data_buf[offset] = value.bump as u8;
         offset += 1;
-        data[offset..offset + 8].copy_from_slice(&value.listing_count.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.listing_count.to_le_bytes());
         Ok(())
     }
 
@@ -656,6 +660,9 @@ impl Listing {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named `data` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
         let seller: Pubkey = Pubkey::new_from_array(
             data[offset..offset + 32]
@@ -670,14 +677,14 @@ impl Listing {
         );
         offset += 32;
         let price: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let seed: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
-        let bump: u8 = data[offset];
+        let bump: u8 = __data_buf[offset];
         offset += 1;
         let marketplace: Pubkey = Pubkey::new_from_array(
             data[offset..offset + 32]
@@ -691,7 +698,7 @@ impl Listing {
                 .map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 32;
-        let is_active: bool = match data[offset] {
+        let is_active: bool = match __data_buf[offset] {
             0 => false,
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
@@ -704,22 +711,23 @@ impl Listing {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
-        data[offset..offset + 32].copy_from_slice(&value.seller.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.seller.as_ref());
         offset += 32;
-        data[offset..offset + 32].copy_from_slice(&value.mint.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.mint.as_ref());
         offset += 32;
-        data[offset..offset + 8].copy_from_slice(&value.price.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.price.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.seed.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.seed.to_le_bytes());
         offset += 8;
-        data[offset] = value.bump as u8;
+        __data_buf[offset] = value.bump as u8;
         offset += 1;
-        data[offset..offset + 32].copy_from_slice(&value.marketplace.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.marketplace.as_ref());
         offset += 32;
-        data[offset..offset + 32].copy_from_slice(&value.vault.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.vault.as_ref());
         offset += 32;
-        data[offset] = if value.is_active { 1 } else { 0 };
+        __data_buf[offset] = if value.is_active { 1 } else { 0 };
         Ok(())
     }
 

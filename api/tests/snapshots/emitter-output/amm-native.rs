@@ -1090,6 +1090,9 @@ impl AmmPool {
         if data[..8] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
+        // Alias to dodge field-name shadowing — a field named `data` would
+        // shadow the parameter and break subsequent field reads.
+        let __data_buf: &[u8] = data;
         let mut offset = 8usize;
         let admin: Pubkey = Pubkey::new_from_array(
             data[offset..offset + 32]
@@ -1116,52 +1119,52 @@ impl AmmPool {
         );
         offset += 32;
         let fee_rate: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let initial_price: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let reserve_a: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let reserve_b: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let lp_supply: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let total_fees_a: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let total_fees_b: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let protocol_fees_a: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let protocol_fees_b: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
         let protocol_fee_rate: u64 = u64::from_le_bytes(
-            data[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
+            __data_buf[offset..offset + 8].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
         offset += 8;
-        let bump: u8 = data[offset];
+        let bump: u8 = __data_buf[offset];
         offset += 1;
-        let vault_a_bump: u8 = data[offset];
+        let vault_a_bump: u8 = __data_buf[offset];
         offset += 1;
-        let vault_b_bump: u8 = data[offset];
+        let vault_b_bump: u8 = __data_buf[offset];
         offset += 1;
-        let is_frozen: bool = match data[offset] {
+        let is_frozen: bool = match __data_buf[offset] {
             0 => false,
             1 => true,
             _ => return Err(ProgramError::InvalidAccountData),
@@ -1174,42 +1177,43 @@ impl AmmPool {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        let __data_buf: &mut [u8] = data;
         let mut offset = 8usize;
-        data[offset..offset + 32].copy_from_slice(&value.admin.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.admin.as_ref());
         offset += 32;
-        data[offset..offset + 32].copy_from_slice(&value.token_mint_a.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.token_mint_a.as_ref());
         offset += 32;
-        data[offset..offset + 32].copy_from_slice(&value.token_mint_b.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.token_mint_b.as_ref());
         offset += 32;
-        data[offset..offset + 32].copy_from_slice(&value.lp_mint.as_ref());
+        __data_buf[offset..offset + 32].copy_from_slice(&value.lp_mint.as_ref());
         offset += 32;
-        data[offset..offset + 8].copy_from_slice(&value.fee_rate.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.fee_rate.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.initial_price.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.initial_price.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.reserve_a.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.reserve_a.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.reserve_b.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.reserve_b.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.lp_supply.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.lp_supply.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.total_fees_a.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.total_fees_a.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.total_fees_b.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.total_fees_b.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.protocol_fees_a.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.protocol_fees_a.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.protocol_fees_b.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.protocol_fees_b.to_le_bytes());
         offset += 8;
-        data[offset..offset + 8].copy_from_slice(&value.protocol_fee_rate.to_le_bytes());
+        __data_buf[offset..offset + 8].copy_from_slice(&value.protocol_fee_rate.to_le_bytes());
         offset += 8;
-        data[offset] = value.bump as u8;
+        __data_buf[offset] = value.bump as u8;
         offset += 1;
-        data[offset] = value.vault_a_bump as u8;
+        __data_buf[offset] = value.vault_a_bump as u8;
         offset += 1;
-        data[offset] = value.vault_b_bump as u8;
+        __data_buf[offset] = value.vault_b_bump as u8;
         offset += 1;
-        data[offset] = if value.is_frozen { 1 } else { 0 };
+        __data_buf[offset] = if value.is_frozen { 1 } else { 0 };
         Ok(())
     }
 

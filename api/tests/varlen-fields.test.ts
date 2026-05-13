@@ -71,17 +71,19 @@ describe("variable-length field emit", () => {
     const text = out.files.map((f) => f.content).join("\n");
 
     // Open-ended read pattern: NO `offset + ${size}` upper bound.
-    expect(text).toMatch(/let mut name_bytes:\s*&\[u8\]\s*=\s*&data\[offset\.\.\];/);
+    // The read() function aliases `data` to `__data_buf` to dodge field-
+    // name shadowing (e.g. a field named `data` would shadow the param).
+    expect(text).toMatch(/let mut name_bytes:\s*&\[u8\]\s*=\s*&__data_buf\[offset\.\.\];/);
     expect(text).toMatch(/let __name_before\s*=\s*name_bytes\.len\(\);/);
     expect(text).toMatch(/offset\s*\+=\s*__name_before\s*-\s*name_bytes\.len\(\);/);
 
-    expect(text).toMatch(/let mut tags_bytes:\s*&\[u8\]\s*=\s*&data\[offset\.\.\];/);
+    expect(text).toMatch(/let mut tags_bytes:\s*&\[u8\]\s*=\s*&__data_buf\[offset\.\.\];/);
     expect(text).toMatch(/let __tags_before\s*=\s*tags_bytes\.len\(\);/);
     expect(text).toMatch(/offset\s*\+=\s*__tags_before\s*-\s*tags_bytes\.len\(\);/);
 
     // Negative: must NOT contain the old fixed-slice form for these fields.
-    // Pre-fix shape was:  &data[offset..offset + 64]; offset += 64;
-    expect(text).not.toMatch(/&data\[offset\.\.offset\s*\+\s*64\];[\s\S]{0,80}name:/);
+    // Pre-fix shape was:  &__data_buf[offset..offset + 64]; offset += 64;
+    expect(text).not.toMatch(/&__data_buf\[offset\.\.offset\s*\+\s*64\];[\s\S]{0,80}name:/);
   });
 
   test("native: String/Vec write serializes through to_vec + copies actual byte count", async () => {
@@ -92,7 +94,7 @@ describe("variable-length field emit", () => {
     const text = out.files.map((f) => f.content).join("\n");
 
     expect(text).toMatch(/let __name_serialized\s*=\s*::borsh::to_vec\(&value\.name\)/);
-    expect(text).toMatch(/data\[offset\.\.offset\s*\+\s*__name_serialized\.len\(\)\]\.copy_from_slice\(&__name_serialized\);/);
+    expect(text).toMatch(/__data_buf\[offset\.\.offset\s*\+\s*__name_serialized\.len\(\)\]\.copy_from_slice\(&__name_serialized\);/);
     expect(text).toMatch(/offset\s*\+=\s*__name_serialized\.len\(\);/);
 
     expect(text).toMatch(/let __tags_serialized\s*=\s*::borsh::to_vec\(&value\.tags\)/);
@@ -106,7 +108,7 @@ describe("variable-length field emit", () => {
     const out = emitPinocchioFull(parsed.ir);
     const text = out.files.map((f) => f.content).join("\n");
 
-    expect(text).toMatch(/let mut name_bytes:\s*&\[u8\]\s*=\s*&data\[offset\.\.\];/);
+    expect(text).toMatch(/let mut name_bytes:\s*&\[u8\]\s*=\s*&__data_buf\[offset\.\.\];/);
     expect(text).toMatch(/offset\s*\+=\s*__name_before\s*-\s*name_bytes\.len\(\);/);
     expect(text).toMatch(/let __name_serialized\s*=\s*::borsh::to_vec\(&value\.name\)/);
     expect(text).toMatch(/offset\s*\+=\s*__name_serialized\.len\(\);/);
