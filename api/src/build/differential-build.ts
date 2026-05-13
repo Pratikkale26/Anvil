@@ -361,7 +361,16 @@ function sniffAnchorExtraDeps(source: string): string {
     const features: string[] = [];
     if (/\banchor_spl::associated_token\b/.test(source)) features.push("associated_token");
     if (/\banchor_spl::memo\b/.test(source)) features.push("memo");
-    if (/\banchor_spl::metadata\b/.test(source)) features.push("metadata");
+    if (/\banchor_spl::metadata\b/.test(source) ||
+        // Brace-form nested use: `use anchor_spl::{metadata::..., ...};`
+        // or `use { anchor_spl::{metadata::...}, ... };`. The exact path
+        // string `anchor_spl::metadata` doesn't appear; detect by
+        // metadata-specific type/fn names.
+        /\bCreateMetadataAccountsV3\b/.test(source) ||
+        /\bCreateMasterEditionV3\b/.test(source) ||
+        /\bcreate_metadata_accounts_v3\b/.test(source) ||
+        /\bcreate_master_edition_v3\b/.test(source) ||
+        /\bmpl_token_metadata\b/.test(source)) features.push("metadata");
     if (/\banchor_spl::token_2022\b/.test(source) || /\btoken_interface\b/.test(source)) {
       features.push("token_2022");
     }

@@ -29,6 +29,9 @@ import {
 } from "@solana/web3.js";
 import { MintLayout, AccountLayout, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { createHash } from "node:crypto";
+import { readFileSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Scenario, ScenarioStep, ScenarioAssertion } from "../ir/scenario.js";
 import type { SolanaIR } from "../ir/schema.js";
 
@@ -40,6 +43,7 @@ const KNOWN_PROGRAMS: Record<string, string> = {
   token_2022: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
   associated_token: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
   memo: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+  mpl_token_metadata: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
   rent: "SysvarRent111111111111111111111111111111111",
   clock: "SysvarC1ock11111111111111111111111111111111",
   stake_history: "SysvarStakeHistory1111111111111111111111111",
@@ -306,9 +310,17 @@ export function resolveSeedExpression(
     if (!kp) throw new Error(`seed references ephemeral keypair '${keypairMatch[1]}' that wasn't materialized — caller forgot to pre-generate or pass ephemeralKeypairs to resolveSeedExpression`);
     return Buffer.from(kp.publicKey.toBytes());
   }
+  // $program:tag.pubkey — stable program ID seed (Metaplex pattern:
+  // seeds = [b"metadata", token_metadata_program.key().as_ref(), mint.key()]).
+  const programMatch = seed.match(/^\$program:([a-zA-Z_][a-zA-Z0-9_]*)\.pubkey$/);
+  if (programMatch?.[1]) {
+    const id = KNOWN_PROGRAMS[programMatch[1]];
+    if (!id) throw new Error(`seed references unknown program tag '${programMatch[1]}'`);
+    return Buffer.from(new PublicKey(id).toBytes());
+  }
   if (seed.startsWith("$program:")) {
     throw new Error(
-      `seed '${seed}': '$program' tag is valid as an account ref but not as a PDA seed. PDAs derive from signer pubkeys, earlier-declared PDAs, byte literals, or typed ints.`,
+      `seed '${seed}': '$program' tag is valid as an account ref but not as a PDA seed (no .pubkey suffix). PDAs derive from signer pubkeys, earlier-declared PDAs, byte literals, or typed ints.`,
     );
   }
   // Reserved sigil that didn't match any known form: refuse rather than
@@ -395,6 +407,40 @@ const MINT_ACCOUNT_SIZE = 82;
 // Fixed value matches what the system program would compute; both sides
 // see byte-identical lamports because resolveScenarioContext is shared.
 const MINT_RENT_EXEMPT_LAMPORTS = 1_461_600;
+
+/** Pre-load auxiliary on-chain programs the scenario CPIs into. Today
+ *  only Metaplex Token Metadata — fixtures that mint NFTs (nft-minter,
+ *  pda-mint-authority, etc.) CPI into the Metaplex program, which
+ *  LiteSVM doesn't ship by default. We bundle the program's .so as a
+ *  test fixture and load it via svm.addProgram when scenario.steps
+ *  reference `$program:mpl_token_metadata`. Best-effort: missing .so
+ *  files are silently skipped (downstream Anchor error surfaces the
+ *  gap loud enough). */
+function loadAuxiliaryPrograms(svm: LiteSVM, scenario: Scenario): void {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const referenced = new Set<string>();
+  for (const step of scenario.steps) {
+    for (const ref of step.accounts) {
+      if (ref.startsWith("$program:")) referenced.add(ref.slice("$program:".length));
+    }
+  }
+  for (const tag of referenced) {
+    const soPath = AUX_PROGRAM_SOS[tag];
+    if (!soPath) continue;
+    // src/build/scenario-runner.ts → ../../tests/fixtures/programs/X.so
+    const resolved = join(__dirname, "..", "..", "tests", "fixtures", "programs", soPath);
+    if (!existsSync(resolved)) continue;
+    const id = KNOWN_PROGRAMS[tag];
+    if (!id) continue;
+    svm.addProgram(new PublicKey(id), readFileSync(resolved));
+  }
+}
+
+// Map from $program: tag → .so filename in tests/fixtures/programs/.
+const AUX_PROGRAM_SOS: Record<string, string> = {
+  mpl_token_metadata: "mpl_token_metadata.so",
+};
 
 export function installMintAccounts(svm: LiteSVM, ctx: ResolvedScenarioContext): void {
   for (const [, mint] of ctx.mints) {
@@ -811,6 +857,13 @@ export function runScenarioOnSo(
 
   // Deploy the program at scenario's programId (or IR's declared id).
   svm.addProgram(ctx.programId, programSo);
+
+  // Pre-load auxiliary programs the scenario depends on (Metaplex Token
+  // Metadata for nft-minter etc.). We load only when scenario.steps
+  // reference the program tag; if the .so fixture is missing the load
+  // is skipped silently (best-effort — tests will then surface the
+  // "Program account is not executable" error from Anchor).
+  loadAuxiliaryPrograms(svm, scenario);
 
   // Pre-create SPL Mint + Token Account state before step 0 so subsequent
   // CPIs (transfer_checked, mint_to, burn) succeed against real layouts.

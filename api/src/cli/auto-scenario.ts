@@ -186,6 +186,7 @@ const KNOWN_PROGRAM_TYPES: Record<string, string> = {
   TokenInterface: "token_2022",
   AssociatedToken: "associated_token",
   Memo: "memo",
+  Metadata: "mpl_token_metadata",
   "Sysvar<Rent>": "rent",
   "Sysvar<Clock>": "clock",
   "Sysvar<StakeHistory>": "stake_history",
@@ -547,6 +548,20 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   for (const td of ir.types) collectConsts(td.name, td.implItems);
 
   const pdaSpecs = new Map<string, { seeds: string[]; sourceIx: string }>();
+  // Pre-compute known-program account-name → program-tag map. PDA seeds
+  // shaped `token_metadata_program.key().as_ref()` route through this so
+  // the seed encoder can emit `$program:mpl_token_metadata.pubkey`
+  // (the canonical Metaplex Token Metadata program ID) instead of an
+  // unresolved-account block.
+  const knownProgramAccountNames = new Map<string, string>();
+  for (const ix of ir.instructions) {
+    for (const acc of ix.accounts) {
+      const tag = KNOWN_PROGRAM_TYPES[acc.accountType];
+      if (tag && !knownProgramAccountNames.has(acc.name)) {
+        knownProgramAccountNames.set(acc.name, tag);
+      }
+    }
+  }
   for (const ix of ir.instructions) {
     // Build per-instruction arg-type map so synthesizeSeeds can resolve
     // arg-derived seed expressions (`<arg>.to_le_bytes()`, `<arg>.as_ref()`)
@@ -567,6 +582,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
           initdEphemeralNames,
           stateTypeNames,
           sourceConstLookup,
+          knownProgramAccountNames,
         );
         if (!seedResult.ok) {
           blockers.push({
@@ -1004,6 +1020,7 @@ function synthesizeSeeds(
   initdEphemeralNames: Set<string> = new Set(),
   stateTypeNames: Set<string> = new Set(),
   sourceConstLookup: Map<string, string> = new Map(),
+  knownProgramAccountNames: Map<string, string> = new Map(),
 ): SeedSynthesis {
   const resolveStateNumericField = (
     accName: string,
@@ -1080,6 +1097,16 @@ function synthesizeSeeds(
       }
       if (mintNames.has(name)) {
         out.push(`$mint:${name}.pubkey`);
+        continue;
+      }
+      // Known-program account references (e.g. `token_metadata_program.key()
+      // .as_ref()`). The account is a Program<'info, Metadata>; its pubkey
+      // is the canonical program ID (metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+      // for Metaplex). Emit `$program:<tag>.pubkey` — runner resolves to
+      // the program's stable pubkey.
+      const programTag = knownProgramAccountNames.get(name);
+      if (programTag) {
+        out.push(`$program:${programTag}.pubkey`);
         continue;
       }
       // B2f fix — init'd Mint / TokenAccount / state account referenced in
