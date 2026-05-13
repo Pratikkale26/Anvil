@@ -153,6 +153,15 @@ export function detectCpi(
   if (funcText.includes("permanent_delegate_initialize")) {
     return extractT22PermanentDelegateInitialize(callNode, collector);
   }
+  if (funcText.includes("transfer_hook_initialize")) {
+    return extractT22TransferHookInitialize(callNode, collector);
+  }
+  if (funcText.includes("transfer_hook_update")) {
+    return extractT22TransferHookUpdate(callNode, collector);
+  }
+  if (funcText.includes("metadata_pointer_initialize")) {
+    return extractT22MetadataPointerInitialize(callNode, collector);
+  }
   if (funcText.includes("transfer_checked_with_fee")) {
     return extractT22TransferCheckedWithFee(callNode, collector);
   }
@@ -1090,6 +1099,191 @@ function extractT22PermanentDelegateInitialize(
     mint: cleanAccountRef(mint),
     tokenProgram: cleanAccountRef(tokenProgram),
     delegate,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 TransferHook extension init (EM2 Session 2) ─────────────────
+//
+// Anchor source shape:
+//   transfer_hook_initialize(
+//       CpiContext::new(
+//           ctx.accounts.token_program.to_account_info(),
+//           TransferHookInitialize {
+//               token_program_id: ctx.accounts.token_program.to_account_info(),
+//               mint: ctx.accounts.mint.to_account_info(),
+//           },
+//       ),
+//       Some(payer_key),                       // Option<Pubkey>
+//       Some(transfer_hook_program_id_key),    // Option<Pubkey>
+//   )?;
+//
+// Mint-level extension. Both authority and transfer_hook_program_id are
+// OptionalNonZeroPubkey on the wire (flat 32 bytes per Option; all-zero
+// = None). Different byte layout from MintCloseAuthority's COption.
+function extractT22TransferHookInitialize(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 transfer_hook_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 transfer_hook_initialize (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const authority = args[1]?.text.trim() ?? "None";
+  const transferHookProgramId = args[2]?.text.trim() ?? "None";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_transfer_hook_initialize",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    authority,
+    transferHookProgramId,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 TransferHook extension update (EM2 Session 2) ───────────────
+//
+// Anchor source shape:
+//   transfer_hook_update(
+//       CpiContext::new(
+//           ctx.accounts.token_program.to_account_info(),
+//           TransferHookUpdate {
+//               token_program_id: ctx.accounts.token_program.to_account_info(),
+//               mint: ctx.accounts.mint.to_account_info(),
+//               authority: ctx.accounts.authority.to_account_info(),
+//           },
+//       ),
+//       Some(new_transfer_hook_program_id_key),  // Option<Pubkey>
+//   )?;
+//
+// Single-authority signer required (multisig signers slot is exposed by
+// raw spl_token_2022 but not by the anchor-spl wrapper).
+function extractT22TransferHookUpdate(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 transfer_hook_update", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 transfer_hook_update (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  let authority = "authority";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+    authority =
+      extractStructField(accountsStruct, "authority") ?? authority;
+  }
+  const transferHookProgramId = args[1]?.text.trim() ?? "None";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_transfer_hook_update",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    authority: cleanAccountRef(authority),
+    transferHookProgramId,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 MetadataPointer extension init (EM2 Session 2) ──────────────
+//
+// Anchor source shape:
+//   metadata_pointer_initialize(
+//       CpiContext::new(
+//           ctx.accounts.token_program.to_account_info(),
+//           MetadataPointerInitialize {
+//               token_program_id: ctx.accounts.token_program.to_account_info(),
+//               mint: ctx.accounts.mint.to_account_info(),
+//           },
+//       ),
+//       Some(authority_key),         // Option<Pubkey>
+//       Some(metadata_account_key),  // Option<Pubkey>
+//   )?;
+//
+// Mint-level extension. Both args use OptionalNonZeroPubkey wire layout.
+//
+// NOTE: anchor-spl 0.31 and 0.32 expose only the initialize wrapper for
+// MetadataPointer — there is no `metadata_pointer_update` helper.
+// Programs that need the raw `spl_token_2022::extension::metadata_pointer
+// ::instruction::update` will hit pass_through. A typed IR kind for
+// update can be added later if a real-world fixture surfaces it.
+function extractT22MetadataPointerInitialize(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 metadata_pointer_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 metadata_pointer_initialize (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const authority = args[1]?.text.trim() ?? "None";
+  const metadataAddress = args[2]?.text.trim() ?? "None";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_metadata_pointer_initialize",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    authority,
+    metadataAddress,
     signerSeeds,
   };
 }

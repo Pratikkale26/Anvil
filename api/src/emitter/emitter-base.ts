@@ -217,6 +217,43 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // Initialize the TransferHook extension on a mint. Parent
+  // discriminator 36 + sub-discriminator 0; payload = two
+  // OptionalNonZeroPubkey (flat 32 bytes each, all-zero = None) =
+  // 64 bytes; accounts = [mint writable]. Different byte layout from
+  // MintCloseAuthority's COption-tagged form.
+  abstract emitT22TransferHookInitialize(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    transferHookProgramId: string,
+    signerSeeds?: string,
+  ): string;
+
+  // Update the TransferHook program id on a mint that already has the
+  // extension. Parent disc 36 + sub-disc 1; payload = single
+  // OptionalNonZeroPubkey (32 bytes); accounts = [mint writable,
+  // authority readonly+signer].
+  abstract emitT22TransferHookUpdate(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    transferHookProgramId: string,
+    signerSeeds?: string,
+  ): string;
+
+  // Initialize the MetadataPointer extension on a mint. Parent disc 39
+  // + sub-disc 0; payload = two OptionalNonZeroPubkey (64 bytes total);
+  // accounts = [mint writable]. Same wire layout as TransferHook init,
+  // different parent discriminator.
+  abstract emitT22MetadataPointerInitialize(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    metadataAddress: string,
+    signerSeeds?: string,
+  ): string;
+
   // TransferFee variant of transfer_checked. Required when a mint has
   // the TransferFee extension — caller asserts decimals + the
   // expected fee, Token-2022 verifies both.

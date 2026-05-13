@@ -46,7 +46,7 @@ const SRC = join(
   "demo-programs",
   "t22-mint-close-authority.rs",
 );
-const PROGRAM_ID = "Mca7H4M9pPXq3vYz1k8Q2w5L9P0sR3tU6V8W0X1Y2Z3";
+const PROGRAM_ID = "5rMLwBQQmDz4aXY7Tw6d3K4v2vktUVYXsNFpm3LAEh4x";
 
 defineDifferential({
   fixtureName: "t22-mint-close-authority",

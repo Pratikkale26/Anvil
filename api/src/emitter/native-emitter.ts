@@ -1017,6 +1017,82 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     )?;`;
   }
 
+  override emitT22TransferHookInitialize(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    transferHookProgramId: string,
+    signerSeeds?: string,
+  ): string {
+    // anchor-spl `transfer_hook_initialize` takes `Option<Pubkey>` (by
+    // value) for both args. Pass the source expressions verbatim into
+    // the spl_token_2022 extension instruction builder.
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 TransferHook extension init — ${mint}
+    let thi_ix = spl_token_2022::extension::transfer_hook::instruction::initialize(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${authority},
+        ${transferHookProgramId},
+    )?;
+    ${invokeType}(
+        &thi_ix,
+        &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22TransferHookUpdate(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    transferHookProgramId: string,
+    signerSeeds?: string,
+  ): string {
+    // spl_token_2022::extension::transfer_hook::instruction::update
+    // signature: (token_program, mint, authority, signers: &[&Pubkey],
+    // transfer_hook_program_id: Option<Pubkey>). Empty signers slice =
+    // single-authority shape (authority itself is the signer).
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 TransferHook update — ${mint}
+    let thu_ix = spl_token_2022::extension::transfer_hook::instruction::update(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${authority}.key,
+        &[],
+        ${transferHookProgramId},
+    )?;
+    ${invokeType}(
+        &thu_ix,
+        &[${mint}.clone(), ${authority}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22MetadataPointerInitialize(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    metadataAddress: string,
+    signerSeeds?: string,
+  ): string {
+    // anchor-spl `metadata_pointer_initialize` takes `Option<Pubkey>`
+    // (by value) for both args. Pass through verbatim.
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 MetadataPointer extension init — ${mint}
+    let mpi_ix = spl_token_2022::extension::metadata_pointer::instruction::initialize(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${authority},
+        ${metadataAddress},
+    )?;
+    ${invokeType}(
+        &mpi_ix,
+        &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
   override emitT22TransferCheckedWithFee(
     source: string,
     mint: string,

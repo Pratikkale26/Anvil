@@ -1595,6 +1595,163 @@ ${invokeCall}
     }`;
   }
 
+  override emitT22TransferHookInitialize(
+    mint: string,
+    _tokenProgram: string,
+    authority: string,
+    transferHookProgramId: string,
+    signerSeeds?: string,
+  ): string {
+    // Token-2022 TransferHook Initialize: parent disc 36, sub-disc 0,
+    // payload = two OptionalNonZeroPubkey (flat 32 bytes each, all-zero
+    // = None). 66 bytes total. accounts = [writable mint].
+    //
+    // Both arguments are source expressions in `None` / `Some(<expr>)`
+    // form. We synthesize the 32-byte slot at runtime — zero when None,
+    // the pubkey bytes when Some.
+    const isAuthorityNone = authority.trim() === "None";
+    const isHookNone = transferHookProgramId.trim() === "None";
+    const authBlock = isAuthorityNone
+      ? "        // authority None: leave d[2..34] zero (OptionalNonZeroPubkey None)"
+      : `        d[2..34].copy_from_slice((${unwrapSomeRef(authority)}).as_ref());`;
+    const hookBlock = isHookNone
+      ? "        // hook program id None: leave d[34..66] zero"
+      : `        d[34..66].copy_from_slice((${unwrapSomeRef(transferHookProgramId)}).as_ref());`;
+    const invokeCall = signerSeeds
+      ? `        let __thi_seed_refs = ${signerSeeds}[0];
+        let mut __thi_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__thi_i, __thi_s) in __thi_seed_refs.iter().enumerate() {
+            if __thi_i >= __thi_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __thi_pda_seeds[__thi_i] = pinocchio::instruction::Seed::from(*__thi_s);
+        }
+        let __thi_signer = pinocchio::instruction::Signer::from(&__thi_pda_seeds[..__thi_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__thi_ix, &[${mint}], &[__thi_signer])?;`
+      : `        pinocchio::cpi::invoke(&__thi_ix, &[${mint}])?;`;
+    return `    // Token-2022 TransferHook extension init — ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __thi_data: [u8; 66] = {
+            let mut d = [0u8; 66];
+            d[0] = 36u8; // parent disc TokenInstruction::TransferHookExtension
+            d[1] = 0u8;  // sub-disc TransferHookInstruction::Initialize
+${authBlock}
+${hookBlock}
+            d
+        };
+        let __thi_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+        ];
+        let __thi_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__thi_metas,
+            data: &__thi_data,
+        };
+${invokeCall}
+    }`;
+  }
+
+  override emitT22TransferHookUpdate(
+    mint: string,
+    _tokenProgram: string,
+    authority: string,
+    transferHookProgramId: string,
+    signerSeeds?: string,
+  ): string {
+    // Token-2022 TransferHook Update: parent disc 36, sub-disc 1,
+    // payload = single OptionalNonZeroPubkey (32 bytes). 34 bytes
+    // total. accounts = [writable mint, readonly+signer authority].
+    const isHookNone = transferHookProgramId.trim() === "None";
+    const hookBlock = isHookNone
+      ? "        // hook program id None: leave d[2..34] zero"
+      : `        d[2..34].copy_from_slice((${unwrapSomeRef(transferHookProgramId)}).as_ref());`;
+    const invokeCall = signerSeeds
+      ? `        let __thu_seed_refs = ${signerSeeds}[0];
+        let mut __thu_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__thu_i, __thu_s) in __thu_seed_refs.iter().enumerate() {
+            if __thu_i >= __thu_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __thu_pda_seeds[__thu_i] = pinocchio::instruction::Seed::from(*__thu_s);
+        }
+        let __thu_signer = pinocchio::instruction::Signer::from(&__thu_pda_seeds[..__thu_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__thu_ix, &[${mint}, ${authority}], &[__thu_signer])?;`
+      : `        pinocchio::cpi::invoke(&__thu_ix, &[${mint}, ${authority}])?;`;
+    return `    // Token-2022 TransferHook update — ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __thu_data: [u8; 34] = {
+            let mut d = [0u8; 34];
+            d[0] = 36u8; // parent disc TokenInstruction::TransferHookExtension
+            d[1] = 1u8;  // sub-disc TransferHookInstruction::Update
+${hookBlock}
+            d
+        };
+        let __thu_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __thu_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__thu_metas,
+            data: &__thu_data,
+        };
+${invokeCall}
+    }`;
+  }
+
+  override emitT22MetadataPointerInitialize(
+    mint: string,
+    _tokenProgram: string,
+    authority: string,
+    metadataAddress: string,
+    signerSeeds?: string,
+  ): string {
+    // Token-2022 MetadataPointer Initialize: parent disc 39, sub-disc
+    // 0, payload = two OptionalNonZeroPubkey (32 bytes each). 66 bytes
+    // total. accounts = [writable mint]. Same wire shape as TransferHook
+    // init; different parent discriminator.
+    const isAuthorityNone = authority.trim() === "None";
+    const isMetadataNone = metadataAddress.trim() === "None";
+    const authBlock = isAuthorityNone
+      ? "        // authority None: leave d[2..34] zero (OptionalNonZeroPubkey None)"
+      : `        d[2..34].copy_from_slice((${unwrapSomeRef(authority)}).as_ref());`;
+    const metadataBlock = isMetadataNone
+      ? "        // metadata address None: leave d[34..66] zero"
+      : `        d[34..66].copy_from_slice((${unwrapSomeRef(metadataAddress)}).as_ref());`;
+    const invokeCall = signerSeeds
+      ? `        let __mpi_seed_refs = ${signerSeeds}[0];
+        let mut __mpi_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__mpi_i, __mpi_s) in __mpi_seed_refs.iter().enumerate() {
+            if __mpi_i >= __mpi_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __mpi_pda_seeds[__mpi_i] = pinocchio::instruction::Seed::from(*__mpi_s);
+        }
+        let __mpi_signer = pinocchio::instruction::Signer::from(&__mpi_pda_seeds[..__mpi_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__mpi_ix, &[${mint}], &[__mpi_signer])?;`
+      : `        pinocchio::cpi::invoke(&__mpi_ix, &[${mint}])?;`;
+    return `    // Token-2022 MetadataPointer extension init — ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __mpi_data: [u8; 66] = {
+            let mut d = [0u8; 66];
+            d[0] = 39u8; // parent disc TokenInstruction::MetadataPointerExtension
+            d[1] = 0u8;  // sub-disc MetadataPointerInstruction::Initialize
+${authBlock}
+${metadataBlock}
+            d
+        };
+        let __mpi_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+        ];
+        let __mpi_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__mpi_metas,
+            data: &__mpi_data,
+        };
+${invokeCall}
+    }`;
+  }
+
   override emitT22NonTransferableMintInitialize(
     mint: string,
     _tokenProgram: string,

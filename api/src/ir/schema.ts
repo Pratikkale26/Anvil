@@ -535,6 +535,68 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // anchor_spl::token_2022_extensions::transfer_hook::
+  // transfer_hook_initialize. Mint-level extension. Sets an optional
+  // authority that can later update the hook program id, and an
+  // optional initial hook program id. Both arguments are
+  // OptionalNonZeroPubkey at the wire level — flat 32-byte fields where
+  // an all-zero pubkey encodes None. Distinct byte layout from
+  // MintCloseAuthority's COption-tagged form.
+  z.object({
+    kind: z.literal("cpi_t22_transfer_hook_initialize"),
+    /** AccountInfo binding for the mint being initialized. */
+    mint: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    /** Source expression for the hook authority (Option<Pubkey>). Use
+     *  the literal "None" or a `Some(<expr>)` form. */
+    authority: z.string(),
+    /** Source expression for the initial hook program id
+     *  (Option<Pubkey>). Use the literal "None" or `Some(<expr>)`. */
+    transferHookProgramId: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_2022_extensions::transfer_hook::
+  // transfer_hook_update. Updates the hook program id on a mint that
+  // already has the TransferHook extension initialized. Needs the
+  // existing authority as an additional signer account. Sub-instruction
+  // byte 1 under parent disc 36; payload is a single
+  // OptionalNonZeroPubkey (32 bytes).
+  z.object({
+    kind: z.literal("cpi_t22_transfer_hook_update"),
+    /** AccountInfo binding for the mint being updated. */
+    mint: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    /** AccountInfo binding for the current hook authority (signer). */
+    authority: z.string(),
+    /** Source expression for the new hook program id
+     *  (Option<Pubkey>). Use the literal "None" or `Some(<expr>)`. */
+    transferHookProgramId: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_2022_extensions::metadata_pointer::
+  // metadata_pointer_initialize. Mint-level extension. Sets an
+  // optional authority that could later update the pointer (no anchor-
+  // spl wrapper exposes update; raw spl_token_2022 supports it but is
+  // out-of-scope for this kind) and the optional metadata address.
+  // Both Options use the OptionalNonZeroPubkey flat layout.
+  z.object({
+    kind: z.literal("cpi_t22_metadata_pointer_initialize"),
+    /** AccountInfo binding for the mint being initialized. */
+    mint: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    /** Source expression for the pointer authority (Option<Pubkey>). */
+    authority: z.string(),
+    /** Source expression for the metadata account address
+     *  (Option<Pubkey>). Use the literal "None" or `Some(<expr>)`. */
+    metadataAddress: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // anchor_spl::token_interface::transfer_checked_with_fee. The
   // TransferFee variant of transfer_checked. Token-2022 program
   // verifies decimals AND that the caller-provided fee matches the

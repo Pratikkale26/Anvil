@@ -25,10 +25,10 @@ Statuses:
 | DefaultAccountState | Y (init+update) | Y (init+update) | newly-initialized accounts start frozen — Y for state-aware code; init+update differential-gated 2026-05-07 (Pinocchio uses literal-AccountState→u8 mapping for the state byte) |
 | ImmutableOwner | Y | Y | none on base CPIs — Y; init differential-gated 2026-05-07 |
 | PermanentDelegate | Y (init) | Y (init) | `transfer_checked` honors the delegate — Y; init differential-gated 2026-05-13 (EM2 S1) |
-| MetadataPointer | partial | partial | none on base CPIs — Y |
+| MetadataPointer | Y (init) | Y (init) | none on base CPIs — Y; init differential-gated 2026-05-13 (EM2 S2); update wrapper not exposed by anchor-spl 0.31/0.32 |
 | TokenMetadata | Y (init+update_field+update_authority) | Y (init+update_field+update_authority) | none on base CPIs — Y; init+update_field+update_authority differential-gated 2026-05-07 across both targets via 4-instruction byte-equal harness exercising Field::Name + Field::Key("...") + OptionalNonZeroPubkey::None |
 | GroupPointer / MemberPointer | partial | partial | none on base CPIs — Y |
-| TransferHook | partial | partial | base `transfer_checked` triggers the hook program — Y if hook program is co-deployed |
+| TransferHook | Y (init+update) | Y (init+update) | base `transfer_checked` triggers the hook program — Y if hook program is co-deployed; init+update differential-gated 2026-05-13 (EM2 S2) |
 | ConfidentialTransferMint | lint | lint | requires zk-proofs path; `transfer_checked` doesn't apply to encrypted balances |
 
 ## What "partial" means concretely

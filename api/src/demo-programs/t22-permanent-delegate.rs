@@ -4,7 +4,7 @@ use anchor_spl::token_2022_extensions::{
 };
 use anchor_spl::token_interface::Token2022;
 
-declare_id!("PdL9k1mNoP3Q4R5S6T7U8V9W0X1Y2Z3aA4bB5cC6dD7");
+declare_id!("DbiTf8MU6NkjeXZB72DLxtmuVBPCauf9CwPu7B6Wb5qw");
 
 #[program]
 pub mod t22_permanent_delegate {

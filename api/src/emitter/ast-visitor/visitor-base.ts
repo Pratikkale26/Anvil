@@ -692,6 +692,9 @@ type CpiT22TransferFeeSetFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_
 type CpiT22ImmutableOwnerInit = Extract<BodyStatement, { kind: "cpi_t22_immutable_owner_initialize" }>;
 type CpiT22MintCloseAuthorityInit = Extract<BodyStatement, { kind: "cpi_t22_mint_close_authority_initialize" }>;
 type CpiT22PermanentDelegateInit = Extract<BodyStatement, { kind: "cpi_t22_permanent_delegate_initialize" }>;
+type CpiT22TransferHookInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_hook_initialize" }>;
+type CpiT22TransferHookUpdate = Extract<BodyStatement, { kind: "cpi_t22_transfer_hook_update" }>;
+type CpiT22MetadataPointerInit = Extract<BodyStatement, { kind: "cpi_t22_metadata_pointer_initialize" }>;
 type CpiT22TransferCheckedWithFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_checked_with_fee" }>;
 type CpiT22WithdrawWithheldFromMint = Extract<BodyStatement, { kind: "cpi_t22_withdraw_withheld_tokens_from_mint" }>;
 type CpiT22HarvestWithheldToMint = Extract<BodyStatement, { kind: "cpi_t22_harvest_withheld_tokens_to_mint" }>;
@@ -748,6 +751,9 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_t22_immutable_owner_initialize",
   "cpi_t22_mint_close_authority_initialize",
   "cpi_t22_permanent_delegate_initialize",
+  "cpi_t22_transfer_hook_initialize",
+  "cpi_t22_transfer_hook_update",
+  "cpi_t22_metadata_pointer_initialize",
   "cpi_t22_transfer_checked_with_fee",
   "cpi_t22_withdraw_withheld_tokens_from_mint",
   "cpi_t22_harvest_withheld_tokens_to_mint",
@@ -811,6 +817,12 @@ export class AstVisitorBase {
         return this.visitCpiT22MintCloseAuthorityInit(stmt);
       case "cpi_t22_permanent_delegate_initialize":
         return this.visitCpiT22PermanentDelegateInit(stmt);
+      case "cpi_t22_transfer_hook_initialize":
+        return this.visitCpiT22TransferHookInit(stmt);
+      case "cpi_t22_transfer_hook_update":
+        return this.visitCpiT22TransferHookUpdate(stmt);
+      case "cpi_t22_metadata_pointer_initialize":
+        return this.visitCpiT22MetadataPointerInit(stmt);
       case "cpi_t22_transfer_checked_with_fee":
         return this.visitCpiT22TransferCheckedWithFee(stmt);
       case "cpi_t22_withdraw_withheld_tokens_from_mint":
@@ -2365,6 +2377,56 @@ export class AstVisitorBase {
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
       delegateResolved,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22TransferHookInit(stmt: CpiT22TransferHookInit): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: transfer_hook_initialize(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    const authorityResolved = w.transformCtxAccountsReferences(stmt.authority);
+    const hookIdResolved = w.transformCtxAccountsReferences(stmt.transferHookProgramId);
+    lines.push(w.emitter.emitT22TransferHookInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      authorityResolved,
+      hookIdResolved,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22TransferHookUpdate(stmt: CpiT22TransferHookUpdate): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: transfer_hook_update(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    const hookIdResolved = w.transformCtxAccountsReferences(stmt.transferHookProgramId);
+    lines.push(w.emitter.emitT22TransferHookUpdate(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      snakeCase(stmt.authority),
+      hookIdResolved,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22MetadataPointerInit(stmt: CpiT22MetadataPointerInit): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: metadata_pointer_initialize(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    const authorityResolved = w.transformCtxAccountsReferences(stmt.authority);
+    const metadataResolved = w.transformCtxAccountsReferences(stmt.metadataAddress);
+    lines.push(w.emitter.emitT22MetadataPointerInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      authorityResolved,
+      metadataResolved,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ));
     return this.applyStructuralize(lines);

@@ -94,6 +94,9 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   // EM2 Session 1 — MintCloseAuthority + PermanentDelegate.
   "t22-mint-close-authority": "t22-mint-close-authority.rs",
   "t22-permanent-delegate": "t22-permanent-delegate.rs",
+  // EM2 Session 2 — TransferHook (init + update) + MetadataPointer (init).
+  "t22-transfer-hook": "t22-transfer-hook.rs",
+  "t22-metadata-pointer": "t22-metadata-pointer.rs",
   // Zero-copy AccountLoader handle (zero_copy_load_init/_mut/_).
   "zero-copy-foo": "zero-copy-foo.rs",
 };

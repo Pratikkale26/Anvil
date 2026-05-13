@@ -4,7 +4,7 @@ use anchor_spl::token_2022_extensions::{
 };
 use anchor_spl::token_interface::Token2022;
 
-declare_id!("Mca7H4M9pPXq3vYz1k8Q2w5L9P0sR3tU6V8W0X1Y2Z3");
+declare_id!("5rMLwBQQmDz4aXY7Tw6d3K4v2vktUVYXsNFpm3LAEh4x");
 
 #[program]
 pub mod t22_mint_close_authority {
