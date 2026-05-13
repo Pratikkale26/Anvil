@@ -2333,60 +2333,242 @@ export class AstVisitorBase {
    * doesn't model directly yet; defer structural conversion to a later
    * commit.
    */
+  /**
+   * Shared signer-seeds prelude. Returns the prelude lines if the
+   * legacy-default-name `signer_seeds` ident applies AND isn't already
+   * in scope from a typed pda_signer_seeds — otherwise empty. Mirrors
+   * `shouldEmitSignerSeedsPrelude` + `ensureSignerSeedsForAccount`
+   * usage seen across the T22 handler family.
+   */
+  private cpiSignerSeedsPrelude(signerSeeds: string | undefined, anchorAccount: string): string[] {
+    const w = this.walker;
+    if (!shouldEmitSignerSeedsPrelude(w, signerSeeds)) return [];
+    return w.ensureSignerSeedsForAccount(anchorAccount);
+  }
+
   visitCpiT22NonTransferableMintInit(stmt: CpiT22NonTransferableMintInit): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22NonTransferableMintInit, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: non_transferable_mint_initialize(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    lines.push(w.emitter.emitT22NonTransferableMintInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22TransferFeeInit(stmt: CpiT22TransferFeeInit): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22TransferFeeInit, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: transfer_fee_initialize(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    // Authority expressions reference Anchor-side ctx.accounts.X.key();
+    // route them through the same passes the body emitter uses for typed
+    // CPI value args so they resolve to local AccountInfo bindings.
+    const tfca = w.transformCtxAccountsReferences(stmt.transferFeeConfigAuthority);
+    const wwa = w.transformCtxAccountsReferences(stmt.withdrawWithheldAuthority);
+    lines.push(w.emitter.emitT22TransferFeeInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      tfca,
+      wwa,
+      stmt.basisPoints,
+      stmt.maximumFee,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22TransferFeeSetFee(stmt: CpiT22TransferFeeSetFee): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22TransferFeeSetFee, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: transfer_fee_set(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.authority);
+    lines.push(w.emitter.emitT22TransferFeeSetFee(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      snakeCase(stmt.authority),
+      stmt.basisPoints,
+      stmt.maximumFee,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22ImmutableOwnerInit(stmt: CpiT22ImmutableOwnerInit): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22ImmutableOwnerInit, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: immutable_owner_initialize(${stmt.tokenAccount})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.tokenAccount);
+    lines.push(w.emitter.emitT22ImmutableOwnerInitialize(
+      snakeCase(stmt.tokenAccount),
+      snakeCase(stmt.tokenProgram),
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22TransferCheckedWithFee(stmt: CpiT22TransferCheckedWithFee): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22TransferCheckedWithFee, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: transfer_checked_with_fee(${stmt.source} -> ${stmt.destination})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.authority);
+    lines.push(w.emitter.emitT22TransferCheckedWithFee(
+      snakeCase(stmt.source),
+      snakeCase(stmt.mint),
+      snakeCase(stmt.destination),
+      snakeCase(stmt.authority),
+      snakeCase(stmt.tokenProgram),
+      stmt.amount,
+      stmt.decimals,
+      stmt.fee,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22WithdrawWithheldFromMint(stmt: CpiT22WithdrawWithheldFromMint): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22WithdrawWithheldFromMint, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: withdraw_withheld_tokens_from_mint(${stmt.mint} -> ${stmt.destination})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.authority);
+    lines.push(w.emitter.emitT22WithdrawWithheldFromMint(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.destination),
+      snakeCase(stmt.authority),
+      snakeCase(stmt.tokenProgram),
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22HarvestWithheldToMint(stmt: CpiT22HarvestWithheldToMint): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22HarvestWithheldToMint, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: harvest_withheld_tokens_to_mint(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    // sources expression may reference ctx.accounts.X / ctx.remaining_accounts.
+    const sourcesResolved = w.transformCtxAccountsReferences(stmt.sources);
+    lines.push(w.emitter.emitT22HarvestWithheldToMint(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      sourcesResolved,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22DefaultAccountStateInit(stmt: CpiT22DefaultAccountStateInit): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22DefaultAccountStateInit, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: default_account_state_initialize(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    lines.push(w.emitter.emitT22DefaultAccountStateInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      stmt.state,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22DefaultAccountStateUpdate(stmt: CpiT22DefaultAccountStateUpdate): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22DefaultAccountStateUpdate, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: default_account_state_update(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.freezeAuthority);
+    lines.push(w.emitter.emitT22DefaultAccountStateUpdate(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      snakeCase(stmt.freezeAuthority),
+      stmt.state,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22InterestBearingMintInit(stmt: CpiT22InterestBearingMintInit): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22InterestBearingMintInit, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: interest_bearing_mint_initialize(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    // Rate-authority arg may reference ctx.accounts.X.key().
+    const rateAuth = w.transformCtxAccountsReferences(stmt.rateAuthority);
+    lines.push(w.emitter.emitT22InterestBearingMintInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      rateAuth,
+      stmt.rate,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22InterestBearingMintUpdateRate(stmt: CpiT22InterestBearingMintUpdateRate): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22InterestBearingMintUpdateRate, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: interest_bearing_mint_update_rate(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.rateAuthority);
+    lines.push(w.emitter.emitT22InterestBearingMintUpdateRate(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      snakeCase(stmt.rateAuthority),
+      stmt.rate,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22TokenMetadataInit(stmt: CpiT22TokenMetadataInit): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22TokenMetadataInit, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: token_metadata_initialize(${stmt.metadata})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mintAuthority);
+    lines.push(w.emitter.emitT22TokenMetadataInitialize(
+      snakeCase(stmt.metadata),
+      snakeCase(stmt.mint),
+      snakeCase(stmt.mintAuthority),
+      snakeCase(stmt.updateAuthority),
+      snakeCase(stmt.tokenProgram),
+      stmt.name,
+      stmt.symbol,
+      stmt.uri,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22TokenMetadataUpdateField(stmt: CpiT22TokenMetadataUpdateField): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22TokenMetadataUpdateField, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: token_metadata_update_field(${stmt.metadata})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.updateAuthority);
+    lines.push(w.emitter.emitT22TokenMetadataUpdateField(
+      snakeCase(stmt.metadata),
+      snakeCase(stmt.updateAuthority),
+      snakeCase(stmt.tokenProgram),
+      stmt.field,
+      stmt.value,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22TokenMetadataUpdateAuthority(stmt: CpiT22TokenMetadataUpdateAuthority): RustStmt[] {
-    return this.captureAndConvert(handleCpiT22TokenMetadataUpdateAuthority, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: token_metadata_update_authority(${stmt.metadata})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.currentAuthority);
+    lines.push(w.emitter.emitT22TokenMetadataUpdateAuthority(
+      snakeCase(stmt.metadata),
+      snakeCase(stmt.currentAuthority),
+      snakeCase(stmt.tokenProgram),
+      stmt.newAuthority,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   /**
@@ -2545,27 +2727,109 @@ export class AstVisitorBase {
   }
 
   /**
-   * cpi_custom — pass-through CPI with raw `rawCode`. The body itself
-   * needs IR-level Rust expression model to fully structuralize (same
-   * blocker as `pass_through`), but the comment-line is structural via
-   * `comment` AST. Net: -1 raw_line per occurrence; the body stays as
-   * a raw_line until M5 lands the IR extension.
+   * cpi_custom — pass-through CPI with raw `rawCode`. The transformed
+   * body still needs the IR-level Rust expression model to fully
+   * structuralize (same blocker as pass_through), but each line gets a
+   * tryStructuralizeMultiLine + convertPassThroughLine attempt via
+   * applyStructuralize. Direct port of `handleCpiCustom`.
    */
   visitCpiCustom(stmt: CpiCustom): RustStmt[] {
-    // Handler appends `?;` (or `;`) to the rawCode-derived call. Replicating
-    // that branch in the visitor structurally drifts on transformedCpiCode's
-    // tail-detection — route through captureAndConvert so each captured line
-    // gets a tryStructuralizeMultiLine attempt while lossless-falling-back
-    // to rawLine on shapes the converter doesn't recognize.
-    return this.captureAndConvert(handleCpiCustom, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.warnings.push(
+      `Custom CPI to '${stmt.programAccount}' — passed through as raw code. Verify framework compatibility.`,
+    );
+    const { prelude: cpiPrelude, code: cpiCode } = w.replaceBumpRefs(stmt.rawCode);
+    let transformedCpiCode = w.normalizeKeyValueUsages(
+      w.transformAccountReferences(
+        w.transformCtxAccountsReferences(w.transformNestedAnchorCode(cpiCode)),
+      ),
+    );
+    if (w.emitter.frameworkName !== "Native") {
+      transformedCpiCode = transformedCpiCode.replace(/\.to_account_info\(\)/g, "");
+    }
+    const lines: string[] = [];
+    for (const preludeLine of cpiPrelude) lines.push(preludeLine);
+    lines.push(`    // ⚠️ Anvil: Custom CPI — verify this works with ${w.emitter.frameworkName}`);
+    // Tail-detection mirrors handleCpiCustom: `invoke[_signed](...)` → `?;`,
+    // other calls ending in `)` → `;`, expressions already terminated stay
+    // as-is.
+    const tail = transformedCpiCode.trimEnd();
+    const isInvoke = /^\s*(?:&)?\s*(?:pinocchio::cpi::)?invoke(?:_signed)?\s*\(/.test(transformedCpiCode);
+    let suffix = "";
+    if (tail.endsWith(")")) suffix = isInvoke ? "?;" : ";";
+    else if (!tail.endsWith(";") && !tail.endsWith("?")) suffix = ";";
+    lines.push(`    ${transformedCpiCode}${suffix}`);
+    return this.applyStructuralize(lines);
   }
 
+  /**
+   * Metaplex create_metadata_v3 typed CPI. Pinocchio + Native both emit
+   * the real `mpl_create_metadata_accounts_v3` helper call (added by
+   * #45). ctx.accounts / ctx.bumps references in IR fields get resolved
+   * to local AccountInfo bindings via the same transforms pass_through
+   * CPI bodies use. Direct port of `handleCpiMplCreateMetadataV3`.
+   */
   visitCpiMplCreateMetadataV3(stmt: CpiMplCreateMetadataV3): RustStmt[] {
-    return this.captureAndConvert(handleCpiMplCreateMetadataV3, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const lines: string[] = [
+      `    mpl_create_metadata_accounts_v3(`,
+      `        ${resolve(stmt.metadata)},`,
+      `        ${resolve(stmt.mint)},`,
+      `        ${resolve(stmt.mintAuthority)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolve(stmt.updateAuthority)},`,
+      `        system_program,`,
+      `        rent,`,
+      `        token_metadata_program,`,
+      `        &${stmt.name},`,
+      `        &${stmt.symbol},`,
+      `        &${stmt.uri},`,
+      `        ${stmt.sellerFeeBasisPoints},`,
+      `        ${stmt.isMutable},`,
+      `        ${stmt.updateAuthorityIsSigner},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
   }
 
+  /**
+   * Metaplex create_master_edition_v3 typed CPI. Same shape as
+   * create_metadata_v3; field map differs. Direct port of
+   * `handleCpiMplCreateMasterEditionV3`.
+   */
   visitCpiMplCreateMasterEditionV3(stmt: CpiMplCreateMasterEditionV3): RustStmt[] {
-    return this.captureAndConvert(handleCpiMplCreateMasterEditionV3, stmt);
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const lines: string[] = [
+      `    mpl_create_master_edition_v3(`,
+      `        ${resolve(stmt.edition)},`,
+      `        ${resolve(stmt.mint)},`,
+      `        ${resolve(stmt.updateAuthority)},`,
+      `        ${resolve(stmt.mintAuthority)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolve(stmt.metadata)},`,
+      `        token_program,`,
+      `        system_program,`,
+      `        rent,`,
+      `        token_metadata_program,`,
+      `        ${stmt.maxSupply},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
   }
 
   /**
