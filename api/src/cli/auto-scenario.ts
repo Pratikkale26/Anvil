@@ -118,6 +118,10 @@ function defaultForAmountArg(argName: string): number | undefined {
   if (/(^|_)(amount|amt|size|qty|tokens?|value|supply|balance|deposit|stake|liquidity|reserve|notional|collateral)(_|$)/.test(n)) return 1_000_000;
   if (/_(in|out)$/.test(n)) return 1_000_000;
   if (/_desired$/.test(n)) return 1_000_000;
+  // Lamports-named amounts (e.g. fund_lamports). 1 SOL is comfortably
+  // above rent-exempt thresholds for typical sub-1KB account allocations
+  // and leaves headroom for downstream transfers.
+  if (/(^|_)lamports(_|$)/.test(n)) return 1_000_000_000;
   return undefined;
 }
 
@@ -635,14 +639,23 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       // every case; leaving the second shape for a follow-up if needed.
     }
   }
-  // Never mark the FIRST signer in any instruction as unfunded — that signer
-  // is the fee payer for the txn and needs funds.
+  // When a Signer is ALSO the first signer (fee payer) of some instruction
+  // AND a create_account target, it can't be airdrop=0 — the tx-fee
+  // deduction needs lamports to come from somewhere. But airdrop=10 SOL
+  // breaks the create_account CPI which requires `to` lamports == 0.
+  // Compromise: airdrop exactly the single-signature tx fee (5000 lamports);
+  // after the fee deduction during txn processing the account hits 0
+  // lamports and create_account succeeds (pda-rent-payer-pe pattern).
   const firstSignerNames = new Set<string>();
   for (const ix of ir.instructions) {
     const first = ix.accounts.find((a) => isSignerAccount(a.accountType));
     if (first) firstSignerNames.add(first.name);
   }
-  for (const fn of firstSignerNames) createAccountTargetNames.delete(fn);
+  const createAccountTargetsFeePayer = new Set<string>();
+  for (const name of createAccountTargetNames) {
+    if (firstSignerNames.has(name)) createAccountTargetsFeePayer.add(name);
+  }
+  for (const fn of createAccountTargetsFeePayer) createAccountTargetNames.delete(fn);
 
   // ── (4b) Identify $keypair: accounts with `owner = id()` constraint ──
   // Anchor's runtime constraint check rejects System-Program-owned accounts
@@ -839,7 +852,14 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       name,
       // Signers that show up as `to:` in system_program::create_account must
       // start at 0 lamports — the CPI fails otherwise. See (4a) above.
-      airdrop: createAccountTargetNames.has(name) ? 0 : 10_000_000_000,
+      // If the same signer is the fee payer somewhere, airdrop the single-sig
+      // tx fee (5000 lamports) so the post-fee balance hits 0 and the CPI
+      // still succeeds.
+      airdrop: createAccountTargetNames.has(name)
+        ? 0
+        : createAccountTargetsFeePayer.has(name)
+          ? 5_000
+          : 10_000_000_000,
     })),
     pdas: [...pdaSpecs.entries()].map<PdaDecl>(([name, spec]) => ({ name, seeds: spec.seeds })),
     mints: [...mintNames].map<MintDecl>((name) => ({
