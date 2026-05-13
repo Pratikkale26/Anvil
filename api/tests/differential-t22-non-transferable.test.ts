@@ -36,6 +36,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(
   import.meta.dir,
@@ -82,7 +83,7 @@ defineDifferential({
     setupTx.feePayer = ctx.payer.publicKey;
     setupTx.sign(ctx.payer, ctx.mint);
     const r1 = svm.sendTransaction(setupTx);
-    if ("err" in r1) {
+    if (isTxFailure(r1)) {
       throw new Error("t22-non-transferable setup failed: " + JSON.stringify(r1));
     }
 
@@ -99,7 +100,7 @@ defineDifferential({
     tx.feePayer = ctx.payer.publicKey;
     tx.sign(ctx.payer);
     const r2 = svm.sendTransaction(tx);
-    if ("err" in r2) {
+    if (isTxFailure(r2)) {
       const errStr =
         typeof r2.err === "object" ? Object.prototype.toString.call(r2.err) + " " + (r2.err?.toString?.() ?? "") : String(r2.err);
       throw new Error(

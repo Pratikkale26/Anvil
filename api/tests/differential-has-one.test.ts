@@ -23,6 +23,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "has-one.rs");
 const PROGRAM_ID = "Absfps8DboaQrCi71THcW4r1CuhrQLokx6DVufbnDmUZ";
@@ -68,14 +69,14 @@ defineDifferential({
     tx1.feePayer = ctx.owner.publicKey;
     tx1.sign(ctx.owner, ctx.safe);
     const r1 = svm.sendTransaction(tx1);
-    if ("err" in r1) throw new Error(`init failed: ${JSON.stringify(r1.err)}`);
+    if (isTxFailure(r1)) throw new Error(`init failed: ${txFailureMessage(r1)}`);
 
     const tx2 = new Transaction().add(bumpIx);
     tx2.recentBlockhash = svm.latestBlockhash();
     tx2.feePayer = ctx.owner.publicKey;
     tx2.sign(ctx.owner);
     const r2 = svm.sendTransaction(tx2);
-    if ("err" in r2) throw new Error(`bump failed: ${JSON.stringify(r2.err)}`);
+    if (isTxFailure(r2)) throw new Error(`bump failed: ${txFailureMessage(r2)}`);
   },
 
   accountsToCompare: (ctx) => [

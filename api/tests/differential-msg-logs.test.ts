@@ -30,6 +30,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "msg-emit.rs");
 const PROGRAM_ID = "MsgEmit111111111111111111111111111111111111";
@@ -83,7 +84,7 @@ defineDifferential({
       tx.feePayer = ctx.payer.publicKey;
       tx.sign(ctx.payer);
       const r = svm.sendTransaction(tx);
-      if ("err" in r) throw new Error(`tx failed: ${JSON.stringify(r.err)}`);
+      if (isTxFailure(r)) throw new Error(`tx failed: ${txFailureMessage(r)}`);
     }
   },
 

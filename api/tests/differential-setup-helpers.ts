@@ -37,6 +37,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 /**
  * Allocate + initialize an SPL Token mint. Returns the two ix to compose.
@@ -159,7 +160,7 @@ export function sendSetupTx(
   tx.feePayer = feePayer;
   tx.sign(...signers);
   const r = svm.sendTransaction(tx);
-  if ("err" in r) {
-    throw new Error(`${errLabel} failed: ${JSON.stringify(r.err)}`);
+  if (isTxFailure(r)) {
+    throw new Error(`${errLabel} failed: ${txFailureMessage(r)}`);
   }
 }

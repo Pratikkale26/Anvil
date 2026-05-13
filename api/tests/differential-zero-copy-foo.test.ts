@@ -26,6 +26,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const DEMO_SRC = join(import.meta.dir, "..", "src", "demo-programs", "zero-copy-foo.rs");
 const PROGRAM_ID = "ZcpFoo1xperiment11111111111111111111111111K";
@@ -88,9 +89,9 @@ defineDifferential({
     tx1.feePayer = ctx.authority.publicKey;
     tx1.sign(ctx.authority, ctx.foo);
     const r1 = svm.sendTransaction(tx1);
-    if ("err" in r1) {
+    if (isTxFailure(r1)) {
       const logs = (r1 as { meta?: { logs?: string[] } }).meta?.logs ?? [];
-      throw new Error(`tx1 failed: ${JSON.stringify(r1.err)}\nlogs:\n${logs.join("\n")}`);
+      throw new Error(`tx1 failed: ${txFailureMessage(r1)}\nlogs:\n${logs.join("\n")}`);
     }
 
     const tx2 = new Transaction().add(updateFooIx);
@@ -98,9 +99,9 @@ defineDifferential({
     tx2.feePayer = ctx.authority.publicKey;
     tx2.sign(ctx.authority);
     const r2 = svm.sendTransaction(tx2);
-    if ("err" in r2) {
+    if (isTxFailure(r2)) {
       const logs = (r2 as { meta?: { logs?: string[] } }).meta?.logs ?? [];
-      throw new Error(`tx2 failed: ${JSON.stringify(r2.err)}\nlogs:\n${logs.join("\n")}`);
+      throw new Error(`tx2 failed: ${txFailureMessage(r2)}\nlogs:\n${logs.join("\n")}`);
     }
   },
 

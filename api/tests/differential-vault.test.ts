@@ -24,6 +24,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const VAULT_SRC = join(import.meta.dir, "..", "src", "demo-programs", "vault.rs");
 // Different program ID than counter so the on-chain owner check passes
@@ -95,7 +96,7 @@ defineDifferential({
       tx.feePayer = ctx.authority.publicKey;
       tx.sign(ctx.authority);
       const r = svm.sendTransaction(tx);
-      if ("err" in r) throw new Error(`vault tx failed: ${JSON.stringify(r.err)}`);
+      if (isTxFailure(r)) throw new Error(`vault tx failed: ${txFailureMessage(r)}`);
     }
   },
 

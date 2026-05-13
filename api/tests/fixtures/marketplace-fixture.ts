@@ -21,6 +21,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "../differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
 export const PROGRAM_ID = "MktP1ace11111111111111111111111111111111111";
 
@@ -81,5 +82,5 @@ export async function callInitializeMarketplace(
   tx.feePayer = ctx.admin.publicKey;
   tx.sign(ctx.admin);
   const r = svm.sendTransaction(tx);
-  if ("err" in r) throw new Error(`initialize tx failed: ${JSON.stringify(r.err)}`);
+  if (isTxFailure(r)) throw new Error(`initialize tx failed: ${txFailureMessage(r)}`);
 }

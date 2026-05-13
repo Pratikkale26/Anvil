@@ -32,6 +32,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "set-authority.rs");
 const PROGRAM_ID = "2Q4rAEjnfX9saZXrMieuKR49ozRVQiuJtamC7d8WFpGE";
@@ -91,7 +92,7 @@ spl-token = "7.0"`,
     setupTx.feePayer = ctx.payer.publicKey;
     setupTx.sign(ctx.payer, ctx.mint, ctx.tokenAccount);
     const r1 = svm.sendTransaction(setupTx);
-    if ("err" in r1) throw new Error(`setup failed: ${JSON.stringify(r1.err)}`);
+    if (isTxFailure(r1)) throw new Error(`setup failed: ${txFailureMessage(r1)}`);
 
     // Call the program's change_owner — flips token account owner from
     // current_owner to new_owner via token::set_authority CPI.
@@ -113,7 +114,7 @@ spl-token = "7.0"`,
     tx.feePayer = ctx.payer.publicKey;
     tx.sign(ctx.payer, ctx.currentOwner);
     const r2 = svm.sendTransaction(tx);
-    if ("err" in r2) throw new Error(`change_owner failed: ${JSON.stringify(r2.err)}`);
+    if (isTxFailure(r2)) throw new Error(`change_owner failed: ${txFailureMessage(r2)}`);
   },
 
   // Token account is SPL-layout (no Anchor disc).

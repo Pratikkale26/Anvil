@@ -40,6 +40,7 @@ import {
   LiteSVM,
 } from "./differential-harness.ts";
 import { setupMintAndAtaIxs, createMintIxs, sendSetupTx } from "./differential-setup-helpers.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "escrow.rs");
 const PROGRAM_ID = "Escrw11111111111111111111111111111111111111";
@@ -123,7 +124,7 @@ defineDifferential({
     tx.feePayer = ctx.maker.publicKey;
     tx.sign(ctx.maker);
     const r2 = svm.sendTransaction(tx);
-    if ("err" in r2) throw new Error(`create_escrow failed: ${JSON.stringify(r2.err)}`);
+    if (isTxFailure(r2)) throw new Error(`create_escrow failed: ${txFailureMessage(r2)}`);
   },
 
   stripDiscriminator: true,

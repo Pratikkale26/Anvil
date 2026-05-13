@@ -33,6 +33,7 @@ import {
   LiteSVM,
 } from "./differential-harness.ts";
 import { createMintIxs, sendSetupTx } from "./differential-setup-helpers.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "ata-mint.rs");
 const PROGRAM_ID = "AtaMint111111111111111111111111111111111111";
@@ -92,7 +93,7 @@ defineDifferential({
     tx.feePayer = ctx.payer.publicKey;
     tx.sign(ctx.payer);
     const r2 = svm.sendTransaction(tx);
-    if ("err" in r2) throw new Error(`mint_with_ata failed: ${JSON.stringify(r2.err)}`);
+    if (isTxFailure(r2)) throw new Error(`mint_with_ata failed: ${txFailureMessage(r2)}`);
   },
 
   // The mint AND the recipient ATA must be byte-equal across scenarios.

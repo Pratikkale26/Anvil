@@ -55,6 +55,7 @@ import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
 import { buildProjectScaffold } from "../src/emitter/project-scaffold.ts";
 import { validateEmitterOutput } from "../src/emitter/output-validator.ts";
 import { refineOutput } from "../src/ai/refine.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const CACHE_ROOT =
   process.env.ANVIL_DIFF_CACHE ??
@@ -158,7 +159,7 @@ if (!TOOLCHAIN_OK) {
             tx.feePayer = ctx.authority.publicKey;
             tx.sign(ctx.authority);
             const r = svm.sendTransaction(tx);
-            if ("err" in r) throw new Error(`tx failed: ${JSON.stringify(r.err)}`);
+            if (isTxFailure(r)) throw new Error(`tx failed: ${txFailureMessage(r)}`);
           }
         },
         accountsToCompare: (ctx: { counterPda: PublicKey }) => [
@@ -319,7 +320,7 @@ if (!TOOLCHAIN_OK) {
             tx.feePayer = ctx.authority.publicKey;
             tx.sign(ctx.authority);
             const r = svm.sendTransaction(tx);
-            if ("err" in r) throw new Error(`tx failed: ${JSON.stringify(r.err)}`);
+            if (isTxFailure(r)) throw new Error(`tx failed: ${txFailureMessage(r)}`);
           },
           accountsToCompare: (ctx: { counterPda: PublicKey }) => [
             { pubkey: ctx.counterPda, label: "counter_pda" },

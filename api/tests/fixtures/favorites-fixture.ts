@@ -25,6 +25,7 @@ import {
   LiteSVM,
 } from "../differential-harness.ts";
 import { existsSync, readFileSync } from "node:fs";
+import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
 /**
  * Path to the upstream lib.rs. Already cloned to /tmp/program-examples
@@ -133,5 +134,5 @@ export async function callSetFavorites(
   tx.feePayer = ctx.user.publicKey;
   tx.sign(ctx.user);
   const r = svm.sendTransaction(tx);
-  if ("err" in r) throw new Error(`set_favorites tx failed: ${JSON.stringify(r.err)}`);
+  if (isTxFailure(r)) throw new Error(`set_favorites tx failed: ${txFailureMessage(r)}`);
 }

@@ -25,6 +25,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "return-data.rs");
 const PROGRAM_ID = "Retdata111111111111111111111111111111111111";
@@ -51,7 +52,7 @@ defineDifferential({
     tx.feePayer = ctx.payer.publicKey;
     tx.sign(ctx.payer);
     const r = svm.sendTransaction(tx);
-    if ("err" in r) throw new Error(`tx failed: ${JSON.stringify(r.err)}`);
+    if (isTxFailure(r)) throw new Error(`tx failed: ${txFailureMessage(r)}`);
   },
 
   // No accounts — every signal lives in the set_return_data payload.

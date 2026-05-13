@@ -29,6 +29,7 @@ import {
   getProjectEntryPath,
 } from "../../src/parser/project-source.ts";
 import { existsSync } from "node:fs";
+import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
 export const LIB_RS =
   "/tmp/program-examples/basics/account-data/anchor/programs/anchor-program-example/src/lib.rs";
@@ -120,5 +121,5 @@ export async function callCreateAddressInfo(
   // allocated by system_program::create_account inside Anchor's init.
   tx.sign(ctx.payer, ctx.addressInfo);
   const r = svm.sendTransaction(tx);
-  if ("err" in r) throw new Error(`create_address_info tx failed: ${JSON.stringify(r.err)}`);
+  if (isTxFailure(r)) throw new Error(`create_address_info tx failed: ${txFailureMessage(r)}`);
 }

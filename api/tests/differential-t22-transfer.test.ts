@@ -39,6 +39,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "t22-transfer.rs");
 const PROGRAM_ID = "4bejS8bLDMyJSshuJwWaf73ZKF9EASdUb71Y59E3NQX9";
@@ -120,7 +121,7 @@ defineDifferential({
     setupTx.feePayer = ctx.payer.publicKey;
     setupTx.sign(ctx.payer, ctx.mint, ctx.fromAta, ctx.toAta, ctx.authority);
     const r1 = svm.sendTransaction(setupTx);
-    if ("err" in r1) {
+    if (isTxFailure(r1)) {
       throw new Error("t22 setup failed: " + JSON.stringify(r1));
     }
 
@@ -143,7 +144,7 @@ defineDifferential({
     tx.feePayer = ctx.payer.publicKey;
     tx.sign(ctx.payer, ctx.authority);
     const r2 = svm.sendTransaction(tx);
-    if ("err" in r2) {
+    if (isTxFailure(r2)) {
       throw new Error("t22 do_transfer failed: " + JSON.stringify(r2));
     }
   },

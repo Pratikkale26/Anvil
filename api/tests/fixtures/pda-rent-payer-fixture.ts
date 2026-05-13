@@ -34,6 +34,7 @@ import {
   getProjectEntryPath,
 } from "../../src/parser/project-source.ts";
 import { existsSync } from "node:fs";
+import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
 export const LIB_RS =
   "/tmp/program-examples/basics/pda-rent-payer/anchor/programs/anchor-program-example/src/lib.rs";
@@ -112,7 +113,7 @@ export async function callPdaRentPayer(
   tx1.feePayer = ctx.payer.publicKey;
   tx1.sign(ctx.payer);
   const r1 = svm.sendTransaction(tx1);
-  if ("err" in r1) throw new Error(`init_rent_vault tx failed: ${JSON.stringify(r1.err)}`);
+  if (isTxFailure(r1)) throw new Error(`init_rent_vault tx failed: ${txFailureMessage(r1)}`);
 
   // Tx 2: create_new_account(). The PDA pays for new_account's rent.
   const createIx = new TransactionInstruction({
@@ -132,5 +133,5 @@ export async function callPdaRentPayer(
   tx2.feePayer = ctx.payer.publicKey;
   tx2.sign(ctx.payer, ctx.newAccount);
   const r2 = svm.sendTransaction(tx2);
-  if ("err" in r2) throw new Error(`create_new_account tx failed: ${JSON.stringify(r2.err)}`);
+  if (isTxFailure(r2)) throw new Error(`create_new_account tx failed: ${txFailureMessage(r2)}`);
 }

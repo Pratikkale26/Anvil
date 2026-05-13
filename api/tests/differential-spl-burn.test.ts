@@ -29,6 +29,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "spl-burn.rs");
 const PROGRAM_ID = "2Ytt3TVz3AyEzWQCuSmoSZPyWqqvrF2Ko64rdWJgfcBN";
@@ -77,7 +78,7 @@ defineDifferential({
     setupTx.feePayer = ctx.payer.publicKey;
     setupTx.sign(ctx.payer, ctx.mint, ctx.fromAta, ctx.authority);
     const r1 = svm.sendTransaction(setupTx);
-    if ("err" in r1) throw new Error(`setup failed: ${JSON.stringify(r1.err)}`);
+    if (isTxFailure(r1)) throw new Error(`setup failed: ${txFailureMessage(r1)}`);
 
     // Burn 300_000 tokens.
     const ix = new TransactionInstruction({
@@ -98,7 +99,7 @@ defineDifferential({
     tx.feePayer = ctx.payer.publicKey;
     tx.sign(ctx.payer, ctx.authority);
     const r2 = svm.sendTransaction(tx);
-    if ("err" in r2) throw new Error(`do_burn failed: ${JSON.stringify(r2.err)}`);
+    if (isTxFailure(r2)) throw new Error(`do_burn failed: ${txFailureMessage(r2)}`);
   },
 
   stripDiscriminator: false,

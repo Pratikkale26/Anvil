@@ -30,6 +30,7 @@ import {
   mintToIx,
   sendSetupTx,
 } from "./differential-setup-helpers.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "spl-transfer.rs");
 const PROGRAM_ID = "2GMS2v2T4wqDwkfuZSmDcTKffxRKd63879ofy5J6vT34";
@@ -86,7 +87,7 @@ defineDifferential({
     tx.feePayer = ctx.payer.publicKey;
     tx.sign(ctx.payer, ctx.authority);
     const r2 = svm.sendTransaction(tx);
-    if ("err" in r2) throw new Error(`do_transfer failed: ${JSON.stringify(r2.err)}`);
+    if (isTxFailure(r2)) throw new Error(`do_transfer failed: ${txFailureMessage(r2)}`);
   },
 
   stripDiscriminator: false,

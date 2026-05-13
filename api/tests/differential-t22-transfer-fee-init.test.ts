@@ -37,6 +37,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(
   import.meta.dir,
@@ -86,7 +87,7 @@ defineDifferential({
     setupTx.feePayer = ctx.payer.publicKey;
     setupTx.sign(ctx.payer, ctx.mint);
     const r1 = svm.sendTransaction(setupTx);
-    if ("err" in r1) {
+    if (isTxFailure(r1)) {
       throw new Error("t22-tf-init setup failed: " + JSON.stringify(r1));
     }
 

@@ -18,6 +18,7 @@ import {
   PublicKey,
   LiteSVM,
 } from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const SRC = join(import.meta.dir, "..", "src", "demo-programs", "tip-jar.rs");
 const PROGRAM_ID = "TipJar1111111111111111111111111111111111111";
@@ -75,7 +76,7 @@ defineDifferential({
       tx.feePayer = ctx.owner.publicKey;
       tx.sign(ctx.owner);
       const r = svm.sendTransaction(tx);
-      if ("err" in r) throw new Error(`create_jar failed: ${JSON.stringify(r.err)}`);
+      if (isTxFailure(r)) throw new Error(`create_jar failed: ${txFailureMessage(r)}`);
     }
 
     // Tipper1 tips 100k
@@ -89,7 +90,7 @@ defineDifferential({
       tx.feePayer = signer.publicKey;
       tx.sign(signer);
       const r = svm.sendTransaction(tx);
-      if ("err" in r) throw new Error(`tip failed: ${JSON.stringify(r.err)}`);
+      if (isTxFailure(r)) throw new Error(`tip failed: ${txFailureMessage(r)}`);
     }
   },
 

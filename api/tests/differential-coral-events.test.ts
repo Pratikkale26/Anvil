@@ -36,6 +36,7 @@ import {
 } from "../src/parser/project-source.ts";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
 const REPO_PATH = "/tmp/coral-anchor";
 const LIB_RS = `${REPO_PATH}/tests/events/programs/events/src/lib.rs`;
@@ -120,8 +121,8 @@ defineDifferential({
       tx.feePayer = ctx.payer.publicKey;
       tx.sign(ctx.payer);
       const r = svm.sendTransaction(tx);
-      if ("err" in r) {
-        throw new Error(`tx failed: ${JSON.stringify(r.err)}`);
+      if (isTxFailure(r)) {
+        throw new Error(`tx failed: ${txFailureMessage(r)}`);
       }
     }
   },
