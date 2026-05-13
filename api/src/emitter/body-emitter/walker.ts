@@ -30,6 +30,7 @@ import type { BodyEmitterCallbacks, BodyEmitterContext } from "./types.js";
 // The legacy `handlers/` directory is gone; the two stragglers
 // (handlePassThrough, handlePdaSignerSeeds) live in body-emitter/ leaf
 // modules and are imported by the visitor directly.
+import { applyPostEmitCleanup } from "./post-emit-cleanup.js";
 
 export class BodyWalker {
   readonly lines: string[] = [];
@@ -186,28 +187,13 @@ export class BodyWalker {
       if (text.length > 0) this.lines.push(text);
     }
 
-    // Stacked-star collapse first — must run BEFORE the comparison-context
-    // strips below, since those expect a single `*` prefix. See
-    // collapseStackedKeyDerefs() at class top for the shared regex.
-    const result = this.collapseStackedKeyDerefs(this.lines.join("\n"));
-    return result
-      // Strip the deref on `*<X>.key` / `*<X>.key()` when its sibling in a
-      // comparison is already `&<expr>` — keeps both sides as `&Pubkey`
-      // instead of mixing `&Pubkey` with `Pubkey`. Triggers in iter-chain
-      // shapes like `if &acc.pubkey == *signer.key`, where Anchor source
-      // originally had `... == ctx.accounts.signer.key` (auto-deref'd to
-      // `&Pubkey`) and our `emitAccountKeyExpr` collapsed it to a by-value
-      // form. The `(?:\(\))?` suffix covers both native (`*X.key`, no parens)
-      // and pinocchio (`*X.key()`, parens) shapes.
-      .replace(/(&[\w.]+(?:\(\))?\s*[=!]=\s*)\*(\w+)\.key(\(\))?\b(?!\w)/g, "$1$2.key$3")
-      .replace(/\*(\w+)\.key(\(\))?\b(?!\w)(\s*[=!]=\s*&[\w.]+(?:\(\))?)/g, "$1.key$2$3")
-      // Strip the deref on `*<X>.key[()]` inside iter-chain closure bodies
-      // whose param is compared with `==` / `!=`. The closure param yielded
-      // by `Vec<Pubkey>::iter()` is `&Pubkey` (auto-borrow), so dropping the
-      // deref keeps `&Pubkey == &Pubkey` symmetric. Matches the multisig
-      // `multisig.owners.iter().position(|a| a == *proposer.key)` shape.
-      .replace(/\|\s*(\w+)\s*\|\s*\1\s*([=!]=)\s*\*(\w+)\.key(\(\))?\b(?!\w)/g, "|$1| $1 $2 $3.key$4")
-      .replace(/\|\s*(\w+)\s*\|\s*\*(\w+)\.key(\(\))?\b(?!\w)(\s*[=!]=\s*)\1\b/g, "|$1| $2.key$3$4$1");
+    // Post-emit cleanup: cross-stmt comparison-context regex chain. See
+    // body-emitter/post-emit-cleanup.ts for the full inventory + why
+    // each shape exists.
+    return applyPostEmitCleanup(
+      (code) => this.collapseStackedKeyDerefs(code),
+      this.lines.join("\n"),
+    );
   }
 
   // ─── Type / lookup helpers ────────────────────────────────────────────────
