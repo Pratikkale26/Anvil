@@ -51,13 +51,15 @@ Single metric: rawNode count across the 38-demo × 2-target corpus.
 
 **Opt-in AST_EMIT=1 path** (the eventual default): **63/63** binary-parity tests pass. The 2 remaining pre-existing failures (regex-solana-program-invoke pinocchio/native) were closed in commit `fad6ab4` by adding macro_call multi-line converter support + a struct_literal extra-indent gate. Pre-session count was 4 failures (4 → 2 via the cpi-custom RHC→CAC change in 19d108c, then 2 → 0 via fad6ab4). **The visitor path is byte-identical to the walker path on the entire snapshot corpus**.
 
-**HOWEVER**: an AST_EMIT=1 realworld-cargo sweep surfaced **3 failures** out of 94 cargo-build cases. Two were closed in commit `dcbe365` (brace-balance + nesting-depth gates in `visitPassThrough`):
+**An initial AST_EMIT=1 realworld-cargo sweep surfaced 3 failures** out of 94 cargo-build cases — pre-existing visitor-path gaps not caught by binary-parity. **All three closed this session**:
 
-- ✅ **coral-multisig/pinocchio** — closed by brace-balance gate (the if-block-open / -close lines now stay as rawLine since they're unbalanced)
-- ✅ **coral-multisig/native** — same fix
-- ⏸ **token-fundraiser** — remaining failure: `__compound_OP=__amount` placeholder leaks at `contribute.rs:91:34` in the visitor's compound branch. The visitor's `visitStateFieldAssign` regex match expects `^__compound_([+\-*\/])=__(.+)$` — but token-fundraiser's `add_to_total = current_total + amount` shape produces a slightly different placeholder that the regex misses, leaving the raw `__compound_/__amount` tokens in the emit. Walker path has a different rewriting hook that doesn't run in the visitor flow. Separate fix.
+- ✅ **coral-multisig/pinocchio** — closed in commit `dcbe365` (brace-balance + nesting-depth gates in `visitPassThrough`). The visitor was feeding individual has_one constraint check lines (if-block open / body / close, each its own walker.lines entry) to tryStructuralizeMultiLine, which recovered with misleading conversions.
+- ✅ **coral-multisig/native** — same fix as above.
+- ✅ **token-fundraiser** — closed in commit `4e4e709`. The visitor's `visitStateFieldAssign` used single-step AccountDef lookup, missing AccountDefs only reachable via the ix-account-binding's accountType indirection (`contributor_account → Contributor`). Compound branch silently skipped → `__compound_/__amount` placeholders leaked into emit. Ported the walker's two-step lookup.
 
-**Status**: AST_EMIT=1 cargo regressions 3 → 1. Default production path remains 94/94 cargo-build green + 117/117 binary parity. Session F flip needs one more fix (visitor compound placeholder handling) before it's safe.
+**Final AST_EMIT=1 status**: **63/63 binary-parity + 94/94 realworld-cargo green** — fully byte-equivalent to AST_EMIT=0 across the entire test corpus. **Session F flip is now technically unblocked.**
+
+**Production AST_EMIT=0 path remains 100% byte-identical** (117/117 + 984/984 + 94/94) — every change this session preserved the default path.
 
 **Production AST_EMIT=0 path remains 100% byte-identical and 1,195/1,195 green** — this regression is opt-in only and does not affect users today.
 
@@ -97,17 +99,15 @@ Beyond the existing fixture corpus, **165 fresh external Anchor programs** were 
 
 Concrete actions ranked by ROI:
 
-1. **Push the 14 commits to origin** — all on `main`. Tests green. The AST_EMIT=1 parity closure (commit `fad6ab4`) is the headline.
+1. **Push the 16 commits to origin** — all on `main`. Tests green. The AST_EMIT=1 parity + cargo closure across the entire corpus is the headline.
 
-2. **Run realworld-cargo with ANVIL_AST_EMIT=1 once externally** — verify the visitor path on the cargo-build axis (not just source-snapshot axis). If cargo build passes/fails identically with AST_EMIT=0 and AST_EMIT=1 across the 94-fixture corpus, **Session F is ready**.
+2. **Session F flip (ANVIL_AST_EMIT=1 default)** — small one-line delete in `walker.walk()`'s env check. Production routes through visitor; legacy walker dispatch becomes the fallback. Verified: 94/94 realworld-cargo green under AST_EMIT=1, identical to AST_EMIT=0. Recommend a 2-week soak window against external real-world fixtures + AI-refine telemetry before retiring walker handlers entirely.
 
-3. **Session F flip (ANVIL_AST_EMIT=1 default)** — small one-line delete in `walker.walk()`'s env check. Production routes through visitor; legacy walker dispatch unused. Soak 2 weeks against real-world fixtures + AI-refine feedback.
+3. **Land Session D's 5 cpi_t22 signer-seeds rawLines** — converter work on the Pinocchio __<X>_seed_refs/__<X>_pda_seeds setup pattern. Net: ~5-7 rawLines, mostly cosmetic at this point since both paths are byte-identical.
 
-4. **Land Session D's 5 cpi_t22 signer-seeds rawLines** — converter work on the Pinocchio __<X>_seed_refs/__<X>_pda_seeds setup pattern. Net: ~5-7 rawLines, mostly cosmetic at this point since AST_EMIT=1 is already byte-identical.
+4. **Corpus expansion** — the 165 external probe revealed candidates (anchor-examples ships 30 minimal Anchor programs each exercising one constraint/type — perfect for #14 byte-equal harness expansion).
 
-5. **Corpus expansion** — the 165 external probe revealed candidates (anchor-examples ships 30 minimal Anchor programs each exercising one constraint/type — perfect for #14 byte-equal harness expansion).
-
-6. **`pass_through` rawNodes (80) are an indefinite long-tail** — each new shape adds converter complexity. Now that AST_EMIT=1 is byte-identical, these don't affect production. Treat per-shape work as routine FIX-tier maintenance.
+5. **`pass_through` rawNodes (80) are an indefinite long-tail** — each new shape adds converter complexity. Now that AST_EMIT=1 is byte-identical, these don't affect correctness. Treat per-shape work as routine FIX-tier maintenance.
 
 ## Files touched this session
 
