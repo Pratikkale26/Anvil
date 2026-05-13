@@ -100,6 +100,7 @@ import {
   promoteFreeFnVisibility,
   promoteImplFnVisibility,
 } from "./emitter-base-utils.js";
+import { getParserSync, type SyntaxNode } from "../parser/ts-init.js";
 
 // ─── Abstract Emitter Interface ──────────────────────────────────────────────
 
@@ -2722,10 +2723,105 @@ export function rewriteSiblingCpiCalls(body: string): string {
   return out;
 }
 
+const STUB_BODY = ` {\n        // ⚠️ Anvil TODO: Anchor-only impl method body — manual port required.\n        // Original referenced CpiContext / ctx.accounts / require! macros that\n        // have no pinocchio/native equivalent at this layer.\n        Err(ProgramError::Custom(0))\n    }`;
+
+const ANCHOR_ONLY_MACRO_NAMES = new Set([
+  "require", "require_eq", "require_neq",
+  "require_keys_eq", "require_keys_neq",
+]);
+const ANCHOR_ONLY_PATH_PREFIXES = new Set(["CpiContext", "anchor_lang", "anchor_spl"]);
+
+function nodeHasError(n: SyntaxNode): boolean {
+  if (n.type === "ERROR" || n.isMissing) return true;
+  for (let i = 0; i < n.namedChildCount; i++) {
+    const c = n.namedChild(i);
+    if (c && nodeHasError(c)) return true;
+  }
+  return false;
+}
+
+function nodeHasAnchorOnlyPattern(n: SyntaxNode): boolean {
+  // scoped path like `CpiContext::new`, `anchor_lang::…`, `anchor_spl::…`
+  if (n.type === "scoped_identifier" || n.type === "scoped_type_identifier") {
+    const head = firstPathSegmentText(n);
+    if (head && ANCHOR_ONLY_PATH_PREFIXES.has(head)) return true;
+  }
+  // field chain: `ctx.accounts.X` / `ctx.bumps.X`
+  if (n.type === "field_expression") {
+    const value = n.childForFieldName("value");
+    if (value && value.type === "field_expression") {
+      const inner = value.childForFieldName("value");
+      const innerField = value.childForFieldName("field");
+      if (
+        inner && inner.type === "identifier" && inner.text === "ctx" &&
+        innerField && (innerField.text === "accounts" || innerField.text === "bumps")
+      ) return true;
+    }
+  }
+  // macro_invocation: require!, require_eq!, …
+  if (n.type === "macro_invocation") {
+    const nameNode = n.childForFieldName("macro");
+    if (nameNode && ANCHOR_ONLY_MACRO_NAMES.has(nameNode.text)) return true;
+  }
+  // signature shape `Context<Self>`
+  if (n.type === "generic_type") {
+    const tyNode = n.childForFieldName("type");
+    const argsNode = n.childForFieldName("type_arguments");
+    if (tyNode && tyNode.text === "Context" && argsNode && /\bSelf\b/.test(argsNode.text)) {
+      return true;
+    }
+  }
+  for (let i = 0; i < n.namedChildCount; i++) {
+    const c = n.namedChild(i);
+    if (c && nodeHasAnchorOnlyPattern(c)) return true;
+  }
+  return false;
+}
+
+function firstPathSegmentText(n: SyntaxNode): string | null {
+  // `A::B::C` → walk leftmost path; tree-sitter-rust nests these.
+  let cur: SyntaxNode | null = n;
+  while (cur && (cur.type === "scoped_identifier" || cur.type === "scoped_type_identifier")) {
+    const path = cur.childForFieldName("path");
+    if (!path) {
+      const name = cur.childForFieldName("name");
+      return name?.text ?? null;
+    }
+    cur = path;
+  }
+  return cur?.text ?? null;
+}
+
 export function stubAnchorOnlyImplItem(raw: string): string {
+  const parser = getParserSync();
+  if (parser) {
+    try {
+      const tree = parser.parse(raw);
+      if (tree) {
+        const root = tree.rootNode;
+        // Expect a single top-level function_item — skip const_item and any
+        // other shape; the regex fallback below preserves prior behavior for
+        // those edges.
+        if (root.namedChildCount === 1) {
+          const top = root.namedChild(0);
+          if (top && top.type === "function_item" && !nodeHasError(top)) {
+            const body = top.childForFieldName("body");
+            if (body && body.type === "block") {
+              if (!nodeHasAnchorOnlyPattern(top)) return raw;
+              const sig = raw.slice(0, body.startIndex).trimEnd();
+              return `${sig}${STUB_BODY}`;
+            }
+          }
+        }
+      }
+    } catch { /* fall through to regex fallback */ }
+  }
+
+  // Regex fallback — used when tree-sitter isn't initialized yet (sync paths
+  // before parseAnchor warms the singleton) or when the chunk isn't a
+  // standalone function_item. Manual depth-walk with string + comment skipping
+  // preserves bit-identity for the const_item path (no `{` at depth 0 ⇒ raw).
   if (!ANCHOR_ONLY_PATTERNS.some((re) => re.test(raw))) return raw;
-  // Find the first `{` at depth 0 (in non-string context) — that's the body
-  // start. Replace everything from `{` to the matching `}` with a stub body.
   let depth = 0;
   let inString = false;
   let inLine = false;
@@ -2747,11 +2843,9 @@ export function stubAnchorOnlyImplItem(raw: string): string {
       depth--;
       if (depth === 0 && bodyStart !== -1) {
         const sig = raw.slice(0, bodyStart).trimEnd();
-        const stub = ` {\n        // ⚠️ Anvil TODO: Anchor-only impl method body — manual port required.\n        // Original referenced CpiContext / ctx.accounts / require! macros that\n        // have no pinocchio/native equivalent at this layer.\n        Err(ProgramError::Custom(0))\n    }`;
-        return `${sig}${stub}`;
+        return `${sig}${STUB_BODY}`;
       }
     }
   }
-  // Body never closed — fall back to leaving raw text alone.
   return raw;
 }

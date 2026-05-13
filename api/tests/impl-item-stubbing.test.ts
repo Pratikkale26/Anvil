@@ -1,5 +1,12 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeAll } from "bun:test";
 import { stubAnchorOnlyImplItem } from "../src/emitter/emitter-base.ts";
+import { getParser } from "../src/parser/ts-init.ts";
+
+beforeAll(async () => {
+  // Warm the tree-sitter singleton so stubAnchorOnlyImplItem exercises its
+  // AST path (not just the regex fallback).
+  await getParser();
+});
 
 describe("stubAnchorOnlyImplItem — Anchor-pattern impl method stubbing", () => {
   test("stubs body containing CpiContext::new", () => {
@@ -73,5 +80,32 @@ describe("stubAnchorOnlyImplItem — Anchor-pattern impl method stubbing", () =>
     const out = stubAnchorOnlyImplItem(raw);
     // No body-level Anchor pattern, but the signature is Anchor-shaped — stub
     expect(out).toContain("⚠️ Anvil TODO");
+  });
+
+  test("AST path skips matches inside comments", () => {
+    // `CpiContext::new` appears only in a comment — should not trigger stub.
+    // The regex path treats this as a hit (false positive); the AST path
+    // ignores it. Both produce a valid Rust function the way users care.
+    const raw = `pub fn doubler(&self) -> u64 {
+        // formerly CpiContext::new(prog, accs);
+        self.x * 2
+    }`;
+    const out = stubAnchorOnlyImplItem(raw);
+    expect(out).not.toContain("⚠️ Anvil TODO");
+    expect(out).toContain("self.x * 2");
+  });
+
+  test("AST path skips matches inside string literals", () => {
+    const raw = `pub fn label() -> &'static str {
+        "CpiContext::not actually a call"
+    }`;
+    const out = stubAnchorOnlyImplItem(raw);
+    expect(out).not.toContain("⚠️ Anvil TODO");
+  });
+
+  test("const_item left unchanged", () => {
+    const raw = `pub const SEED_PREFIX: &[u8] = b"escrow";`;
+    const out = stubAnchorOnlyImplItem(raw);
+    expect(out).toBe(raw);
   });
 });
