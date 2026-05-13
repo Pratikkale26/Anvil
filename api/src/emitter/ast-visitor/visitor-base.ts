@@ -1287,18 +1287,23 @@ export class AstVisitorBase {
     const helperLines = w.lines.slice(before);
     w.lines.length = before;
 
-    const out: RustStmt[] = helperLines.map((l) => rawLine(l));
-    // `Ok(())` is a tail expression, not a statement — Rust returns the
-    // last expression of a block as the function's return value, and
-    // `Ok(());` (with semicolon) returns `()` instead of `Result<()>`,
-    // which is a type error on a `Result`-returning fn. The handler
-    // emits `    Ok(())` verbatim (no semicolon) for this reason. Use
-    // rawLine to mirror the exact byte shape and stay byte-identical
-    // to the handler chain. Once the printer grows a tail-expression
-    // AST kind we can lift this back to structural; doing it now would
-    // require either a tail_expr node OR a suppressSemicolon flag on
-    // expr_stmt, both schema growth for a single literal.
-    out.push(rawLine("    Ok(())"));
+    // Helper lines (from emitAutoCloseAccounts + emitPendingSaves) go
+    // through the same captureAndConvert pipeline used elsewhere —
+    // tryStructuralizeMultiLine first, falling back to convertPassThrough-
+    // Line per line. Without this pass each helper line was emitted as
+    // an opaque rawLine; with it many shapes (`{ ... }` close blocks,
+    // simple `target.try_borrow_mut_*` calls) convert structurally.
+    const out: RustStmt[] = [];
+    for (const entry of helperLines) {
+      const structural = tryStructuralizeMultiLine(entry);
+      if (structural !== null) out.push(...structural);
+      else out.push(convertPassThroughLine(entry));
+    }
+    // `Ok(())` is a tail expression (no trailing `;`). The handler
+    // emits `    Ok(())` verbatim because the function's return type
+    // is `Result<…>` and dropping the semicolon makes the block-tail
+    // expr the function's return value. tailExpr models this exactly.
+    out.push(tailExpr(call(path(["Ok"]), [lit("()")])));
     return out;
   }
 
