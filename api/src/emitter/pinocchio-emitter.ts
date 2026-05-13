@@ -3158,37 +3158,85 @@ export function emitPinocchioFull(ir: SolanaIR) {
 export const __testOnlyCommentOutT22ExtensionCallSites = (body: string) =>
   commentOutT22ExtensionCallSites(body);
 
-function commentOutT22ExtensionCallSites(body: string): string {
+// Public export so the Native emitter can apply the same statement-level
+// strip with a narrower blacklist (NATIVE_T22_TYPE_BLACKLIST). Centralising
+// the algorithm avoids divergence as new T22 patterns surface.
+export function applyT22ExtensionCommentout(
+  body: string,
+  opts?: { typeBlacklist?: ReadonlyArray<string>; fnBlacklist?: ReadonlyArray<string> },
+): string {
+  return commentOutT22ExtensionCallSites(body, opts);
+}
+
+// Pinocchio's full T22 blacklist — includes types that Native CAN resolve
+// (TransferFeeConfig, MintCloseAuthority, etc. all ship via spl_token_2022).
+// Use commentOutT22ExtensionCallSites() with no override on Pinocchio; pass
+// NATIVE_T22_TYPE_BLACKLIST on Native to limit the strip to types that don't
+// have a working Native equivalent post-emit.
+export const PINOCCHIO_T22_TYPE_BLACKLIST: ReadonlyArray<string> = [
+  "TransferFeeConfig",
+  "TransferFeeAmount",
+  "MintCloseAuthority",
+  "PermanentDelegate",
+  "StateWithExtensions",
+  "BaseStateWithExtensions",
+  "ExtensionType",
+  "PodMint",
+  "MintState",
+  "OptionalNonZeroPubkey",
+  "TransferHookExtension",
+  "ExtraAccountMetaList",
+  "ExecuteInstruction",
+  "InitializeExtraAccountMetaList",
+  "InterfaceAccount",
+];
+
+// Native subset — types whose chains break post-emit regardless of whether
+// the crate is available, because Anvil strips the Anchor wrappers that
+// provided the method surface (e.g. `mint.unpack_extension::<X>()` from
+// `Account<Mint>`). Excludes plain types like `TransferFeeConfig` that
+// Native can use directly via spl_token_2022.
+export const NATIVE_T22_TYPE_BLACKLIST: ReadonlyArray<string> = [
+  "StateWithExtensions",
+  "BaseStateWithExtensions",
+  "TransferHookExtension",
+  "ExtraAccountMetaList",
+  "ExecuteInstruction",
+  "InitializeExtraAccountMetaList",
+  "InterfaceAccount",
+];
+
+// FN blacklist is the same across targets — both anchor-spl wrappers and
+// raw spl extension instruction names that the typed IR doesn't yet cover.
+export const T22_FN_BLACKLIST: ReadonlyArray<string> = [
+  "transfer_fee_set",
+  "transfer_checked_with_fee",
+  "transfer_fee_initialize",
+  "withdraw_withheld_tokens_from_mint",
+  "harvest_withheld_tokens_to_mint",
+];
+
+function commentOutT22ExtensionCallSites(
+  body: string,
+  opts?: {
+    typeBlacklist?: ReadonlyArray<string>;
+    fnBlacklist?: ReadonlyArray<string>;
+    /** When true (Pinocchio default), match `X.data.borrow_mut()` —
+     *  Pinocchio's `&AccountInfo` has no `.data` field. Native uses the
+     *  same syntax legitimately via solana_program::AccountInfo, so the
+     *  Native caller must pass false. */
+    matchDataBorrow?: boolean;
+  },
+): string {
   // Direct-blacklist patterns. Each must be a complete word so we don't accidentally
   // strip names that contain these as substrings. `StateWithExtensions` covers both
   // bare and `BaseStateWithExtensions::*` (substring overlap is OK — same fix shape).
   // `\bMint::unpack\b` is NOT here — pinocchio_token's Mint::unpack body-scan prelude
   // (commit #52) emits valid pinocchio code; we only kill the T22-specific extension
   // unpack form which always co-occurs with `StateWithExtensions`.
-  const TYPE_BLACKLIST = [
-    "TransferFeeConfig",
-    "TransferFeeAmount",
-    "MintCloseAuthority",
-    "PermanentDelegate",
-    "StateWithExtensions",
-    "BaseStateWithExtensions",
-    "ExtensionType",
-    "PodMint",
-    "MintState",
-    "OptionalNonZeroPubkey",
-    "TransferHookExtension",
-    "ExtraAccountMetaList",
-    "ExecuteInstruction",
-    "InitializeExtraAccountMetaList",
-    "InterfaceAccount",
-  ];
-  const FN_BLACKLIST = [
-    "transfer_fee_set",
-    "transfer_checked_with_fee",
-    "transfer_fee_initialize",
-    "withdraw_withheld_tokens_from_mint",
-    "harvest_withheld_tokens_to_mint",
-  ];
+  const TYPE_BLACKLIST = opts?.typeBlacklist ?? PINOCCHIO_T22_TYPE_BLACKLIST;
+  const FN_BLACKLIST = opts?.fnBlacklist ?? T22_FN_BLACKLIST;
+  const MATCH_DATA_BORROW = opts?.matchDataBorrow ?? true;
   // Direct E0609 source on pinocchio: Anchor source uses `<acct>.data.borrow()`
   // which assumes the typed Anchor wrapper that exposes a `data: RefCell<Vec<u8>>`
   // field. Pinocchio's `&AccountInfo` has no `.data` field — only methods like
@@ -3231,11 +3279,13 @@ function commentOutT22ExtensionCallSites(body: string): string {
       if (re.test(code)) markedSpanIdx.add(i);
     }
   }
-  for (let i = 0; i < stmtSpans.length; i++) {
-    if (markedSpanIdx.has(i)) continue;
-    const code = spanCodeText[i] ?? "";
-    if (DATA_BORROW_RE.test(code)) markedSpanIdx.add(i);
-    DATA_BORROW_RE.lastIndex = 0;
+  if (MATCH_DATA_BORROW) {
+    for (let i = 0; i < stmtSpans.length; i++) {
+      if (markedSpanIdx.has(i)) continue;
+      const code = spanCodeText[i] ?? "";
+      if (DATA_BORROW_RE.test(code)) markedSpanIdx.add(i);
+      DATA_BORROW_RE.lastIndex = 0;
+    }
   }
 
   // Transitive closure: collect `let X = …;` LHS idents from marked spans, then

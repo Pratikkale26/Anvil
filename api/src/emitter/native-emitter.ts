@@ -9,6 +9,7 @@
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen } from "./emitter-base.js";
+import { applyT22ExtensionCommentout, NATIVE_T22_TYPE_BLACKLIST, T22_FN_BLACKLIST } from "./pinocchio-emitter.js";
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
 import {
   instrDiscriminator,
@@ -96,6 +97,23 @@ export class NativeEmitter extends BaseEmitter {
     ir: SolanaIR,
   ): string {
     bodyCode = super.postProcessInstructionBody(bodyCode, instr, ir);
+    // T22 extension call-site commentout — narrower than Pinocchio's
+    // because Native ships spl_token_2022 and CAN use plain types like
+    // TransferFeeConfig. We only strip statements that reference types
+    // whose method chains break after Anvil removes the Anchor account
+    // wrappers (StateWithExtensions, InterfaceAccount,
+    // ExtraAccountMetaList, etc.). Typed IR CPIs replace transfer_fee_*
+    // / withdraw_withheld_* / harvest_withheld_* before this runs; any
+    // remaining call-sites are user code that wouldn't compile anyway.
+    bodyCode = applyT22ExtensionCommentout(bodyCode, {
+      typeBlacklist: NATIVE_T22_TYPE_BLACKLIST,
+      fnBlacklist: T22_FN_BLACKLIST,
+      // Native's solana_program AccountInfo HAS a `.data` field
+      // (`Rc<RefCell<&'a mut [u8]>>`), and counter/vault/escrow demos use
+      // `counter.data.borrow_mut()` for state writes — completely valid
+      // Native code. Skip the data-borrow trigger that's Pinocchio-only.
+      matchDataBorrow: false,
+    });
     const accountNames = instr.accounts.map((a) => snakeCase(a.name));
     const mintsHit: string[] = [];
     for (const name of accountNames) {
@@ -2214,7 +2232,14 @@ function dedupImports(joined: string): string {
 
 function collectT22ExtensionAutoImports(allCarriedText: string, sourceImportsText: string): string[] {
   const out: string[] = [];
-  const has = (re: RegExp) => re.test(allCarriedText);
+  // Strip line and block comments before scanning so types that appear
+  // ONLY inside the T22 commentout pass's // — ⚠️ Anvil … blocks don't
+  // trigger phantom auto-imports (which would then fail at module level
+  // because the underlying crate, e.g. spl_pod, isn't in scaffold deps).
+  const liveCode = allCarriedText
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/[^\n]*/g, (_m, before: string) => before);
+  const has = (re: RegExp) => re.test(liveCode);
 
   // Anchor source typically pulls extension types in through a nested
   // `use anchor_spl::{ token_2022::spl_token_2022::extension::*, … }`
@@ -2237,7 +2262,14 @@ function collectT22ExtensionAutoImports(allCarriedText: string, sourceImportsTex
     { ident: "StateWithExtensions", path: "spl_token_2022::extension::StateWithExtensions" },
     { ident: "ExtensionType", path: "spl_token_2022::extension::ExtensionType" },
     { ident: "PodMint", path: "spl_token_2022::pod::PodMint" },
-    { ident: "OptionalNonZeroPubkey", path: "spl_pod::optional_keys::OptionalNonZeroPubkey" },
+    // OptionalNonZeroPubkey lives at spl_pod::optional_keys, but spl_pod
+    // isn't in Native's scaffold deps. Native emit code never produces a
+    // direct OptionalNonZeroPubkey reference (the typed IR for T22
+    // pointer-init/update hand-rolls the bytes); the only triggers were
+    // source pass-through chains that the Native T22 commentout pass now
+    // wraps as comments. Don't auto-add — if a user genuinely needs it
+    // they must scaffold spl_pod themselves.
+    // { ident: "OptionalNonZeroPubkey", path: "spl_pod::optional_keys::OptionalNonZeroPubkey" },
     // EM2 Session 3 — DefaultAccountState's `state` enum lives at
     // spl_token_2022::state::AccountState; emit code references it via
     // `&AccountState::Frozen` etc. Auto-import so users don't have to.

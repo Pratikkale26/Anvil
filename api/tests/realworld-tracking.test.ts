@@ -106,8 +106,8 @@ const TRACKED: TrackedCase[] = [
     target: "native",
     path: "/tmp/program-examples/tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs",
     source: "solana-developers/program-examples (tokens/token-2022/transfer-fee/anchor)",
-    maxErrors: 4,
-    reason: "4-error ceiling (was 9 before 2026-05-13 polish pass) reflects unresolved T22 native gaps: spl_pod path resolution + 2 method-not-found + InterfaceAccount<TokenAccount> emit references. Closing requires the deeper Native T22 emit gap fix (handler should unpack mint_account from accounts, currently doesn't bind it).",
+    maxErrors: 1,
+    reason: "1-error ceiling (was 9, dropped via 2026-05-13 polish pass: solana_security_txt filter + Native T22 commentout port + spl_pod auto-import gating). The residual error is a stale data-borrow chain that the Pinocchio commentout would catch but Native intentionally skips (Native's AccountInfo legitimately uses .data.borrow_mut()).",
   },
   // NOTE: t22-transfer-fee/pinocchio promoted (again) to MUST_PASS in
   // realworld-cargo.test.ts after the sibling-state body-stub pass landed
@@ -128,8 +128,8 @@ const TRACKED: TrackedCase[] = [
     target: "native",
     path: "/tmp/program-examples/tokens/token-2022/transfer-hook/hello-world/anchor/programs/transfer-hook/src/lib.rs",
     source: "solana-developers/program-examples (tokens/token-2022/transfer-hook/hello-world/anchor)",
-    maxErrors: 9,
-    reason: "Native still has 9 errors because Native has no T22 commentout pass — the unresolvable spl_* types in body + prelude can't be neutered the same way Pinocchio does. Pinocchio variant promoted 2026-05-02. Real fix would port the T22 commentout from Pinocchio's post-process to a target-agnostic location, or special-case the Native auto-import injector to drop transfer-hook-only types when the underlying spl_pod / spl_transfer_hook_interface crates aren't in scaffold deps.",
+    maxErrors: 0,
+    reason: "0-error ceiling (was 9, now BUILDS GREEN as of 2026-05-13 polish pass — port the Pinocchio T22 commentout to a shared helper with NATIVE_T22_TYPE_BLACKLIST + drop OptionalNonZeroPubkey from Native auto-import + gate data-borrow regex to Pinocchio only). Promote to MUST_PASS when realworld-cargo MUST_PASS is reorganised.",
   },
 
   // ── 2026-05-02 H7 corpus expansion — 1-error gaps for emitter follow-up ──
