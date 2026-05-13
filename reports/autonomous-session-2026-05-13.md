@@ -49,7 +49,17 @@ Single metric: rawNode count across the 38-demo × 2-target corpus.
 | `realworld-cargo*.test.ts` | **94/94** pass (300s) — exercises 36 program-examples + 12 external repos × 2 targets each. Tracking ceilings unchanged. |
 | Total (production-path verification) | **1,195/1,195 known-test cases green** |
 
-**Opt-in AST_EMIT=1 path** (the eventual default): **63/63** binary-parity tests pass. The 2 remaining pre-existing failures (regex-solana-program-invoke pinocchio/native) were closed in commit `fad6ab4` by adding macro_call multi-line converter support + a struct_literal extra-indent gate. Pre-session count was 4 failures (4 → 2 via the cpi-custom RHC→CAC change in 19d108c, then 2 → 0 via fad6ab4). **The visitor path is now fully byte-identical to the walker path on the entire snapshot corpus** — this is the prerequisite gate for Session F (flipping ANVIL_AST_EMIT=1 to default).
+**Opt-in AST_EMIT=1 path** (the eventual default): **63/63** binary-parity tests pass. The 2 remaining pre-existing failures (regex-solana-program-invoke pinocchio/native) were closed in commit `fad6ab4` by adding macro_call multi-line converter support + a struct_literal extra-indent gate. Pre-session count was 4 failures (4 → 2 via the cpi-custom RHC→CAC change in 19d108c, then 2 → 0 via fad6ab4). **The visitor path is byte-identical to the walker path on the entire snapshot corpus**.
+
+**HOWEVER**: an AST_EMIT=1 realworld-cargo sweep surfaced **3 failures** out of 94 cargo-build cases — pre-existing visitor-path gaps not caught by binary-parity (these fixtures aren't in the snapshot corpus):
+
+- **coral-multisig/pinocchio** — `instructions/approve.rs:46` unclosed delimiter. Visitor produces broken if-block close (missing `}` on `has_one` constraint check). Triggered when state_read emits a multi-line if-block prelude that the visitor's `convertPassThroughLine` collapses incorrectly.
+- **coral-multisig/native** — same root cause as above.
+- **token-fundraiser** — cargo-clean failure, similar shape (visitor → walker output divergence on a state_read with has_one constraint).
+
+These regressions exist **only under ANVIL_AST_EMIT=1** (the opt-in flag). The default production path remains 100% byte-identical and 94/94 cargo-build green. **Session F flip is therefore NOT yet ready** — the visitor's multi-line state_read constraint emission needs fixing first. The fix lives in `visitor-base.ts` / `convertPassThroughLine` (the helper-line conversion that wraps captured emit text); separate session-sized task.
+
+**Production AST_EMIT=0 path remains 100% byte-identical and 1,195/1,195 green** — this regression is opt-in only and does not affect users today.
 
 ## External Anchor repo validation
 
