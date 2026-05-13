@@ -87,16 +87,19 @@ describe("resolveSeedExpression: speculative tags refused loudly (A1)", () => {
     ).toThrow(/arg-derived seeds.*not yet supported/);
   });
 
-  test("$keypair: as a seed (vs account ref) is refused", () => {
+  test("$keypair: bare form (no .pubkey suffix) is refused as a seed", () => {
+    // `$keypair:foo.pubkey` IS valid (resolver supports it for B2f-synth
+    // PDA derivation), but the bare form has no recognized shape and must
+    // throw rather than UTF-8-encode the tag string.
     expect(() =>
       resolveSeedExpression("$keypair:foo", new Map(), new Map()),
-    ).toThrow(/not as PDA seeds/);
+    ).toThrow(/unknown seed reference shape/);
   });
 
   test("$program: as a seed is refused", () => {
     expect(() =>
       resolveSeedExpression("$program:system", new Map(), new Map()),
-    ).toThrow(/not as PDA seeds/);
+    ).toThrow(/not as a PDA seed/);
   });
 
   test("unknown $-prefixed sigil refused (no UTF-8 fall-through)", () => {
