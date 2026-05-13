@@ -49,7 +49,7 @@ Single metric: rawNode count across the 38-demo × 2-target corpus.
 | `realworld-cargo*.test.ts` | **94/94** pass (300s) — exercises 36 program-examples + 12 external repos × 2 targets each. Tracking ceilings unchanged. |
 | Total (production-path verification) | **1,195/1,195 known-test cases green** |
 
-**Opt-in AST_EMIT=1 path** (not production default): 61/63 binary-parity tests pass with ANVIL_AST_EMIT=1. The remaining 2 failures (regex-solana-program-invoke pinocchio/native) are a pre-existing struct-literal multi-line-children divergence (the `accounts: vec![A, B]` macro inside a multi-line struct field collapses to single-line when re-printed). **This session improved the AST_EMIT=1 path** — pre-session count was 4 failures, now 2 (cpi-custom-pinocchio + cpi-custom-native were closed by Session A's runHandlerCapture→captureAndConvert change).
+**Opt-in AST_EMIT=1 path** (the eventual default): **63/63** binary-parity tests pass. The 2 remaining pre-existing failures (regex-solana-program-invoke pinocchio/native) were closed in commit `fad6ab4` by adding macro_call multi-line converter support + a struct_literal extra-indent gate. Pre-session count was 4 failures (4 → 2 via the cpi-custom RHC→CAC change in 19d108c, then 2 → 0 via fad6ab4). **The visitor path is now fully byte-identical to the walker path on the entire snapshot corpus** — this is the prerequisite gate for Session F (flipping ANVIL_AST_EMIT=1 to default).
 
 ## External Anchor repo validation
 
@@ -71,30 +71,33 @@ Beyond the existing fixture corpus, **165 fresh external Anchor programs** were 
 
 ## What's left in H1 (per the plan)
 
-`posts/plan-h1-collapse.md` (gitignored) lists 7 sessions. This sub-session completed roughly half of A→C scope:
+`posts/plan-h1-collapse.md` (gitignored) lists 7 sessions. This sub-session completed A→C plus the AST_EMIT=1 parity gate (the Session F prerequisite):
 
 - ✅ Session A (mechanical cleanup, walker-v2 delete)
 - ✅ Session B (zero-copy structural, via unsafe_expr node)
-- ✅ Session C (multi-line indent + array support, return_ok structural lift)
-- ⏸ Session D (sweep remaining cpi_t22 / cpi_mpl) — 5 rawLines remain (cpi_t22_token_metadata_initialize + update_field + transfer_fee_initialize + harvest_withheld + Native variants). Each one needs the signer_seeds Pinocchio shape modeled. ~30-90 min per kind.
-- ⏸ Session E (cpi_spl_set_authority + cpi_custom fallback ports) — 4 rawNodes remain.
-- ⏸ Session F (flip ANVIL_AST_EMIT=1 default) — gated on E. Requires 2-week soak afterwards.
-- ⏸ Session G (retire walker handlers + pass-through-structural) — multi-week.
-- ⏸ Session H (absorb walker's text post-process regex zoo) — separate multi-week, not strictly part of "collapse".
+- ✅ Session C (multi-line indent + array + macro support, return_ok structural lift, struct extra-indent gate)
+- ✅ **Session F gate** (AST_EMIT=1 binary-parity 4 → 0 failures) — visitor is now byte-identical to walker across the entire snapshot corpus
+- ⏸ Session D (sweep remaining cpi_t22 / cpi_mpl rawLines) — diminishing returns; pass_through dominates at 80 rawLines / 41 distinct shapes, each shape requires its own converter expansion
+- ⏸ Session E (cpi_spl_set_authority + cpi_custom fallback ports) — 4 rawNodes remain
+- ⏸ Session F (flip ANVIL_AST_EMIT=1 default) — **now unblocked** by the parity gate. Soak window for catching real-world byte-equal regressions still required before retirement of walker handlers.
+- ⏸ Session G (retire walker handlers + pass-through-structural) — multi-week
+- ⏸ Session H (absorb walker's text post-process regex zoo) — separate multi-week
 
 ## What to do next
 
 Concrete actions ranked by ROI:
 
-1. **Land Session D's 5 cpi_t22 signer-seeds rawLines** — ~1 session of focused converter work. Would close cpi_t22 family fully and bring total rawLines under 90. Single contributor: Pinocchio's __<X>_seed_refs / __<X>_pda_seeds setup pattern. New AST shape needed.
+1. **Push the 14 commits to origin** — all on `main`. Tests green. The AST_EMIT=1 parity closure (commit `fad6ab4`) is the headline.
 
-2. **Push to origin** — 11 commits ahead. All on `main`. Tests green. No outstanding changes.
+2. **Run realworld-cargo with ANVIL_AST_EMIT=1 once externally** — verify the visitor path on the cargo-build axis (not just source-snapshot axis). If cargo build passes/fails identically with AST_EMIT=0 and AST_EMIT=1 across the 94-fixture corpus, **Session F is ready**.
 
-3. **Pause H1 here for now and ship a corpus expansion** — the 165 external probe revealed candidates for byte-equal expansion (anchor-examples ships 30 minimal Anchor programs each exercising one constraint/type — perfect synthetic targets for #14). Could be a quick H3 sweep.
+3. **Session F flip (ANVIL_AST_EMIT=1 default)** — small one-line delete in `walker.walk()`'s env check. Production routes through visitor; legacy walker dispatch unused. Soak 2 weeks against real-world fixtures + AI-refine feedback.
 
-4. **Defer F → after Sessions D/E complete** — the visitor + ast-visitor-byte-identical contract is already byte-identical via captureAndConvert. Flipping ANVIL_AST_EMIT=1 right now would not break anything, but it ALSO wouldn't change observable behavior. The right time to flip is after D/E close to ZERO rawNodes (visible win in the metric AND clean retirement gate for walker handlers).
+4. **Land Session D's 5 cpi_t22 signer-seeds rawLines** — converter work on the Pinocchio __<X>_seed_refs/__<X>_pda_seeds setup pattern. Net: ~5-7 rawLines, mostly cosmetic at this point since AST_EMIT=1 is already byte-identical.
 
-5. **`pass_through` rawNodes (80) are an indefinite long-tail** — each new shape adds converter complexity. Better strategy: snapshot expand corpus to include the shapes, document the AST gaps, treat per-shape work as part of routine FIX-tier maintenance.
+5. **Corpus expansion** — the 165 external probe revealed candidates (anchor-examples ships 30 minimal Anchor programs each exercising one constraint/type — perfect for #14 byte-equal harness expansion).
+
+6. **`pass_through` rawNodes (80) are an indefinite long-tail** — each new shape adds converter complexity. Now that AST_EMIT=1 is byte-identical, these don't affect production. Treat per-shape work as routine FIX-tier maintenance.
 
 ## Files touched this session
 
