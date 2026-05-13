@@ -856,6 +856,14 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       // `;` separator is only valid in vec![value; count] shape (exactly
       // 2 args). Reject pathological inputs.
       if (separator === ";" && args.length !== 2) return null;
+      // Multi-line macro detection deferred — round-trip depends on the
+      // parent context's indent (a vec! at top-level stmt expects items
+      // at stmt + 4, but a vec! inside a struct field expects items at
+      // struct-inner + 4 = stmt + 8). Without threading the container
+      // chain through exprFromNode, the heuristic over- or under-fires.
+      // For now the printer's default single-line form is used; sources
+      // that have multi-line layout fall back to rawLine via the parent
+      // bail. See reports/h1-emit-path-inventory-2026-05-13.md.
       return separator === ";"
         ? { kind: "macro_call", name: macroName, args, delim: open, separator: ";" }
         : { kind: "macro_call", name: macroName, args, delim: open };

@@ -181,9 +181,21 @@ export function printExpr(expr: RustExpr, indent?: string): string {
       return expr.segments.join("::");
     case "macro_call": {
       const sep = expr.separator ?? ",";
-      const args = expr.args.map((a) => printExpr(a, indent)).join(`${sep} `);
       const open = expr.delim ?? "(";
       const close = open === "(" ? ")" : open === "[" ? "]" : "}";
+      if (expr.multiLine && indent !== undefined && expr.args.length > 0) {
+        // `vec![\n    item,\n    item,\n]` style — args on own lines at
+        // indent+4, closing bracket aligned with indent. Used for
+        // multi-line `vec![...]` inside struct field values (e.g. native
+        // CPI emit's `accounts: vec![A, B, C]` where the source uses
+        // multi-line layout for readability).
+        const innerIndent = `${indent}    `;
+        const argLines = expr.args
+          .map((a) => `${innerIndent}${printExpr(a, innerIndent)}${sep}`)
+          .join("\n");
+        return `${expr.name}!${open}\n${argLines}\n${indent}${close}`;
+      }
+      const args = expr.args.map((a) => printExpr(a, indent)).join(`${sep} `);
       return `${expr.name}!${open}${args}${close}`;
     }
     case "array": {

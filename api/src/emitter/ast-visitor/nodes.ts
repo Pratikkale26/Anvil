@@ -156,7 +156,7 @@ export type RustExpr =
    * valid Rust syntax and parse identically, but byte-equality
    * requires preserving the source's chosen form.
    */
-  | { kind: "macro_call"; name: string; args: RustExpr[]; delim?: "(" | "[" | "{"; separator?: "," | ";" }
+  | { kind: "macro_call"; name: string; args: RustExpr[]; delim?: "(" | "[" | "{"; separator?: "," | ";"; multiLine?: boolean }
   /**
    * Array literal — `[a, b, c]` or `[]`. Used for CPI account-list
    * args (`accounts: &[]` in pinocchio's cpi_memo) and for the
