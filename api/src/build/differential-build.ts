@@ -309,14 +309,14 @@ export function sniffAnchorLangVersion(source: string): string {
   // 0.31 (the default) so the 18 byte-equal fixtures don't get dragged
   // into the 1.0 ecosystem migration.
   const hasOneZeroOnlySyntax =
-    // `dup,` constraint inside #[derive(Accounts)] — appears as its own
-    // line in multi-line account blocks. We can't easily scope to the
-    // exact #[account(...)] block (nested parens via realloc =
-    // Sample::space(...) defeat a single regex), so we settle for "dup
-    // followed by comma at line start" which is the constraint shape.
-    // Bare `dup` identifier references in body code don't have a trailing
-    // comma right after, so false-positive risk is minimal.
-    /^\s*dup\s*,/m.test(source) ||
+    // `dup,` constraint inside #[derive(Accounts)] — appears on its own
+    // indented line in multi-line account blocks. Tighten the match to
+    // require leading whitespace and either a trailing comment or
+    // end-of-line — this avoids matching tuple destructuring patterns
+    // like `let dup, foo = expr;` (the legitimate `dup` constraint is
+    // only ever inside an #[account(...)] block, which uses indented
+    // single-flag lines).
+    /^\s+dup\s*,(?:\s*\/\/.*)?$/m.test(source) ||
     // `#[instruction(discriminator = ...)]` — 1.0 literal disc form.
     /#\[instruction\s*\(\s*discriminator\s*=/.test(source);
   if (hasOneZeroOnlySyntax) return "1.0";
