@@ -611,45 +611,14 @@ function parsePdaSignerSeedsLines(lines: string[]): RustStmt[] {
   }
   return out;
 }
-import { handlePassThrough } from "../body-emitter/handlers/pass-through.js";
+// Shared CPI helpers (live in body-emitter/cpi-helpers.ts; were
+// formerly in body-emitter/handlers/cpi.ts before H1 Session G).
 import {
-  handleCpiSystemTransfer,
-  handleCpiSplTransfer,
-  handleCpiSplMintTo,
-  handleCpiSplBurn,
-  handleCpiSplCloseAccount,
-  handleCpiSplSetAuthority,
-  handleCpiT22NonTransferableMintInit,
-  handleCpiT22TransferFeeInit,
-  handleCpiT22TransferFeeSetFee,
-  handleCpiT22ImmutableOwnerInit,
-  handleCpiT22TransferCheckedWithFee,
-  handleCpiT22WithdrawWithheldFromMint,
-  handleCpiT22HarvestWithheldToMint,
-  handleCpiT22DefaultAccountStateInit,
-  handleCpiT22DefaultAccountStateUpdate,
-  handleCpiT22InterestBearingMintInit,
-  handleCpiT22InterestBearingMintUpdateRate,
-  handleCpiT22TokenMetadataInit,
-  handleCpiT22TokenMetadataUpdateField,
-  handleCpiT22TokenMetadataUpdateAuthority,
-  handleCpiAtaCreate,
-  handleCpiMemo,
-  handleCpiCustom,
-  handleCpiMplCreateMetadataV3,
-  handleCpiMplCreateMasterEditionV3,
   shouldEmitSignerSeedsPrelude,
   resolveSignerSeedsExpr,
-} from "../body-emitter/handlers/cpi.js";
-import { handleSysvarClock, handleSysvarRent } from "../body-emitter/handlers/sysvar.js";
-import {
-  handleRequire,
-  handleMsg,
-  handleEmit,
-  handlePdaSignerSeeds,
-  handleReturnOk,
-  handleReturnErr,
-} from "../body-emitter/handlers/control.js";
+} from "../body-emitter/cpi-helpers.js";
+import { handlePassThrough } from "../body-emitter/pass-through-emit.js";
+import { emitPdaSignerSeedsPrelude } from "../body-emitter/pda-signer-seeds-emit.js";
 /**
  * Inline zero-copy helpers (formerly in body-emitter/handlers/zero-copy.ts;
  * H1 Session B port). Used by visitZeroCopyLoad{Init,Mut,} below.
@@ -873,50 +842,6 @@ export class AstVisitorBase {
       case "zero_copy_load":
         return this.visitZeroCopyLoad(stmt);
     }
-  }
-
-  /**
-   * Run `handler(walker, stmt)` and capture the lines it pushed into
-   * `walker.lines` as `raw_line` AST stmts. State mutations the handler
-   * makes on other walker fields (mutatedAccounts, stateVars,
-   * signerSeedsInScope, etc.) are preserved — only line emission is
-   * intercepted.
-   *
-   * Lines are captured VERBATIM (with their original leading indent).
-   * The printer's `raw_line` rule emits them unchanged so multi-line
-   * blocks (e.g. emitRequire returning `    if cond {\n        return
-   * Err…\n    }`) keep their inner-line indent. Stripping + re-prefixing
-   * via the printer's structural-indent rule was the Phase-1 approach
-   * but it broke on multi-line emits — see the regression at the end of
-   * commit 6a46100. The fix preserves indent end-to-end.
-   *
-   * This is the load-bearing primitive for the Phase-2 increment: every
-   * non-structural kind dispatches through here, which keeps byte-
-   * identical output while making the visitor responsible for the full
-   * IR statement set.
-   */
-  protected runHandlerCapture<S extends BodyStatement>(
-    handler: (w: BodyWalker, stmt: S) => void,
-    stmt: S,
-  ): RustStmt[] {
-    const w = this.walker;
-    const before = w.lines.length;
-    handler(w, stmt);
-    const captured = w.lines.slice(before);
-    w.lines.length = before;
-    return captured.map((line) => rawLine(line));
-  }
-
-  /** Variant for handlers with no `stmt` parameter (return_ok). */
-  protected runHandlerCaptureNoArg(
-    handler: (w: BodyWalker) => void,
-  ): RustStmt[] {
-    const w = this.walker;
-    const before = w.lines.length;
-    handler(w);
-    const captured = w.lines.slice(before);
-    w.lines.length = before;
-    return captured.map((line) => rawLine(line));
   }
 
   /**
@@ -1770,7 +1695,7 @@ export class AstVisitorBase {
     // into structural stmts.
     const w = this.walker;
     const before = w.lines.length;
-    handlePdaSignerSeeds(w, stmt);
+    emitPdaSignerSeedsPrelude(w, stmt);
     const lines = w.lines.slice(before);
     w.lines.length = before;
     return parsePdaSignerSeedsLines(lines);
@@ -3029,41 +2954,13 @@ export class AstVisitorBase {
   }
 
   /**
-   * M6.2 prep — captures legacy-handler output AND attempts the
-   * tree-sitter structural conversion on each line. Multi-line entries
-   * go through tryStructuralizeMultiLine; single-line entries through
-   * convertPassThroughLine. Lossless: anything that doesn't convert
-   * stays as rawLine. Same lossless guarantee as visitPassThrough's
-   * own routing.
+   * Run each text entry through the tree-sitter structuralize pipeline:
+   * tryStructuralizeMultiLine attempts a full statement-list parse;
+   * convertPassThroughLine handles single-line shapes; rawLine is the
+   * verbatim fallback for anything else.
    *
-   * Used by visit methods whose legacy emit produces commented-out
-   * stub blocks (Metaplex CreateMetadataV3 / CreateMasterEditionV3
-   * etc.) where the comments + scaffold stmts can be structurally
-   * recognized.
-   */
-  protected captureAndConvert<S extends BodyStatement>(
-    handler: (w: BodyWalker, stmt: S) => void,
-    stmt: S,
-  ): RustStmt[] {
-    const w = this.walker;
-    const before = w.lines.length;
-    handler(w, stmt);
-    const captured = w.lines.slice(before);
-    w.lines.length = before;
-    return this.applyStructuralize(captured);
-  }
-
-  /**
-   * Same per-entry structuralize pipeline as captureAndConvert, but
-   * operating on a locally-built lines list. Used by visit methods that
-   * have moved the handler's body inline — they generate the same text
-   * the handler would have emitted, then route it through this single
-   * structuralize stage so the RustStmt output matches the handler's
-   * captured output byte-for-byte.
-   *
-   * Each entry is parsed by tryStructuralizeMultiLine (tree-sitter); on
-   * any failure it falls back to convertPassThroughLine for the single-
-   * line shapes, finally rawLine for verbatim preservation.
+   * Used by every visit method that produces multi-line emitter output
+   * via local string-building (the inlined former-handler bodies).
    */
   protected applyStructuralize(lines: string[]): RustStmt[] {
     return lines.flatMap((entry) => {

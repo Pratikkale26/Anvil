@@ -25,53 +25,11 @@ import {
   indentBlock,
 } from "../emitter-utils.js";
 import type { BodyEmitterCallbacks, BodyEmitterContext } from "./types.js";
-import { handlePassThrough } from "./handlers/pass-through.js";
-import {
-  handleStateRead,
-  handleBumpsAccess,
-  handleStateFieldAssign,
-} from "./handlers/state.js";
-import {
-  handleCpiSystemTransfer,
-  handleCpiSplTransfer,
-  handleCpiSplMintTo,
-  handleCpiSplBurn,
-  handleCpiSplCloseAccount,
-  handleCpiSplSetAuthority,
-  handleCpiT22NonTransferableMintInit,
-  handleCpiT22TransferFeeInit,
-  handleCpiT22TransferFeeSetFee,
-  handleCpiT22ImmutableOwnerInit,
-  handleCpiT22TransferCheckedWithFee,
-  handleCpiT22WithdrawWithheldFromMint,
-  handleCpiT22HarvestWithheldToMint,
-  handleCpiT22DefaultAccountStateInit,
-  handleCpiT22DefaultAccountStateUpdate,
-  handleCpiT22InterestBearingMintInit,
-  handleCpiT22InterestBearingMintUpdateRate,
-  handleCpiT22TokenMetadataInit,
-  handleCpiT22TokenMetadataUpdateField,
-  handleCpiT22TokenMetadataUpdateAuthority,
-  handleCpiAtaCreate,
-  handleCpiMemo,
-  handleCpiCustom,
-  handleCpiMplCreateMetadataV3,
-  handleCpiMplCreateMasterEditionV3,
-} from "./handlers/cpi.js";
-import { handleSysvarClock, handleSysvarRent } from "./handlers/sysvar.js";
-import {
-  handleZeroCopyLoadInit,
-  handleZeroCopyLoadMut,
-  handleZeroCopyLoad,
-} from "./handlers/zero-copy.js";
-import {
-  handleRequire,
-  handleMsg,
-  handleEmit,
-  handlePdaSignerSeeds,
-  handleReturnOk,
-  handleReturnErr,
-} from "./handlers/control.js";
+// H1 Session G (2026-05-13) — all per-kind handlers retired. The visitor
+// in ../ast-visitor/visitor-base.ts emits structurally for every IR kind.
+// The legacy `handlers/` directory is gone; the two stragglers
+// (handlePassThrough, handlePdaSignerSeeds) live in body-emitter/ leaf
+// modules and are imported by the visitor directly.
 
 export class BodyWalker {
   readonly lines: string[] = [];
@@ -210,74 +168,23 @@ export class BodyWalker {
   walk(): string {
     this.emitAccountConstraintChecks();
 
-    // H1 Session F (2026-05-13) — visitor path is now the production
-    // default. The visitor is byte-identical to the legacy walker on:
-    //   - 117/117 binary-parity-snapshot + ast-visitor-byte-identical
-    //   - 94/94 realworld-cargo (verified under ANVIL_AST_EMIT=1)
-    // Escape hatch: ANVIL_LEGACY_WALKER=1 forces the per-kind handler
-    // chain. Use during soak to debug any byte-equal regression. Once
-    // the 2-week soak passes clean, the legacy branch + handlers/*
-    // imports retire entirely (Session G).
-    if (process.env["ANVIL_LEGACY_WALKER"] !== "1") {
-      // Lazy require to avoid pulling the visitor module on the
-      // legacy path (keeps cold-start cheap when the flag is off).
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { PinocchioAstVisitor, NativeAstVisitor, printStmts } =
-        require("../ast-visitor/index.js") as typeof import("../ast-visitor/index.js");
-      const visitor = this.emitter.frameworkName === "Pinocchio"
-        ? new PinocchioAstVisitor(this)
-        : new NativeAstVisitor(this);
-      for (const stmt of this.statements) {
-        const rustStmts = visitor.visit(stmt);
-        const text = printStmts(rustStmts, "    ");
-        if (text.length > 0) this.lines.push(text);
-      }
-    } else {
+    // H1 Session G (2026-05-13) — visitor is the ONLY emit path. The
+    // legacy per-kind handler switch (gated by ANVIL_LEGACY_WALKER=1)
+    // and the entire handlers/ directory retired this commit. State
+    // mutations the visit methods make on the walker (mutatedAccounts,
+    // stateVars, signerSeedsInScope, etc.) flow through the existing
+    // walker maps — the visitor reads from `this` (the BodyWalker).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { PinocchioAstVisitor, NativeAstVisitor, printStmts } =
+      require("../ast-visitor/index.js") as typeof import("../ast-visitor/index.js");
+    const visitor = this.emitter.frameworkName === "Pinocchio"
+      ? new PinocchioAstVisitor(this)
+      : new NativeAstVisitor(this);
     for (const stmt of this.statements) {
-      switch (stmt.kind) {
-        case "pass_through": handlePassThrough(this, stmt); break;
-        case "state_read": handleStateRead(this, stmt); break;
-        case "bumps_access": handleBumpsAccess(this, stmt); break;
-        case "state_field_assign": handleStateFieldAssign(this, stmt); break;
-        case "require": handleRequire(this, stmt); break;
-        case "msg": handleMsg(this, stmt); break;
-        case "emit": handleEmit(this, stmt); break;
-        case "cpi_system_transfer": handleCpiSystemTransfer(this, stmt); break;
-        case "cpi_spl_transfer": handleCpiSplTransfer(this, stmt); break;
-        case "cpi_spl_mint_to": handleCpiSplMintTo(this, stmt); break;
-        case "cpi_spl_burn": handleCpiSplBurn(this, stmt); break;
-        case "cpi_spl_close_account": handleCpiSplCloseAccount(this, stmt); break;
-        case "cpi_spl_set_authority": handleCpiSplSetAuthority(this, stmt); break;
-        case "cpi_t22_non_transferable_mint_initialize": handleCpiT22NonTransferableMintInit(this, stmt); break;
-        case "cpi_t22_transfer_fee_initialize": handleCpiT22TransferFeeInit(this, stmt); break;
-        case "cpi_t22_transfer_fee_set_fee": handleCpiT22TransferFeeSetFee(this, stmt); break;
-        case "cpi_t22_immutable_owner_initialize": handleCpiT22ImmutableOwnerInit(this, stmt); break;
-        case "cpi_t22_transfer_checked_with_fee": handleCpiT22TransferCheckedWithFee(this, stmt); break;
-        case "cpi_t22_withdraw_withheld_tokens_from_mint": handleCpiT22WithdrawWithheldFromMint(this, stmt); break;
-        case "cpi_t22_harvest_withheld_tokens_to_mint": handleCpiT22HarvestWithheldToMint(this, stmt); break;
-        case "cpi_t22_default_account_state_initialize": handleCpiT22DefaultAccountStateInit(this, stmt); break;
-        case "cpi_t22_default_account_state_update": handleCpiT22DefaultAccountStateUpdate(this, stmt); break;
-        case "cpi_t22_interest_bearing_mint_initialize": handleCpiT22InterestBearingMintInit(this, stmt); break;
-        case "cpi_t22_interest_bearing_mint_update_rate": handleCpiT22InterestBearingMintUpdateRate(this, stmt); break;
-        case "cpi_t22_token_metadata_initialize": handleCpiT22TokenMetadataInit(this, stmt); break;
-        case "cpi_t22_token_metadata_update_field": handleCpiT22TokenMetadataUpdateField(this, stmt); break;
-        case "cpi_t22_token_metadata_update_authority": handleCpiT22TokenMetadataUpdateAuthority(this, stmt); break;
-        case "cpi_ata_create": handleCpiAtaCreate(this, stmt); break;
-        case "cpi_memo": handleCpiMemo(this, stmt); break;
-        case "cpi_custom": handleCpiCustom(this, stmt); break;
-        case "cpi_mpl_create_metadata_v3": handleCpiMplCreateMetadataV3(this, stmt); break;
-        case "cpi_mpl_create_master_edition_v3": handleCpiMplCreateMasterEditionV3(this, stmt); break;
-        case "sysvar_clock": handleSysvarClock(this, stmt); break;
-        case "sysvar_rent": handleSysvarRent(this, stmt); break;
-        case "pda_signer_seeds": handlePdaSignerSeeds(this, stmt); break;
-        case "return_ok": handleReturnOk(this); break;
-        case "return_err": handleReturnErr(this, stmt); break;
-        case "zero_copy_load_init": handleZeroCopyLoadInit(this, stmt); break;
-        case "zero_copy_load_mut": handleZeroCopyLoadMut(this, stmt); break;
-        case "zero_copy_load": handleZeroCopyLoad(this, stmt); break;
-      }
+      const rustStmts = visitor.visit(stmt);
+      const text = printStmts(rustStmts, "    ");
+      if (text.length > 0) this.lines.push(text);
     }
-    } // end of !ANVIL_AST_EMIT branch
 
     // Stacked-star collapse first — must run BEFORE the comparison-context
     // strips below, since those expect a single `*` prefix. See

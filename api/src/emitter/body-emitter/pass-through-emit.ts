@@ -1,18 +1,24 @@
 /**
- * Pass-through handler — the catch-all that runs the full text-transform
+ * Pass-through emit — the catch-all that runs the full text-transform
  * pipeline (CPI rewriters, ctx.accounts/bumps replacement, helper calls,
  * sysvar qualification, residual CpiContext cleanup) over arbitrary Rust
  * blocks the parser couldn't classify into typed IR statements.
+ *
+ * Lives at body-emitter/ root after H1 Session G retired the per-kind
+ * handlers/ directory. The visitor's `visitPassThrough` invokes this
+ * then post-processes the resulting walker.lines via the same
+ * tryStructuralizeMultiLine pipeline used by the typed-CPI visit
+ * methods.
  */
 
-import type { BodyStatement } from "../../../ir/schema.js";
+import type { BodyStatement } from "../../ir/schema.js";
 import {
   snakeCase,
   cleanInlineExpr,
   simplifyPassThroughCode,
-} from "../../emitter-utils.js";
-import { hasResidualAnchorPatterns } from "../../emitter-helpers.js";
-import type { BodyWalker } from "../walker.js";
+} from "../emitter-utils.js";
+import { hasResidualAnchorPatterns } from "../emitter-helpers.js";
+import type { BodyWalker } from "./walker.js";
 import {
   qualifySysvarsStructural,
   stripToAccountInfoStructural,
@@ -30,7 +36,7 @@ import {
   stripRedundantProgramErrorIntoStructural,
   wrapBareErrAsReturnStructural,
   type PassContext,
-} from "../pass-through-structural.js";
+} from "./pass-through-structural.js";
 
 type PassThrough = Extract<BodyStatement, { kind: "pass_through" }>;
 
