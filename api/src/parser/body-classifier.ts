@@ -415,31 +415,38 @@ function classifyStatement(
       // Other bare call expressions at body tail (e.g. user helper
       // returning Result) fall through to the default pass_through
       // path so the printer carries them verbatim.
-      // fall through
-    // eslint-disable-next-line no-fallthrough
-    default: {
-      // if/for/while/match/block — pure Rust, pass through
-      const hasAnchor = containsAnchorPatterns(text);
-      if (hasAnchor) {
-        collector?.add({
-          code: "anchor_pattern_in_passthrough",
-          message: "Pass-through control-flow statement contains an Anchor-specific pattern (ctx.accounts / require! / emit! / CpiContext / anchor_spl). Won't transform on Pinocchio; manual port required.",
-          snippet: text,
-          loc: locFromNode(node),
-        });
-      }
-      return {
-        stmt: {
-          kind: "pass_through",
-          code: text,
-          needsReview: hasAnchor,
-          reviewReason: hasAnchor
-            ? "Contains possible Anchor-specific pattern"
-            : undefined,
-        },
-      };
-    }
+      return passThroughDefault(text, node, collector);
+
+    default:
+      // if/for/while/match/block — pure Rust, pass through.
+      return passThroughDefault(text, node, collector);
   }
+}
+
+function passThroughDefault(
+  text: string,
+  node: SyntaxNode,
+  collector: WarningCollector | undefined,
+): ClassifyResult {
+  const hasAnchor = containsAnchorPatterns(text);
+  if (hasAnchor) {
+    collector?.add({
+      code: "anchor_pattern_in_passthrough",
+      message: "Pass-through control-flow statement contains an Anchor-specific pattern (ctx.accounts / require! / emit! / CpiContext / anchor_spl). Won't transform on Pinocchio; manual port required.",
+      snippet: text,
+      loc: locFromNode(node),
+    });
+  }
+  return {
+    stmt: {
+      kind: "pass_through",
+      code: text,
+      needsReview: hasAnchor,
+      reviewReason: hasAnchor
+        ? "Contains possible Anchor-specific pattern"
+        : undefined,
+    },
+  };
 }
 
 // ─── Let declarations ───────────────────────────────────────────────────────

@@ -2,43 +2,38 @@
  * AstVisitorBase — IR-statement visitor that emits Rust-AST nodes
  * (NOT strings).
  *
- * Phase 1 (commit 6a46100) ported `state_read`, `state_field_assign`,
- * `bumps_access` to per-method visitors that construct structural AST
- * (e.g. `assign(field(ident(...), "...")` for the LHS) and wrap
- * value-side text in raw_line / raw expressions.
+ * H1 Session G (2026-05-13) made this the SOLE emit path. Walker.ts
+ * dispatches every IR statement through `visit()`; the legacy per-kind
+ * handlers in `body-emitter/handlers/` retired and the directory was
+ * deleted alongside the `ANVIL_LEGACY_WALKER` env var.
  *
- * Phase 2 increment (this commit) widens VISITOR_SUPPORTED_KINDS to
- * cover ALL 23 IR kinds. The 20 newly-covered kinds dispatch through
- * `runHandlerCapture`, which calls the existing per-kind handler and
- * captures whatever lines it pushed into a `raw_line` array. State
- * mutations on the walker (mutatedAccounts, stateVars, signerSeeds-
- * InScope, etc.) are preserved because the handler runs against the
- * same walker — only the line emission is intercepted.
+ * Per-kind dispatch lives in `visit()` below. Every visit method
+ * builds either:
+ *   - A pure structural `RustStmt[]` (the goal — recognized by the
+ *     printer and emitted byte-identically without intermediate text)
+ *   - A locally-built `string[]` routed through `applyStructuralize`
+ *     (the tree-sitter-aware tryStructuralizeMultiLine pipeline lifts
+ *     the strings into AST where shapes are recognized, rawLine
+ *     fallback otherwise — same byte output as the former
+ *     captureAndConvert)
  *
- * What this gets us:
- *   - All kinds dispatch through the visitor → Phase 3 (feature-flag
- *     switchover) becomes structurally possible. Until Phase 2 actually
- *     replaces a kind's runHandlerCapture with structural emit, the
- *     output is byte-identical to the production path.
- *   - countRawNodes is now a meaningful migration metric: every
- *     handler-fallback kind contributes raw_line nodes; structural
- *     ports drop them.
- *   - The 3 Phase-1 kinds keep their structural pieces (visitState-
- *     FieldAssign emits `assign(field(...))` for the LHS, etc.) — they
- *     are NOT regressed to runHandlerCapture.
+ * Walker state (`stateVars`, `accountInfoVars`, `signerSeedsInScope`,
+ * `mutatedAccounts`, etc.) flows through the BodyWalker `this.walker`
+ * accessor. Visit methods read AND write it; downstream visit methods
+ * see the mutations.
  *
- * What this DOESN'T get us:
- *   - Retiring the regex layer. Each runHandlerCapture invocation
- *     still runs the full per-handler text-transform pipeline. The
- *     visitor is byte-identical because it produces identical strings;
- *     it does not yet model the structures the regex layer computes.
- *   - That's the structural-port work, deferred to subsequent Phase 2
- *     commits (one kind at a time, byte-identical gated by
- *     binary-parity-snapshot.test.ts + ast-visitor-byte-identical.
- *     test.ts).
- *
- * Production emit path remains unchanged. The visitor is still dead
- * code outside the parity tests.
+ * Status / remaining work:
+ *   - countRawNodes is the structural-coverage migration metric. Per-
+ *     kind structural-vs-rawLine status: see
+ *     `reports/h1-emit-path-inventory-2026-05-13.md` (frozen at
+ *     Session F flip date; many of the captureAndConvert kinds got
+ *     full structural ports in Sessions B-E).
+ *   - The "regex zoo" inside walker.ts methods (transformAccount-
+ *     References, transformCtxAccountsReferences, etc.) is still
+ *     text-in/text-out and called from inside visit methods. Absorbing
+ *     those into a `RustStmt[]`-passes pipeline is a multi-week
+ *     follow-on (deferred per `reports/h1-collapse-shipped-2026-05-
+ *     13.md`).
  */
 
 import type { BodyStatement } from "../../ir/schema.js";
@@ -1367,7 +1362,7 @@ export class AstVisitorBase {
       // Allow entries that span multiple lines (full block bodies) — the
       // converter's strip applies uniformly so byte equality holds.
       if (!entry.includes("\n")) {
-        const leading = /^( *)/.exec(entry)?.[1].length ?? 0;
+        const leading = /^( *)/.exec(entry)?.[1]?.length ?? 0;
         if (leading > 4) return [rawLine(entry)];
       }
 

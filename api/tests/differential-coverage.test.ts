@@ -69,10 +69,52 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   "return-err": "return-err.rs",
   "cpi-memo": "cpi-memo.rs",
   "cpi-custom": "cpi-custom.rs",
-  // Perp-funding (this session): hand-rolled differential gating
-  // initialize_market byte-equal + auto-scenario stub.
+  // Perp-funding: hand-rolled differential gating initialize_market
+  // byte-equal + auto-scenario stub.
   "perp-funding": "perp-funding.rs",
+  // Auto-scenario differential corpus + Phase 2 fixtures (local).
+  amm: "amm.rs",
+  marketplace: "marketplace.rs",
+  "msg-emit": "msg-emit.rs",
+  "program-config": "program-config.rs",
+  "return-data": "return-data.rs",
+  "simple-staking": "simple-staking.rs",
+  "tip-jar": "tip-jar.rs",
+  // Token-2022 extension family fixtures (typed IR + structural emit).
+  // Each demo exercises one extension's init + at least one manage CPI.
+  "t22-default-account-state": "t22-default-account-state.rs",
+  "t22-immutable-owner": "t22-immutable-owner.rs",
+  "t22-interest-bearing": "t22-interest-bearing.rs",
+  "t22-non-transferable": "t22-non-transferable.rs",
+  "t22-token-metadata": "t22-token-metadata.rs",
+  "t22-transfer-fee-init": "t22-transfer-fee-init.rs",
+  // t22-transfer-fee-extras reuses the transfer-fee-init demo source
+  // (per differential-t22-transfer-fee-extras.test.ts).
+  "t22-transfer-fee-extras": "t22-transfer-fee-init.rs",
+  // Zero-copy AccountLoader handle (zero_copy_load_init/_mut/_).
+  "zero-copy-foo": "zero-copy-foo.rs",
 };
+
+/**
+ * Differential fixtures whose source lives OUTSIDE src/demo-programs/ —
+ * they load Anchor source from cached external repos via fixture
+ * loaders (account-data-fixture.ts, etc.). The coverage matrix treats
+ * these as registered but doesn't parse their source for kind coverage
+ * (each external fixture's IR kinds are also covered by an in-tree
+ * demo, so they don't add unique coverage requirements).
+ *
+ * Mark new external fixtures here so the FIXTURE_REGISTRY-points-at-
+ * existing-file check passes.
+ */
+const EXTERNAL_FIXTURES = new Set<string>([
+  "account-data",
+  "anchor-escrow-2025-make-offer",
+  "anchor-escrow-2025-make-offer-tracked",
+  "coral-events",
+  "favorites",
+  "page-visits",
+  "pda-rent-payer",
+]);
 
 /**
  * Kinds that don't appear in any handler body (return_ok is the implicit
@@ -148,11 +190,13 @@ describe("M3: differential coverage matrix", () => {
     expect(missing).toEqual([]);
   });
 
-  test("every differential-*.test.ts is in FIXTURE_REGISTRY", () => {
+  test("every differential-*.test.ts is in FIXTURE_REGISTRY or EXTERNAL_FIXTURES", () => {
     const found: string[] = [];
     for (const file of listDifferentialFixtureFiles()) {
       const name = extractFixtureName(join(import.meta.dir, file));
-      if (name && !(name in FIXTURE_REGISTRY)) found.push(`${file} (fixtureName='${name}')`);
+      if (name && !(name in FIXTURE_REGISTRY) && !EXTERNAL_FIXTURES.has(name)) {
+        found.push(`${file} (fixtureName='${name}')`);
+      }
     }
     expect(found).toEqual([]);
   });

@@ -18,6 +18,12 @@ pub mod zero_copy_foo {
         foo.data = data;
         Ok(())
     }
+
+    pub fn read_foo(ctx: Context<ReadFoo>) -> Result<()> {
+        let foo = ctx.accounts.foo.load()?;
+        msg!("foo.data = {}", foo.data);
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -30,6 +36,13 @@ pub struct CreateFoo<'info> {
 #[derive(Accounts)]
 pub struct UpdateFoo<'info> {
     #[account(mut, has_one = authority)]
+    pub foo: AccountLoader<'info, Foo>,
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct ReadFoo<'info> {
+    #[account(has_one = authority)]
     pub foo: AccountLoader<'info, Foo>,
     pub authority: Signer<'info>,
 }

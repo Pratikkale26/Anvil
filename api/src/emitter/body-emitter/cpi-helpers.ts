@@ -1,13 +1,10 @@
 /**
- * Shared CPI-emit helpers used by the AST visitor (and historically by
- * the per-kind handlers in `handlers/cpi.ts`, retired in H1 Session G).
+ * Shared CPI-emit helpers used by the AST visitor's cpi_* visit
+ * methods. Pulled out of the visitor file to keep it from growing
+ * further; the same logic is invoked from every cpi_* visit method.
  *
- * These don't belong inside the visitor because the same logic is
- * needed by every cpi_* visit method — pulling them into a leaf module
- * keeps the visitor file from growing further and keeps the legacy
- * walker switch (still reachable via ANVIL_LEGACY_WALKER=1 → see
- * walker.ts) able to import the same helpers if a future regression
- * forces a temporary re-enable.
+ * Were formerly inside `body-emitter/handlers/cpi.ts` (retired in H1
+ * Session G when the visitor became the sole emit path).
  */
 
 import type { BodyWalker } from "./walker.js";

@@ -1,12 +1,29 @@
 /**
- * BodyWalker — stateful walker that processes IR body statements and emits
- * framework-specific Rust code.
+ * BodyWalker — stateful state container + transform-helper module that
+ * the AST visitor reads from and writes to while emitting body Rust.
  *
- * Holds all mutable state (account-info maps, signer-seed tracking, output
- * buffer) that the per-statement handlers in handlers/* read and write through
- * walker methods. Transform helpers (regex-heavy text rewriters that close
- * over `instr` and `emitter`) live here as instance methods so handlers can
- * call them without needing to thread arguments.
+ * Post-H1 Session G (2026-05-13): the per-kind handler chain retired;
+ * the visitor in ../ast-visitor/visitor-base.ts is the sole emit path.
+ * BodyWalker remains because:
+ *
+ * 1. **State container** — `stateVars`, `accountInfoVars`, `signer-
+ *    SeedsInScope`, `mutatedAccounts`, `accountsWithSignerSeeds`,
+ *    `localAliases`, etc. Visit methods read these for context
+ *    (downstream stmts depend on what earlier ones bound) and write
+ *    them as side-effects of structural emit.
+ * 2. **Transform helpers** — text-in/text-out regex-heavy rewriters
+ *    (`transformAccountReferences`, `transformCtxAccountsReferences`,
+ *    `transformNestedAnchorCode`, `normalizeKeyValueUsages`,
+ *    `replaceBumpRefs`, `normalizeSeedExpr`, etc.) that close over
+ *    `instr` + `emitter`. The visitor calls them via `this.walker.X()`.
+ *    Absorbing these into structural `RustStmt[]` passes is the
+ *    multi-week deferred work (see reports/h1-collapse-shipped-2026-
+ *    05-13.md).
+ * 3. **Constraint-emission entry** — `emitAccountConstraintChecks`
+ *    runs first in walk(), pushing constraint-side `if X != Y { … }`
+ *    blocks before any IR body stmt is visited.
+ * 4. **Post-emit regex chain** — comparison-context symmetry cleanup
+ *    on the joined output (`body-emitter/post-emit-cleanup.ts`).
  */
 
 import type {

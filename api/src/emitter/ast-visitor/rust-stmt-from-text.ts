@@ -881,8 +881,8 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
         if (lines.length >= 3) {
           const lastLine = lines[lines.length - 1] ?? "";
           const firstItemLine = lines[1] ?? "";
-          const closingIndent = /^( *)/.exec(lastLine)?.[1].length ?? 0;
-          const firstItemIndent = /^( *)/.exec(firstItemLine)?.[1].length ?? 0;
+          const closingIndent = /^( *)/.exec(lastLine)?.[1]?.length ?? 0;
+          const firstItemIndent = /^( *)/.exec(firstItemLine)?.[1]?.length ?? 0;
           if (firstItemIndent === closingIndent + 4) {
             multiLine = true;
           }

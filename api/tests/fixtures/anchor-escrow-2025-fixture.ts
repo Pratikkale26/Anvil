@@ -162,8 +162,17 @@ export async function callMakeOffer(
   tx.feePayer = ctx.maker.publicKey;
   tx.sign(ctx.maker);
   const r = svm.sendTransaction(tx);
-  if ("err" in r) {
-    throw new Error(`make_offer failed: ${JSON.stringify(r.err)}`);
+  if ((r as { constructor?: { name?: string } })?.constructor?.name === "FailedTransactionMetadata") {
+    const errFn = (r as { err?: () => unknown }).err;
+    const err = typeof errFn === "function" ? errFn.call(r) : errFn;
+    const errName = (err as { constructor?: { name?: string } })?.constructor?.name ?? "unknown";
+    const meta = (r as { meta?: () => unknown }).meta;
+    const metaObj = typeof meta === "function" ? meta.call(r) : null;
+    const logs = (metaObj as { logs?: () => string[] })?.logs;
+    const logsArr = typeof logs === "function" ? logs.call(metaObj) : [];
+    throw new Error(
+      `make_offer failed: ${errName}\n  logs:\n    ${(logsArr as string[]).join("\n    ")}`,
+    );
   }
 }
 
