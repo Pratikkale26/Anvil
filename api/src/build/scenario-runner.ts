@@ -841,8 +841,11 @@ export function runScenarioOnSo(
     });
   }
 
-  // Airdrop signers.
+  // Airdrop signers. `airdrop: 0` means the signer must start unfunded —
+  // typically because it's the `to` target of a system_program::create_account
+  // CPI which requires the destination to have zero lamports.
   for (const decl of scenario.signers) {
+    if (decl.airdrop === 0) continue;
     const kp = ctx.signers.get(decl.name)!;
     svm.airdrop(kp.publicKey, BigInt(decl.airdrop ?? 1_000_000_000));
   }

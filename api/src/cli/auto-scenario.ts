@@ -588,6 +588,40 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     return { ok: false, blockers };
   }
 
+  // ── (4a) Detect Signers that are `to` targets of system_program::create_account ──
+  // These signers must have 0 lamports at scenario start. Anchor's `init`
+  // constraint generates this CPI internally; user-level create_account in
+  // a pass_through body (rent-pe / create-account / pda-rent-payer-pe) does
+  // it explicitly. The to-account must be empty for SystemProgram to
+  // allocate it. If we airdrop, create_account fails with InvalidAccountData.
+  // Detection: regex over pass_through bodies for `to: ctx.accounts.<NAME>.to_account_info()`
+  // inside a system_program::CreateAccount struct literal, OR within an
+  // invoke(&system_instruction::create_account(...)) form.
+  const createAccountTargetNames = new Set<string>();
+  for (const ix of ir.instructions) {
+    for (const stmt of ix.body) {
+      if (stmt.kind !== "pass_through") continue;
+      const code = stmt.code;
+      // Anchor wrapper shape: CreateAccount { from: ..., to: ctx.accounts.X.to_account_info() }
+      const m1 = code.matchAll(/CreateAccount\s*\{[^}]*?\bto\s*:\s*ctx\.accounts\.([a-zA-Z_][a-zA-Z0-9_]*)\.to_account_info\(\)/gs);
+      for (const m of m1) {
+        if (m[1] && signerNames.has(m[1])) createAccountTargetNames.add(m[1]);
+      }
+      // system_instruction::create_account(&from_pk, &to_pk, ...) form — `to_pk`
+      // typically resolves through a let binding the same instruction sets up.
+      // For our 32-fixture corpus the Anchor CreateAccount wrapper covers
+      // every case; leaving the second shape for a follow-up if needed.
+    }
+  }
+  // Never mark the FIRST signer in any instruction as unfunded — that signer
+  // is the fee payer for the txn and needs funds.
+  const firstSignerNames = new Set<string>();
+  for (const ix of ir.instructions) {
+    const first = ix.accounts.find((a) => isSignerAccount(a.accountType));
+    if (first) firstSignerNames.add(first.name);
+  }
+  for (const fn of firstSignerNames) createAccountTargetNames.delete(fn);
+
   // ── (4b) Identify $keypair: accounts with `owner = id()` constraint ──
   // Anchor's runtime constraint check rejects System-Program-owned accounts
   // against `owner = id()`. The runner pre-creates these as program-owned
@@ -779,7 +813,12 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     // (pda-rent-payer-pe, anchor-bench-style benchmarks). Each rent-exempt
     // account costs ~1-7M lamports; 10 SOL is comfortably above the realistic
     // worst case for the 32-fixture corpus.
-    signers: allSigners.map<SignerDecl>((name) => ({ name, airdrop: 10_000_000_000 })),
+    signers: allSigners.map<SignerDecl>((name) => ({
+      name,
+      // Signers that show up as `to:` in system_program::create_account must
+      // start at 0 lamports — the CPI fails otherwise. See (4a) above.
+      airdrop: createAccountTargetNames.has(name) ? 0 : 10_000_000_000,
+    })),
     pdas: [...pdaSpecs.entries()].map<PdaDecl>(([name, spec]) => ({ name, seeds: spec.seeds })),
     mints: [...mintNames].map<MintDecl>((name) => ({
       name,
