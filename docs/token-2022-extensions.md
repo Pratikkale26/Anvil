@@ -1,8 +1,8 @@
 # Token-2022 extension coverage
 
-Token-2022 ships as `TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEbW` and behaves like SPL Token plus a per-mint or per-account *extension* layer. Anvil's emit handles the **base CPI shapes** (`transfer_checked`, `mint_to_checked`, `burn_checked`, etc.) regardless of extensions — those operations dispatch to the same Token-2022 program and the extension behavior is enforced at the program level. Extension-specific *initialization* and *management* instructions are a separate surface and are detailed below.
+Token-2022 ships as `TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEbW` and behaves like SPL Token plus a per-mint or per-account *extension* layer. Anvil handles the **base CPI shapes** (`transfer_checked`, `mint_to_checked`, `burn_checked`, etc.) regardless of which extensions a mint carries — those operations dispatch to the same Token-2022 program and the extension behavior is enforced at the program level. Extension-specific *initialization* and *management* instructions are a separate surface and most have typed IR + structural emit; see the status table below.
 
-If your contract only does `transfer_checked` / `mint_to_checked` / `burn_checked` on a mint that happens to have extensions (e.g. transfer-fee, interest-bearing), Anvil's emit produces correct CPI calls — the program does the right thing at runtime. If your contract initializes or manages extensions directly, the emit treats those instructions as `pass_through` and may need manual review for non-Native targets.
+**Coverage summary (2026-05-13, post-EM2 S3):** all 12 non-confidential extensions land at Y on both Pinocchio and Native — 11 with typed IR + byte-equal differential gates, plus CpiGuard at "Y (compat)" (its init/disable instructions are spec-disallowed from CPI; both targets round-trip the same rejection). The remaining 3 (Confidential family) are `lint` pending a zk-proof prelude arc.
 
 The differential gate covers the base path: `differential-t22-transfer` exercises `transfer_checked` with explicit decimals extraction (the silent-corruption risk the validator catches).
 
@@ -11,6 +11,7 @@ The differential gate covers the base path: `differential-t22-transfer` exercise
 Statuses:
 
 - **Y** — emit produces a working CPI; runtime byte-equal verified or differential-gated
+- **Y (compat)** — emit produces source-equivalent code, but the underlying instruction is spec-disallowed from CPI; both Anchor and Anvil emits round-trip the same rejection
 - **partial** — base CPI works (transfer/mint/burn); extension-specific init/manage instructions land as `pass_through` and need manual review
 - **lint** — surface flagged by the validator/linter; emit produces a `TODO(manual)` marker
 - **—** — not supported; emit may compile but runtime behavior diverges
@@ -21,7 +22,7 @@ Statuses:
 | MintCloseAuthority | Y (init) | Y (init) | base close via `cpi_spl_close_account` w/ tokenProgram=token_2022 — Y; init differential-gated 2026-05-13 (EM2 S1) |
 | InterestBearingMint | Y (init+update_rate) | Y (init+update_rate) | none on base CPIs — Y; init+update_rate differential-gated 2026-05-07 |
 | NonTransferable | Y | Y | `transfer_checked` rejects at program level — Y (rejection round-trips); init differential-gated 2026-05-07 |
-| CpiGuard | partial | partial | restricts which CPI calls a token account permits — Y for permitted ops |
+| CpiGuard | Y (compat) | Y (compat) | client-side-only init/disable per Token-2022 spec; CPI invocation rejected — both targets round-trip the same rejection. No typed IR needed |
 | DefaultAccountState | Y (init+update) | Y (init+update) | newly-initialized accounts start frozen — Y for state-aware code; init+update differential-gated 2026-05-07 (Pinocchio uses literal-AccountState→u8 mapping for the state byte) |
 | ImmutableOwner | Y | Y | none on base CPIs — Y; init differential-gated 2026-05-07 |
 | PermanentDelegate | Y (init) | Y (init) | `transfer_checked` honors the delegate — Y; init differential-gated 2026-05-13 (EM2 S1) |
@@ -30,29 +31,43 @@ Statuses:
 | GroupPointer / MemberPointer | Y | Y | none on base CPIs — Y; differential-gated 2026-05-13 (EM2 S3): GroupPointer init + MemberPointer init+update byte-equal. GroupPointer update IR+emit shipped but not byte-equal-gated (anchor-spl 0.31/0.32 `group_pointer_update` wrapper is upstream-broken — signers slot vs invoke-accounts mismatch) |
 | TransferHook | Y (init+update) | Y (init+update) | base `transfer_checked` triggers the hook program — Y if hook program is co-deployed; init+update differential-gated 2026-05-13 (EM2 S2) |
 | ConfidentialTransferMint | lint | lint | requires zk-proofs path; `transfer_checked` doesn't apply to encrypted balances |
+| ConfidentialTransferFee | lint | lint | rides on top of ConfidentialTransferMint; same zk-proof gap |
+| ConfidentialMintBurn | lint | lint | same zk-proof gap |
 
-## What "partial" means concretely
+## What "Y" guarantees
 
-- **Initialization instructions** (`InitializeTransferFeeConfig`, `InitializeMintCloseAuthority`, `InitializeInterestBearingMint`, etc.) are bare Token-2022 program calls with the extension-specific instruction discriminator + payload. Anvil's parser doesn't have typed IR kinds for these; they land in the source's body as `pass_through` (or `cpi_custom` if wrapped in a `CpiContext`). The emit pastes the source through with `ctx.accounts` rewrites applied — usually compile-clean on Native, sometimes leaves a `TODO(manual)` on Pinocchio depending on whether the source uses an `anchor_spl::token_2022_extensions::*` builder vs raw `solana_program::program::invoke`.
+For every row marked Y or Y-with-instructions, the typed IR kind + structural emit have been verified byte-equal against the Anchor-built `.so` via the differential harness in `api/tests/differential-t22-*.test.ts`. The harness allocates a mint with the appropriate `ExtensionType` space, runs the extension init (and any update CPI) under LiteSVM against both targets, then byte-compares the resulting mint account data and lamports. Drift between Anvil's emit and Anchor's helper would fail the gate immediately.
 
-- **Management instructions** (`SetTransferFee`, `WithdrawWithheldTokensFromMint`, `HarvestWithheldTokensToMint`, etc.) follow the same pattern. The validator's `pass_through` audit (see `api/src/emitter/passthrough-audit.ts`) flags these in `--strict` mode if they reference Anchor-only constructs (`ctx.accounts`, `anchor_lang::*`). Otherwise they pass through verbatim.
-
-- **Account size calculation**. Mints and TokenAccounts with extensions are LARGER than the base 82 / 165 bytes. Anvil's emit uses Anchor's `space = ...` value verbatim — if your source correctly accounts for extension bytes, the emit allocates correctly. The validator does not cross-check `space` against extension presence.
+CpiGuard's "Y (compat)" row deserves a specific note: the Token-2022 spec disallows the `EnableCpiGuard` / `DisableCpiGuard` instructions from being issued under CPI (only the token-account owner can sign them, and they reject if the signing CPI stack is non-empty). Source code attempting to call these via Anchor's `cpi_guard_*` wrappers will compile, but will reject at runtime on both targets — and the rejection round-trips through the same error path. No typed IR kind is needed for these.
 
 ## What's NOT yet supported
 
-- **ConfidentialTransferMint** is `lint` because the zk-proof flow has no typed IR kind. Source using `ConfidentialTransferMint` instructions produces a `TODO(manual)` block. Manual rebuild required for both targets.
+- **Confidential family** (ConfidentialTransferMint + ConfidentialTransferFee + ConfidentialMintBurn) are `lint` because the zk-proof flow has no typed IR kind. Source using these instructions produces a `TODO(manual)` block; manual rebuild required for both targets. Re-enabling this surface is its own arc (zk-proof prelude + encrypted-amount handling — not bundled with classic EM2).
 
-- **Direct ExtensionType reads** in handler bodies (e.g. `mint.extension::<TransferFeeConfig>()?`). These get classified as `pass_through` and the emit may not handle the extension's deserialization path correctly. Validator does not flag them today.
+- **Direct ExtensionType reads** in handler bodies (e.g. `mint.extension::<TransferFeeConfig>()?`). These get classified as `pass_through` and the emit may not handle the extension's deserialization path correctly. The validator does not flag them today.
+
+- **Account size calculation.** Mints and TokenAccounts with extensions are LARGER than the base 82 / 165 bytes. Anvil's emit uses Anchor's `space = ...` value verbatim — if your source correctly accounts for extension bytes, the emit allocates correctly. The validator does not cross-check `space` against extension presence.
 
 ## How to add coverage for a new extension
 
 1. Add a fixture in `api/src/demo-programs/t22-<extension>.rs` that exercises the extension's typical use (init + base CPI).
-2. Add `api/tests/differential-t22-<extension>.test.ts` mirroring the existing `differential-t22-transfer.test.ts` shape; set up the mint with the extension via `@solana/spl-token`'s `createInitializeXInstruction` helpers.
-3. If the runtime byte-equal compare fails (data, lamports, or owner divergence), inspect the emit and either:
-   - File a typed IR kind for the extension's init instruction (`cpi_t22_transfer_fee_init`, etc.) so the emit doesn't pass it through.
+2. Add `api/tests/differential-t22-<extension>.test.ts` mirroring an existing one (the `MetadataPointer` test is the cleanest single-instruction template; `TransferHook` shows the init→`createInitializeMint2Instruction` wedge→update pattern needed for `Update` sub-instructions). Set up the mint via `@solana/spl-token`'s `createInitializeXInstruction` helpers or by allocating extension space and letting the program init the extension.
+3. **Critical:** generate `declare_id!(...)` and `PROGRAM_ID` literals via `Keypair.generate().publicKey.toBase58()`. Hand-crafted base58 strings frequently contain `0`, `O`, `I`, or `l` and crash `defineDifferential` at module load — before the toolchain-skip can fire.
+4. If the runtime byte-equal compare fails (data, lamports, or owner divergence), inspect the emit and either:
+   - File a typed IR kind for the extension's init/update instruction (see `cpi_t22_transfer_hook_*` / `cpi_t22_group_pointer_*` for the OptionalNonZeroPubkey-pointer template) so the emit doesn't pass it through.
    - Add a test-side mask if the divergence is benign (e.g. timestamps, randomness — should be rare).
-4. Promote the fixture to the byte-equal corpus in `feature-matrix.md` and `audit-trust-model.md`.
+5. Promote the fixture to the byte-equal corpus in `feature-matrix.md` and `audit-trust-model.md`.
+
+## Wire-layout reference (for new pointer-style extensions)
+
+Several extensions (TransferHook, MetadataPointer, GroupPointer, GroupMemberPointer) share the same `OptionalNonZeroPubkey` wire layout: each Option<Pubkey> is a flat 32-byte field where an all-zero pubkey encodes `None`. There's no COption-tag byte. Multi-Option payloads are simply concatenated.
+
+| Sub-instruction | Total bytes | Layout |
+|---|---|---|
+| `*Initialize` (2 Options) | 66 | parent_disc(1) + sub(1) + auth(32) + addr(32) |
+| `*Update` (1 Option) | 34 | parent_disc(1) + sub(1) + addr(32) |
+
+MintCloseAuthority uses a *different* layout (`COption<Pubkey>` — 1-byte tag + 32-byte pubkey when `Some`). Don't conflate them when adding new extensions.
 
 ## References
 
@@ -60,3 +75,4 @@ Statuses:
 - [Token-2022 source](https://github.com/solana-program/token-2022) — canonical instruction discriminators
 - `api/src/demo-programs/t22-transfer.rs` — current base differential fixture
 - `api/tests/differential-t22-transfer.test.ts` — runtime mint setup pattern
+- `api/src/emitter/pinocchio-emitter.ts` — search for `emitT22FlatOptionPointerInit` / `emitT22FlatOptionPointerUpdate` for the shared pointer-extension Pinocchio code
