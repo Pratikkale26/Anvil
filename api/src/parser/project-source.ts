@@ -496,6 +496,16 @@ function flattenUseStatement(raw: string): string[] {
 
 function flattenUseTree(prefix: string, body: string, out: string[]): void {
   body = body.trim();
+  // Top-level brace-only form: `use { a, b::c, d::{e,f} };` (no path
+  // prefix). Treat each comma-separated item as a top-level path.
+  if (body.startsWith("{") && body.endsWith("}")) {
+    const inner = body.slice(1, -1);
+    const items = splitTopLevelCommas(inner);
+    for (const item of items) {
+      flattenUseTree(prefix, item, out);
+    }
+    return;
+  }
   // Match `path::{items}` — path on the left, brace group on the right.
   // The `s` flag is implicit in the multiline `.` via [\s\S]; using a
   // simple regex with `s` flag here would also work but bun's regex
@@ -507,11 +517,26 @@ function flattenUseTree(prefix: string, body: string, out: string[]): void {
   }
   const pathPart = braceMatch[1]!.trim();
   const itemsRaw = braceMatch[2]!;
-  // Split items at top-level commas (nested `{...}` raises depth).
+  const items = splitTopLevelCommas(itemsRaw);
+  for (const item of items) {
+    // `self` inside a brace group brings in the parent path itself.
+    // `use foo::{self, Bar};` → `use foo;` + `use foo::Bar;`.
+    if (item === "self") {
+      out.push(`${prefix}${pathPart};`);
+      continue;
+    }
+    flattenUseTree(prefix, `${pathPart}::${item}`, out);
+  }
+}
+
+/** Split a brace-group inner body at top-level commas, respecting nested
+ *  `{...}` depth. Shared by the top-level `use { ... };` case and the
+ *  `path::{items}` recursion. */
+function splitTopLevelCommas(s: string): string[] {
   const items: string[] = [];
   let buf = "";
   let depth = 0;
-  for (const ch of itemsRaw) {
+  for (const ch of s) {
     if (ch === "{") depth++;
     else if (ch === "}") depth--;
     if (ch === "," && depth === 0) {
@@ -524,15 +549,7 @@ function flattenUseTree(prefix: string, body: string, out: string[]): void {
   }
   const last = buf.trim();
   if (last) items.push(last);
-  for (const item of items) {
-    // `self` inside a brace group brings in the parent path itself.
-    // `use foo::{self, Bar};` → `use foo;` + `use foo::Bar;`.
-    if (item === "self") {
-      out.push(`${prefix}${pathPart};`);
-      continue;
-    }
-    flattenUseTree(prefix, `${pathPart}::${item}`, out);
-  }
+  return items;
 }
 
 /**
