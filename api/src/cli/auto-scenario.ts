@@ -520,6 +520,27 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   }
 
   // ── (3) Derive PDA seeds for every PDA collected above ──
+  // Build TypeName::CONST_NAME → byte-string-literal lookup from impl items
+  // of every account + type def. Anchor programs commonly declare
+  // `impl Foo { pub const SEED_PREFIX: &'static [u8; N] = b"literal"; }`
+  // and reference it from a PDA seeds = [Foo::SEED_PREFIX, ...] block.
+  // Synthesizer can't read const arithmetic, but b"..." literals fold to a
+  // single bytes value we can emit as a seed verbatim.
+  const sourceConstLookup = new Map<string, string>();
+  const collectConsts = (typeName: string, implItems: string[] | undefined) => {
+    for (const item of implItems ?? []) {
+      for (const m of item.matchAll(/\bpub\s+const\s+([A-Z][A-Z0-9_]*)\s*:\s*&'?(?:'static)?\s*\[u8\s*;\s*\d+\]\s*=\s*b"([^"]+)"\s*;/g)) {
+        if (m[1] && m[2]) sourceConstLookup.set(`${typeName}::${m[1]}`, `b"${m[2]}"`);
+      }
+      // Also accept the &[u8] (no length) form.
+      for (const m of item.matchAll(/\bpub\s+const\s+([A-Z][A-Z0-9_]*)\s*:\s*&'?(?:'static)?\s*\[u8\]\s*=\s*b"([^"]+)"\s*;/g)) {
+        if (m[1] && m[2]) sourceConstLookup.set(`${typeName}::${m[1]}`, `b"${m[2]}"`);
+      }
+    }
+  };
+  for (const ad of ir.accounts) collectConsts(ad.name, ad.implItems);
+  for (const td of ir.types) collectConsts(td.name, td.implItems);
+
   const pdaSpecs = new Map<string, { seeds: string[]; sourceIx: string }>();
   for (const ix of ir.instructions) {
     // Build per-instruction arg-type map so synthesizeSeeds can resolve
@@ -540,6 +561,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
           stateNumericFieldMap,
           initdEphemeralNames,
           stateTypeNames,
+          sourceConstLookup,
         );
         if (!seedResult.ok) {
           blockers.push({
@@ -932,6 +954,7 @@ function synthesizeSeeds(
   stateNumericFieldMap: Map<string, Map<string, { argName: string; argType: string; defaultValue: number }>>,
   initdEphemeralNames: Set<string> = new Set(),
   stateTypeNames: Set<string> = new Set(),
+  sourceConstLookup: Map<string, string> = new Map(),
 ): SeedSynthesis {
   const resolveStateNumericField = (
     accName: string,
@@ -967,6 +990,16 @@ function synthesizeSeeds(
     if (/^[a-z_][a-z0-9_]*$/.test(trimmed) && !signerNames.has(trimmed)) {
       out.push(`b"${trimmed}"`);
       continue;
+    }
+    // Qualified const path: `TypeName::CONST_NAME` (e.g. PageVisits::SEED_PREFIX).
+    // The const declarations live in ir.accounts[].implItems /
+    // ir.types[].implItems; collectConsts scanned them for byte-literal
+    // values. If we have the exact const declared as a b"..." literal,
+    // substitute. Falls through to the convention-based ALL_CAPS heuristic
+    // below when unresolved.
+    if (/^[A-Z][A-Za-z0-9_]*::[A-Z][A-Z0-9_]+$/.test(trimmed)) {
+      const lit = sourceConstLookup.get(trimmed);
+      if (lit) { out.push(lit); continue; }
     }
     // ALL_CAPS const identifier (e.g. VESTING_SEED, VAULT_SEED) -- common
     // Anchor pattern: `pub const VESTING_SEED: &[u8] = b"vesting";` then
