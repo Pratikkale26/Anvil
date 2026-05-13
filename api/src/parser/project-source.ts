@@ -462,20 +462,84 @@ function isInternalUse(line: string, resolvedModules: Set<string>): boolean {
  */
 function collectExternalUseStatements(source: string, resolvedModules: Set<string>): string[] {
   const uses: string[] = [];
-  for (const match of source.matchAll(/^(\s*(?:pub\s+)?use\s+\S[^;]*;\s*)$/gm)) {
+  // Multi-line use statements (e.g. wrapped `use a::{b,\n  c,\n  d};`) need
+  // to be captured up to the terminating `;` regardless of newlines, then
+  // flattened into individual `use a::b::c;` statements. Without this,
+  // `{Mint, transfer}` in one file and `{transfer, Mint}` in another (real
+  // shape from token-fundraiser) survives the dedup Set as two distinct
+  // strings and emits both — E0252 "name `Mint` is defined multiple times".
+  for (const match of source.matchAll(/^\s*(?:pub\s+)?use\s+[^;]*;/gm)) {
     const line = match[0];
     if (line && !isInternalUse(line, resolvedModules)) {
-      uses.push(line.trim());
+      uses.push(...flattenUseStatement(line));
     }
   }
   return uses;
+}
+
+/** Flatten a `use a::{b::c, d::{e, f}};` statement into individual
+ *  `use a::b::c;`, `use a::d::e;`, `use a::d::f;` statements. The dedup
+ *  Set in buildFlattenedSource then sees byte-identical strings for the
+ *  same symbol regardless of which file imported it or what ordering its
+ *  siblings used. Glob (`use a::*;`), aliases (`use a::b as c;`), and
+ *  flat single-path imports (`use a::b;`) pass through unchanged. */
+function flattenUseStatement(raw: string): string[] {
+  const trimmed = raw.trim().replace(/\s+/g, " ");
+  const m = trimmed.match(/^((?:pub\s+)?use\s+)(.+?)\s*;$/);
+  if (!m) return [trimmed];
+  const prefix = m[1]!;
+  const body = m[2]!;
+  const out: string[] = [];
+  flattenUseTree(prefix, body, out);
+  return out;
+}
+
+function flattenUseTree(prefix: string, body: string, out: string[]): void {
+  body = body.trim();
+  // Match `path::{items}` — path on the left, brace group on the right.
+  // The `s` flag is implicit in the multiline `.` via [\s\S]; using a
+  // simple regex with `s` flag here would also work but bun's regex
+  // supports it directly.
+  const braceMatch = body.match(/^([\s\S]+?)::\{([\s\S]+)\}$/);
+  if (!braceMatch) {
+    out.push(`${prefix}${body};`);
+    return;
+  }
+  const pathPart = braceMatch[1]!.trim();
+  const itemsRaw = braceMatch[2]!;
+  // Split items at top-level commas (nested `{...}` raises depth).
+  const items: string[] = [];
+  let buf = "";
+  let depth = 0;
+  for (const ch of itemsRaw) {
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+    if (ch === "," && depth === 0) {
+      const t = buf.trim();
+      if (t) items.push(t);
+      buf = "";
+    } else {
+      buf += ch;
+    }
+  }
+  const last = buf.trim();
+  if (last) items.push(last);
+  for (const item of items) {
+    // `self` inside a brace group brings in the parent path itself.
+    // `use foo::{self, Bar};` → `use foo;` + `use foo::Bar;`.
+    if (item === "self") {
+      out.push(`${prefix}${pathPart};`);
+      continue;
+    }
+    flattenUseTree(prefix, `${pathPart}::${item}`, out);
+  }
 }
 
 /**
  * Strip all `use` declarations from a source string.
  */
 function stripAllUseStatements(source: string): string {
-  return source.replace(/^\s*(?:pub\s+)?use\s+\S[^;]*;\s*$/gm, "");
+  return source.replace(/^\s*(?:pub\s+)?use\s+[^;]*;\s*$/gm, "");
 }
 
 // ─── Module graph walker ─────────────────────────────────────────────────────
