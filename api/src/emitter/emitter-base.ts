@@ -2695,28 +2695,113 @@ function commentOutBlock(raw: string, reason: string): string {
  * crate's CpiContext machinery; both targets strip the import and the
  * call. Same TODO-stub pattern as solana_program::invoke commentout.
  */
+const SIBLING_CPI_BANNER = "sibling-Anchor-program CPI — sibling crate not in target scaffold; manual port required";
+
+/** Match `<crate>::cpi::<fn>` exactly (3 segments) where the call's function
+ *  is a scoped_identifier. Returns the crate's leading identifier text or
+ *  null on mismatch. */
+function siblingCpiCallCrate(callExpr: SyntaxNode): string | null {
+  const fnNode = callExpr.childForFieldName("function");
+  if (!fnNode || fnNode.type !== "scoped_identifier") return null;
+  // tree-sitter-rust nests as: scoped_identifier(path: scoped_identifier(path: id, name: id), name: id)
+  const outerName = fnNode.childForFieldName("name");
+  if (!outerName || outerName.type !== "identifier") return null;
+  const mid = fnNode.childForFieldName("path");
+  if (!mid || mid.type !== "scoped_identifier") return null;
+  const midName = mid.childForFieldName("name");
+  if (!midName || midName.type !== "identifier" || midName.text !== "cpi") return null;
+  const crateNode = mid.childForFieldName("path");
+  if (!crateNode || crateNode.type !== "identifier") return null;
+  return crateNode.text;
+}
+
+/** Walk up to the smallest enclosing statement-or-tail-expression node.
+ *  Returns either an `expression_statement`/`let_declaration` (the
+ *  ;-terminated common case) or the direct child of a `block` when the call
+ *  sits at the block's tail position (no trailing `;`). Mirrors the legacy
+ *  regex behavior of walking back to the previous `{`/`;` and forward to
+ *  the next `;`/`}`. */
+function enclosingStatement(n: SyntaxNode): SyntaxNode | null {
+  let cur: SyntaxNode | null = n;
+  while (cur && cur.parent) {
+    if (cur.type === "expression_statement" || cur.type === "let_declaration") {
+      return cur;
+    }
+    if (cur.parent.type === "block") {
+      // Direct child of a block — a tail expression in the function/block.
+      return cur;
+    }
+    cur = cur.parent;
+  }
+  return null;
+}
+
+function collectSiblingCpiStatements(root: SyntaxNode, ranges: Array<{ start: number; end: number }>): void {
+  if (root.type === "call_expression") {
+    const crate = siblingCpiCallCrate(root);
+    if (crate && !isKnownExternalCrate(crate)) {
+      const stmt = enclosingStatement(root);
+      if (stmt) {
+        ranges.push({ start: stmt.startIndex, end: stmt.endIndex });
+      }
+    }
+  }
+  for (let i = 0; i < root.namedChildCount; i++) {
+    const c = root.namedChild(i);
+    if (c) collectSiblingCpiStatements(c, ranges);
+  }
+}
+
 export function rewriteSiblingCpiCalls(body: string): string {
+  const parser = getParserSync();
+  if (parser) {
+    try {
+      const tree = parser.parse(body);
+      if (tree) {
+        // Skip the AST path when the input has top-level parse errors — emitter
+        // output occasionally carries pre-existing residuals from earlier
+        // post-processors that the regex fallback handles by ignoring scope.
+        if (!nodeHasError(tree.rootNode)) {
+          const ranges: Array<{ start: number; end: number }> = [];
+          collectSiblingCpiStatements(tree.rootNode, ranges);
+          if (ranges.length === 0) return body;
+          // Merge overlapping (same statement may host multiple sibling CPI calls).
+          ranges.sort((a, b) => a.start - b.start);
+          const merged: Array<{ start: number; end: number }> = [];
+          for (const r of ranges) {
+            const last = merged[merged.length - 1];
+            if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+            else merged.push({ ...r });
+          }
+          let out = "";
+          let cursor = 0;
+          for (const r of merged) {
+            out += body.slice(cursor, r.start);
+            const stmt = body.slice(r.start, r.end);
+            const commented = stmt
+              .split("\n")
+              .map((line) => (line.length > 0 ? `// ${line}` : "//"))
+              .join("\n");
+            out += `// ⚠️ Anvil TODO: ${SIBLING_CPI_BANNER}\n${commented}`;
+            cursor = r.end;
+          }
+          out += body.slice(cursor);
+          return out;
+        }
+      }
+    } catch { /* fall through to regex fallback */ }
+  }
+
+  // Regex fallback — bracket-walker for cases the AST didn't cover (parse
+  // errors in emitted text, or sync paths before parser warmup).
   const SIBLING_CPI_RE = /\b([a-z_][a-z0-9_]*)\s*::\s*cpi\s*::\s*[a-z_][a-z0-9_]*\s*\(/gi;
-  // Walk left to right; for each match, find the enclosing statement bounds
-  // (back to previous `;` or `{` at depth 0; forward to next `;` or `}` at
-  // depth 0) and replace the whole statement with a TODO-comment block.
   type Range = { start: number; end: number };
   const ranges: Range[] = [];
   let m: RegExpExecArray | null;
   SIBLING_CPI_RE.lastIndex = 0;
   while ((m = SIBLING_CPI_RE.exec(body)) !== null) {
     const crate = m[1] ?? "";
-    const isKnownExternal =
-      crate === "anchor_lang" ||
-      crate === "anchor_spl" ||
-      crate === "solana_program" ||
-      crate === "pinocchio" ||
-      crate.startsWith("spl_") ||
-      crate.startsWith("mpl_") ||
-      crate.startsWith("pyth_") ||
-      crate.startsWith("switchboard_");
-    if (isKnownExternal) continue;
-    // Walk back to `;` or `{` at paren-depth 0.
+    if (isKnownExternalCrate(crate)) continue;
     let pd = 0;
     let start = 0;
     for (let i = m.index - 1; i >= 0; i--) {
@@ -2730,7 +2815,6 @@ export function rewriteSiblingCpiCalls(body: string): string {
         pd--;
       } else if (ch === ";" && pd === 0) { start = i + 1; break; }
     }
-    // Walk forward to first `;` at paren-depth 0.
     let depth = 0;
     let end = body.length;
     for (let i = m.index; i < body.length; i++) {
@@ -2745,7 +2829,6 @@ export function rewriteSiblingCpiCalls(body: string): string {
     ranges.push({ start, end });
   }
   if (ranges.length === 0) return body;
-  // Merge overlapping ranges (defensive).
   ranges.sort((a, b) => a.start - b.start);
   const merged: Range[] = [];
   for (const r of ranges) {
@@ -2762,7 +2845,7 @@ export function rewriteSiblingCpiCalls(body: string): string {
       .split("\n")
       .map((line) => (line.length > 0 ? `// ${line}` : "//"))
       .join("\n");
-    out += `// ⚠️ Anvil TODO: sibling-Anchor-program CPI — sibling crate not in target scaffold; manual port required\n${commented}`;
+    out += `// ⚠️ Anvil TODO: ${SIBLING_CPI_BANNER}\n${commented}`;
     cursor = r.end;
   }
   out += body.slice(cursor);
