@@ -1053,8 +1053,21 @@ export class AstVisitorBase {
     // uses. Drops the prelude's raw_lines (was 66 across the corpus).
     out.push(...this.ensureStateReadStructural(stateAccountName, stateAccountName, true));
 
+    // Two-step lookup mirroring handleStateFieldAssign: when the
+    // ix-account binding name (e.g. `contributor_account`) doesn't
+    // match an AccountDef name directly (`Contributor`), hop through
+    // the binding's accountType. Without this, AccountDefs only
+    // reachable via the accountType indirection get fieldDef=undefined
+    // and the compound branch silently skips → __compound_/__amount
+    // placeholder leaks into emit. Surfaced on token-fundraiser's
+    // `contributor_account.amount += amount` shape under AST_EMIT=1.
+    const ixAccountRef = w.instr.accounts.find(
+      (a) => snakeCase(a.name) === stateAccountName,
+    );
     const stateAccountDef = w.ir.accounts.find(
-      (acc) => snakeCase(acc.name) === stateAccountName,
+      (acc) =>
+        snakeCase(acc.name) === stateAccountName
+        || (ixAccountRef !== undefined && acc.name === ixAccountRef.accountType),
     );
     const fieldDef = stateAccountDef?.fields.find(
       (f) => snakeCase(f.name) === snakeCase(stmt.field),
