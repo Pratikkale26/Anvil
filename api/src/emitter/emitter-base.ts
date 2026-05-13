@@ -720,6 +720,13 @@ export abstract class BaseEmitter {
         if (/\barrayref\b/.test(statement)) return false;
         if (/\buint::construct_uint\b/.test(statement)) return false;
         if (/^use\s+rand(?:::|;)/.test(statement)) return false;
+        // solana_security_txt is a dev-time annotation macro that emits a
+        // static byte array embedded in the program for tooling to scrape.
+        // The macro invocation lives at module scope and Anvil's parser
+        // drops it; the import line needs explicit filtering. Neither
+        // Pinocchio nor Native scaffold ships the crate, so this is a
+        // universal filter (futarchy/mint_governor surfaced it).
+        if (/\bsolana_security_txt\b/.test(statement)) return false;
         return true;
       });
   }
