@@ -423,10 +423,22 @@ async function buildAnvil(opts: DifferentialBuildOptions, outPath: string): Prom
  * doesn't touch valid AccountInfo-shaped first args.
  */
 function patchAnchorSourceCompat(source: string): string {
-  return source.replace(
+  let out = source;
+  // (1) `CpiContext::new(<X>.key(), ...)` → `CpiContext::new(<X>.to_account_info(), ...)`
+  out = out.replace(
     /\b(CpiContext::new(?:_with_signer)?\s*\(\s*)([a-zA-Z_][a-zA-Z0-9_.]*)\.key\(\)/g,
     "$1$2.to_account_info()",
   );
+  // (2) `let <var> = <X>.key();` where <var> is conventionally a program
+  // ref later passed into CpiContext::new. t22-basics / cashiers-check
+  // pattern: `let cpi_program = ctx.accounts.token_program.key();`.
+  // Rewriting just the let is sufficient — the type at the use-site
+  // becomes AccountInfo, matching the CpiContext::new signature.
+  out = out.replace(
+    /\b(let\s+(?:cpi_program|cpi_program_id|cpi_prog|prog|program_id)\s*=\s*)([a-zA-Z_][a-zA-Z0-9_.]*)\.key\(\)\s*;/g,
+    "$1$2.to_account_info();",
+  );
+  return out;
 }
 
 export { rewriteDeclareId as rewriteDeclareIdForTest };
