@@ -733,8 +733,34 @@ export class BodyWalker {
     const pdaSeeds = (accountRef?.pdaSeeds ?? [`b"${snakeCase(accountName)}"`]).map(
       (seed) => this.normalizeSeedExpr(seed),
     );
+    // `seeds::program = X` override (Metaplex metadata PDAs). The PDA is
+    // derived against the named program ID, not the current program. We
+    // emit the override expression as the program-id argument so the
+    // generated find_program_address call lines up with Anchor's
+    // runtime check.
+    const seedsProgramC = accountRef?.constraints?.find((c) => c.kind === "seeds::program");
+    let programIdArg = "program_id";
+    if (seedsProgramC?.value) {
+      const v = seedsProgramC.value.trim();
+      // `<account>.key()` shape — emit the AccountInfo's key by-value.
+      const m = v.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.key\(\)$/);
+      if (m?.[1]) {
+        // Pinocchio AccountInfo has `.key()` returning &Pubkey; native has
+        // `.key` (field). The emitter dispatches per-target via
+        // resolveAccountInfoVar; we just emit `<x>.key` and let the
+        // per-target post-process adapt. Native expects a *plain*
+        // `<x>.key` deref-able to Pubkey; we wrap with a deref-from-ref
+        // helper using the bare ident — find_program_address takes
+        // `&Pubkey`, which both `&<x>.key` (native) and `<x>.key()`
+        // (pinocchio returns &Pubkey, so the call site needs no extra `&`)
+        // satisfy. Single emit shape that works for both: pass the
+        // AccountInfo's `.key` expression directly; downstream walker
+        // post-processes rewrite for the target idiom.
+        programIdArg = `${m[1]}.key`;
+      }
+    }
     const emitted = this.emitter.emitBumpSeed(
-      "program_id",
+      programIdArg,
       pdaSeeds,
       this.resolveAccountInfoVar(snakeCase(accountName)),
     );

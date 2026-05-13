@@ -438,7 +438,7 @@ ${arms}
     return `    ${_typeName}::save(${accountName}, &${localVar})?;`;
   }
 
-  override emitBumpSeed(_programId: string, seeds: string[], expectedKey: string): string {
+  override emitBumpSeed(programId: string, seeds: string[], expectedKey: string): string {
     const prelude: string[] = [];
     let tempCount = 0;
     const transformedSeeds = seeds.map((seed) => {
@@ -457,7 +457,15 @@ ${arms}
       return `${varName}.as_ref()`;
     });
     const seedsStr = transformedSeeds.map((s) => `${s}`).join(", ");
-    const bumpLine = `    let bump = bump_seed(program_id, &[${seedsStr}], ${expectedKey}.key())?;`;
+    // On Pinocchio AccountInfo.key() returns &Pubkey. The bump_seed
+    // helper takes &Pubkey for the program-id arg. When the caller
+    // passes `<x>.key` (the seeds::program override shape we emit
+    // from walker.ts), Pinocchio's .key field is unused at the type
+    // level — we rewrite to `<x>.key()` so the call lines up.
+    const progExpr = programId === "program_id"
+      ? "program_id"
+      : programId.replace(/\.key$/, ".key()");
+    const bumpLine = `    let bump = bump_seed(${progExpr}, &[${seedsStr}], ${expectedKey}.key())?;`;
     return prelude.length > 0 ? `${prelude.join("\n")}\n${bumpLine}` : bumpLine;
   }
 

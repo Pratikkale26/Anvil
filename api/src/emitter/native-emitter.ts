@@ -467,9 +467,14 @@ ${arms}
     return `    ${typeName}::write(&mut ${accountName}.data.borrow_mut(), &${localVar})?;`;
   }
 
-  override emitBumpSeed(_programId: string, seeds: string[], expectedKey: string): string {
+  override emitBumpSeed(programId: string, seeds: string[], expectedKey: string): string {
     const seedsStr = seeds.map((s) => `${s}`).join(", ");
-    return `    let (expected_key, bump) = Pubkey::find_program_address(&[${seedsStr}], program_id);
+    // Native AccountInfo.key is a field (&Pubkey); when caller passed a
+    // foo.key expression we need to deref-and-borrow for the
+    // find_program_address signature (takes &Pubkey). When caller
+    // passed the bare `program_id` ident, leave it as-is.
+    const progExpr = programId === "program_id" ? "program_id" : programId;
+    return `    let (expected_key, bump) = Pubkey::find_program_address(&[${seedsStr}], ${progExpr});
     if expected_key != *${expectedKey}.key {
         return Err(ProgramError::InvalidSeeds);
     }`;
