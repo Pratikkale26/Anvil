@@ -302,6 +302,25 @@ function warmDifferentialDependencies(
  * dep-resolution failures the previous hard-pin produced.
  */
 export function sniffAnchorLangVersion(source: string): string {
+  // Detect Anchor 1.0+ syntactic markers that don't exist in 0.31:
+  //   - `dup` constraint in #[derive(Accounts)] (allows duplicate accounts)
+  //   - `#[instruction(discriminator = X)]` literal disc override
+  // When either appears, force 1.0 for that source. Other sources stay on
+  // 0.31 (the default) so the 18 byte-equal fixtures don't get dragged
+  // into the 1.0 ecosystem migration.
+  const hasOneZeroOnlySyntax =
+    // `dup,` constraint inside #[derive(Accounts)] — appears as its own
+    // line in multi-line account blocks. We can't easily scope to the
+    // exact #[account(...)] block (nested parens via realloc =
+    // Sample::space(...) defeat a single regex), so we settle for "dup
+    // followed by comma at line start" which is the constraint shape.
+    // Bare `dup` identifier references in body code don't have a trailing
+    // comma right after, so false-positive risk is minimal.
+    /^\s*dup\s*,/m.test(source) ||
+    // `#[instruction(discriminator = ...)]` — 1.0 literal disc form.
+    /#\[instruction\s*\(\s*discriminator\s*=/.test(source);
+  if (hasOneZeroOnlySyntax) return "1.0";
+
   const ALLOWED = new Set(["0.29", "0.30", "0.31"]);
   const re = /anchor[-_]lang\s*[=:]?\s*['"`]?(0\.(?:29|30|31)(?:\.\d+)?)/;
   const m = source.match(re);
