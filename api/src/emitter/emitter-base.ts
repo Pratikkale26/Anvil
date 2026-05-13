@@ -66,9 +66,8 @@ export {
   irNeedsAtaCreationHelper,
   hasResidualAnchorPatterns,
   hasUnsalvageableHelperSignature,
+  recognizeCpiWrapperHelper,
 } from "./emitter-helpers.js";
-
-import { hasResidualAnchorPatterns, hasUnsalvageableHelperSignature } from "./emitter-helpers.js";
 
 // ─── Internal imports ────────────────────────────────────────────────────────
 
@@ -92,6 +91,7 @@ import {
   type Token2022Opts,
 } from "./body-emitter/index.js";
 import { transformHelperCode as transformHelperCodeImpl } from "./anchor-transforms.js";
+import { hasResidualAnchorPatterns, hasUnsalvageableHelperSignature, recognizeCpiWrapperHelper, rewriteCpiWrapperCallSites } from "./emitter-helpers.js";
 import {
   commentOutHelperBlock,
   commentOutUnsalvageableCallSites,
@@ -658,6 +658,7 @@ export abstract class BaseEmitter {
     this.passedThroughCount = 0;
     this.details = [];
     this.unsalvageableHelpers = this.computeUnsalvageableHelpers(ir);
+    this.computeCpiWrapperCallSiteRewrites(ir);
 
     const files: EmitterFile[] = [];
 
@@ -846,10 +847,15 @@ export abstract class BaseEmitter {
     // resolve to "cannot find value" on cargo build. Only emit when the
     // IR has errors to import — keeps single-error-free programs clean.
     const errorImport = ir.errors.length > 0 ? `use crate::errors::*;\n` : "";
-    const raw = `use super::*;\n${errorImport}\n${this.emitInstructionFunction(instr, ir)}`;
-    return this.unsalvageableHelpers.size > 0
-      ? commentOutUnsalvageableCallSites(raw, this.unsalvageableHelpers)
-      : raw;
+    let raw = `use super::*;\n${errorImport}\n${this.emitInstructionFunction(instr, ir)}`;
+    if (this.unsalvageableHelpers.size > 0) {
+      raw = commentOutUnsalvageableCallSites(raw, this.unsalvageableHelpers);
+    }
+    // Rewrite call sites for recognized CPI-wrapper helpers (strip & from
+    // AccountInfo args). Mirrors emit-combined; instruction file is also
+    // a place these calls live.
+    raw = this.applyCpiWrapperCallSiteRewrites(raw);
+    return raw;
   }
 
   /**
@@ -867,6 +873,12 @@ export abstract class BaseEmitter {
   private computeUnsalvageableHelpers(ir: SolanaIR): Set<string> {
     const out = new Set<string>();
     for (const helper of ir.helperFns ?? []) {
+      // Known CPI-wrapper helpers (escrow2025's transfer_tokens /
+      // close_token_account) carry InterfaceAccount in their signature but
+      // we emit a target-typed replacement body — they are salvageable.
+      if (recognizeCpiWrapperHelper(helper.name, helper.signature, helper.body, this.frameworkName)) {
+        continue;
+      }
       if (hasUnsalvageableHelperSignature(helper.signature)) {
         out.add(helper.name);
         continue;
@@ -877,6 +889,33 @@ export abstract class BaseEmitter {
       // survived. If yes, the body can't compile.
       const transformed = this.transformHelperCode(helper.rawCode, ir);
       if (hasResidualAnchorPatterns(transformed)) out.add(helper.name);
+    }
+    return out;
+  }
+
+  /** CPI-wrapper helpers whose call sites need the leading `&` stripped from
+   *  AccountInfo args (call site is `&vault` where vault is already
+   *  `&AccountInfo`). Populated alongside unsalvageableHelpers; consumed
+   *  by the pass_through post-process. */
+  protected cpiWrapperCallSiteRewrites: Array<{ name: string; accountInfoArgIndices: number[] }> = [];
+
+  protected computeCpiWrapperCallSiteRewrites(ir: SolanaIR): void {
+    this.cpiWrapperCallSiteRewrites = [];
+    for (const helper of ir.helperFns ?? []) {
+      const r = recognizeCpiWrapperHelper(helper.name, helper.signature, helper.body, this.frameworkName);
+      if (r) {
+        this.cpiWrapperCallSiteRewrites.push({
+          name: helper.name,
+          accountInfoArgIndices: r.accountInfoArgIndices,
+        });
+      }
+    }
+  }
+
+  protected applyCpiWrapperCallSiteRewrites(code: string): string {
+    let out = code;
+    for (const r of this.cpiWrapperCallSiteRewrites) {
+      out = rewriteCpiWrapperCallSites(out, r.name, r.accountInfoArgIndices);
     }
     return out;
   }
@@ -908,6 +947,14 @@ export abstract class BaseEmitter {
     // helpers.rs still compiles; instruction files have their call sites
     // commented out by the post-process pass below.
     for (const helper of ir.helperFns) {
+      // Known CPI-wrapper helpers — emit target-typed replacement body
+      // instead of the source. Call sites in user code get rewritten
+      // (& stripped from AccountInfo args) via applyCpiWrapperCallSiteRewrites.
+      const wrapper = recognizeCpiWrapperHelper(helper.name, helper.signature, helper.body, this.frameworkName);
+      if (wrapper) {
+        sections.push(`// CPI-wrapper helper — target-typed replacement for source's \`${helper.name}\`\n${wrapper.signature} ${wrapper.body}`);
+        continue;
+      }
       if (this.unsalvageableHelpers.has(helper.name)) {
         sections.push(commentOutHelperBlock(helper.rawCode, helper.name, this.frameworkName));
         continue;
@@ -983,6 +1030,11 @@ export abstract class BaseEmitter {
     // multi-file emit — these helpers can't compile against the target's
     // type system, so emit a comment-out block with a TODO marker instead.
     for (const helper of ir.helperFns) {
+      const wrapper = recognizeCpiWrapperHelper(helper.name, helper.signature, helper.body, this.frameworkName);
+      if (wrapper) {
+        sections.push(`// CPI-wrapper helper — target-typed replacement for source's \`${helper.name}\`\n${wrapper.signature} ${wrapper.body}`);
+        continue;
+      }
       if (this.unsalvageableHelpers.has(helper.name)) {
         sections.push(commentOutHelperBlock(helper.rawCode, helper.name, this.frameworkName));
         continue;
@@ -998,6 +1050,7 @@ export abstract class BaseEmitter {
     if (this.unsalvageableHelpers.size > 0) {
       combined = commentOutUnsalvageableCallSites(combined, this.unsalvageableHelpers);
     }
+    combined = this.applyCpiWrapperCallSiteRewrites(combined);
     return combined;
   }
 
