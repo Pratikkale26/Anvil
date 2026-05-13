@@ -51,13 +51,13 @@ Single metric: rawNode count across the 38-demo × 2-target corpus.
 
 **Opt-in AST_EMIT=1 path** (the eventual default): **63/63** binary-parity tests pass. The 2 remaining pre-existing failures (regex-solana-program-invoke pinocchio/native) were closed in commit `fad6ab4` by adding macro_call multi-line converter support + a struct_literal extra-indent gate. Pre-session count was 4 failures (4 → 2 via the cpi-custom RHC→CAC change in 19d108c, then 2 → 0 via fad6ab4). **The visitor path is byte-identical to the walker path on the entire snapshot corpus**.
 
-**HOWEVER**: an AST_EMIT=1 realworld-cargo sweep surfaced **3 failures** out of 94 cargo-build cases — pre-existing visitor-path gaps not caught by binary-parity (these fixtures aren't in the snapshot corpus):
+**HOWEVER**: an AST_EMIT=1 realworld-cargo sweep surfaced **3 failures** out of 94 cargo-build cases. Two were closed in commit `dcbe365` (brace-balance + nesting-depth gates in `visitPassThrough`):
 
-- **coral-multisig/pinocchio** — `instructions/approve.rs:46` unclosed delimiter. Visitor produces broken if-block close (missing `}` on `has_one` constraint check). Triggered when state_read emits a multi-line if-block prelude that the visitor's `convertPassThroughLine` collapses incorrectly.
-- **coral-multisig/native** — same root cause as above.
-- **token-fundraiser** — cargo-clean failure, similar shape (visitor → walker output divergence on a state_read with has_one constraint).
+- ✅ **coral-multisig/pinocchio** — closed by brace-balance gate (the if-block-open / -close lines now stay as rawLine since they're unbalanced)
+- ✅ **coral-multisig/native** — same fix
+- ⏸ **token-fundraiser** — remaining failure: `__compound_OP=__amount` placeholder leaks at `contribute.rs:91:34` in the visitor's compound branch. The visitor's `visitStateFieldAssign` regex match expects `^__compound_([+\-*\/])=__(.+)$` — but token-fundraiser's `add_to_total = current_total + amount` shape produces a slightly different placeholder that the regex misses, leaving the raw `__compound_/__amount` tokens in the emit. Walker path has a different rewriting hook that doesn't run in the visitor flow. Separate fix.
 
-These regressions exist **only under ANVIL_AST_EMIT=1** (the opt-in flag). The default production path remains 100% byte-identical and 94/94 cargo-build green. **Session F flip is therefore NOT yet ready** — the visitor's multi-line state_read constraint emission needs fixing first. The fix lives in `visitor-base.ts` / `convertPassThroughLine` (the helper-line conversion that wraps captured emit text); separate session-sized task.
+**Status**: AST_EMIT=1 cargo regressions 3 → 1. Default production path remains 94/94 cargo-build green + 117/117 binary parity. Session F flip needs one more fix (visitor compound placeholder handling) before it's safe.
 
 **Production AST_EMIT=0 path remains 100% byte-identical and 1,195/1,195 green** — this regression is opt-in only and does not affect users today.
 
