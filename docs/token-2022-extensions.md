@@ -18,13 +18,13 @@ Statuses:
 | Extension | Pinocchio | Native | Runtime impact on base CPIs |
 |---|---|---|---|
 | TransferFeeConfig | Y (all 5 CPIs) | Y (all 5 CPIs) | base `transfer_checked` automatically deducts fee — Y; full TransferFee family differential-gated 2026-05-07 |
-| MintCloseAuthority | partial | partial | none on base CPIs — Y |
+| MintCloseAuthority | Y (init) | Y (init) | base close via `cpi_spl_close_account` w/ tokenProgram=token_2022 — Y; init differential-gated 2026-05-13 (EM2 S1) |
 | InterestBearingMint | Y (init+update_rate) | Y (init+update_rate) | none on base CPIs — Y; init+update_rate differential-gated 2026-05-07 |
 | NonTransferable | Y | Y | `transfer_checked` rejects at program level — Y (rejection round-trips); init differential-gated 2026-05-07 |
 | CpiGuard | partial | partial | restricts which CPI calls a token account permits — Y for permitted ops |
 | DefaultAccountState | Y (init+update) | Y (init+update) | newly-initialized accounts start frozen — Y for state-aware code; init+update differential-gated 2026-05-07 (Pinocchio uses literal-AccountState→u8 mapping for the state byte) |
 | ImmutableOwner | Y | Y | none on base CPIs — Y; init differential-gated 2026-05-07 |
-| PermanentDelegate | partial | partial | `transfer_checked` honors the delegate — Y |
+| PermanentDelegate | Y (init) | Y (init) | `transfer_checked` honors the delegate — Y; init differential-gated 2026-05-13 (EM2 S1) |
 | MetadataPointer | partial | partial | none on base CPIs — Y |
 | TokenMetadata | Y (init+update_field+update_authority) | Y (init+update_field+update_authority) | none on base CPIs — Y; init+update_field+update_authority differential-gated 2026-05-07 across both targets via 4-instruction byte-equal harness exercising Field::Name + Field::Key("...") + OptionalNonZeroPubkey::None |
 | GroupPointer / MemberPointer | partial | partial | none on base CPIs — Y |

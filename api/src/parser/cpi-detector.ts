@@ -147,6 +147,12 @@ export function detectCpi(
   if (funcText.includes("immutable_owner_initialize")) {
     return extractT22ImmutableOwnerInitialize(callNode, collector);
   }
+  if (funcText.includes("mint_close_authority_initialize")) {
+    return extractT22MintCloseAuthorityInitialize(callNode, collector);
+  }
+  if (funcText.includes("permanent_delegate_initialize")) {
+    return extractT22PermanentDelegateInitialize(callNode, collector);
+  }
   if (funcText.includes("transfer_checked_with_fee")) {
     return extractT22TransferCheckedWithFee(callNode, collector);
   }
@@ -974,6 +980,116 @@ function extractT22ImmutableOwnerInitialize(
     kind: "cpi_t22_immutable_owner_initialize",
     tokenAccount: cleanAccountRef(tokenAccount),
     tokenProgram: cleanAccountRef(tokenProgram),
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 MintCloseAuthority extension init (EM2 Session 1) ───────────
+//
+// Anchor source shape:
+//   mint_close_authority_initialize(
+//       CpiContext::new(
+//           ctx.accounts.token_program.to_account_info(),
+//           MintCloseAuthorityInitialize {
+//               token_program_id: ctx.accounts.token_program.to_account_info(),
+//               mint: ctx.accounts.mint.to_account_info(),
+//           },
+//       ),
+//       Some(&ctx.accounts.payer.key()),  // Option<&Pubkey>
+//   )?;
+//
+// Mint-level extension. The close-authority is Option<Pubkey>.
+function extractT22MintCloseAuthorityInitialize(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 mint_close_authority_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 mint_close_authority_initialize (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const closeAuthority = args[1]?.text.trim() ?? "None";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_mint_close_authority_initialize",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    closeAuthority,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 PermanentDelegate extension init (EM2 Session 1) ────────────
+//
+// Anchor source shape:
+//   permanent_delegate_initialize(
+//       CpiContext::new(
+//           ctx.accounts.token_program.to_account_info(),
+//           PermanentDelegateInitialize {
+//               token_program_id: ctx.accounts.token_program.to_account_info(),
+//               mint: ctx.accounts.mint.to_account_info(),
+//           },
+//       ),
+//       &ctx.accounts.payer.key(),  // &Pubkey (NOT Option)
+//   )?;
+//
+// Mint-level extension. The delegate is a REQUIRED Pubkey.
+function extractT22PermanentDelegateInitialize(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 permanent_delegate_initialize", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 permanent_delegate_initialize (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const delegate = args[1]?.text.trim() ?? "&Pubkey::default()";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_permanent_delegate_initialize",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    delegate,
     signerSeeds,
   };
 }

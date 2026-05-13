@@ -500,6 +500,41 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // anchor_spl::token_2022_extensions::mint_close_authority::
+  // mint_close_authority_initialize. Mint-level extension. The
+  // close-authority is an Option<Pubkey>; when set, the holder can
+  // close the mint (via the existing close_account CPI). Single init
+  // instruction; closing is handled by the existing
+  // cpi_spl_close_account with tokenProgram="token_2022".
+  z.object({
+    kind: z.literal("cpi_t22_mint_close_authority_initialize"),
+    /** AccountInfo binding for the mint being initialized. */
+    mint: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    /** Source expression for the close authority Pubkey (Option). Use
+     *  the literal "None" for no close authority, or a `Some(...)`
+     *  expression. */
+    closeAuthority: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // anchor_spl::token_2022_extensions::permanent_delegate::
+  // permanent_delegate_initialize. Mint-level extension. The delegate
+  // is a REQUIRED Pubkey (no Option) — once set, this account can
+  // transfer/burn from any holder of this mint. Single init
+  // instruction, no manage CPIs (delegate is permanent by design).
+  z.object({
+    kind: z.literal("cpi_t22_permanent_delegate_initialize"),
+    /** AccountInfo binding for the mint being initialized. */
+    mint: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    /** Source expression for the permanent delegate Pubkey (required). */
+    delegate: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // anchor_spl::token_interface::transfer_checked_with_fee. The
   // TransferFee variant of transfer_checked. Token-2022 program
   // verifies decimals AND that the caller-provided fee matches the

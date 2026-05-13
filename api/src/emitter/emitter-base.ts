@@ -196,6 +196,27 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // Initialize the MintCloseAuthority extension on a mint. Single
+  // instruction, no manage CPIs (close uses the regular close_account
+  // CPI). Discriminator 25; payload = COption<Pubkey>;
+  // accounts = [mint writable].
+  abstract emitT22MintCloseAuthorityInitialize(
+    mint: string,
+    tokenProgram: string,
+    closeAuthority: string,
+    signerSeeds?: string,
+  ): string;
+
+  // Initialize the PermanentDelegate extension on a mint. Single
+  // instruction (permanent — no manage CPIs). Discriminator 35; payload
+  // = Pubkey (32 bytes, REQUIRED); accounts = [mint writable].
+  abstract emitT22PermanentDelegateInitialize(
+    mint: string,
+    tokenProgram: string,
+    delegate: string,
+    signerSeeds?: string,
+  ): string;
+
   // TransferFee variant of transfer_checked. Required when a mint has
   // the TransferFee extension — caller asserts decimals + the
   // expected fee, Token-2022 verifies both.

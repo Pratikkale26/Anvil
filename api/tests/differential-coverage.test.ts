@@ -91,6 +91,9 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   // t22-transfer-fee-extras reuses the transfer-fee-init demo source
   // (per differential-t22-transfer-fee-extras.test.ts).
   "t22-transfer-fee-extras": "t22-transfer-fee-init.rs",
+  // EM2 Session 1 — MintCloseAuthority + PermanentDelegate.
+  "t22-mint-close-authority": "t22-mint-close-authority.rs",
+  "t22-permanent-delegate": "t22-permanent-delegate.rs",
   // Zero-copy AccountLoader handle (zero_copy_load_init/_mut/_).
   "zero-copy-foo": "zero-copy-foo.rs",
 };

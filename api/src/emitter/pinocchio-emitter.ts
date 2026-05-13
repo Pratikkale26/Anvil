@@ -77,6 +77,24 @@ function resolveT22DecimalsPinocchio(
 const TOKEN_2022_PROGRAM_ID_CONST = `        const TOKEN_2022_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 238, 117, 143, 222, 24, 66, 93, 188, 228, 108, 205, 218, 182, 26, 252, 77, 131, 185, 13, 39, 254, 189, 249, 40, 216, 161, 139, 252];`;
 
 /**
+ * Strip the `Some(...)` wrapper from an Option<&Pubkey> expression and
+ * the leading `&` if present. Used by extension-init emit (MCA close-
+ * authority Option payload) to get at the inner Pubkey value-expression
+ * for `.as_ref()` byte copy.
+ *
+ * Conservative — only strips the exact `Some(...)` form. Other shapes
+ * (e.g. a bare `if cond { Some(&x) } else { None }`) pass through
+ * verbatim and the caller's emit will produce a compile error that
+ * surfaces the unsupported shape.
+ */
+function unwrapSomeRef(expr: string): string {
+  const trimmed = expr.trim();
+  const m = trimmed.match(/^Some\((.*)\)$/);
+  if (!m || m[1] === undefined) return trimmed;
+  return m[1].trim().replace(/^&/, "");
+}
+
+/**
  * Build the Token-2022 invoke line. The IR-level `signerSeeds` string is a
  * variable name in scope holding `[&[&[u8]]; N]` (set up by the seeds
  * prelude). `pinocchio::cpi::invoke_signed` wants `&[Signer]`, so when seeds
@@ -1473,6 +1491,105 @@ ${TOKEN_2022_PROGRAM_ID_CONST}
             program_id: &TOKEN_2022_PROGRAM_ID,
             accounts: &__io_metas,
             data: &__io_data,
+        };
+${invokeCall}
+    }`;
+  }
+
+  override emitT22MintCloseAuthorityInitialize(
+    mint: string,
+    _tokenProgram: string,
+    closeAuthority: string,
+    signerSeeds?: string,
+  ): string {
+    // Token-2022 InitializeMintCloseAuthority: discriminator 25, payload
+    // = COption<Pubkey> (1-byte tag + 32 bytes if Some). accounts =
+    // [writable mint]. pinocchio_token has no helper for T22 extensions,
+    // so hand-roll the raw CPI against the const TOKEN_2022_PROGRAM_ID.
+    //
+    // closeAuthority is an Option<&Pubkey> expression. Parse the
+    // `None` / `Some(&X)` shape at emit time to produce the right
+    // payload layout: 0x00 (33 bytes total) or 0x01 + 32 bytes.
+    const isNone = closeAuthority.trim() === "None";
+    const dataDecl = isNone
+      ? `        let __mca_data: [u8; 34] = {
+            let mut d = [0u8; 34];
+            d[0] = 25u8;
+            // payload byte 0 = COption tag 0 (None); remaining 32 bytes
+            // are zero-padded (unread when tag=0).
+            d
+        };`
+      : `        let __mca_data: [u8; 34] = {
+            let mut d = [0u8; 34];
+            d[0] = 25u8;
+            d[1] = 1u8; // COption tag = 1 (Some)
+            d[2..34].copy_from_slice((${unwrapSomeRef(closeAuthority)}).as_ref());
+            d
+        };`;
+    const invokeCall = signerSeeds
+      ? `        let __mca_seed_refs = ${signerSeeds}[0];
+        let mut __mca_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__mca_i, __mca_s) in __mca_seed_refs.iter().enumerate() {
+            if __mca_i >= __mca_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __mca_pda_seeds[__mca_i] = pinocchio::instruction::Seed::from(*__mca_s);
+        }
+        let __mca_signer = pinocchio::instruction::Signer::from(&__mca_pda_seeds[..__mca_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__mca_ix, &[${mint}], &[__mca_signer])?;`
+      : `        pinocchio::cpi::invoke(&__mca_ix, &[${mint}])?;`;
+    return `    // Token-2022 MintCloseAuthority extension init — ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+${dataDecl}
+        let __mca_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+        ];
+        let __mca_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__mca_metas,
+            data: &__mca_data,
+        };
+${invokeCall}
+    }`;
+  }
+
+  override emitT22PermanentDelegateInitialize(
+    mint: string,
+    _tokenProgram: string,
+    delegate: string,
+    signerSeeds?: string,
+  ): string {
+    // Token-2022 InitializePermanentDelegate: discriminator 35, payload
+    // = Pubkey (32 bytes, REQUIRED — no Option). accounts = [writable
+    // mint]. Same hand-rolled raw-CPI shape as MintCloseAuthority but
+    // without the COption tag byte.
+    const invokeCall = signerSeeds
+      ? `        let __pd_seed_refs = ${signerSeeds}[0];
+        let mut __pd_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__pd_i, __pd_s) in __pd_seed_refs.iter().enumerate() {
+            if __pd_i >= __pd_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __pd_pda_seeds[__pd_i] = pinocchio::instruction::Seed::from(*__pd_s);
+        }
+        let __pd_signer = pinocchio::instruction::Signer::from(&__pd_pda_seeds[..__pd_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__pd_ix, &[${mint}], &[__pd_signer])?;`
+      : `        pinocchio::cpi::invoke(&__pd_ix, &[${mint}])?;`;
+    return `    // Token-2022 PermanentDelegate extension init — ${mint}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __pd_data: [u8; 33] = {
+            let mut d = [0u8; 33];
+            d[0] = 35u8;
+            d[1..33].copy_from_slice((${delegate.replace(/^&/, "")}).as_ref());
+            d
+        };
+        let __pd_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+        ];
+        let __pd_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__pd_metas,
+            data: &__pd_data,
         };
 ${invokeCall}
     }`;

@@ -973,6 +973,50 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     )?;`;
   }
 
+  override emitT22MintCloseAuthorityInitialize(
+    mint: string,
+    tokenProgram: string,
+    closeAuthority: string,
+    signerSeeds?: string,
+  ): string {
+    // closeAuthority is an Option<&Pubkey> source expression. Pass it
+    // verbatim into spl_token_2022's instruction builder; the Rust
+    // compiler validates the Option<&Pubkey> shape.
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 MintCloseAuthority extension init — ${mint}
+    let mca_init_ix = spl_token_2022::instruction::initialize_mint_close_authority(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${closeAuthority},
+    )?;
+    ${invokeType}(
+        &mca_init_ix,
+        &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
+  override emitT22PermanentDelegateInitialize(
+    mint: string,
+    tokenProgram: string,
+    delegate: string,
+    signerSeeds?: string,
+  ): string {
+    // delegate is a `&Pubkey` source expression (REQUIRED — no Option).
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 PermanentDelegate extension init — ${mint}
+    let pd_init_ix = spl_token_2022::instruction::initialize_permanent_delegate(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${delegate},
+    )?;
+    ${invokeType}(
+        &pd_init_ix,
+        &[${mint}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
   override emitT22TransferCheckedWithFee(
     source: string,
     mint: string,

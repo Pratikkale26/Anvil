@@ -690,6 +690,8 @@ type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non
 type CpiT22TransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_initialize" }>;
 type CpiT22TransferFeeSetFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_set_fee" }>;
 type CpiT22ImmutableOwnerInit = Extract<BodyStatement, { kind: "cpi_t22_immutable_owner_initialize" }>;
+type CpiT22MintCloseAuthorityInit = Extract<BodyStatement, { kind: "cpi_t22_mint_close_authority_initialize" }>;
+type CpiT22PermanentDelegateInit = Extract<BodyStatement, { kind: "cpi_t22_permanent_delegate_initialize" }>;
 type CpiT22TransferCheckedWithFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_checked_with_fee" }>;
 type CpiT22WithdrawWithheldFromMint = Extract<BodyStatement, { kind: "cpi_t22_withdraw_withheld_tokens_from_mint" }>;
 type CpiT22HarvestWithheldToMint = Extract<BodyStatement, { kind: "cpi_t22_harvest_withheld_tokens_to_mint" }>;
@@ -744,6 +746,8 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_t22_transfer_fee_initialize",
   "cpi_t22_transfer_fee_set_fee",
   "cpi_t22_immutable_owner_initialize",
+  "cpi_t22_mint_close_authority_initialize",
+  "cpi_t22_permanent_delegate_initialize",
   "cpi_t22_transfer_checked_with_fee",
   "cpi_t22_withdraw_withheld_tokens_from_mint",
   "cpi_t22_harvest_withheld_tokens_to_mint",
@@ -803,6 +807,10 @@ export class AstVisitorBase {
         return this.visitCpiT22TransferFeeSetFee(stmt);
       case "cpi_t22_immutable_owner_initialize":
         return this.visitCpiT22ImmutableOwnerInit(stmt);
+      case "cpi_t22_mint_close_authority_initialize":
+        return this.visitCpiT22MintCloseAuthorityInit(stmt);
+      case "cpi_t22_permanent_delegate_initialize":
+        return this.visitCpiT22PermanentDelegateInit(stmt);
       case "cpi_t22_transfer_checked_with_fee":
         return this.visitCpiT22TransferCheckedWithFee(stmt);
       case "cpi_t22_withdraw_withheld_tokens_from_mint":
@@ -2324,6 +2332,39 @@ export class AstVisitorBase {
     lines.push(w.emitter.emitT22ImmutableOwnerInitialize(
       snakeCase(stmt.tokenAccount),
       snakeCase(stmt.tokenProgram),
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22MintCloseAuthorityInit(stmt: CpiT22MintCloseAuthorityInit): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: mint_close_authority_initialize(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    // closeAuthority IR field is the verbatim Option<&Pubkey> source
+    // expression. Resolve ctx.accounts.X references like other typed-
+    // CPI value args so they bind to the local AccountInfo names.
+    const closeAuthorityResolved = w.transformCtxAccountsReferences(stmt.closeAuthority);
+    lines.push(w.emitter.emitT22MintCloseAuthorityInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      closeAuthorityResolved,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22PermanentDelegateInit(stmt: CpiT22PermanentDelegateInit): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: permanent_delegate_initialize(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    const delegateResolved = w.transformCtxAccountsReferences(stmt.delegate);
+    lines.push(w.emitter.emitT22PermanentDelegateInitialize(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      delegateResolved,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ));
     return this.applyStructuralize(lines);
