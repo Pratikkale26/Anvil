@@ -735,7 +735,21 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
         }
       }
       // Detect multi-line form via newline presence in the source text.
+      // For multi-line: require closing `}` at the enclosing-stmt's column
+      // (standard layout) so the printer's `+4 from outer` rule produces
+      // byte-identical output. Sources with extra-indented struct layout
+      // (`{` opens on the let line, closing `}` shifted right) — common
+      // in older Anchor-generated code — bail to rawLine which preserves
+      // the source verbatim.
       const isMultiLine = node.text.includes("\n");
+      if (isMultiLine) {
+        const stmtCol = enclosingStmtColumn(node);
+        // field_initializer_list's `}` is at endPosition.column - 1 when
+        // on its own line. Check against enclosing-stmt column.
+        const closeCol = listNode.endPosition.column - 1;
+        const closingOnOwnLine = listNode.endPosition.row > listNode.startPosition.row;
+        if (closingOnOwnLine && closeCol !== stmtCol) return null;
+      }
       return isMultiLine
         ? { kind: "struct_literal", ty, fields, multiLine: true }
         : { kind: "struct_literal", ty, fields };
@@ -856,17 +870,28 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       // `;` separator is only valid in vec![value; count] shape (exactly
       // 2 args). Reject pathological inputs.
       if (separator === ";" && args.length !== 2) return null;
-      // Multi-line macro detection deferred — round-trip depends on the
-      // parent context's indent (a vec! at top-level stmt expects items
-      // at stmt + 4, but a vec! inside a struct field expects items at
-      // struct-inner + 4 = stmt + 8). Without threading the container
-      // chain through exprFromNode, the heuristic over- or under-fires.
-      // For now the printer's default single-line form is used; sources
-      // that have multi-line layout fall back to rawLine via the parent
-      // bail. See reports/h1-emit-path-inventory-2026-05-13.md.
-      return separator === ";"
-        ? { kind: "macro_call", name: macroName, args, delim: open, separator: ";" }
-        : { kind: "macro_call", name: macroName, args, delim: open };
+      // Multi-line detection: items align to closing-bracket.column + 4.
+      // Works in nested contexts because the source's closing bracket is
+      // always on its own line at the container's outer indent, and the
+      // printer reproduces this via the indent it receives from its
+      // caller (struct-field-value, call-arg, etc.).
+      let multiLine = false;
+      if (node.text.includes("\n") && args.length > 0 && separator === ",") {
+        const lines = node.text.split("\n");
+        if (lines.length >= 3) {
+          const lastLine = lines[lines.length - 1] ?? "";
+          const firstItemLine = lines[1] ?? "";
+          const closingIndent = /^( *)/.exec(lastLine)?.[1].length ?? 0;
+          const firstItemIndent = /^( *)/.exec(firstItemLine)?.[1].length ?? 0;
+          if (firstItemIndent === closingIndent + 4) {
+            multiLine = true;
+          }
+        }
+      }
+      const base = separator === ";"
+        ? { kind: "macro_call" as const, name: macroName, args, delim: open as "(" | "[" | "{", separator: ";" as ";" }
+        : { kind: "macro_call" as const, name: macroName, args, delim: open as "(" | "[" | "{" };
+      return multiLine ? { ...base, multiLine: true } : base;
     }
     case "block": {
       // Block at expression position — `{ stmt; stmt; tail_expr? }`.
