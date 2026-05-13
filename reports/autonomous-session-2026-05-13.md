@@ -42,12 +42,14 @@ Single metric: rawNode count across the 38-demo × 2-target corpus.
 
 | Suite | Result |
 |---|---|
-| `binary-parity-snapshot.test.ts` | 92/92 pass (byte-identical source snapshots) |
+| `binary-parity-snapshot.test.ts` (default AST_EMIT=0) | 92/92 pass (byte-identical source snapshots) |
 | `ast-visitor-byte-identical.test.ts` | 25/25 pass (visitor output ≡ walker output on every demo × target) |
-| Combined parity | **117/117** |
+| Combined parity (production path) | **117/117** |
 | `bun test:fast` | **984/984** pass (62 files, 2865 expect calls, 34s) |
 | `realworld-cargo*.test.ts` | **94/94** pass (300s) — exercises 36 program-examples + 12 external repos × 2 targets each. Tracking ceilings unchanged. |
-| Total | **1,195/1,195 known-test cases green** |
+| Total (production-path verification) | **1,195/1,195 known-test cases green** |
+
+**Opt-in AST_EMIT=1 path** (not production default): 61/63 binary-parity tests pass with ANVIL_AST_EMIT=1. The remaining 2 failures (regex-solana-program-invoke pinocchio/native) are a pre-existing struct-literal multi-line-children divergence (the `accounts: vec![A, B]` macro inside a multi-line struct field collapses to single-line when re-printed). **This session improved the AST_EMIT=1 path** — pre-session count was 4 failures, now 2 (cpi-custom-pinocchio + cpi-custom-native were closed by Session A's runHandlerCapture→captureAndConvert change).
 
 ## External Anchor repo validation
 
