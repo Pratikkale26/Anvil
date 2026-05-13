@@ -780,11 +780,14 @@ export class BodyWalker {
     const bumpLine = this.normalizedBumpLine(canonical);
     const bumpVar = `bump_${canonical}`;
     const seedsWithBump = [...pdaSeeds, `&[${bumpVar}]`].join(",\n            ");
+    // Explicit \`&[&[u8]]\` annotation: mixed-element arrays
+    // (e.g. \`b"mint"\` is &[u8; 4] but \`&[bump]\` is &[u8; 1]) fail rustc
+    // type inference (E0308 "expected size 4, found size 1") without it.
     return `${bumpLine}
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
             ${seedsWithBump},
         ];
-    let signer_seeds = &[&seeds[..]];`;
+    let signer_seeds = &[seeds];`;
   }
 
   /**
