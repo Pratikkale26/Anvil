@@ -218,6 +218,13 @@ export function printExpr(expr: RustExpr, indent?: string): string {
       const inner = expr.stmts.map((s) => printStmtAt(s, innerIndent)).join("\n");
       return `{\n${inner}\n${closeIndent}}`;
     }
+    case "unsafe_expr":
+      // Single-line unsafe wrapper: `unsafe { <inner> }`. The inner
+      // expression carries the surrounding indent through printExpr so
+      // multi-line constructs (mlCall, multi-line struct literal) still
+      // align correctly, but the simple `unsafe { fn() }` shape stays
+      // on one line.
+      return `unsafe { ${printExpr(expr.inner, indent)} }`;
     case "range": {
       const op = expr.inclusive ? "..=" : "..";
       const startTxt = expr.start !== undefined ? printExpr(expr.start, indent) : "";
@@ -319,6 +326,9 @@ export function countRawNodes(stmts: RustStmt[]): { rawLines: number; rawExprs: 
           rawLines += sub.rawLines;
           rawExprs += sub.rawExprs;
         }
+        return;
+      case "unsafe_expr":
+        visit(e.inner);
         return;
       case "range":
         if (e.start !== undefined) visit(e.start);

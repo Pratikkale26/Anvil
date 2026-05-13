@@ -888,6 +888,20 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       if (op === "!") return notExpr(operandExpr, { parens: false });
       return null;
     }
+    case "unsafe_block": {
+      // `unsafe { <expr> }` — single tail expression. Inner block must
+      // have exactly one named child which is a tail expression (no
+      // statements). Multi-stmt unsafe blocks bail to rawLine, which
+      // preserves the original layout.
+      const inner = node.namedChild(0);
+      if (!inner || inner.type !== "block") return null;
+      if (inner.namedChildCount !== 1) return null;
+      const tail = inner.namedChild(0);
+      if (!tail) return null;
+      const tailExpr = exprFromNode(tail);
+      if (tailExpr === null) return null;
+      return { kind: "unsafe_expr", inner: tailExpr };
+    }
     default:
       return null;
   }

@@ -196,6 +196,13 @@ export type RustExpr =
    */
   | { kind: "block_expr"; stmts: RustStmt[] }
   /**
+   * `unsafe { inner }` — single-expression unsafe block. Inner must be
+   * an expression (no statements). Prints as `unsafe { <inner> }` on
+   * one line (no inner-indent), matching Pinocchio's zero-copy borrow
+   * calls and other one-line unsafe operations.
+   */
+  | { kind: "unsafe_expr"; inner: RustExpr }
+  /**
    * Range expression — `..`, `..end`, `start..`, `start..end`,
    * `start..=end`. Both endpoints are optional; `inclusive` toggles
    * `..` vs `..=`. Used inside index_expressions for slice subscripts
@@ -315,6 +322,9 @@ export function closureExpr(paramsText: string, body: RustExpr): RustExpr {
 }
 export function blockExpr(stmts: RustStmt[]): RustExpr {
   return { kind: "block_expr", stmts };
+}
+export function unsafeExpr(inner: RustExpr): RustExpr {
+  return { kind: "unsafe_expr", inner };
 }
 export function rangeExpr(opts: { start?: RustExpr; end?: RustExpr; inclusive?: boolean } = {}): RustExpr {
   const r: { kind: "range"; start?: RustExpr; end?: RustExpr; inclusive: boolean } = {
