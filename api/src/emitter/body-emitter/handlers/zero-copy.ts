@@ -67,13 +67,18 @@ export function handleZeroCopyLoadInit(w: BodyWalker, stmt: ZeroCopyLoadInit): v
     return;
   }
   const dataVar = `__${accountName}_data`;
+  // Push each logical statement as ONE entry (multi-line strings ok), so
+  // the visitor's captureAndConvert → tryStructuralizeMultiLine sees
+  // complete if-blocks instead of three separate lines that fail to
+  // parse in isolation. Byte output unchanged — production walker joins
+  // entries with `\n`, same result either way.
   w.lines.push(emitBorrowMutData(w, accountInfoVar, dataVar));
-  w.lines.push(`    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {`);
-  w.lines.push(`        return Err(ProgramError::AccountDataTooSmall);`);
-  w.lines.push(`    }`);
-  w.lines.push(`    if ${dataVar}.iter().any(|b| *b != 0) {`);
-  w.lines.push(`        return Err(ProgramError::AccountAlreadyInitialized);`);
-  w.lines.push(`    }`);
+  w.lines.push(
+    `    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {\n        return Err(ProgramError::AccountDataTooSmall);\n    }`,
+  );
+  w.lines.push(
+    `    if ${dataVar}.iter().any(|b| *b != 0) {\n        return Err(ProgramError::AccountAlreadyInitialized);\n    }`,
+  );
   w.lines.push(`    ${dataVar}[..8].copy_from_slice(&${accountType}::DISCRIMINATOR);`);
   w.lines.push(
     `    let ${localVar}: &mut ${accountType} = bytemuck::from_bytes_mut(&mut ${dataVar}[8..8 + ${accountType}::LEN]);`,
@@ -98,10 +103,8 @@ function emitHasOneChecks(w: BodyWalker, accountName: string, localVar: string):
   for (const c of hasOnes) {
     const targetAccount = snakeCase(c.value!);
     w.lines.push(
-      `    if ${localVar}.${targetAccount} != ${w.emitter.emitAccountKeyExpr(w.resolveAccountInfoVar(targetAccount))} {`,
+      `    if ${localVar}.${targetAccount} != ${w.emitter.emitAccountKeyExpr(w.resolveAccountInfoVar(targetAccount))} {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
     );
-    w.lines.push(`        return Err(ProgramError::InvalidAccountData);`);
-    w.lines.push(`    }`);
   }
 }
 
@@ -117,12 +120,12 @@ export function handleZeroCopyLoadMut(w: BodyWalker, stmt: ZeroCopyLoadMut): voi
   }
   const dataVar = `__${accountName}_data`;
   w.lines.push(emitBorrowMutData(w, accountInfoVar, dataVar));
-  w.lines.push(`    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {`);
-  w.lines.push(`        return Err(ProgramError::AccountDataTooSmall);`);
-  w.lines.push(`    }`);
-  w.lines.push(`    if ${dataVar}[..8] != ${accountType}::DISCRIMINATOR {`);
-  w.lines.push(`        return Err(ProgramError::InvalidAccountData);`);
-  w.lines.push(`    }`);
+  w.lines.push(
+    `    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {\n        return Err(ProgramError::AccountDataTooSmall);\n    }`,
+  );
+  w.lines.push(
+    `    if ${dataVar}[..8] != ${accountType}::DISCRIMINATOR {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
+  );
   w.lines.push(
     `    let ${localVar}: &mut ${accountType} = bytemuck::from_bytes_mut(&mut ${dataVar}[8..8 + ${accountType}::LEN]);`,
   );
@@ -142,12 +145,12 @@ export function handleZeroCopyLoad(w: BodyWalker, stmt: ZeroCopyLoad): void {
   }
   const dataVar = `__${accountName}_data`;
   w.lines.push(emitBorrowData(w, accountInfoVar, dataVar));
-  w.lines.push(`    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {`);
-  w.lines.push(`        return Err(ProgramError::AccountDataTooSmall);`);
-  w.lines.push(`    }`);
-  w.lines.push(`    if ${dataVar}[..8] != ${accountType}::DISCRIMINATOR {`);
-  w.lines.push(`        return Err(ProgramError::InvalidAccountData);`);
-  w.lines.push(`    }`);
+  w.lines.push(
+    `    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {\n        return Err(ProgramError::AccountDataTooSmall);\n    }`,
+  );
+  w.lines.push(
+    `    if ${dataVar}[..8] != ${accountType}::DISCRIMINATOR {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
+  );
   w.lines.push(
     `    let ${localVar}: &${accountType} = bytemuck::from_bytes(&${dataVar}[8..8 + ${accountType}::LEN]);`,
   );
