@@ -815,11 +815,11 @@ export class AstVisitorBase {
       case "cpi_mpl_create_master_edition_v3":
         return this.visitCpiMplCreateMasterEditionV3(stmt);
       case "zero_copy_load_init":
-        return this.runHandlerCapture(handleZeroCopyLoadInit, stmt);
+        return this.captureAndConvert(handleZeroCopyLoadInit, stmt);
       case "zero_copy_load_mut":
-        return this.runHandlerCapture(handleZeroCopyLoadMut, stmt);
+        return this.captureAndConvert(handleZeroCopyLoadMut, stmt);
       case "zero_copy_load":
-        return this.runHandlerCapture(handleZeroCopyLoad, stmt);
+        return this.captureAndConvert(handleZeroCopyLoad, stmt);
     }
   }
 
@@ -2459,9 +2459,10 @@ export class AstVisitorBase {
   visitCpiCustom(stmt: CpiCustom): RustStmt[] {
     // Handler appends `?;` (or `;`) to the rawCode-derived call. Replicating
     // that branch in the visitor structurally drifts on transformedCpiCode's
-    // tail-detection — route through runHandlerCapture so output stays
-    // byte-identical to the handler.
-    return this.runHandlerCapture(handleCpiCustom, stmt);
+    // tail-detection — route through captureAndConvert so each captured line
+    // gets a tryStructuralizeMultiLine attempt while lossless-falling-back
+    // to rawLine on shapes the converter doesn't recognize.
+    return this.captureAndConvert(handleCpiCustom, stmt);
   }
 
   visitCpiMplCreateMetadataV3(stmt: CpiMplCreateMetadataV3): RustStmt[] {
