@@ -650,11 +650,60 @@ import {
   handleReturnOk,
   handleReturnErr,
 } from "../body-emitter/handlers/control.js";
-import {
-  handleZeroCopyLoadInit,
-  handleZeroCopyLoadMut,
-  handleZeroCopyLoad,
-} from "../body-emitter/handlers/zero-copy.js";
+/**
+ * Inline zero-copy helpers (formerly in body-emitter/handlers/zero-copy.ts;
+ * H1 Session B port). Used by visitZeroCopyLoad{Init,Mut,} below.
+ *
+ * Pinocchio uses the unsafe `borrow_mut_data_unchecked` matching existing
+ * pinocchio state-write emit; Native uses safe `try_borrow_mut_data`.
+ */
+function emitBorrowMutData(w: BodyWalker, accountVar: string, dataVar: string): string {
+  if (w.emitter.frameworkName === "Pinocchio") {
+    return `    let ${dataVar} = unsafe { ${accountVar}.borrow_mut_data_unchecked() };`;
+  }
+  return `    let mut ${dataVar} = ${accountVar}.try_borrow_mut_data()?;`;
+}
+
+function emitBorrowData(w: BodyWalker, accountVar: string, dataVar: string): string {
+  if (w.emitter.frameworkName === "Pinocchio") {
+    return `    let ${dataVar} = unsafe { ${accountVar}.borrow_data_unchecked() };`;
+  }
+  return `    let ${dataVar} = ${accountVar}.try_borrow_data()?;`;
+}
+
+/**
+ * Register the zero-copy local handle in walker maps so subsequent
+ * `<localVar>.<field> = expr` short-circuit ensureStateRead — the
+ * bytemuck cast already produced the typed handle.
+ */
+function registerZeroCopyHandle(w: BodyWalker, accountName: string, localVar: string, accountInfoVar: string): void {
+  w.stateVars.set(accountName, localVar);
+  w.accountInfoVars.set(accountName, accountInfoVar);
+  w.mutableStateAccounts.add(accountName);
+}
+
+/**
+ * `#[account(has_one = X)]` checks against the loaded zero-copy handle.
+ * Mirrors the non-zero-copy path in walker.ts:ensureStateRead but
+ * compares the cast struct's field against the targeted AccountInfo's
+ * key. Skipped for load_init (the account is fresh; no constraint to
+ * verify yet).
+ */
+function emitZeroCopyHasOneChecks(w: BodyWalker, accountName: string, localVar: string, lines: string[]): void {
+  const accountRef = w.instr.accounts.find(
+    (a) => snakeCase(a.name) === accountName,
+  );
+  if (!accountRef) return;
+  const hasOnes = accountRef.constraints.filter(
+    (c) => c.kind === "has_one" && c.value,
+  );
+  for (const c of hasOnes) {
+    const targetAccount = snakeCase(c.value!);
+    lines.push(
+      `    if ${localVar}.${targetAccount} != ${w.emitter.emitAccountKeyExpr(w.resolveAccountInfoVar(targetAccount))} {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
+    );
+  }
+}
 
 type StateRead = Extract<BodyStatement, { kind: "state_read" }>;
 type StateFieldAssign = Extract<BodyStatement, { kind: "state_field_assign" }>;
@@ -692,6 +741,9 @@ type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
 type CpiMplCreateMetadataV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_metadata_v3" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
+type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
+type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
+type ZeroCopyLoad = Extract<BodyStatement, { kind: "zero_copy_load" }>;
 
 /**
  * Every IR statement kind the visitor knows how to dispatch. Phase-1
@@ -815,11 +867,11 @@ export class AstVisitorBase {
       case "cpi_mpl_create_master_edition_v3":
         return this.visitCpiMplCreateMasterEditionV3(stmt);
       case "zero_copy_load_init":
-        return this.captureAndConvert(handleZeroCopyLoadInit, stmt);
+        return this.visitZeroCopyLoadInit(stmt);
       case "zero_copy_load_mut":
-        return this.captureAndConvert(handleZeroCopyLoadMut, stmt);
+        return this.visitZeroCopyLoadMut(stmt);
       case "zero_copy_load":
-        return this.captureAndConvert(handleZeroCopyLoad, stmt);
+        return this.visitZeroCopyLoad(stmt);
     }
   }
 
@@ -2517,6 +2569,98 @@ export class AstVisitorBase {
   }
 
   /**
+   * Zero-copy AccountLoader::load_init handle.
+   *
+   * Emits: borrow_mut_data → length check → all-zero check → write disc →
+   * bytemuck cast to `&mut <AccountType>`. Registers the resulting local
+   * binding via `registerZeroCopyHandle` so subsequent field assigns
+   * resolve against the cast handle (not a fresh from_account_info).
+   *
+   * Direct port of `handleZeroCopyLoadInit` (formerly invoked via
+   * captureAndConvert) — same text shapes, now emitted from the visitor
+   * with the same applyStructuralize-routed RustStmt[] return.
+   */
+  visitZeroCopyLoadInit(stmt: ZeroCopyLoadInit): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const accountName = snakeCase(stmt.account);
+    const localVar = snakeCase(stmt.localVar);
+    const accountInfoVar = w.resolveAccountInfoVar(accountName);
+    const accountType = stmt.accountType;
+    if (!accountType) {
+      return [comment(`[zero-copy] unresolved account type for ${stmt.account}; load_init skipped`)];
+    }
+    const dataVar = `__${accountName}_data`;
+    const lines: string[] = [
+      emitBorrowMutData(w, accountInfoVar, dataVar),
+      `    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {\n        return Err(ProgramError::AccountDataTooSmall);\n    }`,
+      `    if ${dataVar}.iter().any(|b| *b != 0) {\n        return Err(ProgramError::AccountAlreadyInitialized);\n    }`,
+      `    ${dataVar}[..8].copy_from_slice(&${accountType}::DISCRIMINATOR);`,
+      `    let ${localVar}: &mut ${accountType} = bytemuck::from_bytes_mut(&mut ${dataVar}[8..8 + ${accountType}::LEN]);`,
+    ];
+    registerZeroCopyHandle(w, accountName, localVar, accountInfoVar);
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Zero-copy AccountLoader::load_mut handle.
+   *
+   * Emits: borrow_mut_data → length check → discriminator check →
+   * bytemuck cast to `&mut <AccountType>` + has_one checks. Direct port
+   * of `handleZeroCopyLoadMut`.
+   */
+  visitZeroCopyLoadMut(stmt: ZeroCopyLoadMut): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const accountName = snakeCase(stmt.account);
+    const localVar = snakeCase(stmt.localVar);
+    const accountInfoVar = w.resolveAccountInfoVar(accountName);
+    const accountType = stmt.accountType;
+    if (!accountType) {
+      return [comment(`[zero-copy] unresolved account type for ${stmt.account}; load_mut skipped`)];
+    }
+    const dataVar = `__${accountName}_data`;
+    const lines: string[] = [
+      emitBorrowMutData(w, accountInfoVar, dataVar),
+      `    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {\n        return Err(ProgramError::AccountDataTooSmall);\n    }`,
+      `    if ${dataVar}[..8] != ${accountType}::DISCRIMINATOR {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
+      `    let ${localVar}: &mut ${accountType} = bytemuck::from_bytes_mut(&mut ${dataVar}[8..8 + ${accountType}::LEN]);`,
+    ];
+    emitZeroCopyHasOneChecks(w, accountName, localVar, lines);
+    registerZeroCopyHandle(w, accountName, localVar, accountInfoVar);
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Zero-copy AccountLoader::load handle (immutable variant).
+   *
+   * Emits: borrow_data → length check → discriminator check → bytemuck
+   * cast to `&<AccountType>` + has_one checks. Direct port of
+   * `handleZeroCopyLoad`.
+   */
+  visitZeroCopyLoad(stmt: ZeroCopyLoad): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const accountName = snakeCase(stmt.account);
+    const localVar = snakeCase(stmt.localVar);
+    const accountInfoVar = w.resolveAccountInfoVar(accountName);
+    const accountType = stmt.accountType;
+    if (!accountType) {
+      return [comment(`[zero-copy] unresolved account type for ${stmt.account}; load skipped`)];
+    }
+    const dataVar = `__${accountName}_data`;
+    const lines: string[] = [
+      emitBorrowData(w, accountInfoVar, dataVar),
+      `    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {\n        return Err(ProgramError::AccountDataTooSmall);\n    }`,
+      `    if ${dataVar}[..8] != ${accountType}::DISCRIMINATOR {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
+      `    let ${localVar}: &${accountType} = bytemuck::from_bytes(&${dataVar}[8..8 + ${accountType}::LEN]);`,
+    ];
+    emitZeroCopyHasOneChecks(w, accountName, localVar, lines);
+    registerZeroCopyHandle(w, accountName, localVar, accountInfoVar);
+    return this.applyStructuralize(lines);
+  }
+
+  /**
    * M6.2 prep — captures legacy-handler output AND attempts the
    * tree-sitter structural conversion on each line. Multi-line entries
    * go through tryStructuralizeMultiLine; single-line entries through
@@ -2538,7 +2682,23 @@ export class AstVisitorBase {
     handler(w, stmt);
     const captured = w.lines.slice(before);
     w.lines.length = before;
-    return captured.flatMap((entry) => {
+    return this.applyStructuralize(captured);
+  }
+
+  /**
+   * Same per-entry structuralize pipeline as captureAndConvert, but
+   * operating on a locally-built lines list. Used by visit methods that
+   * have moved the handler's body inline — they generate the same text
+   * the handler would have emitted, then route it through this single
+   * structuralize stage so the RustStmt output matches the handler's
+   * captured output byte-for-byte.
+   *
+   * Each entry is parsed by tryStructuralizeMultiLine (tree-sitter); on
+   * any failure it falls back to convertPassThroughLine for the single-
+   * line shapes, finally rawLine for verbatim preservation.
+   */
+  protected applyStructuralize(lines: string[]): RustStmt[] {
+    return lines.flatMap((entry) => {
       const structural = tryStructuralizeMultiLine(entry);
       if (structural !== null) return structural;
       return [convertPassThroughLine(entry)];
