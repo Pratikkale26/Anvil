@@ -2073,7 +2073,7 @@ export class AstVisitorBase {
   visitCpiSplMintTo(stmt: CpiSplMintTo): RustStmt[] {
     const w = this.walker;
     if (stmt.tokenProgram === "token_2022") {
-      return this.captureAndConvert(handleCpiSplMintTo, stmt);
+      return this.emitCpiSplMintToCaptured(stmt);
     }
     w.ctx.transformedCount++;
     const out: RustStmt[] = [];
@@ -2132,7 +2132,7 @@ export class AstVisitorBase {
   visitCpiSplBurn(stmt: CpiSplBurn): RustStmt[] {
     const w = this.walker;
     if (stmt.tokenProgram === "token_2022") {
-      return this.captureAndConvert(handleCpiSplBurn, stmt);
+      return this.emitCpiSplBurnCaptured(stmt);
     }
     w.ctx.transformedCount++;
     const out: RustStmt[] = [];
@@ -2191,7 +2191,7 @@ export class AstVisitorBase {
   visitCpiSplCloseAccount(stmt: CpiSplCloseAccount): RustStmt[] {
     const w = this.walker;
     if (stmt.tokenProgram === "token_2022") {
-      return this.captureAndConvert(handleCpiSplCloseAccount, stmt);
+      return this.emitCpiSplCloseAccountCaptured(stmt);
     }
     w.ctx.transformedCount++;
     const out: RustStmt[] = [];
@@ -2248,13 +2248,12 @@ export class AstVisitorBase {
   visitCpiSplSetAuthority(stmt: CpiSplSetAuthority): RustStmt[] {
     const w = this.walker;
     if (w.emitter.frameworkName !== "Native") {
-      // Pinocchio path emits a hand-rolled CPI block with const +
-      // multiple lets + match expression that the AST doesn't model.
-      // captureAndConvert's per-line tryStructuralizeMultiLine collapses
-      // multi-line array literals + drops trailing semicolons, both of
-      // which break byte-equality with the handler. runHandlerCapture
-      // captures verbatim.
-      return this.runHandlerCapture(handleCpiSplSetAuthority, stmt);
+      // Pinocchio path emits a hand-rolled CPI block (const + multiple
+      // lets + match expression) the AST doesn't model. applyStructuralize
+      // would collapse multi-line array literals / drop trailing semis
+      // and break byte-equality — emit the lines as a single rawLine
+      // chunk to preserve verbatim.
+      return this.emitCpiSplSetAuthorityCaptured(stmt);
     }
     w.ctx.transformedCount++;
     w.ctx.details.push(
@@ -2922,6 +2921,111 @@ export class AstVisitorBase {
     emitZeroCopyHasOneChecks(w, accountName, localVar, lines);
     registerZeroCopyHandle(w, accountName, localVar, accountInfoVar);
     return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Token-2022 mint_to — multi-line emitter block + structuralize per
+   * line. Direct port of handleCpiSplMintTo's body; visitor builds the
+   * lines locally.
+   */
+  protected emitCpiSplMintToCaptured(stmt: CpiSplMintTo): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.authority);
+    const authority = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.authority))
+      : snakeCase(stmt.authority);
+    lines.push(w.emitter.emitSplMintTo(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.to),
+      authority,
+      w.resolveAmountExpr(stmt.amount),
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+      {
+        tokenProgram: stmt.tokenProgram,
+        ...(stmt.decimals ? { decimals: stmt.decimals } : {}),
+      },
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Token-2022 burn — same shape as emitCpiSplMintToCaptured. Direct
+   * port of handleCpiSplBurn's body.
+   */
+  protected emitCpiSplBurnCaptured(stmt: CpiSplBurn): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.authority);
+    const authority = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.authority))
+      : snakeCase(stmt.authority);
+    lines.push(w.emitter.emitSplBurn(
+      snakeCase(stmt.from),
+      snakeCase(stmt.mint),
+      authority,
+      w.resolveAmountExpr(stmt.amount),
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+      {
+        tokenProgram: stmt.tokenProgram,
+        ...(stmt.decimals ? { decimals: stmt.decimals } : {}),
+      },
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Token-2022 close_account — same shape as emitCpiSplMintToCaptured.
+   * Direct port of handleCpiSplCloseAccount's body.
+   */
+  protected emitCpiSplCloseAccountCaptured(stmt: CpiSplCloseAccount): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.authority);
+    const authority = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.authority))
+      : snakeCase(stmt.authority);
+    lines.push(w.emitter.emitSplCloseAccount(
+      snakeCase(stmt.account),
+      snakeCase(stmt.destination),
+      authority,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+      { tokenProgram: stmt.tokenProgram },
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Pinocchio set_authority — hand-rolled CPI block. applyStructuralize
+   * would mangle multi-line arrays, so the emitter's single multi-line
+   * output is wrapped as one rawLine (matching the legacy runHandler-
+   * Capture behavior). Direct port of handleCpiSplSetAuthority's body
+   * for the non-Native framework.
+   */
+  protected emitCpiSplSetAuthorityCaptured(stmt: CpiSplSetAuthority): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(
+      `Transformed: token::set_authority(${stmt.account}, ${stmt.authorityType})`,
+    );
+    const out: RustStmt[] = [];
+    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+      for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.currentAuthority)) {
+        out.push(rawLine(preludeLine));
+      }
+    }
+    const currentAuthority = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.currentAuthority))
+      : snakeCase(stmt.currentAuthority);
+    out.push(rawLine(w.emitter.emitSplSetAuthority(
+      snakeCase(stmt.account),
+      currentAuthority,
+      stmt.authorityType,
+      stmt.newAuthority,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+      { tokenProgram: stmt.tokenProgram },
+    )));
+    return out;
   }
 
   /**
