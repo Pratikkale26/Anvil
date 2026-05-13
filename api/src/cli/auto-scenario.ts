@@ -34,6 +34,7 @@
  * other in real time.
  */
 import type { SolanaIR } from "../ir/schema.js";
+import { typeSize } from "../emitter/emitter-utils.js";
 import type {
   Scenario,
   ScenarioStep,
@@ -657,6 +658,33 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   }
   for (const fn of createAccountTargetsFeePayer) createAccountTargetNames.delete(fn);
 
+  // ── (4a2) Detect `#[account(zero)]` state-typed accounts ──
+  // Anchor's `zero` constraint requires the account to be (a) owned by the
+  // program, (b) have a zero discriminator, and (c) have enough data to
+  // hold the serialized state. The offchain client typically pre-creates
+  // these via system_program::create_account before submitting. The runner
+  // installs a zeroed buffer of the right size + owner=programId.
+  const preZeroedAccounts: Array<{ name: string; size: number }> = [];
+  const accountDefByName = new Map(ir.accounts.map((a) => [a.name, a]));
+  for (const ix of ir.instructions) {
+    for (const acc of ix.accounts) {
+      const hasZeroC = acc.constraints?.some((c) => c.kind === "zero");
+      if (!hasZeroC) continue;
+      // Must be state-typed (matches a struct in ir.accounts). Anchor's
+      // `zero` only makes sense on Account<'info, T> shapes.
+      const ad = accountDefByName.get(acc.accountType);
+      if (!ad) continue;
+      // Already collected (same name across instructions): skip.
+      if (preZeroedAccounts.some((p) => p.name === acc.name)) continue;
+      // Compute byte size: 8 (disc) + sum of field sizes.
+      const bodySize = ad.fields.reduce(
+        (sum, f) => sum + typeSize(f.type, f.maxLen),
+        0,
+      );
+      preZeroedAccounts.push({ name: acc.name, size: 8 + bodySize });
+    }
+  }
+
   // ── (4b) Identify $keypair: accounts with `owner = id()` constraint ──
   // Anchor's runtime constraint check rejects System-Program-owned accounts
   // against `owner = id()`. The runner pre-creates these as program-owned
@@ -883,6 +911,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     })),
     steps,
     preOwnedKeypairs: [...preOwnedKeypairs],
+    preZeroedAccounts,
     compare: {
       accounts: [...comparedAccounts],
       lamports: true,

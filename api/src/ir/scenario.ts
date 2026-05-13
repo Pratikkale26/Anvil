@@ -240,6 +240,17 @@ export const ScenarioSchema = z.object({
    *  rejects ephemeral keypairs as System Program-owned. The runner installs
    *  each name with `owner = programId`, rent-exempt for an empty buffer. */
   preOwnedKeypairs: z.array(z.string()).default([]),
+  /** $keypair: names that should be pre-created as program-owned accounts
+   *  with a zero-filled buffer of `size` bytes. Used for `#[account(zero)]`
+   *  on state-typed accounts (cashiers-check's `check`): Anchor requires
+   *  the account to be owned by the program, have a zero discriminator,
+   *  and have enough data length to hold the serialized state. The runner
+   *  installs each entry with `owner = programId`, rent-exempt lamports
+   *  for `size` bytes, and a zeroed data buffer. */
+  preZeroedAccounts: z.array(z.object({
+    name: z.string().min(1),
+    size: z.number().int().min(1),
+  })).default([]),
   /** Ordered instruction sequence. Steps execute in array order. */
   steps: z.array(ScenarioStepSchema).min(1),
   compare: CompareConfigSchema.default({

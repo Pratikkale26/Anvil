@@ -841,6 +841,33 @@ export function runScenarioOnSo(
     });
   }
 
+  // Pre-create $keypair: refs that carry `#[account(zero)]` — same
+  // pattern as preOwnedKeypairs but with a sized zero-filled buffer.
+  // Anchor's `zero` constraint expects the account to have enough data
+  // length to hold the serialized state PLUS a zero discriminator
+  // (so it knows the account hasn't been "claimed" by an earlier init).
+  // The runner allocates the requested size, zero-filled, owned by the
+  // program. Rent-exempt minimum for the size is approximated as
+  // 890_880 + 6960 * size lamports (legacy Solana formula; LiteSVM
+  // accepts any value >= the real minimum).
+  const preZeroedNames = new Set<string>();
+  for (const entry of scenario.preZeroedAccounts) {
+    preZeroedNames.add(entry.name);
+    const kp = ctx.ephemeralKeypairs.get(entry.name) ?? (() => {
+      const fresh = Keypair.generate();
+      ctx.ephemeralKeypairs.set(entry.name, fresh);
+      return fresh;
+    })();
+    const rentExempt = 890_880 + 6_960 * entry.size;
+    svm.setAccount(kp.publicKey, {
+      lamports: rentExempt,
+      data: Buffer.alloc(entry.size),
+      owner: ctx.programId,
+      executable: false,
+      rentEpoch: 0,
+    });
+  }
+
   // Airdrop signers. `airdrop: 0` means the signer must start unfunded —
   // typically because it's the `to` target of a system_program::create_account
   // CPI which requires the destination to have zero lamports.
@@ -882,6 +909,7 @@ export function runScenarioOnSo(
     const pk = resolveAccountRef(`$keypair:${name}`, ctx);
     if (initdNonPdaKeypairNames.has(name)) continue;
     if (preOwnedNames.has(name)) continue;
+    if (preZeroedNames.has(name)) continue;
     svm.airdrop(pk, BigInt(1_000_000_000));
   }
 
