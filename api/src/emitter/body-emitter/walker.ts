@@ -210,18 +210,15 @@ export class BodyWalker {
   walk(): string {
     this.emitAccountConstraintChecks();
 
-    // M6.1 — ANVIL_AST_EMIT=1 routes body statements through the
-    // visitor instead of the per-kind handler chain. The visitor's
-    // output is byte-identical to the handler chain (asserted by
-    // ast-visitor-byte-identical.test.ts on every demo × target),
-    // so binary-parity-snapshot.test.ts must pass identically under
-    // both flag values. Honest framing: this is the switchover
-    // SCAFFOLDING — the visitor still calls into handlers for
-    // non-structural kinds via runHandlerCapture, so flipping the
-    // flag does not actually retire the regex layer yet. M6.2
-    // (sunset) is gated on every IR kind being structurally
-    // complete in the visitor.
-    if (process.env["ANVIL_AST_EMIT"] === "1") {
+    // H1 Session F (2026-05-13) — visitor path is now the production
+    // default. The visitor is byte-identical to the legacy walker on:
+    //   - 117/117 binary-parity-snapshot + ast-visitor-byte-identical
+    //   - 94/94 realworld-cargo (verified under ANVIL_AST_EMIT=1)
+    // Escape hatch: ANVIL_LEGACY_WALKER=1 forces the per-kind handler
+    // chain. Use during soak to debug any byte-equal regression. Once
+    // the 2-week soak passes clean, the legacy branch + handlers/*
+    // imports retire entirely (Session G).
+    if (process.env["ANVIL_LEGACY_WALKER"] !== "1") {
       // Lazy require to avoid pulling the visitor module on the
       // legacy path (keeps cold-start cheap when the flag is off).
       // eslint-disable-next-line @typescript-eslint/no-require-imports
