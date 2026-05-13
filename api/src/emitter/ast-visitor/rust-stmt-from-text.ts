@@ -171,6 +171,29 @@ const MULTI_LINE_OK = new Set([
  * inners; if the source uses anything else (e.g. 8-space-deeper), the
  * structural conversion would change byte output.
  */
+/**
+ * Walk up the AST to find the smallest enclosing block-level statement
+ * (let_declaration, expression_statement, const_item) or a block — return
+ * its startPosition.column. Used by call_expression's multi-line alignment
+ * check: args must align to enclosing-stmt-indent + 4, NOT to the call's
+ * own column.
+ */
+function enclosingStmtColumn(node: SyntaxNode): number {
+  let cur: SyntaxNode | null = node;
+  while (cur && cur.parent) {
+    if (
+      cur.type === "let_declaration" ||
+      cur.type === "expression_statement" ||
+      cur.type === "const_item" ||
+      cur.parent.type === "block"
+    ) {
+      return cur.startPosition.column;
+    }
+    cur = cur.parent;
+  }
+  return node.startPosition.column;
+}
+
 function hasStandardBlockIndent(outer: SyntaxNode, block: SyntaxNode): boolean {
   // Find the first inner stmt's start column.
   if (block.namedChildCount === 0) return true;
@@ -507,18 +530,28 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       // structural converter feeds the multi-line shape back through
       // the printer.
       //
-      // mlCall's printer always emits args at outer.column + 4. If the
-      // source uses a different indent (vesting / cpi-custom programs
-      // have args at outer.column + 8 — extra-indented for readability),
-      // structural re-emit drops byte-equality. Refuse the conversion
-      // in that case so the caller falls back to rawLine (verbatim).
+      // mlCall's printer always emits args at <enclosing-stmt-indent>
+      // + 4. The "enclosing stmt" is the smallest ancestor of this call
+      // that's a let_declaration / expression_statement / block-level
+      // stmt — that's where the indent passed into printExpr originates.
+      // For top-level call-as-stmt the enclosing stmt IS the call's
+      // expression_statement, so its column matches the call's. For
+      // call-in-let-value position the enclosing stmt is the let, which
+      // sits at outer indent. Using the call's own column as the anchor
+      // (the previous check) is wrong in the let-value case and refused
+      // perfectly-formatted Native CPI emits.
+      //
+      // If the source uses a non-standard indent (vesting / cpi-custom:
+      // args at outer + 8 for readability), we still refuse so the
+      // caller falls back to rawLine.
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { mlCall } = require("./nodes.js") as typeof import("./nodes.js");
       if (node.text.includes("\n")) {
         if (args.namedChildCount > 0) {
           const firstArg = args.namedChild(0);
           if (firstArg && firstArg.startPosition.row > node.startPosition.row) {
-            const expected = node.startPosition.column + 4;
+            const stmtCol = enclosingStmtColumn(node);
+            const expected = stmtCol + 4;
             if (firstArg.startPosition.column !== expected) return null;
           }
         }
@@ -649,6 +682,18 @@ function exprFromNode(node: SyntaxNode): RustExpr | null {
       if (separator === ";") {
         if (items.length !== 2) return null;
         return { kind: "array", items, separator: ";" };
+      }
+      // Detect multi-line source layout. Same alignment rule as
+      // call_expression: items must align to enclosing-stmt-indent + 4
+      // for the printer's multi-line array layout to round-trip
+      // byte-identically.
+      if (node.text.includes("\n") && items.length > 0) {
+        const firstItem = node.namedChild(0);
+        if (firstItem && firstItem.startPosition.row > node.startPosition.row) {
+          const stmtCol = enclosingStmtColumn(node);
+          if (firstItem.startPosition.column !== stmtCol + 4) return null;
+          return { kind: "array", items, multiLine: true };
+        }
       }
       return array(items);
     }
