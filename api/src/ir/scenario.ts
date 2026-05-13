@@ -235,6 +235,11 @@ export const ScenarioSchema = z.object({
    *  balance. Auto-scenario synthesizes these from non-init `Account<'info, TokenAccount>`
    *  references using their token::mint / token::authority constraints. */
   tokenAccounts: z.array(TokenAccountDeclSchema).default([]),
+  /** $keypair: names that should be pre-created as program-owned accounts
+   *  (`owner = id()` constraint). Without this, Anchor's runtime owner check
+   *  rejects ephemeral keypairs as System Program-owned. The runner installs
+   *  each name with `owner = programId`, rent-exempt for an empty buffer. */
+  preOwnedKeypairs: z.array(z.string()).default([]),
   /** Ordered instruction sequence. Steps execute in array order. */
   steps: z.array(ScenarioStepSchema).min(1),
   compare: CompareConfigSchema.default({

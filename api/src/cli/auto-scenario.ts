@@ -183,6 +183,16 @@ const KNOWN_PROGRAM_TYPES: Record<string, string> = {
   Memo: "memo",
   "Sysvar<Rent>": "rent",
   "Sysvar<Clock>": "clock",
+  "Sysvar<StakeHistory>": "stake_history",
+  "Sysvar<SlotHashes>": "slot_hashes",
+  "Sysvar<SlotHistory>": "slot_history",
+  "Sysvar<EpochSchedule>": "epoch_schedule",
+  "Sysvar<EpochRewards>": "epoch_rewards",
+  "Sysvar<Instructions>": "instructions",
+  "Sysvar<RecentBlockhashes>": "recent_blockhashes",
+  "Sysvar<Rewards>": "rewards",
+  "Sysvar<Fees>": "fees",
+  "Sysvar<LastRestartSlot>": "last_restart_slot",
 };
 
 /** Account types Anvil knows how to handle in scenarios. */
@@ -578,6 +588,31 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     return { ok: false, blockers };
   }
 
+  // ── (4b) Identify $keypair: accounts with `owner = id()` constraint ──
+  // Anchor's runtime constraint check rejects System-Program-owned accounts
+  // against `owner = id()`. The runner pre-creates these as program-owned
+  // via svm.setAccount before step 0; otherwise we hit ConstraintOwner (2004).
+  // Limit to non-PDA non-Signer non-program ephemeral keypairs — PDAs are
+  // already program-owned by derivation, and the other types have explicit
+  // owners enforced by the runner.
+  const preOwnedKeypairs = new Set<string>();
+  for (const ix of ir.instructions) {
+    for (const acc of ix.accounts) {
+      if (acc.isPda) continue;
+      if (isSignerAccount(acc.accountType)) continue;
+      if (KNOWN_PROGRAM_TYPES[acc.accountType]) continue;
+      if (acc.accountType === "Mint") continue;
+      if (acc.accountType === "TokenAccount") continue;
+      const ownerC = acc.constraints?.find((c) => c.kind === "owner");
+      if (!ownerC) continue;
+      // Common shapes for "owned by this program": id(), crate::id(), &id(), ID, crate::ID.
+      const v = (ownerC.value ?? "").replace(/\s|&/g, "");
+      if (/^(crate::)?id\(\)$/i.test(v) || /^(crate::)?ID$/.test(v)) {
+        preOwnedKeypairs.add(acc.name);
+      }
+    }
+  }
+
   // ── (5) Sequence instructions: init-bearing handlers first, then mutations ──
   const orderedInstructions = sortByInitFirst(ir.instructions);
   if (orderedInstructions.length !== ir.instructions.length) {
@@ -766,6 +801,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       programInits: spec.programInits,
     })),
     steps,
+    preOwnedKeypairs: [...preOwnedKeypairs],
     compare: {
       accounts: [...comparedAccounts],
       lamports: true,

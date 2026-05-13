@@ -42,6 +42,16 @@ const KNOWN_PROGRAMS: Record<string, string> = {
   memo: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
   rent: "SysvarRent111111111111111111111111111111111",
   clock: "SysvarC1ock11111111111111111111111111111111",
+  stake_history: "SysvarStakeHistory1111111111111111111111111",
+  slot_hashes: "SysvarS1otHashes111111111111111111111111111",
+  slot_history: "SysvarS1otHistory11111111111111111111111111",
+  epoch_schedule: "SysvarEpochSchedu1e111111111111111111111111",
+  epoch_rewards: "SysvarEpochRewards1111111111111111111111111",
+  instructions: "Sysvar1nstructions1111111111111111111111111",
+  recent_blockhashes: "SysvarRecentB1ockHashes11111111111111111111",
+  rewards: "SysvarRewards111111111111111111111111111111",
+  fees: "SysvarFees111111111111111111111111111111111",
+  last_restart_slot: "SysvarLastRestartS1ot1111111111111111111111",
 };
 
 // ─── Resolved scenario context ──────────────────────────────────────────────
@@ -470,6 +480,7 @@ export function installTokenAccounts(svm: LiteSVM, ctx: ResolvedScenarioContext)
 export function serializeArgs(
   args: Record<string, unknown>,
   irArgs: Array<{ name: string; type: string }>,
+  ir?: SolanaIR,
 ): Buffer {
   const parts: Buffer[] = [];
   for (const arg of irArgs) {
@@ -477,12 +488,12 @@ export function serializeArgs(
     if (raw === undefined) {
       throw new Error(`scenario step is missing arg '${arg.name}' (type ${arg.type})`);
     }
-    parts.push(serializeOne(raw, arg.type, arg.name));
+    parts.push(serializeOne(raw, arg.type, arg.name, ir));
   }
   return Buffer.concat(parts);
 }
 
-function serializeOne(value: unknown, type: string, fieldName: string): Buffer {
+function serializeOne(value: unknown, type: string, fieldName: string, ir?: SolanaIR): Buffer {
   // Numeric primitives.
   const intMatch = type.match(/^([ui])(8|16|32|64|128)$/);
   if (intMatch) {
@@ -542,12 +553,44 @@ function serializeOne(value: unknown, type: string, fieldName: string): Buffer {
     const lenBuf = Buffer.alloc(4);
     lenBuf.writeUInt32LE(value.length, 0);
     const elemBufs = (value as unknown[]).map((v, i) =>
-      serializeOne(v, inner, `${fieldName}[${i}]`),
+      serializeOne(v, inner, `${fieldName}[${i}]`, ir),
     );
     return Buffer.concat([lenBuf, ...elemBufs]);
   }
+  // Option<T> — borsh: 1-byte tag (0 = None, 1 = Some) + T-encoded value.
+  const optMatch = type.match(/^Option<(.+)>$/);
+  if (optMatch?.[1]) {
+    const inner = optMatch[1];
+    if (value === null || value === undefined) return Buffer.from([0]);
+    return Buffer.concat([Buffer.from([1]), serializeOne(value, inner, fieldName, ir)]);
+  }
+  // Custom struct from IR.types — recurse on fields in declaration order.
+  // No discriminator/tag prefix; struct fields are just concatenated borsh
+  // encodings, matching anchor-lang's #[derive(AnchorSerialize)] behavior.
+  const typeDef = ir?.types?.find((t) => t.name === type);
+  if (typeDef && typeDef.kind === "struct" && typeDef.fields) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`arg '${fieldName}' is struct ${type} but value isn't an object`);
+    }
+    const obj = value as Record<string, unknown>;
+    const fieldBufs = typeDef.fields.map((f) =>
+      serializeOne(obj[f.name], f.type, `${fieldName}.${f.name}`, ir),
+    );
+    return Buffer.concat(fieldBufs);
+  }
+  // Enum from IR.types — borsh: 1-byte variant index. We only support
+  // unit variants (no payload) for now; payload-carrying variants need
+  // the variant tag + nested type, which the IR doesn't currently model.
+  if (typeDef && typeDef.kind === "enum" && typeDef.variants) {
+    if (typeof value !== "string") {
+      throw new Error(`arg '${fieldName}' is enum ${type} but value isn't a variant name string`);
+    }
+    const idx = typeDef.variants.indexOf(value);
+    if (idx < 0) throw new Error(`arg '${fieldName}' enum ${type} has no variant '${value}' (known: ${typeDef.variants.join(", ")})`);
+    return Buffer.from([idx]);
+  }
   throw new Error(
-    `arg '${fieldName}' has unsupported type '${type}' -- V1 supports u8..u128, i8..i128, bool, Pubkey, String, Vec<T>. Custom structs deferred.`,
+    `arg '${fieldName}' has unsupported type '${type}' -- V1 supports u8..u128, i8..i128, bool, Pubkey, String, Vec<T>, Option<T>, and IR-defined struct/enum types.`,
   );
 }
 
@@ -569,7 +612,7 @@ export function buildStepInstruction(
 
   const data = Buffer.concat([
     anchorDiscriminator(step.ix),
-    serializeArgs(step.args, irIx.args),
+    serializeArgs(step.args, irIx.args, ir),
   ]);
 
   const keys = step.accounts.map((ref, slotIdx) => {
@@ -774,6 +817,30 @@ export function runScenarioOnSo(
   installMintAccounts(svm, ctx);
   installTokenAccounts(svm, ctx);
 
+  // Pre-create $keypair: refs that carry `owner = id()` (B2). Anchor's
+  // runtime ConstraintOwner check rejects System-Program-owned accounts;
+  // installing them as program-owned with an empty rent-exempt buffer
+  // mirrors what a previous instruction or external setup would have done.
+  // 0-byte data is sufficient for owner checks; fixtures that also read
+  // data into a state struct still parse a 0-length buffer as zeroed
+  // (default for primitive fields). Bump the size if a real fixture needs
+  // it.
+  const preOwnedNames = new Set(scenario.preOwnedKeypairs);
+  for (const name of preOwnedNames) {
+    const kp = ctx.ephemeralKeypairs.get(name) ?? (() => {
+      const fresh = Keypair.generate();
+      ctx.ephemeralKeypairs.set(name, fresh);
+      return fresh;
+    })();
+    svm.setAccount(kp.publicKey, {
+      lamports: 1_000_000_000,
+      data: Buffer.alloc(0),
+      owner: ctx.programId,
+      executable: false,
+      rentEpoch: 0,
+    });
+  }
+
   // Airdrop signers.
   for (const decl of scenario.signers) {
     const kp = ctx.signers.get(decl.name)!;
@@ -811,6 +878,7 @@ export function runScenarioOnSo(
     // (unless this keypair is going to be init'd, which requires lamports=0).
     const pk = resolveAccountRef(`$keypair:${name}`, ctx);
     if (initdNonPdaKeypairNames.has(name)) continue;
+    if (preOwnedNames.has(name)) continue;
     svm.airdrop(pk, BigInt(1_000_000_000));
   }
 
