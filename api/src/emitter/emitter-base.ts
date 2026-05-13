@@ -2616,29 +2616,75 @@ export function rewriteAnchorResultAlias(body: string): string {
  * crate, that target type is unresolvable. Comment the whole impl with
  * the same TODO banner as other unsupported-shape stubs.
  */
+const SIBLING_KNOWN_EXTERNAL_CRATES = new Set([
+  "anchor_lang", "anchor_spl", "solana_program", "pinocchio",
+  "core", "std", "alloc",
+]);
+const SIBLING_KNOWN_EXTERNAL_PREFIXES = ["spl_", "mpl_", "pyth_", "switchboard_"];
+
+function isKnownExternalCrate(crate: string): boolean {
+  if (SIBLING_KNOWN_EXTERNAL_CRATES.has(crate)) return true;
+  return SIBLING_KNOWN_EXTERNAL_PREFIXES.some((p) => crate.startsWith(p));
+}
+
+/** Return the leftmost path segment of a target type node, or null when the
+ *  target isn't a scoped path. Mirrors the regex `for <crate>::` shape — only
+ *  paths with at least one `::` qualify as candidates. */
+function leftmostScopedSegment(typeNode: SyntaxNode): string | null {
+  if (typeNode.type !== "scoped_type_identifier" && typeNode.type !== "scoped_identifier") {
+    return null;
+  }
+  let cur: SyntaxNode = typeNode;
+  while (true) {
+    const path = cur.childForFieldName("path");
+    if (!path) break;
+    if (path.type === "scoped_identifier" || path.type === "scoped_type_identifier") {
+      cur = path;
+      continue;
+    }
+    // path field is now a leaf identifier — the leftmost segment.
+    return path.text;
+  }
+  return null;
+}
+
 export function commentOutSiblingTraitImpl(raw: string): string {
-  // Match `for <crate>::` to extract the target's outer crate name.
+  const parser = getParserSync();
+  if (parser) {
+    try {
+      const tree = parser.parse(raw);
+      if (tree) {
+        const root = tree.rootNode;
+        if (root.namedChildCount === 1) {
+          const top = root.namedChild(0);
+          if (top && top.type === "impl_item" && !nodeHasError(top)) {
+            const typeField = top.childForFieldName("type");
+            if (!typeField) return raw;
+            const crate = leftmostScopedSegment(typeField);
+            // Non-scoped target (`for Bar`) — not a sibling, leave alone.
+            if (!crate) return raw;
+            if (isKnownExternalCrate(crate)) return raw;
+            return commentOutBlock(raw, "trait impl for sibling-Anchor-program type — sibling crate not in target scaffold; manual port required");
+          }
+        }
+      }
+    } catch { /* fall through to regex fallback */ }
+  }
+
+  // Regex fallback for sync paths that run before parser warmup.
   const m = raw.match(/\bfor\s+([a-z_][a-z0-9_]*)\s*::/i);
   if (!m) return raw;
   const crate = m[1] ?? "";
-  const isKnownExternal =
-    crate === "anchor_lang" ||
-    crate === "anchor_spl" ||
-    crate === "solana_program" ||
-    crate === "pinocchio" ||
-    crate === "core" ||
-    crate === "std" ||
-    crate === "alloc" ||
-    crate.startsWith("spl_") ||
-    crate.startsWith("mpl_") ||
-    crate.startsWith("pyth_") ||
-    crate.startsWith("switchboard_");
-  if (isKnownExternal) return raw;
+  if (isKnownExternalCrate(crate)) return raw;
+  return commentOutBlock(raw, "trait impl for sibling-Anchor-program type — sibling crate not in target scaffold; manual port required");
+}
+
+function commentOutBlock(raw: string, reason: string): string {
   const commented = raw
     .split("\n")
     .map((line) => (line.length > 0 ? `// ${line}` : "//"))
     .join("\n");
-  return `// ⚠️ Anvil TODO: trait impl for sibling-Anchor-program type — sibling crate not in target scaffold; manual port required\n${commented}`;
+  return `// ⚠️ Anvil TODO: ${reason}\n${commented}`;
 }
 
 /**
