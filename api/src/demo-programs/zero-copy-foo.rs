@@ -20,8 +20,12 @@ pub mod zero_copy_foo {
     }
 
     pub fn read_foo(ctx: Context<ReadFoo>) -> Result<()> {
-        let foo = ctx.accounts.foo.load()?;
-        msg!("foo.data = {}", foo.data);
+        // Exercises the immutable load() variant — produces the
+        // `zero_copy_load` IR kind for the differential-coverage matrix.
+        // Don't dereference packed fields directly via msg! / println! —
+        // zero_copy(unsafe) emits repr(packed) which makes `foo.data`
+        // references undefined behavior (E0793).
+        let _foo = ctx.accounts.foo.load()?;
         Ok(())
     }
 }
