@@ -16,7 +16,12 @@ import { getParser } from "../../parser/ts-init.js";
 // the model's view (it can't avoid touching what it can't see). Now:
 // whole file under 12KB, structural-skeleton + windowed bodies for
 // larger files. Material change to prompt shape → new version.
-export const REFINE_PROMPT_VERSION = "refine.v8";
+// v9: catalog expansion. Adds typed-IR-kind hints for the 12 Metaplex
+// Token Metadata slots + the ~25 T22 extension slots + the
+// TokenInterface runtime-dispatch caveat + account-flag enforcement
+// guidance. Without these, model produces hand-rolled CPIs that miss
+// discriminator/account-order conventions Anvil's emit already encodes.
+export const REFINE_PROMPT_VERSION = "refine.v9";
 
 /** Max preview length per rejected attempt — keeps retry prompts bounded. */
 const REJECTED_ATTEMPT_PREVIEW_CHARS = 2000;
@@ -53,11 +58,11 @@ export const REFINE_SYSTEM_RULES = [
   "",
   "── PINOCCHIO TARGET HINTS ──",
   "• Account access: instructions take `accounts: &[AccountInfo]` — no Anchor wrappers, no `ctx.accounts`. Index into the slice.",
-  "• `AccountInfo` flag accessors (`is_signer`, `is_writable`, `is_executable`) are METHODS in pinocchio — call with parens: `acc.is_signer()`, NOT `acc.is_signer`. Treating them as fields produces E0615 (`attempted to take value of method`). Same for `key()`, `lamports()`, `data_len()`, `owner()`.",
+  "• `AccountInfo` flag accessors in PINOCCHIO are METHODS (call with parens): `acc.is_signer()`, `acc.is_writable()`, `acc.is_executable()`, `acc.key()`, `acc.lamports()`, `acc.data_len()`, `acc.owner()`. NATIVE's `solana_program::account_info::AccountInfo` exposes the same as FIELDS (no parens): `acc.is_signer`, `acc.is_writable`, etc. Treating pinocchio methods as fields produces E0615.",
   "• Logging: use `pinocchio::log::sol_log(&str)`. NEVER `msg!`.",
   "• Errors: return `ProgramError::InvalidArgument`, `ProgramError::AccountDataTooSmall`, etc. NEVER `error!`/`require!`/Anchor `#[error_code]`.",
   "• PDAs: derive with `pinocchio::pubkey::find_program_address(seeds, program_id)`. Always store the bump on the account or recompute.",
-  "• System / SPL CPIs: use `pinocchio_system::instructions::*` and `pinocchio_token::instructions::*` builders. NEVER `anchor_lang::system_program::*`, NEVER `anchor_spl::*`, NEVER `solana_program::program::invoke` — pinocchio_* builders already wrap the invoke call.",
+  "• System / SPL CPIs: use `pinocchio_system::instructions::*` and `pinocchio_token::instructions::*` builders. NEVER `anchor_lang::system_program::*`, NEVER `anchor_spl::*` (including `anchor_spl::token_interface::*` — Anvil emits hand-rolled CPIs for the TokenInterface runtime-dispatch case; do not reintroduce the Anchor wrapper), NEVER `solana_program::program::invoke` — pinocchio_* builders already wrap the invoke call.",
   "• Account state: define `#[repr(C)]` structs (or `#[repr(C, packed)]`) with manual `from_account_info` / `save` helpers. NEVER `#[account]`.",
   "• No `#[derive(Accounts)]`, no `#[program]`, no `#[instruction]` — these are Anchor-only attribute macros.",
   "",
@@ -66,6 +71,25 @@ export const REFINE_SYSTEM_RULES = [
   "• Logging: `solana_program::msg!()` is fine here.",
   "• Account deserialization: borsh by hand, with explicit `try_from_slice` + length checks.",
   "• Use `invoke` / `invoke_signed` for CPIs with manual `Instruction` construction.",
+  "",
+  "── TOKEN-2022 EXTENSION CPI HINTS ──",
+  "• Anvil emits ~25 typed IR kinds for T22 extensions as hand-rolled CPIs (no anchor_spl::token_2022 wrapper survives the transpile). Helper fn names follow `t22_<extension>_<verb>` on Pinocchio and `t22_<extension>_<verb>` on Native. Examples: `t22_transfer_fee_initialize`, `t22_metadata_pointer_update`, `t22_group_pointer_initialize`, `t22_non_transferable_mint_initialize`, `t22_token_metadata_initialize`, `t22_default_account_state_update`.",
+  "• Each helper builds an `Instruction` with the T22 program ID (`TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEbW`) and the correct extension discriminator (`spl_token_2022::extension::ExtensionType` tags + sub-instruction byte). Account layout follows the spl-token-2022 spec exactly — do not invent account order.",
+  "• When account space is allocated for a T22 mint with extensions, the `space = N` constraint must include the TLV header (4 bytes per extension) + the extension payload. The validator's checkT22ExtensionSpaceAllocation pass catches under-allocations; fix means recomputing N to include all declared extensions.",
+  "• `TokenInterface` runtime dispatch: when the source uses `Interface<TokenInterface>`, Anvil emits a `*_checked` SPL CPI whose `program_id` is read from the AccountInfo at the slot at runtime (not hardcoded). Don't replace it with a hardcoded program ID — that defeats the dispatch.",
+  "",
+  "── METAPLEX TOKEN METADATA CPI HINTS ──",
+  "• Anvil emits 12 typed IR kinds for Metaplex Token Metadata as hand-rolled CPIs. Helper fn names follow `mpl_<verb>`. Slots: `mpl_create_metadata_accounts_v3` (disc 33), `mpl_update_metadata_accounts_v2` (15), `mpl_create_master_edition_v3` (17), `mpl_verify_collection` (21), `mpl_unverify_collection` (22), `mpl_set_and_verify_collection` (25), `mpl_sign_metadata` (7), `mpl_approve_collection_authority` (23), `mpl_revoke_collection_authority` (24), `mpl_mint_new_edition_from_master` (11), `mpl_freeze_delegated` (26), `mpl_thaw_delegated` (27).",
+  "• Program ID: `metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s`. Each helper builds an `Instruction` with the disc as the first data byte, then any extension payload (e.g. DataV2 fields), then constructs AccountMeta entries in the order MPL's instruction layout expects.",
+  "• Substring-prefix gotcha: `verify_collection` is a substring of both `unverify_collection` AND `set_and_verify_collection`. When fixing a helper, check the EXACT name in the IR kind, not the longest substring match. Similarly `approve` vs `revoke` collection authority.",
+  "",
+  "── ACCOUNT-FLAG ENFORCEMENT ──",
+  "• If the IR marks an account as `Signer`, the emit MUST check `is_signer` at the slot and return `ProgramError::MissingRequiredSignature` if false. Pinocchio: `if !accounts[i].is_signer() { return Err(ProgramError::MissingRequiredSignature); }`. Native: `if !accounts[i].is_signer { return Err(...); }`.",
+  "• If the IR marks an account as `Mut` / `Init`, the emit MUST check `is_writable` similarly. Skipping these checks creates a real exploit: an attacker passes a `is_signer=false` slot and the program acts as if it were signed.",
+  "• If the validator's findings mention 'missing signer check' or 'missing writable check', add the check at the top of the instruction handler, NOT inside the helper that consumes the account. Helpers can't always tell what the caller's invariants are.",
+  "",
+  "── MARKER CONSTANTS ──",
+  "• Stub markers (`TODO(manual)`, `FIXME(anvil)`, `⚠️ Anvil TODO:`, `⚠️ Anvil:`, `0u8 /* TODO: decimals */`) are CENTRALIZED in `api/src/emitter/markers.ts`. The output validator's regex set is built from those constants (linkage test asserts every exported marker has a validator pattern). If your fix emits a new marker, use one of those exact strings — the validator's case-sensitive match won't recognize a custom variant.",
   "",
   "── RUSTC ERROR CODE → FIX SHAPE (when issue source is cargo) ──",
   "• E0425 `cannot find function/value X` → fix the IMPORT or remove the call. Do NOT re-spell X as Y you also can't see.",

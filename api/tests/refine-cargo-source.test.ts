@@ -97,7 +97,7 @@ describe("refine prompt: cargo-source path", () => {
 describe("refine cache key: cargo vs validator path isolation", () => {
   function key(issueSource: "validator" | "cargo") {
     return createAICacheKey({
-      version: "refine.v8",
+      version: "refine.v9",
       evaluator: "evaluator.v3",
       provider: "anthropic",
       model: "claude-sonnet-4-6",
