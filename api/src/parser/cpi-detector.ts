@@ -90,46 +90,16 @@ export function detectCpi(
 
   const funcText = funcNode.text;
 
-  // ── Token-2022 / token_interface CPI patterns ──
-  // These mirror token::* but use the Token-2022 program
-  if (funcText.includes("token_2022::") || funcText.includes("token_interface::")) {
-    if (funcText.includes("transfer_checked") || funcText.includes("transfer")) {
-      const result = extractSplTransfer(callNode, collector, cpiCtxLookup);
-      if (result.kind === "cpi_spl_transfer") {
-        return { ...result, tokenProgram: "token_2022" as const };
-      }
-      return result;
-    }
-    if (funcText.includes("mint_to")) {
-      const result = extractSplMintTo(callNode, collector);
-      if (result.kind === "cpi_spl_mint_to") {
-        return { ...result, tokenProgram: "token_2022" as const };
-      }
-      return result;
-    }
-    if (funcText.includes("burn")) {
-      const result = extractSplBurn(callNode, collector);
-      if (result.kind === "cpi_spl_burn") {
-        return { ...result, tokenProgram: "token_2022" as const };
-      }
-      return result;
-    }
-    if (funcText.includes("close_account") || funcText.includes("CloseAccount")) {
-      const result = extractSplCloseAccount(callNode, collector);
-      if (result.kind === "cpi_spl_close_account") {
-        return { ...result, tokenProgram: "token_2022" as const };
-      }
-      return result;
-    }
-    if (funcText.includes("set_authority") || funcText.includes("SetAuthority")) {
-      const result = extractSplSetAuthority(callNode, collector);
-      if (result.kind === "cpi_spl_set_authority") {
-        return { ...result, tokenProgram: "token_2022" as const };
-      }
-      return result;
-    }
-  }
-
+  // T22 extension dispatch MUST run before the generic token_2022/
+  // token_interface SPL block below. Reason: every T22 ext fn whose name
+  // contains "transfer" (transfer_fee_initialize, transfer_fee_set,
+  // transfer_hook_initialize, transfer_hook_update, transfer_checked_with_fee)
+  // would otherwise match the SPL block's `includes("transfer")` and route
+  // to extractSplTransfer with completely different account shapes,
+  // producing a silent misroute. The T22 fn names are specific enough
+  // that no SPL fn name is a substring of any T22 ext fn name, so this
+  // order is safe.
+  //
   // T22 extension: non_transferable_mint_initialize. Match by helper
   // name regardless of qualifier — Anchor programs typically `use
   // anchor_spl::token_interface::non_transferable_mint_initialize`,
@@ -206,6 +176,49 @@ export function detectCpi(
   }
   if (funcText.includes("token_metadata_update_authority")) {
     return extractT22TokenMetadataUpdateAuthority(callNode, collector);
+  }
+
+  // ── Token-2022 / token_interface CPI patterns (generic SPL fns through
+  // the Token-2022 program). Falls below the T22-extension dispatch so a
+  // qualified `token_2022::transfer_fee_initialize(...)` doesn't get
+  // misrouted into extractSplTransfer via the `includes("transfer")`
+  // substring match.
+  if (funcText.includes("token_2022::") || funcText.includes("token_interface::")) {
+    if (funcText.includes("transfer_checked") || funcText.includes("transfer")) {
+      const result = extractSplTransfer(callNode, collector, cpiCtxLookup);
+      if (result.kind === "cpi_spl_transfer") {
+        return { ...result, tokenProgram: "token_2022" as const };
+      }
+      return result;
+    }
+    if (funcText.includes("mint_to")) {
+      const result = extractSplMintTo(callNode, collector);
+      if (result.kind === "cpi_spl_mint_to") {
+        return { ...result, tokenProgram: "token_2022" as const };
+      }
+      return result;
+    }
+    if (funcText.includes("burn")) {
+      const result = extractSplBurn(callNode, collector);
+      if (result.kind === "cpi_spl_burn") {
+        return { ...result, tokenProgram: "token_2022" as const };
+      }
+      return result;
+    }
+    if (funcText.includes("close_account") || funcText.includes("CloseAccount")) {
+      const result = extractSplCloseAccount(callNode, collector);
+      if (result.kind === "cpi_spl_close_account") {
+        return { ...result, tokenProgram: "token_2022" as const };
+      }
+      return result;
+    }
+    if (funcText.includes("set_authority") || funcText.includes("SetAuthority")) {
+      const result = extractSplSetAuthority(callNode, collector);
+      if (result.kind === "cpi_spl_set_authority") {
+        return { ...result, tokenProgram: "token_2022" as const };
+      }
+      return result;
+    }
   }
 
   // ── SPL Token transfer ──
