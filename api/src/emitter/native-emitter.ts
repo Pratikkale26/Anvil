@@ -327,6 +327,10 @@ use solana_program::{
     const needsClock = _ir.instructions.some(i =>
       i.body.some(s =>
         s.kind === 'sysvar_clock' ||
+        // M2b / N5 — Pyth legacy + modern emits both reference Clock::get()
+        // (modern via clockExpr verbatim, legacy via crate call chain).
+        s.kind === 'cpi_pyth_read_price_legacy' ||
+        s.kind === 'cpi_pyth_read_price_modern' ||
         (s.kind === 'pass_through' && /\bClock::get\(\)/.test(s.code)) ||
         (s.kind === 'state_field_assign' && /\bClock::get\(\)/.test(s.value))
       )

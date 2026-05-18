@@ -421,6 +421,11 @@ export class PinocchioEmitter extends BaseEmitter {
     const needsClock = _ir.instructions.some(i =>
       i.body.some(s =>
         s.kind === 'sysvar_clock' ||
+        // M2b / N5 — Pyth legacy + modern emits both read Clock::get()
+        // for the age-check. Without this gate the import is missed and
+        // cargo refuses with `no function get found for Clock`.
+        s.kind === 'cpi_pyth_read_price_legacy' ||
+        s.kind === 'cpi_pyth_read_price_modern' ||
         (s.kind === 'pass_through' && /\bClock::get\(\)/.test(s.code)) ||
         (s.kind === 'state_field_assign' && /\bClock::get\(\)/.test(s.value))
       )
