@@ -79,3 +79,106 @@ describe("Path 2 v1 — TokenInterface runtime dispatch", () => {
     expect(out).toContain("const TOKEN_2022_PROGRAM_ID: pinocchio::pubkey::Pubkey");
   });
 });
+
+// Path 2 v1 extension — same contract for mint_to / burn / close_account /
+// set_authority. Builds the minimal IR for each kind and asserts the
+// Pinocchio emit dispatches the program_id at runtime when tokenProgramArg
+// is set.
+
+function buildSimpleIr(bodyStatement: any) {
+  return SolanaIRSchema.parse({
+    name: "dispatch_test",
+    programId: "Counter111111111111111111111111111111111111",
+    instructions: [
+      {
+        name: "tt",
+        args: [],
+        accounts: [
+          { name: "a",             accountType: "Account",         isSigner: false, isMut: true,  isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+          { name: "b",             accountType: "Account",         isSigner: false, isMut: true,  isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+          { name: "authority",     accountType: "Signer",          isSigner: true,  isMut: false, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+          { name: "token_program", accountType: "InterfaceAccount", isSigner: false, isMut: false, isInit: false, isOptional: false, isPda: false, pdaSeeds: [], constraints: [] },
+        ],
+        body: [bodyStatement, { kind: "return_ok" }],
+        bodyLocs: [],
+      },
+    ],
+    accounts: [], types: [], constants: [], errors: [], helperFns: [], events: [], imports: [], userTraitImpls: [], warnings: [],
+    metadata: { sourceFramework: "anchor", anvilVersion: "0.4.0", parsedAt: "2026-05-18T00:00:00Z" },
+  });
+}
+
+describe("Path 2 v1 extension — mint_to / burn / close_account / set_authority", () => {
+  test("cpi_spl_mint_to with tokenProgramArg → runtime dispatch", () => {
+    const ir = buildSimpleIr({
+      kind: "cpi_spl_mint_to",
+      mint: "a",
+      to: "b",
+      authority: "authority",
+      amount: "1",
+      tokenProgram: "token_2022",
+      tokenProgramArg: "token_program",
+    });
+    const out = emitPinocchioFull(ir).singleFile;
+    expect(out).toMatch(/program_id:\s*token_program\.key\(\)/);
+    expect(out).not.toMatch(/Token-2022 mint_to[\s\S]{0,300}const TOKEN_2022_PROGRAM_ID/);
+  });
+
+  test("cpi_spl_burn with tokenProgramArg → runtime dispatch", () => {
+    const ir = buildSimpleIr({
+      kind: "cpi_spl_burn",
+      from: "a",
+      mint: "b",
+      authority: "authority",
+      amount: "1",
+      tokenProgram: "token_2022",
+      tokenProgramArg: "token_program",
+    });
+    const out = emitPinocchioFull(ir).singleFile;
+    expect(out).toMatch(/program_id:\s*token_program\.key\(\)/);
+    expect(out).not.toMatch(/Token-2022 burn[\s\S]{0,300}const TOKEN_2022_PROGRAM_ID/);
+  });
+
+  test("cpi_spl_close_account with tokenProgramArg → runtime dispatch", () => {
+    const ir = buildSimpleIr({
+      kind: "cpi_spl_close_account",
+      account: "a",
+      destination: "b",
+      authority: "authority",
+      tokenProgram: "token_2022",
+      tokenProgramArg: "token_program",
+    });
+    const out = emitPinocchioFull(ir).singleFile;
+    expect(out).toMatch(/program_id:\s*token_program\.key\(\)/);
+    expect(out).not.toMatch(/Token-2022 close account[\s\S]{0,300}const TOKEN_2022_PROGRAM_ID/);
+  });
+
+  test("cpi_spl_set_authority with tokenProgramArg → runtime dispatch", () => {
+    const ir = buildSimpleIr({
+      kind: "cpi_spl_set_authority",
+      account: "a",
+      currentAuthority: "authority",
+      authorityType: "AuthorityType::AccountOwner",
+      newAuthority: "Some(new_pk)",
+      tokenProgram: "token_2022",
+      tokenProgramArg: "token_program",
+    });
+    const out = emitPinocchioFull(ir).singleFile;
+    expect(out).toMatch(/program_id:\s*token_program\.key\(\)/);
+    // The const TOKEN_2022_PROGRAM_ID line must not appear inside the
+    // set_authority block (the const is dead code under runtime dispatch).
+    expect(out).not.toMatch(/Token-2022 set authority[\s\S]{0,200}const TOKEN_2022_PROGRAM_ID/);
+  });
+
+  test("tokenProgramArg undefined on all 4 → preserves the hardcoded const path (backward compat)", () => {
+    for (const stmt of [
+      { kind: "cpi_spl_mint_to", mint: "a", to: "b", authority: "authority", amount: "1", tokenProgram: "token_2022" },
+      { kind: "cpi_spl_burn", from: "a", mint: "b", authority: "authority", amount: "1", tokenProgram: "token_2022" },
+      { kind: "cpi_spl_close_account", account: "a", destination: "b", authority: "authority", tokenProgram: "token_2022" },
+      { kind: "cpi_spl_set_authority", account: "a", currentAuthority: "authority", authorityType: "AuthorityType::AccountOwner", newAuthority: "None", tokenProgram: "token_2022" },
+    ]) {
+      const out = emitPinocchioFull(buildSimpleIr(stmt)).singleFile;
+      expect(out).toMatch(/const TOKEN_2022_PROGRAM_ID: pinocchio::pubkey::Pubkey/);
+    }
+  });
+});

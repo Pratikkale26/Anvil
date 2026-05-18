@@ -715,14 +715,21 @@ ${invokeCall}
 
   override emitSplMintTo(mint: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
     if (opts?.tokenProgram === "token_2022") {
+      // Runtime program-ID dispatch (TokenInterface). Same contract as
+      // emitSplTransfer — when tokenProgramArg is set, the program ID
+      // is read from the AccountInfo at runtime instead of hardcoded.
+      const useRuntimeDispatch = !!opts?.tokenProgramArg;
+      const programIdConstBlock = useRuntimeDispatch ? "" : `${TOKEN_2022_PROGRAM_ID_CONST}\n`;
+      const programIdRef = useRuntimeDispatch
+        ? `${opts!.tokenProgramArg}.key()`
+        : `&TOKEN_2022_PROGRAM_ID`;
       if (opts?.decimals === undefined) {
         // Token-2022 mint_to (unchecked) — discriminator 7,
         // accounts [mint, to, authority], data [7, amount_u64_le] (9 bytes).
         const invokeCall = emitT22Invoke(`${mint}, ${to}, ${authority}`, signerSeeds);
         return `    // Token-2022 mint_to (unchecked) — ${mint} → ${to}
     {
-${TOKEN_2022_PROGRAM_ID_CONST}
-        let __t22_amount = (${amount}).to_le_bytes();
+${programIdConstBlock}        let __t22_amount = (${amount}).to_le_bytes();
         let __t22_data: [u8; 9] = [
             7,
             __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
@@ -734,7 +741,7 @@ ${TOKEN_2022_PROGRAM_ID_CONST}
             pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
         ];
         let __t22_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_2022_PROGRAM_ID,
+            program_id: ${programIdRef},
             accounts: &__t22_metas,
             data: &__t22_data,
         };
@@ -747,8 +754,7 @@ ${invokeCall}
       const invokeCall = emitT22Invoke(`${mint}, ${to}, ${authority}`, signerSeeds);
       return `    // Token-2022 mint_to_checked — ${mint} → ${to}
 ${prelude}    {
-${TOKEN_2022_PROGRAM_ID_CONST}
-        let __t22_amount = (${amount}).to_le_bytes();
+${programIdConstBlock}        let __t22_amount = (${amount}).to_le_bytes();
         let __t22_data: [u8; 10] = [
             14,
             __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
@@ -761,7 +767,7 @@ ${TOKEN_2022_PROGRAM_ID_CONST}
             pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
         ];
         let __t22_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_2022_PROGRAM_ID,
+            program_id: ${programIdRef},
             accounts: &__t22_metas,
             data: &__t22_data,
         };
@@ -775,14 +781,19 @@ ${invokeCall}
 
   override emitSplBurn(from: string, mint: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
     if (opts?.tokenProgram === "token_2022") {
+      // Runtime dispatch — same contract as emitSplTransfer.
+      const useRuntimeDispatch = !!opts?.tokenProgramArg;
+      const programIdConstBlock = useRuntimeDispatch ? "" : `${TOKEN_2022_PROGRAM_ID_CONST}\n`;
+      const programIdRef = useRuntimeDispatch
+        ? `${opts!.tokenProgramArg}.key()`
+        : `&TOKEN_2022_PROGRAM_ID`;
       if (opts?.decimals === undefined) {
         // Token-2022 burn (unchecked) — discriminator 8,
         // accounts [from, mint, authority], data [8, amount_u64_le] (9 bytes).
         const invokeCall = emitT22Invoke(`${from}, ${mint}, ${authority}`, signerSeeds);
         return `    // Token-2022 burn (unchecked) — ${from}
     {
-${TOKEN_2022_PROGRAM_ID_CONST}
-        let __t22_amount = (${amount}).to_le_bytes();
+${programIdConstBlock}        let __t22_amount = (${amount}).to_le_bytes();
         let __t22_data: [u8; 9] = [
             8,
             __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
@@ -794,7 +805,7 @@ ${TOKEN_2022_PROGRAM_ID_CONST}
             pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
         ];
         let __t22_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_2022_PROGRAM_ID,
+            program_id: ${programIdRef},
             accounts: &__t22_metas,
             data: &__t22_data,
         };
@@ -807,8 +818,7 @@ ${invokeCall}
       const invokeCall = emitT22Invoke(`${from}, ${mint}, ${authority}`, signerSeeds);
       return `    // Token-2022 burn_checked — ${from}
 ${prelude}    {
-${TOKEN_2022_PROGRAM_ID_CONST}
-        let __t22_amount = (${amount}).to_le_bytes();
+${programIdConstBlock}        let __t22_amount = (${amount}).to_le_bytes();
         let __t22_data: [u8; 10] = [
             15,
             __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
@@ -821,7 +831,7 @@ ${TOKEN_2022_PROGRAM_ID_CONST}
             pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
         ];
         let __t22_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_2022_PROGRAM_ID,
+            program_id: ${programIdRef},
             accounts: &__t22_metas,
             data: &__t22_data,
         };
@@ -835,19 +845,24 @@ ${invokeCall}
 
   override emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string, opts?: Token2022Opts): string {
     if (opts?.tokenProgram === "token_2022") {
+      // Runtime dispatch — same contract as emitSplTransfer.
+      const useRuntimeDispatch = !!opts?.tokenProgramArg;
+      const programIdConstBlock = useRuntimeDispatch ? "" : `${TOKEN_2022_PROGRAM_ID_CONST}\n`;
+      const programIdRef = useRuntimeDispatch
+        ? `${opts!.tokenProgramArg}.key()`
+        : `&TOKEN_2022_PROGRAM_ID`;
       // Token-2022 close_account — discriminator 9, no `_checked` variant
       // exists. Accounts [account, destination, authority], data [9].
       const invokeCall = emitT22Invoke(`${account}, ${destination}, ${authority}`, signerSeeds);
       return `    // Token-2022 close account — ${account}
     {
-${TOKEN_2022_PROGRAM_ID_CONST}
-        let __t22_metas = [
+${programIdConstBlock}        let __t22_metas = [
             pinocchio::instruction::AccountMeta::writable(${account}.key()),
             pinocchio::instruction::AccountMeta::writable(${destination}.key()),
             pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
         ];
         let __t22_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_2022_PROGRAM_ID,
+            program_id: ${programIdRef},
             accounts: &__t22_metas,
             data: &[9],
         };
@@ -882,11 +897,21 @@ ${invokeCall}
       variant && variantByte[variant] !== undefined
         ? `${variantByte[variant]}u8`
         : `2u8/* ${MARKER_ANVIL_TODO_PREFIX} unrecognized AuthorityType '${authorityType}', defaulted to AccountOwner */`;
-    const programIdConst =
-      opts?.tokenProgram === "token_2022"
+    // Runtime program-ID dispatch (TokenInterface) — same contract as
+    // emitSplTransfer. When tokenProgramArg is set, skip the const
+    // declaration and read program ID from the AccountInfo at runtime.
+    // programIdExpr is the full expression substituted at `program_id: …`
+    // (no extra `&` in the template); for the const-decl path that means
+    // `&TOKEN_2022_PROGRAM_ID`, for runtime it's `<arg>.key()`.
+    const useRuntimeDispatch = !!opts?.tokenProgramArg;
+    const programIdConst = useRuntimeDispatch
+      ? ""
+      : (opts?.tokenProgram === "token_2022"
         ? TOKEN_2022_PROGRAM_ID_CONST
-        : `        const SPL_TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];`;
-    const programIdRef = opts?.tokenProgram === "token_2022" ? "TOKEN_2022_PROGRAM_ID" : "SPL_TOKEN_PROGRAM_ID";
+        : `        const SPL_TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];`);
+    const programIdExpr = useRuntimeDispatch
+      ? `${opts!.tokenProgramArg}.key()`
+      : (opts?.tokenProgram === "token_2022" ? "&TOKEN_2022_PROGRAM_ID" : "&SPL_TOKEN_PROGRAM_ID");
     // Convert Anchor's `&[&[&[u8]]]` signer-seeds shape into pinocchio's
     // `&[Signer]` (where Signer wraps `&[Seed]`). Use the same const-size
     // [Seed; 8] stack-alloc pattern as the create_account_signed rewrite
@@ -925,7 +950,7 @@ ${programIdConst}
             pinocchio::instruction::AccountMeta::readonly_signer(${currentAuthority}.key()),
         ];
         let __sa_ix = pinocchio::instruction::Instruction {
-            program_id: &${programIdRef},
+            program_id: ${programIdExpr},
             accounts: &__sa_metas,
             data: &__sa_data[..__sa_len],
         };

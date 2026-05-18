@@ -3442,6 +3442,7 @@ export class AstVisitorBase {
       {
         tokenProgram: stmt.tokenProgram,
         ...(stmt.decimals ? { decimals: stmt.decimals } : {}),
+        ...(stmt.tokenProgramArg ? { tokenProgramArg: snakeCase(stmt.tokenProgramArg) } : {}),
       },
     ));
     return this.applyStructuralize(lines);
@@ -3467,6 +3468,7 @@ export class AstVisitorBase {
       {
         tokenProgram: stmt.tokenProgram,
         ...(stmt.decimals ? { decimals: stmt.decimals } : {}),
+        ...(stmt.tokenProgramArg ? { tokenProgramArg: snakeCase(stmt.tokenProgramArg) } : {}),
       },
     ));
     return this.applyStructuralize(lines);
@@ -3488,7 +3490,10 @@ export class AstVisitorBase {
       snakeCase(stmt.destination),
       authority,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
-      { tokenProgram: stmt.tokenProgram },
+      {
+        tokenProgram: stmt.tokenProgram,
+        ...(stmt.tokenProgramArg ? { tokenProgramArg: snakeCase(stmt.tokenProgramArg) } : {}),
+      },
     ));
     return this.applyStructuralize(lines);
   }
@@ -3521,7 +3526,10 @@ export class AstVisitorBase {
       stmt.authorityType,
       stmt.newAuthority,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
-      { tokenProgram: stmt.tokenProgram },
+      {
+        tokenProgram: stmt.tokenProgram,
+        ...(stmt.tokenProgramArg ? { tokenProgramArg: snakeCase(stmt.tokenProgramArg) } : {}),
+      },
     )));
     return out;
   }
