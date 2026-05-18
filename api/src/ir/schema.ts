@@ -924,6 +924,29 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // Metaplex Token Metadata: set_and_verify_collection (M1e — slot 7).
+  // Discriminator 25. The combo of "set DataV2.collection on the
+  // metadata" + "verify the collection link" in a single CPI. This is
+  // the most-used real-world Metaplex CPI for collection NFTs — most
+  // mint flows that produce a collection-bound NFT use this directly
+  // instead of running update_metadata + verify_collection separately.
+  // Accounts: VerifyCollection's 6 + update_authority signer (the
+  // metadata's update_authority, since this CPI mutates the metadata).
+  // Optional collection_authority_record extends the metas by 1.
+  z.object({
+    kind: z.literal("cpi_mpl_set_and_verify_collection"),
+    metadata: z.string(),
+    collectionAuthority: z.string(),
+    payer: z.string(),
+    updateAuthority: z.string(),
+    collectionMint: z.string(),
+    collection: z.string(),
+    collectionMasterEdition: z.string(),
+    /** Option<Pubkey> — raw text. Literal "None" / "Some(<expr>)". */
+    collectionAuthorityRecord: z.string().default("None"),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: unverify_collection (M1d — catalog slot 6).
   // Discriminator 22 (the symmetric inverse of verify_collection / disc 21).
   // Same accounts as VerifyCollection — Anchor's UnverifyCollection

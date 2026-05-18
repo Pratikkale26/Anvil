@@ -380,10 +380,16 @@ export function detectCpi(
   ) {
     return extractMplUpdateMetadataAccountsV2(callNode, collector);
   }
-  // Order matters: check unverify_collection BEFORE verify_collection
-  // because "verify_collection".includes("verify_collection") matches
-  // both. The dispatch falls through on first match, so the more-
-  // specific token has to win.
+  // Order matters: check more-specific names BEFORE shorter prefixes.
+  // "set_and_verify_collection" / "unverify_collection" both contain
+  // "verify_collection" as a substring; the dispatch falls through on
+  // first match, so the more-specific tokens have to win.
+  if (
+    funcText.includes("set_and_verify_collection") ||
+    funcText.endsWith("::set_and_verify_collection")
+  ) {
+    return extractMplSetAndVerifyCollection(callNode, collector);
+  }
   if (
     funcText.includes("unverify_collection") ||
     funcText.endsWith("::unverify_collection")
@@ -567,6 +573,40 @@ function extractMplVerifyCollection(callNode: SyntaxNode, collector?: WarningCol
     metadata: cleanAccountRef(grab("metadata")),
     collectionAuthority: cleanAccountRef(grab("collection_authority")),
     payer: cleanAccountRef(grab("payer")),
+    collectionMint: cleanAccountRef(grab("collection_mint")),
+    collection: cleanAccountRef(grab("collection")),
+    collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
+    collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
+}
+
+/**
+ * Extract cpi_mpl_set_and_verify_collection (M1e — slot 7). Combo of
+ * UpdateMetadata's set-collection + VerifyCollection. Same accounts
+ * as verify_collection + extra `update_authority: AccountInfo<'info>`
+ * (signer) since this CPI mutates the metadata account.
+ */
+function extractMplSetAndVerifyCollection(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+
+  const grab = (field: string) =>
+    extractStructField(accountsStruct, field) ?? field;
+
+  return {
+    kind: "cpi_mpl_set_and_verify_collection",
+    metadata: cleanAccountRef(grab("metadata")),
+    collectionAuthority: cleanAccountRef(grab("collection_authority")),
+    payer: cleanAccountRef(grab("payer")),
+    updateAuthority: cleanAccountRef(grab("update_authority")),
     collectionMint: cleanAccountRef(grab("collection_mint")),
     collection: cleanAccountRef(grab("collection")),
     collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),

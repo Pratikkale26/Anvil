@@ -718,6 +718,7 @@ type CpiMplCreateMetadataV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_met
 type CpiMplUpdateMetadataAccountsV2 = Extract<BodyStatement, { kind: "cpi_mpl_update_metadata_accounts_v2" }>;
 type CpiMplVerifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_verify_collection" }>;
 type CpiMplUnverifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_unverify_collection" }>;
+type CpiMplSetAndVerifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_set_and_verify_collection" }>;
 type CpiMplSignMetadata = Extract<BodyStatement, { kind: "cpi_mpl_sign_metadata" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
@@ -786,6 +787,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_mpl_update_metadata_accounts_v2",
   "cpi_mpl_verify_collection",
   "cpi_mpl_unverify_collection",
+  "cpi_mpl_set_and_verify_collection",
   "cpi_mpl_sign_metadata",
   "cpi_mpl_create_master_edition_v3",
   "zero_copy_load_init",
@@ -883,6 +885,8 @@ export class AstVisitorBase {
         return this.visitCpiMplVerifyCollection(stmt);
       case "cpi_mpl_unverify_collection":
         return this.visitCpiMplUnverifyCollection(stmt);
+      case "cpi_mpl_set_and_verify_collection":
+        return this.visitCpiMplSetAndVerifyCollection(stmt);
       case "cpi_mpl_sign_metadata":
         return this.visitCpiMplSignMetadata(stmt);
       case "cpi_mpl_create_master_edition_v3":
@@ -3033,6 +3037,36 @@ export class AstVisitorBase {
       `        ${resolve(stmt.metadata)},`,
       `        ${resolve(stmt.collectionAuthority)},`,
       `        ${resolve(stmt.payer)},`,
+      `        ${resolve(stmt.collectionMint)},`,
+      `        ${resolve(stmt.collection)},`,
+      `        ${resolve(stmt.collectionMasterEdition)},`,
+      `        token_metadata_program,`,
+      `        ${stmt.collectionAuthorityRecord},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Metaplex set_and_verify_collection typed CPI (M1e — slot 7).
+   * Combo of UpdateMetadata's set-collection + VerifyCollection. 7
+   * base accounts + optional collection_authority_record.
+   */
+  visitCpiMplSetAndVerifyCollection(stmt: CpiMplSetAndVerifyCollection): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const lines: string[] = [
+      `    mpl_set_and_verify_collection(`,
+      `        ${resolve(stmt.metadata)},`,
+      `        ${resolve(stmt.collectionAuthority)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolve(stmt.updateAuthority)},`,
       `        ${resolve(stmt.collectionMint)},`,
       `        ${resolve(stmt.collection)},`,
       `        ${resolve(stmt.collectionMasterEdition)},`,

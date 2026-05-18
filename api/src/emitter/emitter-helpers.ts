@@ -165,6 +165,18 @@ export function irNeedsMplUnverifyCollectionHelper(ir: SolanaIR): boolean {
   );
 }
 
+/**
+ * M1e — `cpi_mpl_set_and_verify_collection` IR statements need the
+ * `mpl_set_and_verify_collection` helper. Disc 25; 7 base accounts
+ * (verify_collection's 6 + update_authority signer) + optional
+ * collection_authority_record (8 max).
+ */
+export function irNeedsMplSetAndVerifyCollectionHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_set_and_verify_collection")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>
