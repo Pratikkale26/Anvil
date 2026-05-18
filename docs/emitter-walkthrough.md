@@ -326,6 +326,22 @@ was written.
 
 ## 9. Recent architectural decisions
 
+- **2026-05-18 — Path 2 v1 dispatch arg-drop fix** (commits `935e8b7` +
+  `9bb6ad3`): The visitor was dropping `stmt.tokenProgramArg` (for
+  `cpi_spl_transfer`) and `stmt.tokenProgram` (for `cpi_ata_create` on
+  Native) on the floor when calling into the per-target emitter. Result:
+  every `Interface<TokenInterface>` transfer on Pinocchio hardcoded
+  TOKEN_2022_PROGRAM_ID instead of reading from the runtime AccountInfo;
+  every Token-2022 ATA create on Native used `spl_token::id()` for the
+  inner token-program-id arg. Both classes were silent — emit looked
+  fine to validator + cargo, but at runtime the wrong program got
+  invoked. The class is: **a schema field that's not threaded through
+  the visitor → emit silently ignores it**. Regression tests at
+  `emitter-token-interface-dispatch.test.ts` +
+  `emitter-ata-token-program.test.ts` lock the contracts; #75 tracks
+  the same class for mint_to / burn / close_account when tokenProgramArg
+  gets extended.
+
 - **2026-05-18 — Parser cpi-detector dispatch order** (commit `ac4e23d`):
   Qualified Token-2022 calls (`anchor_spl::token_2022::transfer_fee_initialize`)
   were misrouted to `cpi_spl_transfer` via substring-precedence. Fix
