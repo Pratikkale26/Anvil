@@ -138,6 +138,16 @@ const RATE_LIMIT = parseInt(process.env.RATE_LIMIT ?? '60'); // requests per win
 const RATE_WINDOW = 60_000; // 1 minute
 const RATE_WINDOW_SEC = RATE_WINDOW / 1000;
 
+// P0.4: in production, Redis pipeline failures fail loud (503) instead of
+// silently degrading to in-memory. Silent fallback in a multi-replica deploy
+// = each replica's in-memory counter starts at 0 = rate cap effectively
+// multiplied by replica count for the duration of the outage. A loud 503
+// + Retry-After signals the operator that Redis is down; clients back off
+// instead of hammering through the cap.
+const RATELIMIT_REDIS_LOUD_FAIL =
+  process.env.NODE_ENV === "production" &&
+  process.env.ANVIL_RATELIMIT_REDIS_FALLBACK !== "1";
+
 app.use((req, res, next) => {
   const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
   const now = Date.now();
@@ -167,7 +177,25 @@ app.use((req, res, next) => {
           next();
         })
         .catch((err) => {
-          // Fall through to in-memory if Redis hiccups.
+          if (RATELIMIT_REDIS_LOUD_FAIL) {
+            // Production + Redis failure = 503 with Retry-After. Silent
+            // degradation here was a rate-limit-bypass window on
+            // multi-replica deploys. Operators wanting the old behavior
+            // can set ANVIL_RATELIMIT_REDIS_FALLBACK=1.
+            console.error(
+              `[ratelimit] redis pipeline failed in production (${err.message}) — returning 503. Set ANVIL_RATELIMIT_REDIS_FALLBACK=1 to opt into silent in-memory fallback.`,
+            );
+            const aerr = new AnvilError(
+              ErrorCode.RATE_LIMITED,
+              "Rate-limit backend temporarily unavailable",
+              err.message,
+              503,
+            );
+            res.setHeader("Retry-After", "5");
+            res.status(aerr.statusCode).json(aerr.toJSON());
+            return;
+          }
+          // Dev (or operator opt-in): warn once and fall through to in-memory.
           console.warn(`[ratelimit] redis pipeline failed (${err.message}) — falling back to in-memory for this request.`);
           inMemoryRateLimit(ip, now, res, next);
         });

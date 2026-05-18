@@ -32,7 +32,7 @@ The dangerous surface is `POST /build` (and `POST /build/auto-fix`, which calls 
 
 - **Caller queue starvation.** Per-IP cap on concurrent `cargo build-sbf` runs (`ANVIL_BUILD_SBF_PER_IP_CAP`, default 2). One user pipelining 5 SBF builds (each 30s–2min) cannot starve the global queue for 10 minutes.
 
-- **Per-minute rate limit.** Default 60 req/min/IP (`RATE_LIMIT`). Redis-backed when `REDIS_URL` is set.
+- **Per-minute rate limit.** Default 60 req/min/IP (`RATE_LIMIT`). Redis-backed when `REDIS_URL` is set. In production (`NODE_ENV=production`), Redis pipeline failures return 503 with `Retry-After` instead of silently degrading to in-memory — silent fallback in a multi-replica deploy would multiply the effective cap by the replica count during the outage. Operators can opt back into the old behavior with `ANVIL_RATELIMIT_REDIS_FALLBACK=1`.
 
 - **Path traversal on file writes.** `safeRelativePath()` rejects absolute paths and `..` traversal before any write into the scratch dir.
 
