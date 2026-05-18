@@ -13,6 +13,24 @@ export function instrDiscriminator(name: string): string {
   return formatByteArray(discriminatorBytes(`global:${name}`));
 }
 
+/**
+ * Pick the discriminator for an instruction's router arm. Anchor 1.0
+ * lets users override the auto-computed sha256("global:<name>") via
+ * `#[instruction(discriminator = [...])]` — when the parser surfaces
+ * the override as an 8-byte hex string on `instr.discriminator`,
+ * format those bytes; otherwise fall back to the computed namespace.
+ */
+export function routerDiscriminator(instr: { name: string; discriminator?: string }): string {
+  if (instr.discriminator && /^[0-9a-fA-F]{16}$/.test(instr.discriminator)) {
+    const bytes: number[] = [];
+    for (let i = 0; i < 16; i += 2) {
+      bytes.push(parseInt(instr.discriminator.slice(i, i + 2), 16));
+    }
+    return formatByteArray(bytes);
+  }
+  return instrDiscriminator(instr.name);
+}
+
 export function accountDiscriminator(name: string): string {
   return formatByteArray(discriminatorBytes(`account:${name}`));
 }

@@ -13,6 +13,7 @@ import { applyT22ExtensionCommentout, NATIVE_T22_TYPE_BLACKLIST, T22_FN_BLACKLIS
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
 import {
   instrDiscriminator,
+  routerDiscriminator,
   snakeCase,
   toPascalCase,
   isProgramAccount,
@@ -444,7 +445,7 @@ pub fn process_instruction(
     const arms = ir.instructions
       .map(
         (instr) =>
-          `        ${instrDiscriminator(instr.name)} => ${snakeCase(instr.name)}(program_id, accounts, data),`
+          `        ${routerDiscriminator(instr)} => ${snakeCase(instr.name)}(program_id, accounts, data),`
       )
       .join("\n");
 

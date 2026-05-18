@@ -215,6 +215,13 @@ function parseInstructionFn(
   const returnTypeNode = bodyFnNode.childForFieldName("return_type");
   const returnType = returnTypeNode?.text?.trim() || undefined;
 
+  // Anchor 1.0 literal discriminator override —
+  // `#[instruction(discriminator = [1,2,3,4,5,6,7,8])]` on the handler fn.
+  // Pre-this-extract the parser ignored the bytes and the router emit
+  // used the auto-computed sha256("global:<name>") discriminator, which
+  // would silently misroute calls.
+  const discriminator = extractInstructionDiscriminator(fnAttrs);
+
   return {
     name: fnName,
     accounts,
@@ -224,7 +231,28 @@ function parseInstructionFn(
     rawBody,
     ...(returnType ? { returnType } : {}),
     ...(accessControl ? { accessControl } : {}),
+    ...(discriminator ? { discriminator } : {}),
   };
+}
+
+/**
+ * Anchor 1.0 supports an explicit discriminator override on the
+ * handler fn: `#[instruction(discriminator = [N, N, N, N, N, N, N, N])]`.
+ * The discriminator is 8 bytes, decimal-formatted in the source.
+ * Returns the bytes as a 16-char lowercase hex string, or undefined.
+ */
+function extractInstructionDiscriminator(fnAttrs: SyntaxNode[]): string | undefined {
+  for (const attr of fnAttrs) {
+    const text = attr.text;
+    const m = text.match(/#\[instruction\([^)]*\bdiscriminator\s*=\s*\[\s*([0-9, ]+)\s*\]/);
+    if (!m) continue;
+    const bytes = m[1]!.split(",")
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 255);
+    if (bytes.length !== 8) continue;
+    return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  return undefined;
 }
 
 /**

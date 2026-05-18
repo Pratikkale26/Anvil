@@ -12,6 +12,7 @@ import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAncho
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
 import {
   instrDiscriminator,
+  routerDiscriminator,
   accountDiscriminator,
   snakeCase,
   toPascalCase,
@@ -502,7 +503,7 @@ pub fn process_instruction(
     const arms = ir.instructions
       .map(
         (instr) =>
-          `        ${instrDiscriminator(instr.name)} => ${snakeCase(instr.name)}(program_id, accounts, data),`
+          `        ${routerDiscriminator(instr)} => ${snakeCase(instr.name)}(program_id, accounts, data),`
       )
       .join("\n");
 
