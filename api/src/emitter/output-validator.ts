@@ -1,5 +1,11 @@
-import type { EmitterOutput, SolanaIR } from "../ir/schema.js";
+import type { EmitterOutput, SolanaIR, BodyStatement } from "../ir/schema.js";
 import { snakeCase } from "./emitter-utils.js";
+import {
+  T22_EXTENSION_BY_IR_KIND,
+  minimumMintSize,
+  minimumTokenAccountSize,
+  extensionNames,
+} from "./t22-extension-sizes.js";
 import {
   MARKER_TODO_ANVIL,
   MARKER_TODO_PARSE,
@@ -804,6 +810,131 @@ function checkAnchorTypedAccounts(content: string, path: string, target: Detecte
   return issues;
 }
 
+/**
+ * Cross-check declared account space against the minimum required by any
+ * Token-2022 extensions the instruction body initializes on that mint /
+ * token-account.
+ *
+ * E3 (EM2 closure). Pre-E3 a source with `init mint::decimals = 6,
+ * mint::authority = X` AND `cpi_t22_transfer_fee_initialize(...)` could
+ * declare `space = 82` (mint base only) — emit allocates 82 bytes,
+ * TransferFee init CPI then fails at runtime because the extension
+ * doesn't fit. Anvil produced no warning today; the user found out at
+ * deploy time. Post-E3 the validator computes the per-extension minimum
+ * (see t22-extension-sizes.ts) and refuses any allocation below.
+ *
+ * Detection key: an account with `accountType: "Mint"` that has an
+ * `init` constraint AND a `space` constraint, paired with at least one
+ * `cpi_t22_*_initialize` body statement that targets that account name
+ * (or its snakeCase form). Multiple extensions on the same mint are
+ * accumulated.
+ */
+function checkT22ExtensionSpaceAllocation(ir: SolanaIR): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  for (const instr of ir.instructions) {
+    // Collect extension kinds keyed by the account they target. The IR
+    // body kinds carry a `mint` (or `tokenAccount` for ImmutableOwner)
+    // field that names the account; match against AccountRef.name.
+    const extByAccount = new Map<string, BodyStatement["kind"][]>();
+    for (const stmt of instr.body) {
+      const info = T22_EXTENSION_BY_IR_KIND[stmt.kind];
+      if (!info) continue;
+      // Both `mint` and `tokenAccount` fields exist across the IR
+      // family; only one is set per statement based on the extension's
+      // attach point.
+      const accountName =
+        (stmt as unknown as { mint?: string }).mint
+        ?? (stmt as unknown as { tokenAccount?: string }).tokenAccount;
+      if (!accountName) continue;
+      const list = extByAccount.get(accountName) ?? [];
+      list.push(stmt.kind);
+      extByAccount.set(accountName, list);
+    }
+
+    if (extByAccount.size === 0) continue;
+
+    for (const acct of instr.accounts) {
+      const kinds = extByAccount.get(acct.name);
+      if (!kinds || kinds.length === 0) continue;
+
+      // Find the `space = N` constraint, if explicitly set. Anchor's
+      // `space = 8 + Foo::INIT_SPACE` is common — parse a leading integer
+      // from the constraint value text. Patterns like `8 + 82` are
+      // collapsed by light evaluation; non-integer expressions skip the
+      // check (we can't validate dynamic computations from text alone).
+      const spaceConstraint = acct.constraints.find((c) => c.kind === "realloc" || c.kind === "init")
+        ? acct.constraints.find((c) => c.kind === "init" && c.value?.match(/space\s*=/))
+          ?? acct.constraints.find((c) => c.value?.match(/space\s*=/))
+        : undefined;
+      const explicitSpace = (() => {
+        for (const c of acct.constraints) {
+          if (!c.value) continue;
+          const m = c.value.match(/\bspace\s*=\s*([0-9+ \t]+)\b/);
+          if (m && m[1]) {
+            // Sum literal `n + n + n` terms; bail on anything else.
+            const terms = m[1].split("+").map((t) => parseInt(t.trim(), 10));
+            if (terms.every((n) => Number.isFinite(n))) {
+              return terms.reduce((a, b) => a + b, 0);
+            }
+          }
+        }
+        return null;
+      })();
+
+      const attach = T22_EXTENSION_BY_IR_KIND[kinds[0]!]?.attach;
+      const minSize = attach === "mint"
+        ? minimumMintSize(kinds)
+        : attach === "token_account"
+          ? minimumTokenAccountSize(kinds)
+          : null;
+
+      if (minSize === null) {
+        // Variable-size extension (TokenMetadata). Best-effort: only
+        // surface a hint, no error.
+        issues.push({
+          severity: "warning",
+          message:
+            `instruction '${instr.name}': account '${acct.name}' uses Token-2022 ${extensionNames(kinds).join(" + ")} ` +
+            `extension(s) including a variable-length type (TokenMetadata). ` +
+            `Anvil can't compute a precise minimum size from the IR — verify your ` +
+            `space allocation includes the AccountType marker (1B) + per-extension TLV (4B) + ` +
+            `extension payload (≥ 76B base for TokenMetadata + Borsh-encoded strings).`,
+        });
+        continue;
+      }
+
+      if (explicitSpace === null) {
+        // No explicit space = literal. Anchor may compute it via
+        // InitSpace, which doesn't account for T22 extensions.
+        // Surface as a warning so the user can verify their allocation.
+        issues.push({
+          severity: "warning",
+          message:
+            `instruction '${instr.name}': account '${acct.name}' inits Token-2022 ${extensionNames(kinds).join(" + ")} ` +
+            `extension(s) requiring at least ${minSize} bytes, but the account has no explicit ` +
+            `\`space = ${minSize}\` constraint. Anchor's InitSpace derive doesn't account for ` +
+            `T22 extensions — verify your space allocation or set the constraint explicitly.`,
+        });
+        continue;
+      }
+
+      if (explicitSpace < minSize) {
+        issues.push({
+          severity: "error",
+          message:
+            `instruction '${instr.name}': account '${acct.name}' has \`space = ${explicitSpace}\` but ` +
+            `Token-2022 ${extensionNames(kinds).join(" + ")} extension(s) require at least ${minSize} bytes ` +
+            `(base + 1B AccountType marker + per-extension 4B TLV + payload). Under-allocation will fail ` +
+            `the extension init CPI at runtime — increase \`space\` to ≥ ${minSize}.`,
+        });
+      }
+    }
+  }
+
+  return issues;
+}
+
 // ─── Main validator ──────────────────────────────────────────────────────────
 
 /**
@@ -822,6 +953,11 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
       message: warning,
     });
   }
+
+  // T22 extension space-cross-check runs at IR level (not per-file) because
+  // the question is "does this account's space match the extensions the
+  // instruction body inits on it?" — answerable from the IR alone.
+  issues.push(...checkT22ExtensionSpaceAllocation(ir));
 
   // ── Typed-Result instruction return refusal (#20) ──
   //
