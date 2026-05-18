@@ -9,6 +9,7 @@ import { C } from "@/lib/constants";
 import { InputPanel } from "@/components/workbench/input-panel";
 import { OutputPanel } from "@/components/workbench/output-panel";
 import { ValidationPanel } from "@/components/workbench/validation-panel";
+import { ValidationBanner } from "@/components/workbench/validation-banner";
 import { LintPanel } from "@/components/workbench/lint-panel";
 import { DifferentialPanel } from "@/components/workbench/differential-panel";
 import { cn } from "@/lib/utils";
@@ -162,6 +163,11 @@ export default function Workbench() {
         )}>
           <InputPanel state={state} />
           <div className="flex flex-col gap-4">
+            {/* Hard gate notice — renders only when validator reports
+                error-severity issues. Sits ABOVE the output so it is
+                impossible to miss; the ValidationPanel below carries
+                the full per-issue breakdown. */}
+            <ValidationBanner state={state} />
             <OutputPanel state={state} />
             <DifferentialPanel state={differential} />
             <LintPanel state={state} />
