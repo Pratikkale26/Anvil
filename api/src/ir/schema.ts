@@ -924,6 +924,24 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // Metaplex Token Metadata: unverify_collection (M1d — catalog slot 6).
+  // Discriminator 22 (the symmetric inverse of verify_collection / disc 21).
+  // Same accounts as VerifyCollection — Anchor's UnverifyCollection
+  // wrapper exposes an identical struct. Anvil shares the IR shape with
+  // verify_collection (different disc byte at emit time).
+  z.object({
+    kind: z.literal("cpi_mpl_unverify_collection"),
+    metadata: z.string(),
+    collectionAuthority: z.string(),
+    payer: z.string(),
+    collectionMint: z.string(),
+    collection: z.string(),
+    collectionMasterEdition: z.string(),
+    /** Option<Pubkey> — raw text. Literal "None" / "Some(<expr>)". */
+    collectionAuthorityRecord: z.string().default("None"),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: sign_metadata (M1c — catalog slot 5).
   // Discriminator 7 (anchor-spl 0.31 wraps mpl_token_metadata 5.x).
   // Accounts: [metadata writable, creator signer]. Data: 1-byte disc,

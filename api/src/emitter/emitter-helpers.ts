@@ -154,6 +154,17 @@ export function irNeedsMplSignMetadataHelper(ir: SolanaIR): boolean {
   );
 }
 
+/**
+ * M1d — `cpi_mpl_unverify_collection` IR statements need the
+ * `mpl_unverify_collection` helper. Disc 22; same account shape as
+ * verify_collection (slot 4), inverse semantics.
+ */
+export function irNeedsMplUnverifyCollectionHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_unverify_collection")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

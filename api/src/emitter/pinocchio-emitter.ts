@@ -38,6 +38,7 @@ import {
   irNeedsMplUpdateMetadataAccountsV2Helper,
   irNeedsMplVerifyCollectionHelper,
   irNeedsMplSignMetadataHelper,
+  irNeedsMplUnverifyCollectionHelper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK, MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
@@ -3217,6 +3218,81 @@ pub fn mpl_verify_collection(
     };
 
     // Same conditional infos slice — collection_authority_record adds slot.
+    let infos_base = [
+        metadata, collection_authority, payer, collection_mint,
+        collection, collection_master_edition,
+    ];
+    let infos_extra;
+    let infos: &[&AccountInfo] = match collection_authority_record {
+        Some(record) => {
+            infos_extra = [
+                metadata, collection_authority, payer, collection_mint,
+                collection, collection_master_edition, record,
+            ];
+            &infos_extra
+        }
+        None => &infos_base,
+    };
+
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, infos),
+    }
+}`);
+    }
+
+    // M1d — Metaplex unverify_collection. Mirror of verify_collection
+    // (slot 4 helper); only the disc byte changes (22 vs 21). Reuses
+    // the same 6/7-account branch on the optional collection_authority_
+    // record. Could be factored to a shared helper with a disc param;
+    // leaving as two parallel emits because the helpers are 30 lines
+    // each and parallel reads cleaner than indirection for a 5-of-12
+    // catalog.
+    if (irNeedsMplUnverifyCollectionHelper(ir)) {
+      helpers.push(`/// Metaplex Token Metadata: unverify_collection (discriminator 22).
+/// Symmetric inverse of verify_collection — removes the verified-
+/// collection flag from the metadata.
+pub fn mpl_unverify_collection(
+    metadata: &AccountInfo,
+    collection_authority: &AccountInfo,
+    payer: &AccountInfo,
+    collection_mint: &AccountInfo,
+    collection: &AccountInfo,
+    collection_master_edition: &AccountInfo,
+    token_metadata_program: &AccountInfo,
+    collection_authority_record: Option<&AccountInfo>,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: [u8; 1] = [22];
+
+    let mut metas: [pinocchio::instruction::AccountMeta; 7] =
+        core::array::from_fn(|_| pinocchio::instruction::AccountMeta::new(metadata.key(), false, false));
+    let mut meta_count: usize = 6;
+    metas[0] = pinocchio::instruction::AccountMeta::new(metadata.key(), true, false);
+    metas[1] = pinocchio::instruction::AccountMeta::new(collection_authority.key(), false, true);
+    metas[2] = pinocchio::instruction::AccountMeta::new(payer.key(), true, true);
+    metas[3] = pinocchio::instruction::AccountMeta::new(collection_mint.key(), false, false);
+    metas[4] = pinocchio::instruction::AccountMeta::new(collection.key(), false, false);
+    metas[5] = pinocchio::instruction::AccountMeta::new(collection_master_edition.key(), false, false);
+    if let Some(record) = collection_authority_record {
+        metas[6] = pinocchio::instruction::AccountMeta::new(record.key(), false, false);
+        meta_count = 7;
+    }
+    let ix = pinocchio::instruction::Instruction {
+        program_id: token_metadata_program.key(),
+        accounts: &metas[..meta_count],
+        data: &data,
+    };
+
     let infos_base = [
         metadata, collection_authority, payer, collection_mint,
         collection, collection_master_edition,

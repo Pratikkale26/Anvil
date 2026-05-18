@@ -380,6 +380,16 @@ export function detectCpi(
   ) {
     return extractMplUpdateMetadataAccountsV2(callNode, collector);
   }
+  // Order matters: check unverify_collection BEFORE verify_collection
+  // because "verify_collection".includes("verify_collection") matches
+  // both. The dispatch falls through on first match, so the more-
+  // specific token has to win.
+  if (
+    funcText.includes("unverify_collection") ||
+    funcText.endsWith("::unverify_collection")
+  ) {
+    return extractMplUnverifyCollection(callNode, collector);
+  }
   if (
     funcText.includes("verify_collection") ||
     funcText.endsWith("::verify_collection")
@@ -554,6 +564,38 @@ function extractMplVerifyCollection(callNode: SyntaxNode, collector?: WarningCol
 
   return {
     kind: "cpi_mpl_verify_collection",
+    metadata: cleanAccountRef(grab("metadata")),
+    collectionAuthority: cleanAccountRef(grab("collection_authority")),
+    payer: cleanAccountRef(grab("payer")),
+    collectionMint: cleanAccountRef(grab("collection_mint")),
+    collection: cleanAccountRef(grab("collection")),
+    collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
+    collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
+}
+
+/**
+ * Extract cpi_mpl_unverify_collection (M1d — slot 6). Symmetric inverse
+ * of verify_collection. Anchor wrapper exposes the same struct field
+ * names + same `collection_authority_record: Option<Pubkey>` arg.
+ */
+function extractMplUnverifyCollection(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+
+  const grab = (field: string) =>
+    extractStructField(accountsStruct, field) ?? field;
+
+  return {
+    kind: "cpi_mpl_unverify_collection",
     metadata: cleanAccountRef(grab("metadata")),
     collectionAuthority: cleanAccountRef(grab("collection_authority")),
     payer: cleanAccountRef(grab("payer")),
