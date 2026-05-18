@@ -2072,9 +2072,20 @@ export class AstVisitorBase {
     // The hand-rolled block has many shapes (typed array literals, struct
     // literals, signer-seed for-loop, conditional invoke flavor) that
     // benefit from line-by-line structural conversion.
+    //
+    // tokenProgramArg threads through to enable Path 2 v1 runtime dispatch
+    // (TokenInterface). When set, the emit reads program_id from the
+    // AccountInfo at runtime instead of hardcoding TOKEN_2022_PROGRAM_ID —
+    // critical for programs that use anchor_spl::token_interface and run
+    // against legacy SPL Token at runtime.
     const emitted = w.emitter.emitSplTransfer(
       fromVar, toVar, authorityName, amountExpr, signerSeedsResolved,
-      { tokenProgram: "token_2022", decimals: stmt.decimals, mint: stmt.mint ? snakeCase(stmt.mint) : undefined },
+      {
+        tokenProgram: "token_2022",
+        decimals: stmt.decimals,
+        mint: stmt.mint ? snakeCase(stmt.mint) : undefined,
+        tokenProgramArg: stmt.tokenProgramArg ? snakeCase(stmt.tokenProgramArg) : undefined,
+      },
     );
     return parseT22PinocchioBlock(emitted);
   }
