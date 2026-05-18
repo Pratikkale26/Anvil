@@ -132,6 +132,17 @@ export function irNeedsMplUpdateMetadataAccountsV2Helper(ir: SolanaIR): boolean 
   );
 }
 
+/**
+ * M1b — `cpi_mpl_verify_collection` IR statements need the
+ * `mpl_verify_collection` helper. Discriminator 21; data is the disc
+ * byte alone; accounts are 6 fixed + optional collection_authority_record.
+ */
+export function irNeedsMplVerifyCollectionHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_verify_collection")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

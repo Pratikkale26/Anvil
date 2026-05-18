@@ -924,6 +924,28 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // Metaplex Token Metadata: verify_collection (M1b — catalog slot 4).
+  // Discriminator 21 (anchor-spl 0.31 wraps mpl_token_metadata 5.x).
+  // Accounts: [metadata writable, collection_authority signer,
+  //   payer signer+writable, collection_mint readonly, collection
+  //   readonly, collection_master_edition readonly,
+  //   (optional collection_authority_record readonly)].
+  // Data: 1-byte disc (no payload). The single anchor-spl arg
+  // collection_authority_record (Option<Pubkey>) extends the metas
+  // list when Some — passed through verbatim as text.
+  z.object({
+    kind: z.literal("cpi_mpl_verify_collection"),
+    metadata: z.string(),
+    collectionAuthority: z.string(),
+    payer: z.string(),
+    collectionMint: z.string(),
+    collection: z.string(),
+    collectionMasterEdition: z.string(),
+    /** Option<Pubkey> — raw text expression. Literal "None" / "Some(<expr>)". */
+    collectionAuthorityRecord: z.string().default("None"),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: create_master_edition_v3.
   z.object({
     kind: z.literal("cpi_mpl_create_master_edition_v3"),

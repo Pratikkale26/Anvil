@@ -716,6 +716,7 @@ type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
 type CpiMplCreateMetadataV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_metadata_v3" }>;
 type CpiMplUpdateMetadataAccountsV2 = Extract<BodyStatement, { kind: "cpi_mpl_update_metadata_accounts_v2" }>;
+type CpiMplVerifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_verify_collection" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
 type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
@@ -781,6 +782,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_custom",
   "cpi_mpl_create_metadata_v3",
   "cpi_mpl_update_metadata_accounts_v2",
+  "cpi_mpl_verify_collection",
   "cpi_mpl_create_master_edition_v3",
   "zero_copy_load_init",
   "zero_copy_load_mut",
@@ -873,6 +875,8 @@ export class AstVisitorBase {
         return this.visitCpiMplCreateMetadataV3(stmt);
       case "cpi_mpl_update_metadata_accounts_v2":
         return this.visitCpiMplUpdateMetadataAccountsV2(stmt);
+      case "cpi_mpl_verify_collection":
+        return this.visitCpiMplVerifyCollection(stmt);
       case "cpi_mpl_create_master_edition_v3":
         return this.visitCpiMplCreateMasterEditionV3(stmt);
       case "zero_copy_load_init":
@@ -2961,6 +2965,43 @@ export class AstVisitorBase {
       `        ${stmt.newSellerFeeBasisPoints ?? "0"},`,
       `        ${stmt.primarySaleHappened},`,
       `        ${stmt.isMutable},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Metaplex verify_collection typed CPI (M1b). Calls the hand-rolled
+   * `mpl_verify_collection` helper added by Pinocchio + Native emitters.
+   * collection_authority_record is an Option<&AccountInfo>; the helper
+   * extends the metas list when Some.
+   */
+  visitCpiMplVerifyCollection(stmt: CpiMplVerifyCollection): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    // collection_authority_record is text Option<Pubkey> in source. The
+    // helper signature takes Option<&AccountInfo>, so the caller wires
+    // the source's `Some(record_pubkey_or_account)` into a binding the
+    // helper accepts. For the common shape — None or a literal account
+    // reference — pass through verbatim. Non-literal expressions land
+    // through as-text and rely on the user's code already producing the
+    // right type at the call site.
+    const lines: string[] = [
+      `    mpl_verify_collection(`,
+      `        ${resolve(stmt.metadata)},`,
+      `        ${resolve(stmt.collectionAuthority)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolve(stmt.collectionMint)},`,
+      `        ${resolve(stmt.collection)},`,
+      `        ${resolve(stmt.collectionMasterEdition)},`,
+      `        token_metadata_program,`,
+      `        ${stmt.collectionAuthorityRecord},`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
         : `        None,`,

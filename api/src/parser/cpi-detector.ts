@@ -380,6 +380,12 @@ export function detectCpi(
   ) {
     return extractMplUpdateMetadataAccountsV2(callNode, collector);
   }
+  if (
+    funcText.includes("verify_collection") ||
+    funcText.endsWith("::verify_collection")
+  ) {
+    return extractMplVerifyCollection(callNode, collector);
+  }
 
   return null;
 }
@@ -506,6 +512,49 @@ function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: Wa
     newSellerFeeBasisPoints,
     primarySaleHappened,
     isMutable,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
+}
+
+/**
+ * Extract cpi_mpl_verify_collection (M1b). Anchor call shape:
+ *   verify_collection(
+ *     CpiContext::new_with_signer(prog, VerifyCollection {
+ *       payer, metadata, collection_authority, collection_mint,
+ *       collection, collection_master_edition,
+ *     }, signers),
+ *     collection_authority_record,  // Option<Pubkey>
+ *   )?;
+ *
+ * Single arg after CpiContext. The VerifyCollection accounts struct
+ * field name is `collection` (NOT `collection_metadata` — that's the
+ * Metaplex IDL field; anchor-spl renamed it). Anvil's IR uses
+ * `collection` to match the anchor-spl wrapper field name; the underlying
+ * mpl instruction calls it collection_metadata in account slot 4.
+ */
+function extractMplVerifyCollection(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+
+  const grab = (field: string) =>
+    extractStructField(accountsStruct, field) ?? field;
+
+  return {
+    kind: "cpi_mpl_verify_collection",
+    metadata: cleanAccountRef(grab("metadata")),
+    collectionAuthority: cleanAccountRef(grab("collection_authority")),
+    payer: cleanAccountRef(grab("payer")),
+    collectionMint: cleanAccountRef(grab("collection_mint")),
+    collection: cleanAccountRef(grab("collection")),
+    collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
+    collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
   };
 }
