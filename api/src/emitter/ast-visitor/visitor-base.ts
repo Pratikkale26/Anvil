@@ -2785,13 +2785,21 @@ export class AstVisitorBase {
 
     if (!isPinocchio) {
       out.push(comment(`Create Associated Token Account: ${stmt.ata}`));
+      // Native: ATA program builds the inner instruction with the
+      // token-program ID passed as the last arg. For Token-2022 mints
+      // the literal must be spl_token_2022::id(); pre-fix the visitor
+      // dropped stmt.tokenProgram and hardcoded spl_token::id(),
+      // producing wrong-program errors at runtime against T22 mints.
+      const tokenIdPath = stmt.tokenProgram === "token_2022"
+        ? path(["spl_token_2022", "id"])
+        : path(["spl_token", "id"]);
       out.push(letStmt(
         "create_ata_ix",
         mlCall(ident("spl_create_ata_ix"), [
           field(ident(payerVar), "key"),
           field(ident(authorityVar), "key"),
           field(ident(mintVar), "key"),
-          ref(call(path(["spl_token", "id"]), [])),
+          ref(call(tokenIdPath, [])),
         ]),
       ));
       out.push(exprStmt(tryPostfix(mlCall(ident("invoke"), [

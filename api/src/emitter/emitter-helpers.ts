@@ -399,7 +399,8 @@ export function irNeedsToken2022Helper(ir: SolanaIR): boolean {
         stmt.kind === "cpi_spl_transfer" ||
         stmt.kind === "cpi_spl_mint_to" ||
         stmt.kind === "cpi_spl_burn" ||
-        stmt.kind === "cpi_spl_close_account"
+        stmt.kind === "cpi_spl_close_account" ||
+        stmt.kind === "cpi_ata_create"
       ) {
         return (stmt as Record<string, unknown>).tokenProgram === "token_2022";
       }
