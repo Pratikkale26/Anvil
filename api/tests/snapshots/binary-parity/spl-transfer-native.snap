@@ -127,6 +127,7 @@ use solana_program::{
     entrypoint,
     entrypoint::ProgramResult,
     program::invoke,
+    program::invoke_signed,
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvar::Sysvar,
