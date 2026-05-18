@@ -143,6 +143,17 @@ export function irNeedsMplVerifyCollectionHelper(ir: SolanaIR): boolean {
   );
 }
 
+/**
+ * M1c — `cpi_mpl_sign_metadata` IR statements need the
+ * `mpl_sign_metadata` helper. Disc 7; data is the disc byte alone;
+ * accounts are 2 (metadata writable, creator signer).
+ */
+export function irNeedsMplSignMetadataHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_sign_metadata")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

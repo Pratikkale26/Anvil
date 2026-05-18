@@ -924,6 +924,19 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // Metaplex Token Metadata: sign_metadata (M1c — catalog slot 5).
+  // Discriminator 7 (anchor-spl 0.31 wraps mpl_token_metadata 5.x).
+  // Accounts: [metadata writable, creator signer]. Data: 1-byte disc,
+  // no payload. The simplest Metaplex CPI: a creator signs their entry
+  // on a metadata account to mark themselves as having approved the
+  // collection / NFT.
+  z.object({
+    kind: z.literal("cpi_mpl_sign_metadata"),
+    metadata: z.string(),
+    creator: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: verify_collection (M1b — catalog slot 4).
   // Discriminator 21 (anchor-spl 0.31 wraps mpl_token_metadata 5.x).
   // Accounts: [metadata writable, collection_authority signer,

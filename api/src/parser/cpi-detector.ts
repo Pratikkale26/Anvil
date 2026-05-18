@@ -386,6 +386,12 @@ export function detectCpi(
   ) {
     return extractMplVerifyCollection(callNode, collector);
   }
+  if (
+    funcText.includes("sign_metadata") ||
+    funcText.endsWith("::sign_metadata")
+  ) {
+    return extractMplSignMetadata(callNode, collector);
+  }
 
   return null;
 }
@@ -555,6 +561,38 @@ function extractMplVerifyCollection(callNode: SyntaxNode, collector?: WarningCol
     collection: cleanAccountRef(grab("collection")),
     collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
     collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
+}
+
+/**
+ * Extract cpi_mpl_sign_metadata (M1c — slot 5). Anchor call shape:
+ *   sign_metadata(
+ *     CpiContext::new_with_signer(prog, SignMetadata {
+ *       metadata, creator,
+ *     }, signers),
+ *   )?;
+ *
+ * No data args. Simplest catalog entry.
+ */
+function extractMplSignMetadata(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+
+  const grab = (field: string) =>
+    extractStructField(accountsStruct, field) ?? field;
+
+  return {
+    kind: "cpi_mpl_sign_metadata",
+    metadata: cleanAccountRef(grab("metadata")),
+    creator: cleanAccountRef(grab("creator")),
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
   };
 }

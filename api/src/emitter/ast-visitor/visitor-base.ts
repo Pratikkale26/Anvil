@@ -717,6 +717,7 @@ type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
 type CpiMplCreateMetadataV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_metadata_v3" }>;
 type CpiMplUpdateMetadataAccountsV2 = Extract<BodyStatement, { kind: "cpi_mpl_update_metadata_accounts_v2" }>;
 type CpiMplVerifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_verify_collection" }>;
+type CpiMplSignMetadata = Extract<BodyStatement, { kind: "cpi_mpl_sign_metadata" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
 type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
@@ -783,6 +784,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_mpl_create_metadata_v3",
   "cpi_mpl_update_metadata_accounts_v2",
   "cpi_mpl_verify_collection",
+  "cpi_mpl_sign_metadata",
   "cpi_mpl_create_master_edition_v3",
   "zero_copy_load_init",
   "zero_copy_load_mut",
@@ -877,6 +879,8 @@ export class AstVisitorBase {
         return this.visitCpiMplUpdateMetadataAccountsV2(stmt);
       case "cpi_mpl_verify_collection":
         return this.visitCpiMplVerifyCollection(stmt);
+      case "cpi_mpl_sign_metadata":
+        return this.visitCpiMplSignMetadata(stmt);
       case "cpi_mpl_create_master_edition_v3":
         return this.visitCpiMplCreateMasterEditionV3(stmt);
       case "zero_copy_load_init":
@@ -3002,6 +3006,31 @@ export class AstVisitorBase {
       `        ${resolve(stmt.collectionMasterEdition)},`,
       `        token_metadata_program,`,
       `        ${stmt.collectionAuthorityRecord},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Metaplex sign_metadata typed CPI (M1c — slot 5). Simplest catalog
+   * entry: 2 accounts, no data args. Helper takes metadata + creator +
+   * the token_metadata_program (passed via the visitor's standard
+   * resolved binding).
+   */
+  visitCpiMplSignMetadata(stmt: CpiMplSignMetadata): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const lines: string[] = [
+      `    mpl_sign_metadata(`,
+      `        ${resolve(stmt.metadata)},`,
+      `        ${resolve(stmt.creator)},`,
+      `        token_metadata_program,`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
         : `        None,`,
