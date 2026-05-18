@@ -1307,6 +1307,14 @@ function checkUndefinedAssociatedConsts(files: EmitterOutput["files"]): Validati
 function checkExternalCrateDependencies(files: EmitterOutput["files"]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const modules = collectDefinedModules(files);
+  // Crates the scaffold auto-injects when emit references them.
+  // Pre-this-extension the warning fired on bytemuck (zero-copy) +
+  // spl_token_2022 (Native T22 extensions) + spl_token (Native SPL)
+  // + spl_associated_token_account / spl_memo / mpl_token_metadata
+  // even though `buildProjectScaffold` adds them to Cargo.toml.
+  // Result: noise hides real "did you forget X" findings on
+  // genuinely-unexpected crates (Pyth/Switchboard/Drift, which
+  // checkPortabilityBlockers catches with a stronger error).
   const allowed = new Set([
     "clippy",
     "std",
@@ -1316,10 +1324,16 @@ function checkExternalCrateDependencies(files: EmitterOutput["files"]): Validati
     "self",
     "super",
     "borsh",
+    "bytemuck",
     "solana_program",
     "pinocchio",
     "pinocchio_system",
     "pinocchio_token",
+    "spl_token",
+    "spl_token_2022",
+    "spl_associated_token_account",
+    "spl_memo",
+    "mpl_token_metadata",
     "u8",
     "u16",
     "u32",
