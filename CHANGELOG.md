@@ -6,6 +6,106 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ---
 
+## Unreleased
+
+Late-night session 2026-05-18 — concrete bug catches + audit-driven cleanup.
+
+### Fixed
+
+- **HIGH: Path 2 v1 runtime dispatch silently broken on Pinocchio**
+  (commit `935e8b7`). The visitor for `cpi_spl_transfer` was dropping
+  `stmt.tokenProgramArg` on the floor, so every
+  `Interface<TokenInterface>::transfer_checked` call hardcoded
+  `TOKEN_2022_PROGRAM_ID` instead of reading the program ID from the
+  AccountInfo at runtime. Programs using legacy SPL Token mints with
+  TokenInterface would invoke Token-2022 at runtime and revert
+  ("Unknown program TokenzQd..."). Latent regression from
+  commit 31f5305 (2026-05-05). anchor-escrow-2025/make_offer went
+  FAIL → BYTE_EQUAL across full compare scope.
+
+- **HIGH: cpi_ata_create dropped tokenProgram on Native**
+  (commit `9bb6ad3`). Native emit hardcoded `spl_token::id()` for the
+  inner token-program-id arg regardless of `stmt.tokenProgram`, so
+  Token-2022 ATAs got the legacy program ID and the ATA program
+  rejected at runtime.
+
+- **HIGH: Parser cpi-detector substring-precedence**
+  (commit `ac4e23d`). Qualified `token_2022::transfer_fee_initialize`
+  (and 4 sibling T22 ext fns containing "transfer") were misrouted
+  to `cpi_spl_transfer` because the generic SPL block matched
+  `includes("transfer")` before the T22 extension block ran. Reorder
+  closed the class. Externally: `t22-transfer-hook/native`
+  tracking-ceiling-test went BUILDS GREEN and was promoted to
+  MUST_PASS.
+
+- **cli/scenario-runner.ts: wrong-length Token-2022 pubkey**
+  (commit `fbc7f89`). `BUILTIN_PUBKEYS.token_2022_program` had a
+  44-char base58 string that decodes to 33 bytes (invalid). The
+  canonical 43-char form decodes to 32 bytes. Any scenario
+  referencing `token_2022_program` would throw at
+  `new PublicKey(...)`.
+
+### Added — Path 2 v1 dispatch contract on all 5 SPL CPI kinds
+
+Schema field `tokenProgramArg` now lives on `cpi_spl_transfer` (since
+2026-05-05) AND on `cpi_spl_mint_to`, `cpi_spl_burn`,
+`cpi_spl_close_account`, `cpi_spl_set_authority` (commits
+`ec6fbc3` + `259c290`). Both Pinocchio AND Native emit honor it with
+identical `useRuntimeDispatch` semantics (Pinocchio via
+`<arg>.key()` in the hand-rolled Instruction struct; Native via
+`<arg>.key` as the first arg to `spl_token[_2022]::instruction::*`).
+Commit `0fd4700` closed the Native side after a follow-up audit
+caught the same arg-drop class. Parser helper-cpi-catalog detects
+`Interface<TokenInterface>` for transfer + mint_to + burn recognizers
+(commit `2740bdc`). close_account / set_authority can still set the
+field via direct IR construction; their parser path would need
+cpi-detector work if an in-the-wild
+`Interface<TokenInterface>::close_account` shape surfaces.
+
+### Added — Validator portability blockers
+
+Commit `0a98b44`. Output validator scans `ir.imports` against
+`UNSUPPORTED_IMPORT_PATTERNS` (exported from lint-analyzer.ts) and
+emits `[portability]` errors when a blocker import is present.
+Pre-this-change Pyth / Switchboard / mpl_core / Drift programs
+passed validation and only surfaced as cargo errors downstream.
+Now `--strict` refuses the write upfront with a clear message about
+which crate is unsupported.
+
+### Internal
+
+- `ANVIL_TEST_STRICT_FIXTURES=1` env-var gate (commit `e452086`):
+  three test files (realworld-cargo-coverage, realworld-tracking,
+  differential-tracking) had silent-skip early-returns on
+  fixture-not-available / parse-fail. CI now opts into loud
+  failure so missing-fixture cases stop reporting as green.
+- `refine.v9` prompt (commit `5c67d5f` + `50054e2`): T22 + MPL
+  catalog hints + account-flag enforcement + markers.ts linkage
+  + corrected Token-2022 program ID literal (43-char canonical).
+- Differential test harness cache key includes `anvilTarget` (commit
+  `18c116f`) so pinocchio + native fixtures sharing source can't
+  cache-hit each other's stale .so.
+- Workbench polarity strings + footer version + Quasar comment
+  cleanup (commit `1c38086`).
+- visitor-base.ts obsolete-comment fix (commit `49e746e`).
+- IR fixture validation via `SolanaIRSchema.parse` in 4 test files
+  (commit `1a24059`) catches field-name typos that were silently
+  hidden by `as unknown as SolanaIR` casts.
+
+### Documentation
+
+- `docs/emitter-walkthrough.md` (commit `a2ff7a8`) — 392-line review
+  packet for contributors + auditors. Covers visitor architecture,
+  hand-rolled CPI template, account-flag enforcement, marker linkage,
+  end-to-end checklist for adding a new IR kind, debugging tactics,
+  recent architectural decisions.
+- `docs/architecture.md` (commit `cef770b`) — refreshed stale claims:
+  "23 IR kinds" → 60+; Metaplex Token Metadata catalog closed.
+- `docs/token-2022-extensions.md` (commit `1564eab`) — corrected
+  44-char → 43-char Token-2022 program ID.
+
+---
+
 ## 0.4.0 — Safe-by-default
 
 This release flips the polarity of the deploy-safety gate. Pre-0.4 the default emit path wrote stub-bearing output with warnings and most users shipped it; the `--strict` flag was opt-in. Post-0.4 the gate runs by default and an explicit `--permissive` opt-out is required to write unsafe emit.
