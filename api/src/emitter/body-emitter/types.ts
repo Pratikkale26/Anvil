@@ -95,6 +95,7 @@ export interface BodyEmitterCallbacks {
   emitT22TransferHookInitialize(mint: string, tokenProgram: string, authority: string, transferHookProgramId: string, signerSeeds?: string): string;
   emitT22TransferHookUpdate(mint: string, tokenProgram: string, authority: string, transferHookProgramId: string, signerSeeds?: string): string;
   emitT22MetadataPointerInitialize(mint: string, tokenProgram: string, authority: string, metadataAddress: string, signerSeeds?: string): string;
+  emitT22MetadataPointerUpdate(mint: string, tokenProgram: string, authority: string, metadataAddress: string, signerSeeds?: string): string;
   emitT22GroupPointerInitialize(mint: string, tokenProgram: string, authority: string, groupAddress: string, signerSeeds?: string): string;
   emitT22GroupPointerUpdate(mint: string, tokenProgram: string, authority: string, groupAddress: string, signerSeeds?: string): string;
   emitT22GroupMemberPointerInitialize(mint: string, tokenProgram: string, authority: string, memberAddress: string, signerSeeds?: string): string;

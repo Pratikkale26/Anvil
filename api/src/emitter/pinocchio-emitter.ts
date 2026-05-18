@@ -3808,7 +3808,12 @@ export const __testOnlyCommentOutT22ExtensionCallSites = (body: string) =>
 // the algorithm avoids divergence as new T22 patterns surface.
 export function applyT22ExtensionCommentout(
   body: string,
-  opts?: { typeBlacklist?: ReadonlyArray<string>; fnBlacklist?: ReadonlyArray<string> },
+  opts?: {
+    typeBlacklist?: ReadonlyArray<string>;
+    fnBlacklist?: ReadonlyArray<string>;
+    /** Pinocchio default true; Native passes false (its AccountInfo has a real .data field). */
+    matchDataBorrow?: boolean;
+  },
 ): string {
   return commentOutT22ExtensionCallSites(body, opts);
 }
