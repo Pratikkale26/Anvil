@@ -128,6 +128,28 @@ export async function refineOutput(
 
   const issueSource = input.issueSource ?? "validator";
 
+  // Baseline pre-check (audit task #79): if any input file fails to
+  // tree-sitter parse, the error-delta accept gate downstream has no
+  // trustworthy baseline. A model-returned patch could pass tree-sitter
+  // on its own output, drop the regex-detectable errors to zero, and
+  // slip through with garbage semantics — the gate would see
+  // `errors_after (0) < errors_before` and accept. Refuse upfront so
+  // the user fixes the input first AND we don't spend on a doomed
+  // LLM call. Has to run before the API request, not just before the
+  // accept loop.
+  const baselineParser = await getParser();
+  for (const file of input.files) {
+    const inputTree = baselineParser.parse(file.content);
+    if (inputTree?.rootNode.hasError) {
+      throw new Error(
+        `refine baseline: input file '${file.path}' has tree-sitter parse errors. ` +
+        `The error-delta accept gate requires a parseable baseline; fix the syntax ` +
+        `first, then retry refine. (If unexpected, the file may have been corrupted ` +
+        `by a prior partial fix — re-run anvil compile from the original source.)`,
+      );
+    }
+  }
+
   onProgress?.("build_prompt", "Building focused refine prompt.");
   const prompt = await buildRefinePrompt({
     target: input.target,
@@ -193,7 +215,8 @@ export async function refineOutput(
   // Init tree-sitter once for structural pre-checks. Patches whose patchedContent
   // doesn't parse as valid Rust (unbalanced braces, broken expressions) are
   // rejected upfront — the regex validator can miss these and let malformed code
-  // through the accept gate.
+  // through the accept gate. (Baseline parse-check fired at the top of the
+  // function; this parser instance handles per-patch checks below.)
   const tsParser = await getParser();
 
   // Sort patches by filePath so accept/reject ordering is deterministic if the
