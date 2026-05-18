@@ -230,6 +230,16 @@ interface CliArgs {
    */
   fuzzSeed: string | null;
   /**
+   * `differential --fuzz-flags` (P3.2) — additionally mutate AccountMeta
+   * `isSigner`/`isWritable` flags during fuzz iterations. Roughly half of
+   * the fuzz iters will strip one flag from one account slot per iter;
+   * the byte-compare runs with soft-fail-on-tx-error so symmetric
+   * rejections pass (both sides correctly enforced the constraint) and
+   * asymmetric rejections fail (a transpiler-loosened constraint bug).
+   * Requires `--fuzz <N>`; alone it's a no-op.
+   */
+  fuzzFlags: boolean;
+  /**
    * `differential --ignore-events` — opt-in escape hatch for source that
    * uses Anchor's `emit!` macro. Today the harness compares data, lamports,
    * and owner — NOT event log payloads. A program that emits events behind
@@ -292,6 +302,7 @@ function parseArgs(argv: string[]): CliArgs {
     anchorExtraDeps: [],
     fuzz: null,
     fuzzSeed: null,
+    fuzzFlags: false,
     anchorExtraDepsFile: null,
     skipCache: false,
     ignoreEvents: false,
@@ -499,6 +510,12 @@ function parseArgs(argv: string[]): CliArgs {
     if (arg === "--fuzz-seed") {
       args.fuzzSeed = rest[i + 1] ?? null;
       i += 2;
+      continue;
+    }
+
+    if (arg === "--fuzz-flags") {
+      args.fuzzFlags = true;
+      i++;
       continue;
     }
 
@@ -2196,6 +2213,13 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     --fuzz-seed <hex>       Pin the RNG seed for reproducibility. Defaults to
                             a fresh 32-bit seed each run; pass the seed printed
                             at a divergence to re-run the exact mutation.
+    --fuzz-flags            Additionally mutate AccountMeta is_signer/is_writable
+                            flags during fuzz iterations (~50% of iters strip
+                            one flag from one account). Catches the bug class
+                            where Anvil's emit silently loosens a constraint
+                            Anchor enforces. Asymmetric rejection (one side
+                            rejected, the other accepted) is reported as a
+                            divergence. Requires --fuzz <N>.
     --ignore-events         Source uses Anchor's emit!() macro? Skip event
                             log comparison and run anyway. Use --compare-events
                             instead to get full byte-equal verification on
@@ -2513,9 +2537,14 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     }
   }
 
+  // P3.2 — --fuzz-flags is a modifier on --fuzz; alone it's a misuse.
+  if (args.fuzzFlags && (!args.fuzz || args.fuzz <= 0)) {
+    fatal(`--fuzz-flags requires --fuzz <N>. Pass both to enable account-flag mutation iterations.`);
+  }
+
   if (args.fuzz && args.fuzz > 0) {
     // ── Fuzz path: run N iterations with randomized scalar args.
-    progress(`Fuzzing scenario in LiteSVM — ${args.fuzz} iterations${args.fuzzSeed ? ` (seed=${args.fuzzSeed})` : ""}...`);
+    progress(`Fuzzing scenario in LiteSVM — ${args.fuzz} iterations${args.fuzzSeed ? ` (seed=${args.fuzzSeed})` : ""}${args.fuzzFlags ? ", flag-mutation enabled" : ""}...`);
     let fuzzResult;
     try {
       const { runFuzzDifferential } = await import("./scenario-runner.js");
@@ -2529,6 +2558,7 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
         compareEventLogs: args.compareEvents,
         compareReturnData: args.compareReturnData,
         compareMsgLogs: args.compareMsgLogs,
+        flagFuzz: args.fuzzFlags,
         // Progress every 10% (or every iteration if N < 10).
         onProgress: (i, total) => {
           const tick = Math.max(1, Math.floor(total / 10));

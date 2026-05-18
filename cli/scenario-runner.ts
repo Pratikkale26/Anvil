@@ -131,6 +131,17 @@ export interface ScenarioInstruction {
    * token_2022_program, rent, clock).
    */
   accounts: string[];
+  /**
+   * P3.2 — Optional per-position AccountMeta flag overrides. Map of
+   * account-position index (0-based, matching `accounts`) to flag
+   * strips. Only `false` strips are honored; setting a flag to true
+   * via this field is silently ignored (granting privilege the IR
+   * didn't declare would require a Keypair we don't have). Used by
+   * `--fuzz-flags` to catch transpiler bugs where Anvil's emit
+   * silently loosens an Anchor-side constraint (e.g. a slot whose
+   * `Signer<'info>` check the Anvil emit forgot to replicate).
+   */
+  accountFlagStrips?: Record<number, { isSigner?: boolean; isWritable?: boolean }>;
 }
 
 export interface ScenarioCompareSpec {
@@ -194,6 +205,13 @@ export async function runScenarioDifferential(args: {
   compareReturnData?: boolean;
   /** When true, capture + byte-compare user msg!() lines (Anchor framing stripped). */
   compareMsgLogs?: boolean;
+  /**
+   * P3.2 — when true, transaction-level errors are absorbed and the
+   * byte-compare proceeds against the unchanged state. Set by
+   * `--fuzz-flags` iterations where intentional flag-strips are
+   * expected to trigger program-side rejections.
+   */
+  softFailOnTxError?: boolean;
 }): Promise<ScenarioRunResult> {
   const t0 = Date.now();
   const deps = await loadRuntimeDeps();
@@ -214,17 +232,20 @@ export async function runScenarioDifferential(args: {
   const anvilReturn: Array<string | null> = [];
   const anchorMsg: string[] = [];
   const anvilMsg: string[] = [];
+  const softFail = args.softFailOnTxError ?? false;
   const anchorState = await runOneScenario(
     args.scenario, args.anchorSo, programId, ctx, args.ir, deps,
     captureEvents ? anchorEvents : undefined,
     captureReturn ? anchorReturn : undefined,
     captureMsg ? anchorMsg : undefined,
+    softFail,
   );
   const anvilState = await runOneScenario(
     args.scenario, args.anvilSo, programId, ctx, args.ir, deps,
     captureEvents ? anvilEvents : undefined,
     captureReturn ? anvilReturn : undefined,
     captureMsg ? anvilMsg : undefined,
+    softFail,
   );
 
   const results: ScenarioRunResult["results"] = [];
@@ -400,6 +421,18 @@ async function runOneScenario(
   collectedEventLogs?: string[],
   collectedReturnData?: Array<string | null>,
   collectedMsgLogs?: string[],
+  /**
+   * P3.2 — when true, transaction-level errors are absorbed and the
+   * subsequent byte-compare runs against the unchanged state. Used by
+   * `--fuzz-flags`: stripping a flag is EXPECTED to cause a program-side
+   * rejection on a correctly-translated emit; the byte-compare then
+   * decides whether both sides rejected (state unchanged on both → pass)
+   * or only one rejected (state diverges → real transpiler bug).
+   *
+   * Default false preserves the throwing behavior for plain --scenario
+   * and plain --fuzz: callers there want a loud failure on tx error.
+   */
+  softFailOnTxError?: boolean,
 ): Promise<Map<string, AccountSnapshot>> {
   const svm = new deps.LiteSVM();
   svm.addProgram(programId, programSo);
@@ -442,8 +475,15 @@ async function runOneScenario(
       const pubkey = ctx.resolveKey(accName);
       const irAcct = irInstr.accounts[idx]!;
       const isBuiltin = BUILTIN_PUBKEYS[accName] != null;
-      const isSigner = isBuiltin ? false : (ctx.signers.has(accName) || irAcct.isSigner);
-      const isWritable = isBuiltin ? false : (irAcct.isMut || irAcct.isInit);
+      let isSigner = isBuiltin ? false : (ctx.signers.has(accName) || irAcct.isSigner);
+      let isWritable = isBuiltin ? false : (irAcct.isMut || irAcct.isInit);
+      // P3.2 — apply per-position flag strips when present. Only false
+      // overrides are honored (see ScenarioInstruction.accountFlagStrips).
+      const strip = ix.accountFlagStrips?.[idx];
+      if (strip) {
+        if (strip.isSigner === false) isSigner = false;
+        if (strip.isWritable === false) isWritable = false;
+      }
       return { pubkey, isSigner, isWritable };
     });
 
@@ -463,6 +503,12 @@ async function runOneScenario(
     if ("err" in r) {
       // litesvm's FailedTransactionMetadata exposes `err` as a method (not
       // a property) and `logs()` similarly. Call them where present.
+      if (softFailOnTxError) {
+        // Continue to subsequent ixs (and snapshot) — byte-compare decides
+        // whether the rejection is symmetric (state unchanged on both
+        // sides → pass) or asymmetric (state diverges → real bug).
+        continue;
+      }
       let errStr: string;
       try {
         const errVal = typeof r.err === "function" ? r.err() : r.err;
@@ -824,6 +870,70 @@ export function fuzzScenarioArgs(
   return { ...base, instructions: newInstructions };
 }
 
+/**
+ * P3.2 — Mutate ONE account flag in ONE instruction of the scenario.
+ *
+ * Picks a (instruction, account-position, flag) triple uniformly from
+ * all candidates and adds a single `false` strip via the scenario's
+ * `accountFlagStrips` map. Returns the base scenario unchanged when no
+ * candidate exists (rare — e.g. an all-built-ins ix).
+ *
+ * Candidate filter:
+ *   - Skips built-in pubkeys (system_program etc.) — their flags are
+ *     already false at the IR-derivation step; stripping is a no-op.
+ *   - Includes any slot the IR marks `isSigner` (signer-strip candidate).
+ *   - Includes any slot the IR marks `isMut` or `isInit` (writable-strip).
+ *
+ * No guard against stripping the fee-payer-as-signer or stripping
+ * writable from an `isInit` slot: those are EXACTLY the bug classes
+ * `--fuzz-flags` is designed to catch. The byte-compare with
+ * soft-fail-on-tx-error handles the expected-rejection case (state
+ * unchanged on both sides → byte-equal pass) and surfaces the
+ * asymmetric case (only one side rejected → divergence).
+ */
+export function fuzzScenarioFlags(
+  base: DifferentialScenario,
+  ir: SolanaIR,
+  rng: FuzzRng,
+): DifferentialScenario {
+  type Candidate = {
+    ixIdx: number;
+    accIdx: number;
+    flag: "isSigner" | "isWritable";
+  };
+  const candidates: Candidate[] = [];
+  for (let ixIdx = 0; ixIdx < base.instructions.length; ixIdx++) {
+    const scenIx = base.instructions[ixIdx]!;
+    const irIx = ir.instructions.find((i) => i.name === scenIx.ix);
+    if (!irIx) continue;
+    for (let accIdx = 0; accIdx < scenIx.accounts.length; accIdx++) {
+      const accName = scenIx.accounts[accIdx]!;
+      const irAcc = irIx.accounts[accIdx];
+      if (!irAcc) continue;
+      if (BUILTIN_PUBKEYS[accName] != null) continue;
+      const isSigner = base.signers.some((s) => s.name === accName) || irAcc.isSigner;
+      const isWritable = irAcc.isMut || irAcc.isInit;
+      if (isSigner) candidates.push({ ixIdx, accIdx, flag: "isSigner" });
+      if (isWritable) candidates.push({ ixIdx, accIdx, flag: "isWritable" });
+    }
+  }
+  if (candidates.length === 0) return base;
+  const pick = candidates[rng.nextRange(candidates.length)]!;
+  const newInstructions = base.instructions.map((scenIx, idx) => {
+    if (idx !== pick.ixIdx) return scenIx;
+    const existing = scenIx.accountFlagStrips ?? {};
+    const slotExisting = existing[pick.accIdx] ?? {};
+    return {
+      ...scenIx,
+      accountFlagStrips: {
+        ...existing,
+        [pick.accIdx]: { ...slotExisting, [pick.flag]: false },
+      },
+    };
+  });
+  return { ...base, instructions: newInstructions };
+}
+
 export interface FuzzRunResult {
   totalIterations: number;
   passed: number;
@@ -860,6 +970,14 @@ export async function runFuzzDifferential(args: {
   compareEventLogs?: boolean;
   compareReturnData?: boolean;
   compareMsgLogs?: boolean;
+  /**
+   * P3.2 — when true, each iteration coin-flips between arg fuzz and
+   * flag fuzz. Flag-fuzz iters enable softFailOnTxError so the byte
+   * compare can detect asymmetric rejections (one side accepted what
+   * the other rejected → real transpiler bug). Default false preserves
+   * the original arg-only behavior.
+   */
+  flagFuzz?: boolean;
 }): Promise<FuzzRunResult> {
   const t0 = Date.now();
   const masterSeed = args.seed ?? Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, "0");
@@ -871,7 +989,15 @@ export async function runFuzzDifferential(args: {
     // runs given the same master seed.
     const iterSeed = (masterSeedBig ^ (BigInt(i) * 0xdeadbeefn)) & 0xffffffffffffffffn;
     const rng = new FuzzRng(iterSeed);
-    const fuzzed = fuzzScenarioArgs(args.baseScenario, args.ir, rng);
+    // P3.2 — when flagFuzz is on, coin-flip per iter between arg fuzz
+    // (deterministic byte-equal) and flag fuzz (asymmetric-rejection
+    // detection). The coin flip uses a dedicated rng pull at the head
+    // of the iter so the args-mutator's downstream RNG sequence stays
+    // identical to the no-flag-fuzz baseline when args was picked.
+    const useFlagFuzz = args.flagFuzz === true && rng.oneIn(2);
+    const fuzzed = useFlagFuzz
+      ? fuzzScenarioFlags(args.baseScenario, args.ir, rng)
+      : fuzzScenarioArgs(args.baseScenario, args.ir, rng);
     const result = await runScenarioDifferential({
       scenario: fuzzed,
       anchorSo: args.anchorSo,
@@ -880,6 +1006,7 @@ export async function runFuzzDifferential(args: {
       compareEventLogs: args.compareEventLogs,
       compareReturnData: args.compareReturnData,
       compareMsgLogs: args.compareMsgLogs,
+      softFailOnTxError: useFlagFuzz,
     });
     if (!result.ok) {
       return {

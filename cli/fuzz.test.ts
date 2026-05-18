@@ -9,7 +9,7 @@
  * fuzzScenarioArgs doesn't silently break reproducibility.
  */
 import { describe, test, expect } from "bun:test";
-import { fuzzScenarioArgs, type DifferentialScenario } from "./scenario-runner.ts";
+import { fuzzScenarioArgs, fuzzScenarioFlags, type DifferentialScenario } from "./scenario-runner.ts";
 import type { SolanaIR } from "../api/src/ir/schema.js";
 
 const baseScenario: DifferentialScenario = {
@@ -173,6 +173,152 @@ describe("fuzz mutation infra", () => {
     // hex string: only 0-9a-f, even length.
     expect(typeof payload === "string" && /^[0-9a-f]*$/.test(payload)).toBe(true);
     expect(typeof payload === "string" && payload.length % 2).toBe(0);
+  });
+
+  // ── P3.2 — fuzzScenarioFlags coverage. The mutator picks one
+  // (ix, account-position, flag) candidate uniformly and strips it via
+  // accountFlagStrips. The byte-equal contract with soft-fail-on-tx-error
+  // is exercised end-to-end in CLI runs; here we lock the data shape.
+
+  const flagFuzzIr: SolanaIR = {
+    ...fakeIr,
+    instructions: [
+      {
+        name: "initialize",
+        args: [{ name: "amount", type: "u64" }],
+        accounts: [
+          { name: "counter", isSigner: false, isMut: true,  isInit: true,  isPda: true,  accountType: "Account", typeRef: "Counter" },
+          { name: "authority", isSigner: true,  isMut: true,  isInit: false, isPda: false, accountType: "Signer", typeRef: "" },
+          { name: "system_program", isSigner: false, isMut: false, isInit: false, isPda: false, accountType: "Program", typeRef: "System" },
+        ],
+        body: [],
+      },
+    ],
+  } as unknown as SolanaIR;
+
+  test("fuzzScenarioFlags strips exactly one flag from exactly one slot", () => {
+    let pickIndex = 0;
+    const stubRng = {
+      nextU64: () => 0n,
+      nextRange: (_max: number) => pickIndex,
+      oneIn: () => false,
+    };
+    const fuzzed = fuzzScenarioFlags(baseScenario, flagFuzzIr, stubRng as never);
+    // Exactly one ix mutated, one slot, one flag.
+    const totalStrips = fuzzed.instructions.reduce((acc, ix) => {
+      const strips = ix.accountFlagStrips ?? {};
+      let count = 0;
+      for (const v of Object.values(strips)) {
+        if (v.isSigner === false) count++;
+        if (v.isWritable === false) count++;
+      }
+      return acc + count;
+    }, 0);
+    expect(totalStrips).toBe(1);
+    // Non-strip fields are preserved.
+    expect(fuzzed.signers).toEqual(baseScenario.signers);
+    expect(fuzzed.pdas).toEqual(baseScenario.pdas);
+    expect(fuzzed.compare).toEqual(baseScenario.compare);
+    expect(fuzzed.instructions[0]!.accounts).toEqual(baseScenario.instructions[0]!.accounts);
+    expect(fuzzed.instructions[0]!.args).toEqual(baseScenario.instructions[0]!.args);
+  });
+
+  test("fuzzScenarioFlags skips built-in accounts (system_program never picked)", () => {
+    // Run the mutator multiple iterations with different RNG picks; the
+    // system_program slot (index 2) should never appear in the strips
+    // map because it's a built-in. Sweep all candidate indices.
+    for (let pick = 0; pick < 10; pick++) {
+      const stubRng = {
+        nextU64: () => 0n,
+        nextRange: (_max: number) => pick % Math.max(1, _max),
+        oneIn: () => false,
+      };
+      const fuzzed = fuzzScenarioFlags(baseScenario, flagFuzzIr, stubRng as never);
+      const strips = fuzzed.instructions[0]!.accountFlagStrips ?? {};
+      // accIdx 2 = system_program. Must not appear.
+      expect(strips[2]).toBeUndefined();
+    }
+  });
+
+  test("fuzzScenarioFlags returns base unchanged when no candidates exist", () => {
+    // IR with one account that's neither signer, mut, nor init: no
+    // candidates. Mutator should pass scenario through untouched.
+    const noCandidateIr: SolanaIR = {
+      ...fakeIr,
+      instructions: [
+        {
+          name: "initialize",
+          args: [],
+          accounts: [
+            { name: "readonly", isSigner: false, isMut: false, isInit: false, isPda: false, accountType: "Account", typeRef: "Foo" },
+          ],
+          body: [],
+        },
+      ],
+    } as unknown as SolanaIR;
+    const scenario: DifferentialScenario = {
+      ...baseScenario,
+      instructions: [{ ix: "initialize", args: {}, accounts: ["readonly"] }],
+    };
+    const stubRng = {
+      nextU64: () => 0n,
+      nextRange: () => 0,
+      oneIn: () => false,
+    };
+    const fuzzed = fuzzScenarioFlags(scenario, noCandidateIr, stubRng as never);
+    expect(fuzzed).toEqual(scenario);
+  });
+
+  test("fuzzScenarioFlags deterministic under same RNG sequence", () => {
+    // Two stub RNGs producing the same sequence must yield identical
+    // strip maps. Determinism is what makes --fuzz-seed reproducible.
+    const seq = [3, 1, 0, 2, 4];
+    let i1 = 0;
+    let i2 = 0;
+    const rng1 = {
+      nextU64: () => 0n,
+      nextRange: (_max: number) => seq[i1++ % seq.length]! % Math.max(1, _max),
+      oneIn: () => false,
+    };
+    const rng2 = {
+      nextU64: () => 0n,
+      nextRange: (_max: number) => seq[i2++ % seq.length]! % Math.max(1, _max),
+      oneIn: () => false,
+    };
+    const f1 = fuzzScenarioFlags(baseScenario, flagFuzzIr, rng1 as never);
+    const f2 = fuzzScenarioFlags(baseScenario, flagFuzzIr, rng2 as never);
+    expect(f1.instructions[0]!.accountFlagStrips).toEqual(f2.instructions[0]!.accountFlagStrips);
+  });
+
+  test("fuzzScenarioFlags accountFlagStrips preserves existing strips on other slots", () => {
+    // Caller may pre-populate a strip on one slot; the mutator may
+    // ADD a strip on another slot, but must not blow away the prior
+    // entry. (Realistic when callers chain mutators.)
+    const preStripped: DifferentialScenario = {
+      ...baseScenario,
+      instructions: [
+        {
+          ...baseScenario.instructions[0]!,
+          accountFlagStrips: { 0: { isWritable: false } },
+        },
+      ],
+    };
+    // Force the picker to choose index 1 (authority slot, signer flag).
+    // Candidate list order: [counter:isSigner? no, counter:isWritable yes,
+    // authority:isSigner yes, authority:isWritable yes]. So pick=2 lands
+    // on authority signer.
+    const stubRng = {
+      nextU64: () => 0n,
+      nextRange: (_max: number) => 2 % Math.max(1, _max),
+      oneIn: () => false,
+    };
+    const fuzzed = fuzzScenarioFlags(preStripped, flagFuzzIr, stubRng as never);
+    const strips = fuzzed.instructions[0]!.accountFlagStrips ?? {};
+    // Original strip preserved.
+    expect(strips[0]).toEqual({ isWritable: false });
+    // New strip added on a different slot.
+    const otherEntries = Object.keys(strips).filter((k) => k !== "0");
+    expect(otherEntries.length).toBeGreaterThanOrEqual(1);
   });
 
   test("fuzzScenarioArgs still throws on unknown arg types (no silent dropping)", () => {
