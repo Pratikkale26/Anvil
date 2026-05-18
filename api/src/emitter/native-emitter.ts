@@ -258,6 +258,15 @@ export class NativeEmitter extends BaseEmitter {
       || passThroughNeedsInvoke
       || needsMpl;
     const needsInvokeSigned = irNeedsSignedLamportsHelper(_ir)
+      // spl_transfer's helper emission is asymmetric to the other SPL kinds:
+      // when any `cpi_spl_transfer` exists, the emitter pushes BOTH
+      // `spl_token_transfer` (unsigned) AND `spl_token_transfer_signed`
+      // helpers in one block, so `invoke_signed` is referenced even when
+      // no caller currently uses the signed path. The other SPL families
+      // have separate Signed/Unsigned helper gates. Without this, /build
+      // surfaced E0425 "cannot find function `invoke_signed`" on every
+      // emit that included a cpi_spl_transfer.
+      || irNeedsHelper(_ir, "spl_transfer")
       || irNeedsSignedSplMintToHelper(_ir)
       || irNeedsSignedSplBurnHelper(_ir)
       || irNeedsSignedSplCloseAccountHelper(_ir)
