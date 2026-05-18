@@ -106,21 +106,32 @@ export const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
     verdict: () => "blocker",
   },
   // ── Metaplex Token Metadata ────────────────────────────────────────────
+  //
+  // 12/12 catalog landed 2026-05-18 (M1 + M1b..M1j). The typed CPIs
+  // (create_metadata_v3, verify_collection, sign_metadata,
+  // set_and_verify_collection, unverify_collection,
+  // approve/revoke_collection_authority, mint_new_edition,
+  // freeze/thaw_delegated, update_metadata_accounts_v2,
+  // create_master_edition_v3) emit hand-rolled invoke calls and do NOT
+  // need the mpl_token_metadata crate. But programs that call OTHER
+  // Metaplex instructions (set_collection_size, bubblegum, custom
+  // bytes) still pass through. Lint reviewable instead of blocker so
+  // most NFT programs compile cleanly post-emit.
   {
     prefix: "mpl_token_metadata",
-    category: "Unsupported integration",
+    category: "Partial integration",
     title: "mpl_token_metadata imports",
     detail: () =>
-      "Metaplex Token Metadata CPIs aren't transpiled — emitted code carries the import but stubs the call. Suggested fix: replace with manual mpl-token-metadata CPIs after emit.",
-    verdict: () => "blocker",
+      "Anvil transpiles the 12-slot Metaplex Token Metadata catalog as hand-rolled CPIs (verify_collection, sign_metadata, etc. — see docs/feature-matrix.md). Other mpl_token_metadata calls pass through. Suggested fix: confirm your call sites are within the catalog; non-catalog calls need a manual rewrite after emit.",
+    verdict: () => "review",
   },
   {
     prefix: "anchor_spl::metadata",
-    category: "Unsupported integration",
+    category: "Partial integration",
     title: "anchor_spl::metadata imports (Metaplex)",
     detail: () =>
-      "anchor_spl's metadata wrappers route to Metaplex Token Metadata, which Anvil doesn't structurally rewrite. Suggested fix: replace with direct mpl-token-metadata CPIs.",
-    verdict: () => "blocker",
+      "anchor_spl's metadata wrappers route to the typed Metaplex catalog (12 slots covered as of 2026-05-18). Suggested fix: usually no change needed for catalog slots; non-catalog wrapper calls need a manual rewrite to direct mpl-token-metadata invoke.",
+    verdict: () => "review",
   },
   // ── Pyth oracle ────────────────────────────────────────────────────────
   {
