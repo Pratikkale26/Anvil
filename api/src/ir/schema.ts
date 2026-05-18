@@ -924,6 +924,29 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // Metaplex Token Metadata: mint_new_edition_from_master_edition_via_token
+  // (M1h — slot 10). Discriminator 11. The "print an edition from a
+  // master" CPI used by NFT print/edition programs. 14 fixed accounts
+  // (most complex of the catalog). Data: 1-byte disc + u64 LE edition
+  // number (9 bytes total).
+  z.object({
+    kind: z.literal("cpi_mpl_mint_new_edition_from_master"),
+    newMetadata: z.string(),
+    newEdition: z.string(),
+    masterEdition: z.string(),
+    newMint: z.string(),
+    editionMarkPda: z.string(),
+    newMintAuthority: z.string(),
+    payer: z.string(),
+    tokenAccountOwner: z.string(),
+    tokenAccount: z.string(),
+    newMetadataUpdateAuthority: z.string(),
+    metadata: z.string(),
+    /** Edition number — raw text expression. u64. */
+    edition: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: revoke_collection_authority (M1g — slot 9).
   // Discriminator 24. Symmetric inverse of approve: closes the
   // collection_authority_record PDA, lamports return to revoke_authority.

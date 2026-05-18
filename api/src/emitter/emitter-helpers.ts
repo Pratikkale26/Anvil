@@ -191,6 +191,13 @@ export function irNeedsMplRevokeCollectionAuthorityHelper(ir: SolanaIR): boolean
   );
 }
 
+/** M1h — mint_new_edition_from_master_edition_via_token. Disc 11; 14 accts; u64 edition. */
+export function irNeedsMplMintNewEditionFromMasterHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_mint_new_edition_from_master")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

@@ -385,6 +385,14 @@ export function detectCpi(
   // "verify_collection" as a substring; the dispatch falls through on
   // first match, so the more-specific tokens have to win.
   if (
+    funcText.includes("mint_new_edition_from_master_edition_via_token") ||
+    funcText.endsWith("::mint_new_edition_from_master_edition_via_token") ||
+    funcText.includes("mint_new_edition_from_master") ||
+    funcText.endsWith("::mint_new_edition_from_master")
+  ) {
+    return extractMplMintNewEditionFromMaster(callNode, collector);
+  }
+  if (
     funcText.includes("revoke_collection_authority") ||
     funcText.endsWith("::revoke_collection_authority")
   ) {
@@ -589,6 +597,43 @@ function extractMplVerifyCollection(callNode: SyntaxNode, collector?: WarningCol
     collection: cleanAccountRef(grab("collection")),
     collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
     collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
+}
+
+/**
+ * Extract cpi_mpl_mint_new_edition_from_master (M1h — slot 10).
+ * Anchor wrapper name: mint_new_edition_from_master_edition_via_token.
+ * 14 accounts in the struct + 1 u64 edition arg after the CpiContext.
+ */
+function extractMplMintNewEditionFromMaster(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+
+  const grab = (field: string) =>
+    extractStructField(accountsStruct, field) ?? field;
+
+  return {
+    kind: "cpi_mpl_mint_new_edition_from_master",
+    newMetadata: cleanAccountRef(grab("new_metadata")),
+    newEdition: cleanAccountRef(grab("new_edition")),
+    masterEdition: cleanAccountRef(grab("master_edition")),
+    newMint: cleanAccountRef(grab("new_mint")),
+    editionMarkPda: cleanAccountRef(grab("edition_mark_pda")),
+    newMintAuthority: cleanAccountRef(grab("new_mint_authority")),
+    payer: cleanAccountRef(grab("payer")),
+    tokenAccountOwner: cleanAccountRef(grab("token_account_owner")),
+    tokenAccount: cleanAccountRef(grab("token_account")),
+    newMetadataUpdateAuthority: cleanAccountRef(grab("new_metadata_update_authority")),
+    metadata: cleanAccountRef(grab("metadata")),
+    edition: args[1]?.text.trim() ?? "0",
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
   };
 }

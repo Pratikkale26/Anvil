@@ -721,6 +721,7 @@ type CpiMplUnverifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_unverify
 type CpiMplSetAndVerifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_set_and_verify_collection" }>;
 type CpiMplApproveCollectionAuthority = Extract<BodyStatement, { kind: "cpi_mpl_approve_collection_authority" }>;
 type CpiMplRevokeCollectionAuthority = Extract<BodyStatement, { kind: "cpi_mpl_revoke_collection_authority" }>;
+type CpiMplMintNewEditionFromMaster = Extract<BodyStatement, { kind: "cpi_mpl_mint_new_edition_from_master" }>;
 type CpiMplSignMetadata = Extract<BodyStatement, { kind: "cpi_mpl_sign_metadata" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
@@ -792,6 +793,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_mpl_set_and_verify_collection",
   "cpi_mpl_approve_collection_authority",
   "cpi_mpl_revoke_collection_authority",
+  "cpi_mpl_mint_new_edition_from_master",
   "cpi_mpl_sign_metadata",
   "cpi_mpl_create_master_edition_v3",
   "zero_copy_load_init",
@@ -895,6 +897,8 @@ export class AstVisitorBase {
         return this.visitCpiMplApproveCollectionAuthority(stmt);
       case "cpi_mpl_revoke_collection_authority":
         return this.visitCpiMplRevokeCollectionAuthority(stmt);
+      case "cpi_mpl_mint_new_edition_from_master":
+        return this.visitCpiMplMintNewEditionFromMaster(stmt);
       case "cpi_mpl_sign_metadata":
         return this.visitCpiMplSignMetadata(stmt);
       case "cpi_mpl_create_master_edition_v3":
@@ -3137,6 +3141,42 @@ export class AstVisitorBase {
       `        ${resolve(stmt.metadata)},`,
       `        ${resolve(stmt.mint)},`,
       `        token_metadata_program,`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Metaplex mint_new_edition_from_master_edition_via_token (M1h — slot 10).
+   * Most-complex catalog entry: 14 accounts + u64 edition data arg.
+   */
+  visitCpiMplMintNewEditionFromMaster(stmt: CpiMplMintNewEditionFromMaster): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const lines: string[] = [
+      `    mpl_mint_new_edition_from_master(`,
+      `        ${resolve(stmt.newMetadata)},`,
+      `        ${resolve(stmt.newEdition)},`,
+      `        ${resolve(stmt.masterEdition)},`,
+      `        ${resolve(stmt.newMint)},`,
+      `        ${resolve(stmt.editionMarkPda)},`,
+      `        ${resolve(stmt.newMintAuthority)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolve(stmt.tokenAccountOwner)},`,
+      `        ${resolve(stmt.tokenAccount)},`,
+      `        ${resolve(stmt.newMetadataUpdateAuthority)},`,
+      `        ${resolve(stmt.metadata)},`,
+      `        token_program,`,
+      `        system_program,`,
+      `        rent,`,
+      `        token_metadata_program,`,
+      `        ${stmt.edition},`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
         : `        None,`,
