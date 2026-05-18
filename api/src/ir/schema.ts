@@ -924,6 +924,21 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // Metaplex Token Metadata: revoke_collection_authority (M1g — slot 9).
+  // Discriminator 24. Symmetric inverse of approve: closes the
+  // collection_authority_record PDA, lamports return to revoke_authority.
+  // Accounts differ slightly from approve (no payer/system_program/rent
+  // — closing not creating). 5 accounts total.
+  z.object({
+    kind: z.literal("cpi_mpl_revoke_collection_authority"),
+    collectionAuthorityRecord: z.string(),
+    delegateAuthority: z.string(),
+    revokeAuthority: z.string(),
+    metadata: z.string(),
+    mint: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: approve_collection_authority (M1f — slot 8).
   // Discriminator 23. Delegates collection-verification authority to a
   // different account via a PDA-derived authority record. No data args;

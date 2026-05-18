@@ -720,6 +720,7 @@ type CpiMplVerifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_verify_col
 type CpiMplUnverifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_unverify_collection" }>;
 type CpiMplSetAndVerifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_set_and_verify_collection" }>;
 type CpiMplApproveCollectionAuthority = Extract<BodyStatement, { kind: "cpi_mpl_approve_collection_authority" }>;
+type CpiMplRevokeCollectionAuthority = Extract<BodyStatement, { kind: "cpi_mpl_revoke_collection_authority" }>;
 type CpiMplSignMetadata = Extract<BodyStatement, { kind: "cpi_mpl_sign_metadata" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
@@ -790,6 +791,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_mpl_unverify_collection",
   "cpi_mpl_set_and_verify_collection",
   "cpi_mpl_approve_collection_authority",
+  "cpi_mpl_revoke_collection_authority",
   "cpi_mpl_sign_metadata",
   "cpi_mpl_create_master_edition_v3",
   "zero_copy_load_init",
@@ -891,6 +893,8 @@ export class AstVisitorBase {
         return this.visitCpiMplSetAndVerifyCollection(stmt);
       case "cpi_mpl_approve_collection_authority":
         return this.visitCpiMplApproveCollectionAuthority(stmt);
+      case "cpi_mpl_revoke_collection_authority":
+        return this.visitCpiMplRevokeCollectionAuthority(stmt);
       case "cpi_mpl_sign_metadata":
         return this.visitCpiMplSignMetadata(stmt);
       case "cpi_mpl_create_master_edition_v3":
@@ -3105,6 +3109,33 @@ export class AstVisitorBase {
       `        ${resolve(stmt.mint)},`,
       `        system_program,`,
       `        rent,`,
+      `        token_metadata_program,`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Metaplex revoke_collection_authority typed CPI (M1g — slot 9).
+   * Symmetric inverse of approve: closes the authority-record PDA;
+   * lamports flow back to revoke_authority. 5 accounts, no data args.
+   */
+  visitCpiMplRevokeCollectionAuthority(stmt: CpiMplRevokeCollectionAuthority): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const lines: string[] = [
+      `    mpl_revoke_collection_authority(`,
+      `        ${resolve(stmt.collectionAuthorityRecord)},`,
+      `        ${resolve(stmt.delegateAuthority)},`,
+      `        ${resolve(stmt.revokeAuthority)},`,
+      `        ${resolve(stmt.metadata)},`,
+      `        ${resolve(stmt.mint)},`,
       `        token_metadata_program,`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`

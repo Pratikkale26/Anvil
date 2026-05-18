@@ -184,6 +184,13 @@ export function irNeedsMplApproveCollectionAuthorityHelper(ir: SolanaIR): boolea
   );
 }
 
+/** M1g — revoke_collection_authority. Disc 24; 5 accounts; no data args. */
+export function irNeedsMplRevokeCollectionAuthorityHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_revoke_collection_authority")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

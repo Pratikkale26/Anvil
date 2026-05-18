@@ -385,6 +385,12 @@ export function detectCpi(
   // "verify_collection" as a substring; the dispatch falls through on
   // first match, so the more-specific tokens have to win.
   if (
+    funcText.includes("revoke_collection_authority") ||
+    funcText.endsWith("::revoke_collection_authority")
+  ) {
+    return extractMplRevokeCollectionAuthority(callNode, collector);
+  }
+  if (
     funcText.includes("approve_collection_authority") ||
     funcText.endsWith("::approve_collection_authority")
   ) {
@@ -583,6 +589,35 @@ function extractMplVerifyCollection(callNode: SyntaxNode, collector?: WarningCol
     collection: cleanAccountRef(grab("collection")),
     collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
     collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
+}
+
+/**
+ * Extract cpi_mpl_revoke_collection_authority (M1g — slot 9).
+ * Symmetric inverse of approve. 5 accounts, no data args.
+ */
+function extractMplRevokeCollectionAuthority(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+
+  const grab = (field: string) =>
+    extractStructField(accountsStruct, field) ?? field;
+
+  return {
+    kind: "cpi_mpl_revoke_collection_authority",
+    collectionAuthorityRecord: cleanAccountRef(grab("collection_authority_record")),
+    delegateAuthority: cleanAccountRef(grab("delegate_authority")),
+    revokeAuthority: cleanAccountRef(grab("revoke_authority")),
+    metadata: cleanAccountRef(grab("metadata")),
+    mint: cleanAccountRef(grab("mint")),
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
   };
 }
