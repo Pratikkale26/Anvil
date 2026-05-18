@@ -715,6 +715,7 @@ type CpiAtaCreate = Extract<BodyStatement, { kind: "cpi_ata_create" }>;
 type CpiMemo = Extract<BodyStatement, { kind: "cpi_memo" }>;
 type CpiCustom = Extract<BodyStatement, { kind: "cpi_custom" }>;
 type CpiMplCreateMetadataV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_metadata_v3" }>;
+type CpiMplUpdateMetadataAccountsV2 = Extract<BodyStatement, { kind: "cpi_mpl_update_metadata_accounts_v2" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
 type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
@@ -779,6 +780,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_memo",
   "cpi_custom",
   "cpi_mpl_create_metadata_v3",
+  "cpi_mpl_update_metadata_accounts_v2",
   "cpi_mpl_create_master_edition_v3",
   "zero_copy_load_init",
   "zero_copy_load_mut",
@@ -869,6 +871,8 @@ export class AstVisitorBase {
       case "cpi_custom":           return this.visitCpiCustom(stmt);
       case "cpi_mpl_create_metadata_v3":
         return this.visitCpiMplCreateMetadataV3(stmt);
+      case "cpi_mpl_update_metadata_accounts_v2":
+        return this.visitCpiMplUpdateMetadataAccountsV2(stmt);
       case "cpi_mpl_create_master_edition_v3":
         return this.visitCpiMplCreateMasterEditionV3(stmt);
       case "zero_copy_load_init":
@@ -2917,6 +2921,46 @@ export class AstVisitorBase {
       `        ${stmt.sellerFeeBasisPoints},`,
       `        ${stmt.isMutable},`,
       `        ${stmt.updateAuthorityIsSigner},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Metaplex update_metadata_accounts_v2 typed CPI (M1). Calls the
+   * hand-rolled helper `mpl_update_metadata_accounts_v2` (discriminator
+   * 15) added by Pinocchio + Native emitters. The IR captures DataV2
+   * field updates plus Option-shaped {new_update_authority,
+   * primary_sale_happened, is_mutable}; the helper interprets a
+   * caller-supplied `Some/None`-text-pattern for each.
+   */
+  visitCpiMplUpdateMetadataAccountsV2(stmt: CpiMplUpdateMetadataAccountsV2): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    // DataV2 is included when newName is set. Most real-world callers
+    // pass Some(DataV2{...}) on this path; a sparse update that touches
+    // only new_update_authority / primary_sale_happened / is_mutable
+    // leaves newName undefined and the helper sees None for new_data.
+    const hasDataUpdate = !!stmt.newName;
+    const lines: string[] = [
+      `    mpl_update_metadata_accounts_v2(`,
+      `        ${resolve(stmt.metadata)},`,
+      `        ${resolve(stmt.updateAuthority)},`,
+      `        token_metadata_program,`,
+      `        ${stmt.newUpdateAuthority},`,
+      hasDataUpdate ? `        true,` : `        false,`,
+      hasDataUpdate ? `        &${stmt.newName ?? `""`},` : `        "",`,
+      hasDataUpdate ? `        &${stmt.newSymbol ?? `""`},` : `        "",`,
+      hasDataUpdate ? `        &${stmt.newUri ?? `""`},` : `        "",`,
+      `        ${stmt.newSellerFeeBasisPoints ?? "0"},`,
+      `        ${stmt.primarySaleHappened},`,
+      `        ${stmt.isMutable},`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
         : `        None,`,

@@ -374,6 +374,12 @@ export function detectCpi(
   ) {
     return extractMplCreateMasterEditionV3(callNode, collector);
   }
+  if (
+    funcText.includes("update_metadata_accounts_v2") ||
+    funcText.endsWith("::update_metadata_accounts_v2")
+  ) {
+    return extractMplUpdateMetadataAccountsV2(callNode, collector);
+  }
 
   return null;
 }
@@ -425,6 +431,81 @@ function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCol
     sellerFeeBasisPoints: dataField("seller_fee_basis_points") || "0",
     isMutable: args[2]?.text.trim() ?? "true",
     updateAuthorityIsSigner: args[3]?.text.trim() ?? "true",
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
+}
+
+/**
+ * Extract cpi_mpl_update_metadata_accounts_v2 (M1). Anchor call shape:
+ *   update_metadata_accounts_v2(
+ *     CpiContext::new_with_signer(prog, UpdateMetadataAccountsV2 {
+ *       metadata, update_authority,
+ *     }, signers),
+ *     new_update_authority,   // Option<Pubkey>
+ *     Some(DataV2 { name, symbol, uri, seller_fee_basis_points, ... }),
+ *     primary_sale_happened,  // Option<bool>
+ *     is_mutable,             // Option<bool>
+ *   )?;
+ *
+ * Common Anchor usage: update DataV2 (post-mint name/uri fix) OR rotate
+ * update authority — rarely both at once. Anvil's emit handles all four
+ * Option args; the IR's optional new{Name,Symbol,Uri} carry the DataV2
+ * fields when the source set new_data = Some(...).
+ */
+function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+
+  const grab = (field: string) =>
+    extractStructField(accountsStruct, field) ?? field;
+
+  // Args after the CpiContext:
+  //   args[1] = new_update_authority (Option<Pubkey>)
+  //   args[2] = new_data             (Option<DataV2>)
+  //   args[3] = primary_sale_happened (Option<bool>)
+  //   args[4] = is_mutable           (Option<bool>)
+  const newUpdateAuthority = args[1]?.text.trim() ?? "None";
+  const newDataText = args[2]?.text.trim() ?? "None";
+  const primarySaleHappened = args[3]?.text.trim() ?? "None";
+  const isMutable = args[4]?.text.trim() ?? "None";
+
+  // Parse Some(DataV2 { name, symbol, uri, seller_fee_basis_points }).
+  // Falls back to no-data-update if not the literal Some(DataV2 {...}) shape.
+  let newName: string | undefined;
+  let newSymbol: string | undefined;
+  let newUri: string | undefined;
+  let newSellerFeeBasisPoints = "0";
+  const dataV2Match = newDataText.match(/Some\s*\(\s*DataV2\s*\{([\s\S]*)\}\s*\)/);
+  if (dataV2Match && dataV2Match[1]) {
+    const inner = dataV2Match[1];
+    const grabField = (field: string): string | undefined => {
+      const m = inner.match(new RegExp(`\\b${field}\\s*:\\s*([^,}]+)`));
+      return m?.[1]?.trim();
+    };
+    newName = grabField("name");
+    newSymbol = grabField("symbol");
+    newUri = grabField("uri");
+    newSellerFeeBasisPoints = grabField("seller_fee_basis_points") ?? "0";
+  }
+
+  return {
+    kind: "cpi_mpl_update_metadata_accounts_v2",
+    metadata: cleanAccountRef(grab("metadata")),
+    updateAuthority: cleanAccountRef(grab("update_authority")),
+    newUpdateAuthority,
+    newName,
+    newSymbol,
+    newUri,
+    newSellerFeeBasisPoints,
+    primarySaleHappened,
+    isMutable,
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
   };
 }

@@ -119,6 +119,19 @@ export function irNeedsMplCreateMasterEditionV3Helper(ir: SolanaIR): boolean {
   );
 }
 
+/**
+ * M1 — `cpi_mpl_update_metadata_accounts_v2` IR statements need the
+ * `mpl_update_metadata_accounts_v2` helper (hand-rolled invoke against
+ * the Metaplex Token Metadata program). One helper covers all instances
+ * in the IR. Discriminator 15; payload is 4 Option<T> fields after the
+ * disc byte.
+ */
+export function irNeedsMplUpdateMetadataAccountsV2Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_update_metadata_accounts_v2")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

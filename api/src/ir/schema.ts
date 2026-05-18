@@ -893,6 +893,37 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // Metaplex Token Metadata: update_metadata_accounts_v2 (M1 — EM2
+  // catalog expansion beyond create_metadata_v3 + create_master_edition_v3).
+  // Discriminator 15 (anchor-spl 0.31 wraps mpl_token_metadata 5.x).
+  // Accounts: [metadata writable, update_authority signer]. Data:
+  //   1 byte disc + Option<Pubkey> new_update_authority
+  //   + Option<DataV2> new_data + Option<bool> primary_sale_happened
+  //   + Option<bool> is_mutable.
+  // Common Anchor usage: update DataV2 fields post-mint (rename, fix URI)
+  // or rotate update authority. This IR slot models the typical shape
+  // where DataV2 fields are Some when present; other Options are raw
+  // text passed through (Anvil supports the literal "None" / "Some(...)"
+  // forms at emit time).
+  z.object({
+    kind: z.literal("cpi_mpl_update_metadata_accounts_v2"),
+    metadata: z.string(),
+    updateAuthority: z.string(),
+    /** Option<Pubkey> — raw text expression. Literal "None" or "Some(<expr>)". */
+    newUpdateAuthority: z.string().default("None"),
+    /** When set, the DataV2 update is emitted. Empty/undefined = no data update. */
+    newName: z.string().optional(),
+    newSymbol: z.string().optional(),
+    newUri: z.string().optional(),
+    /** DataV2.seller_fee_basis_points when newName is set. */
+    newSellerFeeBasisPoints: z.string().default("0"),
+    /** Option<bool> primary_sale_happened — raw text. */
+    primarySaleHappened: z.string().default("None"),
+    /** Option<bool> is_mutable — raw text. */
+    isMutable: z.string().default("None"),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: create_master_edition_v3.
   z.object({
     kind: z.literal("cpi_mpl_create_master_edition_v3"),
