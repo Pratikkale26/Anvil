@@ -30,6 +30,131 @@ async function bodyKindsFor(source: string): Promise<string[]> {
   return r.ir.instructions[0]!.body.map((s) => s.kind);
 }
 
+describe("cpi-detector dispatch precedence — strict isExtCall matcher", () => {
+  // The matcher accepts `funcText === name` OR `funcText.endsWith("::" + name)`.
+  // It deliberately rejects arbitrary substring containment. This block
+  // locks the rejection class — any future refactor that widens isExtCall
+  // back into a substring check will surface here.
+
+  test("hypothetical transfer_fee_initialize_v2 does NOT misroute to v1 dispatch", async () => {
+    // Pre-refactor: `funcText.includes("transfer_fee_initialize")` would
+    // match `transfer_fee_initialize_v2`, silently downcasting a future
+    // v2 call to v1's IR kind. isExtCall's exact + endsWith match
+    // prevents this.
+    const src = `
+use anchor_lang::prelude::*;
+declare_id!("Counter111111111111111111111111111111111111");
+
+#[program]
+pub mod p {
+    use super::*;
+    pub fn handler(ctx: Context<I>, bp: u16) -> Result<()> {
+        // Synthetic "future" call shape — should not route to v1 IR.
+        transfer_fee_initialize_v2(ctx.accounts.mint.to_account_info(), bp)?;
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct I<'info> {
+    #[account(mut)]
+    pub mint: Signer<'info>,
+}
+`;
+    const r = await parseAnchor(src);
+    if (!r.ok) return;
+    const kinds = r.ir.instructions[0]!.body.map((s) => s.kind);
+    // Must not silently classify as v1 IR
+    expect(kinds).not.toContain("cpi_t22_transfer_fee_initialize");
+  });
+
+  test("group_member_pointer_initialize is NOT shadowed by group_pointer_initialize", async () => {
+    // group_member_pointer_initialize includes the substring
+    // "pointer_initialize" but NOT "group_pointer_initialize", so under
+    // isExtCall the longest-first ordering catches the right one. This
+    // test pins the ordering so a later refactor that swaps the rules
+    // cannot silently regress.
+    const src = `
+use anchor_lang::prelude::*;
+use anchor_spl::token_2022_extensions::group_member_pointer::group_member_pointer_initialize;
+declare_id!("Counter111111111111111111111111111111111111");
+
+#[program]
+pub mod p {
+    use super::*;
+    pub fn handler(ctx: Context<I>) -> Result<()> {
+        anchor_spl::token_2022_extensions::group_member_pointer::group_member_pointer_initialize(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                anchor_spl::token_2022_extensions::group_member_pointer::GroupMemberPointerInitialize {
+                    mint: ctx.accounts.mint.to_account_info(),
+                    token_program: ctx.accounts.token_program.to_account_info(),
+                },
+            ),
+            Some(ctx.accounts.authority.key()),
+            Some(ctx.accounts.member.key()),
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct I<'info> {
+    #[account(mut)]
+    pub mint: Signer<'info>,
+    pub authority: Signer<'info>,
+    pub member: Signer<'info>,
+    pub token_program: Program<'info, anchor_spl::token_interface::Token2022>,
+}
+`;
+    const kinds = await bodyKindsFor(src);
+    expect(kinds).toContain("cpi_t22_group_member_pointer_initialize");
+    expect(kinds).not.toContain("cpi_t22_group_pointer_initialize");
+  });
+
+  test("bare unqualified post-consolidation transfer_fee_initialize routes correctly", async () => {
+    // After CpiContext consolidation, the call appears unqualified.
+    // isExtCall must match `funcText === name` for this case.
+    const src = `
+use anchor_lang::prelude::*;
+use anchor_spl::token_2022::transfer_fee_initialize;
+declare_id!("Counter111111111111111111111111111111111111");
+
+#[program]
+pub mod p {
+    use super::*;
+    pub fn init(ctx: Context<I>, bp: u16, mf: u64) -> Result<()> {
+        transfer_fee_initialize(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                anchor_spl::token_2022::TransferFeeInitialize {
+                    mint: ctx.accounts.mint.to_account_info(),
+                    token_program: ctx.accounts.token_program.to_account_info(),
+                },
+            ),
+            Some(&ctx.accounts.fee_authority.key()),
+            Some(&ctx.accounts.withdraw_authority.key()),
+            bp,
+            mf,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct I<'info> {
+    #[account(mut)]
+    pub mint: Signer<'info>,
+    pub fee_authority: Signer<'info>,
+    pub withdraw_authority: Signer<'info>,
+    pub token_program: Program<'info, anchor_spl::token_interface::Token2022>,
+}
+`;
+    const kinds = await bodyKindsFor(src);
+    expect(kinds).toContain("cpi_t22_transfer_fee_initialize");
+  });
+});
+
 describe("cpi-detector dispatch precedence — qualified T22 ext fns", () => {
   test("token_2022::transfer_fee_initialize → cpi_t22_transfer_fee_initialize", async () => {
     const src = `

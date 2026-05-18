@@ -42,6 +42,35 @@ export interface CpiContextLookup {
 }
 
 /**
+ * Strict CPI function-name match. Avoids the substring-collision class
+ * that produced the T22-ext misroute bug (fix landed in commit ac4e23d
+ * after the live API surfaced `transfer_fee_initialize` getting routed
+ * through extractSplTransfer via `includes("transfer")`).
+ *
+ * Two accept shapes:
+ *   - Bare unqualified call (post-CpiContext-consolidation):
+ *     `transfer_fee_initialize(cpi_ctx, …)` → funcText === name.
+ *   - Qualified path:
+ *     `anchor_spl::token_2022_extensions::transfer_fee::transfer_fee_initialize(…)`
+ *     → funcText.endsWith("::" + name).
+ *
+ * Rejects:
+ *   - Arbitrary substring containment. `transfer_fee_initialize` does
+ *     NOT match `transfer_fee_initialize_v2` (hypothetical future name)
+ *     under this matcher; the dispatch would correctly fall through to
+ *     a more specific rule or to pass_through.
+ *   - Names that look similar but aren't exact. `transfer` does NOT
+ *     match `transfer_fee_initialize` — closing the original misroute.
+ *
+ * If a future call shape needs more flexibility (e.g. dispatch on a
+ * version-prefixed name), add a separate predicate rather than
+ * widening this one.
+ */
+function isExtCall(funcText: string, name: string): boolean {
+  return funcText === name || funcText.endsWith("::" + name);
+}
+
+/**
  * Add a `cpi_classification_lost` warning to the collector when a CPI was
  * recognised by name but the detector couldn't extract its struct fields.
  * `kind` describes the CPI surface (e.g. "SPL transfer", "set_authority"),
@@ -100,81 +129,89 @@ export function detectCpi(
   // that no SPL fn name is a substring of any T22 ext fn name, so this
   // order is safe.
   //
-  // T22 extension: non_transferable_mint_initialize. Match by helper
-  // name regardless of qualifier — Anchor programs typically `use
-  // anchor_spl::token_interface::non_transferable_mint_initialize`,
-  // making the call site unqualified. The accounts-struct field
-  // names disambiguate from any non-T22 collisions.
-  if (funcText.includes("non_transferable_mint_initialize")) {
+  // Each isExtCall match is precise: `funcText === name` OR
+  // `funcText.endsWith("::" + name)`. Previously these used
+  // `funcText.includes(name)` which had two known risks: (1) substring
+  // collisions where an unrelated future function name happens to
+  // contain an existing T22-ext name as a substring, (2) the T22-ext
+  // name being a substring of a longer future T22-ext that needs
+  // distinct dispatch. isExtCall closes both classes — see
+  // parser-cpi-dispatch-precedence.test.ts for the regression coverage.
+  if (isExtCall(funcText, "non_transferable_mint_initialize")) {
     return extractT22NonTransferableMintInitialize(callNode, collector);
   }
-  if (funcText.includes("transfer_fee_initialize")) {
+  if (isExtCall(funcText, "transfer_fee_initialize")) {
     return extractT22TransferFeeInitialize(callNode, collector);
   }
-  if (funcText.includes("transfer_fee_set")) {
+  if (isExtCall(funcText, "transfer_fee_set")) {
     return extractT22TransferFeeSet(callNode, collector);
   }
-  if (funcText.includes("immutable_owner_initialize")) {
+  if (isExtCall(funcText, "immutable_owner_initialize")) {
     return extractT22ImmutableOwnerInitialize(callNode, collector);
   }
-  if (funcText.includes("mint_close_authority_initialize")) {
+  if (isExtCall(funcText, "mint_close_authority_initialize")) {
     return extractT22MintCloseAuthorityInitialize(callNode, collector);
   }
-  if (funcText.includes("permanent_delegate_initialize")) {
+  if (isExtCall(funcText, "permanent_delegate_initialize")) {
     return extractT22PermanentDelegateInitialize(callNode, collector);
   }
-  if (funcText.includes("transfer_hook_initialize")) {
+  if (isExtCall(funcText, "transfer_hook_initialize")) {
     return extractT22TransferHookInitialize(callNode, collector);
   }
-  if (funcText.includes("transfer_hook_update")) {
+  if (isExtCall(funcText, "transfer_hook_update")) {
     return extractT22TransferHookUpdate(callNode, collector);
   }
-  if (funcText.includes("metadata_pointer_initialize")) {
+  if (isExtCall(funcText, "metadata_pointer_initialize")) {
     return extractT22MetadataPointerInitialize(callNode, collector);
   }
-  if (funcText.includes("metadata_pointer_update")) {
+  if (isExtCall(funcText, "metadata_pointer_update")) {
     return extractT22MetadataPointerUpdate(callNode, collector);
   }
-  if (funcText.includes("group_pointer_initialize")) {
-    return extractT22GroupPointerInitialize(callNode, collector);
-  }
-  if (funcText.includes("group_pointer_update")) {
-    return extractT22GroupPointerUpdate(callNode, collector);
-  }
-  if (funcText.includes("group_member_pointer_initialize")) {
+  // group_member_pointer_* MUST come before group_pointer_* — the
+  // shorter name is a substring under the strict matcher's endsWith
+  // arm only if the prefix is exactly `::`, but a tree-sitter funcText
+  // for an unqualified bare call would be just the leaf name. Order
+  // longest-first to be safe.
+  if (isExtCall(funcText, "group_member_pointer_initialize")) {
     return extractT22GroupMemberPointerInitialize(callNode, collector);
   }
-  if (funcText.includes("group_member_pointer_update")) {
+  if (isExtCall(funcText, "group_member_pointer_update")) {
     return extractT22GroupMemberPointerUpdate(callNode, collector);
   }
-  if (funcText.includes("transfer_checked_with_fee")) {
+  if (isExtCall(funcText, "group_pointer_initialize")) {
+    return extractT22GroupPointerInitialize(callNode, collector);
+  }
+  if (isExtCall(funcText, "group_pointer_update")) {
+    return extractT22GroupPointerUpdate(callNode, collector);
+  }
+  if (isExtCall(funcText, "transfer_checked_with_fee")) {
     return extractT22TransferCheckedWithFee(callNode, collector);
   }
-  if (funcText.includes("withdraw_withheld_tokens_from_mint")) {
+  if (isExtCall(funcText, "withdraw_withheld_tokens_from_mint")) {
     return extractT22WithdrawWithheldFromMint(callNode, collector);
   }
-  if (funcText.includes("harvest_withheld_tokens_to_mint")) {
+  if (isExtCall(funcText, "harvest_withheld_tokens_to_mint")) {
     return extractT22HarvestWithheldToMint(callNode, collector);
   }
-  if (funcText.includes("default_account_state_initialize")) {
+  if (isExtCall(funcText, "default_account_state_initialize")) {
     return extractT22DefaultAccountStateInit(callNode, collector);
   }
-  if (funcText.includes("default_account_state_update")) {
+  if (isExtCall(funcText, "default_account_state_update")) {
     return extractT22DefaultAccountStateUpdate(callNode, collector);
   }
-  if (funcText.includes("interest_bearing_mint_initialize")) {
+  if (isExtCall(funcText, "interest_bearing_mint_initialize")) {
     return extractT22InterestBearingMintInit(callNode, collector);
   }
-  if (funcText.includes("interest_bearing_mint_update_rate")) {
+  if (isExtCall(funcText, "interest_bearing_mint_update_rate")) {
     return extractT22InterestBearingMintUpdateRate(callNode, collector);
   }
-  if (funcText.includes("token_metadata_initialize")) {
+  if (isExtCall(funcText, "token_metadata_initialize")) {
     return extractT22TokenMetadataInitialize(callNode, collector);
   }
-  if (funcText.includes("token_metadata_update_field")) {
+  if (isExtCall(funcText, "token_metadata_update_field")) {
     return extractT22TokenMetadataUpdateField(callNode, collector);
   }
-  if (funcText.includes("token_metadata_update_authority")) {
+  if (isExtCall(funcText, "token_metadata_update_authority")) {
     return extractT22TokenMetadataUpdateAuthority(callNode, collector);
   }
 
