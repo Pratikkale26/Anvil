@@ -62,6 +62,17 @@ field via direct IR construction; their parser path would need
 cpi-detector work if an in-the-wild
 `Interface<TokenInterface>::close_account` shape surfaces.
 
+### Hardening — AI refine baseline parse-check
+
+Commit `7db4212` (task #79). The refine accept gate uses
+errors_after < errors_before to decide if a patch is acceptable.
+Pre-this-commit, if the INPUT failed tree-sitter parse, the error
+count from validationIssues might be misleading and a model-returned
+syntactically-clean garbage patch could slip through. Fix: tree-sitter
+parse every input file at the top of `refineOutput()` and refuse with
+a clear error if any fails. Side benefit: no API spend on doomed
+refines of unparseable inputs.
+
 ### Added — Validator portability blockers
 
 Commit `0a98b44`. Output validator scans `ir.imports` against
@@ -71,6 +82,23 @@ Pre-this-change Pyth / Switchboard / mpl_core / Drift programs
 passed validation and only surfaced as cargo errors downstream.
 Now `--strict` refuses the write upfront with a clear message about
 which crate is unsupported.
+
+### Added — Anchor 1.0 partial support
+
+- **Literal discriminator override** (commit `824e50b`, task #77).
+  Parser extracts `#[instruction(discriminator = [N,N,N,N,N,N,N,N])]`
+  from handler fn attrs and populates the existing
+  `instr.discriminator` IR field. New `routerDiscriminator(instr)`
+  helper picks the override over the auto-computed
+  sha256("global:<name>") when set. Both Pinocchio + Native router
+  emits honor the contract. Backward-compatible: undefined →
+  computed disc (existing behavior).
+
+- **Sniffer detects 0.32 / 1.0 with explicit version checks**
+  (audit-confirmed, no code change required this session).
+
+- `dup` constraint preservation tracked at task #78 — multi-day arc
+  (needs IR schema + AccountRef plumbing).
 
 ### Internal
 
