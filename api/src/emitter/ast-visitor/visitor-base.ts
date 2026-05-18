@@ -3436,32 +3436,27 @@ export class AstVisitorBase {
   }
 
   /**
-   * M2a — legacy Pyth oracle read. Session-1 stub: emit a TODO marker so
-   * the build refuses (the validator surfaces it as an unsafe-marker
-   * error under --strict). Session-2 wires the real PriceFeed
-   * deserialize + age-check.
-   *
-   * The price-binding local is still declared as a placeholder unit
-   * struct so downstream code that references `.price` / `.exponent`
-   * / `.conf` / `.publish_time` compiles (they get bound by the real
-   * emit; the stub leaves them as todo!() so the unsafe-marker test
-   * still recognises this as un-shipped code).
+   * M2b — legacy Pyth oracle read. Dispatches to the per-target
+   * emitter (`emitPythReadPriceLegacy`):
+   *   Native: re-emits `pyth_sdk_solana::*` calls; the crate is auto-
+   *     injected into Cargo.toml via project-scaffold.
+   *   Pinocchio: hand-rolls the PriceAccountV2 byte deserialization
+   *     (offsets are from pyth-sdk-solana's PriceAccount struct), with
+   *     a magic-header check to fail loud on the wrong account type.
    */
   visitCpiPythReadPriceLegacy(stmt: CpiPythReadPriceLegacy): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
     const priceBinding = snakeCase(stmt.priceBinding);
-    const feedAccount = snakeCase(stmt.feedAccount);
-    const lines: string[] = [
-      `    // ⚠️ Anvil TODO: cpi_pyth_read_price_legacy emit not yet implemented (M2b).`,
-      `    // Source pattern:`,
-      `    //   let ${stmt.feedBinding ?? "<feed>"} = load_price_feed_from_account_info(&${feedAccount})?;`,
-      `    //   let ${priceBinding} = ${stmt.feedBinding ?? "<feed>"}.get_price_no_older_than(${stmt.clockExpr}, ${stmt.maxAgeExpr})${stmt.staleErrExpr ? `.ok_or(${stmt.staleErrExpr})` : ""}?;`,
-      `    // The full emit hand-rolls the PriceFeed Borsh deserialize + age-check`,
-      `    // against the documented account layout. Until then, manual rebuild required.`,
-      `    let ${priceBinding} = todo!("Pyth read emit pending M2b") as ();`,
-    ];
-    return this.applyStructuralize(lines);
+    const feedAccount = w.resolveAccountInfoVar(snakeCase(stmt.feedAccount));
+    const code = w.emitter.emitPythReadPriceLegacy(
+      feedAccount,
+      priceBinding,
+      stmt.clockExpr,
+      stmt.maxAgeExpr,
+      stmt.staleErrExpr,
+    );
+    return this.applyStructuralize([code]);
   }
 
   /**

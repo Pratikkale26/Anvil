@@ -520,6 +520,29 @@ export abstract class BaseEmitter {
   // ── Type mapping ──
   abstract rustTypeForFramework(typeName: string): string;
 
+  // ── M2b — Pyth legacy oracle read ──
+  // Emit the deserialize + age-check sequence that maps the legacy
+  // `let X = load_price_feed_from_account_info(&ACC)?; let Y =
+  // X.get_price_no_older_than(&clock, max_age)?;` source idiom to a
+  // target-portable read.
+  //
+  // Native: re-emits the `pyth_sdk_solana::*` call chain — Cargo.toml
+  //   auto-injects the crate via project-scaffold's NATIVE_OPTIONAL_DEPS.
+  //   Y is typed as `pyth_sdk_solana::Price` (fields price / conf /
+  //   exponent / publish_time).
+  // Pinocchio: hand-rolls the PriceAccountV2 byte deserialization (the
+  //   crate doesn't compile on the stripped target). Magic header
+  //   (0xa1b2c3d4) check + length guard + slice read of the documented
+  //   offsets. Y is typed as the locally-emitted `AnvilPythPrice`
+  //   struct (same field shape).
+  abstract emitPythReadPriceLegacy(
+    feedAccount: string,
+    priceBinding: string,
+    clockExpr: string,
+    maxAgeExpr: string,
+    staleErrExpr: string | undefined,
+  ): string;
+
   // ── Helpers that the framework might need ──
   abstract emitHelperFunctions(ir: SolanaIR): string;
 

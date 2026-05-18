@@ -2353,6 +2353,80 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
     return typeName;
   }
 
+  /**
+   * M2b — Pinocchio Pyth legacy read hand-rolls the PriceAccountV2 byte
+   * deserialization. Layout pinned to pyth-sdk-solana 0.10's
+   * PriceAccount struct (verified against the on-chain account format
+   * Pyth publishes for legacy feeds — see
+   * https://github.com/pyth-network/pyth-sdk-rs/blob/main/pyth-sdk-solana/src/state.rs).
+   *
+   * Offsets used:
+   *   0..4    magic (u32 LE) — must equal 0xa1b2c3d4 ("pyth" little-endian)
+   *   20..24  expo (i32 LE) — signed exponent
+   *   96..104 timestamp (i64 LE) — publish_time for the agg block
+   *   208..216 agg.price (i64 LE)
+   *   216..224 agg.conf (u64 LE)
+   *
+   * The emit defines a one-off AnvilPythPrice struct locally so the
+   * downstream `<priceBinding>.price` / `.exponent` / `.conf` /
+   * `.publish_time` field reads compile (same field shape as
+   * pyth_sdk_solana::Price).
+   *
+   * Magic check fires loud if the account is the wrong type — better
+   * UX than silently mis-deserializing arbitrary bytes.
+   *
+   * NOTE: not differentially gated against real Pyth bytes yet; the
+   * cloned validator carries Pyth Receiver (modern PriceUpdateV2),
+   * not the legacy PriceAccount format. Best-effort for now; emit
+   * shape is correct, byte offsets are documented but unverified
+   * end-to-end. See posts/plan-pyth-m2.md Risk Register.
+   */
+  override emitPythReadPriceLegacy(
+    feedAccount: string,
+    priceBinding: string,
+    _clockExpr: string,
+    maxAgeExpr: string,
+    staleErrExpr: string | undefined,
+  ): string {
+    const errArm = staleErrExpr
+      ? `return Err(${staleErrExpr});`
+      : `return Err(ProgramError::Custom(0xa1b2c3d4));`;
+    // clockExpr from the source is `&Clock::get()?` — Anchor's `Clock` is
+    // `solana_program::clock::Clock` which isn't in scope on Pinocchio.
+    // Synthesize the target-portable form via emitClockGetExprNoTry.
+    const clockTs = this.emitClockGetExpr("unix_timestamp");
+    return [
+      `    let __pyth_data = ${feedAccount}.try_borrow_data()?;`,
+      `    if __pyth_data.len() < 240 {`,
+      `        return Err(ProgramError::InvalidAccountData);`,
+      `    }`,
+      `    // PriceAccountV2 magic = 0xa1b2c3d4 ("pyth" LE)`,
+      `    if u32::from_le_bytes(__pyth_data[0..4].try_into().map_err(|_| ProgramError::InvalidAccountData)?) != 0xa1b2c3d4 {`,
+      `        return Err(ProgramError::InvalidAccountData);`,
+      `    }`,
+      `    let __pyth_expo = i32::from_le_bytes(__pyth_data[20..24].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_publish_time = i64::from_le_bytes(__pyth_data[96..104].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_price = i64::from_le_bytes(__pyth_data[208..216].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_conf = u64::from_le_bytes(__pyth_data[216..224].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_now = ${clockTs};`,
+      `    if __pyth_now.saturating_sub(__pyth_publish_time) > (${maxAgeExpr}) as i64 {`,
+      `        ${errArm}`,
+      `    }`,
+      `    pub struct AnvilPythPrice {`,
+      `        pub price: i64,`,
+      `        pub conf: u64,`,
+      `        pub exponent: i32,`,
+      `        pub publish_time: i64,`,
+      `    }`,
+      `    let ${priceBinding} = AnvilPythPrice {`,
+      `        price: __pyth_price,`,
+      `        conf: __pyth_conf,`,
+      `        exponent: __pyth_expo,`,
+      `        publish_time: __pyth_publish_time,`,
+      `    };`,
+    ].join("\n");
+  }
+
   // Pinocchio: Pubkey IS [u8; 32], so deserialization in arg parsing is a raw slice
   override emitPubkeyDeserialize(start: number, end: number): string {
     return `data[${start}..${end}].try_into().map_err(|_| ProgramError::InvalidInstructionData)?`;

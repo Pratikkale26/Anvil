@@ -1600,6 +1600,42 @@ ${maybeRead}    let seeds = &[
     return typeName;
   }
 
+  /**
+   * M2b — Native Pyth legacy read uses the pyth-sdk-solana crate directly.
+   * The crate is auto-injected via project-scaffold's NATIVE_OPTIONAL_DEPS
+   * when ir.imports references pyth_sdk_solana::* (the parser keeps the
+   * `use` line even though the load_* call is consumed into the typed IR
+   * kind, so the dep stays alive). Emit re-builds the call chain
+   * fully-qualified so it works regardless of whether the source had
+   * `use pyth_sdk_solana::load_price_feed_from_account_info;`.
+   *
+   * The price binding ends up typed as `pyth_sdk_solana::Price` — fields
+   * `price` (i64), `conf` (u64), `exponent` (i32), `publish_time` (i64).
+   * Downstream field reads (`current_price.price` etc.) compile cleanly.
+   */
+  override emitPythReadPriceLegacy(
+    feedAccount: string,
+    priceBinding: string,
+    clockExpr: string,
+    maxAgeExpr: string,
+    staleErrExpr: string | undefined,
+  ): string {
+    // pyth_sdk_solana::load_price_feed_from_account_info expects an
+    // &AccountInfo (not a Box / Account wrapper). The feedAccount has
+    // already been resolved via resolveAccountInfoVar so it's the bare
+    // `&accounts[N]` form; pass it through.
+    const errArm = staleErrExpr
+      ? `.ok_or(${staleErrExpr})?`
+      : `.ok_or(ProgramError::Custom(0xa1b2c3d4))?`;
+    return [
+      `    let __pyth_feed = pyth_sdk_solana::load_price_feed_from_account_info(${feedAccount})`,
+      `        .map_err(|_| ProgramError::InvalidAccountData)?;`,
+      `    let ${priceBinding} = __pyth_feed`,
+      `        .get_price_no_older_than(${clockExpr}, ${maxAgeExpr})`,
+      `        ${errArm};`,
+    ].join("\n");
+  }
+
   override emitPubkeyDeserialize(start: number, end: number): string {
     return `Pubkey::new_from_array(
         data[${start}..${end}]

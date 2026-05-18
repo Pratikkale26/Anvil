@@ -9,11 +9,9 @@
  * the write upfront.
  *
  * This file locks the contract:
- * - pyth_sdk_solana blocks BOTH targets (verdict is unconditional
- *   "blocker" per the lint-analyzer table — Anvil doesn't structurally
- *   rewrite the price-feed read regardless of which target ships the
- *   crate downstream)
  * - mpl_core blocks BOTH targets (no structural rewrite + no helper)
+ * - pyth_sdk_solana is "review" since M2b (structural emit shipped) —
+ *   no portability error, but a review-bucket finding through /lint.
  * - clean imports (anchor_lang, anchor_spl::token) → no errors
  * - duplicate-prefix dedupe so one offending crate yields one error
  */
@@ -54,23 +52,23 @@ function mkOutput(target: "pinocchio" | "native", extraContent = ""): EmitterOut
 }
 
 describe("validator checkPortabilityBlockers", () => {
-  test("pyth_sdk_solana import on Pinocchio → blocker error", () => {
+  test("pyth_sdk_solana import on Pinocchio → no portability error (M2b downgraded to review)", () => {
+    // M2b shipped a structural emit (api/src/emitter/pinocchio-emitter.ts
+    // emitPythReadPriceLegacy), so the lint-analyzer verdict relaxed from
+    // "blocker" → "review". checkPortabilityBlockers only escalates
+    // blocker-verdict imports to validator errors; review-verdict
+    // imports show up in /lint findings but don't refuse the emit.
     const ir = buildIr(["use pyth_sdk_solana::state::SolanaPriceAccount;"]);
     const issues = validateEmitterOutput(ir, mkOutput("pinocchio"));
-    const blockers = issues.filter((i) => i.severity === "error" && i.message.includes("pyth_sdk_solana"));
-    expect(blockers.length).toBeGreaterThan(0);
+    const blockers = issues.filter((i) => i.severity === "error" && i.message.includes("[portability]") && i.message.includes("pyth_sdk_solana"));
+    expect(blockers.length).toBe(0);
   });
 
-  test("pyth_sdk_solana import on Native → also blocker (verdict is unconditional)", () => {
-    // Per the lint-analyzer's verdict table, pyth_sdk_solana is a blocker
-    // on both targets — Native ships the crate but Anvil still doesn't
-    // structurally rewrite the price-feed read, so emit is incomplete.
-    // If this assertion ever flips, the lint-analyzer's verdict has been
-    // softened and this test should be updated alongside.
+  test("pyth_sdk_solana import on Native → no portability error (M2b)", () => {
     const ir = buildIr(["use pyth_sdk_solana::state::SolanaPriceAccount;"]);
     const issues = validateEmitterOutput(ir, mkOutput("native"));
     const blockers = issues.filter((i) => i.severity === "error" && i.message.includes("[portability]") && i.message.includes("pyth_sdk_solana"));
-    expect(blockers.length).toBe(1);
+    expect(blockers.length).toBe(0);
   });
 
   test("mpl_core blocks BOTH pinocchio AND native (no structural rewrite either way)", () => {
@@ -95,13 +93,15 @@ describe("validator checkPortabilityBlockers", () => {
   });
 
   test("multiple blockers in one file → one error per unique prefix (deduped)", () => {
+    // Use a prefix that's still a blocker (mpl_core, drift) — pyth_sdk_solana
+    // is no longer a blocker post-M2b.
     const ir = buildIr([
-      "use pyth_sdk_solana::state::PriceAccount;",
-      "use pyth_sdk_solana::utils;",
-      "use pyth_sdk_solana::constants;",
+      "use mpl_core::accounts::Asset;",
+      "use mpl_core::utils;",
+      "use mpl_core::constants;",
     ]);
     const issues = validateEmitterOutput(ir, mkOutput("pinocchio"));
-    const pythBlockers = issues.filter((i) => i.severity === "error" && i.message.includes("[portability]") && i.message.includes("pyth_sdk_solana"));
-    expect(pythBlockers.length).toBe(1);
+    const blockers = issues.filter((i) => i.severity === "error" && i.message.includes("[portability]") && i.message.includes("mpl_core"));
+    expect(blockers.length).toBe(1);
   });
 });

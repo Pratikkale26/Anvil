@@ -146,9 +146,11 @@ export const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
     prefix: "pyth_sdk_solana",
     category: "Unsupported integration",
     title: "pyth_sdk_solana imports",
-    detail: () =>
-      "Legacy Pyth SDK reads aren't transpiled. Suggested fix: migrate to the receiver SDK or write the deserialization manually after emit.",
-    verdict: () => "blocker",
+    detail: (target) =>
+      target === "native"
+        ? "Legacy Pyth SDK reads are transpiled (M2b) — Native re-uses the pyth-sdk-solana crate which is auto-injected into Cargo.toml. Verify the runtime accounts use the legacy PriceAccountV2 format (Pyth has been migrating publishers to the receiver SDK)."
+        : "Legacy Pyth SDK reads are transpiled to a hand-rolled PriceAccountV2 byte deserialization on Pinocchio (M2b). The emit is best-effort: byte offsets pinned to pyth-sdk-solana 0.10's PriceAccount struct, with a magic-header check (0xa1b2c3d4) to fail loud on the wrong account type. Verify against a real PriceAccount payload before deploy.",
+    verdict: () => "review",
   },
   {
     prefix: "pythnet_sdk",
