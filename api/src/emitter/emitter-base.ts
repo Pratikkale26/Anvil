@@ -101,6 +101,7 @@ import {
   promoteImplFnVisibility,
 } from "./emitter-base-utils.js";
 import { getParserSync, type SyntaxNode } from "../parser/ts-init.js";
+import { MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
 // ─── Abstract Emitter Interface ──────────────────────────────────────────────
 
@@ -1449,7 +1450,7 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
         // checkUnsafeMarkers as an error. The pre-P0.1 emit `// TODO: parse`
         // was stripped by stripLineComments before ERROR_PATTERNS scanned,
         // so the gap was silently shipping a missing arg-deserialization.
-        return `    // ⚠️ Anvil TODO: parse ${name}: ${arg.type} — custom-type Borsh deserialization not yet implemented for this arg. Hand-port the deserializer or simplify the arg type.`;
+        return `    // ${MARKER_ANVIL_TODO_PREFIX} parse ${name}: ${arg.type} — custom-type Borsh deserialization not yet implemented for this arg. Hand-port the deserializer or simplify the arg type.`;
     }
   }
 
@@ -2443,7 +2444,7 @@ ${fields}
     }
     return [
       `// ╔════════════════════════════════════════════════════════════════════════════════╗`,
-      `// ║  ⚠️  ANVIL: function below was carried from the Anchor source and partially  ║`,
+      `// ║  ${MARKER_ANVIL_PREFIX}: function below was carried from the Anchor source and partially  ║`,
       `// ║  transformed. It may still use Anchor APIs (ctx, CpiContext, etc.) and        ║`,
       `// ║  MUST be reviewed for ${this.frameworkName.padEnd(52)} ║`,
       `// ║  before this code will compile.                                              ║`,
@@ -2572,7 +2573,7 @@ export function commentOutSiblingStateAccesses(
         .split("\n")
         .map((line) => (line.length > 0 ? `// ${line}` : "//"))
         .join("\n");
-      return `${prelude}// ⚠️ Anvil TODO: AccountsRef struct parse failed (likely seeds::program = sibling::ID constraint or similar) — body references unresolved accounts. Manual port required.
+      return `${prelude}// ${MARKER_ANVIL_TODO_PREFIX} AccountsRef struct parse failed (likely seeds::program = sibling::ID constraint or similar) — body references unresolved accounts. Manual port required.
 ${stubbed}
     Ok(())
 `;
@@ -2637,7 +2638,7 @@ ${stubbed}
   // now commented out, so without this the function body ends with a
   // bare if-stmt or commented block and rustc can't infer the return
   // type (E0317 if-may-be-missing-an-else).
-  return `${prelude}// ⚠️ Anvil TODO: sibling-Anchor-program state access — instruction body depends on opaque sibling-crate types (${accountList}); transpile is structural-only. Manual port required.
+  return `${prelude}// ${MARKER_ANVIL_TODO_PREFIX} sibling-Anchor-program state access — instruction body depends on opaque sibling-crate types (${accountList}); transpile is structural-only. Manual port required.
 ${stubbed}
     Ok(())
 `;
@@ -2805,7 +2806,7 @@ function commentOutBlock(raw: string, reason: string): string {
     .split("\n")
     .map((line) => (line.length > 0 ? `// ${line}` : "//"))
     .join("\n");
-  return `// ⚠️ Anvil TODO: ${reason}\n${commented}`;
+  return `// ${MARKER_ANVIL_TODO_PREFIX} ${reason}\n${commented}`;
 }
 
 /**
@@ -2903,7 +2904,7 @@ export function rewriteSiblingCpiCalls(body: string): string {
               .split("\n")
               .map((line) => (line.length > 0 ? `// ${line}` : "//"))
               .join("\n");
-            out += `// ⚠️ Anvil TODO: ${SIBLING_CPI_BANNER}\n${commented}`;
+            out += `// ${MARKER_ANVIL_TODO_PREFIX} ${SIBLING_CPI_BANNER}\n${commented}`;
             cursor = r.end;
           }
           out += body.slice(cursor);
@@ -2966,14 +2967,14 @@ export function rewriteSiblingCpiCalls(body: string): string {
       .split("\n")
       .map((line) => (line.length > 0 ? `// ${line}` : "//"))
       .join("\n");
-    out += `// ⚠️ Anvil TODO: ${SIBLING_CPI_BANNER}\n${commented}`;
+    out += `// ${MARKER_ANVIL_TODO_PREFIX} ${SIBLING_CPI_BANNER}\n${commented}`;
     cursor = r.end;
   }
   out += body.slice(cursor);
   return out;
 }
 
-const STUB_BODY = ` {\n        // ⚠️ Anvil TODO: Anchor-only impl method body — manual port required.\n        // Original referenced CpiContext / ctx.accounts / require! macros that\n        // have no pinocchio/native equivalent at this layer.\n        Err(ProgramError::Custom(0))\n    }`;
+const STUB_BODY = ` {\n        // ${MARKER_ANVIL_TODO_PREFIX} Anchor-only impl method body — manual port required.\n        // Original referenced CpiContext / ctx.accounts / require! macros that\n        // have no pinocchio/native equivalent at this layer.\n        Err(ProgramError::Custom(0))\n    }`;
 
 const ANCHOR_ONLY_MACRO_NAMES = new Set([
   "require", "require_eq", "require_neq",

@@ -7,6 +7,8 @@
  * stays focused on the class API. No behaviour change.
  */
 
+import { MARKER_ANVIL_TODO_PREFIX } from "./markers.js";
+
 /**
  * Build the "this helper uses Anchor-only types — manual port required"
  * banner + comment-out the body line-by-line. Used by emitHelpersFile()
@@ -18,9 +20,15 @@
  * literals; a single line-prefix sweep is unambiguous.
  */
 export function commentOutHelperBlock(rawCode: string, name: string, frameworkName: string): string {
+  // Pre-P0.1-followup the banner used "⚠️  ANVIL TODO" (uppercase, double-
+  // space) which the validator's case-sensitive regex did NOT match —
+  // every commented-out unsalvageable helper shipped as a stub the
+  // validator silently missed. Migrated to MARKER_ANVIL_TODO_PREFIX so
+  // checkUnsafeMarkers() catches the banner line; the constant + the
+  // validator regex source both derive from markers.ts (linkage test).
   const banner = [
     `// ╔════════════════════════════════════════════════════════════════════════════╗`,
-    `// ║  ⚠️  ANVIL TODO: helper '${name}' uses Anchor-only types`,
+    `// ║  ${MARKER_ANVIL_TODO_PREFIX} helper '${name}' uses Anchor-only types`,
     `// ║  (InterfaceAccount, Interface<TokenInterface>, Box<Account>, etc.) that`,
     `// ║  don't exist on ${frameworkName}. Body commented out below; instruction call sites`,
     `// ║  are also commented out so the program compiles. MANUAL PORT REQUIRED.`,
@@ -124,7 +132,7 @@ export function commentOutUnsalvageableCallSites(text: string, helpers: Set<stri
   for (let i = 0; i < lines.length; i++) {
     if (commentOut.has(i)) {
       if (!prevCommented) {
-        out += `// ⚠️ Anvil TODO: call site of unsalvageable helper commented out — manual port required\n`;
+        out += `// ${MARKER_ANVIL_TODO_PREFIX} call site of unsalvageable helper commented out — manual port required\n`;
       }
       const original = lines[i] ?? "";
       out += `// ${original}` + (i < lines.length - 1 ? "\n" : "");

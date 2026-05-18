@@ -24,7 +24,7 @@ pub fn bump_seed(
 }
 
 // ╔════════════════════════════════════════════════════════════════════════════╗
-// ║  ⚠️  ANVIL TODO: helper 'transfer_via_helper' uses Anchor-only types
+// ║  ⚠️ Anvil TODO: helper 'transfer_via_helper' uses Anchor-only types
 // ║  (InterfaceAccount, Interface<TokenInterface>, Box<Account>, etc.) that
 // ║  don't exist on Pinocchio. Body commented out below; instruction call sites
 // ║  are also commented out so the program compiles. MANUAL PORT REQUIRED.

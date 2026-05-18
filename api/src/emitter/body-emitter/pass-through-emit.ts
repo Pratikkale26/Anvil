@@ -18,6 +18,7 @@ import {
   simplifyPassThroughCode,
 } from "../emitter-utils.js";
 import { hasResidualAnchorPatterns } from "../emitter-helpers.js";
+import { MARKER_ANVIL_PREFIX, MARKER_ANVIL_REVIEW_PREFIX } from "../markers.js";
 import type { BodyWalker } from "./walker.js";
 import {
   qualifySysvarsStructural,
@@ -328,7 +329,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
         // the runtime call would always fail. Compiling-but-no-op is better
         // than a 5-error pile that hides the rest of the program's issues.
         // The TODO above tells the user what to fill in.
-        return `// ⚠️ Anvil: CPI call to ${fnName} — requires manual implementation${argsStr}\n    // Accounts: ${accountVars.join(", ")}\n    // TODO(manual): rebuild this CPI for the target framework. Source signature\n    // and account list above. Reference (commented out — does not compile on\n    // pinocchio because solana_program is not in scope, and accounts/data are\n    // empty placeholders even on native):\n    //\n    // invoke(\n    //     &solana_program::instruction::Instruction {\n    //         program_id: *${accountVars.length > 0 ? accountVars[0] : "program"}.key,\n    //         accounts: vec![],\n    //         data: vec![],\n    //     },\n    //     &[${accountVars.map((v) => `${v}.clone()`).join(", ")}],\n    // )?;`;
+        return `// ${MARKER_ANVIL_PREFIX}: CPI call to ${fnName} — requires manual implementation${argsStr}\n    // Accounts: ${accountVars.join(", ")}\n    // TODO(manual): rebuild this CPI for the target framework. Source signature\n    // and account list above. Reference (commented out — does not compile on\n    // pinocchio because solana_program is not in scope, and accounts/data are\n    // empty placeholders even on native):\n    //\n    // invoke(\n    //     &solana_program::instruction::Instruction {\n    //         program_id: *${accountVars.length > 0 ? accountVars[0] : "program"}.key,\n    //         accounts: vec![],\n    //         data: vec![],\n    //     },\n    //     &[${accountVars.map((v) => `${v}.clone()`).join(", ")}],\n    // )?;`;
       },
     );
   }
@@ -341,7 +342,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
         const argsStr = args ? cleanInlineExpr(args) : "";
         // Same rationale as the CpiContext stub above — comment out the
         // broken invoke skeleton so the rest of the file still compiles.
-        return `// ⚠️ Anvil: CPI to ${moduleName}::${fnName}\n    // Original args: ${argsStr}\n    // TODO(manual): rebuild for target framework. Reference skeleton (does\n    // not compile — placeholder only):\n    //\n    // invoke(\n    //     &solana_program::instruction::Instruction {\n    //         program_id: *${ctxVar}_program.key,\n    //         accounts: vec![],\n    //         data: vec![], // discriminator + args for '${snakeCase(fnName)}'\n    //     },\n    //     &[],\n    // )?;`;
+        return `// ${MARKER_ANVIL_PREFIX}: CPI to ${moduleName}::${fnName}\n    // Original args: ${argsStr}\n    // TODO(manual): rebuild for target framework. Reference skeleton (does\n    // not compile — placeholder only):\n    //\n    // invoke(\n    //     &solana_program::instruction::Instruction {\n    //         program_id: *${ctxVar}_program.key,\n    //         accounts: vec![],\n    //         data: vec![], // discriminator + args for '${snakeCase(fnName)}'\n    //     },\n    //     &[],\n    // )?;`;
       },
     );
   }
@@ -358,7 +359,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     code = `    ${transformedRawCode};`;
   }
   if (stmt.needsReview && hasResidualAnchorPatterns(transformedRawCode)) {
-    code = `    // ⚠️ Anvil: Review this section — ${stmt.reviewReason ?? "may need manual verification"}\n${code}`;
+    code = `    // ${MARKER_ANVIL_REVIEW_PREFIX} this section — ${stmt.reviewReason ?? "may need manual verification"}\n${code}`;
   }
   w.lines.push(code);
 }

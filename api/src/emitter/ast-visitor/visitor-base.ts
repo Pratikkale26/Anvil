@@ -613,6 +613,7 @@ import {
   resolveSignerSeedsExpr,
 } from "../body-emitter/cpi-helpers.js";
 import { handlePassThrough } from "../body-emitter/pass-through-emit.js";
+import { MARKER_ANVIL_PREFIX } from "../markers.js";
 import { emitPdaSignerSeedsPrelude } from "../body-emitter/pda-signer-seeds-emit.js";
 /**
  * Inline zero-copy helpers (formerly in body-emitter/handlers/zero-copy.ts;
@@ -1489,7 +1490,7 @@ export class AstVisitorBase {
         // stmts: a raw_line for the comment (verbatim, with its 4-space
         // indent matching the original) and an expr_stmt for the call.
         return [
-          comment("⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio"),
+          comment(`${MARKER_ANVIL_PREFIX}: formatted msg!() collapsed to static sol_log for Pinocchio`),
           solLogCall,
         ];
       }
@@ -2874,7 +2875,7 @@ export class AstVisitorBase {
     }
     const lines: string[] = [];
     for (const preludeLine of cpiPrelude) lines.push(preludeLine);
-    lines.push(`    // ⚠️ Anvil: Custom CPI — verify this works with ${w.emitter.frameworkName}`);
+    lines.push(`    // ${MARKER_ANVIL_PREFIX}: Custom CPI — verify this works with ${w.emitter.frameworkName}`);
     // Tail-detection mirrors handleCpiCustom: `invoke[_signed](...)` → `?;`,
     // other calls ending in `)` → `;`, expressions already terminated stay
     // as-is.

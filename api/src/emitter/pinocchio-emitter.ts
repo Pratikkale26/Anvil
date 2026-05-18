@@ -36,7 +36,7 @@ import {
   irNeedsMplCreateMetadataV3Helper,
   irNeedsMplCreateMasterEditionV3Helper,
 } from "./emitter-helpers.js";
-import { MARKER_DECIMALS_FALLBACK } from "./markers.js";
+import { MARKER_DECIMALS_FALLBACK, MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
 /**
  * Token-2022 checked variants need the mint's `.decimals`. Anchor source
@@ -871,7 +871,7 @@ ${invokeCall}
     const authTypeByte =
       variant && variantByte[variant] !== undefined
         ? `${variantByte[variant]}u8`
-        : `2u8/* ⚠️ Anvil TODO: unrecognized AuthorityType '${authorityType}', defaulted to AccountOwner */`;
+        : `2u8/* ${MARKER_ANVIL_TODO_PREFIX} unrecognized AuthorityType '${authorityType}', defaulted to AccountOwner */`;
     const programIdConst =
       opts?.tokenProgram === "token_2022"
         ? TOKEN_2022_PROGRAM_ID_CONST
@@ -1225,7 +1225,7 @@ ${TOKEN_2022_PROGRAM_ID_CONST}
     //   Key(s)→ 0x03 + u32 LE strlen + UTF-8 bytes
     const enc = mapFieldLiteralToEncoding(field);
     if (enc === null) {
-      return `    // ⚠️ Anvil TODO: token_metadata_update_field(metadata=${metadata}, field=${field}, value=${value})
+      return `    // ${MARKER_ANVIL_TODO_PREFIX} token_metadata_update_field(metadata=${metadata}, field=${field}, value=${value})
     //   Pinocchio path supports literal Field::{Name,Symbol,Uri,Key("...")};
     //   the source uses a non-literal expression. Hand-roll the disc+payload
     //   if needed.`;
@@ -1296,7 +1296,7 @@ ${fieldBlock}
     // Wire payload: 8-byte disc + 32-byte OptionalNonZeroPubkey (zeros = None).
     const enc = mapNewAuthorityLiteralToEncoding(newAuthority);
     if (enc === null) {
-      return `    // ⚠️ Anvil TODO: token_metadata_update_authority(metadata=${metadata}, new_authority=${newAuthority})
+      return `    // ${MARKER_ANVIL_TODO_PREFIX} token_metadata_update_authority(metadata=${metadata}, new_authority=${newAuthority})
     //   Pinocchio path supports literal OptionalNonZeroPubkey::try_from(None|Some(<pk>))?;
     //   the source uses a non-literal expression. Hand-roll the disc+32-byte payload
     //   if needed.`;
@@ -1337,7 +1337,7 @@ ${payloadBlock}
     // state value. Total: 3 bytes.
     const stateByte = mapAccountStateLiteralToByte(state);
     if (stateByte === null) {
-      return `    // ⚠️ Anvil TODO: default_account_state_initialize(${mint}, state=${state})
+      return `    // ${MARKER_ANVIL_TODO_PREFIX} default_account_state_initialize(${mint}, state=${state})
     //   Pinocchio path supports literal &AccountState::{Uninitialized,Initialized,Frozen};
     //   the source uses a non-literal expression. Hand-roll the u8 byte if needed.`;
     }
@@ -1379,7 +1379,7 @@ ${invokeCall}
     // as Initialize plus the freeze_authority readonly_signer meta.
     const stateByte = mapAccountStateLiteralToByte(state);
     if (stateByte === null) {
-      return `    // ⚠️ Anvil TODO: default_account_state_update(${mint}, authority=${freezeAuthority}, state=${state})
+      return `    // ${MARKER_ANVIL_TODO_PREFIX} default_account_state_update(${mint}, authority=${freezeAuthority}, state=${state})
     //   Pinocchio path supports literal &AccountState::{Uninitialized,Initialized,Frozen};
     //   the source uses a non-literal expression. Hand-roll the u8 byte if needed.`;
     }
@@ -2243,7 +2243,7 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
         return `    pinocchio::log::sol_log(${literal});`;
       }
       // Shape 2: literal followed by more (format args). Collapse.
-      return `    // ⚠️ Anvil: formatted msg!() collapsed to static sol_log for Pinocchio\n    pinocchio::log::sol_log(${literal});`;
+      return `    // ${MARKER_ANVIL_PREFIX}: formatted msg!() collapsed to static sol_log for Pinocchio\n    pinocchio::log::sol_log(${literal});`;
     }
     // Shape 3: no leading literal. Pass through and let the compiler /
     // developer catch anything weird.
@@ -2377,7 +2377,7 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
             ].join("\n");
           }
           // Unknown accessor type — emit a TODO so the user sees the gap.
-          return `    // ⚠️ Anvil TODO: accessor(${t}) on field ${name} — only Pubkey is supported today; hand-port the get/set methods.`;
+          return `    // ${MARKER_ANVIL_TODO_PREFIX} accessor(${t}) on field ${name} — only Pubkey is supported today; hand-port the get/set methods.`;
         })
         .join("\n");
       const accessorBlock = accessorMethods ? `\n${accessorMethods}` : "";
@@ -3763,7 +3763,7 @@ function commentOutT22Ranges(body: string, ranges: StmtRange[]): string {
       .split("\n")
       .map((line) => (line.length > 0 ? `// ${line}` : "//"))
       .join("\n");
-    outStr += `// ⚠️ Anvil TODO: Token-2022 extension call site has no pinocchio equivalent — manual port required\n${commented}`;
+    outStr += `// ${MARKER_ANVIL_TODO_PREFIX} Token-2022 extension call site has no pinocchio equivalent — manual port required\n${commented}`;
     cursor = r.stmtEnd;
   }
   outStr += body.slice(cursor);
@@ -3886,7 +3886,7 @@ function commentOutRanges(body: string, ranges: StmtRange[]): string {
       .split("\n")
       .map((line) => (line.length > 0 ? `// ${line}` : "//"))
       .join("\n");
-    out += `// ⚠️ Anvil TODO: solana_program direct call has no pinocchio equivalent — manual port required\n${commented}`;
+    out += `// ${MARKER_ANVIL_TODO_PREFIX} solana_program direct call has no pinocchio equivalent — manual port required\n${commented}`;
     cursor = r.stmtEnd;
   }
   out += body.slice(cursor);

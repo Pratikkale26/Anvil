@@ -48,6 +48,7 @@ import type { BodyEmitterCallbacks, BodyEmitterContext } from "./types.js";
 // (handlePassThrough, handlePdaSignerSeeds) live in body-emitter/ leaf
 // modules and are imported by the visitor directly.
 import { applyPostEmitCleanup } from "./post-emit-cleanup.js";
+import { MARKER_ANVIL_PREFIX } from "../markers.js";
 
 export class BodyWalker {
   readonly lines: string[] = [];
@@ -760,12 +761,12 @@ export class BodyWalker {
     // user at the right thing instead of just rejecting the emit silently.
     transformed = transformed.replace(
       /&\s*ctx\.bumps\b(?!\.\w)/g,
-      "&__BUMPS_FULL_STRUCT_TODO__ /* ⚠️ Anvil: full bumps struct passed as ref (multi-file impl-method delegate). Anvil doesn't parse contexts/*.rs yet — port the receiver inline or pass individual bump fields. */",
+      `&__BUMPS_FULL_STRUCT_TODO__ /* ${MARKER_ANVIL_PREFIX}: full bumps struct passed as ref (multi-file impl-method delegate). Anvil doesn't parse contexts/*.rs yet — port the receiver inline or pass individual bump fields. */`,
     );
     // Bare `ctx.bumps` (no .field, no leading &) — same rationale.
     transformed = transformed.replace(
       /\bctx\.bumps\b(?!\.\w)/g,
-      "__BUMPS_FULL_STRUCT_TODO__ /* ⚠️ Anvil: full bumps struct value (multi-file impl-method delegate). */",
+      `__BUMPS_FULL_STRUCT_TODO__ /* ${MARKER_ANVIL_PREFIX}: full bumps struct value (multi-file impl-method delegate). */`,
     );
     return { prelude, code: transformed };
   }
@@ -1397,14 +1398,14 @@ export class BodyWalker {
     transformed = transformed.replace(
       /token_interface::set_authority\(\s*(?:ctx\.accounts\.)?into\(\)\s*,\s*AuthorityType::AccountOwner\s*,\s*Some\((\w+)\)\s*,?\s*\)\?;/g,
       (_full, newAuthority: string) =>
-        `// ⚠️ Anvil: set_authority CPI — manually verify account references\n    invoke(\n        &spl_token::instruction::set_authority(\n            token_program.key,\n            initializer_deposit_token_account.key,\n            Some(&${newAuthority}),\n            spl_token::instruction::AuthorityType::AccountOwner,\n            initializer.key,\n            &[],\n        )?,\n        &[initializer_deposit_token_account.clone(), initializer.clone()],\n    )?;`,
+        `// ${MARKER_ANVIL_PREFIX}: set_authority CPI — manually verify account references\n    invoke(\n        &spl_token::instruction::set_authority(\n            token_program.key,\n            initializer_deposit_token_account.key,\n            Some(&${newAuthority}),\n            spl_token::instruction::AuthorityType::AccountOwner,\n            initializer.key,\n            &[],\n        )?,\n        &[initializer_deposit_token_account.clone(), initializer.clone()],\n    )?;`,
     );
 
     // ── Generic token_interface::set_authority with_signer ──
     transformed = transformed.replace(
       /token_interface::set_authority\(\s*(?:ctx\.accounts\s*\.\s*)?(?:into_set_authority_context\(\)\s*\.with_signer\([\s\S]*?\))\s*,\s*AuthorityType::AccountOwner\s*,\s*Some\(([^)]+)\)\s*,?\s*\)\?;/g,
       (_full, newAuthority: string) =>
-        `// ⚠️ Anvil: set_authority CPI with signer — manually verify account references\n    invoke_signed(\n        &spl_token::instruction::set_authority(\n            token_program.key,\n            pda_deposit_token_account.key,\n            Some(&${cleanInlineExpr(newAuthority)}),\n            spl_token::instruction::AuthorityType::AccountOwner,\n            pda_account.key,\n            &[],\n        )?,\n        &[pda_deposit_token_account.clone(), pda_account.clone()],\n        &[&seeds[..]],\n    )?;`,
+        `// ${MARKER_ANVIL_PREFIX}: set_authority CPI with signer — manually verify account references\n    invoke_signed(\n        &spl_token::instruction::set_authority(\n            token_program.key,\n            pda_deposit_token_account.key,\n            Some(&${cleanInlineExpr(newAuthority)}),\n            spl_token::instruction::AuthorityType::AccountOwner,\n            pda_account.key,\n            &[],\n        )?,\n        &[pda_deposit_token_account.clone(), pda_account.clone()],\n        &[&seeds[..]],\n    )?;`,
     );
 
     // ── Metaplex CPI patterns — emit a TODO marker, NOT a runnable stub ──
@@ -1418,13 +1419,13 @@ export class BodyWalker {
     transformed = transformed.replace(
       /create_metadata_accounts_v3\(\s*CpiContext::new\(\s*[\s\S]*?\)\s*,\s*DataV2\s*\{([\s\S]*?)\}\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*,?\s*\)\?;/g,
       (_full, _dataFields: string, isMutable: string, updateAuthIsSigner: string, _collectionDetails: string) =>
-        `// ⚠️ Anvil: Metaplex create_metadata_accounts_v3 CPI — manual rebuild required\n    // Native: add \`mpl-token-metadata\` to Cargo.toml + rewrite as\n    //   mpl_token_metadata::instructions::CreateMetadataAccountV3 (cpi)\n    // Pinocchio: hand-roll the CPI against the Metaplex program ID\n    //   (no pinocchio metaplex crate exists today).\n    // Reference skeleton (commented out — does not compile out of the box):\n    //\n    // invoke(\n    //     &mpl_token_metadata::instruction::create_metadata_accounts_v3(\n    //         *token_metadata_program.key,\n    //         *metadata_account.key,\n    //         *mint_account.key,\n    //         *payer.key, *payer.key, *payer.key,\n    //         nft_name.clone(), nft_symbol.clone(), nft_uri.clone(),\n    //         None, 0,\n    //         true, // update_authority_is_signer=${updateAuthIsSigner}\n    //         ${isMutable},  // is_mutable\n    //         None, None, None,\n    //     ),\n    //     &[\n    //         metadata_account.clone(), mint_account.clone(), payer.clone(),\n    //         system_program.clone(), rent.clone(),\n    //     ],\n    // )?;`,
+        `// ${MARKER_ANVIL_PREFIX}: Metaplex create_metadata_accounts_v3 CPI — manual rebuild required\n    // Native: add \`mpl-token-metadata\` to Cargo.toml + rewrite as\n    //   mpl_token_metadata::instructions::CreateMetadataAccountV3 (cpi)\n    // Pinocchio: hand-roll the CPI against the Metaplex program ID\n    //   (no pinocchio metaplex crate exists today).\n    // Reference skeleton (commented out — does not compile out of the box):\n    //\n    // invoke(\n    //     &mpl_token_metadata::instruction::create_metadata_accounts_v3(\n    //         *token_metadata_program.key,\n    //         *metadata_account.key,\n    //         *mint_account.key,\n    //         *payer.key, *payer.key, *payer.key,\n    //         nft_name.clone(), nft_symbol.clone(), nft_uri.clone(),\n    //         None, 0,\n    //         true, // update_authority_is_signer=${updateAuthIsSigner}\n    //         ${isMutable},  // is_mutable\n    //         None, None, None,\n    //     ),\n    //     &[\n    //         metadata_account.clone(), mint_account.clone(), payer.clone(),\n    //         system_program.clone(), rent.clone(),\n    //     ],\n    // )?;`,
     );
 
     transformed = transformed.replace(
       /create_master_edition_v3\(\s*CpiContext::new\(\s*[\s\S]*?\)\s*,\s*(\w+)\s*,?\s*\)\?;/g,
       (_full, maxSupply: string) =>
-        `// ⚠️ Anvil: Metaplex create_master_edition_v3 CPI — manual rebuild required\n    // Reference skeleton (commented out — does not compile out of the box):\n    //\n    // invoke(\n    //     &mpl_token_metadata::instruction::create_master_edition_v3(\n    //         *token_metadata_program.key,\n    //         *edition_account.key, *mint_account.key,\n    //         *payer.key, *payer.key, *metadata_account.key, *payer.key,\n    //         ${maxSupply}, // max_supply\n    //     ),\n    //     &[\n    //         edition_account.clone(), mint_account.clone(), payer.clone(),\n    //         metadata_account.clone(), token_program.clone(),\n    //         system_program.clone(), rent.clone(),\n    //     ],\n    // )?;`,
+        `// ${MARKER_ANVIL_PREFIX}: Metaplex create_master_edition_v3 CPI — manual rebuild required\n    // Reference skeleton (commented out — does not compile out of the box):\n    //\n    // invoke(\n    //     &mpl_token_metadata::instruction::create_master_edition_v3(\n    //         *token_metadata_program.key,\n    //         *edition_account.key, *mint_account.key,\n    //         *payer.key, *payer.key, *metadata_account.key, *payer.key,\n    //         ${maxSupply}, // max_supply\n    //     ),\n    //     &[\n    //         edition_account.clone(), mint_account.clone(), payer.clone(),\n    //         metadata_account.clone(), token_program.clone(),\n    //         system_program.clone(), rent.clone(),\n    //     ],\n    // )?;`,
     );
 
     // ── Generic CPI fallback: any remaining CpiContext::new(...) ──
@@ -1465,7 +1466,7 @@ export class BodyWalker {
       (_full, _module: string, fnName: string, args: string) => {
         const instrName = snakeCase(fnName);
         const argsStr = args ? `, ${args.trim()}` : "";
-        return `// ⚠️ Anvil: CPI to external program ${_module}::cpi::${fnName} — manual rebuild required\n    // Original: ${_module}::cpi::${fnName}(ctx${argsStr})\n    // TODO(manual): build instruction data for '${instrName}' against the\n    // target program's discriminator + arg layout. Reference skeleton below\n    // is commented out (does not compile out of the box):\n    //\n    // {\n    //     let mut cpi_data = Vec::new();\n    //     // TODO: Build instruction discriminator + args for '${instrName}'\n    //     invoke(\n    //         &solana_program::instruction::Instruction {\n    //             program_id: *cpi_program.key,\n    //             accounts: cpi_accounts.iter().map(|a| solana_program::instruction::AccountMeta {\n    //                 pubkey: *a.key,\n    //                 is_signer: a.is_signer,\n    //                 is_writable: a.is_writable,\n    //             }).collect(),\n    //             data: cpi_data,\n    //         },\n    //         cpi_accounts,\n    //     )?;\n    // }`;
+        return `// ${MARKER_ANVIL_PREFIX}: CPI to external program ${_module}::cpi::${fnName} — manual rebuild required\n    // Original: ${_module}::cpi::${fnName}(ctx${argsStr})\n    // TODO(manual): build instruction data for '${instrName}' against the\n    // target program's discriminator + arg layout. Reference skeleton below\n    // is commented out (does not compile out of the box):\n    //\n    // {\n    //     let mut cpi_data = Vec::new();\n    //     // TODO: Build instruction discriminator + args for '${instrName}'\n    //     invoke(\n    //         &solana_program::instruction::Instruction {\n    //             program_id: *cpi_program.key,\n    //             accounts: cpi_accounts.iter().map(|a| solana_program::instruction::AccountMeta {\n    //                 pubkey: *a.key,\n    //                 is_signer: a.is_signer,\n    //                 is_writable: a.is_writable,\n    //             }).collect(),\n    //             data: cpi_data,\n    //         },\n    //         cpi_accounts,\n    //     )?;\n    // }`;
       },
     );
 
@@ -1477,7 +1478,7 @@ export class BodyWalker {
         if (fnName === "invoke" || fnName === "invoke_signed") return _full;
         const instrName = snakeCase(fnName);
         const argsStr = args ? `, ${args.trim()}` : "";
-        return `// ⚠️ Anvil: CPI to external program ${fnName} — manual rebuild required\n    // Original: ${fnName}(ctx${argsStr})\n    // TODO(manual): build instruction data for '${instrName}'. See sibling\n    // walker stub above for skeleton.`;
+        return `// ${MARKER_ANVIL_PREFIX}: CPI to external program ${fnName} — manual rebuild required\n    // Original: ${fnName}(ctx${argsStr})\n    // TODO(manual): build instruction data for '${instrName}'. See sibling\n    // walker stub above for skeleton.`;
       },
     );
 
@@ -1517,7 +1518,7 @@ export class BodyWalker {
             if (fieldName) {
               return `${localVar}.${fieldName} = ${f};`;
             }
-            return `// ⚠️ Anvil: could not resolve set_inner field at position ${idx} (${f})`;
+            return `// ${MARKER_ANVIL_PREFIX}: could not resolve set_inner field at position ${idx} (${f})`;
           }
           return `${localVar}.${f} = ${f};`;
         });

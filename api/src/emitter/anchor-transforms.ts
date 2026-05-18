@@ -11,6 +11,7 @@ import {
   cleanInlineExpr,
   emitRequireGuard,
 } from "./emitter-utils.js";
+import { MARKER_ANVIL_REVIEW_PREFIX } from "./markers.js";
 
 /**
  * Transform a helper function's code from Anchor-style to framework-agnostic Rust.
@@ -159,11 +160,11 @@ export function transformHelperCode(
   if (/CpiContext::/.test(next)) {
     next = next.replace(
       /CpiContext::new_with_signer\(/g,
-      "/* ⚠️ Anvil: Review — CpiContext not available, use invoke_signed() */ CpiContext::new_with_signer("
+      `/* ${MARKER_ANVIL_REVIEW_PREFIX} — CpiContext not available, use invoke_signed() */ CpiContext::new_with_signer(`
     );
     next = next.replace(
       /CpiContext::new\(/g,
-      "/* ⚠️ Anvil: Review — CpiContext not available, use invoke() */ CpiContext::new("
+      `/* ${MARKER_ANVIL_REVIEW_PREFIX} — CpiContext not available, use invoke() */ CpiContext::new(`
     );
   }
 

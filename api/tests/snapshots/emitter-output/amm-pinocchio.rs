@@ -1234,7 +1234,7 @@ pub fn integer_sqrt(n: u128) -> u128 {
 }
 
 // ╔════════════════════════════════════════════════════════════════════════════╗
-// ║  ⚠️  ANVIL TODO: helper 'transfer_to_vault' uses Anchor-only types
+// ║  ⚠️ Anvil TODO: helper 'transfer_to_vault' uses Anchor-only types
 // ║  (InterfaceAccount, Interface<TokenInterface>, Box<Account>, etc.) that
 // ║  don't exist on Pinocchio. Body commented out below; instruction call sites
 // ║  are also commented out so the program compiles. MANUAL PORT REQUIRED.
@@ -1256,7 +1256,7 @@ pub fn integer_sqrt(n: u128) -> u128 {
 // }
 
 // ╔════════════════════════════════════════════════════════════════════════════╗
-// ║  ⚠️  ANVIL TODO: helper 'transfer_from_vault' uses Anchor-only types
+// ║  ⚠️ Anvil TODO: helper 'transfer_from_vault' uses Anchor-only types
 // ║  (InterfaceAccount, Interface<TokenInterface>, Box<Account>, etc.) that
 // ║  don't exist on Pinocchio. Body commented out below; instruction call sites
 // ║  are also commented out so the program compiles. MANUAL PORT REQUIRED.
@@ -1280,7 +1280,7 @@ pub fn integer_sqrt(n: u128) -> u128 {
 // }
 
 // ╔════════════════════════════════════════════════════════════════════════════╗
-// ║  ⚠️  ANVIL TODO: helper 'mint_lp_to_user' uses Anchor-only types
+// ║  ⚠️ Anvil TODO: helper 'mint_lp_to_user' uses Anchor-only types
 // ║  (InterfaceAccount, Interface<TokenInterface>, Box<Account>, etc.) that
 // ║  don't exist on Pinocchio. Body commented out below; instruction call sites
 // ║  are also commented out so the program compiles. MANUAL PORT REQUIRED.
@@ -1304,7 +1304,7 @@ pub fn integer_sqrt(n: u128) -> u128 {
 // }
 
 // ╔════════════════════════════════════════════════════════════════════════════╗
-// ║  ⚠️  ANVIL TODO: helper 'burn_lp_from_user' uses Anchor-only types
+// ║  ⚠️ Anvil TODO: helper 'burn_lp_from_user' uses Anchor-only types
 // ║  (InterfaceAccount, Interface<TokenInterface>, Box<Account>, etc.) that
 // ║  don't exist on Pinocchio. Body commented out below; instruction call sites
 // ║  are also commented out so the program compiles. MANUAL PORT REQUIRED.
