@@ -323,7 +323,7 @@ const healthHandler: express.RequestHandler = async (_req, res) => {
 
   res.json({
     service: "Anvil API",
-    version: "0.3.4",
+    version: "0.4.0",
     status: "ok",
     uptime: Math.floor(process.uptime()),
     release: RELEASE,
