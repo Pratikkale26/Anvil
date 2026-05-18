@@ -542,6 +542,16 @@ ${arms}
   override emitSplTransfer(from: string, to: string, authority: string, amount: string, signerSeeds?: string, opts?: Token2022Opts): string {
     const t22 = opts?.tokenProgram === "token_2022";
     const crate = t22 ? "spl_token_2022" : "spl_token";
+    // Path 2 v1 runtime dispatch on Native — same contract as the
+    // Pinocchio side (commit 259c290). When tokenProgramArg is set,
+    // the spl_token[_2022]::instruction::transfer*(..) functions
+    // accept any program ID for arg 0; pass the runtime AccountInfo
+    // key instead of the const so legacy SPL Token mints with
+    // Interface<TokenInterface> route correctly.
+    const useRuntimeDispatch = !!opts?.tokenProgramArg;
+    const programIdArg = useRuntimeDispatch
+      ? `${opts!.tokenProgramArg}.key`
+      : `&${crate}::id()`;
     if (t22) {
       const invokeType = signerSeeds ? "invoke_signed" : "invoke";
       const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
@@ -552,7 +562,7 @@ ${arms}
         return `    // Token-2022 transfer (unchecked) — ${from} → ${to}
     #[allow(deprecated)]
     let transfer_ix = ${crate}::instruction::transfer(
-        &${crate}::id(),
+        ${programIdArg},
         ${from}.key,
         ${to}.key,
         ${authority}.key,
@@ -580,7 +590,7 @@ ${arms}
       const { decimalsExpr, prelude } = resolveT22Decimals(mint, opts?.decimals);
       return `    // Token-2022 transfer_checked — ${from} → ${to}
 ${prelude}    let transfer_ix = ${crate}::instruction::transfer_checked(
-        &${crate}::id(),
+        ${programIdArg},
         ${from}.key,
         ${mint}.key,
         ${to}.key,
@@ -630,12 +640,17 @@ ${prelude}    let transfer_ix = ${crate}::instruction::transfer_checked(
     const crate = t22 ? "spl_token_2022" : "spl_token";
     const invokeType = signerSeeds ? "invoke_signed" : "invoke";
     const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    // Path 2 v1 runtime dispatch — see emitSplTransfer comment.
+    const useRuntimeDispatch = !!opts?.tokenProgramArg;
+    const programIdArg = useRuntimeDispatch
+      ? `${opts!.tokenProgramArg}.key`
+      : `&${crate}::id()`;
     if (t22) {
       if (opts?.decimals === undefined) {
         // Token-2022 mint_to (unchecked) — accounts [mint, to, authority].
         return `    // Token-2022 mint_to (unchecked) — ${mint} → ${to}
     let mint_ix = ${crate}::instruction::mint_to(
-        &${crate}::id(),
+        ${programIdArg},
         ${mint}.key,
         ${to}.key,
         ${authority}.key,
@@ -650,7 +665,7 @@ ${prelude}    let transfer_ix = ${crate}::instruction::transfer_checked(
       const { decimalsExpr, prelude } = resolveT22Decimals(mint, opts?.decimals);
       return `    // Token-2022 mint_to_checked — ${mint} → ${to}
 ${prelude}    let mint_ix = ${crate}::instruction::mint_to_checked(
-        &${crate}::id(),
+        ${programIdArg},
         ${mint}.key,
         ${to}.key,
         ${authority}.key,
@@ -665,7 +680,7 @@ ${prelude}    let mint_ix = ${crate}::instruction::mint_to_checked(
     }
     return `    // SPL Token mint_to — ${mint} → ${to}
     let mint_ix = spl_token::instruction::mint_to(
-        &spl_token::id(),
+        ${programIdArg},
         ${mint}.key,
         ${to}.key,
         ${authority}.key,
@@ -683,12 +698,16 @@ ${prelude}    let mint_ix = ${crate}::instruction::mint_to_checked(
     const crate = t22 ? "spl_token_2022" : "spl_token";
     const invokeType = signerSeeds ? "invoke_signed" : "invoke";
     const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    const useRuntimeDispatch = !!opts?.tokenProgramArg;
+    const programIdArg = useRuntimeDispatch
+      ? `${opts!.tokenProgramArg}.key`
+      : `&${crate}::id()`;
     if (t22) {
       if (opts?.decimals === undefined) {
         // Token-2022 burn (unchecked) — accounts [from, mint, authority].
         return `    // Token-2022 burn (unchecked) — ${from}
     let burn_ix = ${crate}::instruction::burn(
-        &${crate}::id(),
+        ${programIdArg},
         ${from}.key,
         ${mint}.key,
         ${authority}.key,
@@ -703,7 +722,7 @@ ${prelude}    let mint_ix = ${crate}::instruction::mint_to_checked(
       const { decimalsExpr, prelude } = resolveT22Decimals(mint, opts?.decimals);
       return `    // Token-2022 burn_checked — ${from}
 ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
-        &${crate}::id(),
+        ${programIdArg},
         ${from}.key,
         ${mint}.key,
         ${authority}.key,
@@ -718,7 +737,7 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     }
     return `    // SPL Token burn — ${from}
     let burn_ix = spl_token::instruction::burn(
-        &spl_token::id(),
+        ${programIdArg},
         ${from}.key,
         ${mint}.key,
         ${authority}.key,
@@ -735,9 +754,13 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     const crate = opts?.tokenProgram === "token_2022" ? "spl_token_2022" : "spl_token";
     const invokeType = signerSeeds ? "invoke_signed" : "invoke";
     const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    const useRuntimeDispatch = !!opts?.tokenProgramArg;
+    const programIdArg = useRuntimeDispatch
+      ? `${opts!.tokenProgramArg}.key`
+      : `&${crate}::id()`;
     return `    // ${crate === "spl_token_2022" ? "Token-2022" : "SPL Token"} close account — ${account}
     let close_ix = ${crate}::instruction::close_account(
-        &${crate}::id(),
+        ${programIdArg},
         ${account}.key,
         ${destination}.key,
         ${authority}.key,
@@ -760,6 +783,11 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     const crate = opts?.tokenProgram === "token_2022" ? "spl_token_2022" : "spl_token";
     const invokeType = signerSeeds ? "invoke_signed" : "invoke";
     const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    // Path 2 v1 runtime dispatch — same contract as emitSplTransfer.
+    const useRuntimeDispatch = !!opts?.tokenProgramArg;
+    const programIdArg = useRuntimeDispatch
+      ? `${opts!.tokenProgramArg}.key`
+      : `&${crate}::id()`;
     // Map Anchor's `AuthorityType::X` variant to the target's enum path.
     // Anchor exposes the same variant names as spl_token, so we just rewrite
     // the path. `.into()` covers cases where the user wrote a fully-qualified
@@ -770,7 +798,7 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     );
     return `    // ${crate === "spl_token_2022" ? "Token-2022" : "SPL Token"} set authority — ${account}
     let set_authority_ix = ${crate}::instruction::set_authority(
-        &${crate}::id(),
+        ${programIdArg},
         ${account}.key,
         match &${newAuthority} { Some(pk) => Some(pk), None => None },
         ${remapped},

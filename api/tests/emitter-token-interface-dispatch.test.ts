@@ -23,6 +23,7 @@
  */
 import { describe, test, expect } from "bun:test";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
+import { emitNativeFull } from "../src/emitter/native-emitter.ts";
 import { SolanaIRSchema } from "../src/ir/schema.ts";
 
 function buildIr(opts: { tokenProgramArg?: string } = {}) {
@@ -181,4 +182,29 @@ describe("Path 2 v1 extension — mint_to / burn / close_account / set_authority
       expect(out).toMatch(/const TOKEN_2022_PROGRAM_ID: pinocchio::pubkey::Pubkey/);
     }
   });
+});
+
+// Native emitter side — same Path 2 v1 contract. The Native emit uses
+// spl_token[_2022]::instruction::* helpers; the first arg is a Pubkey
+// reference. tokenProgramArg sets that arg to `<arg>.key` (a runtime
+// AccountInfo's pubkey) instead of `&crate::id()`.
+
+describe("Path 2 v1 — Native emit dispatch on all 5 SPL kinds", () => {
+  for (const fixture of [
+    { name: "cpi_spl_transfer", stmt: { kind: "cpi_spl_transfer", from: "a", to: "b", authority: "authority", amount: "1", tokenProgram: "token_2022", mint: "b", decimals: "6", tokenProgramArg: "token_program" }, fnRegex: /transfer_checked/ },
+    { name: "cpi_spl_mint_to", stmt: { kind: "cpi_spl_mint_to", mint: "a", to: "b", authority: "authority", amount: "1", tokenProgram: "token_2022", tokenProgramArg: "token_program" }, fnRegex: /mint_to/ },
+    { name: "cpi_spl_burn", stmt: { kind: "cpi_spl_burn", from: "a", mint: "b", authority: "authority", amount: "1", tokenProgram: "token_2022", tokenProgramArg: "token_program" }, fnRegex: /burn/ },
+    { name: "cpi_spl_close_account", stmt: { kind: "cpi_spl_close_account", account: "a", destination: "b", authority: "authority", tokenProgram: "token_2022", tokenProgramArg: "token_program" }, fnRegex: /close_account/ },
+    { name: "cpi_spl_set_authority", stmt: { kind: "cpi_spl_set_authority", account: "a", currentAuthority: "authority", authorityType: "AuthorityType::AccountOwner", newAuthority: "Some(pk)", tokenProgram: "token_2022", tokenProgramArg: "token_program" }, fnRegex: /set_authority/ },
+  ] as const) {
+    test(`${fixture.name} (Native) with tokenProgramArg → runtime dispatch`, () => {
+      const out = emitNativeFull(buildSimpleIr(fixture.stmt as any)).singleFile;
+      // The instruction-helper call's first arg should be token_program.key
+      // (runtime dispatch), not &spl_token_2022::id() (hardcoded const).
+      expect(out).toMatch(new RegExp(`spl_token_2022::instruction::${fixture.fnRegex.source}\\([\\s\\S]{0,400}token_program\\.key`));
+      // And the &spl_token_2022::id() literal should NOT appear inside the
+      // first 400 chars of that call site.
+      expect(out).not.toMatch(new RegExp(`spl_token_2022::instruction::${fixture.fnRegex.source}\\([\\s\\S]{0,80}&spl_token_2022::id\\(\\)`));
+    });
+  }
 });

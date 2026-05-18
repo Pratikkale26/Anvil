@@ -2029,8 +2029,13 @@ export class AstVisitorBase {
       }
 
       const callPath = path(["spl_token_2022", "instruction", checked ? "transfer_checked" : "transfer"]);
+      // Path 2 v1 runtime dispatch — when tokenProgramArg is set, use the
+      // AccountInfo's key (runtime) instead of &spl_token_2022::id() (const).
+      const programIdExpr: RustExpr = stmt.tokenProgramArg
+        ? field(ident(snakeCase(stmt.tokenProgramArg)), "key")
+        : ref(call(path(["spl_token_2022", "id"]), []));
       const callArgs: RustExpr[] = [
-        ref(call(path(["spl_token_2022", "id"]), [])),
+        programIdExpr,
         field(ident(fromVar), "key"),
       ];
       if (checked && stmt.mint) callArgs.push(field(ident(snakeCase(stmt.mint)), "key"));
@@ -2296,6 +2301,12 @@ export class AstVisitorBase {
       /\bAuthorityType\b/g,
       `${crate}::instruction::AuthorityType`,
     );
+    // Path 2 v1 runtime dispatch — when tokenProgramArg is set, the
+    // first arg of set_authority becomes `<arg>.key` (runtime) instead
+    // of `&crate::id()` (compile-time const). Matches Pinocchio dispatch.
+    const programIdExpr = stmt.tokenProgramArg
+      ? field(ident(snakeCase(stmt.tokenProgramArg)), "key")
+      : ref(call(path([crate, "id"]), []));
 
     // Comment line — `// <SPL Token | Token-2022> set authority — <account>`.
     out.push(comment(
@@ -2317,7 +2328,7 @@ export class AstVisitorBase {
       tryPostfix(mlCall(
         path([crate, "instruction", "set_authority"]),
         [
-          ref(call(path([crate, "id"]), [])),
+          programIdExpr,
           field(ident(accountVar), "key"),
           rawExpr(`match &${stmt.newAuthority} { Some(pk) => Some(pk), None => None }`),
           parseSimpleExpr(remappedAuthorityType),
