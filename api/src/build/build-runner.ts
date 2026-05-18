@@ -135,6 +135,11 @@ pinocchio = "0.9"
 pinocchio-system = "0.4"
 pinocchio-token = "0.4"
 pinocchio-associated-token-account = "0.4"
+# Zero-copy account types reference bytemuck::Pod/Zeroable directly.
+# buildProjectScaffold auto-injects this when ir.accounts has any
+# isZeroCopy entry; mirror that here so /build doesn't fail on
+# zero_copy_load / Pod-impl emit. See project-scaffold.ts.
+bytemuck = { version = "1", features = ["derive"] }
 `;
 
 // FUTURE: Emit-side blocker (c) — solana-vote-program scaffold dep.
@@ -156,6 +161,18 @@ solana-program = "2.2"
 spl-token = { version = "7", features = ["no-entrypoint"] }
 spl-token-2022 = { version = "6", features = ["no-entrypoint"] }
 spl-associated-token-account = { version = "6", features = ["no-entrypoint"] }
+# Common scaffold-injected crates that the Anvil project scaffold pulls
+# in when the IR references them. Mirroring the
+# extractUsedCrates / project-scaffold subset here so /build doesn't
+# fail on legitimate emit:
+#   - bytemuck: zero-copy Pod/Zeroable impls
+#   - spl-memo: cpi_memo helper
+#   - spl-token-metadata-interface: T22 TokenMetadata extension CPIs
+#   - mpl-token-metadata: real-CPI MPL catalog (12 instructions)
+bytemuck = { version = "1", features = ["derive"] }
+spl-memo = { version = "6", features = ["no-entrypoint"] }
+spl-token-metadata-interface = "0.4"
+mpl-token-metadata = "5.1"
 `;
 
 function cargoTomlFor(target: BuildTarget): string {
