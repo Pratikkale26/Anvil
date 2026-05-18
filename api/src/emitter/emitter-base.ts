@@ -1430,7 +1430,11 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
           return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
         .map_err(|_| ProgramError::InvalidInstructionData)?;`;
         }
-        return `    // TODO: parse ${name}: ${arg.type}`;
+        // Loud marker — ⚠️ Anvil TODO is detected by output-validator's
+        // checkUnsafeMarkers as an error. The pre-P0.1 emit `// TODO: parse`
+        // was stripped by stripLineComments before ERROR_PATTERNS scanned,
+        // so the gap was silently shipping a missing arg-deserialization.
+        return `    // ⚠️ Anvil TODO: parse ${name}: ${arg.type} — custom-type Borsh deserialization not yet implemented for this arg. Hand-port the deserializer or simplify the arg type.`;
     }
   }
 

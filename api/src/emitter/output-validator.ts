@@ -1,5 +1,38 @@
 import type { EmitterOutput, SolanaIR } from "../ir/schema.js";
 import { snakeCase } from "./emitter-utils.js";
+import {
+  MARKER_TODO_ANVIL,
+  MARKER_TODO_PARSE,
+  MARKER_TODO_MANUAL,
+  MARKER_FIXME_ANVIL,
+  MARKER_ANVIL_TODO_PREFIX,
+  MARKER_ANVIL_PREFIX,
+  MARKER_ANVIL_REVIEW_PREFIX,
+} from "./markers.js";
+
+// Regex escape — handles characters with special meaning. Keeps the
+// validator-side regex sources in lockstep with the emit-side marker
+// constants in markers.ts. If a marker grows a regex-special character,
+// this still produces a correct pattern.
+function reEscape(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Pre-compiled regex sources for marker detection, built FROM the marker
+// constants. A drift in markers.ts is caught at module load (regex compiles
+// the new shape) and at test load (the linkage test re-asserts emit ↔
+// validator contract). NEVER inline these patterns elsewhere.
+const TODO_ANVIL_RE = new RegExp(reEscape(MARKER_TODO_ANVIL));
+const TODO_PARSE_RE = new RegExp(reEscape(MARKER_TODO_PARSE));
+const TODO_MANUAL_OR_FIXME_RE = new RegExp(
+  `${reEscape(MARKER_TODO_MANUAL)}|${reEscape(MARKER_FIXME_ANVIL)}`,
+);
+const ANVIL_LINE_MARKER_RE = new RegExp(
+  `\\/\\/\\s*${reEscape(MARKER_ANVIL_PREFIX)}[\\s:]`,
+);
+const ANVIL_BLOCK_MARKER_RE = new RegExp(
+  `\\/\\*\\s*${reEscape(MARKER_ANVIL_PREFIX)}[\\s:]`,
+);
 
 export type ValidationSeverity = "error" | "warning";
 
@@ -99,11 +132,11 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<
     message: "Anchor emit!() macro leaked through — should be msg!() or event emit.",
   },
   {
-    pattern: /TODO\(anvil\)/,
-    message: "Emitter marker TODO(anvil) still present — this feature is not implemented.",
+    pattern: TODO_ANVIL_RE,
+    message: `Emitter marker ${MARKER_TODO_ANVIL} still present — this feature is not implemented.`,
   },
   {
-    pattern: /TODO: parse/,
+    pattern: TODO_PARSE_RE,
     message: "Argument deserialization not implemented for a custom type.",
   },
   {
@@ -675,10 +708,10 @@ function checkManualTodos(content: string, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
-    if (/TODO\(manual\)|FIXME\(anvil\)/.test(lines[i] ?? "")) {
+    if (TODO_MANUAL_OR_FIXME_RE.test(lines[i] ?? "")) {
       issues.push({
         severity: "error",
-        message: "Anvil TODO(manual) / FIXME(anvil) marker still present — emitter could not safely transform this section; manual rebuild required before deploy.",
+        message: `Anvil ${MARKER_TODO_MANUAL} / ${MARKER_FIXME_ANVIL} marker still present — emitter could not safely transform this section; manual rebuild required before deploy.`,
         path,
         line: i + 1,
       });
@@ -710,7 +743,7 @@ function checkUnsafeMarkers(content: string, path: string): ValidationIssue[] {
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    const isAnvilMarker = /\/\/\s*⚠️\s*Anvil[\s:]/.test(line) || /\/\*\s*⚠️\s*Anvil[\s:]/.test(line);
+    const isAnvilMarker = ANVIL_LINE_MARKER_RE.test(line) || ANVIL_BLOCK_MARKER_RE.test(line);
     if (!isAnvilMarker) continue;
     // Truly-broken markers contain one of these phrases; the surrounding
     // code is a non-functional stub.

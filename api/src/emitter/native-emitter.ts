@@ -37,6 +37,7 @@ import {
   irNeedsMplCreateMetadataV3Helper,
   irNeedsMplCreateMasterEditionV3Helper,
 } from "./emitter-helpers.js";
+import { MARKER_DECIMALS_FALLBACK } from "./markers.js";
 
 /**
  * Token-2022 checked variants need the mint's `.decimals`. In Anchor source
@@ -49,8 +50,10 @@ import {
  */
 function resolveT22Decimals(mint: string, decimals: string | undefined): { decimalsExpr: string; prelude: string } {
   // Fallback must be syntactically valid Rust — `/* TODO */` alone collapses to
-  // nothing after lexing and leaves a stray comma in the args list.
-  const fallback = decimals ?? "0u8 /* TODO: decimals — could not infer from source; verify against the mint */";
+  // nothing after lexing and leaves a stray comma in the args list. Marker
+  // string lives in markers.ts; validator imports the same constant so a drift
+  // here is caught by the linkage test (api/tests/marker-validator-linkage.test.ts).
+  const fallback = decimals ?? MARKER_DECIMALS_FALLBACK;
   if (!decimals) return { decimalsExpr: fallback, prelude: "" };
   const accessRe = new RegExp(`^${mint}\\.decimals$`);
   if (!accessRe.test(decimals.trim())) return { decimalsExpr: fallback, prelude: "" };
