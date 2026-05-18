@@ -103,6 +103,10 @@ describe("CLI cargo-gate wiring (#22)", () => {
   test(
     "default (auto) on broken source: gate refuses, exit 3",
     () => {
+      // --permissive is needed to test the cargo-gate path in isolation;
+      // post-v0.4 the validator-side --strict gate fires first and exits 2
+      // before cargo even runs. This test is specifically about the
+      // cargo-gate semantics, so we opt out of the parallel validator gate.
       const out = join(SCRATCH, "broken-out");
       rmSync(out, { recursive: true, force: true });
       const r = runCli([
@@ -112,6 +116,7 @@ describe("CLI cargo-gate wiring (#22)", () => {
         "pinocchio",
         "--output",
         out,
+        "--permissive",
       ]);
       expect(r.code).toBe(3);
       expect(r.stdout + r.stderr).toMatch(/cargo check:.*error/i);
@@ -124,6 +129,9 @@ describe("CLI cargo-gate wiring (#22)", () => {
   test(
     "--no-cargo-check skips the gate, exit 0 on broken source",
     () => {
+      // Same rationale as the test above: --permissive opts out of the
+      // validator-side strict gate (v0.4+ default) so we can isolate
+      // the cargo-gate behavior.
       const out = join(SCRATCH, "broken-out-skip");
       rmSync(out, { recursive: true, force: true });
       const r = runCli([
@@ -134,11 +142,47 @@ describe("CLI cargo-gate wiring (#22)", () => {
         "--output",
         out,
         "--no-cargo-check",
+        "--permissive",
       ]);
       expect(r.code).toBe(0);
       // Gate didn't run, so no cargo-error report in output.
       expect(r.stdout + r.stderr).not.toMatch(/cargo check: \d+ error/i);
     },
     240_000,
+  );
+
+  test(
+    "v0.4 BREAKING: --strict is default — broken source refused without --permissive",
+    () => {
+      // Sanity check that the safe-by-default flip actually took effect.
+      // Pre-v0.4 this same invocation would have exit 0 (strict opt-in;
+      // emit written with warnings). Post-v0.4 the gate exits 2 before
+      // any cargo gate runs.
+      const out = join(SCRATCH, "default-broken-refusal");
+      rmSync(out, { recursive: true, force: true });
+      const r = runCli([
+        "compile",
+        join(SCRATCH, "broken.rs"),
+        "--target",
+        "pinocchio",
+        "--output",
+        out,
+        "--no-cargo-check",
+      ]);
+      expect(r.code).toBe(2);
+      expect(r.stdout + r.stderr).toMatch(/safe-by-default/i);
+      expect(r.stdout + r.stderr).toMatch(/--permissive/);
+    },
+    240_000,
+  );
+
+  test(
+    "--strict + --permissive is a hard error",
+    () => {
+      const r = runCli(["compile", "--strict", "--permissive", "foo.rs", "--target", "pinocchio"]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toMatch(/mutually exclusive/i);
+    },
+    30_000,
   );
 });

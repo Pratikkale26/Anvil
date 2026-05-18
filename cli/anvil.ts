@@ -126,14 +126,31 @@ interface CliArgs {
   thresholdAbs: number;
   snapshotPath: string | null;
   /**
-   * --strict on `compile`: refuse to write output when the validator
-   * reports any error or when the emitted code carries `// TODO(manual)`
-   * / `// ⚠️ Anvil … manual rebuild required` stubs. Default behavior is
-   * permissive (writes anyway, prints warnings) for explore-mode users;
-   * --strict is the gate for "I'm about to deploy this." Exit code 2 on
+   * Safe-by-default deploy gate (v0.4 BREAKING change).
+   *
+   * `anvil compile` refuses to write output when the validator reports
+   * any error or when the emitted code carries `// TODO(manual)` /
+   * `// ⚠️ Anvil … manual rebuild required` stubs. Exit code 2 on
    * failure, distinct from 1 (parse/emit error).
+   *
+   * Pre-v0.4 the gate was opt-in via `--strict`; the default wrote
+   * stub-bearing emit to disk with a warning, which most users then
+   * shipped. Post-v0.4 the gate runs by default. `--permissive` is the
+   * escape hatch for explore-mode users who want to inspect partial
+   * emit before fixing the gaps.
+   *
+   * `--strict` flag is preserved as a no-op for back-compat with
+   * scripts that explicitly opt in to the gate. Specifying both
+   * `--strict` and `--permissive` is a hard error.
    */
   strict: boolean;
+  /**
+   * `--permissive` on `compile`: opt OUT of the v0.4 safe-by-default
+   * gate. Writes stub-bearing emit to disk anyway (with warnings).
+   * Use for explore mode or partial-emit debugging only — NEVER ship
+   * permissive output to mainnet.
+   */
+  permissive: boolean;
   /**
    * Cargo accept gate (#22). Defaults to ON when `cargo` is on PATH —
    * after writing the emit, run `cargo check` in the output dir and
@@ -265,7 +282,9 @@ function parseArgs(argv: string[]): CliArgs {
     thresholdPct: 5,
     thresholdAbs: 10,
     snapshotPath: null,
-    strict: false,
+    // v0.4 BREAKING: safe-by-default. The gate runs unless --permissive is set.
+    strict: true,
+    permissive: false,
     cargoCheck: "auto",
     scenario: null,
     anchorSo: null,
@@ -364,7 +383,18 @@ function parseArgs(argv: string[]): CliArgs {
     }
 
     if (arg === "--strict") {
+      // v0.4: --strict is the default. Kept as a no-op so back-compat scripts
+      // that explicitly pass --strict still work. Conflicts with --permissive.
       args.strict = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--permissive") {
+      // v0.4: opt OUT of the safe-by-default gate. Writes stub-bearing emit
+      // anyway. Use for explore mode / partial-emit debugging only.
+      args.permissive = true;
+      args.strict = false;
       i++;
       continue;
     }
@@ -572,12 +602,19 @@ function printCompileHelp(): void {
     --output, -o <dir>      Output directory (default: ./anvil-output/)
     --single-file           Emit a single .rs file instead of project layout
     --json                  Output the IR as JSON instead of writing files
-    --strict                Refuse to write output if the validator finds
-                            errors or the emit contains TODO(manual) /
-                            "manual rebuild required" stub markers. Also
-                            implies --cargo-check (deploy-grade requires
-                            both gates). Exit code 2 on validator refusal,
-                            3 on cargo refusal.
+    --strict                ${c.bold}Default in v0.4+.${c.reset} Refuse to write output if the
+                            validator finds errors or the emit contains
+                            TODO(manual) / "manual rebuild required" stub
+                            markers. Implies --cargo-check (deploy-grade
+                            requires both gates). Exit code 2 on validator
+                            refusal, 3 on cargo refusal. Kept as a no-op
+                            flag for back-compat with scripts that
+                            explicitly opted in pre-v0.4.
+    --permissive            Opt OUT of the safe-by-default gate. Writes
+                            stub-bearing emit to disk anyway (with
+                            warnings). Use for explore mode or partial-
+                            emit debugging only. ${c.red}NEVER ship permissive
+                            output to mainnet.${c.reset} Conflicts with --strict.
     --cargo-check           Force the cargo accept gate ON. After writing,
                             \`cargo check\` runs in the output directory and
                             non-zero exit refuses success. Errors on
@@ -588,10 +625,9 @@ function printCompileHelp(): void {
 
   ${c.bold}EXAMPLES${c.reset}
 
-    anvil compile program.rs --target pinocchio
+    anvil compile program.rs --target pinocchio       # safe-by-default
     anvil compile ./my-program --target native --output ./dist
-    anvil compile ./my-program --target pinocchio --strict
-    anvil compile ./my-program --target pinocchio --cargo-check
+    anvil compile ./my-program --target pinocchio --permissive    # explore mode
 `);
 }
 
@@ -1088,23 +1124,31 @@ async function cmdCompile(args: CliArgs): Promise<void> {
   }
   if (args.strict) {
     const allText = (output.files.length > 0 ? output.files.map((f) => f.content) : [output.singleFile]).join("\n");
+    // Stub-marker patterns. Sourced from api/src/emitter/markers.ts via the
+    // CLI's api-src bundle — keeping this list in sync with the emit-side
+    // constants closes the marker drift class. The linkage test
+    // (api/tests/marker-validator-linkage.test.ts) defends the validator
+    // side; this list is the CLI's parallel cargo-not-needed guard.
     const stubMarkers = [
       /TODO\(manual\)/,
+      /FIXME\(anvil\)/,
       /⚠️\s*Anvil[^\n]*manual rebuild required/i,
       /⚠️\s*Anvil[^\n]*not yet supported/i,
+      /⚠️\s*Anvil\s+TODO:/,
       /\b0u8\s*\/\*\s*TODO:\s*decimals\b/,
     ];
     const stubHits = stubMarkers.filter((re) => re.test(allText));
     const passthroughFindings = auditPassthrough(ir);
     const passthroughErrors = passthroughFindings.filter((f) => f.severity === "error");
     if (errors.length > 0 || stubHits.length > 0 || passthroughErrors.length > 0) {
-      error(`--strict refusal: emit not deploy-safe.`);
+      error(`Refusing to write — emit not deploy-safe (v0.4 safe-by-default).`);
+      console.log(`    ${c.dim}Re-run with ${c.cyan}--permissive${c.reset}${c.dim} to write stub-bearing emit anyway (explore mode only — never ship to mainnet).${c.reset}`);
       if (errors.length > 0) {
         console.log(`    ${c.dim}validator errors: ${errors.length}${c.reset}`);
       }
       if (stubHits.length > 0) {
         console.log(
-          `    ${c.dim}stub markers detected (${stubHits.length} pattern${stubHits.length !== 1 ? "s" : ""}); the emit contains compile-clean placeholders that no-op the original behavior. Re-run without --strict to inspect, or fix the source.${c.reset}`,
+          `    ${c.dim}stub markers detected (${stubHits.length} pattern${stubHits.length !== 1 ? "s" : ""}); the emit contains compile-clean placeholders that no-op the original behavior.${c.reset}`,
         );
       }
       if (passthroughErrors.length > 0) {
@@ -1121,6 +1165,15 @@ async function cmdCompile(args: CliArgs): Promise<void> {
       }
       process.exit(2);
     }
+  }
+
+  // --permissive surfaces a loud one-liner before write so the user is
+  // reminded every time they bypass the gate. The flag is intentionally
+  // explicit; "I forgot the default flipped" must not silently slip by.
+  if (args.permissive) {
+    warn(
+      `--permissive: gate skipped. Emit may carry stub markers. ${c.red}NEVER ship this output to mainnet without manual audit.${c.reset}`,
+    );
   }
 
   // 6. Write output
@@ -2035,6 +2088,15 @@ async function main(): Promise<void> {
   if (!args.command) {
     printHelp();
     process.exit(1);
+  }
+
+  // --strict and --permissive are mutually exclusive. --strict is the default
+  // in v0.4+, so passing both is almost certainly a script-conversion mistake.
+  // Fail loud — silently honoring one means the user's intent isn't checked.
+  if (args.permissive && process.argv.includes("--strict")) {
+    fatal(
+      `--strict and --permissive are mutually exclusive. ${c.cyan}--strict${c.reset} is the default in v0.4+; pass ${c.cyan}--permissive${c.reset} only to opt out (explore mode).`,
+    );
   }
 
   switch (args.command) {
