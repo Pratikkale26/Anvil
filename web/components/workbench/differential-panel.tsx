@@ -164,9 +164,29 @@ export function DifferentialPanel({ state }: { state: DifferentialState }) {
     return (
       <Panel>
         <div className="px-5 py-4">
-          <div className="text-[14px] font-bold text-anvil-text mb-2 flex items-center gap-2">
-            <Zap size={14} className="text-anvil-amber" />
-            Verify byte-equal
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="text-[14px] font-bold text-anvil-text flex items-center gap-2">
+              <Zap size={14} className="text-anvil-amber" />
+              Verify byte-equal
+            </div>
+            {/* P5.3: SPL recommendation badge. Detected by useDifferential
+                scanning the IR body kinds for cpi_spl_* / cpi_t22_* /
+                cpi_ata_create / cpi_memo. SPL touches have the highest
+                divergence risk (decimals, account ordering, signer-seed
+                shape) so the workbench nudges the user explicitly. */}
+            {state.recommendedForSpl && (
+              <span
+                className="text-[10px] font-bold tracking-wide px-2 py-[2px] rounded-full uppercase whitespace-nowrap"
+                style={{
+                  background: "rgba(245,166,35,0.10)",
+                  color: "#ffcf6e",
+                  border: "1px solid rgba(245,166,35,0.35)",
+                }}
+                title="This program calls SPL Token / Token-2022 / ATA / Memo CPIs. Differential verification is recommended — these surfaces have the highest byte-divergence risk."
+              >
+                Recommended for SPL
+              </span>
+            )}
           </div>
           <div className="text-[12px] text-anvil-text-sub leading-relaxed mb-3">
             Run an instruction sequence against{" "}

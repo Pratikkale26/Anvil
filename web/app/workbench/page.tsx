@@ -10,6 +10,7 @@ import { InputPanel } from "@/components/workbench/input-panel";
 import { OutputPanel } from "@/components/workbench/output-panel";
 import { ValidationPanel } from "@/components/workbench/validation-panel";
 import { ValidationBanner } from "@/components/workbench/validation-banner";
+import { AuditTrustPanel } from "@/components/workbench/audit-trust-panel";
 import { LintPanel } from "@/components/workbench/lint-panel";
 import { DifferentialPanel } from "@/components/workbench/differential-panel";
 import { cn } from "@/lib/utils";
@@ -170,6 +171,7 @@ export default function Workbench() {
             <ValidationBanner state={state} />
             <OutputPanel state={state} />
             <DifferentialPanel state={differential} />
+            <AuditTrustPanel />
             <LintPanel state={state} />
             <ValidationPanel state={state} />
           </div>

@@ -38,6 +38,37 @@ export interface DifferentialProgress {
   buildLogs: string[];
 }
 
+/**
+ * P5.3: detect whether the parsed IR contains SPL / Token-2022 / ATA
+ * CPI body statements. When it does, the workbench's differential
+ * panel surfaces a "Recommended for SPL programs" badge to nudge the
+ * user to run byte-equal verification before extracting. Pure read of
+ * IR body kinds — no type-narrowing across the unknown unwrapping
+ * because the workbench passes the IR as opaque JSON.
+ */
+function detectSplCpiInIr(ir: unknown | null): boolean {
+  if (!ir || typeof ir !== "object") return false;
+  const root = ir as { instructions?: Array<{ body?: Array<{ kind?: string }> }> };
+  const ixs = root.instructions;
+  if (!Array.isArray(ixs)) return false;
+  for (const ix of ixs) {
+    if (!Array.isArray(ix.body)) continue;
+    for (const stmt of ix.body) {
+      const k = stmt.kind;
+      if (typeof k !== "string") continue;
+      if (
+        k.startsWith("cpi_spl_") ||
+        k.startsWith("cpi_t22_") ||
+        k === "cpi_ata_create" ||
+        k === "cpi_memo"
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function useDifferential(args: {
   ir: unknown | null;
   anchorSource: string | null;
@@ -244,6 +275,11 @@ export function useDifferential(args: {
     }
   }
 
+  // P5.3 — recompute on every IR change. Cheap (walks body kinds), so
+  // useMemo is overkill; the IR identity is stable across re-renders
+  // until the user re-runs the pipeline.
+  const recommendedForSpl = detectSplCpiInIr(args.ir);
+
   return {
     phase,
     scenario,
@@ -257,6 +293,13 @@ export function useDifferential(args: {
     error,
     quota,
     target: args.target ?? "pinocchio",
+    /**
+     * True when the IR has SPL / Token-2022 / ATA / Memo CPI body kinds.
+     * SPL touches have the highest divergence-risk (decimals, account
+     * ordering, signer-seed shape) so the workbench surfaces a
+     * "Recommended for SPL programs" badge near the differential CTA.
+     */
+    recommendedForSpl,
     generateAutoScenario,
     runVerify,
     reset: () => {

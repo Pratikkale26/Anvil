@@ -1,7 +1,7 @@
 "use client";
 
 import Editor, { DiffEditor } from "@monaco-editor/react";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   C,
   MONACO_OPTS,
@@ -129,6 +129,47 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     compareTargetBusy,
     compareTargetError,
   } = state;
+
+  // P5.1: Stub-marker acknowledgement gate.
+  //
+  // When the emit contains any ⚠️ Anvil / TODO(manual) / FIXME(anvil) /
+  // 0u8 /* TODO: decimals literal, Copy + Download .rs + Download
+  // project bundle stay DISABLED until the user explicitly checks the
+  // ack box. Matches the CLI's safe-by-default --strict polarity flip
+  // (P0.2): you can't ship stub-bearing emit without an active opt-out.
+  //
+  // Scan runs on the whole project (all outputFiles), not just the
+  // active file — a user could see a clean active tab but the bundle
+  // they're about to download contains a stub elsewhere.
+  //
+  // Ack state is per-session (lives in component state, NOT
+  // localStorage). Resets when the workbench reloads. Each new
+  // pipeline run resets too — different output, different decision.
+  const stubsPresentInEmit = useMemo(() => {
+    const probe = (s: string): boolean => (
+      /TODO\(manual\)/.test(s) ||
+      /FIXME\(anvil\)/.test(s) ||
+      /⚠️\s*Anvil/.test(s) ||
+      /\b0u8\s*\/\*\s*TODO:\s*decimals\b/.test(s)
+    );
+    if (outputFiles.length > 0) {
+      return outputFiles.some((f) => probe(f.content));
+    }
+    return probe(singleFileCode);
+  }, [outputFiles, singleFileCode]);
+  const [stubAck, setStubAck] = useState(false);
+  // Reset ack whenever the underlying emit changes — a new pipeline
+  // run produces a fresh outputFiles identity, so this fires.
+  const lastOutputRef = useRef(outputFiles);
+  if (lastOutputRef.current !== outputFiles) {
+    lastOutputRef.current = outputFiles;
+    if (stubAck) setStubAck(false);
+  }
+  const gateActive = stubsPresentInEmit && !stubAck;
+  const guardedClick = (action: () => void) => () => {
+    if (gateActive) return; // disabled state should prevent this anyway
+    action();
+  };
 
   // File-tree filter. Shown above the list once the project has enough files
   // that scrolling is annoying (real-world Anchor programs with 20-50 files).
@@ -311,29 +352,31 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
           {/* Icon actions */}
           <div className="flex items-center gap-1">
             <IconBtn
-              title={copied ? "Copied!" : "Copy"}
-              onClick={copyActiveContent}
-              disabled={!activeContent}
-              active={copied}
+              title={gateActive ? "Acknowledge stub markers below before copying" : copied ? "Copied!" : "Copy"}
+              onClick={guardedClick(copyActiveContent)}
+              disabled={!activeContent || gateActive}
+              active={copied && !gateActive}
             >
-              {copied ? (
+              {copied && !gateActive ? (
                 <CheckCircle2 size={14} />
               ) : (
                 <Copy size={14} />
               )}
             </IconBtn>
             <IconBtn
-              title="Download .rs"
-              onClick={downloadSingleFile}
-              disabled={!singleFileCode}
+              title={gateActive ? "Acknowledge stub markers below before downloading" : "Download .rs"}
+              onClick={guardedClick(downloadSingleFile)}
+              disabled={!singleFileCode || gateActive}
             >
               <Download size={14} />
             </IconBtn>
             <IconBtn
-              title="Download buildable project (.tar) — includes Cargo.toml + README + src/"
-              onClick={downloadProjectBundle}
-              disabled={!outputFiles.length}
-              primary
+              title={gateActive
+                ? "Acknowledge stub markers below before downloading the bundle"
+                : "Download buildable project (.tar) — includes Cargo.toml + README + src/"}
+              onClick={guardedClick(downloadProjectBundle)}
+              disabled={!outputFiles.length || gateActive}
+              primary={!gateActive}
             >
               <FileArchive size={14} />
             </IconBtn>
@@ -443,6 +486,63 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
           </div>
         );
       })()}
+
+      {/* P5.1 — stub-marker acknowledgement strip. Shown ONLY when the
+          emit contains stub markers AND the user hasn't acked this run.
+          Disables Copy / Download .rs / Download .tar in the header
+          until the checkbox is ticked. Mirrors the CLI's safe-by-default
+          --strict polarity: you can't extract the artifact without an
+          explicit opt-out gesture. Hidden once acked OR once the next
+          pipeline run produces fresh output. */}
+      {stubsPresentInEmit && (
+        <div
+          className="px-5 py-2.5 border-b text-[12px] flex items-start gap-2.5"
+          style={{
+            background: stubAck
+              ? "rgba(245,166,35,0.04)"
+              : "rgba(224,90,90,0.07)",
+            borderColor: stubAck
+              ? "rgba(245,166,35,0.20)"
+              : "rgba(224,90,90,0.30)",
+            color: stubAck ? "#e8d68a" : "#ffb0b0",
+          }}
+          role={stubAck ? "status" : "alert"}
+        >
+          <span aria-hidden="true" className="font-bold leading-snug">
+            {stubAck ? "✓" : "!"}
+          </span>
+          <div className="leading-snug flex-1 min-w-0">
+            <span className="font-semibold">
+              {stubAck
+                ? "Stub markers acknowledged — extract enabled."
+                : "Emit contains stub markers — extract disabled."}
+            </span>{" "}
+            {!stubAck && (
+              <>
+                The emit has at least one <code className="font-mono text-[11px]">⚠️ Anvil</code> /
+                {" "}<code className="font-mono text-[11px]">TODO(manual)</code> /
+                {" "}<code className="font-mono text-[11px]">0u8 /* TODO: decimals</code> placeholder
+                that compiles but does not implement the original Anchor behavior. The CLI&apos;s
+                safe-by-default <code className="font-mono text-[11px]">--strict</code> gate would
+                refuse to write this. Tick the box to extract anyway (explore mode only —
+                <strong> never deploy stub-bearing emit to mainnet</strong>).
+              </>
+            )}
+          </div>
+          {!stubAck && (
+            <label className="flex items-center gap-2 text-[11px] font-semibold whitespace-nowrap cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={stubAck}
+                onChange={(e) => setStubAck(e.target.checked)}
+                className="cursor-pointer"
+                style={{ accentColor: "#e05a5a" }}
+              />
+              I&apos;ll audit, not deploy
+            </label>
+          )}
+        </div>
+      )}
 
       {/* Tabs (dimmed + inert while the AI-refine diff overlay is up) */}
       <div

@@ -94,11 +94,15 @@ What we **don't** claim:
 
 ## Try it in 30 seconds
 
+**Requires [Bun](https://bun.sh) ≥ 1.0.0** as the runtime. The CLI is published as `anvil-sol` and runs under Bun (not Node) — `bun add -g anvil-sol` or invoke with `bunx anvil-sol …`. The full repo also runs under Bun for tests + the dev server.
+
 ```bash
 git clone https://github.com/Pratikkale26/Anvil && cd Anvil
 bun install && cd cli && bun install && cd ..
 
-# Transpile a bundled demo and cargo-build it
+# Transpile a bundled demo and cargo-build it. (v0.4+ writes the project
+# only when the safe-by-default gate passes; pass --permissive to write
+# stub-bearing emit anyway — explore mode only.)
 bun cli/anvil.ts compile api/src/demo-programs/counter.rs --target native -o /tmp/counter-native
 cd /tmp/counter-native && cargo build
 
@@ -241,7 +245,7 @@ docs/   Architecture, differential testing, feature matrix, migration guide
 
 ## Status
 
-v0.4.0 — **safe-by-default** (`--strict` is the new CLI default; `--permissive` is the opt-out). See [CHANGELOG.md](CHANGELOG.md) for the BREAKING-change migration notes. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). **611 passing tests across 91 files** (4 known-fail, most env-gated): 34 byte-equal differential fixtures (28 demo + **6 externally-authored Anchor programs**) + 50+ real-world cargo regressions + parser / emitter / validator / sandbox / AI suites. Source of truth: `bun scripts/count-tests.ts`.
+v0.4.0 — **safe-by-default** (`--strict` is the new CLI default; `--permissive` is the opt-out). See [CHANGELOG.md](CHANGELOG.md) for the BREAKING-change migration notes. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). **985+ passing tests across 65+ fast-suite files** (excluding env-gated differential + SBF-toolchain suites): 30+ byte-equal differential fixtures (T22 family + 6 externally-authored Anchor programs) + 50+ real-world cargo regressions + parser / emitter / validator / sandbox / AI suites + marker-validator linkage. Source of truth: `bun scripts/count-tests.ts`.
 
 Working notes for grant + migration: [docs/migration-guide.md](docs/migration-guide.md).
 
