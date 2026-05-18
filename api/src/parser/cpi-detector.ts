@@ -162,6 +162,9 @@ export function detectCpi(
   if (funcText.includes("metadata_pointer_initialize")) {
     return extractT22MetadataPointerInitialize(callNode, collector);
   }
+  if (funcText.includes("metadata_pointer_update")) {
+    return extractT22MetadataPointerUpdate(callNode, collector);
+  }
   if (funcText.includes("group_pointer_initialize")) {
     return extractT22GroupPointerInitialize(callNode, collector);
   }
@@ -1359,6 +1362,56 @@ function extractT22GroupPointerInitialize(
     tokenProgram: cleanAccountRef(tokenProgram),
     authority,
     groupAddress,
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 MetadataPointer update (E1 — EM2 closure) ───────────────────
+//
+// Mint-level extension. anchor-spl 0.31/0.32 doesn't expose a wrapper,
+// but follow this detection convention for any source that wraps the
+// raw spl_token_2022 call (custom helpers / future anchor-spl).
+// Payload = single OptionalNonZeroPubkey (32 bytes).
+function extractT22MetadataPointerUpdate(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 metadata_pointer_update", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 metadata_pointer_update (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  let tokenProgram = "token_program";
+  let authority = "authority";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+    authority =
+      extractStructField(accountsStruct, "authority") ?? authority;
+  }
+  const metadataAddress = args[1]?.text.trim() ?? "None";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_metadata_pointer_update",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    authority: cleanAccountRef(authority),
+    metadataAddress,
     signerSeeds,
   };
 }

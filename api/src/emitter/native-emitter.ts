@@ -1114,6 +1114,34 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     )?;`;
   }
 
+  override emitT22MetadataPointerUpdate(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    metadataAddress: string,
+    signerSeeds?: string,
+  ): string {
+    // anchor-spl 0.31/0.32 does not expose a wrapper for MetadataPointer
+    // update. Programs use raw spl_token_2022::extension::metadata_pointer
+    // ::instruction::update directly. Anvil's typed slot routes here so
+    // the emit is uniform whether the source went through anchor-spl or
+    // raw spl_token_2022. Native path emits the same raw helper.
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 MetadataPointer update — ${mint}
+    let mpu_ix = spl_token_2022::extension::metadata_pointer::instruction::update(
+        &spl_token_2022::id(),
+        ${mint}.key,
+        ${authority}.key,
+        &[],
+        ${metadataAddress},
+    )?;
+    ${invokeType}(
+        &mpu_ix,
+        &[${mint}.clone(), ${authority}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
   override emitT22GroupPointerInitialize(
     mint: string,
     tokenProgram: string,

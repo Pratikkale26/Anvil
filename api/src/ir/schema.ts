@@ -579,10 +579,9 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
 
   // anchor_spl::token_2022_extensions::metadata_pointer::
   // metadata_pointer_initialize. Mint-level extension. Sets an
-  // optional authority that could later update the pointer (no anchor-
-  // spl wrapper exposes update; raw spl_token_2022 supports it but is
-  // out-of-scope for this kind) and the optional metadata address.
-  // Both Options use the OptionalNonZeroPubkey flat layout.
+  // optional authority that can later update the pointer and the
+  // optional metadata address. Both Options use the
+  // OptionalNonZeroPubkey flat layout.
   z.object({
     kind: z.literal("cpi_t22_metadata_pointer_initialize"),
     /** AccountInfo binding for the mint being initialized. */
@@ -593,6 +592,31 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     authority: z.string(),
     /** Source expression for the metadata account address
      *  (Option<Pubkey>). Use the literal "None" or `Some(<expr>)`. */
+    metadataAddress: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // spl_token_2022::extension::metadata_pointer::instruction::update.
+  // Parent disc 39 + sub 1; payload = single OptionalNonZeroPubkey
+  // (32 bytes, zero-filled = None). Requires the existing pointer
+  // authority as signer.
+  //
+  // anchor-spl 0.31/0.32 does not expose a wrapper for this — programs
+  // call raw `spl_token_2022::extension::metadata_pointer::instruction
+  // ::update` directly. Without this IR kind the call falls through to
+  // pass_through and the emit references a crate that Pinocchio
+  // doesn't ship. EM2 closure (E1) wires the typed slot so both targets
+  // produce a working CPI: Native via the spl_token_2022 helper,
+  // Pinocchio via hand-rolled raw bytes (same shape as GroupPointer
+  // update with parent disc 39 instead of 40).
+  z.object({
+    kind: z.literal("cpi_t22_metadata_pointer_update"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    /** AccountInfo binding for the current pointer authority (signer). */
+    authority: z.string(),
+    /** Source expression for the new metadata account address
+     *  (Option<Pubkey>). Literal `None` or `Some(<expr>)`. */
     metadataAddress: z.string(),
     signerSeeds: z.string().optional(),
   }),

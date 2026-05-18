@@ -695,6 +695,7 @@ type CpiT22PermanentDelegateInit = Extract<BodyStatement, { kind: "cpi_t22_perma
 type CpiT22TransferHookInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_hook_initialize" }>;
 type CpiT22TransferHookUpdate = Extract<BodyStatement, { kind: "cpi_t22_transfer_hook_update" }>;
 type CpiT22MetadataPointerInit = Extract<BodyStatement, { kind: "cpi_t22_metadata_pointer_initialize" }>;
+type CpiT22MetadataPointerUpdate = Extract<BodyStatement, { kind: "cpi_t22_metadata_pointer_update" }>;
 type CpiT22GroupPointerInit = Extract<BodyStatement, { kind: "cpi_t22_group_pointer_initialize" }>;
 type CpiT22GroupPointerUpdate = Extract<BodyStatement, { kind: "cpi_t22_group_pointer_update" }>;
 type CpiT22GroupMemberPointerInit = Extract<BodyStatement, { kind: "cpi_t22_group_member_pointer_initialize" }>;
@@ -758,6 +759,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_t22_transfer_hook_initialize",
   "cpi_t22_transfer_hook_update",
   "cpi_t22_metadata_pointer_initialize",
+  "cpi_t22_metadata_pointer_update",
   "cpi_t22_group_pointer_initialize",
   "cpi_t22_group_pointer_update",
   "cpi_t22_group_member_pointer_initialize",
@@ -831,6 +833,8 @@ export class AstVisitorBase {
         return this.visitCpiT22TransferHookUpdate(stmt);
       case "cpi_t22_metadata_pointer_initialize":
         return this.visitCpiT22MetadataPointerInit(stmt);
+      case "cpi_t22_metadata_pointer_update":
+        return this.visitCpiT22MetadataPointerUpdate(stmt);
       case "cpi_t22_group_pointer_initialize":
         return this.visitCpiT22GroupPointerInit(stmt);
       case "cpi_t22_group_pointer_update":
@@ -2442,6 +2446,22 @@ export class AstVisitorBase {
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
       authorityResolved,
+      metadataResolved,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22MetadataPointerUpdate(stmt: CpiT22MetadataPointerUpdate): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: metadata_pointer_update(${stmt.mint})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    const metadataResolved = w.transformCtxAccountsReferences(stmt.metadataAddress);
+    lines.push(w.emitter.emitT22MetadataPointerUpdate(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      snakeCase(stmt.authority),
       metadataResolved,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ));

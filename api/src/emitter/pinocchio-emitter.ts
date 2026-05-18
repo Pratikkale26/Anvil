@@ -1864,6 +1864,19 @@ ${invokeCall}
     }`;
   }
 
+  override emitT22MetadataPointerUpdate(
+    mint: string,
+    _tokenProgram: string,
+    authority: string,
+    metadataAddress: string,
+    signerSeeds?: string,
+  ): string {
+    // Parent disc 39 = MetadataPointerExtension; sub 1 = Update.
+    // Payload = single OptionalNonZeroPubkey (32 bytes, zero = None).
+    // accounts = [writable mint, readonly+signer authority].
+    return emitT22FlatOptionPointerUpdate("mpu", "MetadataPointer", 39, mint, authority, metadataAddress, signerSeeds);
+  }
+
   override emitT22GroupPointerInitialize(
     mint: string,
     _tokenProgram: string,

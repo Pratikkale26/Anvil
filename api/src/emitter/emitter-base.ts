@@ -254,6 +254,21 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // Update the MetadataPointer pointer address on a mint that already
+  // has the extension. Parent disc 39 + sub-disc 1; payload = single
+  // OptionalNonZeroPubkey (32 bytes); accounts = [mint writable,
+  // authority readonly+signer]. anchor-spl 0.31/0.32 doesn't expose a
+  // wrapper, so source uses raw spl_token_2022 — this typed slot
+  // routes both targets to a working CPI (Native: spl_token_2022
+  // helper; Pinocchio: hand-rolled raw bytes).
+  abstract emitT22MetadataPointerUpdate(
+    mint: string,
+    tokenProgram: string,
+    authority: string,
+    metadataAddress: string,
+    signerSeeds?: string,
+  ): string;
+
   // GroupPointer init/update. Parent disc 40, sub 0/1. Init payload =
   // 2× OptionalNonZeroPubkey; Update payload = 1× OptionalNonZeroPubkey
   // and requires the authority signer.
