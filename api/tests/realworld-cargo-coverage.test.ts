@@ -28,6 +28,13 @@ export type { RealworldCase } from "./realworld-fixtures.ts";
 
 const CARGO_OK = cargoAvailable();
 
+// When set, fixture-unavailable and parse-fail silent-returns throw
+// instead of returning. CI sets this so a missing real-world fixture
+// surfaces as a test failure rather than a silent pass (without the
+// flag, an offline run on a fresh box could report every real-world
+// case as green while having verified nothing).
+const STRICT_FIXTURES = process.env.ANVIL_TEST_STRICT_FIXTURES === "1";
+
 describe("real-world cargo coverage (H3 increment)", () => {
   if (!CARGO_OK) {
     test.skip("cargo not on PATH — skipping real-world cargo coverage", () => {});
@@ -40,13 +47,18 @@ describe("real-world cargo coverage (H3 increment)", () => {
       async () => {
         const source = ensureFixture(c);
         if (!source) {
-          console.warn(`[realworld] ${c.id}: source not available (no network?), skipping`);
+          const msg = `[realworld] ${c.id}: source not available (no network?)`;
+          if (STRICT_FIXTURES) throw new Error(`${msg} — surfacing per ANVIL_TEST_STRICT_FIXTURES=1`);
+          console.warn(`${msg}, skipping`);
           return;
         }
 
         const parsed = await parseAnchor(source);
         expect(parsed.ok).toBe(true);
-        if (!parsed.ok) return;
+        if (!parsed.ok) {
+          if (STRICT_FIXTURES) throw new Error(`[realworld] ${c.id}: parser failed — surfacing per ANVIL_TEST_STRICT_FIXTURES=1`);
+          return;
+        }
 
         const emit = emitPinocchioFull(parsed.ir);
         const issues = validateEmitterOutput(parsed.ir, emit);

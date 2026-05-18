@@ -219,18 +219,27 @@ if (process.env.ANVIL_NO_CLONE !== "1") {
 const anyExist = TRACKED.some((c) => existsSync(c.path));
 
 if (anyExist) {
+  // STRICT_FIXTURES converts silent-returns to throws so CI surfaces
+  // missing-fixture or parse-fail cases instead of reporting them as
+  // green. Default behavior unchanged for local dev.
+  const STRICT_FIXTURES = process.env.ANVIL_TEST_STRICT_FIXTURES === "1";
   describe("Real-world Anchor cargo-build tracking [non-blocking ceilings]", () => {
     for (const c of TRACKED) {
       test(`${c.id} / ${c.target} (≤${c.maxErrors})`, async () => {
         if (!existsSync(c.path)) {
-          console.warn(`[tracking] ${c.id}/${c.target}: skipped — path missing: ${c.path}`);
+          const msg = `[tracking] ${c.id}/${c.target}: path missing: ${c.path}`;
+          if (STRICT_FIXTURES) throw new Error(`${msg} — surfacing per ANVIL_TEST_STRICT_FIXTURES=1`);
+          console.warn(`${msg} — skipping`);
           return;
         }
         const files = collectProjectFilesFromEntry(c.path);
         const source = buildProjectSource(getProjectEntryPath(c.path), files);
         const parsed = await parseAnchor(source);
         expect(parsed.ok).toBe(true);
-        if (!parsed.ok) return;
+        if (!parsed.ok) {
+          if (STRICT_FIXTURES) throw new Error(`[tracking] ${c.id}/${c.target}: parser failed — surfacing per ANVIL_TEST_STRICT_FIXTURES=1`);
+          return;
+        }
         const out = c.target === "native"
           ? emitNativeFull(parsed.ir)
           : emitPinocchioFull(parsed.ir);

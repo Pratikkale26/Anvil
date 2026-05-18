@@ -107,11 +107,17 @@ if (anyExist) {
   // as the binary fixtures so a fresh dev box doesn't silently skip.
   ensureEscrowCloned();
 
+  // STRICT_FIXTURES converts the path-missing silent-return into a
+  // throw so CI surfaces an unexpectedly-missing tracked fixture
+  // instead of reporting it as green.
+  const STRICT_FIXTURES = process.env.ANVIL_TEST_STRICT_FIXTURES === "1";
   describe("Differential tracking [non-blocking ceilings]", () => {
     for (const tc of TRACKED) {
       test(`${tc.id} (≤${tc.maxMismatches})`, async () => {
         if (!existsSync(tc.pathProbe)) {
-          console.warn(`[diff-tracking] ${tc.id}: skipped — path missing: ${tc.pathProbe}`);
+          const msg = `[diff-tracking] ${tc.id}: path missing: ${tc.pathProbe}`;
+          if (STRICT_FIXTURES) throw new Error(`${msg} — surfacing per ANVIL_TEST_STRICT_FIXTURES=1`);
+          console.warn(`${msg} — skipping`);
           return;
         }
         const programId = new PublicKey(tc.fixture.programIdBase58);
