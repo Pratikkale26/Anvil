@@ -36,7 +36,6 @@ export function loadWorkbenchState(): Partial<PersistedWorkbench> | null {
     const out: Partial<PersistedWorkbench> = {};
     if (isInputMode(p.mode)) out.mode = p.mode;
     // Drop stored values that no longer match the supported Target union
-    // (e.g. an old "quasar" selection from before that target was removed)
     // so hydration can't leave the workbench wedged on an unsupported value.
     if (isTarget(p.target)) out.target = p.target;
     if (typeof p.demoName === "string") out.demoName = p.demoName;

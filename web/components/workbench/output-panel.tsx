@@ -523,8 +523,8 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                 {" "}<code className="font-mono text-[11px]">TODO(manual)</code> /
                 {" "}<code className="font-mono text-[11px]">0u8 /* TODO: decimals</code> placeholder
                 that compiles but does not implement the original Anchor behavior. The CLI&apos;s
-                safe-by-default <code className="font-mono text-[11px]">--strict</code> gate would
-                refuse to write this. Tick the box to extract anyway (explore mode only —
+                safe-by-default <code className="font-mono text-[11px]">--strict</code> gate
+                refuses this. Tick the box to extract anyway (explore mode only —
                 <strong> never deploy stub-bearing emit to mainnet</strong>).
               </>
             )}

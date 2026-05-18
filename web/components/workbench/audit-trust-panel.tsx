@@ -111,7 +111,7 @@ export function AuditTrustPanel() {
               does NOT implement the original Anchor behavior. The CLI&apos;s
               safe-by-default{" "}
               <code className="font-mono text-[11px]">--strict</code> gate
-              would refuse to write it.
+              refuses this.
             </div>
           </div>
 

@@ -104,11 +104,11 @@ export function ValidationBanner({ state }: { state: AnvilPipelineState }) {
               {errorCount} validator error{errorCount !== 1 ? "s" : ""} present.
             </div>
             <div className="text-xs text-anvil-text-sub mt-1.5 leading-relaxed">
-              The CLI&apos;s default <code className="font-mono text-anvil-amber-light">--strict</code> gate
-              would refuse to write this output. See the Validation panel below for
-              per-issue detail; resolve each error before deploying. Pass{" "}
+              The CLI&apos;s safe-by-default <code className="font-mono text-anvil-amber-light">--strict</code> gate
+              refuses this output. See the Validation panel below for per-issue
+              detail; resolve each error before deploying. Use{" "}
               <code className="font-mono text-anvil-amber-light">--permissive</code>{" "}
-              to the CLI only for explore-mode inspection (never to mainnet).
+              only for explore-mode inspection (never to mainnet).
             </div>
             {errorPaths.length > 0 && (
               <div className="text-[11px] text-anvil-text-muted mt-1.5 font-mono leading-relaxed">

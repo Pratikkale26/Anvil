@@ -24,7 +24,7 @@ export function Footer() {
                   ANVIL
                 </span>
                 <span className="text-[11px] tracking-wider text-anvil-text-muted uppercase">
-                  Solana Compiler · v0.3.4
+                  Solana Compiler · v0.4.0
                 </span>
               </div>
             </div>
