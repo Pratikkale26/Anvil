@@ -347,6 +347,14 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
     /** Mint decimals expression — required when tokenProgram is "token_2022" (mint_to_checked). */
     decimals: z.string().optional(),
+    /**
+     * AccountInfo binding name for runtime program-ID dispatch — same
+     * semantics as `cpi_spl_transfer.tokenProgramArg`. Set when source
+     * uses `Interface<TokenInterface>::mint_to(...)` so the emit reads
+     * the program ID from the AccountInfo at runtime instead of
+     * hardcoding TOKEN_2022_PROGRAM_ID.
+     */
+    tokenProgramArg: z.string().optional(),
   }),
 
   // SPL Token burn CPI
@@ -361,6 +369,11 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
     /** Mint decimals expression — required when tokenProgram is "token_2022" (burn_checked). */
     decimals: z.string().optional(),
+    /**
+     * AccountInfo binding name for runtime program-ID dispatch — same
+     * semantics as `cpi_spl_transfer.tokenProgramArg`.
+     */
+    tokenProgramArg: z.string().optional(),
   }),
 
   // SPL Token close_account CPI
@@ -372,6 +385,11 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
     /** Which token program to invoke: "token" (default) or "token_2022" */
     tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
+    /**
+     * AccountInfo binding name for runtime program-ID dispatch — same
+     * semantics as `cpi_spl_transfer.tokenProgramArg`.
+     */
+    tokenProgramArg: z.string().optional(),
   }),
 
   // SPL Token set_authority CPI
@@ -393,6 +411,11 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
     /** Which token program to invoke: "token" (default) or "token_2022" */
     tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
+    /**
+     * AccountInfo binding name for runtime program-ID dispatch — same
+     * semantics as `cpi_spl_transfer.tokenProgramArg`.
+     */
+    tokenProgramArg: z.string().optional(),
   }),
 
   // Associated Token Account creation CPI
