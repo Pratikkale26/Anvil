@@ -1,5 +1,6 @@
 import type { EmitterOutput, SolanaIR, BodyStatement } from "../ir/schema.js";
 import { snakeCase } from "./emitter-utils.js";
+import { UNSUPPORTED_IMPORT_PATTERNS, type LintTarget } from "../cli/lint-analyzer.js";
 import {
   T22_EXTENSION_BY_IR_KIND,
   minimumMintSize,
@@ -1043,6 +1044,19 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
   issues.push(...checkExternalCrateDependencies(files));
   const aggregateTarget = detectTarget(files.map((file) => file.content).join("\n"));
 
+  // ── Portability blocker check ──
+  // The lint-analyzer's UNSUPPORTED_IMPORT_PATTERNS table identifies
+  // imports Anvil doesn't structurally rewrite (Pyth, Switchboard,
+  // mpl_core, Drift, etc.). Pre-this-check, those imports passed
+  // validation and only surfaced as cargo errors downstream — bad UX
+  // because the user has to wait for a long build to learn the emit
+  // won't work. This pass scans `ir.imports` against the same table
+  // and emits a validator error when the target's verdict for that
+  // pattern is "blocker", so the --strict gate refuses to write the
+  // output upfront. Native gets per-pattern verdicts (some blockers
+  // are Pinocchio-only). Same data source as `anvil lint`.
+  issues.push(...checkPortabilityBlockers(ir, aggregateTarget));
+
   for (const file of files) {
     const target = aggregateTarget ?? detectTarget(file.content);
     const codeForPatternChecks = stripLineComments(file.content);
@@ -1219,6 +1233,40 @@ function collectDefinedAssociatedConsts(files: EmitterOutput["files"]): Map<stri
     }
   }
   return defs;
+}
+
+/**
+ * Walk ir.imports against the lint-analyzer's UNSUPPORTED_IMPORT_PATTERNS
+ * table. Emits a validator error for each import whose verdict is "blocker"
+ * for the detected target. Allows the strict gate (--strict default in
+ * v0.4+) to refuse before cargo runs.
+ *
+ * Detected target defaults to "pinocchio" when emit is empty / heuristic
+ * fails — Pinocchio has the more conservative blocker set, so defaulting
+ * there minimizes false negatives.
+ */
+function checkPortabilityBlockers(
+  ir: SolanaIR,
+  detectedTarget: "pinocchio" | "native" | null,
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const target: LintTarget = detectedTarget ?? "pinocchio";
+  const imports = ir.imports ?? [];
+  const seen = new Set<string>(); // dedupe per prefix
+  for (const importLine of imports) {
+    for (const p of UNSUPPORTED_IMPORT_PATTERNS) {
+      if (seen.has(p.prefix)) continue;
+      if (!importLine.includes(p.prefix)) continue;
+      const verdict = p.verdict(target);
+      if (verdict !== "blocker") continue;
+      seen.add(p.prefix);
+      issues.push({
+        severity: "error",
+        message: `[portability] ${p.title}: ${p.detail(target)}`,
+      });
+    }
+  }
+  return issues;
 }
 
 function checkUndefinedAssociatedConsts(files: EmitterOutput["files"]): ValidationIssue[] {

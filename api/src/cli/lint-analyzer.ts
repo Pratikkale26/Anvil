@@ -66,7 +66,7 @@ const EXTERNAL_BLOCKER_CRATES: Array<{ crate: string; reason: string }> = [
 // plus a dedicated 'Unsupported integration' for SDK-blockers).
 type TargetVerdict = (target: LintTarget) => LintLevel;
 
-type UnsupportedPattern = {
+export type UnsupportedPattern = {
   /** Path prefix as it appears in `use ...;` — match is substring against the import line. */
   prefix: string;
   category: string;
@@ -77,7 +77,13 @@ type UnsupportedPattern = {
   verdict: TargetVerdict;
 };
 
-const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
+/**
+ * Exported so the output-validator can reuse the same blocker
+ * patterns to short-circuit emit on Pinocchio targets — see
+ * `checkPortabilityBlockers` in output-validator.ts. Keeping the list
+ * in one place avoids drift between `anvil lint` and `anvil compile`.
+ */
+export const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
   // ── Metaplex Core ──────────────────────────────────────────────────────
   {
     prefix: "mpl_core",
