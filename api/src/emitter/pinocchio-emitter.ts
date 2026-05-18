@@ -3882,8 +3882,14 @@ export const NATIVE_T22_TYPE_BLACKLIST: ReadonlyArray<string> = [
   "InterfaceAccount",
 ];
 
-// FN blacklist is the same across targets — both anchor-spl wrappers and
-// raw spl extension instruction names that the typed IR doesn't yet cover.
+// FN blacklist for Pinocchio's commentout pass. These are raw
+// spl_token_2022::extension::transfer_fee::instruction::* call shapes
+// that hit pass_through (no pinocchio_spl_token_2022_transfer_fee
+// equivalent crate exists), so the emit needs to strip them. The
+// typed-IR path for the same operations DOES work on Pinocchio
+// (hand-rolled invoke at emitT22{TransferCheckedWithFee,
+// WithdrawWithheldFromMint, HarvestWithheldToMint}); this list
+// catches the rarer untyped-passthrough case.
 export const T22_FN_BLACKLIST: ReadonlyArray<string> = [
   "transfer_fee_set",
   "transfer_checked_with_fee",
@@ -3891,6 +3897,16 @@ export const T22_FN_BLACKLIST: ReadonlyArray<string> = [
   "withdraw_withheld_tokens_from_mint",
   "harvest_withheld_tokens_to_mint",
 ];
+
+// Native has the spl_token_2022 crate available, so any
+// `spl_token_2022::extension::transfer_fee::instruction::*` call (typed
+// or pass_through) compiles directly. Empty blacklist by default;
+// callers can still pass an explicit set if a future test program
+// surfaces a Native-side gap. Closes the API-sweep finding where
+// `t22-transfer-fee-init` Native emit had 3 ⚠️ Anvil markers because
+// the typed-IR's spl_token_2022 calls were being stripped by the
+// shared blacklist.
+export const NATIVE_T22_FN_BLACKLIST: ReadonlyArray<string> = [];
 
 function commentOutT22ExtensionCallSites(
   body: string,

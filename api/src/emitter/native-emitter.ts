@@ -9,7 +9,7 @@
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen } from "./emitter-base.js";
-import { applyT22ExtensionCommentout, NATIVE_T22_TYPE_BLACKLIST, T22_FN_BLACKLIST } from "./pinocchio-emitter.js";
+import { applyT22ExtensionCommentout, NATIVE_T22_TYPE_BLACKLIST, NATIVE_T22_FN_BLACKLIST } from "./pinocchio-emitter.js";
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
 import {
   instrDiscriminator,
@@ -121,7 +121,7 @@ export class NativeEmitter extends BaseEmitter {
     // remaining call-sites are user code that wouldn't compile anyway.
     bodyCode = applyT22ExtensionCommentout(bodyCode, {
       typeBlacklist: NATIVE_T22_TYPE_BLACKLIST,
-      fnBlacklist: T22_FN_BLACKLIST,
+      fnBlacklist: NATIVE_T22_FN_BLACKLIST,
       // Native's solana_program AccountInfo HAS a `.data` field
       // (`Rc<RefCell<&'a mut [u8]>>`), and counter/vault/escrow demos use
       // `counter.data.borrow_mut()` for state writes — completely valid
