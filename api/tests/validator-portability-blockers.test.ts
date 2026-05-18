@@ -10,8 +10,10 @@
  *
  * This file locks the contract:
  * - mpl_core blocks BOTH targets (no structural rewrite + no helper)
- * - pyth_sdk_solana is "review" since M2b (structural emit shipped) —
- *   no portability error, but a review-bucket finding through /lint.
+ * - pyth_sdk_solana stays "blocker" — M2b parser+IR+emit landed but the
+ *   pyth crates' borsh-derive proc-macro conflicts with the Anvil
+ *   scaffold's borsh pin. Strict gate refuses until cargo-compat is
+ *   solved end-to-end. Same for pyth_solana_receiver_sdk (N5).
  * - clean imports (anchor_lang, anchor_spl::token) → no errors
  * - duplicate-prefix dedupe so one offending crate yields one error
  */
@@ -52,23 +54,24 @@ function mkOutput(target: "pinocchio" | "native", extraContent = ""): EmitterOut
 }
 
 describe("validator checkPortabilityBlockers", () => {
-  test("pyth_sdk_solana import on Pinocchio → no portability error (M2b downgraded to review)", () => {
-    // M2b shipped a structural emit (api/src/emitter/pinocchio-emitter.ts
-    // emitPythReadPriceLegacy), so the lint-analyzer verdict relaxed from
-    // "blocker" → "review". checkPortabilityBlockers only escalates
-    // blocker-verdict imports to validator errors; review-verdict
-    // imports show up in /lint findings but don't refuse the emit.
+  test("pyth_sdk_solana import on Pinocchio → blocker (cargo-compat unresolved)", () => {
+    // M2b shipped parser+IR+emit, but the pyth-sdk-solana 0.10
+    // borsh-derive proc-macro conflicts with the Anvil scaffold's
+    // borsh 1.5 pin — the emit produces uncompilable code under the
+    // current scaffold. Strict gate keeps blocking until the cargo-
+    // compat is solved end-to-end. Same posture as before M2b for
+    // gate behavior.
     const ir = buildIr(["use pyth_sdk_solana::state::SolanaPriceAccount;"]);
     const issues = validateEmitterOutput(ir, mkOutput("pinocchio"));
     const blockers = issues.filter((i) => i.severity === "error" && i.message.includes("[portability]") && i.message.includes("pyth_sdk_solana"));
-    expect(blockers.length).toBe(0);
+    expect(blockers.length).toBe(1);
   });
 
-  test("pyth_sdk_solana import on Native → no portability error (M2b)", () => {
+  test("pyth_sdk_solana import on Native → also blocker (cargo-compat unresolved)", () => {
     const ir = buildIr(["use pyth_sdk_solana::state::SolanaPriceAccount;"]);
     const issues = validateEmitterOutput(ir, mkOutput("native"));
     const blockers = issues.filter((i) => i.severity === "error" && i.message.includes("[portability]") && i.message.includes("pyth_sdk_solana"));
-    expect(blockers.length).toBe(0);
+    expect(blockers.length).toBe(1);
   });
 
   test("mpl_core blocks BOTH pinocchio AND native (no structural rewrite either way)", () => {

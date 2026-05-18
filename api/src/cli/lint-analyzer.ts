@@ -134,25 +134,30 @@ export const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
     verdict: () => "review",
   },
   // ── Pyth oracle ────────────────────────────────────────────────────────
+  // M2/N5 parser+IR+emit shipped (cpi_pyth_read_price_{legacy,modern}),
+  // but the Cargo.toml interop between the pyth-* crates and Anvil's
+  // scaffold's pinned borsh version is unresolved: pyth-solana-receiver-sdk
+  // 0.6 + pyth-sdk-solana 0.10 use borsh-derive in a way that conflicts
+  // with the scaffold's `borsh = "1.5"` (BorshDeserialize macro can't
+  // find borsh in deps from the proc-macro context). Until the version
+  // pin is solved end-to-end, the strict gate keeps refusing — the
+  // structural emit exists but produces uncompilable code under the
+  // current scaffold. Tracked: future session resolves the cargo-compat.
   {
     prefix: "pyth_solana_receiver_sdk",
     category: "Unsupported integration",
     title: "pyth_solana_receiver_sdk imports",
-    detail: (target) =>
-      target === "native"
-        ? "Modern Pyth oracle reads (PriceUpdateV2) are transpiled (N5) — Native uses pyth-solana-receiver-sdk + Anchor's AccountDeserialize fallback. Cargo.toml gets the crate auto-injected."
-        : "Modern Pyth oracle reads (PriceUpdateV2) are transpiled to a hand-rolled byte deserialization on Pinocchio (N5). Dynamic verification_level offset detection + embedded feed_id cross-check against the user-supplied feed_id (fails loud on wrong-feed attacks). NOTE: `get_feed_id_from_hex(\"0x...\")` calls survive as pass_through and need a Pinocchio-compatible hex-parse helper (M2c).",
-    verdict: () => "review",
+    detail: () =>
+      "Pyth modern (PriceUpdateV2) reads have parser+IR+emit shipped (N5), but the receiver-sdk crate's borsh-derive proc-macro conflicts with the Anvil scaffold's borsh pin. Strict gate refuses until the cargo-compat is resolved. Workaround: `--permissive` builds emit a structurally-correct skeleton you can hand-patch the deps on, or migrate the read to a manual deserialize.",
+    verdict: () => "blocker",
   },
   {
     prefix: "pyth_sdk_solana",
     category: "Unsupported integration",
     title: "pyth_sdk_solana imports",
-    detail: (target) =>
-      target === "native"
-        ? "Legacy Pyth SDK reads are transpiled (M2b) — Native re-uses the pyth-sdk-solana crate which is auto-injected into Cargo.toml. Verify the runtime accounts use the legacy PriceAccountV2 format (Pyth has been migrating publishers to the receiver SDK)."
-        : "Legacy Pyth SDK reads are transpiled to a hand-rolled PriceAccountV2 byte deserialization on Pinocchio (M2b). The emit is best-effort: byte offsets pinned to pyth-sdk-solana 0.10's PriceAccount struct, with a magic-header check (0xa1b2c3d4) to fail loud on the wrong account type. Verify against a real PriceAccount payload before deploy.",
-    verdict: () => "review",
+    detail: () =>
+      "Legacy Pyth SDK reads have parser+IR+emit shipped (M2b), but the pyth-sdk-solana crate's borsh-derive proc-macro conflicts with the Anvil scaffold's borsh pin. Strict gate refuses until the cargo-compat is resolved. Suggested fix: migrate to the receiver SDK (better long-term), or write the deserialization manually after emit.",
+    verdict: () => "blocker",
   },
   {
     prefix: "pythnet_sdk",

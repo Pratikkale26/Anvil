@@ -120,6 +120,13 @@ const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
   // so they tend to compile on pinocchio with `default-features = false`)
   mpl_core:                  `mpl-core = { version = "0.10", default-features = false }`,
   mpl_token_metadata:        `mpl-token-metadata = { version = "5.1", default-features = false }`,
+  // Pyth (M2b legacy + N5 modern). The Pinocchio emit hand-rolls byte
+  // deserialization for the actual price read, but keeps source-side
+  // `use pyth_*` imports + `get_feed_id_from_hex` pass-through calls
+  // in scope — those need the crate to compile. The receiver SDK
+  // pulls anchor-lang transitively for the AccountDeserialize trait.
+  pyth_sdk_solana:           `pyth-sdk-solana = "0.10"`,
+  pyth_solana_receiver_sdk:  `pyth-solana-receiver-sdk = "0.6"`,
   // Common third-party crates
   bytemuck:                  `bytemuck = { version = "1", features = ["derive"] }`,
   arrayref:                  `arrayref = "0.3"`,
