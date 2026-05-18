@@ -385,6 +385,12 @@ export function detectCpi(
   // "verify_collection" as a substring; the dispatch falls through on
   // first match, so the more-specific tokens have to win.
   if (
+    funcText.includes("approve_collection_authority") ||
+    funcText.endsWith("::approve_collection_authority")
+  ) {
+    return extractMplApproveCollectionAuthority(callNode, collector);
+  }
+  if (
     funcText.includes("set_and_verify_collection") ||
     funcText.endsWith("::set_and_verify_collection")
   ) {
@@ -577,6 +583,38 @@ function extractMplVerifyCollection(callNode: SyntaxNode, collector?: WarningCol
     collection: cleanAccountRef(grab("collection")),
     collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
     collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
+}
+
+/**
+ * Extract cpi_mpl_approve_collection_authority (M1f — slot 8).
+ * No data args after the CpiContext; 8 fixed accounts (system_program
+ * and rent are sourced from the visitor's standard bindings, not from
+ * the IR — keeping the IR field count minimal).
+ */
+function extractMplApproveCollectionAuthority(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+
+  const grab = (field: string) =>
+    extractStructField(accountsStruct, field) ?? field;
+
+  return {
+    kind: "cpi_mpl_approve_collection_authority",
+    collectionAuthorityRecord: cleanAccountRef(grab("collection_authority_record")),
+    newCollectionAuthority: cleanAccountRef(grab("new_collection_authority")),
+    updateAuthority: cleanAccountRef(grab("update_authority")),
+    payer: cleanAccountRef(grab("payer")),
+    metadata: cleanAccountRef(grab("metadata")),
+    mint: cleanAccountRef(grab("mint")),
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
   };
 }

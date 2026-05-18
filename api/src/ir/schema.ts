@@ -924,6 +924,21 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // Metaplex Token Metadata: approve_collection_authority (M1f — slot 8).
+  // Discriminator 23. Delegates collection-verification authority to a
+  // different account via a PDA-derived authority record. No data args;
+  // 8 accounts. Used by collection-owner delegation flows.
+  z.object({
+    kind: z.literal("cpi_mpl_approve_collection_authority"),
+    collectionAuthorityRecord: z.string(),
+    newCollectionAuthority: z.string(),
+    updateAuthority: z.string(),
+    payer: z.string(),
+    metadata: z.string(),
+    mint: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: set_and_verify_collection (M1e — slot 7).
   // Discriminator 25. The combo of "set DataV2.collection on the
   // metadata" + "verify the collection link" in a single CPI. This is

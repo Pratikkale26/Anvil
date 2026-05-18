@@ -719,6 +719,7 @@ type CpiMplUpdateMetadataAccountsV2 = Extract<BodyStatement, { kind: "cpi_mpl_up
 type CpiMplVerifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_verify_collection" }>;
 type CpiMplUnverifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_unverify_collection" }>;
 type CpiMplSetAndVerifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_set_and_verify_collection" }>;
+type CpiMplApproveCollectionAuthority = Extract<BodyStatement, { kind: "cpi_mpl_approve_collection_authority" }>;
 type CpiMplSignMetadata = Extract<BodyStatement, { kind: "cpi_mpl_sign_metadata" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
@@ -788,6 +789,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_mpl_verify_collection",
   "cpi_mpl_unverify_collection",
   "cpi_mpl_set_and_verify_collection",
+  "cpi_mpl_approve_collection_authority",
   "cpi_mpl_sign_metadata",
   "cpi_mpl_create_master_edition_v3",
   "zero_copy_load_init",
@@ -887,6 +889,8 @@ export class AstVisitorBase {
         return this.visitCpiMplUnverifyCollection(stmt);
       case "cpi_mpl_set_and_verify_collection":
         return this.visitCpiMplSetAndVerifyCollection(stmt);
+      case "cpi_mpl_approve_collection_authority":
+        return this.visitCpiMplApproveCollectionAuthority(stmt);
       case "cpi_mpl_sign_metadata":
         return this.visitCpiMplSignMetadata(stmt);
       case "cpi_mpl_create_master_edition_v3":
@@ -3072,6 +3076,36 @@ export class AstVisitorBase {
       `        ${resolve(stmt.collectionMasterEdition)},`,
       `        token_metadata_program,`,
       `        ${stmt.collectionAuthorityRecord},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Metaplex approve_collection_authority typed CPI (M1f — slot 8).
+   * Delegates collection-verification authority via PDA-derived
+   * record. 8 fixed accounts, no data args.
+   */
+  visitCpiMplApproveCollectionAuthority(stmt: CpiMplApproveCollectionAuthority): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const lines: string[] = [
+      `    mpl_approve_collection_authority(`,
+      `        ${resolve(stmt.collectionAuthorityRecord)},`,
+      `        ${resolve(stmt.newCollectionAuthority)},`,
+      `        ${resolve(stmt.updateAuthority)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolve(stmt.metadata)},`,
+      `        ${resolve(stmt.mint)},`,
+      `        system_program,`,
+      `        rent,`,
+      `        token_metadata_program,`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
         : `        None,`,

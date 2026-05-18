@@ -177,6 +177,13 @@ export function irNeedsMplSetAndVerifyCollectionHelper(ir: SolanaIR): boolean {
   );
 }
 
+/** M1f — approve_collection_authority. Disc 23; 8 accounts; no data args. */
+export function irNeedsMplApproveCollectionAuthorityHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_approve_collection_authority")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>
