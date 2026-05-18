@@ -127,17 +127,27 @@ function cloneIfNeeded(fix: Fixture): boolean {
   return true;
 }
 
+// Same env-var pattern as realworld-tracking + realworld-cargo-coverage
+// (commit e452086, task #72). Set ANVIL_TEST_STRICT_FIXTURES=1 to escalate
+// silent-skips (clone failure / libPath drift) into real test failures —
+// useful in CI where missing fixtures should NOT pass-by-omission.
+const STRICT_FIXTURES = process.env.ANVIL_TEST_STRICT_FIXTURES === "1";
+
 describe("Real-world LARGE program coverage (parser + emit gates)", () => {
   for (const fix of LARGE_FIXTURES) {
     test(`${fix.id}: parser passes + validator under ceiling`, async () => {
       const have = cloneIfNeeded(fix);
       if (!have) {
-        console.warn(`[realworld-large] ${fix.id} not available locally — skipping`);
+        const msg = `[realworld-large] ${fix.id} not available locally — skipping`;
+        if (STRICT_FIXTURES) throw new Error(`${msg} — surfacing per ANVIL_TEST_STRICT_FIXTURES=1`);
+        console.warn(msg);
         return;
       }
       const libFile = join(CACHE_ROOT, fix.id, fix.libPath);
       if (!existsSync(libFile)) {
-        console.warn(`[realworld-large] ${fix.id}: ${fix.libPath} not found in cloned repo — likely the libPath drifted; update the fixture entry.`);
+        const msg = `[realworld-large] ${fix.id}: ${fix.libPath} not found in cloned repo — likely the libPath drifted; update the fixture entry.`;
+        if (STRICT_FIXTURES) throw new Error(`${msg} — surfacing per ANVIL_TEST_STRICT_FIXTURES=1`);
+        console.warn(msg);
         return;
       }
       // Flatten the multi-file project. Marinade-class programs split
