@@ -169,13 +169,19 @@ export function classifyBody(
   // (pass_through). When pass_through still references `signer`, splice
   // back.
   const droppedBindings: Array<{ ident: string; rawCode: string; index: number }> = [];
+  // M2a — `let X = load_price_feed_from_account_info(&ACC)?` is dropped
+  // and registered here; the next statement that calls
+  // `X.get_price_no_older_than(...)` is collapsed into a single
+  // `cpi_pyth_read_price_legacy` IR statement. Cleared after consumption
+  // or when a non-let / unrelated statement intervenes.
+  let pendingPythLoad: { feedAccount: string; feedBinding: string } | null = null;
   for (const child of flatChildren) {
     if (!child) continue;
 
     // Skip comment nodes
     if (child.type === "line_comment" || child.type === "block_comment") continue;
 
-    const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog);
+    const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog, pendingPythLoad);
     const childLoc = locFromNode(child);
 
     // Track seeds for PDA signer seeds grouping
@@ -208,7 +214,21 @@ export function classifyBody(
           });
         }
       }
+      // M2a — register Pyth load binding for the next `get_price_no_older_than`
+      // statement. Tracked alongside the dropped let so the price-extract line
+      // can collapse the pair into one IR statement.
+      if (classified._pythLoadData) {
+        pendingPythLoad = classified._pythLoadData;
+      }
       continue;
+    }
+
+    // M2a — consumption of pendingPythLoad happens inside the let-classifier,
+    // which emits a `cpi_pyth_read_price_legacy` stmt; clear after the consumer
+    // fires so a stray downstream `.get_price_no_older_than` doesn't spuriously
+    // collapse against a stale binding.
+    if (classified.stmt.kind === "cpi_pyth_read_price_legacy") {
+      pendingPythLoad = null;
     }
 
     // Track CPI context variables — don't emit the let statement
@@ -360,6 +380,12 @@ interface ClassifyResult {
    *  separately so a downstream `let cpi_ctx = CpiContext::new(prog, X)`
    *  can resolve fields through the chain. */
   _cpiAccountsBinding?: CpiAccountsBinding;
+  /** M2a — `let X = load_price_feed_from_account_info(&ACC)?;` was
+   *  recognised. The PriceFeed binding (`X`, `ACC`) is registered so the
+   *  next `let Y = X.get_price_no_older_than(...)?` produces the typed
+   *  IR stmt instead of pass_through. _dropStmt: true is the carrier;
+   *  this field hands the side-channel data to the loop. */
+  _pythLoadData?: { feedAccount: string; feedBinding: string };
 }
 
 const SPL_CPI_STRUCT_NAMES = new Set([
@@ -380,12 +406,13 @@ function classifyStatement(
   hasUserSeedsManagement = false,
   collector?: WarningCollector,
   helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
+  pendingPythLoad: { feedAccount: string; feedBinding: string } | null = null,
 ): ClassifyResult {
   const text = node.text;
 
   switch (node.type) {
     case "let_declaration":
-      return classifyLetDeclaration(node, pendingSeeds, cpiAccountsByVar, hasUserSeedsManagement);
+      return classifyLetDeclaration(node, pendingSeeds, cpiAccountsByVar, hasUserSeedsManagement, pendingPythLoad);
 
     case "expression_statement":
       return classifyExpressionStatement(node, cpiContexts, collector, helperCpiCatalog);
@@ -456,11 +483,60 @@ function classifyLetDeclaration(
   pendingSeeds: { seeds: string[]; bumpField?: string; rawCode: string } | null,
   cpiAccountsByVar: Map<string, CpiAccountsBinding>,
   hasUserSeedsManagement = false,
+  pendingPythLoad: { feedAccount: string; feedBinding: string } | null = null,
 ): ClassifyResult {
   const text = node.text;
   const patternNode = node.childForFieldName("pattern");
   const valueNode = node.childForFieldName("value");
   const localVar = extractPatternName(patternNode);
+
+  // ── M2a — Pyth legacy oracle read, line 1: load PriceFeed ──
+  // Source:
+  //   let price_feed = load_price_feed_from_account_info(&ctx.accounts.feed)?;
+  //   let price_feed = pyth_sdk_solana::load_price_feed_from_account_info(...)?;
+  // Drop this stmt and register the binding; the next line picks it up.
+  if (valueNode && localVar) {
+    const v = valueNode.text.trim();
+    const loadMatch = v.match(
+      /^(?:pyth_sdk_solana::)?load_price_feed_from_account_info\s*\(\s*&\s*(?:ctx\s*\.\s*accounts\s*\.\s*)?([A-Za-z_][A-Za-z0-9_]*)(?:\s*\.\s*to_account_info\s*\(\s*\))?\s*\)\s*\??\s*$/,
+    );
+    if (loadMatch?.[1]) {
+      return {
+        stmt: { kind: "pass_through", code: "", needsReview: false },
+        _dropStmt: true,
+        _pythLoadData: { feedAccount: loadMatch[1], feedBinding: localVar },
+      };
+    }
+  }
+
+  // ── M2a — Pyth legacy oracle read, line 2: extract price + age-check ──
+  // Source patterns:
+  //   let current_price = price_feed.get_price_no_older_than(&clock, max_age)
+  //       .ok_or(ErrorCode::StalePrice)?;
+  //   let current_price = price_feed.get_price_no_older_than(&Clock::get()?, max_age)?;
+  // The `price_feed` ident must match the previously dropped load
+  // statement (tracked by pendingPythLoad). Without that binding we leave
+  // it as pass_through — wouldn't recognise an isolated method call.
+  if (valueNode && localVar && pendingPythLoad) {
+    const v = valueNode.text.trim();
+    // Match: <receiver>.get_price_no_older_than(<clock>, <maxAge>) [.ok_or(<err>)]? ?;
+    const callRe =
+      /^([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*get_price_no_older_than\s*\(\s*([\s\S]+?)\s*,\s*([\s\S]+?)\s*\)\s*(?:\.\s*ok_or\s*\(\s*([\s\S]+?)\s*\))?\s*\??\s*$/;
+    const m = v.match(callRe);
+    if (m && m[1] === pendingPythLoad.feedBinding) {
+      return {
+        stmt: {
+          kind: "cpi_pyth_read_price_legacy",
+          feedAccount: pendingPythLoad.feedAccount,
+          feedBinding: pendingPythLoad.feedBinding,
+          priceBinding: localVar,
+          clockExpr: m[2] ?? "&Clock::get()?",
+          maxAgeExpr: m[3] ?? "0",
+          ...(m[4] ? { staleErrExpr: m[4] } : {}),
+        },
+      };
+    }
+  }
 
   // ── CpiContext::new(...) — Extract CPI details, don't emit ──
   // MUST check this BEFORE ctx.accounts, because CpiContext contains ctx.accounts references

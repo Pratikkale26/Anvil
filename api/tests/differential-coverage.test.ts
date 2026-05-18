@@ -170,6 +170,10 @@ const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
   "cpi_mpl_thaw_delegated",
   // T22 MetadataPointer update — see E2 (task #37).
   "cpi_t22_metadata_pointer_update",
+  // M2a — legacy Pyth read. Session-1 IR + parser + visitor stub
+  // landed (this commit); structural emit + byte-equal gate land in
+  // M2b / Session-3 of the M2 arc (posts/plan-pyth-m2.md).
+  "cpi_pyth_read_price_legacy",
 ]);
 
 function listBodyStatementKinds(): string[] {

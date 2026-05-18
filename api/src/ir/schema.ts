@@ -1181,6 +1181,41 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     localVar: z.string(),
     accountType: z.string(),
   }),
+
+  // M2a — legacy Pyth oracle read (pyth_sdk_solana crate). Pattern:
+  //   let price_feed = load_price_feed_from_account_info(&ctx.accounts.X)?;
+  //   let current_price = price_feed.get_price_no_older_than(&clock, max_age)
+  //       .ok_or(ErrorCode::StalePrice)?;
+  // Bound to one IR statement so the emit can produce a target-portable
+  // deserialize + age-check sequence. Without this, the parser surfaces
+  // pass_through carrying a `pyth_sdk_solana::*` import — the lint table
+  // refuses (#42 / #67 / #68). With this, the emit hand-rolls the read
+  // against the documented PriceFeed account layout (32B magic + Borsh-
+  // serialized PriceFeedMessage); no foreign crate at runtime.
+  z.object({
+    kind: z.literal("cpi_pyth_read_price_legacy"),
+    /** AccountInfo binding for the Pyth price-feed account. */
+    feedAccount: z.string(),
+    /** Local variable that receives the loaded PriceFeed
+     *  (`let X = load_price_feed_from_account_info(...)`). Used to
+     *  trace the chained `.get_price_no_older_than` call when parser
+     *  spans both lines. */
+    feedBinding: z.string().optional(),
+    /** Local variable that receives the Price struct
+     *  (`let Y = X.get_price_no_older_than(...)?;`). The emit binds
+     *  `Y` to a struct with fields `{ price, conf, exponent, publish_time }`. */
+    priceBinding: z.string(),
+    /** Source expression for max-age seconds. Carried verbatim — may be
+     *  a literal (`60`), a constant (`MAX_AGE`), or an instruction arg. */
+    maxAgeExpr: z.string(),
+    /** Source expression for the clock. Carried verbatim. Common forms:
+     *  `&Clock::get()?`, `&clock` (when clock is the Sysvar account ref). */
+    clockExpr: z.string(),
+    /** Optional source for the `.ok_or(...)?` error path. When present,
+     *  the emit propagates it through the age-check failure branch;
+     *  when absent, the emit raises `ProgramError::Custom(0)`. */
+    staleErrExpr: z.string().optional(),
+  }),
 ]);
 
 export type BodyStatement = z.infer<typeof BodyStatementSchema>;

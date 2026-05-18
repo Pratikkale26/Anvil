@@ -729,6 +729,7 @@ type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_creat
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
 type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
 type ZeroCopyLoad = Extract<BodyStatement, { kind: "zero_copy_load" }>;
+type CpiPythReadPriceLegacy = Extract<BodyStatement, { kind: "cpi_pyth_read_price_legacy" }>;
 
 /**
  * Every IR statement kind the visitor knows how to dispatch. Phase-1
@@ -925,6 +926,8 @@ export class AstVisitorBase {
         return this.visitZeroCopyLoadMut(stmt);
       case "zero_copy_load":
         return this.visitZeroCopyLoad(stmt);
+      case "cpi_pyth_read_price_legacy":
+        return this.visitCpiPythReadPriceLegacy(stmt);
     }
   }
 
@@ -3429,6 +3432,35 @@ export class AstVisitorBase {
     ];
     emitZeroCopyHasOneChecks(w, accountName, localVar, lines);
     registerZeroCopyHandle(w, accountName, localVar, accountInfoVar);
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * M2a — legacy Pyth oracle read. Session-1 stub: emit a TODO marker so
+   * the build refuses (the validator surfaces it as an unsafe-marker
+   * error under --strict). Session-2 wires the real PriceFeed
+   * deserialize + age-check.
+   *
+   * The price-binding local is still declared as a placeholder unit
+   * struct so downstream code that references `.price` / `.exponent`
+   * / `.conf` / `.publish_time` compiles (they get bound by the real
+   * emit; the stub leaves them as todo!() so the unsafe-marker test
+   * still recognises this as un-shipped code).
+   */
+  visitCpiPythReadPriceLegacy(stmt: CpiPythReadPriceLegacy): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const priceBinding = snakeCase(stmt.priceBinding);
+    const feedAccount = snakeCase(stmt.feedAccount);
+    const lines: string[] = [
+      `    // ⚠️ Anvil TODO: cpi_pyth_read_price_legacy emit not yet implemented (M2b).`,
+      `    // Source pattern:`,
+      `    //   let ${stmt.feedBinding ?? "<feed>"} = load_price_feed_from_account_info(&${feedAccount})?;`,
+      `    //   let ${priceBinding} = ${stmt.feedBinding ?? "<feed>"}.get_price_no_older_than(${stmt.clockExpr}, ${stmt.maxAgeExpr})${stmt.staleErrExpr ? `.ok_or(${stmt.staleErrExpr})` : ""}?;`,
+      `    // The full emit hand-rolls the PriceFeed Borsh deserialize + age-check`,
+      `    // against the documented account layout. Until then, manual rebuild required.`,
+      `    let ${priceBinding} = todo!("Pyth read emit pending M2b") as ();`,
+    ];
     return this.applyStructuralize(lines);
   }
 
