@@ -1,6 +1,6 @@
 # Token-2022 extension coverage
 
-Token-2022 ships as `TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEbW` and behaves like SPL Token plus a per-mint or per-account *extension* layer. Anvil handles the **base CPI shapes** (`transfer_checked`, `mint_to_checked`, `burn_checked`, etc.) regardless of which extensions a mint carries — those operations dispatch to the same Token-2022 program and the extension behavior is enforced at the program level. Extension-specific *initialization* and *management* instructions are a separate surface and most have typed IR + structural emit; see the status table below.
+Token-2022 ships as `TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb` and behaves like SPL Token plus a per-mint or per-account *extension* layer. Anvil handles the **base CPI shapes** (`transfer_checked`, `mint_to_checked`, `burn_checked`, etc.) regardless of which extensions a mint carries — those operations dispatch to the same Token-2022 program and the extension behavior is enforced at the program level. Extension-specific *initialization* and *management* instructions are a separate surface and most have typed IR + structural emit; see the status table below.
 
 **Coverage summary (2026-05-18, post-EM2 closure E1+E3):** all 12 non-confidential extensions land at Y on both Pinocchio and Native — 11 with typed IR + byte-equal differential gates, plus CpiGuard at "Y (compat)" (its init/disable instructions are spec-disallowed from CPI; both targets round-trip the same rejection). The remaining 3 (Confidential family) are `lint` pending a zk-proof prelude arc.
 

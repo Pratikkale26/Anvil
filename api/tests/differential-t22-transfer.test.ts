@@ -8,7 +8,7 @@
  * The validator catches the literal pattern, but only on programs that
  * hit it. This fixture asserts the byte-equality property at runtime.
  *
- * Setup: Token-2022 mint (program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEbW),
+ * Setup: Token-2022 mint (program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb),
  * two T22 token accounts, mint to source, transfer_checked between them.
  *
  * If the emit drops the decimals byte, the on-chain T22 program returns
