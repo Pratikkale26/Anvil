@@ -9,14 +9,18 @@
  */
 import { describe, test, expect } from "bun:test";
 import { auditPassthrough } from "../src/emitter/passthrough-audit.ts";
-import type { SolanaIR } from "../src/ir/schema.ts";
+import { SolanaIRSchema, type SolanaIR } from "../src/ir/schema.ts";
 
 function irWithPassthrough(code: string): SolanaIR {
-  return {
-    programName: "audit_demo",
+  // Schema.parse routes the literal through Zod — field-name typos here
+  // (programName vs name, typeDefs vs types, errorCodes vs errors) would
+  // otherwise pass TS structural typing via `as unknown as` and silently
+  // produce empty/undefined reads in the audit pass.
+  return SolanaIRSchema.parse({
+    name: "audit_demo",
     programId: "Demo11111111111111111111111111111111111111",
     accounts: [],
-    typeDefs: [],
+    types: [],
     instructions: [
       {
         name: "do_thing",
@@ -25,12 +29,22 @@ function irWithPassthrough(code: string): SolanaIR {
         body: [
           { kind: "pass_through", code, needsReview: false },
         ],
+        bodyLocs: [],
       },
     ],
-    errorCodes: [],
+    errors: [],
     constants: [],
     events: [],
-  } as unknown as SolanaIR;
+    helperFns: [],
+    imports: [],
+    userTraitImpls: [],
+    warnings: [],
+    metadata: {
+      sourceFramework: "anchor",
+      anvilVersion: "0.4.0",
+      parsedAt: "2026-05-18T00:00:00Z",
+    },
+  });
 }
 
 describe("auditPassthrough", () => {

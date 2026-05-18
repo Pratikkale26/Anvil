@@ -10,7 +10,7 @@
  */
 import { describe, test, expect } from "bun:test";
 import { fuzzScenarioArgs, fuzzScenarioFlags, type DifferentialScenario } from "./scenario-runner.ts";
-import type { SolanaIR } from "../api/src/ir/schema.js";
+import { SolanaIRSchema, type SolanaIR } from "../api/src/ir/schema.js";
 
 const baseScenario: DifferentialScenario = {
   programId: "Counter111111111111111111111111111111111111",
@@ -26,12 +26,15 @@ const baseScenario: DifferentialScenario = {
   compare: [{ name: "counter_pda" }],
 };
 
-const fakeIr: SolanaIR = {
+// Reusable canonical-schema-conforming IR. Pre-#65, the local-only TS cast
+// `as unknown as SolanaIR` masked field-name drift (`framework`→`metadata.
+// sourceFramework`, `customTypes`→`types`). SolanaIRSchema.parse forces
+// the canonical shape so future test additions don't reintroduce drift.
+const fakeIr: SolanaIR = SolanaIRSchema.parse({
   name: "counter",
-  framework: "anchor",
   programId: "Counter111111111111111111111111111111111111",
   accounts: [],
-  customTypes: [],
+  types: [],
   errors: [],
   instructions: [
     {
@@ -39,12 +42,27 @@ const fakeIr: SolanaIR = {
       args: [{ name: "amount", type: "u64" }],
       accounts: [],
       body: [],
+      bodyLocs: [],
     },
   ],
   imports: [],
   helperFns: [],
   constants: [],
-} as unknown as SolanaIR;
+  events: [],
+  userTraitImpls: [],
+  warnings: [],
+  metadata: {
+    sourceFramework: "anchor",
+    anvilVersion: "0.4.0",
+    parsedAt: "2026-05-18T00:00:00Z",
+  },
+});
+
+// Helper for derived IRs that only diverge from fakeIr in `instructions`.
+// Spread-then-parse keeps the validation guarantee for ad-hoc shapes.
+function makeIrWithIxs(instructions: SolanaIR["instructions"]): SolanaIR {
+  return SolanaIRSchema.parse({ ...fakeIr, instructions });
+}
 
 describe("fuzz mutation infra", () => {
   test("fuzzScenarioArgs preserves non-arg fields", () => {
@@ -112,17 +130,15 @@ describe("fuzz mutation infra", () => {
   // is locked above; these lock the new String + Vec<u8> shapes.
 
   test("fuzzScenarioArgs mutates String args to ASCII strings", () => {
-    const irWithString: SolanaIR = {
-      ...fakeIr,
-      instructions: [
-        {
-          name: "initialize",
-          args: [{ name: "label", type: "String" }],
-          accounts: [],
-          body: [],
-        },
-      ],
-    } as unknown as SolanaIR;
+    const irWithString = makeIrWithIxs([
+      {
+        name: "initialize",
+        args: [{ name: "label", type: "String" }],
+        accounts: [],
+        body: [],
+        bodyLocs: [],
+      },
+    ]);
     const stringScenario: DifferentialScenario = {
       ...baseScenario,
       instructions: [
@@ -144,17 +160,15 @@ describe("fuzz mutation infra", () => {
   });
 
   test("fuzzScenarioArgs mutates Vec<u8> args to hex strings", () => {
-    const irWithBytes: SolanaIR = {
-      ...fakeIr,
-      instructions: [
-        {
-          name: "initialize",
-          args: [{ name: "payload", type: "Vec<u8>" }],
-          accounts: [],
-          body: [],
-        },
-      ],
-    } as unknown as SolanaIR;
+    const irWithBytes = makeIrWithIxs([
+      {
+        name: "initialize",
+        args: [{ name: "payload", type: "Vec<u8>" }],
+        accounts: [],
+        body: [],
+        bodyLocs: [],
+      },
+    ]);
     const bytesScenario: DifferentialScenario = {
       ...baseScenario,
       instructions: [
@@ -180,21 +194,19 @@ describe("fuzz mutation infra", () => {
   // accountFlagStrips. The byte-equal contract with soft-fail-on-tx-error
   // is exercised end-to-end in CLI runs; here we lock the data shape.
 
-  const flagFuzzIr: SolanaIR = {
-    ...fakeIr,
-    instructions: [
-      {
-        name: "initialize",
-        args: [{ name: "amount", type: "u64" }],
-        accounts: [
-          { name: "counter", isSigner: false, isMut: true,  isInit: true,  isPda: true,  accountType: "Account", typeRef: "Counter" },
-          { name: "authority", isSigner: true,  isMut: true,  isInit: false, isPda: false, accountType: "Signer", typeRef: "" },
-          { name: "system_program", isSigner: false, isMut: false, isInit: false, isPda: false, accountType: "Program", typeRef: "System" },
-        ],
-        body: [],
-      },
-    ],
-  } as unknown as SolanaIR;
+  const flagFuzzIr = makeIrWithIxs([
+    {
+      name: "initialize",
+      args: [{ name: "amount", type: "u64" }],
+      accounts: [
+        { name: "counter",        accountType: "Account", isSigner: false, isMut: true,  isInit: true,  isPda: true,  isOptional: false, pdaSeeds: [], constraints: [] },
+        { name: "authority",      accountType: "Signer",  isSigner: true,  isMut: true,  isInit: false, isPda: false, isOptional: false, pdaSeeds: [], constraints: [] },
+        { name: "system_program", accountType: "Program", isSigner: false, isMut: false, isInit: false, isPda: false, isOptional: false, pdaSeeds: [], constraints: [] },
+      ],
+      body: [],
+      bodyLocs: [],
+    },
+  ]);
 
   test("fuzzScenarioFlags strips exactly one flag from exactly one slot", () => {
     let pickIndex = 0;
@@ -243,19 +255,17 @@ describe("fuzz mutation infra", () => {
   test("fuzzScenarioFlags returns base unchanged when no candidates exist", () => {
     // IR with one account that's neither signer, mut, nor init: no
     // candidates. Mutator should pass scenario through untouched.
-    const noCandidateIr: SolanaIR = {
-      ...fakeIr,
-      instructions: [
-        {
-          name: "initialize",
-          args: [],
-          accounts: [
-            { name: "readonly", isSigner: false, isMut: false, isInit: false, isPda: false, accountType: "Account", typeRef: "Foo" },
-          ],
-          body: [],
-        },
-      ],
-    } as unknown as SolanaIR;
+    const noCandidateIr = makeIrWithIxs([
+      {
+        name: "initialize",
+        args: [],
+        accounts: [
+          { name: "readonly", accountType: "Account", isSigner: false, isMut: false, isInit: false, isPda: false, isOptional: false, pdaSeeds: [], constraints: [] },
+        ],
+        body: [],
+        bodyLocs: [],
+      },
+    ]);
     const scenario: DifferentialScenario = {
       ...baseScenario,
       instructions: [{ ix: "initialize", args: {}, accounts: ["readonly"] }],
@@ -322,17 +332,15 @@ describe("fuzz mutation infra", () => {
   });
 
   test("fuzzScenarioArgs still throws on unknown arg types (no silent dropping)", () => {
-    const irWithCustomType: SolanaIR = {
-      ...fakeIr,
-      instructions: [
-        {
-          name: "initialize",
-          args: [{ name: "config", type: "ConfigStruct" }],
-          accounts: [],
-          body: [],
-        },
-      ],
-    } as unknown as SolanaIR;
+    const irWithCustomType = makeIrWithIxs([
+      {
+        name: "initialize",
+        args: [{ name: "config", type: "ConfigStruct" }],
+        accounts: [],
+        body: [],
+        bodyLocs: [],
+      },
+    ]);
     const stubRng = {
       nextU64: () => 0n,
       nextRange: () => 0,

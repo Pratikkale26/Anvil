@@ -22,7 +22,7 @@
 import { describe, test, expect } from "bun:test";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
 import { emitNativeFull } from "../src/emitter/native-emitter.ts";
-import type { SolanaIR } from "../src/ir/schema.ts";
+import { SolanaIRSchema, type SolanaIR, type BodyStatement } from "../src/ir/schema.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -50,8 +50,11 @@ function mkAcct(spec: AcctSpec) {
   };
 }
 
-function mkIR(ixName: string, accounts: AcctSpec[], body: any[]): SolanaIR {
-  return {
+function mkIR(ixName: string, accounts: AcctSpec[], body: BodyStatement[]): SolanaIR {
+  // Routed through schema.parse so field-name typos in body statements
+  // (which would otherwise pass through TS structural typing) surface as
+  // a loud parse error at the fixture site, not deep inside the visitor.
+  return SolanaIRSchema.parse({
     name: "mpl_snap",
     instructions: [
       {
@@ -77,7 +80,7 @@ function mkIR(ixName: string, accounts: AcctSpec[], body: any[]): SolanaIR {
       // Pinned so the emit is deterministic across runs.
       parsedAt: "2026-05-18T00:00:00Z",
     },
-  } as unknown as SolanaIR;
+  });
 }
 
 /**

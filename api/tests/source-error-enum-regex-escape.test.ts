@@ -8,10 +8,14 @@
 import { describe, test, expect } from "bun:test";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
 import { emitNativeFull } from "../src/emitter/native-emitter.ts";
-import type { SolanaIR } from "../src/ir/schema.ts";
+import { SolanaIRSchema, type SolanaIR } from "../src/ir/schema.ts";
 
 function irWithErrors(errorNames: string[]): SolanaIR {
-  return {
+  // schema.parse instead of `as unknown as` — the prior cast masked a
+  // metadata-shape typo (generatedAt / parserVersion vs canonical
+  // sourceFramework / anvilVersion / parsedAt). The metadata was being
+  // silently ignored by emit-side; parse forces canonical shape.
+  return SolanaIRSchema.parse({
     name: "test_program",
     programId: "Counter111111111111111111111111111111111111",
     instructions: [
@@ -20,7 +24,8 @@ function irWithErrors(errorNames: string[]): SolanaIR {
         args: [],
         accounts: [],
         body: [],
-      } as unknown as SolanaIR["instructions"][number],
+        bodyLocs: [],
+      },
     ],
     accounts: [],
     types: [],
@@ -31,8 +36,12 @@ function irWithErrors(errorNames: string[]): SolanaIR {
     imports: [],
     userTraitImpls: [],
     warnings: [],
-    metadata: { generatedAt: new Date().toISOString(), parserVersion: "test" },
-  } as unknown as SolanaIR;
+    metadata: {
+      sourceFramework: "anchor",
+      anvilVersion: "0.4.0",
+      parsedAt: new Date().toISOString(),
+    },
+  });
 }
 
 describe("sourceErrorEnumName — regex-escape", () => {
