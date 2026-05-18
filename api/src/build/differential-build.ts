@@ -321,8 +321,15 @@ export function sniffAnchorLangVersion(source: string): string {
     /#\[instruction\s*\(\s*discriminator\s*=/.test(source);
   if (hasOneZeroOnlySyntax) return "1.0";
 
-  const ALLOWED = new Set(["0.29", "0.30", "0.31"]);
-  const re = /anchor[-_]lang\s*[=:]?\s*['"`]?(0\.(?:29|30|31)(?:\.\d+)?)/;
+  // N6 audit (2026-05-18): added 0.32. Pre-N6 0.32 sources fell back to
+  // 0.31 silently — most carry through fine (0.32 is largely additive
+  // over 0.31 — adds Anchor's first-class `events::*` API + the new
+  // `interfaces::*` module shapes), but a 0.32-specific feature flag set
+  // off-pinned could surface as cryptic dep-resolution errors. Surface
+  // the version explicitly so the differential harness pins the matching
+  // anchor-lang dep.
+  const ALLOWED = new Set(["0.29", "0.30", "0.31", "0.32"]);
+  const re = /anchor[-_]lang\s*[=:]?\s*['"`]?(0\.(?:29|30|31|32)(?:\.\d+)?)/;
   const m = source.match(re);
   if (m?.[1]) {
     // Strip patch component if present — Cargo accepts the major.minor form.
