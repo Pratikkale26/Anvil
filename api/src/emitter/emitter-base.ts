@@ -543,6 +543,29 @@ export abstract class BaseEmitter {
     staleErrExpr: string | undefined,
   ): string;
 
+  // N5 — Pyth modern oracle read (receiver-sdk PriceUpdateV2). The
+  // source idiom is a single method call on an Anchor
+  // `Account<'info, PriceUpdateV2>`:
+  //   let X = ctx.accounts.price_update
+  //       .get_price_no_older_than(&Clock::get()?, max_age, &feed_id)?;
+  //
+  // Native: re-emits the receiver-sdk call chain — Cargo.toml gets
+  //   pyth-solana-receiver-sdk via NATIVE_OPTIONAL_DEPS. X is typed
+  //   `pyth_solana_receiver_sdk::price_update::Price`.
+  // Pinocchio: hand-rolls the PriceUpdateV2 byte deserialization.
+  //   Layout: 8B discriminator + 32B write_authority + 1-2B
+  //   verification_level + 84B PriceFeedMessage (32B feed_id +
+  //   i64+u64+i32+i64+i64+i64+u64) + 8B posted_slot. feed_id is
+  //   cross-checked against the user-supplied expression — fail loud
+  //   on the wrong feed.
+  abstract emitPythReadPriceModern(
+    priceUpdateAccount: string,
+    priceBinding: string,
+    clockExpr: string,
+    maxAgeExpr: string,
+    feedIdExpr: string,
+  ): string;
+
   // ── Helpers that the framework might need ──
   abstract emitHelperFunctions(ir: SolanaIR): string;
 

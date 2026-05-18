@@ -730,6 +730,7 @@ type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
 type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
 type ZeroCopyLoad = Extract<BodyStatement, { kind: "zero_copy_load" }>;
 type CpiPythReadPriceLegacy = Extract<BodyStatement, { kind: "cpi_pyth_read_price_legacy" }>;
+type CpiPythReadPriceModern = Extract<BodyStatement, { kind: "cpi_pyth_read_price_modern" }>;
 
 /**
  * Every IR statement kind the visitor knows how to dispatch. Phase-1
@@ -928,6 +929,8 @@ export class AstVisitorBase {
         return this.visitZeroCopyLoad(stmt);
       case "cpi_pyth_read_price_legacy":
         return this.visitCpiPythReadPriceLegacy(stmt);
+      case "cpi_pyth_read_price_modern":
+        return this.visitCpiPythReadPriceModern(stmt);
     }
   }
 
@@ -3455,6 +3458,27 @@ export class AstVisitorBase {
       stmt.clockExpr,
       stmt.maxAgeExpr,
       stmt.staleErrExpr,
+    );
+    return this.applyStructuralize([code]);
+  }
+
+  /**
+   * N5 — Pyth modern read (receiver-sdk PriceUpdateV2). Delegates to
+   * the per-target emitter. Native uses pyth_solana_receiver_sdk;
+   * Pinocchio hand-rolls PriceUpdateV2 byte deserialization including
+   * the embedded feed_id cross-check (which legacy doesn't have).
+   */
+  visitCpiPythReadPriceModern(stmt: CpiPythReadPriceModern): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const priceBinding = snakeCase(stmt.priceBinding);
+    const account = w.resolveAccountInfoVar(snakeCase(stmt.priceUpdateAccount));
+    const code = w.emitter.emitPythReadPriceModern(
+      account,
+      priceBinding,
+      stmt.clockExpr,
+      stmt.maxAgeExpr,
+      stmt.feedIdExpr,
     );
     return this.applyStructuralize([code]);
   }

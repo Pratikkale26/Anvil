@@ -174,6 +174,10 @@ const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
   // landed (this commit); structural emit + byte-equal gate land in
   // M2b / Session-3 of the M2 arc (posts/plan-pyth-m2.md).
   "cpi_pyth_read_price_legacy",
+  // N5 — modern Pyth read (receiver-sdk PriceUpdateV2). IR + parser +
+  // per-target emit shipped; differential byte-equal against the
+  // cloned Pyth Receiver validator is queued for M2c.
+  "cpi_pyth_read_price_modern",
 ]);
 
 function listBodyStatementKinds(): string[] {

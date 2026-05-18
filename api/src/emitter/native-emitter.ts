@@ -1613,6 +1613,32 @@ ${maybeRead}    let seeds = &[
    * `price` (i64), `conf` (u64), `exponent` (i32), `publish_time` (i64).
    * Downstream field reads (`current_price.price` etc.) compile cleanly.
    */
+  /**
+   * N5 — Native Pyth modern read via pyth-solana-receiver-sdk.
+   *
+   * Anchor's `Account<'info, PriceUpdateV2>` has been stripped to bare
+   * `AccountInfo` by the emit; the receiver-sdk's method takes
+   * &PriceUpdateV2, not &AccountInfo. Manually deserialize via the
+   * crate's `PriceUpdateV2::try_deserialize` (Anchor account
+   * deserialize), then call `.get_price_no_older_than(...)`.
+   */
+  override emitPythReadPriceModern(
+    priceUpdateAccount: string,
+    priceBinding: string,
+    clockExpr: string,
+    maxAgeExpr: string,
+    feedIdExpr: string,
+  ): string {
+    return [
+      `    let __pyth_data = ${priceUpdateAccount}.try_borrow_data()?;`,
+      `    let __pyth_update = <pyth_solana_receiver_sdk::price_update::PriceUpdateV2 as anchor_lang::AccountDeserialize>::try_deserialize(&mut &__pyth_data[..])`,
+      `        .map_err(|_| ProgramError::InvalidAccountData)?;`,
+      `    let ${priceBinding} = __pyth_update`,
+      `        .get_price_no_older_than(${clockExpr}, ${maxAgeExpr}, ${feedIdExpr})`,
+      `        .map_err(|_| ProgramError::Custom(0xa1b2c3d4))?;`,
+    ].join("\n");
+  }
+
   override emitPythReadPriceLegacy(
     feedAccount: string,
     priceBinding: string,

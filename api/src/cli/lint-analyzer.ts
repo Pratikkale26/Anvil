@@ -138,9 +138,11 @@ export const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
     prefix: "pyth_solana_receiver_sdk",
     category: "Unsupported integration",
     title: "pyth_solana_receiver_sdk imports",
-    detail: () =>
-      "Pyth oracle reads (price feed parsing) aren't transpiled. Suggested fix: replace the Pyth feed reads with manual code that mirrors your target's account model after emit.",
-    verdict: () => "blocker",
+    detail: (target) =>
+      target === "native"
+        ? "Modern Pyth oracle reads (PriceUpdateV2) are transpiled (N5) — Native uses pyth-solana-receiver-sdk + Anchor's AccountDeserialize fallback. Cargo.toml gets the crate auto-injected."
+        : "Modern Pyth oracle reads (PriceUpdateV2) are transpiled to a hand-rolled byte deserialization on Pinocchio (N5). Dynamic verification_level offset detection + embedded feed_id cross-check against the user-supplied feed_id (fails loud on wrong-feed attacks). NOTE: `get_feed_id_from_hex(\"0x...\")` calls survive as pass_through and need a Pinocchio-compatible hex-parse helper (M2c).",
+    verdict: () => "review",
   },
   {
     prefix: "pyth_sdk_solana",

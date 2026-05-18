@@ -538,6 +538,38 @@ function classifyLetDeclaration(
     }
   }
 
+  // ── N5 — Pyth modern (receiver-sdk PriceUpdateV2) ──
+  // One-liner method call on an Anchor `Account<'info, PriceUpdateV2>`:
+  //   let price = ctx.accounts.price_update
+  //       .get_price_no_older_than(&Clock::get()?, 60, &feed_id)?;
+  // Distinguished from legacy by 3-arg method call (legacy is 2 args).
+  // Receiver is typically `ctx.accounts.<name>` so the regex strips the
+  // ctx.accounts. prefix to get the bare account name.
+  //
+  // Detection runs AFTER the legacy 2-arg branch above — if a
+  // pendingPythLoad is active and the bare-receiver call matches, the
+  // legacy branch wins. The 3-arg form has no preceding load (the
+  // PriceUpdateV2 account IS the data source), so the modern detection
+  // is gated on the legacy branch NOT matching (different arg count).
+  if (valueNode && localVar) {
+    const v = valueNode.text.trim();
+    const modernRe =
+      /^(?:ctx\s*\.\s*accounts\s*\.\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*get_price_no_older_than\s*\(\s*([\s\S]+?)\s*,\s*([\s\S]+?)\s*,\s*([\s\S]+?)\s*\)\s*\??\s*$/;
+    const m = v.match(modernRe);
+    if (m && m[1]) {
+      return {
+        stmt: {
+          kind: "cpi_pyth_read_price_modern",
+          priceUpdateAccount: m[1],
+          priceBinding: localVar,
+          clockExpr: m[2] ?? "&Clock::get()?",
+          maxAgeExpr: m[3] ?? "0",
+          feedIdExpr: m[4] ?? "&[0u8; 32]",
+        },
+      };
+    }
+  }
+
   // ── CpiContext::new(...) — Extract CPI details, don't emit ──
   // MUST check this BEFORE ctx.accounts, because CpiContext contains ctx.accounts references
   if (valueNode && text.includes("CpiContext::")) {

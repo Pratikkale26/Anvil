@@ -1182,6 +1182,31 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     accountType: z.string(),
   }),
 
+  // N5 — modern Pyth oracle read (pyth_solana_receiver_sdk crate /
+  // PriceUpdateV2). One-line idiom (no load-prelude like legacy):
+  //   let price = ctx.accounts.price_update
+  //       .get_price_no_older_than(&Clock::get()?, 60, &feed_id)?;
+  // Distinguished from legacy by the 3-arg method call (legacy has 2 args).
+  //
+  // The receiver SDK ships with the validator (Pyth Receiver program is
+  // cloned onto the local solana-test-validator), so this kind is the
+  // first Pyth IR with end-to-end differential infrastructure on the
+  // bench. Implementation lands here; emit + differential gate follow.
+  z.object({
+    kind: z.literal("cpi_pyth_read_price_modern"),
+    /** AccountInfo (or Anchor Account) binding for the PriceUpdateV2 account. */
+    priceUpdateAccount: z.string(),
+    /** Local variable that receives the Price struct from the call. */
+    priceBinding: z.string(),
+    /** Source expression for the clock arg. Carried verbatim. */
+    clockExpr: z.string(),
+    /** Source expression for max-age seconds. Carried verbatim. */
+    maxAgeExpr: z.string(),
+    /** Source expression for the feed_id (e.g. `&feed_id` after
+     *  `get_feed_id_from_hex`). Carried verbatim. */
+    feedIdExpr: z.string(),
+  }),
+
   // M2a — legacy Pyth oracle read (pyth_sdk_solana crate). Pattern:
   //   let price_feed = load_price_feed_from_account_info(&ctx.accounts.X)?;
   //   let current_price = price_feed.get_price_no_older_than(&clock, max_age)
