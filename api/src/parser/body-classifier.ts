@@ -979,6 +979,9 @@ function classifyHelperCpiCall(
     }
     const seeds = resolveSignerSeeds();
     if (!seeds.ok) return null;
+    const tokenProgramArg = entry.isInterface
+      ? args[entry.argMap.tokenProgram]
+      : undefined;
     return {
       kind: "cpi_spl_mint_to",
       mint: args[entry.argMap.mint]!,
@@ -987,6 +990,7 @@ function classifyHelperCpiCall(
       amount: args[entry.argMap.amount]!,
       tokenProgram: entry.tokenProgram,
       signerSeeds: seeds.expr,
+      tokenProgramArg,
     };
   }
 
@@ -997,6 +1001,9 @@ function classifyHelperCpiCall(
     }
     const seeds = resolveSignerSeeds();
     if (!seeds.ok) return null;
+    const tokenProgramArg = entry.isInterface
+      ? args[entry.argMap.tokenProgram]
+      : undefined;
     return {
       kind: "cpi_spl_burn",
       from: args[entry.argMap.from]!,
@@ -1005,6 +1012,7 @@ function classifyHelperCpiCall(
       amount: args[entry.argMap.amount]!,
       tokenProgram: entry.tokenProgram,
       signerSeeds: seeds.expr,
+      tokenProgramArg,
     };
   }
 

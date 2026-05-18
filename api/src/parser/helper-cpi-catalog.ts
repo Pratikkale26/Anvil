@@ -324,12 +324,18 @@ function recognizeMintToHelper(
   if (!params) return null;
   if (params.length !== 5 && params.length !== 6) return null;
 
+  // Token-program slot may be `&AccountInfo<...>` (legacy single-program
+  // helper) OR `Interface<TokenInterface>` (Path 2 v1 runtime dispatch
+  // — same wire format works for both SPL Token and Token-2022; only
+  // program_id varies, sourced from the AccountInfo at runtime).
   const isAccountInfo = (t: string) => /&\s*AccountInfo\s*</.test(t);
+  const isInterfaceTokenProgram = (t: string) => /\bInterface\s*<.*\bTokenInterface\b.*>/s.test(t);
+  const isTokenProgramParam = (t: string) => isAccountInfo(t) || isInterfaceTokenProgram(t);
   const isAmount = (t: string) => /^&?\s*u64\b/.test(t);
   const isSignerSeeds = (t: string) =>
     /&\s*\[\s*&\s*\[\s*&\s*\[\s*u8\s*\]/s.test(t);
 
-  if (!isAccountInfo(params[0]!.type)) return null;
+  if (!isTokenProgramParam(params[0]!.type)) return null;
   if (!isAccountInfo(params[1]!.type)) return null;
   if (!isAccountInfo(params[2]!.type)) return null;
   if (!isAccountInfo(params[3]!.type)) return null;
@@ -349,10 +355,12 @@ function recognizeMintToHelper(
   if (!/\btoken::mint_to\s*\(/.test(helper.body) && !/\bmint_to\s*\(/.test(helper.body)) return null;
   if (!/\bMintTo\s*\{/.test(helper.body)) return null;
 
+  const isInterface = isInterfaceTokenProgram(params[0]!.type);
   return {
     helperName: helper.name,
     kind: "cpi_spl_mint_to",
-    tokenProgram: "token",
+    tokenProgram: isInterface ? "token_2022" : "token",
+    isInterface: isInterface ? true : undefined,
     acceptsLocalSignerSeeds: true,
     argMap: {
       mint: 1,
@@ -376,12 +384,16 @@ function recognizeBurnHelper(
   if (!params) return null;
   if (params.length !== 5 && params.length !== 6) return null;
 
+  // Token-program slot may be `&AccountInfo<...>` or `Interface<TokenInterface>`.
+  // See recognizeMintToHelper for the runtime-dispatch rationale.
   const isAccountInfo = (t: string) => /&\s*AccountInfo\s*</.test(t);
+  const isInterfaceTokenProgram = (t: string) => /\bInterface\s*<.*\bTokenInterface\b.*>/s.test(t);
+  const isTokenProgramParam = (t: string) => isAccountInfo(t) || isInterfaceTokenProgram(t);
   const isAmount = (t: string) => /^&?\s*u64\b/.test(t);
   const isSignerSeeds = (t: string) =>
     /&\s*\[\s*&\s*\[\s*&\s*\[\s*u8\s*\]/s.test(t);
 
-  if (!isAccountInfo(params[0]!.type)) return null;
+  if (!isTokenProgramParam(params[0]!.type)) return null;
   if (!isAccountInfo(params[1]!.type)) return null;
   if (!isAccountInfo(params[2]!.type)) return null;
   if (!isAccountInfo(params[3]!.type)) return null;
@@ -401,10 +413,12 @@ function recognizeBurnHelper(
   if (!/\btoken::burn\s*\(/.test(helper.body) && !/\bburn\s*\(/.test(helper.body)) return null;
   if (!/\bBurn\s*\{/.test(helper.body)) return null;
 
+  const isInterface = isInterfaceTokenProgram(params[0]!.type);
   return {
     helperName: helper.name,
     kind: "cpi_spl_burn",
-    tokenProgram: "token",
+    tokenProgram: isInterface ? "token_2022" : "token",
+    isInterface: isInterface ? true : undefined,
     acceptsLocalSignerSeeds: true,
     argMap: {
       mint: 1,
