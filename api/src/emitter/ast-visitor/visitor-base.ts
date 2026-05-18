@@ -737,15 +737,23 @@ type ZeroCopyLoad = Extract<BodyStatement, { kind: "zero_copy_load" }>;
  * it here AND add a case to `visit()` below or the test gate breaks.
  */
 export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new Set([
-  // Structural Phase-1 ports — visitor builds AST nodes for the LHS,
-  // wraps RHS in raw expressions where text-transform pipelines apply.
+  // The 60+ kinds below all dispatch through `visit()` to per-kind
+  // visit* methods. Per-kind structural coverage varies (see the
+  // individual method body for whether it produces RustStmt[] directly
+  // or routes through applyStructuralize on a string[] from the
+  // emitter), but EVERY entry in this set has a real implementation —
+  // none silently falls back to pass_through. Pre-H1-Session-G this
+  // list distinguished "Phase-1 structural" from "Phase-2 handler-
+  // fallback" entries; that distinction is obsolete now that handlers
+  // were retired. The remaining gradient is structural-AST vs string-
+  // pipeline-then-lift; the visit() dispatch is uniform.
+  //
+  // The one genuine pass-through is `cpi_custom` itself (intentional
+  // — for truly user-written RPCs Anvil can't typecheck) and
+  // `pass_through` (the catch-all for un-classified Anchor source).
   "state_read",
   "state_field_assign",
   "bumps_access",
-  // Handler-fallback Phase-2 ports — visitor invokes the existing
-  // handler and wraps the lines it emits in raw_line stmts. Byte-
-  // identical; structural conversion deferred per-kind to subsequent
-  // Phase-2 commits.
   "pass_through",
   "require",
   "msg",
