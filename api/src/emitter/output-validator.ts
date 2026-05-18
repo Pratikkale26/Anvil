@@ -1307,6 +1307,16 @@ function checkUndefinedAssociatedConsts(files: EmitterOutput["files"]): Validati
 function checkExternalCrateDependencies(files: EmitterOutput["files"]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const modules = collectDefinedModules(files);
+  // Cross-file `use` bindings. `instructions/raw_transfer.rs` does
+  // `use super::*;` which inherits everything `instructions/mod.rs` exposed,
+  // which in turn does `use crate::*;` to inherit from `lib.rs`. We don't
+  // model that scope chain explicitly — collecting bindings across every
+  // emitted file gives the same answer (a binding in lib.rs is reachable
+  // from anywhere via use super::*/use crate::*).
+  const crossFileBindings = new Set<string>();
+  for (const f of files) {
+    for (const b of collectUseBindings(f.content)) crossFileBindings.add(b);
+  }
   // Crates the scaffold auto-injects when emit references them.
   // Pre-this-extension the warning fired on bytemuck (zero-copy) +
   // spl_token_2022 (Native T22 extensions) + spl_token (Native SPL)
@@ -1333,7 +1343,10 @@ function checkExternalCrateDependencies(files: EmitterOutput["files"]): Validati
     "spl_token_2022",
     "spl_associated_token_account",
     "spl_memo",
+    "spl_token_metadata_interface",
     "mpl_token_metadata",
+    "pinocchio_associated_token_account",
+    "pinocchio_token_2022",
     "u8",
     "u16",
     "u32",
@@ -1348,10 +1361,20 @@ function checkExternalCrateDependencies(files: EmitterOutput["files"]): Validati
 
   for (const file of files) {
     const seen = new Set<string>();
-    const lines = file.content.split("\n");
+    // Names brought into local scope by `use` lines — across the whole project
+    // (see crossFileBindings comment above for the reachability rationale).
+    const useBindings = crossFileBindings;
+    // Strip block comments globally (they can span lines), then strip line
+    // comments per-line below. Without this, the bare-call regex matched
+    // `// token::transfer(...)` inside commented-out unsalvageable-helper
+    // bodies and flagged `token` as an unexpected crate.
+    const sansBlocks = file.content.replace(/\/\*[\s\S]*?\*\//g, "");
+    const lines = sansBlocks.split("\n");
     let inUseBlock = false;
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+      const rawLine = lines[i];
+      if (!rawLine) continue;
+      const line = rawLine.replace(/\/\/.*$/, "");
       if (!line) continue;
 
       if (/^\s*use\s+/.test(line)) {
@@ -1381,6 +1404,7 @@ function checkExternalCrateDependencies(files: EmitterOutput["files"]): Validati
       for (const match of line.matchAll(/(?<![:\w])([a-z][a-z0-9_]*)::[A-Za-z_][A-Za-z0-9_:]*/g)) {
         const prefix = match[1];
         if (!prefix || allowed.has(prefix) || modules.has(prefix) || seen.has(prefix)) continue;
+        if (useBindings.has(prefix)) continue;
         seen.add(prefix);
         issues.push({
           severity: "warning",
@@ -1393,6 +1417,90 @@ function checkExternalCrateDependencies(files: EmitterOutput["files"]): Validati
   }
 
   return issues;
+}
+
+/**
+ * Walk a Rust source string and return the set of lowercase identifiers
+ * brought into local scope by `use` lines. Handles:
+ *   use foo::bar::baz;                          -> { baz }
+ *   use foo::{bar, baz};                        -> { bar, baz }
+ *   use foo::{bar::quux, baz::frob};            -> { quux, frob }
+ *   use foo::bar as alias;                      -> { alias }
+ *   use foo::{                                   -> multi-line block; joined and parsed
+ *     bar,
+ *     baz,
+ *   };
+ *
+ * Only lowercase-leading idents are tracked because they're the only ones
+ * checkExternalCrateDependencies' bare-call regex flags as crates.
+ */
+function collectUseBindings(content: string): Set<string> {
+  const bindings = new Set<string>();
+  // Join continuation lines so multi-line brace-imports are processed as one.
+  const joined = content.replace(/\n\s*/g, " ");
+  for (const match of joined.matchAll(/\buse\s+([^;]+);/g)) {
+    const path = match[1]?.trim();
+    if (!path) continue;
+    collectBindingsFromPath(path, bindings);
+  }
+  return bindings;
+}
+
+function collectBindingsFromPath(path: string, out: Set<string>): void {
+  // Strip an optional leading `pub`/`pub(...)`.
+  const stripped = path.replace(/^pub(?:\(.+?\))?\s+/, "");
+  const braceStart = stripped.indexOf("{");
+  if (braceStart === -1) {
+    // Simple path: foo::bar::baz [as alias]
+    const aliasMatch = stripped.match(/\bas\s+([a-z][a-z0-9_]*)\s*$/);
+    if (aliasMatch?.[1]) {
+      out.add(aliasMatch[1]);
+      return;
+    }
+    const tail = stripped.split("::").pop()?.trim();
+    if (!tail || tail === "*" || tail === "self") return;
+    const m = tail.match(/^([a-z][a-z0-9_]*)/);
+    if (m?.[1]) out.add(m[1]);
+    return;
+  }
+  // Brace-import: walk balanced top-level commas inside { ... }.
+  const braceEnd = findMatchingBrace(stripped, braceStart);
+  if (braceEnd === -1) return;
+  const inner = stripped.slice(braceStart + 1, braceEnd);
+  for (const part of splitTopLevelCommas(inner)) {
+    const trimmed = part.trim();
+    if (!trimmed || trimmed === "*" || trimmed === "self") continue;
+    collectBindingsFromPath(trimmed, out);
+  }
+}
+
+function findMatchingBrace(s: string, openIdx: number): number {
+  let depth = 0;
+  for (let i = openIdx; i < s.length; i++) {
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function splitTopLevelCommas(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+    else if (ch === "," && depth === 0) {
+      out.push(s.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(s.slice(start));
+  return out;
 }
 
 function isInstructionFile(path: string): boolean {
