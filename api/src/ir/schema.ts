@@ -924,6 +924,30 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // Metaplex Token Metadata: freeze_delegated_account (M1i — slot 11).
+  // Discriminator 26. Locks a token account; only the delegate can
+  // unfreeze. 5 accounts, no data args. Used by escrow / governance.
+  z.object({
+    kind: z.literal("cpi_mpl_freeze_delegated"),
+    delegate: z.string(),
+    tokenAccount: z.string(),
+    edition: z.string(),
+    mint: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // Metaplex Token Metadata: thaw_delegated_account (M1j — slot 12).
+  // Discriminator 27. Symmetric inverse of freeze_delegated. Same
+  // accounts, different disc byte.
+  z.object({
+    kind: z.literal("cpi_mpl_thaw_delegated"),
+    delegate: z.string(),
+    tokenAccount: z.string(),
+    edition: z.string(),
+    mint: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Metaplex Token Metadata: mint_new_edition_from_master_edition_via_token
   // (M1h — slot 10). Discriminator 11. The "print an edition from a
   // master" CPI used by NFT print/edition programs. 14 fixed accounts

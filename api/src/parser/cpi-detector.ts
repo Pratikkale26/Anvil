@@ -392,6 +392,26 @@ export function detectCpi(
   ) {
     return extractMplMintNewEditionFromMaster(callNode, collector);
   }
+  // M1i/M1j — freeze/thaw_delegated_account. Check after their substring
+  // siblings (freeze_account / thaw_account on regular SPL Token) — those
+  // aren't in this catalog but a future SPL Token CPI add could collide.
+  // Today no conflicts; dispatch order is internal to MPL.
+  if (
+    funcText.includes("freeze_delegated_account") ||
+    funcText.endsWith("::freeze_delegated_account") ||
+    funcText.includes("freeze_delegated") ||
+    funcText.endsWith("::freeze_delegated")
+  ) {
+    return extractMplFreezeDelegated(callNode, collector);
+  }
+  if (
+    funcText.includes("thaw_delegated_account") ||
+    funcText.endsWith("::thaw_delegated_account") ||
+    funcText.includes("thaw_delegated") ||
+    funcText.endsWith("::thaw_delegated")
+  ) {
+    return extractMplThawDelegated(callNode, collector);
+  }
   if (
     funcText.includes("revoke_collection_authority") ||
     funcText.endsWith("::revoke_collection_authority")
@@ -597,6 +617,54 @@ function extractMplVerifyCollection(callNode: SyntaxNode, collector?: WarningCol
     collection: cleanAccountRef(grab("collection")),
     collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
     collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
+}
+
+/**
+ * Extract cpi_mpl_freeze_delegated (M1i — slot 11). 5 accounts, no data.
+ */
+function extractMplFreezeDelegated(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+  const grab = (field: string) => extractStructField(accountsStruct, field) ?? field;
+  return {
+    kind: "cpi_mpl_freeze_delegated",
+    delegate: cleanAccountRef(grab("delegate")),
+    tokenAccount: cleanAccountRef(grab("token_account")),
+    edition: cleanAccountRef(grab("edition")),
+    mint: cleanAccountRef(grab("mint")),
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+  };
+}
+
+/**
+ * Extract cpi_mpl_thaw_delegated (M1j — slot 12). Symmetric inverse of freeze.
+ */
+function extractMplThawDelegated(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    return extractCustomCpi(callNode, collector);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  if (!accountsStruct) return extractCustomCpi(callNode, collector);
+  const grab = (field: string) => extractStructField(accountsStruct, field) ?? field;
+  return {
+    kind: "cpi_mpl_thaw_delegated",
+    delegate: cleanAccountRef(grab("delegate")),
+    tokenAccount: cleanAccountRef(grab("token_account")),
+    edition: cleanAccountRef(grab("edition")),
+    mint: cleanAccountRef(grab("mint")),
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
   };
 }

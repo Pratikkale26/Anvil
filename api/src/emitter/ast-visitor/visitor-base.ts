@@ -722,6 +722,8 @@ type CpiMplSetAndVerifyCollection = Extract<BodyStatement, { kind: "cpi_mpl_set_
 type CpiMplApproveCollectionAuthority = Extract<BodyStatement, { kind: "cpi_mpl_approve_collection_authority" }>;
 type CpiMplRevokeCollectionAuthority = Extract<BodyStatement, { kind: "cpi_mpl_revoke_collection_authority" }>;
 type CpiMplMintNewEditionFromMaster = Extract<BodyStatement, { kind: "cpi_mpl_mint_new_edition_from_master" }>;
+type CpiMplFreezeDelegated = Extract<BodyStatement, { kind: "cpi_mpl_freeze_delegated" }>;
+type CpiMplThawDelegated = Extract<BodyStatement, { kind: "cpi_mpl_thaw_delegated" }>;
 type CpiMplSignMetadata = Extract<BodyStatement, { kind: "cpi_mpl_sign_metadata" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
@@ -794,6 +796,8 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_mpl_approve_collection_authority",
   "cpi_mpl_revoke_collection_authority",
   "cpi_mpl_mint_new_edition_from_master",
+  "cpi_mpl_freeze_delegated",
+  "cpi_mpl_thaw_delegated",
   "cpi_mpl_sign_metadata",
   "cpi_mpl_create_master_edition_v3",
   "zero_copy_load_init",
@@ -899,6 +903,10 @@ export class AstVisitorBase {
         return this.visitCpiMplRevokeCollectionAuthority(stmt);
       case "cpi_mpl_mint_new_edition_from_master":
         return this.visitCpiMplMintNewEditionFromMaster(stmt);
+      case "cpi_mpl_freeze_delegated":
+        return this.visitCpiMplFreezeDelegated(stmt);
+      case "cpi_mpl_thaw_delegated":
+        return this.visitCpiMplThawDelegated(stmt);
       case "cpi_mpl_sign_metadata":
         return this.visitCpiMplSignMetadata(stmt);
       case "cpi_mpl_create_master_edition_v3":
@@ -3177,6 +3185,58 @@ export class AstVisitorBase {
       `        rent,`,
       `        token_metadata_program,`,
       `        ${stmt.edition},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Metaplex freeze_delegated_account typed CPI (M1i — slot 11). Locks
+   * a token account; only the delegate can subsequently thaw. 5 accts.
+   */
+  visitCpiMplFreezeDelegated(stmt: CpiMplFreezeDelegated): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const lines: string[] = [
+      `    mpl_freeze_delegated(`,
+      `        ${resolve(stmt.delegate)},`,
+      `        ${resolve(stmt.tokenAccount)},`,
+      `        ${resolve(stmt.edition)},`,
+      `        ${resolve(stmt.mint)},`,
+      `        token_program,`,
+      `        token_metadata_program,`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Metaplex thaw_delegated_account typed CPI (M1j — slot 12). Symmetric
+   * inverse of freeze. Closes the 12-slot Metaplex catalog.
+   */
+  visitCpiMplThawDelegated(stmt: CpiMplThawDelegated): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const lines: string[] = [
+      `    mpl_thaw_delegated(`,
+      `        ${resolve(stmt.delegate)},`,
+      `        ${resolve(stmt.tokenAccount)},`,
+      `        ${resolve(stmt.edition)},`,
+      `        ${resolve(stmt.mint)},`,
+      `        token_program,`,
+      `        token_metadata_program,`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
         : `        None,`,

@@ -198,6 +198,20 @@ export function irNeedsMplMintNewEditionFromMasterHelper(ir: SolanaIR): boolean 
   );
 }
 
+/** M1i — freeze_delegated_account. Disc 26; 5 accounts; no data args. */
+export function irNeedsMplFreezeDelegatedHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_freeze_delegated")
+  );
+}
+
+/** M1j — thaw_delegated_account. Disc 27; same shape as freeze. */
+export function irNeedsMplThawDelegatedHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_thaw_delegated")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

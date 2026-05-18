@@ -44,6 +44,8 @@ import {
   irNeedsMplApproveCollectionAuthorityHelper,
   irNeedsMplRevokeCollectionAuthorityHelper,
   irNeedsMplMintNewEditionFromMasterHelper,
+  irNeedsMplFreezeDelegatedHelper,
+  irNeedsMplThawDelegatedHelper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK } from "./markers.js";
 
@@ -240,7 +242,9 @@ export class NativeEmitter extends BaseEmitter {
       || irNeedsMplSetAndVerifyCollectionHelper(_ir)
       || irNeedsMplApproveCollectionAuthorityHelper(_ir)
       || irNeedsMplRevokeCollectionAuthorityHelper(_ir)
-      || irNeedsMplMintNewEditionFromMasterHelper(_ir);
+      || irNeedsMplMintNewEditionFromMasterHelper(_ir)
+      || irNeedsMplFreezeDelegatedHelper(_ir)
+      || irNeedsMplThawDelegatedHelper(_ir);
     const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsHelper(_ir, "spl_transfer")
       || irNeedsUnsignedSplMintToHelper(_ir)
@@ -2260,6 +2264,68 @@ pub fn mpl_verify_collection<'a>(
     if let Some(record) = collection_authority_record {
         infos.push(record.clone());
     }
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplFreezeDelegatedHelper(_ir)) {
+      helpers.push(`/// Metaplex Token Metadata: freeze_delegated_account (discriminator 26).
+pub fn mpl_freeze_delegated<'a>(
+    delegate: &AccountInfo<'a>,
+    token_account: &AccountInfo<'a>,
+    edition: &AccountInfo<'a>,
+    mint: &AccountInfo<'a>,
+    token_program: &AccountInfo<'a>,
+    token_metadata_program: &AccountInfo<'a>,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: Vec<u8> = vec![26];
+    let accounts = vec![
+        AccountMeta::new_readonly(*delegate.key, true),
+        AccountMeta::new(*token_account.key, false),
+        AccountMeta::new_readonly(*edition.key, false),
+        AccountMeta::new_readonly(*mint.key, false),
+        AccountMeta::new_readonly(*token_program.key, false),
+    ];
+    let ix = Instruction { program_id: *token_metadata_program.key, accounts, data };
+    let infos = [
+        delegate.clone(), token_account.clone(), edition.clone(),
+        mint.clone(), token_program.clone(),
+    ];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplThawDelegatedHelper(_ir)) {
+      helpers.push(`/// Metaplex Token Metadata: thaw_delegated_account (discriminator 27).
+pub fn mpl_thaw_delegated<'a>(
+    delegate: &AccountInfo<'a>,
+    token_account: &AccountInfo<'a>,
+    edition: &AccountInfo<'a>,
+    mint: &AccountInfo<'a>,
+    token_program: &AccountInfo<'a>,
+    token_metadata_program: &AccountInfo<'a>,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: Vec<u8> = vec![27];
+    let accounts = vec![
+        AccountMeta::new_readonly(*delegate.key, true),
+        AccountMeta::new(*token_account.key, false),
+        AccountMeta::new_readonly(*edition.key, false),
+        AccountMeta::new_readonly(*mint.key, false),
+        AccountMeta::new_readonly(*token_program.key, false),
+    ];
+    let ix = Instruction { program_id: *token_metadata_program.key, accounts, data };
+    let infos = [
+        delegate.clone(), token_account.clone(), edition.clone(),
+        mint.clone(), token_program.clone(),
+    ];
     match signer_seeds {
         Some(seeds) => invoke_signed(&ix, &infos, seeds),
         None => invoke(&ix, &infos),

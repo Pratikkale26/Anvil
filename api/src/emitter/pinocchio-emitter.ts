@@ -43,6 +43,8 @@ import {
   irNeedsMplApproveCollectionAuthorityHelper,
   irNeedsMplRevokeCollectionAuthorityHelper,
   irNeedsMplMintNewEditionFromMasterHelper,
+  irNeedsMplFreezeDelegatedHelper,
+  irNeedsMplThawDelegatedHelper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK, MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
@@ -3250,6 +3252,94 @@ pub fn mpl_verify_collection(
             pinocchio::cpi::invoke_signed(&ix, infos, &[signer])
         }
         None => pinocchio::cpi::invoke(&ix, infos),
+    }
+}`);
+    }
+
+    // M1i + M1j — Metaplex freeze_delegated + thaw_delegated. Symmetric
+    // pair. Discriminators 26 + 27 respectively. Same 5-account shape:
+    // [delegate signer, token_account writable, edition readonly, mint
+    // readonly, token_program readonly].
+    if (irNeedsMplFreezeDelegatedHelper(ir)) {
+      helpers.push(`/// Metaplex Token Metadata: freeze_delegated_account (discriminator 26).
+/// Locks a token account; only the delegate can subsequently thaw.
+pub fn mpl_freeze_delegated(
+    delegate: &AccountInfo,
+    token_account: &AccountInfo,
+    edition: &AccountInfo,
+    mint: &AccountInfo,
+    token_program: &AccountInfo,
+    token_metadata_program: &AccountInfo,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: [u8; 1] = [26];
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(delegate.key(), false, true),
+        pinocchio::instruction::AccountMeta::new(token_account.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(edition.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(mint.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: token_metadata_program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [delegate, token_account, edition, mint, token_program];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplThawDelegatedHelper(ir)) {
+      helpers.push(`/// Metaplex Token Metadata: thaw_delegated_account (discriminator 27).
+/// Symmetric inverse of freeze_delegated — unlocks the token account.
+pub fn mpl_thaw_delegated(
+    delegate: &AccountInfo,
+    token_account: &AccountInfo,
+    edition: &AccountInfo,
+    mint: &AccountInfo,
+    token_program: &AccountInfo,
+    token_metadata_program: &AccountInfo,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: [u8; 1] = [27];
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(delegate.key(), false, true),
+        pinocchio::instruction::AccountMeta::new(token_account.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(edition.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(mint.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: token_metadata_program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [delegate, token_account, edition, mint, token_program];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
     }
 }`);
     }
