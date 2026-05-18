@@ -7,10 +7,11 @@ numbers we care about and the date they were last refreshed.
 
 | Metric | Value | As of |
 |---|---|---|
+| Current CLI version | v0.4.0 (safe-by-default; see [CHANGELOG.md](CHANGELOG.md)) | 2026-05-18 |
 | npm weekly downloads | _tbd_ | _tbd_ |
 | GitHub stars | _tbd_ | _tbd_ |
-| MIGRATIONS.md entries | 0 | 2026-05-06 |
-| INTEGRATIONS.md entries | 0 | 2026-05-06 |
+| MIGRATIONS.md entries | 0 | 2026-05-18 |
+| INTEGRATIONS.md entries | 0 | 2026-05-18 |
 
 Run `npm view anvil-sol` for current download numbers. Star count is on the
 repo header.

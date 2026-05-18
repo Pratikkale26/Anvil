@@ -107,4 +107,92 @@ describe("fuzz mutation infra", () => {
     // RNG was actually consulted.
     expect(nextU64Calls).toBeGreaterThan(0);
   });
+
+  // P3.1 — multi-type mutator coverage. The legacy u8/u16/.../bool surface
+  // is locked above; these lock the new String + Vec<u8> shapes.
+
+  test("fuzzScenarioArgs mutates String args to ASCII strings", () => {
+    const irWithString: SolanaIR = {
+      ...fakeIr,
+      instructions: [
+        {
+          name: "initialize",
+          args: [{ name: "label", type: "String" }],
+          accounts: [],
+          body: [],
+        },
+      ],
+    } as unknown as SolanaIR;
+    const stringScenario: DifferentialScenario = {
+      ...baseScenario,
+      instructions: [
+        { ix: "initialize", args: { label: "original" }, accounts: [] },
+      ],
+    };
+    // Uniform path (oneIn(3) → false) → 0-20 char ASCII string.
+    const stubRng = {
+      nextU64: () => 0n,
+      nextRange: (max: number) => max > 1 ? 5 : 0, // pick "5" most of the time → middle of A-Z range
+      oneIn: (_n: number) => false,
+    };
+    const fuzzed = fuzzScenarioArgs(stringScenario, irWithString, stubRng as never);
+    const label = fuzzed.instructions[0]!.args!.label;
+    expect(typeof label).toBe("string");
+    expect(label).not.toBe("original");
+    // ASCII-only (no UTF-8 multi-byte): every char is in [0x20, 0x7e].
+    expect(typeof label === "string" && /^[\x20-\x7e]*$/.test(label)).toBe(true);
+  });
+
+  test("fuzzScenarioArgs mutates Vec<u8> args to hex strings", () => {
+    const irWithBytes: SolanaIR = {
+      ...fakeIr,
+      instructions: [
+        {
+          name: "initialize",
+          args: [{ name: "payload", type: "Vec<u8>" }],
+          accounts: [],
+          body: [],
+        },
+      ],
+    } as unknown as SolanaIR;
+    const bytesScenario: DifferentialScenario = {
+      ...baseScenario,
+      instructions: [
+        { ix: "initialize", args: { payload: "deadbeef" }, accounts: [] },
+      ],
+    };
+    // Uniform path; nextRange(33) → 8 yields an 8-byte vec.
+    const stubRng = {
+      nextU64: () => 0n,
+      nextRange: (max: number) => max >= 33 ? 8 : (max > 1 ? 0xab : 0),
+      oneIn: (_n: number) => false,
+    };
+    const fuzzed = fuzzScenarioArgs(bytesScenario, irWithBytes, stubRng as never);
+    const payload = fuzzed.instructions[0]!.args!.payload;
+    expect(typeof payload).toBe("string");
+    // hex string: only 0-9a-f, even length.
+    expect(typeof payload === "string" && /^[0-9a-f]*$/.test(payload)).toBe(true);
+    expect(typeof payload === "string" && payload.length % 2).toBe(0);
+  });
+
+  test("fuzzScenarioArgs still throws on unknown arg types (no silent dropping)", () => {
+    const irWithCustomType: SolanaIR = {
+      ...fakeIr,
+      instructions: [
+        {
+          name: "initialize",
+          args: [{ name: "config", type: "ConfigStruct" }],
+          accounts: [],
+          body: [],
+        },
+      ],
+    } as unknown as SolanaIR;
+    const stubRng = {
+      nextU64: () => 0n,
+      nextRange: () => 0,
+      oneIn: () => false,
+    };
+    expect(() => fuzzScenarioArgs(baseScenario, irWithCustomType, stubRng as never))
+      .toThrow(/can't randomize arg .*\(type 'ConfigStruct'\)/);
+  });
 });

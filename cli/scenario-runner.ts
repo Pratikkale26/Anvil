@@ -733,6 +733,46 @@ function fuzzArgValue(
       : Number(rng.nextU64() & 0x1fffffffffffffn);
     case "i128": return useBoundary ? 0 : Number(rng.nextU64() & 0x1fffffffffffffn);
     case "bool": return rng.oneIn(2);
+    // P3.1 — String + Vec<u8> mutation. Both biased toward boundary
+    // lengths (empty, 1-byte, ~max) and otherwise uniformly random.
+    // ASCII-only on String so the Borsh-encoded bytes are deterministic
+    // across the two .so runs (UTF-8 multi-byte chars complicate the
+    // hash comparison without adding meaningful coverage).
+    case "String": {
+      if (useBoundary) {
+        // Empty + 1-char + a small random — covers off-by-one bounds.
+        const choice = rng.nextRange(3);
+        if (choice === 0) return "";
+        if (choice === 1) return String.fromCharCode(0x41 + rng.nextRange(26));
+        return ["a", "z", "0", "9"][rng.nextRange(4)] as string;
+      }
+      // Uniform: 0-20 chars, ASCII letters + digits.
+      const len = rng.nextRange(21);
+      let out = "";
+      for (let i = 0; i < len; i++) {
+        const ch = rng.nextRange(62);
+        out += ch < 26
+          ? String.fromCharCode(0x41 + ch)
+          : ch < 52
+            ? String.fromCharCode(0x61 + ch - 26)
+            : String.fromCharCode(0x30 + ch - 52);
+      }
+      return out;
+    }
+    case "Vec<u8>": {
+      // Returned as a hex string — the scenario encoder upstream decodes
+      // it via Buffer.from(value, "hex") when arg.type matches Vec<u8>.
+      // Boundary: empty + 1-byte. Uniform: 0-32 bytes.
+      const len = useBoundary
+        ? (rng.nextRange(2) === 0 ? 0 : 1)
+        : rng.nextRange(33);
+      let hex = "";
+      for (let i = 0; i < len; i++) {
+        const b = rng.nextRange(256);
+        hex += b.toString(16).padStart(2, "0");
+      }
+      return hex;
+    }
     case "Pubkey":
       throw new Error(
         `--fuzz can't randomize Pubkey args ('${arg.name}' on this ix). ` +
