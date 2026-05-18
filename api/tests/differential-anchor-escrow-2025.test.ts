@@ -1,37 +1,35 @@
 /**
  * A6 — first real-world differential fixture (byte-equal scope).
  *
- * mikemaccana/anchor-escrow-2025 make_offer init flow. Asserts byte-equal
- * on the offer-PDA — the credibility-lift claim from A6.
+ * mikemaccana/anchor-escrow-2025 make_offer init flow. Byte-equal across
+ * the FULL compare scope (offer-PDA + maker_ata_a + vault_ata + token
+ * accounts) — verified continuously by `differential-tracking.test.ts`
+ * with `maxMismatches: 0`. That file is the authoritative regression
+ * gate; this file remains as a documentation pointer.
  *
- * STATUS: SKIPPED 2026-05-13 — upstream upgraded to Anchor 0.32.1, where
- * `anchor_spl::token_interface::transfer_checked` re-exports
- * `anchor_spl::token_2022::transfer_checked`. That function builds the
- * Instruction via `spl_token_2022::instruction::transfer_checked(
- * ctx.program.key, ...)`, which accepts EITHER Token-1 OR Token-2022 as
- * the program_id but the CPI runtime resolves to whichever program is
- * passed. The fixture setup creates Token-1 mints and passes
- * TOKEN_PROGRAM_ID, but LiteSVM reports "Unknown program TokenzQdB..."
- * (Token-2022) before the escrow fails with "An account required by the
- * instruction is missing".
+ * History:
+ * - 2026-05-13: Skipped after upstream upgraded to Anchor 0.32.1. The
+ *   token_interface re-export of transfer_checked triggered a runtime
+ *   dispatch path the emit didn't honor — the visitor was dropping
+ *   `stmt.tokenProgramArg` so the Pinocchio emit hardcoded
+ *   TOKEN_2022_PROGRAM_ID. LiteSVM reported "Unknown program TokenzQd..."
+ *   because the fixture uses legacy SPL Token mints.
+ * - 2026-05-18: Fixed by threading tokenProgramArg through the visitor
+ *   (commit 935e8b7). Emit now correctly reads program_id from the
+ *   AccountInfo at runtime. differential-tracking surfaced the test
+ *   passing byte-equal on the full compare scope.
  *
- * Root cause likely an interaction between anchor-spl 0.32's runtime
- * dispatch + the fixture's mixed-token-program setup. Restoring this
- * test requires either:
- *   1. Rewriting the fixture to use Token-2022 mints + TOKEN_2022_PROGRAM_ID
- *      throughout (significant test-side rewrite, no source change).
- *   2. Pinning the upstream clone to a pre-0.32 commit (operational
- *      change to ensureRepoCloned).
- *
- * Tracked at task #14 (H3 corpus expansion). The fixture remains gated
- * via `realworld-cargo.test.ts` (cargo-build only) and
- * `realworld-tracking.test.ts` (non-blocking ceiling), so we still know
- * if the upstream stops compiling under Anvil emit.
+ * Why this file stays as a stub: the byte-equal gate is in
+ * differential-tracking.test.ts, which is the layer that auto-promotes
+ * tracked fixtures to byte-equal when the underlying emit divergence
+ * closes. Adding a separate active test here would duplicate the
+ * coverage. The stub-and-pointer pattern keeps the regression-guard
+ * conceptually visible without duplicating CI work.
  */
 import { describe, test } from "bun:test";
 
 describe.skip("Anchor vs Anvil-Pinocchio runtime correctness (anchor-escrow-2025-make-offer)", () => {
-  test("produces byte-equal account state", () => {
-    // Deferred — see file header for root cause + repair paths.
+  test("regression-gated by differential-tracking.test.ts (maxMismatches=0)", () => {
+    // See file header.
   });
 });
