@@ -10,7 +10,7 @@ backends — Pinocchio (production) or Native (reference, raw `solana_program`)
 Anchor-like Rust
   ├─► tree-sitter parse
   ├─► structural classification (instructions, accounts, constraints, body stmts)
-  ├─► SolanaIR (Zod-validated, 23 body-statement kinds)
+  ├─► SolanaIR (Zod-validated, 60+ body-statement kinds)
   ├─► target emitter (Pinocchio | Native)
   ├─► output validator (structural)
   └─► generated Rust + CU metadata
@@ -33,7 +33,7 @@ Two apps:
 - account contexts with full constraint normalization (16 kinds: `init`, `mut`, `seeds`, `bump`, `has_one`, `close`, `init_if_needed`, `payer`, `space`, `token::*`, `associated_token::*`, freeform `constraint = …`, etc.)
 - custom errors
 - helper / inherent-impl methods (now flow-preserved into emit)
-- body statements classified into 23 IR kinds (`state_read`, `state_field_assign`, `bumps_access`, `pass_through`, `require`, `msg`, `emit`, `return_ok`, `return_err`, `sysvar_clock`, `sysvar_rent`, `pda_signer_seeds`, `cpi_spl_transfer`, `cpi_spl_mint_to`, `cpi_spl_burn`, `cpi_spl_close_account`, `cpi_spl_set_authority`, `cpi_ata_create`, `cpi_memo`, `cpi_custom`, `cpi_system_transfer`, `cpi_mpl_create_metadata_v3`, `cpi_mpl_create_master_edition_v3`)
+- body statements classified into 60+ IR kinds (`state_read`, `state_field_assign`, `bumps_access`, `pass_through`, `require`, `msg`, `emit`, `return_ok`, `return_err`, `sysvar_clock`, `sysvar_rent`, `pda_signer_seeds`, `cpi_spl_*` family (transfer / mint_to / burn / close_account / set_authority), `cpi_ata_create`, `cpi_memo`, `cpi_custom`, `cpi_system_transfer`, the 12-slot `cpi_mpl_*` Metaplex Token Metadata catalog, the 25-slot `cpi_t22_*` Token-2022 extension family, `zero_copy_load*`). Full list lives in `BodyStatementSchema` (api/src/ir/schema.ts).
 
 Project ingestion supports raw source, single `.rs` file, project directory, or git repo URL with `programs/*/src/lib.rs` auto-detection.
 
@@ -124,14 +124,14 @@ Snapshot tests confirm "the emitter still emits the same string." Differential t
 - **Workspace ingestion** (multi-program Anchor repos) requires explicit `sourcePath` per program.
 - **CU heuristic table** doesn't auto-update; real numbers come from `scripts/measure-cu.ts`.
 - **Token-2022 extension surfaces** (transfer-hook, transfer-fee, confidential-transfer) have ceilings, not green builds, on Pinocchio. Tracked-ceiling layer in `realworld-tracking.test.ts`.
-- **Pyth + Switchboard + Metaplex CPIs** — imports preserve, structural rewrites don't. Listed as grant M2 / M3 deliverables.
+- **Metaplex Token Metadata CPI** — 12 slots typed + hand-rolled emitted (M3 deliverable closed 2026-05-18). **Pyth + Switchboard CPIs** — imports preserved on Native, body code passes through; pinocchio rejects via the lint-analyzer "blocker" verdict. M2 deliverable (typed IR + byte-parse Pinocchio emit) is the active follow-up.
 - **Pinocchio formatted msg!()** can't byte-equal Anchor's `alloc::format!()` runtime substitution (Pinocchio is no_std). Static literal msg!() byte-equals; format-arg msg!() collapses to a static literal with a comment-tagged warning.
 
 ## Recommended next milestones
 
 1. **Expand real-world byte-equal corpus** beyond 6 (target: 10-15 externally-authored Anchor programs gated; adoption-tracking deliverable per the SF grant's A1).
-2. **Pyth + Switchboard CPIs** (grant M2): new IR kinds + emit + 2 byte-equal fixtures. ~2 weeks.
-3. **Metaplex Token Metadata + Core CPIs** (grant M3): 12-instruction catalog + 4 fixtures. ~5 weeks.
+2. **Pyth + Switchboard CPIs** (grant M2 — Pyth detection done via lint, typed IR + Pinocchio byte-parse emit pending): new IR kinds + emit + 2 byte-equal fixtures.
+3. ~~**Metaplex Token Metadata + Core CPIs**~~ **CLOSED 2026-05-18** — full 12-slot Metaplex Token Metadata catalog typed + hand-rolled emitted on both targets; Metaplex Core pending as separate scope.
 4. **EM1 Phase 3-4 — visitor is production + handlers retired** (DONE, 2026-05-13). Session F flipped the default; Session G deleted the entire `handlers/` directory + the legacy switch + the `ANVIL_LEGACY_WALKER` escape hatch. Total LoC delta ~-1500 across the emit stack. **Phase 5 remaining**: convert `walker.ts` helper regex methods (`transformAccountReferences`, `transformCtxAccountsReferences`, `transformNestedAnchorCode`, `normalizeKeyValueUsages`, `replaceBumpRefs`) from text-in/text-out to `RustStmt[]`-passes. Multi-week; details in [`reports/h1-collapse-shipped-2026-05-13.md`](../reports/h1-collapse-shipped-2026-05-13.md).
 5. **Workspace ingestion** (programs/*/Cargo.toml driven).
 6. **CU measurement automation** (replace heuristic table with measured numbers per fixture).
