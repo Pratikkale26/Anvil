@@ -141,16 +141,35 @@ const IMPLICIT_KINDS = new Set<string>(["return_ok"]);
  *
  * Currently:
  *   - cpi_mpl_*: Metaplex catalog work is grant-M3 / Tier 2.2 in
- *     project-roadmap-todos.md. ~5 weeks of work for 12-instruction
- *     IDL-driven catalog + 4 fixtures. The IR slots + structured-stub
- *     emit landed via #29 today; live-program differential gates need
- *     mpl-token-metadata loaded into LiteSVM (similar to #36's SPL Memo
- *     work) AND per-target real CPI emit (not just stubs) before they
- *     can byte-equal.
+ *     project-roadmap-todos.md. The IR slots + real CPI emit
+ *     (Pinocchio + Native) landed across 2026-05-13 → 2026-05-18 for
+ *     all 12 catalog instructions. Live-program differential gates
+ *     require mpl-token-metadata loaded into LiteSVM AND a real
+ *     external-program scenario harness — that is task #51 (N1), a
+ *     separate arc from the emit work.
+ *   - cpi_t22_metadata_pointer_update: emit landed via E1 (commit
+ *     6b4ed1f). The differential gate is E2 (task #37) — currently
+ *     blocked on SBF-toolchain session.
  */
 const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
+  // Pre-existing entries from the M3 IR slot landing (#29).
   "cpi_mpl_create_metadata_v3",
   "cpi_mpl_create_master_edition_v3",
+  // Catalog slots 3–7 (verify_collection family + sign_metadata).
+  "cpi_mpl_update_metadata_accounts_v2",
+  "cpi_mpl_verify_collection",
+  "cpi_mpl_sign_metadata",
+  "cpi_mpl_unverify_collection",
+  "cpi_mpl_set_and_verify_collection",
+  // Catalog slots 8–9 (approve/revoke collection authority).
+  "cpi_mpl_approve_collection_authority",
+  "cpi_mpl_revoke_collection_authority",
+  // Catalog slots 10–12 (editions + freeze/thaw).
+  "cpi_mpl_mint_new_edition_from_master",
+  "cpi_mpl_freeze_delegated",
+  "cpi_mpl_thaw_delegated",
+  // T22 MetadataPointer update — see E2 (task #37).
+  "cpi_t22_metadata_pointer_update",
 ]);
 
 function listBodyStatementKinds(): string[] {
