@@ -375,7 +375,17 @@ export function defineDifferential<S extends DifferentialSetup>(
         // operators wanting them gone can `find ~/.anvil-diff-cache -mtime
         // +7 -type d -empty -delete` (no in-process eviction here — tests
         // shouldn't pay for that on every run).
-        const cacheDir = join(CACHE_ROOT, `${fixture.fixtureName}-${sourceHash}-${ANVIL_CODE_VERSION}`);
+        // anvilTarget MUST be in the cache key. Pinocchio and Native produce
+        // structurally different .so binaries from the same Anchor source;
+        // pre-fix the key omitted target so two fixtures sharing source +
+        // ANVIL_CODE_VERSION but differing in target would cache-hit on
+        // each other's .so. Silent false-pass class. Default "pinocchio"
+        // keeps the cache directory name backward-compatible for fixtures
+        // that don't override.
+        const targetSuffix = fixture.anvilTarget && fixture.anvilTarget !== "pinocchio"
+          ? `-${fixture.anvilTarget}`
+          : "";
+        const cacheDir = join(CACHE_ROOT, `${fixture.fixtureName}-${sourceHash}-${ANVIL_CODE_VERSION}${targetSuffix}`);
         mkdirSync(cacheDir, { recursive: true });
         const anchorSoPath = join(cacheDir, `${fixture.fixtureName}_anchor.so`);
         const anvilSoPath = join(cacheDir, `${fixture.fixtureName}_anvil.so`);
