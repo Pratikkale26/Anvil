@@ -123,14 +123,10 @@ const TRACKED: TrackedCase[] = [
   // pass over the init/realloc preludes (not just the handler body)
   // so unresolvable types in `space = ...` expressions get commented
   // out. 4 → 0 errors.
-  {
-    id: "t22-transfer-hook",
-    target: "native",
-    path: "/tmp/program-examples/tokens/token-2022/transfer-hook/hello-world/anchor/programs/transfer-hook/src/lib.rs",
-    source: "solana-developers/program-examples (tokens/token-2022/transfer-hook/hello-world/anchor)",
-    maxErrors: 0,
-    reason: "0-error ceiling (was 9, now BUILDS GREEN as of 2026-05-13 polish pass — port the Pinocchio T22 commentout to a shared helper with NATIVE_T22_TYPE_BLACKLIST + drop OptionalNonZeroPubkey from Native auto-import + gate data-borrow regex to Pinocchio only). Promote to MUST_PASS when realworld-cargo MUST_PASS is reorganised.",
-  },
+  //
+  // NOTE: t22-transfer-hook/native promoted to MUST_PASS 2026-05-18
+  // after the cpi-detector dispatch-order fix (qualified T22 ext fns
+  // route to typed kinds before the generic SPL block).
 
   // ── 2026-05-02 H7 corpus expansion — 1-error gaps for emitter follow-up ──
   //

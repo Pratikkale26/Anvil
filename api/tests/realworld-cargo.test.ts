@@ -113,10 +113,17 @@ const MUST_PASS: Case[] = [
   // interface / spl_discriminator / spl_pod, AND running the T22
   // commentout pass over the init/realloc preludes (not just the handler
   // body) so unresolvable types in `space = ...` expressions get
-  // commented out. Native variant still in tracking — Native doesn't have
-  // a T22 commentout pass yet.
+  // commented out.
   { id: "t22-transfer-hook", target: "pinocchio", path: "tokens/token-2022/transfer-hook/hello-world/anchor/programs/transfer-hook/src/lib.rs",
     maintainer: "anvil-core", lastPassedDate: "2026-05-02" },
+
+  // t22-transfer-hook/native: promoted 2026-05-18 after the cpi-detector
+  // dispatch-order fix routed qualified `token_2022::transfer_hook_*`
+  // calls to the typed T22 IR kinds (pre-fix they were silently misrouted
+  // to cpi_spl_transfer via substring precedence). Verified by tracking
+  // surface "now BUILDS GREEN" signal.
+  { id: "t22-transfer-hook", target: "native", path: "tokens/token-2022/transfer-hook/hello-world/anchor/programs/transfer-hook/src/lib.rs",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-18" },
 
   // create-account/native: locked in by pass-through-aware import scan
   // (`(transfer|create_account|...)\\(\\s*CpiContext::new` triggers the
