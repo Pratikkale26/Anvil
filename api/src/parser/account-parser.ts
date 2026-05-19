@@ -49,7 +49,10 @@ export function parseAccountsStructFields(
     }
 
     if (child.type === "field_declaration") {
-      const account = parseAccountField(child, currentAttrs);
+      const account = parseAccountField(child, currentAttrs, {
+        collector: opts?.collector,
+        structName: parentStructName,
+      });
       if (account) {
         // Composite-Accounts detection (#21): if the field's accountType
         // matches the name of another #[derive(Accounts)] struct in the
@@ -134,6 +137,10 @@ export function parseAccountsStructFields(
 function parseAccountField(
   fieldNode: SyntaxNode,
   attrs: SyntaxNode[],
+  parseCtx?: {
+    collector?: WarningCollector;
+    structName?: string;
+  },
 ): AccountRef | null {
   const nameNode = fieldNode.childForFieldName("name");
   const typeNode = fieldNode.childForFieldName("type");
@@ -163,7 +170,11 @@ function parseAccountField(
   let initSpace: string | undefined;
 
   if (accountAttrInner) {
-    constraints = parseConstraints(accountAttrInner);
+    constraints = parseConstraints(accountAttrInner, {
+      collector: parseCtx?.collector,
+      structName: parseCtx?.structName,
+      fieldName,
+    });
     const initMetadata = parseInitMetadata(accountAttrInner);
     initPayer = initMetadata.payer;
     initSpace = initMetadata.space;

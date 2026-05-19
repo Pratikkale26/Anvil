@@ -1584,6 +1584,16 @@ export const ParserWarningCodeSchema = z.enum([
    * BEFORE deploy. Strict-mode validator promotes to ERROR.
    */
   "cpi_unrecognized_dropped",
+  /**
+   * P2 — parseConstraints saw a key in an `#[account(...)]` attribute body
+   * that doesn't match any entry in KNOWN_CONSTRAINT_KEYS and isn't in
+   * the explicit intentional-skip list (payer/space/realloc::*). Pre-fix
+   * these silently dropped — a future Anchor version's new constraint key
+   * (e.g. `lazy`, `delegate`) vanished from the IR with zero signal.
+   * Surface the dropped key so future Anchor evolution doesn't degrade
+   * Anvil's IR completeness invisibly.
+   */
+  "constraint_key_unrecognized",
 ]);
 
 export type ParserWarningCode = z.infer<typeof ParserWarningCodeSchema>;
