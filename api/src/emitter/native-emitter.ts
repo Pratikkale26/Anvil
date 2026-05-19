@@ -2103,11 +2103,12 @@ pub fn spl_token_transfer_signed<'a>(
     // struct (task #84); collection / uses / collection_details still None.
     if (irNeedsMplCreateMetadataV3Helper(_ir) || irNeedsMplUpdateMetadataAccountsV2Helper(_ir)) {
       helpers.push(`/// Mirrors mpl-token-metadata 5.1.1's Creator struct for inline Borsh
-/// serialization without a runtime mpl crate dependency. 'a tracks
-/// the lifetime of the referenced Pubkey (typically from AccountInfo.key).
+/// serialization without a runtime mpl crate dependency. address is
+/// the Pubkey value (callers pass via \`*account.key\` deref or owned
+/// Pubkey from find_program_address etc.).
 #[derive(Clone, Copy)]
-pub struct Creator<'a> {
-    pub address: &'a Pubkey,
+pub struct Creator {
+    pub address: Pubkey,
     pub verified: bool,
     pub share: u8,
 }`);
@@ -2131,7 +2132,7 @@ pub fn mpl_create_metadata_accounts_v3<'a>(
     symbol: &str,
     uri: &str,
     seller_fee_basis_points: u16,
-    creators: Option<Vec<Creator<'a>>>,
+    creators: Option<Vec<Creator>>,
     is_mutable: bool,
     update_authority_is_signer: bool,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -2265,7 +2266,7 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
     new_symbol: &str,
     new_uri: &str,
     new_seller_fee_basis_points: u16,
-    creators: Option<Vec<Creator<'a>>>,
+    creators: Option<Vec<Creator>>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
     signer_seeds: Option<&[&[&[u8]]]>,

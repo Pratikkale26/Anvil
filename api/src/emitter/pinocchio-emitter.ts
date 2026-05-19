@@ -3017,16 +3017,16 @@ pub fn spl_token_transfer_signed(
     // against mpl-token-metadata 5.1.1 source: discriminator = 33, args =
     // borsh(DataV2 { name, symbol, uri, seller_fee_basis_points, creators?,
     // collection?, uses? }, is_mutable, collection_details?). Helper
-    // supports DataV2.creators via local Creator<'a> struct (task #84).
+    // supports DataV2.creators via local Creator struct (task #84).
     // collection / uses / collection_details still hard-coded to None.
     if (irNeedsMplCreateMetadataV3Helper(ir) || irNeedsMplUpdateMetadataAccountsV2Helper(ir)) {
       helpers.push(`/// Mirrors mpl-token-metadata 5.1.1's Creator struct for inline Borsh
-/// serialization without needing the mpl crate at compile time. The
-/// 'a lifetime tracks the lifetime of the referenced Pubkey (typically
-/// from an AccountInfo's key() call).
+/// serialization without needing the mpl crate at compile time. address
+/// is the raw 32-byte Pubkey (Pinocchio's Pubkey = [u8; 32]) so callers
+/// pass via \`*account.key()\` deref.
 #[derive(Clone, Copy)]
-pub struct Creator<'a> {
-    pub address: &'a Pubkey,
+pub struct Creator {
+    pub address: Pubkey,
     pub verified: bool,
     pub share: u8,
 }`);
@@ -3034,9 +3034,9 @@ pub struct Creator<'a> {
     if (irNeedsMplCreateMetadataV3Helper(ir)) {
       helpers.push(`/// Metaplex Token Metadata: create_metadata_accounts_v3 (discriminator 33).
 /// Hand-rolled invoke — mpl-token-metadata is not no_std + alloc compatible
-/// for Pinocchio. DataV2.creators is supported via the local Creator<'a>
+/// for Pinocchio. DataV2.creators is supported via the local Creator
 /// struct; collection / uses / collection_details still hard-coded to None.
-pub fn mpl_create_metadata_accounts_v3<'a>(
+pub fn mpl_create_metadata_accounts_v3(
     metadata: &AccountInfo,
     mint: &AccountInfo,
     mint_authority: &AccountInfo,
@@ -3049,7 +3049,7 @@ pub fn mpl_create_metadata_accounts_v3<'a>(
     symbol: &str,
     uri: &str,
     seller_fee_basis_points: u16,
-    creators: Option<Vec<Creator<'a>>>,
+    creators: Option<Vec<Creator>>,
     is_mutable: bool,
     update_authority_is_signer: bool,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -3209,7 +3209,7 @@ pub fn mpl_create_master_edition_v3(
       helpers.push(`/// Metaplex Token Metadata: update_metadata_accounts_v2 (discriminator 15).
 /// Hand-rolled invoke for Pinocchio. The 4 Option fields collapse to
 /// length-prefixed tags + payloads in the same Borsh shape mpl uses.
-pub fn mpl_update_metadata_accounts_v2<'a>(
+pub fn mpl_update_metadata_accounts_v2(
     metadata: &AccountInfo,
     update_authority: &AccountInfo,
     token_metadata_program: &AccountInfo,
@@ -3219,7 +3219,7 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
     new_symbol: &str,
     new_uri: &str,
     new_seller_fee_basis_points: u16,
-    creators: Option<Vec<Creator<'a>>>,
+    creators: Option<Vec<Creator>>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
     signer_seeds: Option<&[&[&[u8]]]>,

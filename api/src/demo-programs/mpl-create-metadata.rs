@@ -5,7 +5,7 @@ use anchor_spl::metadata::{
     CreateMetadataAccountsV3, Metadata, UpdateMetadataAccountsV2,
 };
 use anchor_spl::token::{Mint, Token};
-use anchor_spl::metadata::mpl_token_metadata::types::DataV2;
+use anchor_spl::metadata::mpl_token_metadata::types::{Creator, DataV2};
 
 declare_id!("HYoSg3PQeyrytfiDptkAoBVbqqqbqouQn6ziJV9bNmjf");
 
@@ -37,7 +37,13 @@ pub mod mpl_create_metadata {
                 symbol,
                 uri,
                 seller_fee_basis_points: 500,
-                creators: None,
+                creators: Some(vec![
+                    Creator {
+                        address: ctx.accounts.payer.key(),
+                        verified: true,
+                        share: 100,
+                    },
+                ]),
                 collection: None,
                 uses: None,
             },
@@ -89,7 +95,17 @@ pub mod mpl_create_metadata {
                 symbol: new_symbol,
                 uri: new_uri,
                 seller_fee_basis_points: 750,
-                creators: None,
+                // Same verified creator as in make() — MPL rejects with
+                // 0x5e "Verified creators cannot be removed" if dropped on
+                // update. Keeping it stable across name/uri changes is the
+                // typical pattern for royalty-bearing NFTs.
+                creators: Some(vec![
+                    Creator {
+                        address: ctx.accounts.update_authority.key(),
+                        verified: true,
+                        share: 100,
+                    },
+                ]),
                 collection: None,
                 uses: None,
             }),

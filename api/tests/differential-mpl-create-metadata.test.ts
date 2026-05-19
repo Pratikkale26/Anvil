@@ -9,6 +9,12 @@
  * both Anchor and Anvil runs invoke the same MPL ix with the same
  * accounts and same data, so the resulting metadata PDA must byte-equal.
  *
+ * As of task #84 phase 3 (2026-05-19) the demo also exercises
+ * DataV2.creators = Some(vec![Creator { address: payer.key(), verified:
+ * true, share: 100 }]). The metadata PDA byte-equal compare verifies
+ * Anvil's hand-rolled Borsh of Option<Vec<Creator>> matches the bytes
+ * MPL writes when anchor-spl serializes via its mpl crate.
+ *
  * What this catches:
  *   - Discriminator drift (33 → wrong byte) → loud byte-mismatch
  *   - DataV2 borsh shape drift (Option-tag, field order) → mismatch

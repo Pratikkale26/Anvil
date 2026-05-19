@@ -1,4 +1,4 @@
-pub fn mpl_update_metadata_accounts_v2<'a>(
+pub fn mpl_update_metadata_accounts_v2(
     metadata: &AccountInfo,
     update_authority: &AccountInfo,
     token_metadata_program: &AccountInfo,
@@ -8,7 +8,7 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
     new_symbol: &str,
     new_uri: &str,
     new_seller_fee_basis_points: u16,
-    creators: Option<Vec<Creator<'a>>>,
+    creators: Option<Vec<Creator>>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
     signer_seeds: Option<&[&[&[u8]]]>,
