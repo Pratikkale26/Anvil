@@ -79,3 +79,75 @@ describe("task #48 S4 — MPL Core BurnV1 emit (Native)", () => {
     expect(all).toContain("AccountMeta::new(*collection_info.key, false)");
   });
 });
+
+// Regression: BurnV1 helper uses `collection.is_some()` as the writable bit
+// in the Pinocchio meta. If a user source omits `.collection(...)` entirely,
+// the IR has `collection: "None"` and the call site must emit a literal
+// `None,` to the helper — exercising the helper's
+// `AccountMeta::new(collection_info.key(), false, false)` branch. cargo-check
+// alone wouldn't surface a regression in IR→call-site wiring since both
+// branches type-check; this test guards the wiring.
+const SOURCE_NO_COLLECTION = `
+use anchor_lang::prelude::*;
+declare_id!("11111111111111111111111111111111");
+
+#[program]
+mod mc {
+    use super::*;
+    pub fn burn(ctx: Context<BurnAssetNoCollection>) -> Result<()> {
+        mpl_core::BurnV1CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+            .asset(&ctx.accounts.asset.to_account_info())
+            .payer(&ctx.accounts.payer.to_account_info())
+            .authority(Some(&ctx.accounts.owner.to_account_info()))
+            .system_program(&ctx.accounts.system_program.to_account_info())
+            .invoke()?;
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct BurnAssetNoCollection<'info> {
+    /// CHECK
+    #[account(mut)]
+    pub asset: AccountInfo<'info>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    /// CHECK
+    pub owner: Signer<'info>,
+    pub system_program: Program<'info, System>,
+    /// CHECK
+    pub mpl_core_program: AccountInfo<'info>,
+}
+`;
+
+describe("task #48 S4 — BurnV1 None-collection wiring regression", () => {
+  test("IR with collection=None emits literal `None,` at the helper call site", async () => {
+    const parsed = await parseAnchor(SOURCE_NO_COLLECTION);
+    if (!parsed.ok) throw new Error("parse: " + parsed.error);
+    const all = collectFiles(emitPinocchioFull(parsed.ir));
+    const callMatch = all.match(/mpl_core_burn_v1\([\s\S]+?\)\?;/);
+    expect(callMatch).toBeTruthy();
+    const call = callMatch![0];
+    // collection is the 3rd positional arg (after program, asset). When the
+    // IR has collection=None, the call site must emit a literal `None` —
+    // not `Some(...)` — so the helper's `collection.unwrap_or(program)` +
+    // `collection.is_some()` resolve to the program key + non-writable bit.
+    const lines = call.split("\n").map((s) => s.trim());
+    // Line 0 = "mpl_core_burn_v1("
+    // Line 1 = program
+    // Line 2 = asset
+    // Line 3 = collection (this is the one we care about)
+    expect(lines[3]).toBe("None,");
+  });
+
+  test("Native emit also routes collection=None correctly", async () => {
+    const parsed = await parseAnchor(SOURCE_NO_COLLECTION);
+    if (!parsed.ok) throw new Error("parse: " + parsed.error);
+    const all = collectFiles(emitNativeFull(parsed.ir));
+    const callMatch = all.match(/mpl_core_burn_v1\([\s\S]+?\)\?;/);
+    expect(callMatch).toBeTruthy();
+    const call = callMatch![0];
+    const lines = call.split("\n").map((s) => s.trim());
+    expect(lines[3]).toBe("None,");
+  });
+});
