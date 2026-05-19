@@ -895,6 +895,29 @@ function classifyLetDeclaration(
     }
   }
 
+  // task #39 — `let <var> = ctx.accounts.<acc>.key();` shape. The emit's
+  // post-process correctly rewrites this to `*<acc>.key()` (Pinocchio) or
+  // `*<acc>.key` (Native), but the IR's pass_through code field carries
+  // the original `ctx.accounts.` prefix, which the audit then flags as a
+  // false positive. Rewrite the carried text here (stripping `ctx.accounts.`
+  // from the .key() call) so the audit sees the clean form. The emit's
+  // post-process is idempotent on the already-stripped form. Targeting
+  // the exact `let LHS = ctx.accounts.X.key();` shape keeps the rewrite
+  // bounded and easy to verify.
+  if (valueNode) {
+    const keyExtract = valueNode.text.trim().match(/^ctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*key\s*\(\s*\)\s*$/);
+    if (keyExtract?.[1]) {
+      const acct = keyExtract[1];
+      return {
+        stmt: {
+          kind: "pass_through",
+          code: `let ${localVar ?? "_"} = ${acct}.key();`,
+          needsReview: false,
+        },
+      };
+    }
+  }
+
   // ── Default: pass through ──
   return {
     stmt: {
