@@ -7,7 +7,7 @@
 **Validator issues:** 1
 **cargo-build verdict:** ok
 **cargo errors:** 0
-**cargo duration:** 554ms
+**cargo duration:** 461ms
 
 ## Validator issues
 

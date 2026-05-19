@@ -603,31 +603,55 @@ export class BodyWalker {
     }
     for (const account of this.instr.accounts) {
       const accountName = snakeCase(account.name);
-      const accountInfoVar = this.resolveAccountInfoVar(accountName);
-      normalized = normalized
-        .split(`${accountName}.key().as_ref()`)
-        .join(this.emitter.emitAccountKeyAsRefExpr(accountInfoVar));
-      normalized = normalized
-        .split(`${accountName}.key.as_ref()`)
-        .join(this.emitter.emitAccountKeyAsRefExpr(accountInfoVar));
-      normalized = normalized
-        .split(`${this.resolveStateVar(accountName)}.key().as_ref()`)
-        .join(this.emitter.emitAccountKeyAsRefExpr(accountInfoVar));
-      normalized = normalized
-        .split(`${this.resolveStateVar(accountName)}.key.as_ref()`)
-        .join(this.emitter.emitAccountKeyAsRefExpr(accountInfoVar));
-      // #36/#38 — bare-account variant. `mint_a.key().to_bytes()` on an
-      // AccountInfo: .key() returns &Pubkey, .to_bytes() doesn't exist
-      // on Pinocchio's [u8; 32]. Rewrite to the Pubkey value via
-      // emitAccountKeyExpr (Pinocchio: `*mint_a.key()` returns Pubkey).
-      normalized = normalized
-        .split(`${accountName}.key().to_bytes()`)
-        .join(this.emitter.emitAccountKeyExpr(accountInfoVar));
-      normalized = normalized
-        .split(`${accountName}.key.to_bytes()`)
-        .join(this.emitter.emitAccountKeyExpr(accountInfoVar));
+      normalized = this.rewriteAccountKeyChains(normalized, accountName);
     }
     return normalized;
+  }
+
+  /**
+   * H7 Phase 3 (FIELD-KEY consolidation) — replace the family of
+   * `<receiver>.key{maybe()}.{as_ref|to_bytes}()` suffix shapes with the
+   * target-specific emitter helper output.
+   *
+   * Pre-consolidation, walker.ts had ~6 duplicated split/join pairs in
+   * normalizeSeedExpr alone (4 .as_ref forms + 2 .to_bytes forms), each
+   * doing the same shape. The duplication invited the precedence pitfalls
+   * documented as #36/#38/#39 — the regex zoo grew every time a new
+   * receiver variant (state-var alias, multi-segment type path, etc.)
+   * surfaced. Centralize the receiver enumeration here so a future
+   * receiver type only needs one entry.
+   *
+   * Receivers covered (per account):
+   *   - The account's AccountInfo binding name (`<account>`)
+   *   - The deserialized state local (resolveStateVar(<account>))
+   *
+   * Suffix shapes covered:
+   *   - `.key().as_ref()` → emitAccountKeyAsRefExpr (slice form)
+   *   - `.key.as_ref()`   → emitAccountKeyAsRefExpr (slice form, no parens)
+   *   - `.key().to_bytes()` → emitAccountKeyExpr (Pubkey value form;
+   *     #36/#38 — Pinocchio's Pubkey IS [u8;32], no to_bytes method)
+   *   - `.key.to_bytes()`   → emitAccountKeyExpr (same, no parens)
+   *
+   * Exact text split/join is intentional: regex would introduce escape
+   * fragility for the dot-chain shapes, and we want to match the literal
+   * source emit produces (the surrounding text has already been
+   * normalized by earlier passes).
+   */
+  private rewriteAccountKeyChains(code: string, accountName: string): string {
+    const accountInfoVar = this.resolveAccountInfoVar(accountName);
+    const keyAsRef = this.emitter.emitAccountKeyAsRefExpr(accountInfoVar);
+    const keyValue = this.emitter.emitAccountKeyExpr(accountInfoVar);
+    const stateVar = this.resolveStateVar(accountName);
+    const receivers = [accountName, stateVar];
+    let out = code;
+    for (const recv of receivers) {
+      out = out
+        .split(`${recv}.key().as_ref()`).join(keyAsRef)
+        .split(`${recv}.key.as_ref()`).join(keyAsRef)
+        .split(`${recv}.key().to_bytes()`).join(keyValue)
+        .split(`${recv}.key.to_bytes()`).join(keyValue);
+    }
+    return out;
   }
 
   normalizedBumpLine(accountName: string): string {
