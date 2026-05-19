@@ -1229,28 +1229,28 @@ export class BodyWalker {
         `&accounts[${namedAccountCount}..]`,
       );
     }
-    // `&*ctx.accounts.X` is Anchor's idiom for borrowing the deref'd value
-    // out of `Account<'info, T>` / `InterfaceAccount<'info, T>`. After our
-    // state-read pass, the local `X` is already a `T` value (no auto-deref
-    // needed), so collapse `&*` to `&`. Without this, `(&*x).into()` survives
-    // verbatim and rustc rejects with E0614 (`type cannot be dereferenced`)
-    // on the now-non-Deref local.
-    transformed = transformed.replace(
-      /&\s*\*\s*ctx\.accounts\.(\w+)/g,
-      (_full, name: string) => `&ctx.accounts.${name}`,
-    );
-    transformed = transformed.replace(
-      /&mut\s*ctx\.accounts\.(\w+)/g,
-      (_full, name: string) => `&mut ${snakeCase(name)}`,
-    );
-    transformed = transformed.replace(
-      /&\s*ctx\.accounts\.(\w+)/g,
-      (_full, name: string) => `&${snakeCase(name)}`,
-    );
-    transformed = transformed.replace(
-      /\bctx\.accounts\.(\w+)\b/g,
-      (_full, name: string) => snakeCase(name),
-    );
+    // H7 Phase 4c — consolidate ctx.accounts.X reference forms in one
+    // ordered table. Each entry maps a borrow prefix to a wrapper for
+    // the replacement (or null to drop the wrapper after snakeCase).
+    // Order is the precedence guarantee: `&*` (deref-and-borrow) first
+    // so it collapses to `&` BEFORE the broader `&` rule fires; `&mut`
+    // before `&` so the `mut` keyword isn't lost; the bare-`ctx.accounts.X`
+    // form last so it doesn't partial-match what an earlier rule already
+    // rewrote.
+    //
+    // The `&*` collapse is special — it leaves `ctx.accounts.X` intact
+    // so the subsequent `&ctx.accounts.X` rule does the snakeCase pass.
+    // Without that, `(&*x).into()` survives verbatim and rustc refuses
+    // with E0614 on a now-non-Deref local.
+    const ctxAccountRefRules: Array<[RegExp, (name: string) => string]> = [
+      [/&\s*\*\s*ctx\.accounts\.(\w+)/g, (name) => `&ctx.accounts.${name}`],
+      [/&mut\s*ctx\.accounts\.(\w+)/g, (name) => `&mut ${snakeCase(name)}`],
+      [/&\s*ctx\.accounts\.(\w+)/g, (name) => `&${snakeCase(name)}`],
+      [/\bctx\.accounts\.(\w+)\b/g, (name) => snakeCase(name)],
+    ];
+    for (const [pattern, replacer] of ctxAccountRefRules) {
+      transformed = transformed.replace(pattern, (_full, name: string) => replacer(name));
+    }
     transformed = transformed.replace(
       /ctx\.accounts\.(\w+)\.(\w+)/g,
       (full, name: string, field: string) => {
