@@ -588,14 +588,12 @@ export class BodyWalker {
     for (const account of this.instr.accounts) {
       const accountName = snakeCase(account.name);
       if (!this.isGeneratedStateType(account.accountType)) continue;
-      normalized = normalized.replace(
-        new RegExp(`\\b${accountName}\\.(\\w+)`, "g"),
-        (full, field: string) => {
-          if (field === "key" || field === "lamports") return full;
-          const localVar = this.ensureStateRead(accountName);
-          return `${localVar}.${snakeCase(field)}`;
-        },
-      );
+      // H7 Phase 4d (STATE-FIELD consolidation, seed-context entry).
+      // Mirror of the body-context call site below: rewrite `<acc>.field`
+      // to `<localVar>.field` for fields that aren't AccountInfo
+      // accessors. ensureStateRead lazily emits the from_account_info
+      // load when the field is first referenced.
+      normalized = this.rewriteStateFieldRefs(normalized, accountName, /*requirePrefix=*/ false);
       // #36/#38 — strip `.key()` / `.to_bytes()` off state Pubkey fields.
       // Pinocchio's Pubkey IS [u8; 32]; the methods don't exist. See
       // stripStatePubkeyFieldMethods() at the top of the class.
@@ -637,6 +635,36 @@ export class BodyWalker {
    * source emit produces (the surrounding text has already been
    * normalized by earlier passes).
    */
+  /**
+   * H7 Phase 4d (STATE-FIELD consolidation) — rewrite `<accountName>.field`
+   * to `<localVar>.field` where field isn't an AccountInfo accessor
+   * (key/lamports). Shared between seed-context (normalizeSeedExpr) and
+   * body-context (transformAccountReferences) call sites.
+   *
+   * The `requirePrefix` flag toggles between the two boundary regexes:
+   *   - false (seed context): `\b${accountName}\.(\w+)` — pure word
+   *     boundary; the seed expression is already a leaf scope (we own
+   *     the surrounding text) so `<acct>.X` can't appear as a suffix
+   *     of a longer identifier.
+   *   - true (body context): `(^|[^\w.])${accountName}\.(\w+)` —
+   *     prefix capture so identifiers like `foo_${accountName}` don't
+   *     accidentally match. The captured prefix is preserved verbatim
+   *     in the replacement.
+   */
+  private rewriteStateFieldRefs(code: string, accountName: string, requirePrefix: boolean): string {
+    const escAcct = accountName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = requirePrefix
+      ? new RegExp(`(^|[^\\w.])${escAcct}\\.(\\w+)`, "g")
+      : new RegExp(`\\b${escAcct}\\.(\\w+)`, "g");
+    return code.replace(re, (full, ...args: string[]) => {
+      const prefix = requirePrefix ? args[0]! : "";
+      const field = requirePrefix ? args[1]! : args[0]!;
+      if (field === "key" || field === "lamports") return full;
+      const localVar = this.ensureStateRead(accountName);
+      return `${prefix}${localVar}.${snakeCase(field)}`;
+    });
+  }
+
   /**
    * H7 Phase 3b (FIELD-KEY consolidation, continued) — replace the
    * `<receiver>.key()` and `<receiver>.key` value-form references with
@@ -1060,14 +1088,12 @@ export class BodyWalker {
         }
       }
       if (!this.isGeneratedStateType(account.accountType)) continue;
-      transformed = transformed.replace(
-        new RegExp(`(^|[^\\w.])${accountName}\\.(\\w+)`, "g"),
-        (full, prefix: string, field: string) => {
-          if (field === "key" || field === "lamports") return full;
-          const localVar = this.ensureStateRead(accountName);
-          return `${prefix}${localVar}.${snakeCase(field)}`;
-        },
-      );
+      // H7 Phase 4d (STATE-FIELD consolidation, body-context entry).
+      // Mirror of the seed-context call site in normalizeSeedExpr. The
+      // body version uses `(^|[^\w.])` prefix-capture so the rewrite
+      // doesn't collide with `<acct>.X` appearing inside a longer
+      // identifier (compound assignments resolved separately upstream).
+      transformed = this.rewriteStateFieldRefs(transformed, accountName, /*requirePrefix=*/ true);
       // #36 / #38 — strip `.key()` / `.to_bytes()` off state Pubkey fields.
       // See stripStatePubkeyFieldMethods() at the top of the class.
       transformed = this.stripStatePubkeyFieldMethods(transformed, accountName, account.accountType);
