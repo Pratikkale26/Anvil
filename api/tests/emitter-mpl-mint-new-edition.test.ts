@@ -57,14 +57,17 @@ function buildIR(opts: { edition?: string; signerSeeds?: string } = {}): SolanaI
 }
 
 describe("M1h: cpi_mpl_mint_new_edition_from_master emit", () => {
-  test("Pinocchio: emits disc 11 + u64 LE edition + 14 metas", () => {
+  test("Pinocchio: emits disc 11 + u64 LE edition + 13 metas (rent omitted)", () => {
     const out = emitPinocchioFull(buildIR({ edition: "42u64" }));
     const body = out.singleFile;
     expect(body).toContain("mpl_mint_new_edition_from_master");
     expect(body).toMatch(/data\.push\(11\)/);
     expect(body).toMatch(/data\.extend_from_slice\(&edition\.to_le_bytes\(\)\)/);
-    // 14 metas; verify last one (rent) is present
-    expect(body).toMatch(/AccountMeta::new\(rent\.key\(\), false, false\)/);
+    // anchor-spl 0.31 hardcodes rent: None — Anvil now omits the rent
+    // slot to match (commit e8f8f37). Verifies the rent arg is dropped
+    // via `let _ = rent;` and not passed into the meta array.
+    expect(body).toMatch(/let _ = rent;/);
+    expect(body).not.toMatch(/AccountMeta::new\(rent\.key\(\)/);
     // Visitor passes the edition arg through
     expect(body).toMatch(/mpl_mint_new_edition_from_master\([\s\S]*?42u64,/);
   });
