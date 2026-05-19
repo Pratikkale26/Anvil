@@ -545,6 +545,22 @@ function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCol
     const explicit = dataText.match(new RegExp(`\\b${field}\\s*:\\s*([^,}]+)`));
     return explicit?.[1]?.trim() ?? "";
   };
+  // The IR doesn't capture DataV2.creators / collection / uses — emit
+  // hard-codes all three to None. If source has Some(...) for any of
+  // them, the emitted CPI would silently drop royalty/collection state.
+  // Surface as a parser warning so the validator flags it before deploy
+  // (task #84 tracks the actual IR extension).
+  for (const f of ["creators", "collection", "uses"]) {
+    const val = dataField(f);
+    if (val && val !== "None") {
+      collector?.add({
+        code: "mpl_datav2_fields_dropped",
+        message: `cpi_mpl_create_metadata_v3: DataV2.${f} = ${val.slice(0, 60)} — Anvil's IR doesn't carry this field yet. The emitted CPI will write None, dropping the source's intent. Track via task #84.`,
+        snippet: dataText,
+        loc: locFromNode(args[1] ?? callNode),
+      });
+    }
+  }
 
   return {
     kind: "cpi_mpl_create_metadata_v3",
@@ -625,6 +641,19 @@ function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: Wa
     newSymbol = grabField("symbol");
     newUri = grabField("uri");
     newSellerFeeBasisPoints = grabField("seller_fee_basis_points") ?? "0";
+    // Same silent-drop class as create_metadata_v3 (task #84) — surface
+    // when source sets creators/collection/uses to Some(...) on update.
+    for (const f of ["creators", "collection", "uses"]) {
+      const val = grabField(f);
+      if (val && val !== "None") {
+        collector?.add({
+          code: "mpl_datav2_fields_dropped",
+          message: `cpi_mpl_update_metadata_accounts_v2: DataV2.${f} = ${val.slice(0, 60)} — Anvil's IR doesn't carry this field yet. The emitted CPI will write None, dropping the source's intent. Track via task #84.`,
+          snippet: newDataText,
+          loc: locFromNode(args[2] ?? callNode),
+        });
+      }
+    }
   }
 
   return {

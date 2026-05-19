@@ -1519,6 +1519,8 @@ export const ParserWarningCodeSchema = z.enum([
   "anchor_pattern_in_passthrough",
   /** #[derive(Accounts)] struct field whose type is another Accounts struct (composite shape). */
   "composite_accounts_field",
+  /** DataV2 had creators/collection/uses set to Some(...) but the IR drops them; emit silently writes None. */
+  "mpl_datav2_fields_dropped",
 ]);
 
 export type ParserWarningCode = z.infer<typeof ParserWarningCodeSchema>;
