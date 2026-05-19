@@ -90,6 +90,106 @@ function extractInstructionBody(content: string, fnName: string): string | null 
 }
 
 /**
+ * task #26 — strip Rust line + block comments AND string literals from a
+ * source snippet. The validator's owner/has_one regexes match
+ * `<name>.<field>` against the function body's TEXT, so an unrelated
+ * string literal or comment that happens to spell `account.owner` would
+ * generate a false-positive PASS — telling the user the check is in
+ * place when only a comment mentions it. The H7 walker-port arc was
+ * scoped to upgrade these checks to full AST traversal; this helper
+ * delivers ~80% of the benefit (no false positives from strings/
+ * comments) without the async refactor by pre-stripping the body before
+ * regex matching. Char-for-char fidelity is preserved (each stripped
+ * char is replaced with a space or newline) so line/column positions
+ * in any downstream issue still point at the original text.
+ *
+ * Exported for unit testing.
+ */
+export function stripCommentsAndStringsForValidator(text: string): string {
+  const out: string[] = [];
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const ch = text[i] ?? "";
+    const next = text[i + 1] ?? "";
+    if (ch === "/" && next === "/") {
+      // Line comment to next newline (or EOF). Preserve newlines so line
+      // numbers stay aligned.
+      while (i < n && text[i] !== "\n") {
+        out.push(" ");
+        i++;
+      }
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      // Block comment terminator: '*' followed by '/'.
+      out.push("  ");
+      i += 2;
+      while (i < n) {
+        if (text[i] === "*" && text[i + 1] === "/") {
+          out.push("  ");
+          i += 2;
+          break;
+        }
+        out.push(text[i] === "\n" ? "\n" : " ");
+        i++;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      out.push('"');
+      i++;
+      while (i < n && text[i] !== '"') {
+        if (text[i] === "\\" && i + 1 < n) {
+          out.push("  ");
+          i += 2;
+          continue;
+        }
+        out.push(text[i] === "\n" ? "\n" : " ");
+        i++;
+      }
+      if (i < n && text[i] === '"') {
+        out.push('"');
+        i++;
+      }
+      continue;
+    }
+    if (ch === "'") {
+      // Lifetime tick (`'info`, `'_`, …) vs char literal. Tree-sitter
+      // distinguishes these; we approximate: if the next char is a
+      // letter/underscore and the one AFTER that ISN'T a `'`, it's a
+      // lifetime — keep. Otherwise treat as char literal and strip.
+      const c1 = text[i + 1] ?? "";
+      const c2 = text[i + 2] ?? "";
+      if (/[A-Za-z_]/.test(c1) && c2 !== "'") {
+        out.push("'");
+        i++;
+        continue;
+      }
+      out.push("'");
+      i++;
+      while (i < n && text[i] !== "'") {
+        if (text[i] === "\\" && i + 1 < n) {
+          out.push("  ");
+          i += 2;
+          continue;
+        }
+        out.push(" ");
+        i++;
+      }
+      if (i < n && text[i] === "'") {
+        out.push("'");
+        i++;
+      }
+      continue;
+    }
+    out.push(ch);
+    i++;
+  }
+  return out.join("");
+}
+
+/**
  * B7 — escape regex meta-chars in a name fragment so we can interpolate
  * user-derived identifiers into a regex pattern without false matches.
  * Identifier characters [A-Za-z0-9_] don't need escaping; we keep the
@@ -367,8 +467,14 @@ function checkOwnerChecks(content: string, ir: SolanaIR, path: string): Validati
 
   for (const instr of ir.instructions) {
     const fnName = snakeCase(instr.name);
-    const fnBody = extractInstructionBody(content, fnName);
-    if (!fnBody) continue;
+    const rawFnBody = extractInstructionBody(content, fnName);
+    if (!rawFnBody) continue;
+    // task #26 — strip comments + string literals before regex matching
+    // so a comment or string that mentions `<name>.owner` doesn't fool
+    // the check into reporting a missing owner guard as present (or vice
+    // versa). The B7 regex remains the matcher; the stripped view just
+    // removes the false-positive class.
+    const fnBody = stripCommentsAndStringsForValidator(rawFnBody);
 
     for (const acc of instr.accounts) {
       if (!acc.isMut || acc.isInit || acc.isOptional) continue;
@@ -515,8 +621,14 @@ function checkHasOneConstraints(content: string, ir: SolanaIR, path: string): Va
 
   for (const instr of ir.instructions) {
     const fnName = snakeCase(instr.name);
-    const fnBody = extractInstructionBody(content, fnName);
-    if (!fnBody) continue;
+    const rawFnBody = extractInstructionBody(content, fnName);
+    if (!rawFnBody) continue;
+    // task #26 — strip comments + strings before regex matching (same
+    // rationale as checkOwnerChecks above). A doc comment saying
+    // "this validates from.owner against the signer" would have
+    // matched the field-access regex and reported the has_one as
+    // enforced when it wasn't. Now invisible to the matcher.
+    const fnBody = stripCommentsAndStringsForValidator(rawFnBody);
 
     for (const acc of instr.accounts) {
       const accountName = snakeCase(acc.name);
