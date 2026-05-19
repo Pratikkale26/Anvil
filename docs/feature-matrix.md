@@ -29,7 +29,8 @@
 | Metaplex Token Metadata CPIs (create_metadata_v3, master_edition_v3, verify/sign collection, freeze/thaw, mint_new_edition, approve/revoke collection authority) | Y (12 IR kinds, 11/12 slots byte-equal differential-gated) | Y |
 | Pyth price feed reads (legacy `PriceAccountV2` + modern `PriceUpdateV2`) | Y (byte-equal differential against Pyth Receiver `.so`) | Y |
 | Switchboard On-Demand PullFeed reads (`PullFeedAccountData::parse(...)` + `.value()` / `.value_with_max_staleness(N)`) | Y (parser + hand-rolled byte read; byte-equal differential pending fixture) | Y |
-| MPL Core CPIs | lint | lint |
+| MPL Core CreateV2 (kinobi fluent builder) | Y (parser + hand-rolled bytes; byte-equal differential pending fixture) | Y |
+| MPL Core CPIs (Update / Transfer / Burn / plugins / collection mint) | lint | lint |
 | Confidential T22 family (ConfidentialTransfer{Mint,Fee,MintBurn}) | lint (zk-proof prelude arc not started) | lint |
 | Impl-method inlining (`ctx.accounts.foo()`) | partial | partial |
 | Composite `#[derive(Accounts)]` flatten (`pub foo: Inner<'info>`) | Y (3-layer parser+classifier+emitter port, 2026-05-19; BYTE_EQUAL verified on real :8899 validator for Anchor org composite example) | Y |
@@ -84,7 +85,7 @@ Quasar emit was deleted from the production path on 2026-05-05 (`quasar-lang` ha
 
 ## Known gaps
 
-- **MPL Core** (the newer Metaplex format, separate from Token Metadata). Not supported — no IR kinds; emit produces a TODO stub. Token Metadata IS fully supported (12 IR kinds, byte-equal differential-gated).
+- **MPL Core** (the newer Metaplex format, separate from Token Metadata). **CreateV2 fully supported** (kinobi fluent `CreateV2CpiBuilder` chain → hand-rolled Borsh args + 8-account meta with MPL_CORE_ID readonly fallback for None optional slots; v1 scope: plugins / external_plugin_adapters always None). Update / Transfer / Burn / plugin CPIs (AddPluginV1 / RemovePluginV1 / UpdatePluginV1 / Approve / Revoke / CreateCollectionV2) remain lint-only and pull a TODO stub at emit. Token Metadata IS fully supported (12 IR kinds, byte-equal differential-gated).
 - **Switchboard oracle CPIs.** Two-line `PullFeedAccountData::parse(...)` + `.value() / .value_with_max_staleness(N)` legacy reader idiom is fully supported (parser + hand-rolled byte deserialization at offset 200 i128 / offset 296 u64, dropping the `switchboard-on-demand` crate dep). Byte-equal differential gate pending a `switchboard-on-demand.so` fixture; until then, a byte-offset regression test independently re-implements the offset reads against a synthetic buffer (mirrors the Pyth M2 pattern).
 - **Confidential T22 family** (`ConfidentialTransferMint`, `ConfidentialTransferFee`, `ConfidentialMintBurn`). Lint-only — requires zk-proof prelude arc (Groth16 verification, encrypted amounts, decryption-handle handling); fundamentally different architecture than the byte-payload T22 extensions, scoped as its own multi-week effort.
 - **Impl-method inlining for `ctx.accounts.foo()`.** Partial: the flattener preserves impl-scoped names, but inlining method bodies into instruction handlers interacts with the CPI-consolidation regex. Affects some escrow-style programs. Tracked-ceiling in `realworld-tracking.test.ts`.

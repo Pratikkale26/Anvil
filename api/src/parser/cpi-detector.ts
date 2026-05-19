@@ -499,6 +499,16 @@ export function detectCpi(
     return extractMplSignMetadata(callNode, collector);
   }
 
+  // MPL Core (task #48 S1). Uses kinobi's fluent CpiBuilder rather than
+  // CpiContext::new. Outer call is `.invoke()` (or `.invoke_signed(seeds)`)
+  // and the receiver chain bottoms out at `CreateV2CpiBuilder::new(prog)`.
+  if (
+    /\bCreateV2CpiBuilder\b/.test(funcText) &&
+    /\.(invoke|invoke_signed)$/.test(funcText)
+  ) {
+    return extractMplCoreCreateV2(callNode, collector);
+  }
+
   return null;
 }
 
@@ -1043,6 +1053,102 @@ function extractMplCreateMasterEditionV3(callNode: SyntaxNode, collector?: Warni
     maxSupply: args[1]?.text.trim() ?? "None",
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
   };
+}
+
+/**
+ * Extract cpi_mpl_core_create_v2 (task #48 S1). MPL Core uses kinobi's
+ * fluent CpiBuilder, not CpiContext. Source shape:
+ *
+ *   mpl_core::CreateV2CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+ *       .asset(&ctx.accounts.asset.to_account_info())
+ *       .payer(&ctx.accounts.payer.to_account_info())
+ *       .system_program(&ctx.accounts.system_program.to_account_info())
+ *       .name("Foo".to_string())
+ *       .uri("https://example.com".to_string())
+ *       .data_state(DataState::AccountState)
+ *       .plugins(None)
+ *       .external_plugin_adapters(None)
+ *       .invoke()?;
+ *
+ * Optionals (.collection, .authority, .owner, .update_authority,
+ * .log_wrapper) may or may not appear. .invoke_signed(seeds) is the
+ * alternate terminator that supplies signer seeds.
+ *
+ * Strategy: walk the receiver chain by descending into each call_expression's
+ * function.field_expression.value. Each step is one `.method(arg)`. The
+ * chain bottoms out at the initial `CreateV2CpiBuilder::new(program)` call
+ * — its first arg is the program AccountInfo.
+ */
+function extractMplCoreCreateV2(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const fields: Record<string, string> = {};
+  let signerSeeds: string | undefined;
+  let programArg = "mpl_core_program";
+
+  let current: SyntaxNode | null = callNode;
+  let safety = 0;
+  while (current && current.type === "call_expression" && safety++ < 64) {
+    const funcNode = current.childForFieldName("function");
+    if (!funcNode) break;
+
+    if (funcNode.type === "field_expression") {
+      const methodNode = funcNode.childForFieldName("field");
+      const innerExpr: SyntaxNode | null = funcNode.childForFieldName("value");
+      const methodName = methodNode?.text ?? "";
+      const argsNode = current.childForFieldName("arguments");
+      const args = argsNode ? getArguments(argsNode) : [];
+      const argText = args[0]?.text.trim() ?? "";
+      if (methodName === "invoke_signed") {
+        signerSeeds = argText;
+      } else if (methodName === "invoke") {
+        // terminal, nothing to capture
+      } else if (methodName) {
+        fields[methodName] = argText;
+      }
+      current = innerExpr;
+    } else if (funcNode.type === "scoped_identifier" || funcNode.type === "field_expression" as string) {
+      // Reached the constructor: `mpl_core::CreateV2CpiBuilder::new(program)`.
+      const argsNode = current.childForFieldName("arguments");
+      const args = argsNode ? getArguments(argsNode) : [];
+      if (args[0]) programArg = args[0].text.trim();
+      break;
+    } else {
+      break;
+    }
+  }
+
+  if (!fields.asset || !fields.payer || !fields.system_program) {
+    warnClassificationLost(collector, "MPL Core CreateV2", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  return {
+    kind: "cpi_mpl_core_create_v2",
+    programAccount: clean(programArg),
+    asset: clean(fields.asset),
+    collection: fields.collection ? `Some(${clean(stripSomeWrap(fields.collection))})` : "None",
+    authority: fields.authority ? `Some(${clean(stripSomeWrap(fields.authority))})` : "None",
+    payer: clean(fields.payer),
+    owner: fields.owner ? `Some(${clean(stripSomeWrap(fields.owner))})` : "None",
+    updateAuthority: fields.update_authority ? `Some(${clean(stripSomeWrap(fields.update_authority))})` : "None",
+    systemProgram: clean(fields.system_program),
+    logWrapper: fields.log_wrapper ? `Some(${clean(stripSomeWrap(fields.log_wrapper))})` : "None",
+    name: fields.name ?? '""',
+    uri: fields.uri ?? '""',
+    dataState: fields.data_state ?? "DataState::AccountState",
+    signerSeeds,
+  };
+}
+
+/**
+ * Source might write `.collection(Some(&x))` or `.collection(&x)` — the
+ * kinobi builder API actually requires the explicit Some(_), but we handle
+ * the bare form defensively. Strip one outer Some(...) wrapper if present.
+ */
+function stripSomeWrap(expr: string): string {
+  const trimmed = expr.trim();
+  const m = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/);
+  return m?.[1] ?? trimmed;
 }
 
 function extractMemoCpi(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {

@@ -212,6 +212,18 @@ export function irNeedsMplThawDelegatedHelper(ir: SolanaIR): boolean {
   );
 }
 
+/**
+ * MPL Core S1 — CreateV2. Hand-rolled invoke against MPL Core program
+ * (CoREENxT...). Discriminator 20; Borsh-encoded args (data_state u8 +
+ * name String + uri String + plugins=None + external_plugin_adapters=None);
+ * 8-account meta with MPL_CORE_ID readonly fallback for None optional slots.
+ */
+export function irNeedsMplCoreCreateV2Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_core_create_v2")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

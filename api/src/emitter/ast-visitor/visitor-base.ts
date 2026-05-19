@@ -726,6 +726,7 @@ type CpiMplFreezeDelegated = Extract<BodyStatement, { kind: "cpi_mpl_freeze_dele
 type CpiMplThawDelegated = Extract<BodyStatement, { kind: "cpi_mpl_thaw_delegated" }>;
 type CpiMplSignMetadata = Extract<BodyStatement, { kind: "cpi_mpl_sign_metadata" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
+type CpiMplCoreCreateV2 = Extract<BodyStatement, { kind: "cpi_mpl_core_create_v2" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
 type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
 type ZeroCopyLoad = Extract<BodyStatement, { kind: "zero_copy_load" }>;
@@ -812,6 +813,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_mpl_thaw_delegated",
   "cpi_mpl_sign_metadata",
   "cpi_mpl_create_master_edition_v3",
+  "cpi_mpl_core_create_v2",
   "zero_copy_load_init",
   "zero_copy_load_mut",
   "zero_copy_load",
@@ -923,6 +925,8 @@ export class AstVisitorBase {
         return this.visitCpiMplSignMetadata(stmt);
       case "cpi_mpl_create_master_edition_v3":
         return this.visitCpiMplCreateMasterEditionV3(stmt);
+      case "cpi_mpl_core_create_v2":
+        return this.visitCpiMplCoreCreateV2(stmt);
       case "zero_copy_load_init":
         return this.visitZeroCopyLoadInit(stmt);
       case "zero_copy_load_mut":
@@ -3371,6 +3375,55 @@ export class AstVisitorBase {
       `        rent,`,
       `        token_metadata_program,`,
       `        ${stmt.maxSupply},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * MPL Core CreateV2 typed CPI (task #48 S1). 8 accounts (4 required +
+   * 4 optional with MPL_CORE_ID readonly fallback), Borsh-encoded args
+   * (data_state + name + uri + plugins=None + external_plugin_adapters=None).
+   * Helper is emitted by `mpl_core_create_v2` in the target's helpers
+   * block; this visitor just dispatches the call.
+   */
+  visitCpiMplCoreCreateV2(stmt: CpiMplCoreCreateV2): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const resolveOpt = (e: string): string => {
+      const trimmed = e.trim();
+      if (trimmed === "None" || trimmed === "") return "None";
+      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+      if (inner !== undefined) return `Some(${resolve(inner)})`;
+      return `Some(${resolve(trimmed)})`;
+    };
+    // DataState enum → discriminant byte. Unknown variants pass through and
+    // surface a compile error in user code rather than silently mismapping.
+    const dataStateExpr = /::AccountState\b/.test(stmt.dataState)
+      ? "0u8"
+      : /::LedgerState\b/.test(stmt.dataState)
+      ? "1u8"
+      : stmt.dataState;
+    const lines: string[] = [
+      `    mpl_core_create_v2(`,
+      `        ${resolve(stmt.programAccount)},`,
+      `        ${resolve(stmt.asset)},`,
+      `        ${resolveOpt(stmt.collection)},`,
+      `        ${resolveOpt(stmt.authority)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolveOpt(stmt.owner)},`,
+      `        ${resolveOpt(stmt.updateAuthority)},`,
+      `        ${resolve(stmt.systemProgram)},`,
+      `        ${resolveOpt(stmt.logWrapper)},`,
+      `        &${stmt.name},`,
+      `        &${stmt.uri},`,
+      `        ${dataStateExpr},`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
         : `        None,`,

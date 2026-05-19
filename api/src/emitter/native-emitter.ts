@@ -47,6 +47,7 @@ import {
   irNeedsMplMintNewEditionFromMasterHelper,
   irNeedsMplFreezeDelegatedHelper,
   irNeedsMplThawDelegatedHelper,
+  irNeedsMplCoreCreateV2Helper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK } from "./markers.js";
 
@@ -245,7 +246,8 @@ export class NativeEmitter extends BaseEmitter {
       || irNeedsMplRevokeCollectionAuthorityHelper(_ir)
       || irNeedsMplMintNewEditionFromMasterHelper(_ir)
       || irNeedsMplFreezeDelegatedHelper(_ir)
-      || irNeedsMplThawDelegatedHelper(_ir);
+      || irNeedsMplThawDelegatedHelper(_ir)
+      || irNeedsMplCoreCreateV2Helper(_ir);
     const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsHelper(_ir, "spl_transfer")
       || irNeedsUnsignedSplMintToHelper(_ir)
@@ -2743,6 +2745,82 @@ pub fn mpl_unverify_collection<'a>(
     if let Some(record) = collection_authority_record {
         infos.push(record.clone());
     }
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreCreateV2Helper(_ir)) {
+      helpers.push(`/// MPL Core: CreateV2 (discriminator 20).
+/// v1 scope: plugins / external_plugin_adapters always None. Kinobi's
+/// convention: keep all 8 account slots; substitute the mpl_core program
+/// itself (readonly, non-signer) for any None optional.
+pub fn mpl_core_create_v2<'a>(
+    program: &AccountInfo<'a>,
+    asset: &AccountInfo<'a>,
+    collection: Option<&AccountInfo<'a>>,
+    authority: Option<&AccountInfo<'a>>,
+    payer: &AccountInfo<'a>,
+    owner: Option<&AccountInfo<'a>>,
+    update_authority: Option<&AccountInfo<'a>>,
+    system_program: &AccountInfo<'a>,
+    log_wrapper: Option<&AccountInfo<'a>>,
+    name: &str,
+    uri: &str,
+    data_state: u8,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let name_bytes = name.as_bytes();
+    let uri_bytes = uri.as_bytes();
+    let mut data: Vec<u8> = Vec::with_capacity(1 + 1 + 4 + name_bytes.len() + 4 + uri_bytes.len() + 1 + 1);
+    data.push(20);
+    data.push(data_state);
+    data.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+    data.extend_from_slice(name_bytes);
+    data.extend_from_slice(&(uri_bytes.len() as u32).to_le_bytes());
+    data.extend_from_slice(uri_bytes);
+    data.push(0);
+    data.push(0);
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let owner_info = owner.unwrap_or(program);
+    let update_authority_info = update_authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let accounts = vec![
+        AccountMeta::new(*asset.key, true),
+        if collection.is_some() {
+            AccountMeta::new(*collection_info.key, false)
+        } else {
+            AccountMeta::new_readonly(*collection_info.key, false)
+        },
+        if authority.is_some() {
+            AccountMeta::new_readonly(*authority_info.key, true)
+        } else {
+            AccountMeta::new_readonly(*authority_info.key, false)
+        },
+        AccountMeta::new(*payer.key, true),
+        AccountMeta::new_readonly(*owner_info.key, false),
+        AccountMeta::new_readonly(*update_authority_info.key, false),
+        AccountMeta::new_readonly(*system_program.key, false),
+        AccountMeta::new_readonly(*log_wrapper_info.key, false),
+    ];
+    let ix = Instruction {
+        program_id: *program.key,
+        accounts,
+        data,
+    };
+    let infos = [
+        asset.clone(),
+        collection_info.clone(),
+        authority_info.clone(),
+        payer.clone(),
+        owner_info.clone(),
+        update_authority_info.clone(),
+        system_program.clone(),
+        log_wrapper_info.clone(),
+    ];
     match signer_seeds {
         Some(seeds) => invoke_signed(&ix, &infos, seeds),
         None => invoke(&ix, &infos),

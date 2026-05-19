@@ -73,7 +73,15 @@ const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
   // Re-adding them would compile the pyth crates and re-introduce the
   // borsh-derive proc-macro interop issue that locked the M2/N5
   // ceiling pre-N5b.
-  mpl_core:                  `mpl-core = "0.10"`,
+  // mpl_core is intentionally NOT in this list. Task #48 S1 unified MPL
+  // Core CreateV2 emit on hand-rolled bytes (see mpl_core_create_v2 helper
+  // in emitter-base / pinocchio-emitter / native-emitter). Including the
+  // crate re-introduces the borsh-derive proc-macro interop issue against
+  // mpl-core's 0.10 → solana-address 2.x → borsh-1.6 vs the program's
+  // own borsh-1.5 dep, surfacing as a wave of E0277 "Pubkey: BorshSerialize
+  // not satisfied" errors across PluginRegistryV1 / PluginAuthority. The
+  // `use mpl_core::*` source line is dropped by filteredSourceImports for
+  // CreateV2 — other MPL Core CPIs are still lint-flagged.
   mpl_token_metadata:        `mpl-token-metadata = "5.1"`,
   switchboard_on_demand:     `switchboard-on-demand = "0.4"`,
   switchboard_v2:            `switchboard-v2 = "0.4"`,
@@ -123,7 +131,7 @@ const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
 const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
   // External program SDKs (these typically don't depend on solana-program,
   // so they tend to compile on pinocchio with `default-features = false`)
-  mpl_core:                  `mpl-core = { version = "0.10", default-features = false }`,
+  // Same rationale as NATIVE_OPTIONAL_DEPS — mpl_core dropped post task #48 S1.
   mpl_token_metadata:        `mpl-token-metadata = { version = "5.1", default-features = false }`,
   // Common third-party crates
   bytemuck:                  `bytemuck = { version = "1", features = ["derive"] }`,

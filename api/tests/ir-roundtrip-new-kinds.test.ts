@@ -200,6 +200,24 @@ const NEW_KIND_FIXTURES: Array<{
       mint: "mint",
     },
   },
+  {
+    name: "cpi_mpl_core_create_v2 (task #48 S1)",
+    stmt: {
+      kind: "cpi_mpl_core_create_v2",
+      programAccount: "mpl_core_program",
+      asset: "asset",
+      collection: "None",
+      authority: "None",
+      payer: "payer",
+      owner: "None",
+      updateAuthority: "None",
+      systemProgram: "system_program",
+      logWrapper: "None",
+      name: "name",
+      uri: "uri",
+      dataState: "DataState::AccountState",
+    },
+  },
 ];
 
 describe("IR roundtrip — new kinds shipped 2026-05-18", () => {

@@ -46,6 +46,7 @@ import {
   irNeedsMplMintNewEditionFromMasterHelper,
   irNeedsMplFreezeDelegatedHelper,
   irNeedsMplThawDelegatedHelper,
+  irNeedsMplCoreCreateV2Helper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK, MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
@@ -399,7 +400,8 @@ export class PinocchioEmitter extends BaseEmitter {
       || irNeedsMplRevokeCollectionAuthorityHelper(_ir)
       || irNeedsMplMintNewEditionFromMasterHelper(_ir)
       || irNeedsMplFreezeDelegatedHelper(_ir)
-      || irNeedsMplThawDelegatedHelper(_ir);
+      || irNeedsMplThawDelegatedHelper(_ir)
+      || irNeedsMplCoreCreateV2Helper(_ir);
     if (needsSeedSigner) {
       imports.push(`use pinocchio::instruction::{Seed, Signer};`);
     }
@@ -3975,6 +3977,92 @@ pub fn mpl_unverify_collection(
                 None => pinocchio::cpi::invoke(&ix, &infos),
             }
         }
+    }
+}`);
+    }
+
+    // MPL Core S1 — CreateV2. Discriminator 20; Borsh args (data_state u8
+    // + name String + uri String + plugins=None 0x00 + external_plugin_adapters=None
+    // 0x00). 8-account meta with the mpl_core program itself used as the
+    // readonly fallback for any None optional slot (kinobi's convention).
+    if (irNeedsMplCoreCreateV2Helper(ir)) {
+      helpers.push(`/// MPL Core: CreateV2 (discriminator 20).
+/// v1 scope: plugins / external_plugin_adapters always None — most user
+/// programs add plugins via separate AddPluginV1 CPIs. Kinobi's convention
+/// is to keep all 8 account slots in the meta list, substituting the
+/// mpl_core program itself (readonly, non-signer) for any None optional.
+pub fn mpl_core_create_v2(
+    program: &AccountInfo,
+    asset: &AccountInfo,
+    collection: Option<&AccountInfo>,
+    authority: Option<&AccountInfo>,
+    payer: &AccountInfo,
+    owner: Option<&AccountInfo>,
+    update_authority: Option<&AccountInfo>,
+    system_program: &AccountInfo,
+    log_wrapper: Option<&AccountInfo>,
+    name: &str,
+    uri: &str,
+    data_state: u8,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let name_bytes = name.as_bytes();
+    let uri_bytes = uri.as_bytes();
+    let mut data: Vec<u8> = Vec::with_capacity(1 + 1 + 4 + name_bytes.len() + 4 + uri_bytes.len() + 1 + 1);
+    data.push(20);
+    data.push(data_state);
+    data.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+    data.extend_from_slice(name_bytes);
+    data.extend_from_slice(&(uri_bytes.len() as u32).to_le_bytes());
+    data.extend_from_slice(uri_bytes);
+    data.push(0);
+    data.push(0);
+    // Fallback to the mpl_core program key + AccountInfo for any None slot
+    // (kinobi-generated MPL Core builders set the meta to the program ID
+    // itself, readonly + non-signer, when the corresponding builder method
+    // sees Option<...>::None).
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let owner_info = owner.unwrap_or(program);
+    let update_authority_info = update_authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(asset.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(collection_info.key(), collection.is_some(), false),
+        pinocchio::instruction::AccountMeta::new(authority_info.key(), false, authority.is_some()),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(owner_info.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(update_authority_info.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(log_wrapper_info.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [
+        asset,
+        collection_info,
+        authority_info,
+        payer,
+        owner_info,
+        update_authority_info,
+        system_program,
+        log_wrapper_info,
+    ];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
     }
 }`);
     }

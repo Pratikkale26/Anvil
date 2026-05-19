@@ -921,6 +921,12 @@ export abstract class BaseEmitter {
         // interop issue that locked the M2/N5 ceiling pre-N5b).
         if (/\bpyth_sdk_solana\b/.test(statement)) return false;
         if (/\bpyth_solana_receiver_sdk\b/.test(statement)) return false;
+        // mpl_core dropped on BOTH targets — task #48 S1 hand-rolls the
+        // bytes via mpl_core_create_v2 helper. Same borsh-derive interop
+        // issue as Pyth: mpl-core 0.10 pulls solana-address → borsh 1.6
+        // while the program crate uses borsh 1.5, surfacing as wave of
+        // "Pubkey: BorshSerialize not satisfied" across PluginRegistryV1.
+        if (/\bmpl_core\b/.test(statement)) return false;
         // Token-2022 transfer-hook helper crates. These are SBF-only crates
         // not in the Pinocchio OR Native scaffold (Native ships
         // spl_token_2022 + spl_pod, but not the transfer-hook-specific

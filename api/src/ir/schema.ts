@@ -1160,6 +1160,44 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // MPL Core: CreateV2 (task #48 S1). Distinct from MPL Token Metadata
+  // (different program ID: CoREENxT...). Uses kinobi's fluent-builder
+  // shape: `mpl_core::CreateV2CpiBuilder::new(program).asset(a).payer(p)
+  //   .system_program(sp).name(...).uri(...).data_state(...).invoke()?;`
+  // Wire format: discriminator=20, Borsh args (data_state u8 + name String
+  // + uri String + plugins=None 0x00 + external_plugin_adapters=None 0x00).
+  // 8-account meta with MPL_CORE_ID readonly fallback for None slots.
+  // v1 scope: plugins/external_plugin_adapters always None (most user
+  // programs add plugins via separate AddPluginV1 CPIs).
+  z.object({
+    kind: z.literal("cpi_mpl_core_create_v2"),
+    /** The mpl_core program AccountInfo (binds the program ID). */
+    programAccount: z.string(),
+    /** Asset account — required, writable + signer. */
+    asset: z.string(),
+    /** Optional collection — raw text. Literal "None" or "Some(<expr>)". */
+    collection: z.string().default("None"),
+    /** Optional authority — raw text. Literal "None" or "Some(<expr>)". */
+    authority: z.string().default("None"),
+    /** Payer — required, writable + signer. */
+    payer: z.string(),
+    /** Optional owner — raw text. */
+    owner: z.string().default("None"),
+    /** Optional update_authority — raw text. */
+    updateAuthority: z.string().default("None"),
+    /** System program. */
+    systemProgram: z.string(),
+    /** Optional log_wrapper — raw text. */
+    logWrapper: z.string().default("None"),
+    /** Asset name — raw String expression. */
+    name: z.string(),
+    /** Asset URI — raw String expression. */
+    uri: z.string(),
+    /** DataState enum — raw expression (e.g. "DataState::AccountState"). */
+    dataState: z.string().default("DataState::AccountState"),
+    signerSeeds: z.string().optional(),
+  }),
+
   // Clock::get() sysvar access. `field` set when the source chained a
   // field access like `Clock::get()?.unix_timestamp` — emitters can then
   // bind directly to the primitive value rather than the Clock struct
