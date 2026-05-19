@@ -117,7 +117,7 @@ Tag, npm publish, README sweep promoting the new coverage. Outreach: 5 documente
 
 > **MPL byte-equal coverage: 3/12 → 9/12 ACHIEVED 2026-05-19** (originally 7/12 by 2026-06-15; exceeded 4 weeks early). Externally verifiable via `bun test api/tests/differential-mpl-*.test.ts`. The 3 remaining slots (`sign_metadata`, `verify_collection`, `unverify_collection`) are blocked by either Task #84 (DataV2.creators IR support) or a known anchor-spl 0.31 `unverify_collection` wrapper bug.
 >
-> 12 distinct bug findings during the push — 6 wire-format bugs in Anvil's emit + parser, 1 in anchor-spl itself, 5 documented compatibility/contract gaps. All emit bugs were caught by the runtime differential before users hit them. List in CHANGELOG.
+> 11 distinct bugs surfaced during the May 19 MPL byte-equal arc (split across two autonomous sessions, same day): 4 in the morning push (DataV2 shorthand silent-coerce, Pinocchio Seed/Signer import gate, master_edition rent meta, update_metadata Borsh field order), 6 in the afternoon push (3 parser-impedance bugs from canonical anchor-spl field names, verify_collection disc 21→18, unverify payer-in-meta drop, revoke_collection_authority delegate flag inversion, plus a Pinocchio infos-slice-vs-array refactor that revealed 3 helpers had never compiled), and 1 upstream anchor-spl 0.31 wrapper bug (unverify_collection sets `collection` field to `metadata.key`). All Anvil-side bugs were caught by the runtime differential before users hit them; details in CHANGELOG.
 
 ### Final tranche commitments
 
