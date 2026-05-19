@@ -1082,41 +1082,56 @@ export class BodyWalker {
     for (const account of this.instr.accounts) {
       const accountName = snakeCase(account.name);
       const accountInfoVar = this.resolveAccountInfoVar(accountName);
-      const keyExpr = this.emitter.emitAccountKeyExpr(accountInfoVar);
-      transformed = transformed.replace(
-        new RegExp(`([=,(]\\s*)${accountName}\\.key\\(\\)(?!\\.as_ref\\(\\))`, "g"),
+      transformed = this.rewriteAccountKeyComparisons(transformed, accountName, accountInfoVar);
+    }
+    return transformed;
+  }
+
+  /**
+   * H7 Phase 3c (FIELD-KEY consolidation, continued) — normalize the
+   * comparison-context `<recv>.key()` / `<recv>.key` shapes used in
+   * equality checks and argument passes. Two prefix contexts apply:
+   *
+   *   - After `=`, `,`, or `(` — broad assignment/arg-pass context
+   *   - At start-of-line or after whitespace, before `==`/`!=`/`)`/`,`/`;`
+   *     — strict comparison context
+   *
+   * Each receiver (accountName + accountInfoVar) gets both prefix
+   * forms × both .key()/.key suffix forms = 4 rewrites. Pre-
+   * consolidation, normalizeKeyValueUsages spelled out all 8
+   * (4 × 2 receivers); consolidating into one helper drops that to
+   * 4 inside a 2-receiver loop with the receiver name escaped.
+   */
+  private rewriteAccountKeyComparisons(
+    code: string,
+    accountName: string,
+    accountInfoVar: string,
+  ): string {
+    const keyExpr = this.emitter.emitAccountKeyExpr(accountInfoVar);
+    const receivers = [accountName, accountInfoVar];
+    let out = code;
+    for (const recv of receivers) {
+      const esc = recv.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Broad context: after `=`, `,`, or `(` — both .key() and .key forms
+      out = out.replace(
+        new RegExp(`([=,(]\\s*)${esc}\\.key\\(\\)(?!\\.as_ref\\(\\))`, "g"),
         `$1${keyExpr}`,
       );
-      transformed = transformed.replace(
-        new RegExp(`([=,(]\\s*)${accountName}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
+      out = out.replace(
+        new RegExp(`([=,(]\\s*)${esc}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
         `$1${keyExpr}`,
       );
-      transformed = transformed.replace(
-        new RegExp(`(^|\\s)${accountName}\\.key\\(\\)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
+      // Strict context: start-of-line or whitespace, before comparison ops
+      out = out.replace(
+        new RegExp(`(^|\\s)${esc}\\.key\\(\\)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
         (_full, prefix: string) => `${prefix}${keyExpr}`,
       );
-      transformed = transformed.replace(
-        new RegExp(`(^|\\s)${accountName}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
-        (_full, prefix: string) => `${prefix}${keyExpr}`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`([=,(]\\s*)${accountInfoVar}\\.key\\(\\)(?!\\.as_ref\\(\\))`, "g"),
-        `$1${keyExpr}`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`([=,(]\\s*)${accountInfoVar}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
-        `$1${keyExpr}`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`(^|\\s)${accountInfoVar}\\.key\\(\\)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
-        (_full, prefix: string) => `${prefix}${keyExpr}`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`(^|\\s)${accountInfoVar}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
+      out = out.replace(
+        new RegExp(`(^|\\s)${esc}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)(?=\\s*(?:==|!=|\\)|,|;))`, "g"),
         (_full, prefix: string) => `${prefix}${keyExpr}`,
       );
     }
-    return transformed;
+    return out;
   }
 
   transformCtxAccountsReferences(code: string): string {
