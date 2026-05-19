@@ -700,6 +700,13 @@ function extractMplVerifyCollection(callNode: SyntaxNode, collector?: WarningCol
 
   const grab = (field: string) =>
     extractStructField(accountsStruct, field) ?? field;
+  const grabAny = (fields: string[]): string => {
+    for (const f of fields) {
+      const v = extractStructField(accountsStruct, f);
+      if (v) return v;
+    }
+    return fields[fields.length - 1]!;
+  };
 
   return {
     kind: "cpi_mpl_verify_collection",
@@ -707,7 +714,7 @@ function extractMplVerifyCollection(callNode: SyntaxNode, collector?: WarningCol
     collectionAuthority: cleanAccountRef(grab("collection_authority")),
     payer: cleanAccountRef(grab("payer")),
     collectionMint: cleanAccountRef(grab("collection_mint")),
-    collection: cleanAccountRef(grab("collection")),
+    collection: cleanAccountRef(grabAny(["collection_metadata", "collection"])),
     collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
     collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
@@ -880,6 +887,14 @@ function extractMplSetAndVerifyCollection(callNode: SyntaxNode, collector?: Warn
   const grab = (field: string) =>
     extractStructField(accountsStruct, field) ?? field;
 
+  const grabAny = (fields: string[]): string => {
+    for (const f of fields) {
+      const v = extractStructField(accountsStruct, f);
+      if (v) return v;
+    }
+    return fields[fields.length - 1]!;
+  };
+
   return {
     kind: "cpi_mpl_set_and_verify_collection",
     metadata: cleanAccountRef(grab("metadata")),
@@ -887,7 +902,7 @@ function extractMplSetAndVerifyCollection(callNode: SyntaxNode, collector?: Warn
     payer: cleanAccountRef(grab("payer")),
     updateAuthority: cleanAccountRef(grab("update_authority")),
     collectionMint: cleanAccountRef(grab("collection_mint")),
-    collection: cleanAccountRef(grab("collection")),
+    collection: cleanAccountRef(grabAny(["collection_metadata", "collection"])),
     collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
     collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
@@ -912,6 +927,13 @@ function extractMplUnverifyCollection(callNode: SyntaxNode, collector?: WarningC
 
   const grab = (field: string) =>
     extractStructField(accountsStruct, field) ?? field;
+  const grabAny = (fields: string[]): string => {
+    for (const f of fields) {
+      const v = extractStructField(accountsStruct, f);
+      if (v) return v;
+    }
+    return fields[fields.length - 1]!;
+  };
 
   return {
     kind: "cpi_mpl_unverify_collection",
@@ -920,7 +942,7 @@ function extractMplUnverifyCollection(callNode: SyntaxNode, collector?: WarningC
     payer: cleanAccountRef(grab("payer")),
     collectionMint: cleanAccountRef(grab("collection_mint")),
     collection: cleanAccountRef(grab("collection")),
-    collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
+    collectionMasterEdition: cleanAccountRef(grabAny(["collection_master_edition_account", "collection_master_edition"])),
     collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
   };

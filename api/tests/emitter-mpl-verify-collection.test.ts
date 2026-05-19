@@ -102,12 +102,15 @@ function buildIR(opts: { authorityRecord?: string; signerSeeds?: string } = {}):
 }
 
 describe("M1b: cpi_mpl_verify_collection emit", () => {
-  test("Pinocchio: emits helper with discriminator 21 and 6-account base shape", () => {
+  test("Pinocchio: emits helper with discriminator 18 and 6-account base shape", () => {
     const out = emitPinocchioFull(buildIR());
     const body = out.singleFile;
     expect(body).toContain("mpl_verify_collection");
-    // Single-byte data payload [21]
-    expect(body).toMatch(/let data: \[u8; 1\] = \[21\];/);
+    // Single-byte data payload [18] — mpl-token-metadata 5.1.1 legacy
+    // VerifyCollection ix discriminator (NOT 21 — that's SetAndVerify in some
+    // older docs). Fixed in N1c after byte-equal differential surfaced the
+    // mismatch against the staged mpl_token_metadata.so.
+    expect(body).toMatch(/let data: \[u8; 1\] = \[18\];/);
     // Pinocchio AccountMeta::new shape
     expect(body).toMatch(/AccountMeta::new\(metadata\.key\(\), true, false\)/);
     expect(body).toMatch(/AccountMeta::new\(collection_authority\.key\(\), false, true\)/);
@@ -124,11 +127,11 @@ describe("M1b: cpi_mpl_verify_collection emit", () => {
     expect(body).toMatch(/mpl_verify_collection\([\s\S]*?Some\(authority_record_acc\),/);
   });
 
-  test("Native: emits helper with disc 21 + 6 AccountMeta entries", () => {
+  test("Native: emits helper with disc 18 + 6 AccountMeta entries", () => {
     const out = emitNativeFull(buildIR());
     const body = out.singleFile;
     expect(body).toContain("mpl_verify_collection");
-    expect(body).toMatch(/let data: Vec<u8> = vec!\[21\];/);
+    expect(body).toMatch(/let data: Vec<u8> = vec!\[18\];/);
     expect(body).toMatch(/AccountMeta::new\(\*metadata\.key, false\)/);
     expect(body).toMatch(/AccountMeta::new_readonly\(\*collection_authority\.key, true\)/);
     // Native helper signature uses AccountInfo<'a>

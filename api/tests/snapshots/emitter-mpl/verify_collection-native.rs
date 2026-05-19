@@ -9,7 +9,7 @@ pub fn mpl_verify_collection<'a>(
     collection_authority_record: Option<&AccountInfo<'a>>,
     signer_seeds: Option<&[&[&[u8]]]>,
 ) -> ProgramResult {
-    let data: Vec<u8> = vec![21];
+    let data: Vec<u8> = vec![18];
     let mut accounts = vec![
         AccountMeta::new(*metadata.key, false),
         AccountMeta::new_readonly(*collection_authority.key, true),

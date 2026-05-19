@@ -9,8 +9,9 @@ pub fn mpl_verify_collection(
     collection_authority_record: Option<&AccountInfo>,
     signer_seeds: Option<&[&[&[u8]]]>,
 ) -> ProgramResult {
-    // VerifyCollection: single-byte data.
-    let data: [u8; 1] = [21];
+    // VerifyCollection: single-byte data. mpl-token-metadata 5.1.1's
+    // VerifyCollection legacy ix discriminator is 18 (0x12).
+    let data: [u8; 1] = [18];
 
     // Build metas. With collection_authority_record we get 7 slots; without, 6.
     let mut metas: [pinocchio::instruction::AccountMeta; 7] =
@@ -32,34 +33,47 @@ pub fn mpl_verify_collection(
         data: &data,
     };
 
-    // Same conditional infos slice — collection_authority_record adds slot.
-    let infos_base = [
-        metadata, collection_authority, payer, collection_mint,
-        collection, collection_master_edition,
-    ];
-    let infos_extra;
-    let infos: &[&AccountInfo] = match collection_authority_record {
+    // Pinocchio's invoke/invoke_signed take `&[&AccountInfo; N]` (fixed-size
+    // array reference) — slice references don't coerce. Call into the typed-
+    // array branch per (record, signer) combination instead of unifying first.
+    match collection_authority_record {
         Some(record) => {
-            infos_extra = [
+            let infos: [&AccountInfo; 7] = [
                 metadata, collection_authority, payer, collection_mint,
                 collection, collection_master_edition, record,
             ];
-            &infos_extra
-        }
-        None => &infos_base,
-    };
-
-    match signer_seeds {
-        Some(seeds) => {
-            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
-            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
-            for (i, s) in seed_group.iter().enumerate() {
-                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
-                sd[i] = Seed::from(*s);
+            match signer_seeds {
+                Some(seeds) => {
+                    let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+                    let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+                    for (i, s) in seed_group.iter().enumerate() {
+                        if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                        sd[i] = Seed::from(*s);
+                    }
+                    let signer = Signer::from(&sd[..seed_group.len()]);
+                    pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+                }
+                None => pinocchio::cpi::invoke(&ix, &infos),
             }
-            let signer = Signer::from(&sd[..seed_group.len()]);
-            pinocchio::cpi::invoke_signed(&ix, infos, &[signer])
         }
-        None => pinocchio::cpi::invoke(&ix, infos),
+        None => {
+            let infos: [&AccountInfo; 6] = [
+                metadata, collection_authority, payer, collection_mint,
+                collection, collection_master_edition,
+            ];
+            match signer_seeds {
+                Some(seeds) => {
+                    let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+                    let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+                    for (i, s) in seed_group.iter().enumerate() {
+                        if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                        sd[i] = Seed::from(*s);
+                    }
+                    let signer = Signer::from(&sd[..seed_group.len()]);
+                    pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+                }
+                None => pinocchio::cpi::invoke(&ix, &infos),
+            }
+        }
     }
 }

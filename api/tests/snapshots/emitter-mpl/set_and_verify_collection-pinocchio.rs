@@ -33,33 +33,44 @@ pub fn mpl_set_and_verify_collection(
         data: &data,
     };
 
-    let infos_base = [
-        metadata, collection_authority, payer, update_authority,
-        collection_mint, collection, collection_master_edition,
-    ];
-    let infos_extra;
-    let infos: &[&AccountInfo] = match collection_authority_record {
+    match collection_authority_record {
         Some(record) => {
-            infos_extra = [
+            let infos: [&AccountInfo; 8] = [
                 metadata, collection_authority, payer, update_authority,
                 collection_mint, collection, collection_master_edition, record,
             ];
-            &infos_extra
-        }
-        None => &infos_base,
-    };
-
-    match signer_seeds {
-        Some(seeds) => {
-            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
-            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
-            for (i, s) in seed_group.iter().enumerate() {
-                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
-                sd[i] = Seed::from(*s);
+            match signer_seeds {
+                Some(seeds) => {
+                    let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+                    let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+                    for (i, s) in seed_group.iter().enumerate() {
+                        if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                        sd[i] = Seed::from(*s);
+                    }
+                    let signer = Signer::from(&sd[..seed_group.len()]);
+                    pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+                }
+                None => pinocchio::cpi::invoke(&ix, &infos),
             }
-            let signer = Signer::from(&sd[..seed_group.len()]);
-            pinocchio::cpi::invoke_signed(&ix, infos, &[signer])
         }
-        None => pinocchio::cpi::invoke(&ix, infos),
+        None => {
+            let infos: [&AccountInfo; 7] = [
+                metadata, collection_authority, payer, update_authority,
+                collection_mint, collection, collection_master_edition,
+            ];
+            match signer_seeds {
+                Some(seeds) => {
+                    let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+                    let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+                    for (i, s) in seed_group.iter().enumerate() {
+                        if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                        sd[i] = Seed::from(*s);
+                    }
+                    let signer = Signer::from(&sd[..seed_group.len()]);
+                    pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+                }
+                None => pinocchio::cpi::invoke(&ix, &infos),
+            }
+        }
     }
 }
