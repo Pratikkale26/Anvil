@@ -3470,6 +3470,11 @@ pub fn mpl_mint_new_edition_from_master(
     let mut data: Vec<u8> = Vec::with_capacity(9);
     data.push(11);
     data.extend_from_slice(&edition.to_le_bytes());
+    // anchor-spl 0.31's mint_new_edition_from_master_edition_via_token
+    // wrapper hard-codes \`rent: None\` (sibling pattern of create_metadata_v3,
+    // create_master_edition_v3). Omit rent from the meta + infos lists to
+    // keep byte-equal with the Anchor reference CPI invocation.
+    let _ = rent;
     let metas = [
         pinocchio::instruction::AccountMeta::new(new_metadata.key(), true, false),
         pinocchio::instruction::AccountMeta::new(new_edition.key(), true, false),
@@ -3484,7 +3489,6 @@ pub fn mpl_mint_new_edition_from_master(
         pinocchio::instruction::AccountMeta::new(metadata.key(), false, false),
         pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
         pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
-        pinocchio::instruction::AccountMeta::new(rent.key(), false, false),
     ];
     let ix = pinocchio::instruction::Instruction {
         program_id: token_metadata_program.key(),
@@ -3494,7 +3498,7 @@ pub fn mpl_mint_new_edition_from_master(
     let infos = [
         new_metadata, new_edition, master_edition, new_mint, edition_mark_pda,
         new_mint_authority, payer, token_account_owner, token_account,
-        new_metadata_update_authority, metadata, token_program, system_program, rent,
+        new_metadata_update_authority, metadata, token_program, system_program,
     ];
     match signer_seeds {
         Some(seeds) => {
@@ -3579,6 +3583,10 @@ pub fn mpl_approve_collection_authority(
     signer_seeds: Option<&[&[&[u8]]]>,
 ) -> ProgramResult {
     let data: [u8; 1] = [23];
+    // anchor-spl 0.31's approve_collection_authority wrapper hard-codes
+    // \`rent: None\` — the rent slot is OMITTED from the account list.
+    // Matching that produces byte-equal CPI invocations.
+    let _ = rent;
     let metas = [
         pinocchio::instruction::AccountMeta::new(collection_authority_record.key(), true, false),
         pinocchio::instruction::AccountMeta::new(new_collection_authority.key(), false, false),
@@ -3587,7 +3595,6 @@ pub fn mpl_approve_collection_authority(
         pinocchio::instruction::AccountMeta::new(metadata.key(), false, false),
         pinocchio::instruction::AccountMeta::new(mint.key(), false, false),
         pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
-        pinocchio::instruction::AccountMeta::new(rent.key(), false, false),
     ];
     let ix = pinocchio::instruction::Instruction {
         program_id: token_metadata_program.key(),
@@ -3597,7 +3604,7 @@ pub fn mpl_approve_collection_authority(
     let infos = [
         collection_authority_record, new_collection_authority,
         update_authority, payer, metadata, mint,
-        system_program, rent,
+        system_program,
     ];
     match signer_seeds {
         Some(seeds) => {

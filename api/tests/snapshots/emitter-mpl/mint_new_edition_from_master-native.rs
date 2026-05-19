@@ -20,6 +20,11 @@ pub fn mpl_mint_new_edition_from_master<'a>(
     let mut data: Vec<u8> = Vec::with_capacity(9);
     data.push(11);
     data.extend_from_slice(&edition.to_le_bytes());
+    // anchor-spl 0.31's mint_new_edition_from_master_edition_via_token
+    // wrapper hard-codes `rent: None` (sibling pattern). The rent slot
+    // is OMITTED from the account list to keep byte-equal with the
+    // Anchor reference CPI.
+    let _ = rent;
     let accounts = vec![
         AccountMeta::new(*new_metadata.key, false),
         AccountMeta::new(*new_edition.key, false),
@@ -34,7 +39,6 @@ pub fn mpl_mint_new_edition_from_master<'a>(
         AccountMeta::new_readonly(*metadata.key, false),
         AccountMeta::new_readonly(*token_program.key, false),
         AccountMeta::new_readonly(*system_program.key, false),
-        AccountMeta::new_readonly(*rent.key, false),
     ];
     let ix = Instruction { program_id: *token_metadata_program.key, accounts, data };
     let infos = [
@@ -42,7 +46,7 @@ pub fn mpl_mint_new_edition_from_master<'a>(
         new_mint.clone(), edition_mark_pda.clone(), new_mint_authority.clone(),
         payer.clone(), token_account_owner.clone(), token_account.clone(),
         new_metadata_update_authority.clone(), metadata.clone(),
-        token_program.clone(), system_program.clone(), rent.clone(),
+        token_program.clone(), system_program.clone(),
     ];
     match signer_seeds {
         Some(seeds) => invoke_signed(&ix, &infos, seeds),

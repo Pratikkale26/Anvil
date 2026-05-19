@@ -11,6 +11,10 @@ pub fn mpl_approve_collection_authority(
     signer_seeds: Option<&[&[&[u8]]]>,
 ) -> ProgramResult {
     let data: [u8; 1] = [23];
+    // anchor-spl 0.31's approve_collection_authority wrapper hard-codes
+    // `rent: None` — the rent slot is OMITTED from the account list.
+    // Matching that produces byte-equal CPI invocations.
+    let _ = rent;
     let metas = [
         pinocchio::instruction::AccountMeta::new(collection_authority_record.key(), true, false),
         pinocchio::instruction::AccountMeta::new(new_collection_authority.key(), false, false),
@@ -19,7 +23,6 @@ pub fn mpl_approve_collection_authority(
         pinocchio::instruction::AccountMeta::new(metadata.key(), false, false),
         pinocchio::instruction::AccountMeta::new(mint.key(), false, false),
         pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
-        pinocchio::instruction::AccountMeta::new(rent.key(), false, false),
     ];
     let ix = pinocchio::instruction::Instruction {
         program_id: token_metadata_program.key(),
@@ -29,7 +32,7 @@ pub fn mpl_approve_collection_authority(
     let infos = [
         collection_authority_record, new_collection_authority,
         update_authority, payer, metadata, mint,
-        system_program, rent,
+        system_program,
     ];
     match signer_seeds {
         Some(seeds) => {
