@@ -377,12 +377,29 @@ export class PinocchioEmitter extends BaseEmitter {
     if (irNeedsHelper(_ir, "transfer_lamports")) {
       imports.push(`use pinocchio_system::instructions::Transfer as SystemTransfer;`);
     }
+    // MPL helpers use bare `Seed::from(...)` / `Signer::from(...)` inside
+    // their signer_seeds match arms (see pub fn mpl_sign_metadata, etc).
+    // Without the bare-import gate they emit dead-code with unresolved
+    // names. The mpl_* family ALL support signer_seeds so the import is
+    // unconditional once any MPL helper is in scope.
     const needsSeedSigner = irNeedsInitAccountHelper(_ir)
       || irNeedsSignedLamportsHelper(_ir)
       || irNeedsSignedSplMintToHelper(_ir)
       || irNeedsSignedSplBurnHelper(_ir)
       || irNeedsSignedSplCloseAccountHelper(_ir)
-      || irNeedsHelper(_ir, "spl_transfer");
+      || irNeedsHelper(_ir, "spl_transfer")
+      || irNeedsMplCreateMetadataV3Helper(_ir)
+      || irNeedsMplCreateMasterEditionV3Helper(_ir)
+      || irNeedsMplUpdateMetadataAccountsV2Helper(_ir)
+      || irNeedsMplVerifyCollectionHelper(_ir)
+      || irNeedsMplSignMetadataHelper(_ir)
+      || irNeedsMplUnverifyCollectionHelper(_ir)
+      || irNeedsMplSetAndVerifyCollectionHelper(_ir)
+      || irNeedsMplApproveCollectionAuthorityHelper(_ir)
+      || irNeedsMplRevokeCollectionAuthorityHelper(_ir)
+      || irNeedsMplMintNewEditionFromMasterHelper(_ir)
+      || irNeedsMplFreezeDelegatedHelper(_ir)
+      || irNeedsMplThawDelegatedHelper(_ir);
     if (needsSeedSigner) {
       imports.push(`use pinocchio::instruction::{Seed, Signer};`);
     }

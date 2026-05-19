@@ -325,6 +325,25 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    * IGNORED when this is set; the upstream Cargo.toml owns those.
    */
   anchorReferenceCrateDir?: string;
+  /**
+   * Auxiliary on-chain programs the scenario CPIs into. Loaded into the
+   * LiteSVM via `svm.addProgram` BEFORE the fixture's callScript runs, in
+   * BOTH Anchor and Anvil scenarios. The .so file lives under
+   * `tests/fixtures/programs/<soFilename>` (same path scenario-runner.ts
+   * uses for the HTTP-driven path).
+   *
+   * Example for an MPL Token Metadata differential:
+   *   auxiliaryPrograms: [{
+   *     programId: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+   *     soFilename: "mpl_token_metadata.so",
+   *   }]
+   *
+   * When the .so file is missing the harness throws — silent-skip would
+   * trivially-pass the differential (both sides would fail the CPI
+   * identically) and that's the exact false-positive class the byte-equal
+   * gate is meant to prevent.
+   */
+  auxiliaryPrograms?: Array<{ programId: string; soFilename: string }>;
 }
 
 /** Single account snapshot — captured post-scenario for byte-compare. */
@@ -886,6 +905,20 @@ async function runScenario<S extends DifferentialSetup>(
 ): Promise<Map<string, AccountSnapshot>> {
   const svm = new LiteSVM();
   svm.addProgram(programId, programSo);
+  if (fixture.auxiliaryPrograms) {
+    const auxDir = join(import.meta.dir, "fixtures", "programs");
+    for (const aux of fixture.auxiliaryPrograms) {
+      const soPath = join(auxDir, aux.soFilename);
+      if (!existsSync(soPath)) {
+        throw new Error(
+          `auxiliary program .so missing: ${soPath}. ` +
+          `Dump it via 'solana program dump ${aux.programId} ${aux.soFilename} -u <rpc>' ` +
+          `and place under tests/fixtures/programs/.`,
+        );
+      }
+      svm.addProgram(new PublicKey(aux.programId), readFileSync(soPath));
+    }
+  }
   // Pin clock + slot so both Anchor and Anvil scenarios see identical
   // sysvar values. Without this, programs reading Clock::get() see
   // different timestamps across the two runs and produce divergent

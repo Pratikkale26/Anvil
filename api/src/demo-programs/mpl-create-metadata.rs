@@ -5,7 +5,7 @@ use anchor_spl::metadata::{
 use anchor_spl::token::{Mint, Token};
 use anchor_spl::metadata::mpl_token_metadata::types::DataV2;
 
-declare_id!("Mp1CreateMeta11111111111111111111111111111");
+declare_id!("HYoSg3PQeyrytfiDptkAoBVbqqqbqouQn6ziJV9bNmjf");
 
 #[program]
 pub mod mpl_create_metadata {
