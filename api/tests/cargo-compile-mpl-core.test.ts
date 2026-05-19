@@ -62,19 +62,22 @@ const cargoAvailable = (() => {
   } catch { return false; }
 })();
 
-describe("MPL Core CreateV2 — cargo check across project scaffold", () => {
-  for (const target of ["pinocchio", "native"] as const) {
-    test(`mpl-core-create-v2 / ${target} compiles cleanly`, async () => {
-      if (!cargoAvailable) {
-        if (STRICT_FIXTURES) throw new Error(`cargo not available — surfacing per ANVIL_TEST_STRICT_FIXTURES=1`);
-        console.warn(`[cargo-compile-mpl-core] cargo not available — skipping ${target}`);
-        return;
-      }
-      const { ok, tail } = await buildAndCheck("mpl-core-create-v2", target);
-      if (!ok) {
-        console.error(`\n[cargo-compile-mpl-core] ${target} FAILED:\n${tail}`);
-      }
-      expect(ok).toBe(true);
-    }, 360_000);
+describe("MPL Core — cargo check across project scaffold", () => {
+  const demos = ["mpl-core-create-v2", "mpl-core-update-v2"];
+  for (const demo of demos) {
+    for (const target of ["pinocchio", "native"] as const) {
+      test(`${demo} / ${target} compiles cleanly`, async () => {
+        if (!cargoAvailable) {
+          if (STRICT_FIXTURES) throw new Error(`cargo not available — surfacing per ANVIL_TEST_STRICT_FIXTURES=1`);
+          console.warn(`[cargo-compile-mpl-core] cargo not available — skipping ${demo}/${target}`);
+          return;
+        }
+        const { ok, tail } = await buildAndCheck(demo, target);
+        if (!ok) {
+          console.error(`\n[cargo-compile-mpl-core] ${demo}/${target} FAILED:\n${tail}`);
+        }
+        expect(ok).toBe(true);
+      }, 360_000);
+    }
   }
 });

@@ -202,6 +202,8 @@ const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
   // fixture is bundled (parallel to the Pyth Receiver pattern). cargo-check
   // across the full project scaffold is the available signal.
   "cpi_mpl_core_create_v2",
+  // MPL Core UpdateV2 — task #48 S2. Same fixture-pending status as S1.
+  "cpi_mpl_core_update_v2",
 ]);
 
 function listBodyStatementKinds(): string[] {

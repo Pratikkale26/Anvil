@@ -48,6 +48,7 @@ import {
   irNeedsMplFreezeDelegatedHelper,
   irNeedsMplThawDelegatedHelper,
   irNeedsMplCoreCreateV2Helper,
+  irNeedsMplCoreUpdateV2Helper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK } from "./markers.js";
 
@@ -247,7 +248,8 @@ export class NativeEmitter extends BaseEmitter {
       || irNeedsMplMintNewEditionFromMasterHelper(_ir)
       || irNeedsMplFreezeDelegatedHelper(_ir)
       || irNeedsMplThawDelegatedHelper(_ir)
-      || irNeedsMplCoreCreateV2Helper(_ir);
+      || irNeedsMplCoreCreateV2Helper(_ir)
+      || irNeedsMplCoreUpdateV2Helper(_ir);
     const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsHelper(_ir, "spl_transfer")
       || irNeedsUnsignedSplMintToHelper(_ir)
@@ -2818,6 +2820,87 @@ pub fn mpl_core_create_v2<'a>(
         payer.clone(),
         owner_info.clone(),
         update_authority_info.clone(),
+        system_program.clone(),
+        log_wrapper_info.clone(),
+    ];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreUpdateV2Helper(_ir)) {
+      helpers.push(`/// MPL Core: UpdateV2 (discriminator 30).
+/// v1 scope: new_update_authority always None.
+pub fn mpl_core_update_v2<'a>(
+    program: &AccountInfo<'a>,
+    asset: &AccountInfo<'a>,
+    collection: Option<&AccountInfo<'a>>,
+    payer: &AccountInfo<'a>,
+    authority: Option<&AccountInfo<'a>>,
+    new_collection: Option<&AccountInfo<'a>>,
+    system_program: &AccountInfo<'a>,
+    log_wrapper: Option<&AccountInfo<'a>>,
+    new_name: Option<&str>,
+    new_uri: Option<&str>,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut data: Vec<u8> = Vec::with_capacity(64);
+    data.push(30);
+    match new_name {
+        Some(s) => {
+            data.push(1);
+            data.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            data.extend_from_slice(s.as_bytes());
+        }
+        None => data.push(0),
+    }
+    match new_uri {
+        Some(s) => {
+            data.push(1);
+            data.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            data.extend_from_slice(s.as_bytes());
+        }
+        None => data.push(0),
+    }
+    data.push(0);
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let new_collection_info = new_collection.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let accounts = vec![
+        AccountMeta::new(*asset.key, false),
+        if collection.is_some() {
+            AccountMeta::new(*collection_info.key, false)
+        } else {
+            AccountMeta::new_readonly(*collection_info.key, false)
+        },
+        AccountMeta::new(*payer.key, true),
+        if authority.is_some() {
+            AccountMeta::new_readonly(*authority_info.key, true)
+        } else {
+            AccountMeta::new_readonly(*authority_info.key, false)
+        },
+        if new_collection.is_some() {
+            AccountMeta::new(*new_collection_info.key, false)
+        } else {
+            AccountMeta::new_readonly(*new_collection_info.key, false)
+        },
+        AccountMeta::new_readonly(*system_program.key, false),
+        AccountMeta::new_readonly(*log_wrapper_info.key, false),
+    ];
+    let ix = Instruction {
+        program_id: *program.key,
+        accounts,
+        data,
+    };
+    let infos = [
+        asset.clone(),
+        collection_info.clone(),
+        payer.clone(),
+        authority_info.clone(),
+        new_collection_info.clone(),
         system_program.clone(),
         log_wrapper_info.clone(),
     ];

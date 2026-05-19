@@ -727,6 +727,7 @@ type CpiMplThawDelegated = Extract<BodyStatement, { kind: "cpi_mpl_thaw_delegate
 type CpiMplSignMetadata = Extract<BodyStatement, { kind: "cpi_mpl_sign_metadata" }>;
 type CpiMplCreateMasterEditionV3 = Extract<BodyStatement, { kind: "cpi_mpl_create_master_edition_v3" }>;
 type CpiMplCoreCreateV2 = Extract<BodyStatement, { kind: "cpi_mpl_core_create_v2" }>;
+type CpiMplCoreUpdateV2 = Extract<BodyStatement, { kind: "cpi_mpl_core_update_v2" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
 type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
 type ZeroCopyLoad = Extract<BodyStatement, { kind: "zero_copy_load" }>;
@@ -814,6 +815,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_mpl_sign_metadata",
   "cpi_mpl_create_master_edition_v3",
   "cpi_mpl_core_create_v2",
+  "cpi_mpl_core_update_v2",
   "zero_copy_load_init",
   "zero_copy_load_mut",
   "zero_copy_load",
@@ -927,6 +929,8 @@ export class AstVisitorBase {
         return this.visitCpiMplCreateMasterEditionV3(stmt);
       case "cpi_mpl_core_create_v2":
         return this.visitCpiMplCoreCreateV2(stmt);
+      case "cpi_mpl_core_update_v2":
+        return this.visitCpiMplCoreUpdateV2(stmt);
       case "zero_copy_load_init":
         return this.visitZeroCopyLoadInit(stmt);
       case "zero_copy_load_mut":
@@ -3424,6 +3428,56 @@ export class AstVisitorBase {
       `        &${stmt.name},`,
       `        &${stmt.uri},`,
       `        ${dataStateExpr},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * MPL Core UpdateV2 typed CPI (task #48 S2). Disc 30; 7 accounts. Args:
+   * Option<String> new_name + Option<String> new_uri + Option<UpdateAuthority>
+   * (last always None in v1 scope). Helper signature mirrors create_v2 but
+   * for the asset-not-signer + new_collection slot + Option<String> args.
+   */
+  visitCpiMplCoreUpdateV2(stmt: CpiMplCoreUpdateV2): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const resolveOpt = (e: string): string => {
+      const trimmed = e.trim();
+      if (trimmed === "None" || trimmed === "") return "None";
+      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+      if (inner !== undefined) return `Some(${resolve(inner)})`;
+      return `Some(${resolve(trimmed)})`;
+    };
+    // Option<String> stays as raw text — `Some("foo".to_string())` /
+    // `Some(my_string)` / `None` all pass through; the helper takes
+    // Option<&str> at the call site so the user-provided String/&str/&String
+    // expression gets auto-deref'd by Rust.
+    const optString = (e: string): string => {
+      const trimmed = e.trim();
+      if (trimmed === "None" || trimmed === "") return "None";
+      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+      if (inner !== undefined) return `Some(&${inner})`;
+      return `Some(&${trimmed})`;
+    };
+    const lines: string[] = [
+      `    mpl_core_update_v2(`,
+      `        ${resolve(stmt.programAccount)},`,
+      `        ${resolve(stmt.asset)},`,
+      `        ${resolveOpt(stmt.collection)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolveOpt(stmt.authority)},`,
+      `        ${resolveOpt(stmt.newCollection)},`,
+      `        ${resolve(stmt.systemProgram)},`,
+      `        ${resolveOpt(stmt.logWrapper)},`,
+      `        ${optString(stmt.newName)},`,
+      `        ${optString(stmt.newUri)},`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
         : `        None,`,

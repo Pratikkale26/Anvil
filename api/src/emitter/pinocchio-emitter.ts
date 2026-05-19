@@ -47,6 +47,7 @@ import {
   irNeedsMplFreezeDelegatedHelper,
   irNeedsMplThawDelegatedHelper,
   irNeedsMplCoreCreateV2Helper,
+  irNeedsMplCoreUpdateV2Helper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK, MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
@@ -401,7 +402,8 @@ export class PinocchioEmitter extends BaseEmitter {
       || irNeedsMplMintNewEditionFromMasterHelper(_ir)
       || irNeedsMplFreezeDelegatedHelper(_ir)
       || irNeedsMplThawDelegatedHelper(_ir)
-      || irNeedsMplCoreCreateV2Helper(_ir);
+      || irNeedsMplCoreCreateV2Helper(_ir)
+      || irNeedsMplCoreUpdateV2Helper(_ir);
     if (needsSeedSigner) {
       imports.push(`use pinocchio::instruction::{Seed, Signer};`);
     }
@@ -4048,6 +4050,93 @@ pub fn mpl_core_create_v2(
         payer,
         owner_info,
         update_authority_info,
+        system_program,
+        log_wrapper_info,
+    ];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    // MPL Core S2 — UpdateV2. Discriminator 30; 7 accounts; Borsh args:
+    // Option<String> new_name + Option<String> new_uri + Option<UpdateAuthority>=None.
+    // Asset is writable but NOT a signer (unlike CreateV2). All optional
+    // accounts fall back to the program key itself (kinobi convention).
+    if (irNeedsMplCoreUpdateV2Helper(ir)) {
+      helpers.push(`/// MPL Core: UpdateV2 (discriminator 30).
+/// v1 scope: new_update_authority always None — UpdateAuthority enum
+/// Borsh shape is deferred until a real fixture surfaces. Optional accounts
+/// fall back to the mpl_core program key per kinobi convention.
+pub fn mpl_core_update_v2(
+    program: &AccountInfo,
+    asset: &AccountInfo,
+    collection: Option<&AccountInfo>,
+    payer: &AccountInfo,
+    authority: Option<&AccountInfo>,
+    new_collection: Option<&AccountInfo>,
+    system_program: &AccountInfo,
+    log_wrapper: Option<&AccountInfo>,
+    new_name: Option<&str>,
+    new_uri: Option<&str>,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut data: Vec<u8> = Vec::with_capacity(64);
+    data.push(30);
+    // Option<String> new_name
+    match new_name {
+        Some(s) => {
+            data.push(1);
+            data.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            data.extend_from_slice(s.as_bytes());
+        }
+        None => data.push(0),
+    }
+    // Option<String> new_uri
+    match new_uri {
+        Some(s) => {
+            data.push(1);
+            data.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            data.extend_from_slice(s.as_bytes());
+        }
+        None => data.push(0),
+    }
+    // Option<UpdateAuthority> new_update_authority — v1 always None
+    data.push(0);
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let new_collection_info = new_collection.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(asset.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(collection_info.key(), collection.is_some(), false),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(authority_info.key(), false, authority.is_some()),
+        pinocchio::instruction::AccountMeta::new(new_collection_info.key(), new_collection.is_some(), false),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(log_wrapper_info.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [
+        asset,
+        collection_info,
+        payer,
+        authority_info,
+        new_collection_info,
         system_program,
         log_wrapper_info,
     ];

@@ -218,6 +218,22 @@ const NEW_KIND_FIXTURES: Array<{
       dataState: "DataState::AccountState",
     },
   },
+  {
+    name: "cpi_mpl_core_update_v2 (task #48 S2)",
+    stmt: {
+      kind: "cpi_mpl_core_update_v2",
+      programAccount: "mpl_core_program",
+      asset: "asset",
+      collection: "None",
+      payer: "payer",
+      authority: "Some(authority)",
+      newCollection: "None",
+      systemProgram: "system_program",
+      logWrapper: "None",
+      newName: "Some(new_name)",
+      newUri: "Some(new_uri)",
+    },
+  },
 ];
 
 describe("IR roundtrip — new kinds shipped 2026-05-18", () => {

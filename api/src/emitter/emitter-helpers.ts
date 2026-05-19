@@ -224,6 +224,18 @@ export function irNeedsMplCoreCreateV2Helper(ir: SolanaIR): boolean {
   );
 }
 
+/**
+ * MPL Core S2 — UpdateV2. Hand-rolled invoke; discriminator 30; 7 accounts
+ * (asset writable non-signer, payer writable signer, optionals fall back
+ * to MPL_CORE_ID via the helper). Borsh args: Option<String> new_name +
+ * Option<String> new_uri + Option<UpdateAuthority>=None (v1 scope).
+ */
+export function irNeedsMplCoreUpdateV2Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_core_update_v2")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

@@ -499,14 +499,20 @@ export function detectCpi(
     return extractMplSignMetadata(callNode, collector);
   }
 
-  // MPL Core (task #48 S1). Uses kinobi's fluent CpiBuilder rather than
+  // MPL Core (task #48 S1+S2). Uses kinobi's fluent CpiBuilder rather than
   // CpiContext::new. Outer call is `.invoke()` (or `.invoke_signed(seeds)`)
-  // and the receiver chain bottoms out at `CreateV2CpiBuilder::new(prog)`.
+  // and the receiver chain bottoms out at the constructor's `::new(prog)`.
   if (
     /\bCreateV2CpiBuilder\b/.test(funcText) &&
     /\.(invoke|invoke_signed)$/.test(funcText)
   ) {
     return extractMplCoreCreateV2(callNode, collector);
+  }
+  if (
+    /\bUpdateV2CpiBuilder\b/.test(funcText) &&
+    /\.(invoke|invoke_signed)$/.test(funcText)
+  ) {
+    return extractMplCoreUpdateV2(callNode, collector);
   }
 
   return null;
@@ -1079,7 +1085,17 @@ function extractMplCreateMasterEditionV3(callNode: SyntaxNode, collector?: Warni
  * chain bottoms out at the initial `CreateV2CpiBuilder::new(program)` call
  * — its first arg is the program AccountInfo.
  */
-function extractMplCoreCreateV2(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+/**
+ * Walk an MPL Core kinobi CpiBuilder fluent chain. Returns the captured
+ * method-name → arg-text map, the constructor's program arg, and any
+ * .invoke_signed(seeds) arg. Shared by CreateV2 + UpdateV2 (and future
+ * MPL Core slots — same chain shape across all builders).
+ */
+function walkMplCoreBuilder(callNode: SyntaxNode): {
+  fields: Record<string, string>;
+  programArg: string;
+  signerSeeds: string | undefined;
+} {
   const fields: Record<string, string> = {};
   let signerSeeds: string | undefined;
   let programArg = "mpl_core_program";
@@ -1105,8 +1121,7 @@ function extractMplCoreCreateV2(callNode: SyntaxNode, collector?: WarningCollect
         fields[methodName] = argText;
       }
       current = innerExpr;
-    } else if (funcNode.type === "scoped_identifier" || funcNode.type === "field_expression" as string) {
-      // Reached the constructor: `mpl_core::CreateV2CpiBuilder::new(program)`.
+    } else if (funcNode.type === "scoped_identifier") {
       const argsNode = current.childForFieldName("arguments");
       const args = argsNode ? getArguments(argsNode) : [];
       if (args[0]) programArg = args[0].text.trim();
@@ -1115,6 +1130,11 @@ function extractMplCoreCreateV2(callNode: SyntaxNode, collector?: WarningCollect
       break;
     }
   }
+  return { fields, programArg, signerSeeds };
+}
+
+function extractMplCoreCreateV2(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const { fields, programArg, signerSeeds } = walkMplCoreBuilder(callNode);
 
   if (!fields.asset || !fields.payer || !fields.system_program) {
     warnClassificationLost(collector, "MPL Core CreateV2", callNode);
@@ -1136,6 +1156,48 @@ function extractMplCoreCreateV2(callNode: SyntaxNode, collector?: WarningCollect
     name: fields.name ?? '""',
     uri: fields.uri ?? '""',
     dataState: fields.data_state ?? "DataState::AccountState",
+    signerSeeds,
+  };
+}
+
+/**
+ * task #48 S2 — UpdateV2 (disc 30, 7 accounts). Source pattern:
+ *   mpl_core::UpdateV2CpiBuilder::new(prog)
+ *       .asset(&ctx.accounts.asset.to_account_info())
+ *       .payer(&ctx.accounts.payer.to_account_info())
+ *       .system_program(&ctx.accounts.system_program.to_account_info())
+ *       .new_name(Some("New Name".to_string()))
+ *       .new_uri(Some("https://new.example.com".to_string()))
+ *       .new_update_authority(None)
+ *       .invoke()?;
+ */
+function extractMplCoreUpdateV2(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const { fields, programArg, signerSeeds } = walkMplCoreBuilder(callNode);
+
+  if (!fields.asset || !fields.payer || !fields.system_program) {
+    warnClassificationLost(collector, "MPL Core UpdateV2", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  // Option<String> args pass through verbatim — preserve the Some(...) form.
+  const passOpt = (raw: string | undefined): string => {
+    if (!raw) return "None";
+    const trimmed = raw.trim();
+    return trimmed === "" ? "None" : trimmed;
+  };
+  return {
+    kind: "cpi_mpl_core_update_v2",
+    programAccount: clean(programArg),
+    asset: clean(fields.asset),
+    collection: fields.collection ? `Some(${clean(stripSomeWrap(fields.collection))})` : "None",
+    payer: clean(fields.payer),
+    authority: fields.authority ? `Some(${clean(stripSomeWrap(fields.authority))})` : "None",
+    newCollection: fields.new_collection ? `Some(${clean(stripSomeWrap(fields.new_collection))})` : "None",
+    systemProgram: clean(fields.system_program),
+    logWrapper: fields.log_wrapper ? `Some(${clean(stripSomeWrap(fields.log_wrapper))})` : "None",
+    newName: passOpt(fields.new_name),
+    newUri: passOpt(fields.new_uri),
     signerSeeds,
   };
 }

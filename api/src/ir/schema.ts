@@ -1160,6 +1160,37 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // MPL Core: UpdateV2 (task #48 S2). Discriminator 30; 7 accounts (asset
+  // writable non-signer, payer writable signer, optionals fall back to
+  // MPL_CORE_ID via the helper). Borsh args: Option<String> new_name +
+  // Option<String> new_uri + Option<UpdateAuthority>. v1 scope:
+  // new_update_authority always None (defer the UpdateAuthority enum
+  // Borsh encoding until a second pass once a real fixture surfaces).
+  z.object({
+    kind: z.literal("cpi_mpl_core_update_v2"),
+    /** The mpl_core program AccountInfo. */
+    programAccount: z.string(),
+    /** Asset account — writable, non-signer. */
+    asset: z.string(),
+    /** Optional collection — Literal "None" or "Some(<expr>)". */
+    collection: z.string().default("None"),
+    /** Payer — writable + signer. */
+    payer: z.string(),
+    /** Optional authority — "None" or "Some(<expr>)". */
+    authority: z.string().default("None"),
+    /** Optional new_collection — "None" or "Some(<expr>)". */
+    newCollection: z.string().default("None"),
+    /** System program. */
+    systemProgram: z.string(),
+    /** Optional log_wrapper — "None" or "Some(<expr>)". */
+    logWrapper: z.string().default("None"),
+    /** Option<String> new_name — "None" or "Some(<expr>)". */
+    newName: z.string().default("None"),
+    /** Option<String> new_uri — "None" or "Some(<expr>)". */
+    newUri: z.string().default("None"),
+    signerSeeds: z.string().optional(),
+  }),
+
   // MPL Core: CreateV2 (task #48 S1). Distinct from MPL Token Metadata
   // (different program ID: CoREENxT...). Uses kinobi's fluent-builder
   // shape: `mpl_core::CreateV2CpiBuilder::new(program).asset(a).payer(p)
