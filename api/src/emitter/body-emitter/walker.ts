@@ -1466,26 +1466,56 @@ export class BodyWalker {
       (from, to, amount) =>
         `transfer_lamports(${this.normalizeAccountExpr(from)}, ${this.normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)})?;`,
     );
-    replaceCpi(
-      /let\s+cpi_accounts\s*=\s*MintTo\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new_with_signer\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts,\s*([\w\[\]&\s.]+?)\s*,\s*\);\s*mint_to\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
-      (mint, to, authority, signerSeeds, amount) =>
-        `spl_token_mint_to_signed(${this.normalizeAccountExpr(mint)}, ${this.normalizeAccountExpr(to)}, ${this.normalizeAccountExpr(authority)}, ${this.resolveAmountExpr(cleanInlineExpr(amount))}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`,
-    );
-    replaceCpi(
-      /let\s+cpi_accounts\s*=\s*MintTo\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts\s*\);\s*mint_to\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
-      (mint, to, authority, amount) =>
-        `spl_token_mint_to(${this.normalizeAccountExpr(mint)}, ${this.normalizeAccountExpr(to)}, ${this.normalizeAccountExpr(authority)}, ${this.resolveAmountExpr(cleanInlineExpr(amount))})?;`,
-    );
-    replaceCpi(
-      /let\s+cpi_accounts\s*=\s*Burn\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*from:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new_with_signer\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts,\s*([\w\[\]&\s.]+?)\s*,\s*\);\s*burn\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
-      (mint, from, authority, signerSeeds, amount) =>
-        `spl_token_burn_signed(${this.normalizeAccountExpr(from)}, ${this.normalizeAccountExpr(mint)}, ${this.normalizeAccountExpr(authority)}, ${this.resolveAmountExpr(cleanInlineExpr(amount))}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`,
-    );
-    replaceCpi(
-      /let\s+cpi_accounts\s*=\s*Burn\s*\{\s*mint:\s*([\w.]+)\.to_account_info\(\),\s*from:\s*([\w.]+)\.to_account_info\(\),\s*authority:\s*([\w.]+)\.to_account_info\(\),\s*\};\s*let\s+ctx\s*=\s*CpiContext::new\(\s*[\w.]+\.to_account_info\(\),\s*cpi_accounts\s*\);\s*burn\(ctx,\s*([\s\S]*?)\)\?;\s*Ok\(\(\)\)/g,
-      (mint, from, authority, amount) =>
-        `spl_token_burn(${this.normalizeAccountExpr(from)}, ${this.normalizeAccountExpr(mint)}, ${this.normalizeAccountExpr(authority)}, ${this.resolveAmountExpr(cleanInlineExpr(amount))})?;`,
-    );
+    // H7 Phase 5b — let-bound SPL CPI pairs. Mirror of Phase 5a but for
+    // the let-bound source shape:
+    //   let cpi_accounts = X { ... };
+    //   let ctx = CpiContext::{new|new_with_signer}(...);
+    //   fn(ctx, args)?;
+    //   Ok(())
+    //
+    // 4 rules: MintTo signed/unsigned + Burn signed/unsigned. Differs from
+    // the inline form (Phase 5a) in source shape but produces the same
+    // helper-call output. Uses normalizeAccountExpr (handles arbitrary
+    // path expressions like `ctx.accounts.X` AND bare idents) instead of
+    // snakeCase (which only handles bare idents).
+    type LetBoundCpi = {
+      structName: string;
+      structFields: readonly string[];
+      fnName: string;
+      helperBase: string;
+      argOrder: readonly number[];
+    };
+    const letBoundCpis: readonly LetBoundCpi[] = [
+      { structName: "MintTo", structFields: ["mint", "to", "authority"],   fnName: "mint_to", helperBase: "spl_token_mint_to", argOrder: [0, 1, 2] },
+      { structName: "Burn",   structFields: ["mint", "from", "authority"], fnName: "burn",    helperBase: "spl_token_burn",    argOrder: [1, 0, 2] },
+    ];
+    const letBoundFieldRe = (name: string) =>
+      `${name}:\\s*([\\w.]+)\\.to_account_info\\(\\),\\s*`;
+    const buildLetBoundCpiRegex = (cpi: LetBoundCpi, signed: boolean): RegExp => {
+      const fields = cpi.structFields.map(letBoundFieldRe).join("");
+      const ctor = signed
+        ? `CpiContext::new_with_signer\\(\\s*[\\w.]+\\.to_account_info\\(\\),\\s*cpi_accounts,\\s*([\\w\\[\\]&\\s.]+?)\\s*,\\s*\\)`
+        : `CpiContext::new\\(\\s*[\\w.]+\\.to_account_info\\(\\),\\s*cpi_accounts\\s*\\)`;
+      return new RegExp(
+        `let\\s+cpi_accounts\\s*=\\s*${cpi.structName}\\s*\\{\\s*${fields}\\};\\s*let\\s+ctx\\s*=\\s*${ctor};\\s*${cpi.fnName}\\(ctx,\\s*([\\s\\S]*?)\\)\\?;\\s*Ok\\(\\(\\)\\)`,
+        "g",
+      );
+    };
+    for (const cpi of letBoundCpis) {
+      replaceCpi(buildLetBoundCpiRegex(cpi, true), (...groups) => {
+        const captured = groups.slice(0, cpi.structFields.length);
+        const signerSeeds = groups[cpi.structFields.length]!;
+        const amount = groups[cpi.structFields.length + 1]!;
+        const args = cpi.argOrder.map((i) => this.normalizeAccountExpr(captured[i]!)).join(", ");
+        return `${cpi.helperBase}_signed(${args}, ${this.resolveAmountExpr(cleanInlineExpr(amount))}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`;
+      });
+      replaceCpi(buildLetBoundCpiRegex(cpi, false), (...groups) => {
+        const captured = groups.slice(0, cpi.structFields.length);
+        const amount = groups[cpi.structFields.length]!;
+        const args = cpi.argOrder.map((i) => this.normalizeAccountExpr(captured[i]!)).join(", ");
+        return `${cpi.helperBase}(${args}, ${this.resolveAmountExpr(cleanInlineExpr(amount))})?;`;
+      });
+    }
     replaceCpi(
       /let\s+ix\s*=\s*anchor_lang::solana_program::system_instruction::transfer\(\s*&([\w.]+)\.key\(\),\s*&([\w.]+)\.key\(\),\s*([\s\S]*?)\s*,\s*\);\s*anchor_lang::solana_program::program::invoke_signed\(\s*&ix,\s*&\[[\s\S]*?\],\s*(signer_seeds)\s*,\s*\)\?;/g,
       (from, to, amount, signerSeeds) =>
