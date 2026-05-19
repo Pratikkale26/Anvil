@@ -1,44 +1,47 @@
 /**
- * Pyth oracle differential — DEFERRED, blocked on Pyth CPI emit.
+ * Pyth oracle differential — DEFERRED, blocked on M2c harness (write-
+ * back state + synthetic PriceUpdate setup helper).
  *
- * The roadmap (Tier 2.1) lists `oracle-pyth` as a target for the
- * differential corpus. It is intentionally not scoped here yet, for one
- * blocking reason that lives in the emitter, not in the scenario code:
+ * Update 2026-05-19: the original blocker — "Anvil has no typed IR
+ * kind for Pyth reads" — is closed. The full Pyth oracle arc shipped
+ * across 10 commits (M2a → M2b → N5 → N5b → N5c). Both legacy
+ * (pyth_sdk_solana) and modern (pyth_solana_receiver_sdk
+ * PriceUpdateV2) reads are typed (cpi_pyth_read_price_{legacy,modern})
+ * and emit compile-clean target code via hand-rolled byte
+ * deserialization. The pyth_feed_id_literal IR kind inlines
+ * get_feed_id_from_hex calls at parse time.
  *
- *   1. Anvil has no typed IR kind for Pyth price-account reads.
- *      Currently `pyth_solana_receiver_sdk::*` / `pyth_sdk_solana::*`
- *      imports are surfaced by the lint-analyzer as
- *      "pyth_solana_receiver_sdk imports — Pyth oracle reads aren't
- *      transpiled" (see api/src/cli/lint-analyzer.ts:119-141). The
- *      bodies that consume those types fall through to `pass_through`,
- *      where the regex layer cannot rewrite a price-feed deserialize
- *      into a Pinocchio-equivalent that's byte-equal to Anchor's.
+ * What's locked already:
+ *   - cargo-compile-pyth.test.ts — all 4 (demo × target) builds OK
+ *   - pyth-byte-offsets.test.ts — TS re-reads using the SAME offsets
+ *     as the Pinocchio emit, locks byte-layout contract
+ *   - litesvm-aux-programs.test.ts — Pyth Receiver .so fixture loads
+ *     into LiteSVM via addProgram
  *
- *   2. The grant M2 milestone (project-roadmap-todos.md, Tier 2.2)
- *      schedules `cpi_pyth_read_price` + `cpi_switchboard_read_result`
- *      typed IR kinds + emit + 2 fixtures over ~2 weeks. Until that
- *      lands, byte-equal divergence here would be a known emit gap
- *      tagged as a differential test failure — wrong signal.
+ * What this differential WOULD add (the M2c arc):
+ *   - A pyth demo with a write-back state account so the post-read
+ *     state is comparable.
+ *   - A TS helper that synthesizes PriceUpdateV2 bytes (the building
+ *     blocks are in pyth-byte-offsets.test.ts as `buildModernPriceUpdate`).
+ *   - svm.setAccount() install the synthetic PriceUpdate, then run
+ *     the scenario with BOTH Anchor reference and Anvil emit, then
+ *     byte-compare the post-read state account.
  *
- * Path to enable:
- *   - Land Tier 2.2 Pyth CPI work (typed IR kind + parser + emitter).
- *   - Add a small Pyth-consumer demo program under
- *     `api/src/demo-programs/oracle-pyth.rs` (read price,
- *     write to a state PDA).
- *   - Mock the Pyth price account in scenario setup using a
- *     pre-encoded price feed buffer (LiteSVM `setAccount`).
- *   - Compare the state PDA byte-for-byte; the price feed input is
- *     identical across both runs so the only divergence source is the
- *     Pinocchio/Native deserialize path.
+ * Caveat blocking the differential gate (NOT M2c, separate issue):
+ *   - Anchor reference build of pyth_solana_receiver_sdk hits the
+ *     same borsh-derive proc-macro issue Anvil sidestepped via the
+ *     hand-rolled emit. Until the receiver-sdk fixes its Cargo.toml
+ *     to declare `borsh` as a direct dep, Anchor itself can't build
+ *     a pyth-modern reference — meaning we can compare Anvil emit
+ *     against Anvil emit, but not against Anchor. Track upstream:
+ *     https://github.com/pyth-network/pyth-crosschain/issues
  *
- * Tracking-layer style: surface the gap explicitly in the test suite
- * so it doesn't disappear into a TODO file no one re-reads. When it's
- * unblocked, replace the `describe.skip` body with a real
+ * When unblocked, replace the `describe.skip` body with a real
  * `defineDifferential({...})` call — same shape as
  * `differential-staking.test.ts`.
  */
 import { describe, test } from "bun:test";
 
-describe.skip("Anchor vs Anvil-Pinocchio runtime correctness (oracle-pyth) [DEFERRED — Pyth CPI emit]", () => {
+describe.skip("Anchor vs Anvil-Pinocchio runtime correctness (oracle-pyth) [DEFERRED — M2c harness]", () => {
   test.skip("see file header for the path to enable", () => {});
 });
