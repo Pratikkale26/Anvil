@@ -42,6 +42,30 @@ import {
 } from "../build/scenario-runner.js";
 import { consumeQuota, quotaSnapshotAsync } from "../build/differential-quota.js";
 
+/**
+ * S8 — program-ID source resolution. Pre-fix the inline chain ended with
+ * the SystemProgram placeholder when every source was missing, silently
+ * changing semantics (PDAs / token mints / signer checks derived against
+ * the wrong program). Extracted as a pure helper so it can be unit-tested
+ * without spinning the express stack.
+ *
+ * Returns the first non-empty source in priority order, or undefined.
+ * The caller (route) refuses with 400 when undefined rather than falling
+ * back to a placeholder.
+ */
+export function resolveProgramIdSource(input: {
+  programIdBase58?: string;
+  scenarioProgramId?: string;
+  irProgramId?: string;
+  anchorSource: string;
+}): string | undefined {
+  if (input.programIdBase58) return input.programIdBase58;
+  if (input.scenarioProgramId) return input.scenarioProgramId;
+  if (input.irProgramId) return input.irProgramId;
+  const m = input.anchorSource.match(/\bdeclare_id!\s*\(\s*"([^"]+)"\s*\)/);
+  return m?.[1];
+}
+
 export const differentialRoute = Router();
 
 const FileSchema = z.object({
@@ -187,20 +211,32 @@ differentialRoute.post("/", async (req, res) => {
   }
 
   // (5) Resolve programId. Priority: explicit field > scenario > IR >
-  //     re-extract from anchorSource > placeholder. The anchorSource
-  //     fallback rescues stale workbench state where IR was parsed before
-  //     the declare_id! extraction fix landed (every step would otherwise
-  //     revert against the SystemProgram placeholder).
-  const declareIdMatch = parsed.data.anchorSource.match(/\bdeclare_id!\s*\(\s*"([^"]+)"\s*\)/);
+  //     re-extract from anchorSource. The anchorSource fallback rescues
+  //     stale workbench state where IR was parsed before the declare_id!
+  //     extraction fix landed.
+  const programIdSource = resolveProgramIdSource({
+    programIdBase58: parsed.data.programIdBase58,
+    scenarioProgramId: scenario.programId,
+    irProgramId: ir.programId,
+    anchorSource: parsed.data.anchorSource,
+  });
+  if (!programIdSource) {
+    console.warn(
+      "[differential] no programId resolvable from programIdBase58 / scenario.programId / ir.programId / declare_id! — refusing rather than silently defaulting to SystemProgram",
+    );
+    res.status(400).json(
+      new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "programId is required but could not be resolved",
+        "Set request.programIdBase58, scenario.programId, ir.programId, or include declare_id!(...) in anchorSource. Pre-fix the route silently defaulted to SystemProgram which broke PDA derivation.",
+        400,
+      ).toJSON(),
+    );
+    return;
+  }
   let programId: PublicKey;
   try {
-    programId = new PublicKey(
-      parsed.data.programIdBase58
-        ?? scenario.programId
-        ?? ir.programId
-        ?? declareIdMatch?.[1]
-        ?? "11111111111111111111111111111111",
-    );
+    programId = new PublicKey(programIdSource);
   } catch (err) {
     res.status(400).json(
       new AnvilError(ErrorCode.VALIDATION_FAILED, "Invalid programId base58", String(err), 400).toJSON(),
