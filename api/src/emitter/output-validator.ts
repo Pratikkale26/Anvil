@@ -1100,8 +1100,22 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     //   - composite_accounts_field (#21): nested #[derive(Accounts)] field
     //     that Anvil's parser does not flatten — chained access compiles
     //     against AccountInfo and rustc refuses with E0609.
+    //   - cpi_unrecognized_dropped (B6): a CPI shape (anchor_spl, token_
+    //     interface, <crate>::cpi, invoke) landed in pass_through. Pinocchio
+    //     post-process will strip it → silent on-chain CPI loss. Strict
+    //     bar for the mainnet-deploy use case the production-readiness
+    //     review surfaced.
+    //   - cfg_gated_item_dropped (B9): a feature-gated handler / struct
+    //     was silently stripped because the default cfg context evaluates
+    //     the predicate false. Surface as a warning (not error): the user
+    //     may actually intend the strip if they're not building that
+    //     feature; the parser warning carries the predicate text so they
+    //     can confirm. Strict-mode CLI's existing marker scan promotes if
+    //     needed.
     const severity: ValidationSeverity =
-      w.code === "anchor_pattern_in_passthrough" || w.code === "composite_accounts_field"
+      w.code === "anchor_pattern_in_passthrough" ||
+      w.code === "composite_accounts_field" ||
+      w.code === "cpi_unrecognized_dropped"
         ? "error"
         : "warning";
     issues.push({
