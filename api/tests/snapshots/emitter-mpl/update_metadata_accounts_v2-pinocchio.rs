@@ -1,4 +1,4 @@
-pub fn mpl_update_metadata_accounts_v2(
+pub fn mpl_update_metadata_accounts_v2<'a>(
     metadata: &AccountInfo,
     update_authority: &AccountInfo,
     token_metadata_program: &AccountInfo,
@@ -8,6 +8,7 @@ pub fn mpl_update_metadata_accounts_v2(
     new_symbol: &str,
     new_uri: &str,
     new_seller_fee_basis_points: u16,
+    creators: Option<Vec<Creator<'a>>>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -38,11 +39,24 @@ pub fn mpl_update_metadata_accounts_v2(
         data.extend_from_slice(new_uri.as_bytes());
         // DataV2.seller_fee_basis_points
         data.extend_from_slice(&new_seller_fee_basis_points.to_le_bytes());
-        // DataV2.creators = None, collection = None, uses = None
-        data.push(0);
+        // DataV2.creators
+        match creators {
+            Some(arr) => {
+                data.push(1);
+                data.extend_from_slice(&(arr.len() as u32).to_le_bytes());
+                for c in arr {
+                    data.extend_from_slice(&c.address[..]);
+                    data.push(if c.verified { 1 } else { 0 });
+                    data.push(c.share);
+                }
+            }
+            None => data.push(0),
+        }
+        // DataV2.collection = None, uses = None
         data.push(0);
         data.push(0);
     } else {
+        let _ = creators;
         data.push(0);
     }
     // Option<Pubkey> new_update_authority

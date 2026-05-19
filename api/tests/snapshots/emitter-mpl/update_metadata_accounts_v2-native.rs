@@ -8,6 +8,7 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
     new_symbol: &str,
     new_uri: &str,
     new_seller_fee_basis_points: u16,
+    creators: Option<Vec<Creator<'a>>>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -26,10 +27,22 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
         data.extend_from_slice(&(new_uri.len() as u32).to_le_bytes());
         data.extend_from_slice(new_uri.as_bytes());
         data.extend_from_slice(&new_seller_fee_basis_points.to_le_bytes());
-        data.push(0); // creators = None
+        match creators {
+            Some(arr) => {
+                data.push(1);
+                data.extend_from_slice(&(arr.len() as u32).to_le_bytes());
+                for c in arr {
+                    data.extend_from_slice(c.address.as_ref());
+                    data.push(if c.verified { 1 } else { 0 });
+                    data.push(c.share);
+                }
+            }
+            None => data.push(0),
+        }
         data.push(0); // collection = None
         data.push(0); // uses = None
     } else {
+        let _ = creators;
         data.push(0);
     }
     match new_update_authority {

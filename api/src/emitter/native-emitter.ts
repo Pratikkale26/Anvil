@@ -2099,12 +2099,25 @@ pub fn spl_token_transfer_signed<'a>(
     // < 1.0 but our scaffold uses borsh 1.6 — incompatible deps. Hand-roll
     // the same byte layout used by Pinocchio. Verified vs mpl-token-metadata
     // 5.1.1 source: discriminator = 33, args = DataV2 + is_mutable +
-    // Option<CollectionDetails>.
+    // Option<CollectionDetails>. DataV2.creators supported via local Creator
+    // struct (task #84); collection / uses / collection_details still None.
+    if (irNeedsMplCreateMetadataV3Helper(_ir) || irNeedsMplUpdateMetadataAccountsV2Helper(_ir)) {
+      helpers.push(`/// Mirrors mpl-token-metadata 5.1.1's Creator struct for inline Borsh
+/// serialization without a runtime mpl crate dependency. 'a tracks
+/// the lifetime of the referenced Pubkey (typically from AccountInfo.key).
+#[derive(Clone, Copy)]
+pub struct Creator<'a> {
+    pub address: &'a Pubkey,
+    pub verified: bool,
+    pub share: u8,
+}`);
+    }
     if (irNeedsMplCreateMetadataV3Helper(_ir)) {
       helpers.push(`/// Metaplex Token Metadata: create_metadata_accounts_v3 (discriminator 33).
 /// Hand-rolled invoke — mpl-token-metadata crate pins borsh < 1.0,
-/// incompatible with the scaffold's borsh 1.x dep. Args limited to common
-/// Anchor shape: creators/collection/uses/collection_details all None.
+/// incompatible with the scaffold's borsh 1.x dep. DataV2.creators
+/// supported via local Creator<'a>; collection / uses / collection_details
+/// still hard-coded to None.
 pub fn mpl_create_metadata_accounts_v3<'a>(
     metadata: &AccountInfo<'a>,
     mint: &AccountInfo<'a>,
@@ -2118,6 +2131,7 @@ pub fn mpl_create_metadata_accounts_v3<'a>(
     symbol: &str,
     uri: &str,
     seller_fee_basis_points: u16,
+    creators: Option<Vec<Creator<'a>>>,
     is_mutable: bool,
     update_authority_is_signer: bool,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -2132,7 +2146,18 @@ pub fn mpl_create_metadata_accounts_v3<'a>(
     data.extend_from_slice(&(uri.len() as u32).to_le_bytes());
     data.extend_from_slice(uri.as_bytes());
     data.extend_from_slice(&seller_fee_basis_points.to_le_bytes());
-    data.push(0);
+    match creators {
+        Some(arr) => {
+            data.push(1);
+            data.extend_from_slice(&(arr.len() as u32).to_le_bytes());
+            for c in arr {
+                data.extend_from_slice(c.address.as_ref());
+                data.push(if c.verified { 1 } else { 0 });
+                data.push(c.share);
+            }
+        }
+        None => data.push(0),
+    }
     data.push(0);
     data.push(0);
     data.push(if is_mutable { 1 } else { 0 });
@@ -2240,6 +2265,7 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
     new_symbol: &str,
     new_uri: &str,
     new_seller_fee_basis_points: u16,
+    creators: Option<Vec<Creator<'a>>>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -2258,10 +2284,22 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
         data.extend_from_slice(&(new_uri.len() as u32).to_le_bytes());
         data.extend_from_slice(new_uri.as_bytes());
         data.extend_from_slice(&new_seller_fee_basis_points.to_le_bytes());
-        data.push(0); // creators = None
+        match creators {
+            Some(arr) => {
+                data.push(1);
+                data.extend_from_slice(&(arr.len() as u32).to_le_bytes());
+                for c in arr {
+                    data.extend_from_slice(c.address.as_ref());
+                    data.push(if c.verified { 1 } else { 0 });
+                    data.push(c.share);
+                }
+            }
+            None => data.push(0),
+        }
         data.push(0); // collection = None
         data.push(0); // uses = None
     } else {
+        let _ = creators;
         data.push(0);
     }
     match new_update_authority {

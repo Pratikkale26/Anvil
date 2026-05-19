@@ -2988,6 +2988,12 @@ export class AstVisitorBase {
     const resolve = (e: string) => w.normalizeKeyValueUsages(
       w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
     );
+    // DataV2.creators: pass through user's `Some(vec![Creator { ... }])`
+    // expression (task #84 phase 2). Normalize ctx.accounts.X.key() →
+    // target-appropriate form. None / undefined → literal None.
+    const creatorsArg = stmt.creators && stmt.creators !== "None"
+      ? resolve(stmt.creators)
+      : "None";
     const lines: string[] = [
       `    mpl_create_metadata_accounts_v3(`,
       `        ${resolve(stmt.metadata)},`,
@@ -3002,6 +3008,7 @@ export class AstVisitorBase {
       `        &${stmt.symbol},`,
       `        &${stmt.uri},`,
       `        ${stmt.sellerFeeBasisPoints},`,
+      `        ${creatorsArg},`,
       `        ${stmt.isMutable},`,
       `        ${stmt.updateAuthorityIsSigner},`,
       stmt.signerSeeds
@@ -3031,6 +3038,9 @@ export class AstVisitorBase {
     // only new_update_authority / primary_sale_happened / is_mutable
     // leaves newName undefined and the helper sees None for new_data.
     const hasDataUpdate = !!stmt.newName;
+    const creatorsArg = stmt.creators && stmt.creators !== "None"
+      ? resolve(stmt.creators)
+      : "None";
     const lines: string[] = [
       `    mpl_update_metadata_accounts_v2(`,
       `        ${resolve(stmt.metadata)},`,
@@ -3042,6 +3052,7 @@ export class AstVisitorBase {
       hasDataUpdate ? `        &${stmt.newSymbol ?? `""`},` : `        "",`,
       hasDataUpdate ? `        &${stmt.newUri ?? `""`},` : `        "",`,
       `        ${stmt.newSellerFeeBasisPoints ?? "0"},`,
+      `        ${creatorsArg},`,
       `        ${stmt.primarySaleHappened},`,
       `        ${stmt.isMutable},`,
       stmt.signerSeeds
