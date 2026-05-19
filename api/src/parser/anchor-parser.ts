@@ -108,9 +108,21 @@ function computeParseTimeout(lineCount: number): number {
   return Math.min(PARSE_TIMEOUT_MAX_MS, Math.max(PARSE_TIMEOUT_BASE_MS, scaled));
 }
 
+export interface ParseOptions {
+  timeoutMs?: number;
+  /**
+   * B9 — items dropped during project-source flattening due to inactive
+   * `#[cfg(feature = "...")]` predicates. Surfaced as
+   * `cfg_gated_item_dropped` ParserWarnings on the resulting IR so users
+   * see what disappeared from their emit. Empty / undefined means no
+   * such items were dropped.
+   */
+  cfgDrops?: import("./project-source.js").CfgGatedDrop[];
+}
+
 export async function parseAnchor(
   source: string,
-  opts?: { timeoutMs?: number },
+  opts?: ParseOptions,
 ): Promise<ParseResult | ParseError> {
   // Apply Anchor-macro source rewrites BEFORE tree-sitter parses. The
   // multi-file `buildProjectSource` flow already does this; pre-fix, the
@@ -182,6 +194,26 @@ export async function parseAnchor(
     // validator (and downstream consumers) see what the parser couldn't fully
     // classify. See ParserWarning in ir/schema.ts.
     const warningCollector = createWarningCollector();
+
+    // B9 — surface cfg(feature=...) drops collected during project-source
+    // flattening. The parser does the source-shaping internally for single-
+    // file inputs (via rewriteErrMacroToExplicit + tree-sitter), but the
+    // cfg-strip happens upstream in project-source.ts. Callers that ran
+    // buildProjectSourceGraph pass the captured drops via opts.cfgDrops so
+    // they land here as user-visible warnings.
+    if (opts?.cfgDrops && opts.cfgDrops.length > 0) {
+      for (const drop of opts.cfgDrops) {
+        warningCollector.add({
+          code: "cfg_gated_item_dropped",
+          message:
+            `Stripped #[cfg(${drop.predicate})] item: ${drop.itemSnippet} — the default cfg context ` +
+            `evaluates the predicate to false (no features enabled). If your deploy DOES enable this ` +
+            `feature, re-run Anvil with the relevant cfg flags in scope OR upgrade your code to be ` +
+            `unconditional.`,
+          loc: { line: drop.line, column: 0 },
+        });
+      }
+    }
 
     // ── Parse instructions (partial-IR-on-timeout, #27) ──
     // parseInstructions walks each handler fn and may call parseGuarded

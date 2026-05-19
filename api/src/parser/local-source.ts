@@ -4,6 +4,7 @@ import {
   buildProjectSourceGraph,
   collectProjectFilesFromEntry,
   getProjectEntryPath,
+  type CfgGatedDrop,
   type ProjectFile,
 } from "./project-source.js";
 
@@ -13,6 +14,8 @@ export interface LocalSourceResolution {
   candidates: string[];
   projectFiles?: ProjectFile[];
   projectEntryPath?: string;
+  /** B9 — cfg(feature=...) items dropped during flattening; surface as parser warnings. */
+  cfgDrops?: CfgGatedDrop[];
 }
 
 function isRustFile(path: string): boolean {
@@ -90,12 +93,14 @@ export function resolveLocalSource(inputPath: string): LocalSourceResolution {
     }
     const projectFiles = collectProjectFilesFromEntry(resolvedPath);
     const projectEntryPath = getProjectEntryPath(resolvedPath);
+    const build = buildProjectSourceGraph(projectEntryPath, projectFiles);
     return {
-      source: buildProjectSourceGraph(projectEntryPath, projectFiles).source,
+      source: build.source,
       resolvedPath,
       candidates: [resolvedPath],
       projectFiles,
       projectEntryPath,
+      cfgDrops: build.cfgDrops,
     };
   }
 
@@ -113,12 +118,14 @@ export function resolveLocalSource(inputPath: string): LocalSourceResolution {
   }
   const projectFiles = collectProjectFilesFromEntry(selected);
   const projectEntryPath = getProjectEntryPath(selected);
+  const build = buildProjectSourceGraph(projectEntryPath, projectFiles);
 
   return {
-    source: buildProjectSourceGraph(projectEntryPath, projectFiles).source,
+    source: build.source,
     resolvedPath: selected,
     candidates,
     projectFiles,
     projectEntryPath,
+    cfgDrops: build.cfgDrops,
   };
 }

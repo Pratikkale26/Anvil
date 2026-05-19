@@ -2,7 +2,7 @@ import { Router } from "express";
 import { parseAnchor } from "../parser/anchor-parser.js";
 import { metrics } from "../metrics.js";
 import { resolveLocalSource } from "../parser/local-source.js";
-import { buildProjectSource, type ProjectFile } from "../parser/project-source.js";
+import { buildProjectSourceGraph, type CfgGatedDrop, type ProjectFile } from "../parser/project-source.js";
 import { resolveRepoSource } from "../parser/repo-source.js";
 import { AnvilError, ErrorCode } from "../errors.js";
 
@@ -52,6 +52,13 @@ parseRoute.post("/", async (req, res) => {
   let resolvedSource = source;
   let resolvedPath: string | undefined;
   let candidates: string[] | undefined;
+  // B9 — accumulate cfg(feature=...) drops across whichever input path was
+  // used so parseAnchor can surface them as `cfg_gated_item_dropped`
+  // warnings. The single-string `source` input goes through parseAnchor's
+  // own cfg-strip pass (inside rewriteErrMacroToExplicit + descendant calls),
+  // so drops still surface — that's the only path that doesn't populate
+  // resolvedCfgDrops here.
+  let resolvedCfgDrops: CfgGatedDrop[] | undefined;
 
   try {
     // ── 1. Folder upload: { files, entryPath } ──────────────────────────────
@@ -67,9 +74,11 @@ parseRoute.post("/", async (req, res) => {
         );
       }
 
-      resolvedSource = buildProjectSource(entryPath, projectFiles);
+      const build = buildProjectSourceGraph(entryPath, projectFiles);
+      resolvedSource = build.source;
       resolvedPath = entryPath;
       candidates = projectFiles.map((file) => file.path);
+      resolvedCfgDrops = build.cfgDrops;
     }
 
     // ── 2. Local server path: { sourcePath } ───────────────────────────────
@@ -78,6 +87,7 @@ parseRoute.post("/", async (req, res) => {
       resolvedSource = resolved.source;
       resolvedPath = resolved.resolvedPath;
       candidates = resolved.candidates;
+      resolvedCfgDrops = resolved.cfgDrops;
     }
 
     // ── 3. Local server path: { projectPath } ──────────────────────────────
@@ -86,6 +96,7 @@ parseRoute.post("/", async (req, res) => {
       resolvedSource = resolved.source;
       resolvedPath = resolved.resolvedPath;
       candidates = resolved.candidates;
+      resolvedCfgDrops = resolved.cfgDrops;
     }
 
     // ── 4. GitHub repo: { repoUrl, repoRef?, repoSubpath? } ────────────────
@@ -94,6 +105,7 @@ parseRoute.post("/", async (req, res) => {
       resolvedSource = resolved.source;
       resolvedPath = resolved.resolvedPath;
       candidates = resolved.candidates;
+      resolvedCfgDrops = resolved.cfgDrops;
     }
   } catch (error) {
     if (error instanceof AnvilError) {
@@ -132,7 +144,7 @@ parseRoute.post("/", async (req, res) => {
     return;
   }
 
-  const result = await parseAnchor(resolvedSource);
+  const result = await parseAnchor(resolvedSource, { cfgDrops: resolvedCfgDrops });
   metrics.recordParse(result.ok);
   if (!result.ok) {
     const code = result.error.includes("No Anchor #[program] module")

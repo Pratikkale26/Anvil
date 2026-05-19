@@ -1,4 +1,4 @@
-import type { ProjectFile } from "./project-source.js";
+import type { CfgGatedDrop, ProjectFile } from "./project-source.js";
 import { buildProjectSourceGraph } from "./project-source.js";
 
 export interface RepoSourceInput {
@@ -13,6 +13,8 @@ export interface RepoSourceResolution {
   candidates: string[];
   projectFiles: ProjectFile[];
   projectEntryPath: string;
+  /** B9 — cfg(feature=...) items dropped during flattening; surface as parser warnings. */
+  cfgDrops?: CfgGatedDrop[];
 }
 
 interface ParsedGitHubInput {
@@ -186,5 +188,6 @@ export async function resolveRepoSource(input: RepoSourceInput): Promise<RepoSou
     candidates: allRustPaths,
     projectFiles,
     projectEntryPath,
+    cfgDrops: build.cfgDrops,
   };
 }

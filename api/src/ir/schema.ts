@@ -1567,6 +1567,23 @@ export const ParserWarningCodeSchema = z.enum([
   "composite_accounts_field",
   /** DataV2 had creators/collection/uses set to Some(...) but the IR drops them; emit silently writes None. */
   "mpl_datav2_fields_dropped",
+  /**
+   * B9 — #[cfg(feature = "...")]-gated item was dropped by stripInactiveCfgItems.
+   * Default cfg context has no features enabled, so a handler/struct/const gated
+   * under a feature flag silently disappears from emit. The user might be
+   * surprised when their `--features=mainnet` instruction list is shorter than
+   * their Anchor source's. Surfaces the dropped name + predicate text.
+   */
+  "cfg_gated_item_dropped",
+  /**
+   * B6 — Parser saw a CPI-shape call (anchor_spl::* / token_interface::* /
+   * <crate>::cpi::* / solana_program::program::invoke{_signed}) and could
+   * NOT match it against any typed extractor. Emit drops the call into
+   * pass_through where the post-process regex either strips or stubs it.
+   * Surfaced loudly so users see the silent-CPI-loss class of regression
+   * BEFORE deploy. Strict-mode validator promotes to ERROR.
+   */
+  "cpi_unrecognized_dropped",
 ]);
 
 export type ParserWarningCode = z.infer<typeof ParserWarningCodeSchema>;

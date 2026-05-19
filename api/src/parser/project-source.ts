@@ -10,6 +10,14 @@ export interface ProjectSourceBuild {
   source: string;
   includedFiles: string[];
   missingModules: string[];
+  /**
+   * B9 — items dropped by `stripInactiveCfgItems` whose predicate referenced
+   * a feature flag or target gate. The anchor parser surfaces these as
+   * `cfg_gated_item_dropped` warnings so the user sees that their effective
+   * handler list shrunk relative to the original source. Empty when no
+   * cfg-gated items were dropped (the common case).
+   */
+  cfgDrops?: CfgGatedDrop[];
 }
 
 interface ExternalModuleDecl {
@@ -183,10 +191,54 @@ function splitTopLevelArgs(args: string): string[] {
  *
  * Exported for unit testing.
  */
+
+/**
+ * One item that `stripInactiveCfgItems` removed from the source. The
+ * upstream parser surfaces these as `cfg_gated_item_dropped` warnings so
+ * users see when their `--features=mainnet` handler list shrunk relative
+ * to the Anchor source.
+ */
+export interface CfgGatedDrop {
+  /** The cfg predicate text inside `#[cfg(...)]` (`feature = "X"`, `test`, etc.). */
+  predicate: string;
+  /** First ~80 chars of the stripped item — usually enough to identify
+   *  fn/struct name without dumping a multi-KB block. */
+  itemSnippet: string;
+  /** 1-indexed line number where the cfg attribute started. */
+  line: number;
+}
+
 export function stripInactiveCfgItems(source: string): string {
+  return stripInactiveCfgItemsWithDrops(source).source;
+}
+
+/**
+ * Same as stripInactiveCfgItems but also returns the list of dropped items.
+ * Used by the project-source flatten pipeline to plumb drops into the parser
+ * warning collector.
+ */
+export function stripInactiveCfgItemsWithDrops(
+  source: string,
+): { source: string; drops: CfgGatedDrop[] } {
   let out = "";
   let i = 0;
   const n = source.length;
+  const drops: CfgGatedDrop[] = [];
+  // Pre-compute line-start offsets for cheap line-number lookup. Avoids
+  // re-scanning the source per attribute.
+  const lineStarts: number[] = [0];
+  for (let k = 0; k < n; k++) if (source[k] === "\n") lineStarts.push(k + 1);
+  const lineFor = (offset: number): number => {
+    // Binary search lineStarts for the last start <= offset.
+    let lo = 0;
+    let hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >>> 1;
+      if (lineStarts[mid]! <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo + 1;
+  };
   while (i < n) {
     // Look for the next `#[cfg(...)]` attribute.
     const attrStart = source.indexOf("#[", i);
@@ -249,7 +301,20 @@ export function stripInactiveCfgItems(source: string): string {
       out += source.slice(attrEnd, itemEnd);
     } else {
       // Strip attribute + item entirely. Drop a single trailing newline so
-      // we don't leave a blank gap.
+      // we don't leave a blank gap. Record the drop for upstream warning
+      // emission (B9) — pure-test gates are noisy and intentional, so we
+      // only report drops that mention feature flags or specific cfg-key
+      // overrides the user might be surprised by.
+      const isReportable = /\bfeature\b|\btarget_os\b|\btarget_arch\b/.test(predicate)
+        && !isPureTestGate;
+      if (isReportable) {
+        const snippet = source.slice(itemStart, Math.min(itemStart + 80, itemEnd)).replace(/\s+/g, " ").trim();
+        drops.push({
+          predicate: predicate.trim(),
+          itemSnippet: snippet,
+          line: lineFor(attrStart),
+        });
+      }
       let k = itemEnd;
       if (source[k] === "\n") k++;
       i = k;
@@ -257,7 +322,7 @@ export function stripInactiveCfgItems(source: string): string {
     }
     i = itemEnd;
   }
-  return out;
+  return { source: out, drops };
 }
 
 /**
@@ -1055,7 +1120,12 @@ function buildFlattenedSource(
   // both branches of declare_id! / pub const ID via cfg(feature = "devnet")
   // and cfg(not(feature = "devnet")); without this pass both branches
   // emit and cargo fails with E0428 "name defined multiple times."
-  source = stripInactiveCfgItems(source);
+  // B9 — capture the dropped items so anchor-parser can surface
+  // `cfg_gated_item_dropped` warnings instead of silently shrinking the
+  // emitted handler list.
+  const cfgRes = stripInactiveCfgItemsWithDrops(source);
+  source = cfgRes.source;
+  const cfgDrops = cfgRes.drops;
 
   // Expand inline `pubkey!("Base58String")` macro calls into the constant
   // byte-array form `Pubkey::new_from_array([..32..])`. The macro doesn't
@@ -1065,7 +1135,7 @@ function buildFlattenedSource(
   // target framework that exposes a Pubkey type.
   source = expandPubkeyMacro(source);
 
-  return { source, includedFiles, missingModules };
+  return { source, includedFiles, missingModules, cfgDrops };
 }
 
 /**
@@ -1458,14 +1528,14 @@ export function buildProjectSourceGraph(entryPath: string, files: ProjectFile[])
   // pubkey!() expansion run last so we never strip a feature-gated decl_id!
   // BEFORE the err! rewrite would have touched it (no overlap today, but
   // safe ordering).
+  const cfgRes = stripInactiveCfgItemsWithDrops(
+    rewriteErrMacroToExplicit(consolidateMultiStatementCpi(entryFile.content)),
+  );
   return {
-    source: expandPubkeyMacro(
-      stripInactiveCfgItems(
-        rewriteErrMacroToExplicit(consolidateMultiStatementCpi(entryFile.content)),
-      ),
-    ),
+    source: expandPubkeyMacro(cfgRes.source),
     includedFiles: [normalizedEntry],
     missingModules: [],
+    cfgDrops: cfgRes.drops,
   };
 }
 
