@@ -1,24 +1,23 @@
 /**
- * Regression for #21 — Composite #[derive(Accounts)] struct fields.
+ * #21 / H1 — Composite #[derive(Accounts)] struct fields.
  *
- * Surfaced by the 2026-05-12 real-world sweep (anchor/tests/composite):
+ * Anchor flattens nested Accounts structs at IDL generation: the inner
+ * struct's fields become slots in the outer struct's account list. Pre-H1
+ * Anvil refused this shape with the composite_accounts_field validator
+ * error so users got a clear pre-emit failure instead of a cryptic post-
+ * cargo E0609 ("no field X on type AccountInfo").
  *
- *   #[derive(Accounts)]
- *   pub struct CompositeUpdate<'info> {
- *       foo: Foo<'info>,    // ← another #[derive(Accounts)] struct
- *       bar: Bar<'info>,    // ← another #[derive(Accounts)] struct
- *   }
+ * Post-H1 (2026-05-19): parseAccountsStructFields now flattens composites
+ * directly. The validator error retires for the cases the parser can
+ * handle; this test pivots from "validator refuses" to "parser produces
+ * a flat account list + body chains resolve":
  *
- * Source: ctx.accounts.foo.dummy_a — Anchor flattens at IDL gen so the
- * nested struct's accounts join the parent's account list.
+ *   accounts: [foo_dummy_a, bar_dummy_b]
+ *   body: `ctx.accounts.foo.dummy_a` → rewritten to `ctx.accounts.foo_dummy_a`
  *
- * Pre-fix: parser treats `foo: Foo<'info>` as a regular AccountInfo
- * field, validator passes, cargo refuses with E0609 "no field dummy_a
- * on type &pinocchio::account_info::AccountInfo".
- *
- * Until the parser learns to flatten nested Accounts, the validator
- * MUST refuse this shape so users see a clear error pre-emit instead
- * of a cryptic E0609 post-cargo.
+ * Cycle detection + multi-level recursion live in
+ * parser-composite-flatten.test.ts. This file holds the end-to-end shape:
+ * a real composite Anchor program produces an emit-validatable IR.
  */
 import { describe, test, expect } from "bun:test";
 import { parseAnchor } from "../src/parser/anchor-parser.js";
@@ -72,23 +71,32 @@ pub struct DummyB {
 }
 `;
 
-describe("Composite #[derive(Accounts)] regression (#21)", () => {
-  test("validator surfaces an error for composite Accounts field", async () => {
+describe("Composite #[derive(Accounts)] (#21 / H1)", () => {
+  test("composite fields flatten into the outer accounts list", async () => {
     const parsed = await parseAnchor(COMPOSITE_SOURCE);
     if (!parsed.ok) throw new Error(`parse failed: ${parsed.error}`);
 
+    // Pre-H1 there was 1 slot per composite ("foo", "bar"); post-H1 they
+    // expand to "<outer>_<inner>" leaf names.
+    const ix = parsed.ir.instructions.find((i) => i.name === "composite_update");
+    expect(ix).toBeDefined();
+    const accountNames = ix!.accounts.map((a) => a.name);
+    expect(accountNames).toEqual(["foo_dummy_a", "bar_dummy_b"]);
+  });
+
+  test("composite_accounts_field validator error no longer fires", async () => {
+    const parsed = await parseAnchor(COMPOSITE_SOURCE);
+    if (!parsed.ok) throw new Error(`parse failed: ${parsed.error}`);
     const emit = emitPinocchioFull(parsed.ir);
     const issues = validateEmitterOutput(parsed.ir, emit);
-    const errors = issues.filter((i) => i.severity === "error");
-    const compositeError = errors.find(
+    const compositeError = issues.find(
       (e) =>
-        /composite.*Accounts/i.test(e.message)
-        || /nested.*Accounts/i.test(e.message)
-        || /Accounts struct field/i.test(e.message),
+        e.severity === "error"
+        && (/composite.*Accounts/i.test(e.message)
+          || /nested.*Accounts/i.test(e.message)
+          || /Accounts struct field/i.test(e.message)),
     );
-    expect(compositeError).toBeDefined();
-    // Should name the offending field or the parent struct.
-    expect(compositeError!.message).toMatch(/foo|bar|Foo|Bar|CompositeUpdate/);
+    expect(compositeError).toBeUndefined();
   });
 
   test("normal (non-composite) Accounts struct does NOT trigger the error", async () => {

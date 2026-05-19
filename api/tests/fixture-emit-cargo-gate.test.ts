@@ -100,29 +100,28 @@ pub struct NoAccs<'info> {
 }
 `;
 
+// H1 — pre-2026-05-19 this was a composite-Accounts source that cargo
+// rejected (Anvil emitted `ctx.accounts.foo.dummy_a` against a single
+// AccountInfo binding → E0609). Post-H1 composite flatten makes that
+// source build cleanly, so the test now uses an unambiguously broken
+// shape: a handler body that pass_through-carries a reference to an
+// undefined identifier. The emitter preserves the source verbatim and
+// cargo refuses with E0425 "cannot find value `nonexistent_function`".
 const BROKEN_SOURCE = `
 use anchor_lang::prelude::*;
 declare_id!("EHthziFziNoac9LBGxEaVN47Y3uUiRoXvqAiR6oes4iU");
 #[program]
-mod composite_broken {
+mod broken_passthrough {
     use super::*;
-    pub fn composite_update(ctx: Context<CompositeUpdate>, dummy_a: u64) -> Result<()> {
-        let a = &mut ctx.accounts.foo.dummy_a;
-        a.data = dummy_a;
+    pub fn do_stuff(_ctx: Context<Plain>) -> Result<()> {
+        let _ = nonexistent_function_that_cargo_must_refuse();
         Ok(())
     }
 }
 #[derive(Accounts)]
-pub struct CompositeUpdate<'info> {
-    foo: Foo<'info>,
+pub struct Plain<'info> {
+    pub signer: Signer<'info>,
 }
-#[derive(Accounts)]
-pub struct Foo<'info> {
-    #[account(mut)]
-    pub dummy_a: Account<'info, DummyA>,
-}
-#[account]
-pub struct DummyA { pub data: u64 }
 `;
 
 describe("/emit?gate=cargo (#22 / B2 backend)", () => {

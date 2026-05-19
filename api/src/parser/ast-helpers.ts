@@ -8,6 +8,47 @@
 
 import type { SyntaxNode } from "./ts-init.js";
 
+/**
+ * H1 Layer 2 — rewrite composite Accounts chains in a handler body's
+ * source text BEFORE the body is classified.
+ *
+ * compositeMap is built by parseAccountsStructFields when flattenComposites
+ * is enabled (H1 Layer 1). It maps dotted source paths under
+ * `ctx.accounts.` (e.g. `outer.inner`, `outer.middle.inner`) to the flat
+ * slot name the IR carries (e.g. `outer_inner`, `outer_middle_inner`).
+ *
+ * Without this rewrite the body's `ctx.accounts.outer.inner` references
+ * survive into classification verbatim, and downstream classifiers either
+ * misclassify (treating `inner` as a data field on slot `outer`) or fall
+ * to pass_through (failing to recognize the chain shape).
+ *
+ * Sort entries longest-path-first so a multi-level path matches before
+ * its proper prefix — `outer.middle.inner` substitutes before any
+ * `outer.middle` substitution that would leave `outer_middle.inner`
+ * dangling.
+ */
+export function rewriteCompositeChainsInBodyText(
+  bodyText: string,
+  compositeMap: ReadonlyMap<string, string>,
+): string {
+  if (compositeMap.size === 0) return bodyText;
+  const entries = [...compositeMap.entries()].sort(
+    (a, b) => b[0].split(".").length - a[0].split(".").length,
+  );
+  let out = bodyText;
+  for (const [path, flat] of entries) {
+    const escapedPath = path.split(".").map((seg) => seg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*\\.\\s*");
+    // Match `ctx . accounts . <path>` with arbitrary whitespace, followed
+    // by a non-identifier-continuation char (chain end / method call / etc).
+    // Use a non-capturing lookahead so the replacement is a clean text swap.
+    out = out.replace(
+      new RegExp(`\\bctx\\s*\\.\\s*accounts\\s*\\.\\s*${escapedPath}(?![A-Za-z0-9_])`, "g"),
+      `ctx.accounts.${flat}`,
+    );
+  }
+  return out;
+}
+
 // ─── Node text extraction ────────────────────────────────────────────────────
 
 /** Get the original source text for a node */

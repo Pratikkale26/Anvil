@@ -14,11 +14,11 @@ import type {
 } from "../ir/schema.js";
 import { parseGuarded } from "./ts-init.js";
 import type { Parser, SyntaxNode } from "./ts-init.js";
-import { findDescendant, findTopLevelComma } from "./ast-helpers.js";
+import { findDescendant, findTopLevelComma, rewriteCompositeChainsInBodyText } from "./ast-helpers.js";
 import { normalizeSolanaType } from "./utils.js";
 import { classifyBody } from "./body-classifier.js";
 import type { WarningCollector } from "./warning-collector.js";
-import { parseAccountsStructFields } from "./account-parser.js";
+import { parseAccountsStructFields, type AccountsStructRegistry } from "./account-parser.js";
 import type { HelperCpiCatalogEntry } from "./helper-cpi-catalog.js";
 
 // ─── Instruction parsing ────────────────────────────────────────────────────
@@ -184,9 +184,23 @@ function parseInstructionFn(
   // #[derive(Accounts)] struct names so parseAccountsStructFields can flag
   // fields whose type is itself another Accounts struct.
   const accountsStructNames = new Set(accountsStructs.map((s) => s.name));
+  // H1 — build the registry that parseAccountsStructFields uses to
+  // recursively flatten composite fields when flattenComposites is on.
+  // Map<structName, {node, attrs}> built once per program parse.
+  const accountsStructRegistry: AccountsStructRegistry = new Map(
+    accountsStructs.map((s) => [s.name, { node: s.node, attrs: s.attrs }] as const),
+  );
+  // H1 Layer 2 output side-channel — fills with dotted-source-path → flat-name
+  // entries for every composite slot under this Accounts struct. Used below
+  // to rewrite `ctx.accounts.outer.inner` references in the handler body
+  // before classification runs.
+  const compositeFieldPathMap = new Map<string, string>();
   const accounts = accountsStruct
     ? parseAccountsStructFields(accountsStruct.node, accountsStruct.attrs, {
         accountsStructNames,
+        accountsStructRegistry,
+        flattenComposites: true,
+        compositeFieldPathMap,
         collector,
       })
     : [];
@@ -257,6 +271,25 @@ function parseInstructionFn(
       const fn = findDescendant(synthetic.rootNode, "function_item");
       const synBody = fn?.childForFieldName("body");
       if (synBody) bodyNode = synBody;
+    }
+  }
+  // H1 Layer 2 — rewrite composite-Accounts chains in the body source text
+  // BEFORE classification. parseAccountsStructFields populated
+  // compositeFieldPathMap with `<outer>.<inner>...` → flat-name entries; we
+  // apply those substitutions verbatim so downstream classifiers see flat
+  // chains. Without this, `ctx.accounts.outer.inner` survives into the AST
+  // and the body-classifier's chain helpers either misclassify (treating
+  // `inner` as a data field on `outer`) or fall to pass_through.
+  if (bodyNode && compositeFieldPathMap.size > 0) {
+    const original = bodyNode.text;
+    const rewritten = rewriteCompositeChainsInBodyText(original, compositeFieldPathMap);
+    if (rewritten !== original) {
+      const synthetic = parseGuarded(parser, `fn __anvil_composite_norm__() ${rewritten}`);
+      if (synthetic) {
+        const fn = findDescendant(synthetic.rootNode, "function_item");
+        const synBody = fn?.childForFieldName("body");
+        if (synBody) bodyNode = synBody;
+      }
     }
   }
   // Tag every classification warning with this instruction name so users
