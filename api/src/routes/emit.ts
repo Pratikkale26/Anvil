@@ -4,6 +4,7 @@ import { emitPinocchio, emitPinocchioFull } from "../emitter/pinocchio-emitter.j
 import { emitNative, emitNativeFull } from "../emitter/native-emitter.js";
 import { analyzeCU } from "../emitter/cu-analyzer.js";
 import { validateEmitterOutput } from "../emitter/output-validator.js";
+import { auditPassthrough } from "../emitter/passthrough-audit.js";
 import { refineOutput, REFINE_PROMPT_VERSION } from "../ai/refine.js";
 import { RejectedAttemptSchema, type RejectedAttempt } from "../ai/refine-schemas.js";
 import { checkSpendCap, recordSpend, shouldRefuseDueToSpendBackend } from "../ai/spend-tracker.js";
@@ -140,6 +141,26 @@ emitRoute.post("/", async (req, res) => {
     const emitter = emitters[target as Target];
     const output = emitter(ir);
     let validationIssues = validateEmitterOutput(ir, output);
+
+    // B2 — wire pass_through audit into the API surface. CLI strict mode
+    // already runs auditPassthrough() at cli/src/anvil.ts:1158; the
+    // workbench's /emit response previously got no signal for Anchor-only
+    // constructs hiding inside complex pass_through statements. Without
+    // this, an `anchor_spl::*` import buried in a let-else / closure /
+    // match arm survives the post-emit regex sweep and ships an Anchor
+    // dependency to the user as "compiled output". Merge audit findings
+    // into validationIssues so they pick up strict-mode refusal + show
+    // in the workbench validation panel alongside output-validator issues.
+    const passthroughFindings = auditPassthrough(ir);
+    if (passthroughFindings.length > 0) {
+      const asValidationIssues = passthroughFindings.map((f) => ({
+        severity: f.severity,
+        message: `[passthrough-audit] ${f.message} — snippet: ${f.snippet}`,
+        path: f.path,
+      }));
+      validationIssues = [...validationIssues, ...asValidationIssues];
+    }
+
     const validationErrors = validationIssues.filter((issue) => issue.severity === "error");
     metrics.recordEmit(target, validationErrors.length);
     const validationWarnings = validationIssues
