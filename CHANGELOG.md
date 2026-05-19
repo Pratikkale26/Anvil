@@ -8,7 +8,7 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ## Unreleased
 
-### Added — Metaplex byte-equal differential (2026-05-19, 7 commits)
+### Added — Metaplex byte-equal differential (2026-05-19, 11 commits)
 
 First three MPL catalog slots locked under byte-equal runtime verification
 (task #51 / N1). The MPL Token Metadata `.so` already staged at
@@ -58,6 +58,27 @@ remaining IR-level limitation: `DataV2.creators / collection / uses` are
 not captured in the IR; the emit hard-codes them to `None`. NFT minters
 using royalty creators would have those silently dropped without this
 warning. Full IR extension tracked as task #84.
+
+Audit of remaining MPL helpers surfaced **two more** instances of the
+same rent-in-account-list bug class (`e8f8f37`):
+
+5. **`mpl_mint_new_edition_from_master`** — included rent as the 14th
+   account. anchor-spl 0.31's wrapper passes `rent: None` → 13
+   accounts. Anvil's CPI would diverge from Anchor on every print-
+   edition emit.
+6. **`mpl_approve_collection_authority`** — included rent as the 8th
+   account. anchor-spl 0.31 wrapper omits it → 7 accounts.
+
+Both fixed across Native + Pinocchio. New
+`emitter-mpl-rent-omit.test.ts` (`65573a7`) locks the invariant that
+the four MPL helpers carrying a rent fn arg for ABI compat MUST drop
+it (`let _ = rent;`) before constructing the meta list — fires loudly
+if a future refactor re-introduces the divergence.
+
+Dev-server fix (`65573a7`) — two unescaped backticks inside the
+build-runner Cargo.toml template literals caused
+`bun run dev` to fail with a parse error. Replaced with plain
+quotes; the comments still read cleanly.
 
 ### Added — Pyth oracle transpile (2026-05-19, 10 commits)
 
