@@ -731,6 +731,11 @@ type CpiMplCoreUpdateV2 = Extract<BodyStatement, { kind: "cpi_mpl_core_update_v2
 type CpiMplCoreTransferV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_transfer_v1" }>;
 type CpiMplCoreBurnV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_burn_v1" }>;
 type CpiMplCoreCreateCollectionV2 = Extract<BodyStatement, { kind: "cpi_mpl_core_create_collection_v2" }>;
+type CpiMplCoreAddPluginV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_add_plugin_v1" }>;
+type CpiMplCoreRemovePluginV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_remove_plugin_v1" }>;
+type CpiMplCoreUpdatePluginV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_update_plugin_v1" }>;
+type CpiMplCoreApprovePluginAuthorityV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_approve_plugin_authority_v1" }>;
+type CpiMplCoreRevokePluginAuthorityV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_revoke_plugin_authority_v1" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
 type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
 type ZeroCopyLoad = Extract<BodyStatement, { kind: "zero_copy_load" }>;
@@ -822,6 +827,11 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_mpl_core_transfer_v1",
   "cpi_mpl_core_burn_v1",
   "cpi_mpl_core_create_collection_v2",
+  "cpi_mpl_core_add_plugin_v1",
+  "cpi_mpl_core_remove_plugin_v1",
+  "cpi_mpl_core_update_plugin_v1",
+  "cpi_mpl_core_approve_plugin_authority_v1",
+  "cpi_mpl_core_revoke_plugin_authority_v1",
   "zero_copy_load_init",
   "zero_copy_load_mut",
   "zero_copy_load",
@@ -943,6 +953,16 @@ export class AstVisitorBase {
         return this.visitCpiMplCoreBurnV1(stmt);
       case "cpi_mpl_core_create_collection_v2":
         return this.visitCpiMplCoreCreateCollectionV2(stmt);
+      case "cpi_mpl_core_add_plugin_v1":
+        return this.visitCpiMplCoreAddPluginV1(stmt);
+      case "cpi_mpl_core_remove_plugin_v1":
+        return this.visitCpiMplCoreRemovePluginV1(stmt);
+      case "cpi_mpl_core_update_plugin_v1":
+        return this.visitCpiMplCoreUpdatePluginV1(stmt);
+      case "cpi_mpl_core_approve_plugin_authority_v1":
+        return this.visitCpiMplCoreApprovePluginAuthorityV1(stmt);
+      case "cpi_mpl_core_revoke_plugin_authority_v1":
+        return this.visitCpiMplCoreRevokePluginAuthorityV1(stmt);
       case "zero_copy_load_init":
         return this.visitZeroCopyLoadInit(stmt);
       case "zero_copy_load_mut":
@@ -3597,6 +3617,229 @@ export class AstVisitorBase {
       `        ${resolve(stmt.systemProgram)},`,
       `        &${stmt.name},`,
       `        &${stmt.uri},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * MPL Core plugin family — task #48 S6-S10.
+   *
+   * Plugin variant disc table (Plugin enum tag bytes — must match
+   * mpl-core's source order in types/plugin.rs):
+   *   0=Royalties, 1=FreezeDelegate, 2=BurnDelegate, 3=TransferDelegate,
+   *   4=UpdateDelegate, 5=PermanentFreezeDelegate, 6=Attributes,
+   *   7=PermanentTransferDelegate, 8=PermanentBurnDelegate, 9=Edition,
+   *   10=MasterEdition, 11=AddBlocker, 12=ImmutableMetadata,
+   *   13=VerifiedCreators, 14=Autograph, 15=BubblegumV2, 16=FreezeExecute
+   *
+   * PluginType is the same enum, same disc order.
+   *
+   * v1-supported variants (those with statically-sized payloads — 8 total):
+   *   FreezeDelegate(1), BurnDelegate(2), TransferDelegate(3),
+   *   PermanentFreezeDelegate(5), PermanentTransferDelegate(7),
+   *   PermanentBurnDelegate(8), AddBlocker(11), ImmutableMetadata(12)
+   */
+  private mplCorePluginDisc(variant: string): number {
+    const table: Record<string, number> = {
+      "Royalties": 0,
+      "FreezeDelegate": 1,
+      "BurnDelegate": 2,
+      "TransferDelegate": 3,
+      "UpdateDelegate": 4,
+      "PermanentFreezeDelegate": 5,
+      "Attributes": 6,
+      "PermanentTransferDelegate": 7,
+      "PermanentBurnDelegate": 8,
+      "Edition": 9,
+      "MasterEdition": 10,
+      "AddBlocker": 11,
+      "ImmutableMetadata": 12,
+      "VerifiedCreators": 13,
+      "Autograph": 14,
+      "BubblegumV2": 15,
+      "FreezeExecute": 16,
+    };
+    return table[variant] ?? 0;
+  }
+
+  private mplCorePluginAuthorityDisc(variant: string): number {
+    const table: Record<string, number> = {
+      "None": 0,
+      "Owner": 1,
+      "UpdateAuthority": 2,
+      // Address(_) = 3 — payload requires Pubkey, not in v1 scope
+    };
+    return table[variant] ?? 0;
+  }
+
+  /** Build the Plugin-variant byte slice literal for inline use. */
+  private mplCorePluginBytes(variant: string, frozen: string | undefined): string {
+    const disc = this.mplCorePluginDisc(variant);
+    if (variant === "FreezeDelegate" || variant === "PermanentFreezeDelegate") {
+      const fexpr = frozen ?? "false";
+      return `&[${disc}u8, if ${fexpr} { 1u8 } else { 0u8 }]`;
+    }
+    return `&[${disc}u8]`;
+  }
+
+  visitCpiMplCoreAddPluginV1(stmt: CpiMplCoreAddPluginV1): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const resolveOpt = (e: string): string => {
+      const trimmed = e.trim();
+      if (trimmed === "None" || trimmed === "") return "None";
+      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+      if (inner !== undefined) return `Some(${resolve(inner)})`;
+      return `Some(${resolve(trimmed)})`;
+    };
+    const pluginBytes = this.mplCorePluginBytes(stmt.pluginVariant, stmt.pluginFrozen);
+    const lines: string[] = [
+      `    mpl_core_add_plugin_v1(`,
+      `        ${resolve(stmt.programAccount)},`,
+      `        ${resolve(stmt.asset)},`,
+      `        ${resolveOpt(stmt.collection)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolveOpt(stmt.authority)},`,
+      `        ${resolve(stmt.systemProgram)},`,
+      `        ${resolveOpt(stmt.logWrapper)},`,
+      `        ${pluginBytes},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiMplCoreRemovePluginV1(stmt: CpiMplCoreRemovePluginV1): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const resolveOpt = (e: string): string => {
+      const trimmed = e.trim();
+      if (trimmed === "None" || trimmed === "") return "None";
+      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+      if (inner !== undefined) return `Some(${resolve(inner)})`;
+      return `Some(${resolve(trimmed)})`;
+    };
+    const pluginTypeDisc = this.mplCorePluginDisc(stmt.pluginType);
+    const lines: string[] = [
+      `    mpl_core_remove_plugin_v1(`,
+      `        ${resolve(stmt.programAccount)},`,
+      `        ${resolve(stmt.asset)},`,
+      `        ${resolveOpt(stmt.collection)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolveOpt(stmt.authority)},`,
+      `        ${resolve(stmt.systemProgram)},`,
+      `        ${resolveOpt(stmt.logWrapper)},`,
+      `        ${pluginTypeDisc}u8,`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiMplCoreUpdatePluginV1(stmt: CpiMplCoreUpdatePluginV1): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const resolveOpt = (e: string): string => {
+      const trimmed = e.trim();
+      if (trimmed === "None" || trimmed === "") return "None";
+      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+      if (inner !== undefined) return `Some(${resolve(inner)})`;
+      return `Some(${resolve(trimmed)})`;
+    };
+    const pluginBytes = this.mplCorePluginBytes(stmt.pluginVariant, stmt.pluginFrozen);
+    const lines: string[] = [
+      `    mpl_core_update_plugin_v1(`,
+      `        ${resolve(stmt.programAccount)},`,
+      `        ${resolve(stmt.asset)},`,
+      `        ${resolveOpt(stmt.collection)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolveOpt(stmt.authority)},`,
+      `        ${resolve(stmt.systemProgram)},`,
+      `        ${resolveOpt(stmt.logWrapper)},`,
+      `        ${pluginBytes},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiMplCoreApprovePluginAuthorityV1(stmt: CpiMplCoreApprovePluginAuthorityV1): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const resolveOpt = (e: string): string => {
+      const trimmed = e.trim();
+      if (trimmed === "None" || trimmed === "") return "None";
+      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+      if (inner !== undefined) return `Some(${resolve(inner)})`;
+      return `Some(${resolve(trimmed)})`;
+    };
+    const pluginTypeDisc = this.mplCorePluginDisc(stmt.pluginType);
+    const newAuthorityDisc = this.mplCorePluginAuthorityDisc(stmt.newAuthority);
+    const lines: string[] = [
+      `    mpl_core_approve_plugin_authority_v1(`,
+      `        ${resolve(stmt.programAccount)},`,
+      `        ${resolve(stmt.asset)},`,
+      `        ${resolveOpt(stmt.collection)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolveOpt(stmt.authority)},`,
+      `        ${resolve(stmt.systemProgram)},`,
+      `        ${resolveOpt(stmt.logWrapper)},`,
+      `        ${pluginTypeDisc}u8,`,
+      `        ${newAuthorityDisc}u8,`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiMplCoreRevokePluginAuthorityV1(stmt: CpiMplCoreRevokePluginAuthorityV1): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const resolveOpt = (e: string): string => {
+      const trimmed = e.trim();
+      if (trimmed === "None" || trimmed === "") return "None";
+      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+      if (inner !== undefined) return `Some(${resolve(inner)})`;
+      return `Some(${resolve(trimmed)})`;
+    };
+    const pluginTypeDisc = this.mplCorePluginDisc(stmt.pluginType);
+    const lines: string[] = [
+      `    mpl_core_revoke_plugin_authority_v1(`,
+      `        ${resolve(stmt.programAccount)},`,
+      `        ${resolve(stmt.asset)},`,
+      `        ${resolveOpt(stmt.collection)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolveOpt(stmt.authority)},`,
+      `        ${resolve(stmt.systemProgram)},`,
+      `        ${resolveOpt(stmt.logWrapper)},`,
+      `        ${pluginTypeDisc}u8,`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
         : `        None,`,

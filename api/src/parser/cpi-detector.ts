@@ -532,6 +532,37 @@ export function detectCpi(
   ) {
     return extractMplCoreCreateCollectionV2(callNode, collector);
   }
+  // Plugin family (S6-S10). All use kinobi's fluent CpiBuilder chain.
+  if (
+    /\bAddPluginV1CpiBuilder\b/.test(funcText) &&
+    /\.(invoke|invoke_signed)$/.test(funcText)
+  ) {
+    return extractMplCoreAddPluginV1(callNode, collector);
+  }
+  if (
+    /\bRemovePluginV1CpiBuilder\b/.test(funcText) &&
+    /\.(invoke|invoke_signed)$/.test(funcText)
+  ) {
+    return extractMplCoreRemovePluginV1(callNode, collector);
+  }
+  if (
+    /\bUpdatePluginV1CpiBuilder\b/.test(funcText) &&
+    /\.(invoke|invoke_signed)$/.test(funcText)
+  ) {
+    return extractMplCoreUpdatePluginV1(callNode, collector);
+  }
+  if (
+    /\bApprovePluginAuthorityV1CpiBuilder\b/.test(funcText) &&
+    /\.(invoke|invoke_signed)$/.test(funcText)
+  ) {
+    return extractMplCoreApprovePluginAuthorityV1(callNode, collector);
+  }
+  if (
+    /\bRevokePluginAuthorityV1CpiBuilder\b/.test(funcText) &&
+    /\.(invoke|invoke_signed)$/.test(funcText)
+  ) {
+    return extractMplCoreRevokePluginAuthorityV1(callNode, collector);
+  }
 
   return null;
 }
@@ -1174,6 +1205,251 @@ function extractMplCoreCreateV2(callNode: SyntaxNode, collector?: WarningCollect
     name: fields.name ?? '""',
     uri: fields.uri ?? '""',
     dataState: fields.data_state ?? "DataState::AccountState",
+    signerSeeds,
+  };
+}
+
+/**
+ * Plugin family parser helpers (task #48 S6-S10).
+ *
+ * Plugin variants supported in v1 (statically-sized payloads only):
+ *   FreezeDelegate(bool), PermanentFreezeDelegate(bool), BurnDelegate(),
+ *   TransferDelegate(), PermanentTransferDelegate(), PermanentBurnDelegate(),
+ *   AddBlocker(), ImmutableMetadata()
+ *
+ * Source patterns:
+ *   Plugin::FreezeDelegate(FreezeDelegate { frozen: false })
+ *   Plugin::ImmutableMetadata(ImmutableMetadata {})
+ *   Plugin::PermanentFreezeDelegate(PermanentFreezeDelegate { frozen: true })
+ *
+ * Variant identifiers are matched against an allowlist; unsupported
+ * variants (Royalties, Attributes, etc.) cause the parser to fall back
+ * to extractCustomCpi.
+ */
+const V1_PLUGIN_VARIANTS = new Set([
+  "FreezeDelegate",
+  "BurnDelegate",
+  "TransferDelegate",
+  "PermanentFreezeDelegate",
+  "PermanentTransferDelegate",
+  "PermanentBurnDelegate",
+  "AddBlocker",
+  "ImmutableMetadata",
+]);
+
+const ALL_PLUGIN_TYPES = new Set([
+  "Royalties", "FreezeDelegate", "BurnDelegate", "TransferDelegate",
+  "UpdateDelegate", "PermanentFreezeDelegate", "Attributes",
+  "PermanentTransferDelegate", "PermanentBurnDelegate", "Edition",
+  "MasterEdition", "AddBlocker", "ImmutableMetadata", "VerifiedCreators",
+  "Autograph", "BubblegumV2", "FreezeExecute",
+]);
+
+/**
+ * Parse a Plugin enum value expression like
+ *   `Plugin::FreezeDelegate(FreezeDelegate { frozen: false })`
+ * and return the variant name + (for *FreezeDelegate variants) the
+ * frozen bool expression text. Returns null when the variant isn't in
+ * the v1-supported set.
+ */
+function parsePluginValue(text: string): { variant: string; frozen?: string } | null {
+  const m = text.match(/Plugin\s*::\s*(\w+)\s*\(/);
+  if (!m) return null;
+  const variant = m[1] ?? "";
+  if (!V1_PLUGIN_VARIANTS.has(variant)) return null;
+  // For frozen variants, extract the `frozen: <expr>` body OR the
+  // struct-field shorthand `frozen` (where the variable name matches the
+  // field). Anchor users frequently pass through instruction args this
+  // way; without the shorthand path the parser falls back to cpi_custom
+  // and the cargo build then can't resolve the user's `Plugin::*` symbol.
+  if (variant === "FreezeDelegate" || variant === "PermanentFreezeDelegate") {
+    const explicit = text.match(/frozen\s*:\s*([^,\}\)\s]+)/);
+    if (explicit) return { variant, frozen: explicit[1]?.trim() };
+    // Shorthand: `{ frozen }` with no colon and only a single identifier.
+    const shorthand = text.match(/\{\s*frozen\s*\}/);
+    if (shorthand) return { variant, frozen: "frozen" };
+    return null;
+  }
+  return { variant };
+}
+
+/**
+ * Parse a PluginType expression `PluginType::FreezeDelegate` -> "FreezeDelegate".
+ */
+function parsePluginType(text: string): string | null {
+  const m = text.match(/PluginType\s*::\s*(\w+)/);
+  if (!m) return null;
+  const variant = m[1] ?? "";
+  return ALL_PLUGIN_TYPES.has(variant) ? variant : null;
+}
+
+/**
+ * Parse a PluginAuthority expression. v1 supports None/Owner/UpdateAuthority.
+ * Address(_) variants return null (fall-back-to-custom).
+ */
+function parsePluginAuthority(text: string): "None" | "Owner" | "UpdateAuthority" | null {
+  const m = text.match(/PluginAuthority\s*::\s*(\w+)/);
+  if (!m) return null;
+  const v = m[1] ?? "";
+  if (v === "None" || v === "Owner" || v === "UpdateAuthority") return v;
+  return null;
+}
+
+function extractMplCoreAddPluginV1(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const { fields, programArg, signerSeeds } = walkMplCoreBuilder(callNode);
+
+  if (!fields.asset || !fields.payer || !fields.system_program || !fields.plugin) {
+    warnClassificationLost(collector, "MPL Core AddPluginV1", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const plugin = parsePluginValue(fields.plugin);
+  if (!plugin) {
+    warnClassificationLost(collector, "MPL Core AddPluginV1 (unsupported plugin variant)", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  // v1 only supports init_authority absent or None.
+  if (fields.init_authority && fields.init_authority.trim() !== "" && fields.init_authority.trim() !== "None") {
+    warnClassificationLost(collector, "MPL Core AddPluginV1 (non-None init_authority)", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  return {
+    kind: "cpi_mpl_core_add_plugin_v1",
+    programAccount: clean(programArg),
+    asset: clean(fields.asset),
+    collection: fields.collection ? `Some(${clean(stripSomeWrap(fields.collection))})` : "None",
+    payer: clean(fields.payer),
+    authority: fields.authority ? `Some(${clean(stripSomeWrap(fields.authority))})` : "None",
+    systemProgram: clean(fields.system_program),
+    logWrapper: fields.log_wrapper ? `Some(${clean(stripSomeWrap(fields.log_wrapper))})` : "None",
+    pluginVariant: plugin.variant as "FreezeDelegate" | "BurnDelegate" | "TransferDelegate"
+      | "PermanentFreezeDelegate" | "PermanentTransferDelegate" | "PermanentBurnDelegate"
+      | "AddBlocker" | "ImmutableMetadata",
+    pluginFrozen: plugin.frozen,
+    signerSeeds,
+  };
+}
+
+function extractMplCoreRemovePluginV1(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const { fields, programArg, signerSeeds } = walkMplCoreBuilder(callNode);
+
+  if (!fields.asset || !fields.payer || !fields.system_program || !fields.plugin_type) {
+    warnClassificationLost(collector, "MPL Core RemovePluginV1", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const pluginType = parsePluginType(fields.plugin_type);
+  if (!pluginType) {
+    warnClassificationLost(collector, "MPL Core RemovePluginV1 (unknown PluginType)", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  return {
+    kind: "cpi_mpl_core_remove_plugin_v1",
+    programAccount: clean(programArg),
+    asset: clean(fields.asset),
+    collection: fields.collection ? `Some(${clean(stripSomeWrap(fields.collection))})` : "None",
+    payer: clean(fields.payer),
+    authority: fields.authority ? `Some(${clean(stripSomeWrap(fields.authority))})` : "None",
+    systemProgram: clean(fields.system_program),
+    logWrapper: fields.log_wrapper ? `Some(${clean(stripSomeWrap(fields.log_wrapper))})` : "None",
+    pluginType,
+    signerSeeds,
+  };
+}
+
+function extractMplCoreUpdatePluginV1(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const { fields, programArg, signerSeeds } = walkMplCoreBuilder(callNode);
+
+  if (!fields.asset || !fields.payer || !fields.system_program || !fields.plugin) {
+    warnClassificationLost(collector, "MPL Core UpdatePluginV1", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const plugin = parsePluginValue(fields.plugin);
+  if (!plugin) {
+    warnClassificationLost(collector, "MPL Core UpdatePluginV1 (unsupported plugin variant)", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  return {
+    kind: "cpi_mpl_core_update_plugin_v1",
+    programAccount: clean(programArg),
+    asset: clean(fields.asset),
+    collection: fields.collection ? `Some(${clean(stripSomeWrap(fields.collection))})` : "None",
+    payer: clean(fields.payer),
+    authority: fields.authority ? `Some(${clean(stripSomeWrap(fields.authority))})` : "None",
+    systemProgram: clean(fields.system_program),
+    logWrapper: fields.log_wrapper ? `Some(${clean(stripSomeWrap(fields.log_wrapper))})` : "None",
+    pluginVariant: plugin.variant as "FreezeDelegate" | "BurnDelegate" | "TransferDelegate"
+      | "PermanentFreezeDelegate" | "PermanentTransferDelegate" | "PermanentBurnDelegate"
+      | "AddBlocker" | "ImmutableMetadata",
+    pluginFrozen: plugin.frozen,
+    signerSeeds,
+  };
+}
+
+function extractMplCoreApprovePluginAuthorityV1(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const { fields, programArg, signerSeeds } = walkMplCoreBuilder(callNode);
+
+  if (!fields.asset || !fields.payer || !fields.system_program || !fields.plugin_type || !fields.new_authority) {
+    warnClassificationLost(collector, "MPL Core ApprovePluginAuthorityV1", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const pluginType = parsePluginType(fields.plugin_type);
+  const newAuthority = parsePluginAuthority(fields.new_authority);
+  if (!pluginType || !newAuthority) {
+    warnClassificationLost(collector, "MPL Core ApprovePluginAuthorityV1 (unsupported variant)", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  return {
+    kind: "cpi_mpl_core_approve_plugin_authority_v1",
+    programAccount: clean(programArg),
+    asset: clean(fields.asset),
+    collection: fields.collection ? `Some(${clean(stripSomeWrap(fields.collection))})` : "None",
+    payer: clean(fields.payer),
+    authority: fields.authority ? `Some(${clean(stripSomeWrap(fields.authority))})` : "None",
+    systemProgram: clean(fields.system_program),
+    logWrapper: fields.log_wrapper ? `Some(${clean(stripSomeWrap(fields.log_wrapper))})` : "None",
+    pluginType,
+    newAuthority,
+    signerSeeds,
+  };
+}
+
+function extractMplCoreRevokePluginAuthorityV1(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const { fields, programArg, signerSeeds } = walkMplCoreBuilder(callNode);
+
+  if (!fields.asset || !fields.payer || !fields.system_program || !fields.plugin_type) {
+    warnClassificationLost(collector, "MPL Core RevokePluginAuthorityV1", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const pluginType = parsePluginType(fields.plugin_type);
+  if (!pluginType) {
+    warnClassificationLost(collector, "MPL Core RevokePluginAuthorityV1 (unknown PluginType)", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  return {
+    kind: "cpi_mpl_core_revoke_plugin_authority_v1",
+    programAccount: clean(programArg),
+    asset: clean(fields.asset),
+    collection: fields.collection ? `Some(${clean(stripSomeWrap(fields.collection))})` : "None",
+    payer: clean(fields.payer),
+    authority: fields.authority ? `Some(${clean(stripSomeWrap(fields.authority))})` : "None",
+    systemProgram: clean(fields.system_program),
+    logWrapper: fields.log_wrapper ? `Some(${clean(stripSomeWrap(fields.log_wrapper))})` : "None",
+    pluginType,
     signerSeeds,
   };
 }

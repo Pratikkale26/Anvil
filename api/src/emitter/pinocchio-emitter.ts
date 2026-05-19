@@ -51,6 +51,11 @@ import {
   irNeedsMplCoreTransferV1Helper,
   irNeedsMplCoreBurnV1Helper,
   irNeedsMplCoreCreateCollectionV2Helper,
+  irNeedsMplCoreAddPluginV1Helper,
+  irNeedsMplCoreRemovePluginV1Helper,
+  irNeedsMplCoreUpdatePluginV1Helper,
+  irNeedsMplCoreApprovePluginAuthorityV1Helper,
+  irNeedsMplCoreRevokePluginAuthorityV1Helper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK, MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
@@ -409,7 +414,12 @@ export class PinocchioEmitter extends BaseEmitter {
       || irNeedsMplCoreUpdateV2Helper(_ir)
       || irNeedsMplCoreTransferV1Helper(_ir)
       || irNeedsMplCoreBurnV1Helper(_ir)
-      || irNeedsMplCoreCreateCollectionV2Helper(_ir);
+      || irNeedsMplCoreCreateCollectionV2Helper(_ir)
+      || irNeedsMplCoreAddPluginV1Helper(_ir)
+      || irNeedsMplCoreRemovePluginV1Helper(_ir)
+      || irNeedsMplCoreUpdatePluginV1Helper(_ir)
+      || irNeedsMplCoreApprovePluginAuthorityV1Helper(_ir)
+      || irNeedsMplCoreRevokePluginAuthorityV1Helper(_ir);
     if (needsSeedSigner) {
       imports.push(`use pinocchio::instruction::{Seed, Signer};`);
     }
@@ -4059,6 +4069,256 @@ pub fn mpl_core_create_v2(
         system_program,
         log_wrapper_info,
     ];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    // MPL Core S6-S10 — Plugin family. All share the same 6-account meta
+    // (asset writable non-signer, collection optional writable, payer
+    // writable signer, authority optional signer, system_program,
+    // log_wrapper optional). Helpers differ only in discriminator + data
+    // payload. v1 plugin variant scope is statically-sized: visitor emits
+    // the Plugin/PluginType bytes inline at the call site.
+    if (irNeedsMplCoreAddPluginV1Helper(ir)) {
+      helpers.push(`/// MPL Core: AddPluginV1 (discriminator 2).
+/// plugin_bytes: pre-encoded Plugin enum bytes (variant disc + payload).
+/// init_authority_disc: Some(_) emits Option<PluginAuthority>=Some(<v>), None emits 0x00.
+pub fn mpl_core_add_plugin_v1(
+    program: &AccountInfo,
+    asset: &AccountInfo,
+    collection: Option<&AccountInfo>,
+    payer: &AccountInfo,
+    authority: Option<&AccountInfo>,
+    system_program: &AccountInfo,
+    log_wrapper: Option<&AccountInfo>,
+    plugin_bytes: &[u8],
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut data: Vec<u8> = Vec::with_capacity(1 + plugin_bytes.len() + 1);
+    data.push(2);
+    data.extend_from_slice(plugin_bytes);
+    data.push(0); // Option<PluginAuthority> = None (v1 scope)
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(asset.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(collection_info.key(), collection.is_some(), false),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(authority_info.key(), false, authority.is_some()),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(log_wrapper_info.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [asset, collection_info, payer, authority_info, system_program, log_wrapper_info];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreRemovePluginV1Helper(ir)) {
+      helpers.push(`/// MPL Core: RemovePluginV1 (discriminator 4).
+pub fn mpl_core_remove_plugin_v1(
+    program: &AccountInfo,
+    asset: &AccountInfo,
+    collection: Option<&AccountInfo>,
+    payer: &AccountInfo,
+    authority: Option<&AccountInfo>,
+    system_program: &AccountInfo,
+    log_wrapper: Option<&AccountInfo>,
+    plugin_type_disc: u8,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: [u8; 2] = [4, plugin_type_disc];
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(asset.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(collection_info.key(), collection.is_some(), false),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(authority_info.key(), false, authority.is_some()),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(log_wrapper_info.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [asset, collection_info, payer, authority_info, system_program, log_wrapper_info];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreUpdatePluginV1Helper(ir)) {
+      helpers.push(`/// MPL Core: UpdatePluginV1 (discriminator 6).
+pub fn mpl_core_update_plugin_v1(
+    program: &AccountInfo,
+    asset: &AccountInfo,
+    collection: Option<&AccountInfo>,
+    payer: &AccountInfo,
+    authority: Option<&AccountInfo>,
+    system_program: &AccountInfo,
+    log_wrapper: Option<&AccountInfo>,
+    plugin_bytes: &[u8],
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut data: Vec<u8> = Vec::with_capacity(1 + plugin_bytes.len());
+    data.push(6);
+    data.extend_from_slice(plugin_bytes);
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(asset.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(collection_info.key(), collection.is_some(), false),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(authority_info.key(), false, authority.is_some()),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(log_wrapper_info.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [asset, collection_info, payer, authority_info, system_program, log_wrapper_info];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreApprovePluginAuthorityV1Helper(ir)) {
+      helpers.push(`/// MPL Core: ApprovePluginAuthorityV1 (discriminator 8).
+/// v1 scope: new_authority_disc ∈ {0,1,2} (None / Owner / UpdateAuthority).
+pub fn mpl_core_approve_plugin_authority_v1(
+    program: &AccountInfo,
+    asset: &AccountInfo,
+    collection: Option<&AccountInfo>,
+    payer: &AccountInfo,
+    authority: Option<&AccountInfo>,
+    system_program: &AccountInfo,
+    log_wrapper: Option<&AccountInfo>,
+    plugin_type_disc: u8,
+    new_authority_disc: u8,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: [u8; 3] = [8, plugin_type_disc, new_authority_disc];
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(asset.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(collection_info.key(), collection.is_some(), false),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(authority_info.key(), false, authority.is_some()),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(log_wrapper_info.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [asset, collection_info, payer, authority_info, system_program, log_wrapper_info];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreRevokePluginAuthorityV1Helper(ir)) {
+      helpers.push(`/// MPL Core: RevokePluginAuthorityV1 (discriminator 10).
+pub fn mpl_core_revoke_plugin_authority_v1(
+    program: &AccountInfo,
+    asset: &AccountInfo,
+    collection: Option<&AccountInfo>,
+    payer: &AccountInfo,
+    authority: Option<&AccountInfo>,
+    system_program: &AccountInfo,
+    log_wrapper: Option<&AccountInfo>,
+    plugin_type_disc: u8,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: [u8; 2] = [10, plugin_type_disc];
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(asset.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(collection_info.key(), collection.is_some(), false),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(authority_info.key(), false, authority.is_some()),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(log_wrapper_info.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [asset, collection_info, payer, authority_info, system_program, log_wrapper_info];
     match signer_seeds {
         Some(seeds) => {
             let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;

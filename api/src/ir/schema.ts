@@ -1160,6 +1160,122 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // MPL Core: AddPluginV1 (task #48 S6). Discriminator 2; 6 accounts (same
+  // as TransferV1 minus new_owner). Borsh args: plugin: Plugin (enum) +
+  // init_authority: Option<PluginAuthority>. v1 scope supports 8 simple
+  // Plugin variants (the empty-payload + bool-payload ones); complex
+  // variants (Royalties, Attributes, UpdateDelegate, Edition, MasterEdition,
+  // VerifiedCreators, Autograph, BubblegumV2, FreezeExecute) fall through
+  // to cpi_custom. init_authority is always None in v1 scope (the
+  // additional 32-byte Address arm of PluginAuthority requires further work).
+  //
+  // The visitor encodes the Plugin variant bytes inline at the call site
+  // as a fixed-size byte array slice (1 byte for empty-payload variants,
+  // 2 bytes for the bool-payload FreezeDelegate / PermanentFreezeDelegate).
+  // The helper takes a `&[u8]` so both sizes flow through the same signature.
+  z.object({
+    kind: z.literal("cpi_mpl_core_add_plugin_v1"),
+    programAccount: z.string(),
+    asset: z.string(),
+    collection: z.string().default("None"),
+    payer: z.string(),
+    authority: z.string().default("None"),
+    systemProgram: z.string(),
+    logWrapper: z.string().default("None"),
+    /** Plugin variant name (Rust enum identifier). v1 supports 8 simple variants. */
+    pluginVariant: z.enum([
+      "FreezeDelegate",
+      "BurnDelegate",
+      "TransferDelegate",
+      "PermanentFreezeDelegate",
+      "PermanentTransferDelegate",
+      "PermanentBurnDelegate",
+      "AddBlocker",
+      "ImmutableMetadata",
+    ]),
+    /** Raw bool expression for FreezeDelegate / PermanentFreezeDelegate frozen field. */
+    pluginFrozen: z.string().optional(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // MPL Core: RemovePluginV1 (task #48 S7). Discriminator 4; same 6-account
+  // shape as AddPluginV1. Borsh args: plugin_type: PluginType (single u8
+  // discriminant). All 17 PluginType variants supported since payload-less.
+  z.object({
+    kind: z.literal("cpi_mpl_core_remove_plugin_v1"),
+    programAccount: z.string(),
+    asset: z.string(),
+    collection: z.string().default("None"),
+    payer: z.string(),
+    authority: z.string().default("None"),
+    systemProgram: z.string(),
+    logWrapper: z.string().default("None"),
+    /** PluginType variant name — all 17 supported; helper maps to disc byte. */
+    pluginType: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // MPL Core: UpdatePluginV1 (task #48 S8). Discriminator 6; same accounts
+  // as AddPluginV1. Args: plugin: Plugin only (no init_authority). Same
+  // 8-variant v1 scope as AddPluginV1.
+  z.object({
+    kind: z.literal("cpi_mpl_core_update_plugin_v1"),
+    programAccount: z.string(),
+    asset: z.string(),
+    collection: z.string().default("None"),
+    payer: z.string(),
+    authority: z.string().default("None"),
+    systemProgram: z.string(),
+    logWrapper: z.string().default("None"),
+    pluginVariant: z.enum([
+      "FreezeDelegate",
+      "BurnDelegate",
+      "TransferDelegate",
+      "PermanentFreezeDelegate",
+      "PermanentTransferDelegate",
+      "PermanentBurnDelegate",
+      "AddBlocker",
+      "ImmutableMetadata",
+    ]),
+    pluginFrozen: z.string().optional(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // MPL Core: ApprovePluginAuthorityV1 (task #48 S9). Discriminator 8;
+  // 6 accounts. Args: plugin_type: PluginType + new_authority: PluginAuthority.
+  // v1 scope: new_authority limited to None / Owner / UpdateAuthority
+  // variants (Address { address: Pubkey } adds a 32-byte payload that
+  // requires more parser work — defer).
+  z.object({
+    kind: z.literal("cpi_mpl_core_approve_plugin_authority_v1"),
+    programAccount: z.string(),
+    asset: z.string(),
+    collection: z.string().default("None"),
+    payer: z.string(),
+    authority: z.string().default("None"),
+    systemProgram: z.string(),
+    logWrapper: z.string().default("None"),
+    pluginType: z.string(),
+    /** PluginAuthority variant name. v1 scope: "None" | "Owner" | "UpdateAuthority". */
+    newAuthority: z.enum(["None", "Owner", "UpdateAuthority"]),
+    signerSeeds: z.string().optional(),
+  }),
+
+  // MPL Core: RevokePluginAuthorityV1 (task #48 S10). Discriminator 10;
+  // same accounts as ApprovePluginAuthorityV1. Args: plugin_type only.
+  z.object({
+    kind: z.literal("cpi_mpl_core_revoke_plugin_authority_v1"),
+    programAccount: z.string(),
+    asset: z.string(),
+    collection: z.string().default("None"),
+    payer: z.string(),
+    authority: z.string().default("None"),
+    systemProgram: z.string(),
+    logWrapper: z.string().default("None"),
+    pluginType: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // MPL Core: CreateCollectionV2 (task #48 S5). Discriminator 21; just
   // 4 accounts (collection writable+signer, update_authority optional
   // readonly, payer writable+signer, system_program); no log_wrapper

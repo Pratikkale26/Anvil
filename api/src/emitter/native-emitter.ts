@@ -52,6 +52,11 @@ import {
   irNeedsMplCoreTransferV1Helper,
   irNeedsMplCoreBurnV1Helper,
   irNeedsMplCoreCreateCollectionV2Helper,
+  irNeedsMplCoreAddPluginV1Helper,
+  irNeedsMplCoreRemovePluginV1Helper,
+  irNeedsMplCoreUpdatePluginV1Helper,
+  irNeedsMplCoreApprovePluginAuthorityV1Helper,
+  irNeedsMplCoreRevokePluginAuthorityV1Helper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK } from "./markers.js";
 
@@ -255,7 +260,12 @@ export class NativeEmitter extends BaseEmitter {
       || irNeedsMplCoreUpdateV2Helper(_ir)
       || irNeedsMplCoreTransferV1Helper(_ir)
       || irNeedsMplCoreBurnV1Helper(_ir)
-      || irNeedsMplCoreCreateCollectionV2Helper(_ir);
+      || irNeedsMplCoreCreateCollectionV2Helper(_ir)
+      || irNeedsMplCoreAddPluginV1Helper(_ir)
+      || irNeedsMplCoreRemovePluginV1Helper(_ir)
+      || irNeedsMplCoreUpdatePluginV1Helper(_ir)
+      || irNeedsMplCoreApprovePluginAuthorityV1Helper(_ir)
+      || irNeedsMplCoreRevokePluginAuthorityV1Helper(_ir);
     const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsHelper(_ir, "spl_transfer")
       || irNeedsUnsignedSplMintToHelper(_ir)
@@ -2829,6 +2839,222 @@ pub fn mpl_core_create_v2<'a>(
         system_program.clone(),
         log_wrapper_info.clone(),
     ];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreAddPluginV1Helper(_ir)) {
+      helpers.push(`/// MPL Core: AddPluginV1 (discriminator 2).
+pub fn mpl_core_add_plugin_v1<'a>(
+    program: &AccountInfo<'a>,
+    asset: &AccountInfo<'a>,
+    collection: Option<&AccountInfo<'a>>,
+    payer: &AccountInfo<'a>,
+    authority: Option<&AccountInfo<'a>>,
+    system_program: &AccountInfo<'a>,
+    log_wrapper: Option<&AccountInfo<'a>>,
+    plugin_bytes: &[u8],
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut data: Vec<u8> = Vec::with_capacity(1 + plugin_bytes.len() + 1);
+    data.push(2);
+    data.extend_from_slice(plugin_bytes);
+    data.push(0);
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let accounts = vec![
+        AccountMeta::new(*asset.key, false),
+        if collection.is_some() {
+            AccountMeta::new(*collection_info.key, false)
+        } else {
+            AccountMeta::new_readonly(*collection_info.key, false)
+        },
+        AccountMeta::new(*payer.key, true),
+        if authority.is_some() {
+            AccountMeta::new_readonly(*authority_info.key, true)
+        } else {
+            AccountMeta::new_readonly(*authority_info.key, false)
+        },
+        AccountMeta::new_readonly(*system_program.key, false),
+        AccountMeta::new_readonly(*log_wrapper_info.key, false),
+    ];
+    let ix = Instruction { program_id: *program.key, accounts, data };
+    let infos = [asset.clone(), collection_info.clone(), payer.clone(), authority_info.clone(), system_program.clone(), log_wrapper_info.clone()];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreRemovePluginV1Helper(_ir)) {
+      helpers.push(`/// MPL Core: RemovePluginV1 (discriminator 4).
+pub fn mpl_core_remove_plugin_v1<'a>(
+    program: &AccountInfo<'a>,
+    asset: &AccountInfo<'a>,
+    collection: Option<&AccountInfo<'a>>,
+    payer: &AccountInfo<'a>,
+    authority: Option<&AccountInfo<'a>>,
+    system_program: &AccountInfo<'a>,
+    log_wrapper: Option<&AccountInfo<'a>>,
+    plugin_type_disc: u8,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: Vec<u8> = vec![4, plugin_type_disc];
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let accounts = vec![
+        AccountMeta::new(*asset.key, false),
+        if collection.is_some() {
+            AccountMeta::new(*collection_info.key, false)
+        } else {
+            AccountMeta::new_readonly(*collection_info.key, false)
+        },
+        AccountMeta::new(*payer.key, true),
+        if authority.is_some() {
+            AccountMeta::new_readonly(*authority_info.key, true)
+        } else {
+            AccountMeta::new_readonly(*authority_info.key, false)
+        },
+        AccountMeta::new_readonly(*system_program.key, false),
+        AccountMeta::new_readonly(*log_wrapper_info.key, false),
+    ];
+    let ix = Instruction { program_id: *program.key, accounts, data };
+    let infos = [asset.clone(), collection_info.clone(), payer.clone(), authority_info.clone(), system_program.clone(), log_wrapper_info.clone()];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreUpdatePluginV1Helper(_ir)) {
+      helpers.push(`/// MPL Core: UpdatePluginV1 (discriminator 6).
+pub fn mpl_core_update_plugin_v1<'a>(
+    program: &AccountInfo<'a>,
+    asset: &AccountInfo<'a>,
+    collection: Option<&AccountInfo<'a>>,
+    payer: &AccountInfo<'a>,
+    authority: Option<&AccountInfo<'a>>,
+    system_program: &AccountInfo<'a>,
+    log_wrapper: Option<&AccountInfo<'a>>,
+    plugin_bytes: &[u8],
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut data: Vec<u8> = Vec::with_capacity(1 + plugin_bytes.len());
+    data.push(6);
+    data.extend_from_slice(plugin_bytes);
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let accounts = vec![
+        AccountMeta::new(*asset.key, false),
+        if collection.is_some() {
+            AccountMeta::new(*collection_info.key, false)
+        } else {
+            AccountMeta::new_readonly(*collection_info.key, false)
+        },
+        AccountMeta::new(*payer.key, true),
+        if authority.is_some() {
+            AccountMeta::new_readonly(*authority_info.key, true)
+        } else {
+            AccountMeta::new_readonly(*authority_info.key, false)
+        },
+        AccountMeta::new_readonly(*system_program.key, false),
+        AccountMeta::new_readonly(*log_wrapper_info.key, false),
+    ];
+    let ix = Instruction { program_id: *program.key, accounts, data };
+    let infos = [asset.clone(), collection_info.clone(), payer.clone(), authority_info.clone(), system_program.clone(), log_wrapper_info.clone()];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreApprovePluginAuthorityV1Helper(_ir)) {
+      helpers.push(`/// MPL Core: ApprovePluginAuthorityV1 (discriminator 8).
+pub fn mpl_core_approve_plugin_authority_v1<'a>(
+    program: &AccountInfo<'a>,
+    asset: &AccountInfo<'a>,
+    collection: Option<&AccountInfo<'a>>,
+    payer: &AccountInfo<'a>,
+    authority: Option<&AccountInfo<'a>>,
+    system_program: &AccountInfo<'a>,
+    log_wrapper: Option<&AccountInfo<'a>>,
+    plugin_type_disc: u8,
+    new_authority_disc: u8,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: Vec<u8> = vec![8, plugin_type_disc, new_authority_disc];
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let accounts = vec![
+        AccountMeta::new(*asset.key, false),
+        if collection.is_some() {
+            AccountMeta::new(*collection_info.key, false)
+        } else {
+            AccountMeta::new_readonly(*collection_info.key, false)
+        },
+        AccountMeta::new(*payer.key, true),
+        if authority.is_some() {
+            AccountMeta::new_readonly(*authority_info.key, true)
+        } else {
+            AccountMeta::new_readonly(*authority_info.key, false)
+        },
+        AccountMeta::new_readonly(*system_program.key, false),
+        AccountMeta::new_readonly(*log_wrapper_info.key, false),
+    ];
+    let ix = Instruction { program_id: *program.key, accounts, data };
+    let infos = [asset.clone(), collection_info.clone(), payer.clone(), authority_info.clone(), system_program.clone(), log_wrapper_info.clone()];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreRevokePluginAuthorityV1Helper(_ir)) {
+      helpers.push(`/// MPL Core: RevokePluginAuthorityV1 (discriminator 10).
+pub fn mpl_core_revoke_plugin_authority_v1<'a>(
+    program: &AccountInfo<'a>,
+    asset: &AccountInfo<'a>,
+    collection: Option<&AccountInfo<'a>>,
+    payer: &AccountInfo<'a>,
+    authority: Option<&AccountInfo<'a>>,
+    system_program: &AccountInfo<'a>,
+    log_wrapper: Option<&AccountInfo<'a>>,
+    plugin_type_disc: u8,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: Vec<u8> = vec![10, plugin_type_disc];
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let accounts = vec![
+        AccountMeta::new(*asset.key, false),
+        if collection.is_some() {
+            AccountMeta::new(*collection_info.key, false)
+        } else {
+            AccountMeta::new_readonly(*collection_info.key, false)
+        },
+        AccountMeta::new(*payer.key, true),
+        if authority.is_some() {
+            AccountMeta::new_readonly(*authority_info.key, true)
+        } else {
+            AccountMeta::new_readonly(*authority_info.key, false)
+        },
+        AccountMeta::new_readonly(*system_program.key, false),
+        AccountMeta::new_readonly(*log_wrapper_info.key, false),
+    ];
+    let ix = Instruction { program_id: *program.key, accounts, data };
+    let infos = [asset.clone(), collection_info.clone(), payer.clone(), authority_info.clone(), system_program.clone(), log_wrapper_info.clone()];
     match signer_seeds {
         Some(seeds) => invoke_signed(&ix, &infos, seeds),
         None => invoke(&ix, &infos),

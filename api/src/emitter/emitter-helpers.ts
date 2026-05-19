@@ -271,6 +271,41 @@ export function irNeedsMplCoreCreateCollectionV2Helper(ir: SolanaIR): boolean {
   );
 }
 
+/** task #48 S6 — AddPluginV1. Disc 2; 6 accts; plugin bytes + init_authority disc. */
+export function irNeedsMplCoreAddPluginV1Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_core_add_plugin_v1")
+  );
+}
+
+/** task #48 S7 — RemovePluginV1. Disc 4; 6 accts; plugin_type u8. */
+export function irNeedsMplCoreRemovePluginV1Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_core_remove_plugin_v1")
+  );
+}
+
+/** task #48 S8 — UpdatePluginV1. Disc 6; 6 accts; plugin bytes only. */
+export function irNeedsMplCoreUpdatePluginV1Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_core_update_plugin_v1")
+  );
+}
+
+/** task #48 S9 — ApprovePluginAuthorityV1. Disc 8; 6 accts; plugin_type + new_authority discs. */
+export function irNeedsMplCoreApprovePluginAuthorityV1Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_core_approve_plugin_authority_v1")
+  );
+}
+
+/** task #48 S10 — RevokePluginAuthorityV1. Disc 10; 6 accts; plugin_type only. */
+export function irNeedsMplCoreRevokePluginAuthorityV1Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_core_revoke_plugin_authority_v1")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

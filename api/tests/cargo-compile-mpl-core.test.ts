@@ -69,6 +69,10 @@ describe("MPL Core — cargo check across project scaffold", () => {
     "mpl-core-transfer-v1",
     "mpl-core-burn-v1",
     "mpl-core-create-collection-v2",
+    "mpl-core-add-plugin-v1",
+    "mpl-core-remove-plugin-v1",
+    "mpl-core-update-plugin-v1",
+    "mpl-core-approve-revoke-plugin-authority-v1",
   ];
   for (const demo of demos) {
     for (const target of ["pinocchio", "native"] as const) {

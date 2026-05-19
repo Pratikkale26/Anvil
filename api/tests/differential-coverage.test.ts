@@ -210,6 +210,14 @@ const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
   "cpi_mpl_core_burn_v1",
   // MPL Core CreateCollectionV2 — task #48 S5. Same fixture-pending status.
   "cpi_mpl_core_create_collection_v2",
+  // MPL Core plugin family — task #48 S6-S10. Same fixture-pending status.
+  // Real-program byte-equal validation lives in differential-mpl-core.test.ts
+  // once the mpl_core.so + LiteSVM harness wiring matures.
+  "cpi_mpl_core_add_plugin_v1",
+  "cpi_mpl_core_remove_plugin_v1",
+  "cpi_mpl_core_update_plugin_v1",
+  "cpi_mpl_core_approve_plugin_authority_v1",
+  "cpi_mpl_core_revoke_plugin_authority_v1",
 ]);
 
 function listBodyStatementKinds(): string[] {
