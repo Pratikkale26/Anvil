@@ -545,21 +545,10 @@ function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCol
     const explicit = dataText.match(new RegExp(`\\b${field}\\s*:\\s*([^,}]+)`));
     return explicit?.[1]?.trim() ?? "";
   };
-  // Task #84 Phases 1-4: `creators` + `collection` captured. `uses`
-  // still IR-less; warning kept for it.
-  for (const f of ["uses"]) {
-    const val = dataField(f);
-    if (val && val !== "None") {
-      collector?.add({
-        code: "mpl_datav2_fields_dropped",
-        message: `cpi_mpl_create_metadata_v3: DataV2.${f} = ${val.slice(0, 60)} — Anvil's IR doesn't carry this field yet. The emitted CPI will write None, dropping the source's intent. Track via task #84.`,
-        snippet: dataText,
-        loc: locFromNode(args[1] ?? callNode),
-      });
-    }
-  }
+  // Task #84 closed: creators, collection, uses all captured.
   const creatorsExpr = extractDataV2NestedExpression(dataText, "creators");
   const collectionExpr = extractDataV2NestedExpression(dataText, "collection");
+  const usesExpr = extractDataV2NestedExpression(dataText, "uses");
 
   return {
     kind: "cpi_mpl_create_metadata_v3",
@@ -574,6 +563,7 @@ function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCol
     sellerFeeBasisPoints: dataField("seller_fee_basis_points") || "0",
     creators: creatorsExpr,
     collection: collectionExpr,
+    uses: usesExpr,
     isMutable: args[2]?.text.trim() ?? "true",
     updateAuthorityIsSigner: args[3]?.text.trim() ?? "true",
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
@@ -669,6 +659,7 @@ function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: Wa
   let newSellerFeeBasisPoints = "0";
   let creatorsExpr: string | undefined;
   let collectionExpr: string | undefined;
+  let usesExpr: string | undefined;
   const dataV2Match = newDataText.match(/Some\s*\(\s*DataV2\s*\{([\s\S]*)\}\s*\)/);
   if (dataV2Match && dataV2Match[1]) {
     const inner = dataV2Match[1];
@@ -684,21 +675,10 @@ function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: Wa
     newSymbol = grabField("symbol");
     newUri = grabField("uri");
     newSellerFeeBasisPoints = grabField("seller_fee_basis_points") ?? "0";
-    // Task #84 Phases 1-4: creators + collection captured. Uses
-    // remains IR-less; warning kept for it.
-    for (const f of ["uses"]) {
-      const val = grabField(f);
-      if (val && val !== "None") {
-        collector?.add({
-          code: "mpl_datav2_fields_dropped",
-          message: `cpi_mpl_update_metadata_accounts_v2: DataV2.${f} = ${val.slice(0, 60)} — Anvil's IR doesn't carry this field yet. The emitted CPI will write None, dropping the source's intent. Track via task #84.`,
-          snippet: newDataText,
-          loc: locFromNode(args[2] ?? callNode),
-        });
-      }
-    }
+    // Task #84 closed: creators, collection, uses all captured.
     creatorsExpr = extractDataV2NestedExpression(inner, "creators");
     collectionExpr = extractDataV2NestedExpression(inner, "collection");
+    usesExpr = extractDataV2NestedExpression(inner, "uses");
   }
 
   return {
@@ -712,6 +692,7 @@ function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: Wa
     newSellerFeeBasisPoints,
     creators: creatorsExpr,
     collection: collectionExpr,
+    uses: usesExpr,
     primarySaleHappened,
     isMutable,
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,

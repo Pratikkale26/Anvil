@@ -924,6 +924,14 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
      * (if Some) 1 byte verified + 32 byte key. Task #84 phase 4.
      */
     collection: z.string().optional(),
+    /**
+     * DataV2.uses — raw text expression. Captures patterns like
+     * `Some(Uses { use_method: UseMethod::Burn, remaining: 10, total: 10 })`
+     * or `None`. Emit serializes Option<Uses> = 1 byte tag + (if Some)
+     * 1 byte use_method variant + 8 byte u64 LE remaining + 8 byte u64
+     * LE total = 18 bytes. Task #84 phase 5 — closes the task.
+     */
+    uses: z.string().optional(),
     /** Whether the metadata is mutable after creation. */
     isMutable: z.string().default("true"),
     /** Update authority is a signer. */
@@ -965,6 +973,11 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
      * `cpi_mpl_create_metadata_v3.collection`. Task #84 phase 4.
      */
     collection: z.string().optional(),
+    /**
+     * DataV2.uses raw text expression. Same shape + parsing as
+     * `cpi_mpl_create_metadata_v3.uses`. Task #84 phase 5.
+     */
+    uses: z.string().optional(),
     /** Option<bool> primary_sale_happened — raw text. */
     primarySaleHappened: z.string().default("None"),
     /** Option<bool> is_mutable — raw text. */

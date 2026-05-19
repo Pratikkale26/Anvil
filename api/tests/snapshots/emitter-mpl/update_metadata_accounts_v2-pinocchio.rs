@@ -10,6 +10,7 @@ pub fn mpl_update_metadata_accounts_v2(
     new_seller_fee_basis_points: u16,
     creators: Option<Vec<Creator>>,
     collection: Option<Collection>,
+    uses: Option<Uses>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -62,11 +63,24 @@ pub fn mpl_update_metadata_accounts_v2(
             }
             None => data.push(0),
         }
-        // DataV2.uses = None
-        data.push(0);
+        // DataV2.uses
+        match uses {
+            Some(u) => {
+                data.push(1);
+                data.push(match u.use_method {
+                    UseMethod::Burn => 0,
+                    UseMethod::Multiple => 1,
+                    UseMethod::Single => 2,
+                });
+                data.extend_from_slice(&u.remaining.to_le_bytes());
+                data.extend_from_slice(&u.total.to_le_bytes());
+            }
+            None => data.push(0),
+        }
     } else {
         let _ = creators;
         let _ = collection;
+        let _ = uses;
         data.push(0);
     }
     // Option<Pubkey> new_update_authority

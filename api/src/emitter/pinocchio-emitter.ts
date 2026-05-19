@@ -3037,6 +3037,24 @@ pub struct Creator {
 pub struct Collection {
     pub verified: bool,
     pub key: Pubkey,
+}
+
+/// Mirrors mpl-token-metadata 5.1.1's UseMethod enum (Borsh variant
+/// discriminant: Burn=0, Multiple=1, Single=2). Task #84 phase 5.
+#[derive(Clone, Copy)]
+pub enum UseMethod {
+    Burn,
+    Multiple,
+    Single,
+}
+
+/// Mirrors mpl-token-metadata 5.1.1's Uses struct. 17 bytes (1 byte
+/// variant + 8 byte u64 LE remaining + 8 byte u64 LE total). Task #84 phase 5.
+#[derive(Clone, Copy)]
+pub struct Uses {
+    pub use_method: UseMethod,
+    pub remaining: u64,
+    pub total: u64,
 }`);
     }
     if (irNeedsMplCreateMetadataV3Helper(ir)) {
@@ -3059,6 +3077,7 @@ pub fn mpl_create_metadata_accounts_v3(
     seller_fee_basis_points: u16,
     creators: Option<Vec<Creator>>,
     collection: Option<Collection>,
+    uses: Option<Uses>,
     is_mutable: bool,
     update_authority_is_signer: bool,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -3100,8 +3119,20 @@ pub fn mpl_create_metadata_accounts_v3(
         }
         None => data.push(0),
     }
-    // DataV2.uses: Option<Uses> = None
-    data.push(0);
+    // DataV2.uses: Option<Uses>
+    match uses {
+        Some(u) => {
+            data.push(1);
+            data.push(match u.use_method {
+                UseMethod::Burn => 0,
+                UseMethod::Multiple => 1,
+                UseMethod::Single => 2,
+            });
+            data.extend_from_slice(&u.remaining.to_le_bytes());
+            data.extend_from_slice(&u.total.to_le_bytes());
+        }
+        None => data.push(0),
+    }
     // is_mutable: bool
     data.push(if is_mutable { 1 } else { 0 });
     // collection_details: Option<CollectionDetails> = None
@@ -3237,6 +3268,7 @@ pub fn mpl_update_metadata_accounts_v2(
     new_seller_fee_basis_points: u16,
     creators: Option<Vec<Creator>>,
     collection: Option<Collection>,
+    uses: Option<Uses>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -3289,11 +3321,24 @@ pub fn mpl_update_metadata_accounts_v2(
             }
             None => data.push(0),
         }
-        // DataV2.uses = None
-        data.push(0);
+        // DataV2.uses
+        match uses {
+            Some(u) => {
+                data.push(1);
+                data.push(match u.use_method {
+                    UseMethod::Burn => 0,
+                    UseMethod::Multiple => 1,
+                    UseMethod::Single => 2,
+                });
+                data.extend_from_slice(&u.remaining.to_le_bytes());
+                data.extend_from_slice(&u.total.to_le_bytes());
+            }
+            None => data.push(0),
+        }
     } else {
         let _ = creators;
         let _ = collection;
+        let _ = uses;
         data.push(0);
     }
     // Option<Pubkey> new_update_authority
