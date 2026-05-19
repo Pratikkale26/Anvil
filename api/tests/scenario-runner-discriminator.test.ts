@@ -200,7 +200,12 @@ describe("compareScenarioRuns: discriminator-aware stripping (A4)", () => {
     v.snapshots.set("a", { data: Buffer.from(sameBytes), lamports: 100n, owner: "11111111111111111111111111111111" });
 
     const verdict = compareScenarioRuns(scenario, ir, a, v, 0);
-    expect(verdict.verdict).toBe("BYTE_EQUAL");
+    // B4 — bytes match BUT partial_compare_scope fires, so verdict
+    // downgrades to BYTE_EQUAL_WITH_WARNINGS. Pre-B4 the verdict was
+    // BYTE_EQUAL; downstream consumers checking `verdict ===
+    // "BYTE_EQUAL"` shipped on incomplete proofs. The downgrade IS the
+    // safety surface the test should pin.
+    expect(verdict.verdict).toBe("BYTE_EQUAL_WITH_WARNINGS");
     const w = verdict.sanityWarnings.find((w) => w.kind === "partial_compare_scope");
     expect(w).toBeDefined();
     expect(w?.message).toContain("Uncompared:");
@@ -245,7 +250,12 @@ describe("compareScenarioRuns: discriminator-aware stripping (A4)", () => {
     const v = emptyRun();
     v.snapshots.set("a", { data: Buffer.from(data), lamports: 100n, owner: "11111111111111111111111111111111" });
     const verdict = compareScenarioRuns(scenario, ir, a, v, 0);
-    expect(verdict.verdict).toBe("BYTE_EQUAL");
+    // B4 — zero-data buffers fire `zero_mutation` which downgrades the
+    // verdict to BYTE_EQUAL_WITH_WARNINGS. Bytes still match (the test's
+    // primary claim); the downgrade reflects that the equality is
+    // trivial (nothing changed). partial_compare_scope is what the
+    // test actually pins absence of.
+    expect(verdict.verdict).toBe("BYTE_EQUAL_WITH_WARNINGS");
     expect(verdict.sanityWarnings.find((w) => w.kind === "partial_compare_scope")).toBeUndefined();
   });
 
@@ -336,6 +346,10 @@ describe("compareScenarioRuns: discriminator-aware stripping (A4)", () => {
     v.snapshots.set("the_account", { data: Buffer.alloc(0), lamports: 0n, owner: "11111111111111111111111111111111" });
 
     const verdict = compareScenarioRuns(makeScenario(), ir, a, v, 0);
-    expect(verdict.verdict).toBe("BYTE_EQUAL");
+    // B4 — zero-data accounts trigger zero_mutation, downgrading the
+    // verdict. The bytes-equal claim still holds (the test's primary
+    // assertion is "discriminator-strip doesn't false-fail on empty"),
+    // but BYTE_EQUAL_WITH_WARNINGS is the correct verdict now.
+    expect(verdict.verdict).toBe("BYTE_EQUAL_WITH_WARNINGS");
   });
 });
