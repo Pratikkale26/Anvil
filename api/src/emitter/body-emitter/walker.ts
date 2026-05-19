@@ -1533,26 +1533,46 @@ export class BodyWalker {
     // pass (line ~597) replaces `X.key` → `*X.key` (Pubkey value); we need
     // `&Pubkey` for system_instruction::create_account, so prefixing `&`
     // gives `&*X.key` after normalization, which is `&Pubkey`.
-    replaceCpi(
-      /(?:anchor_lang::system_program::)?create_account\(\s*CpiContext::new\(\s*[\s\S]*?,\s*(?:anchor_lang::system_program::)?CreateAccount\s*\{\s*from:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,\s*to:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,?\s*\}\s*,?\s*\)\s*\.\s*with_signer\(\s*(\w+)\s*\)\s*,\s*([\s\S]*?)\s*,\s*([\s\S]*?)\s*,\s*&?(?:ctx\.accounts\.)?(\w+)(?:\.key\(\))?\s*,?\s*\)\?;/g,
-      (from, to, signerVar, lamports, space, owner) => {
-        const fromVar = snakeCase(from.replace(/\.to_account_info\(\)/, ""));
-        const toVar = snakeCase(to.replace(/\.to_account_info\(\)/, ""));
-        const ownerExpr = resolveCreateAccountOwner(owner);
+    // H7 Phase 5c — system_program create_account signed/unsigned pair
+    // consolidation. Pre-fix: two side-by-side replaceCpi() calls; only
+    // difference is `.with_signer(seedsVar),` vs bare `,` after the
+    // CpiContext::new(...) close + the `invoke_signed(..., seedsVar)`
+    // trailer in the output.
+    //
+    // Regex generator + output template centralizes the divergence:
+    // `signed` flag picks the `.with_signer(\\w+)` capture vs bare `,`
+    // and the output appends `\n        ${signerVar},\n    ` before the
+    // closing `)?;`.
+    const buildCreateAcctRegex = (signed: boolean): RegExp => {
+      const fromTo =
+        `from:\\s*(?:ctx\\.accounts\\.)?(\\w+)(?:\\.to_account_info\\(\\))?\\s*,\\s*` +
+        `to:\\s*(?:ctx\\.accounts\\.)?(\\w+)(?:\\.to_account_info\\(\\))?\\s*,?\\s*`;
+      const postCtx = signed
+        ? `\\)\\s*\\.\\s*with_signer\\(\\s*(\\w+)\\s*\\)\\s*,\\s*`
+        : `\\)\\s*,\\s*`;
+      return new RegExp(
+        `(?:anchor_lang::system_program::)?create_account\\(\\s*CpiContext::new\\(\\s*[\\s\\S]*?,\\s*(?:anchor_lang::system_program::)?CreateAccount\\s*\\{\\s*${fromTo}\\}\\s*,?\\s*${postCtx}([\\s\\S]*?)\\s*,\\s*([\\s\\S]*?)\\s*,\\s*&?(?:ctx\\.accounts\\.)?(\\w+)(?:\\.key\\(\\))?\\s*,?\\s*\\)\\?;`,
+        "g",
+      );
+    };
+    const buildCreateAcctEmit = (signed: boolean) => (...groups: string[]) => {
+      const from = groups[0]!;
+      const to = groups[1]!;
+      const offset = signed ? 1 : 0;
+      const signerVar = signed ? groups[2]! : "";
+      const lamports = groups[2 + offset]!;
+      const space = groups[3 + offset]!;
+      const owner = groups[4 + offset]!;
+      const fromVar = snakeCase(from.replace(/\.to_account_info\(\)/, ""));
+      const toVar = snakeCase(to.replace(/\.to_account_info\(\)/, ""));
+      const ownerExpr = resolveCreateAccountOwner(owner);
+      if (signed) {
         return `// System Program: create account (PDA signed)\n    invoke_signed(\n        &system_instruction::create_account(\n            &${fromVar}.key,\n            &${toVar}.key,\n            ${cleanInlineExpr(lamports)},\n            ${cleanInlineExpr(space)} as u64,\n            ${ownerExpr},\n        ),\n        &[${fromVar}.clone(), ${toVar}.clone()],\n        ${signerVar},\n    )?;`;
-      },
-    );
-
-    // ── system create_account via CpiContext, unsigned ──
-    replaceCpi(
-      /(?:anchor_lang::system_program::)?create_account\(\s*CpiContext::new\(\s*[\s\S]*?,\s*(?:anchor_lang::system_program::)?CreateAccount\s*\{\s*from:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,\s*to:\s*(?:ctx\.accounts\.)?(\w+)(?:\.to_account_info\(\))?\s*,?\s*\}\s*,?\s*\)\s*,\s*([\s\S]*?)\s*,\s*([\s\S]*?)\s*,\s*&?(?:ctx\.accounts\.)?(\w+)(?:\.key\(\))?\s*,?\s*\)\?;/g,
-      (from, to, lamports, space, owner) => {
-        const fromVar = snakeCase(from.replace(/\.to_account_info\(\)/, ""));
-        const toVar = snakeCase(to.replace(/\.to_account_info\(\)/, ""));
-        const ownerExpr = resolveCreateAccountOwner(owner);
-        return `// System Program: create account\n    invoke(\n        &system_instruction::create_account(\n            &${fromVar}.key,\n            &${toVar}.key,\n            ${cleanInlineExpr(lamports)},\n            ${cleanInlineExpr(space)} as u64,\n            ${ownerExpr},\n        ),\n        &[${fromVar}.clone(), ${toVar}.clone()],\n    )?;`;
-      },
-    );
+      }
+      return `// System Program: create account\n    invoke(\n        &system_instruction::create_account(\n            &${fromVar}.key,\n            &${toVar}.key,\n            ${cleanInlineExpr(lamports)},\n            ${cleanInlineExpr(space)} as u64,\n            ${ownerExpr},\n        ),\n        &[${fromVar}.clone(), ${toVar}.clone()],\n    )?;`;
+    };
+    replaceCpi(buildCreateAcctRegex(true), buildCreateAcctEmit(true));
+    replaceCpi(buildCreateAcctRegex(false), buildCreateAcctEmit(false));
 
     // ── Generic SPL mint_to via CpiContext (covers nft-minter mint_to pattern) ──
     replaceCpi(
