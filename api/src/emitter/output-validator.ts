@@ -89,6 +89,46 @@ function extractInstructionBody(content: string, fnName: string): string | null 
   return content.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
 }
 
+/**
+ * B7 — escape regex meta-chars in a name fragment so we can interpolate
+ * user-derived identifiers into a regex pattern without false matches.
+ * Identifier characters [A-Za-z0-9_] don't need escaping; we keep the
+ * function tight (escape every common meta-char) for defense-in-depth.
+ */
+function escapeForRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * B7 — Detect whether a function body contains ANY error-return shape
+ * the emitter or AI refine might produce. Used by has_one + owner checks
+ * to confirm the field-equality test has an associated Err path. Pre-B7
+ * this was hardcoded to `fnBody.includes("ProgramError::InvalidAccountData")`
+ * which AI patches could trivially regress by rewriting to a custom
+ * error variant.
+ *
+ * Recognized shapes:
+ *   - ProgramError::<X>
+ *   - <Enum>::<Variant>.into()       — custom Anchor-style errors
+ *   - return Err(<expr>);
+ *   - Err(<expr>)?;                  — short-circuit at expression position
+ *   - return Err(<expr>.into());
+ *
+ * The check is intentionally permissive: it asks "is there SOME Err
+ * return in this body?" not "is the Err return correctly placed?"
+ * Placement-correctness would need real AST + control-flow tracking.
+ */
+function fnBodyHasAnyErrorReturn(fnBody: string): boolean {
+  // Any of these substrings represents an error-return path in the
+  // emitted Rust. Order is irrelevant; we want a single yes/no signal.
+  return (
+    /\bProgramError::\w+/.test(fnBody) ||
+    /\breturn\s+Err\s*\(/.test(fnBody) ||
+    /\bErr\s*\([^)]*\.into\(\)\s*\)/.test(fnBody) ||
+    /\bErr\s*\([^)]+\)\s*\?\s*;/.test(fnBody)
+  );
+}
+
 function extractStateAliases(fnBody: string, accountName: string): string[] {
   const aliases = new Set([accountName]);
   const patterns = [
@@ -293,6 +333,23 @@ function checkAccountCountGuards(content: string, ir: SolanaIR, path: string): V
 /**
  * Check that every mutable custom-state account has an owner check emitted.
  * Missing owner checks allow attackers to pass accounts owned by other programs.
+ *
+ * B7 — pre-B7 this used `fnBody.includes(`${accountName}.owner`)`, defeated
+ * by:
+ *   - aliasing: `let a = &acct; ... a.owner` → no match on `acct.owner`
+ *   - field-chain wrappers: `(*a.account).owner` → matches but coincidentally
+ *   - type rename: `info.owner` after `let info = acct.to_account_info()`
+ *
+ * Now: build a per-instruction set of NAMES referring to the account
+ * (the source name + every alias detected by extractStateAliases) and
+ * a word-boundary regex that matches `<name>.owner` field access OR
+ * `<name>.owner()` method call. Still text-based (the validator is
+ * sync; switching to tree-sitter would require an async parse), but
+ * AT LEAST robust to the alias defeats. A full AST upgrade is tracked
+ * for the H7 walker-port arc.
+ *
+ * The aliasing rules use the same extractStateAliases that has_one
+ * already uses — symmetric helper, single source of truth.
  */
 function checkOwnerChecks(content: string, ir: SolanaIR, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
@@ -308,9 +365,20 @@ function checkOwnerChecks(content: string, ir: SolanaIR, path: string): Validati
       if (!acc.isMut || acc.isInit || acc.isOptional) continue;
       if (!stateNames.has(acc.accountType)) continue;
       const accountName = snakeCase(acc.name);
-      const hasOwnerCheck =
-        fnBody.includes(`${accountName}.owner`) ||
-        fnBody.includes(`${accountName}.owner()`);
+      // Build candidate names: the source name + every alias the
+      // emitter / user code might bind to it. Symmetric with has_one's
+      // extractStateAliases use below.
+      const candidateNames: string[] = [
+        accountName,
+        ...extractStateAliases(fnBody, accountName),
+        // Also capture the legacy `<name>_account` rename pattern the
+        // emitter sometimes produces for AccountInfo borrows.
+        `${accountName}_account`,
+      ];
+      const ownerRe: RegExp = new RegExp(
+        `\\b(?:${candidateNames.map(escapeForRegex).join("|")})\\s*\\.\\s*owner\\b`,
+      );
+      const hasOwnerCheck: boolean = ownerRe.test(fnBody);
       if (!hasOwnerCheck) {
         // Promoted warning -> error: a mutable state account whose
         // accountType is in ir.accounts (i.e. a program-owned struct, not
@@ -447,8 +515,20 @@ function checkHasOneConstraints(content: string, ir: SolanaIR, path: string): Va
         if (constraint.kind !== "has_one" || !constraint.value) continue;
         const fieldName = snakeCase(normalizedConstraintValue(constraint.value));
         const aliases = extractStateAliases(fnBody, accountName);
-        const hasCheck = aliases.some((alias) => fnBody.includes(`${alias}.${fieldName}`))
-          && fnBody.includes("ProgramError::InvalidAccountData");
+        // B7 — pre-B7 this required the literal string
+        // `ProgramError::InvalidAccountData` to appear anywhere in the
+        // function body. AI refine could trivially regress by rewriting
+        // to a custom error variant. Now: ANY Err-return shape counts as
+        // the enforcement clause (ProgramError::*, Err(...)?, custom
+        // .into(), explicit return Err(...);). Bytes-level placement
+        // correctness is still beyond this validator's scope; the
+        // differential gate is the real correctness signal.
+        const fieldAccessRe = new RegExp(
+          `\\b(?:${aliases.map(escapeForRegex).join("|")})\\s*\\.\\s*${escapeForRegex(fieldName)}\\b`,
+        );
+        const hasFieldRead = fieldAccessRe.test(fnBody);
+        const hasErrPath = fnBodyHasAnyErrorReturn(fnBody);
+        const hasCheck = hasFieldRead && hasErrPath;
 
         if (!hasCheck) {
           issues.push({
