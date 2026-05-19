@@ -20,7 +20,7 @@ import { metrics } from "../metrics.js";
 import { SolanaIRSchema, type SolanaIR } from "../ir/schema.js";
 import { refineOutput } from "../ai/refine.js";
 import { AIError } from "../ai/errors.js";
-import { checkSpendCap, recordSpend } from "../ai/spend-tracker.js";
+import { checkSpendCap, recordSpend, shouldRefuseDueToSpendBackend } from "../ai/spend-tracker.js";
 import type { ValidationIssue } from "../emitter/output-validator.js";
 import { ScenarioSchema, lintScenario, type Scenario } from "../ir/scenario.js";
 import { buildBothSos, differentialAvailable, validateAnchorExtraDeps } from "../build/differential-build.js";
@@ -440,7 +440,8 @@ buildRoute.post("/auto-fix", async (req, res) => {
     | "refine_error"
     | "client_closed"
     | "regression_reverted"
-    | "daily_spend_cap_hit" = "max_iterations";
+    | "daily_spend_cap_hit"
+    | "spend_backend_degraded" = "max_iterations";
 
   const callerIp = req.ip ?? req.socket.remoteAddress ?? "unknown";
 
@@ -543,6 +544,18 @@ buildRoute.post("/auto-fix", async (req, res) => {
     }
     if (clientClosed) {
       stoppedReason = "client_closed";
+      break;
+    }
+
+    // B3 — backend-health gate. When Redis (cross-replica spend store) is
+    // degraded in prod, stop the auto-fix loop and report — silent fallback
+    // to in-memory would let multi-replica deploys overrun the cap.
+    const backendCheck = shouldRefuseDueToSpendBackend();
+    if (backendCheck.refuse) {
+      console.warn(`[build][auto-fix] spend backend degraded — halting loop ip=${callerIp}`);
+      iter.refineError = { category: "backend_degraded", message: backendCheck.reason! };
+      emit("refine-error", { iteration: i, category: "backend_degraded", message: iter.refineError.message });
+      stoppedReason = "spend_backend_degraded";
       break;
     }
 

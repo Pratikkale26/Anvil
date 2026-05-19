@@ -5,7 +5,7 @@ import { RefineRequestSchema } from "../ai/refine-schemas.js";
 import { refineOutput } from "../ai/refine.js";
 import { type SolanaIR, SolanaIRSchema } from "../ir/schema.js";
 import { buildDeterministicReviewReport } from "../ai/review-report.js";
-import { checkSpendCap, recordSpend } from "../ai/spend-tracker.js";
+import { checkSpendCap, recordSpend, shouldRefuseDueToSpendBackend } from "../ai/spend-tracker.js";
 import { AIError } from "../ai/errors.js";
 import { diagnoseDifferentialFailure } from "../ai/diagnose-differential.js";
 
@@ -81,6 +81,24 @@ aiRoute.post("/refine", async (req, res) => {
   // gate routes were closed. Mirror the same shape: 429 + Retry-After when
   // capped, recordSpend post-call (0 on cache hit so the budget doesn't
   // move on free responses).
+  // B3 — spend-tracker backend degradation guard. In prod with Redis
+  // configured, a Redis outage means the per-IP counter can't be enforced
+  // across replicas; silent fallback inflates the effective cap by
+  // replica count. 503 + Retry-After until Redis recovers (operator can
+  // opt back into the old silent-fallback via ANVIL_SPEND_REDIS_FALLBACK=1).
+  const backendCheck = shouldRefuseDueToSpendBackend();
+  if (backendCheck.refuse) {
+    console.warn(`[ai/refine] spend backend degraded — refusing call ip=${callerIp}`);
+    res.setHeader("Retry-After", "5");
+    res.status(503).json({
+      error: "AI spend backend temporarily unavailable",
+      details: backendCheck.reason,
+      category: "backend_degraded",
+      retryAfterSec: 5,
+    });
+    return;
+  }
+
   const spendCheck = await checkSpendCap(callerIp);
   if (!spendCheck.allowed) {
     const message = spendCheck.reason ?? `Daily AI spend cap of $${spendCheck.capUsd.toFixed(2)} per IP reached.`;
@@ -214,6 +232,22 @@ aiRoute.post("/diagnose-differential", async (req, res) => {
 
   const { requestId, log } = createProgressLogger("diagnose-differential");
   const callerIp = req.ip ?? req.socket.remoteAddress ?? "unknown";
+
+  // B3 — same backend-health gate as /ai/refine. Spend tracking can't be
+  // trusted across replicas while Redis is degraded; refuse with 503
+  // rather than silently overcharging via per-replica fallback.
+  const backendCheck = shouldRefuseDueToSpendBackend();
+  if (backendCheck.refuse) {
+    console.warn(`[ai/diagnose-differential] spend backend degraded — refusing ip=${callerIp}`);
+    res.setHeader("Retry-After", "5");
+    res.status(503).json({
+      error: "AI spend backend temporarily unavailable",
+      details: backendCheck.reason,
+      category: "backend_degraded",
+      retryAfterSec: 5,
+    });
+    return;
+  }
 
   const spendCheck = await checkSpendCap(callerIp);
   if (!spendCheck.allowed) {

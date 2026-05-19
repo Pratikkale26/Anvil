@@ -50,6 +50,79 @@ let memStore: Store = { days: {} };
 let flushTimer: NodeJS.Timeout | null = null;
 let initialized = false;
 
+/**
+ * B3 — Redis backend health tracking. Mirrors RATELIMIT_REDIS_LOUD_FAIL
+ * (index.ts) so the spend cap behaves consistently with the per-minute
+ * rate limit when Redis flakes in production.
+ *
+ * In a multi-replica deploy, silent fallback to per-replica in-memory
+ * means each replica re-starts the per-IP counter at zero — effective
+ * cap becomes N × nominal cap for the duration of the outage. The same
+ * argument applied to rate-limiting; index.ts already opted into loud-
+ * fail with a 503 + Retry-After. Spend tracking previously kept the
+ * silent fallback — fixed here.
+ *
+ * Health flips unhealthy on any Redis op failure (recordSpend's pipeline
+ * OR checkSpendCap's GET). Flips back to healthy on the next successful
+ * Redis op. Routes consult `isSpendBackendHealthy()`; in prod with Redis
+ * configured + ANVIL_SPEND_REDIS_FALLBACK !== "1", they 503 the request.
+ */
+interface RedisHealth {
+  healthy: boolean;
+  lastFailureMs: number;
+  lastFailureReason: string;
+}
+let redisHealth: RedisHealth = { healthy: true, lastFailureMs: 0, lastFailureReason: "" };
+
+function markRedisUnhealthy(reason: string): void {
+  // Only log on the transition healthy→unhealthy to avoid log spam during
+  // a sustained outage. Same pattern the rate-limit middleware uses.
+  if (redisHealth.healthy) {
+    console.error(`[spend-tracker] redis backend unhealthy: ${reason}`);
+  }
+  redisHealth = { healthy: false, lastFailureMs: Date.now(), lastFailureReason: reason };
+}
+function markRedisHealthy(): void {
+  if (!redisHealth.healthy) {
+    console.log(`[spend-tracker] redis backend recovered (was unhealthy: ${redisHealth.lastFailureReason})`);
+  }
+  redisHealth = { healthy: true, lastFailureMs: 0, lastFailureReason: "" };
+}
+
+/**
+ * True when Redis-backed spend tracking is operating normally. Always true
+ * when Redis isn't configured (single-instance fallback is the design).
+ * False when a recent op (recordSpend pipeline or checkSpendCap GET) hit
+ * a transport / timeout / auth failure that hasn't been recovered yet.
+ */
+export function isSpendBackendHealthy(): boolean {
+  if (!isRedisEnabled()) return true;
+  return redisHealth.healthy;
+}
+
+/**
+ * Whether the current process should refuse the next AI-billable request
+ * because the Redis backend is degraded. True only when ALL of:
+ *   - NODE_ENV === "production"
+ *   - REDIS_URL is set
+ *   - The Redis backend is currently unhealthy
+ *   - ANVIL_SPEND_REDIS_FALLBACK is unset / not "1"
+ *
+ * Routes consult this and emit 503 + Retry-After when true.
+ */
+export function shouldRefuseDueToSpendBackend(): { refuse: boolean; reason?: string } {
+  if (!isRedisEnabled()) return { refuse: false };
+  if (redisHealth.healthy) return { refuse: false };
+  if (process.env.NODE_ENV !== "production") return { refuse: false };
+  if (process.env.ANVIL_SPEND_REDIS_FALLBACK === "1") return { refuse: false };
+  return {
+    refuse: true,
+    reason: `Spend-tracking backend temporarily unavailable (${redisHealth.lastFailureReason}). ` +
+      "Multi-replica deploys silent-fallback to per-replica in-memory would inflate the effective cap; " +
+      "refusing requests until Redis recovers. Set ANVIL_SPEND_REDIS_FALLBACK=1 to opt back into silent fallback.",
+  };
+}
+
 function capUsd(): number {
   const raw = process.env.ANVIL_DAILY_AI_USD_PER_IP;
   if (!raw) return DEFAULT_CAP_USD;
@@ -164,8 +237,14 @@ export async function checkSpendCap(ip: string): Promise<SpendCheck> {
       try {
         const microStr = await redis.get(`anvil:spend:${day}:${ip}`);
         if (microStr) todayUsd = Math.max(todayUsd, Number(microStr) / 1_000_000);
-      } catch {
-        // Fall through to in-memory value.
+        // Successful read — clear any prior unhealthy marker. The recovery
+        // signal is per-op so an intermittent failure recovers fast.
+        markRedisHealthy();
+      } catch (err) {
+        // Fall through to in-memory value AND mark the backend unhealthy
+        // so the next checkSpendCap can refuse if loud-fail is configured.
+        const reason = err instanceof Error ? err.message : String(err);
+        markRedisUnhealthy(`checkSpendCap GET failed: ${reason}`);
       }
     }
   }
@@ -235,8 +314,16 @@ export function recordSpend(ip: string, usd: number): void {
         .incrby(key, micro)
         .expire(key, 48 * 60 * 60, "NX")
         .exec()
+        .then(() => {
+          // Successful write — recover health if degraded.
+          markRedisHealthy();
+        })
         .catch((err: Error) => {
+          // Console.warn kept for back-compat operator logs; markRedisUnhealthy
+          // flips the loud-fail flag that shouldRefuseDueToSpendBackend()
+          // consults from route layers.
           console.warn(`[spend-tracker] redis incrby failed: ${err.message}`);
+          markRedisUnhealthy(`recordSpend pipeline failed: ${err.message}`);
         });
     }
   }

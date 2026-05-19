@@ -6,7 +6,7 @@ import { analyzeCU } from "../emitter/cu-analyzer.js";
 import { validateEmitterOutput } from "../emitter/output-validator.js";
 import { refineOutput, REFINE_PROMPT_VERSION } from "../ai/refine.js";
 import { RejectedAttemptSchema, type RejectedAttempt } from "../ai/refine-schemas.js";
-import { checkSpendCap, recordSpend } from "../ai/spend-tracker.js";
+import { checkSpendCap, recordSpend, shouldRefuseDueToSpendBackend } from "../ai/spend-tracker.js";
 import { buildDeterministicReviewReport } from "../ai/review-report.js";
 import { AIError } from "../ai/errors.js";
 import { buildProjectScaffold } from "../emitter/project-scaffold.js";
@@ -181,19 +181,31 @@ emitRoute.post("/", async (req, res) => {
       // Per-IP daily spend cap. Hit-cap path returns the deterministic emit
       // with a structured refineError so the caller doesn't lose their work.
       const callerIp = req.ip ?? req.socket.remoteAddress ?? "unknown";
-      const spendCheck = await checkSpendCap(callerIp);
-      if (!spendCheck.allowed) {
-        const message =
-          spendCheck.reason ??
-          `Daily AI spend cap of $${spendCheck.capUsd.toFixed(2)} per IP reached.`;
-        console.warn(
-          `[emit][refine] daily AI spend cap hit ip=${callerIp} todayUsd=${spendCheck.todayUsd.toFixed(4)} cap=${spendCheck.capUsd.toFixed(2)}`,
-        );
-        validationWarnings.push(`AI refine unavailable: ${message}`);
-        refineError = { category: "daily_cap_hit", message };
-        metrics.recordRefineError("daily_cap_hit");
-        res.setHeader("Retry-After", String(spendCheck.retryAfterSec));
-      } else try {
+      // B3 — when Redis (cross-replica spend store) is unhealthy in prod,
+      // refuse the AI-billable call. Silent fallback to in-memory would
+      // multiply the effective per-IP cap by the replica count. Mirror of
+      // RATELIMIT_REDIS_LOUD_FAIL behavior in index.ts.
+      const backendCheck = shouldRefuseDueToSpendBackend();
+      if (backendCheck.refuse) {
+        console.warn(`[emit][refine] spend backend degraded — refusing AI call. ip=${callerIp}`);
+        validationWarnings.push(`AI refine unavailable: spend backend degraded.`);
+        refineError = { category: "backend_degraded", message: backendCheck.reason! };
+        metrics.recordRefineError("backend_degraded");
+        res.setHeader("Retry-After", "5");
+      } else {
+        const spendCheck = await checkSpendCap(callerIp);
+        if (!spendCheck.allowed) {
+          const message =
+            spendCheck.reason ??
+            `Daily AI spend cap of $${spendCheck.capUsd.toFixed(2)} per IP reached.`;
+          console.warn(
+            `[emit][refine] daily AI spend cap hit ip=${callerIp} todayUsd=${spendCheck.todayUsd.toFixed(4)} cap=${spendCheck.capUsd.toFixed(2)}`,
+          );
+          validationWarnings.push(`AI refine unavailable: ${message}`);
+          refineError = { category: "daily_cap_hit", message };
+          metrics.recordRefineError("daily_cap_hit");
+          res.setHeader("Retry-After", String(spendCheck.retryAfterSec));
+        } else try {
         const retryNote = previousAttempts ? ` (retry with ${previousAttempts.length} prior rejection(s))` : "";
         console.log(`[emit][refine] ${validationErrors.length} validation errors found — running AI refine pass${retryNote}.`);
         const result = await refineOutput({
@@ -264,6 +276,7 @@ emitRoute.post("/", async (req, res) => {
           metrics.recordRefineError("unknown");
         }
       }
+      } // close: else (B3 — backend healthy branch)
     }
 
     const response: Record<string, unknown> = {
