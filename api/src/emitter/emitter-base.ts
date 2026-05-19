@@ -2184,10 +2184,50 @@ ${fields}
     let seedsPrelude = "";
     let signerSeedsExpr: string | undefined;
     if (accountRef.isPda) {
-      const pdaSeeds = (accountRef.pdaSeeds ?? [`b"${accountName}"`]).map((seed) =>
-        this.normalizeInitSeedExpr(seed)
-      );
-      bumpPrelude = this.emitBumpSeed(
+      // task #45 — state-field references inside seeds expressions
+      // (e.g. `seeds = [base.base_data.to_le_bytes().as_ref()]`). Without
+      // deserializing the account first, `base.base_data` resolves to
+      // `<AccountInfo>.base_data` which doesn't exist. Detect each
+      // `<state-account>.<field>` reference, emit a state-load preamble,
+      // and rewrite the seed expression to use the deserialized local.
+      // Mirror of body-walker's normalizeSeedExpr account-field rewrite
+      // (which only runs at body-bump time, not at init-prelude time).
+      const stateFieldPreloads: string[] = [];
+      const loadedStateAccounts = new Set<string>();
+      const rawSeeds = accountRef.pdaSeeds ?? [`b"${accountName}"`];
+      const rewrittenSeeds = rawSeeds.map((seed) => {
+        let s = seed;
+        for (const acc of instr.accounts) {
+          if (acc.name === accountRef.name) continue;
+          const stateTypeDef = ir.accounts.find((a) => a.name === acc.accountType);
+          if (!stateTypeDef) continue;
+          const accName = snakeCase(acc.name);
+          const stateVar = `${accName}_state`;
+          const re = new RegExp(`\\b${accName}\\.(\\w+)`, "g");
+          const replaced = s.replace(re, (full, field: string) => {
+            if (field === "key" || field === "lamports") return full;
+            // Only rewrite if the field exists on the state def. Fall
+            // through to original text otherwise so emit doesn't grab
+            // method calls / nested expressions.
+            const hasField = stateTypeDef.fields.some((f: { name: string }) => f.name === field);
+            if (!hasField) return full;
+            if (!loadedStateAccounts.has(accName)) {
+              loadedStateAccounts.add(accName);
+              stateFieldPreloads.push(
+                `    let ${stateVar} = ${stateTypeDef.name}::from_account_info(${accName})?;`,
+              );
+            }
+            return `${stateVar}.${field}`;
+          });
+          s = replaced;
+        }
+        return s;
+      });
+      const pdaSeeds = rewrittenSeeds.map((seed) => this.normalizeInitSeedExpr(seed));
+      if (stateFieldPreloads.length > 0) {
+        bumpPrelude = stateFieldPreloads.join("\n") + "\n";
+      }
+      bumpPrelude += this.emitBumpSeed(
         "program_id",
         pdaSeeds,
         accountName,
