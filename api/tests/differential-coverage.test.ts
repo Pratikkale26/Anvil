@@ -102,6 +102,17 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   "t22-group-member-pointer": "t22-group-member-pointer.rs",
   // Zero-copy AccountLoader handle (zero_copy_load_init/_mut/_).
   "zero-copy-foo": "zero-copy-foo.rs",
+  // Metaplex Token Metadata byte-equal fixtures (2026-05-09 → 2026-05-19).
+  // Each entry maps the fixtureName the .test.ts file declares to the demo
+  // it loads (`api/src/demo-programs/mpl-*.rs`). The differential gate runs
+  // mpl_token_metadata.so loaded into LiteSVM via svm.addProgram.
+  "mpl-create-metadata": "mpl-create-metadata.rs",
+  "mpl-verify-collection-direct": "mpl-verify-collection-direct.rs",
+  "mpl-mint-new-edition": "mpl-mint-new-edition.rs",
+  "mpl-approve-revoke": "mpl-approve-revoke.rs",
+  "mpl-freeze-thaw": "mpl-freeze-thaw.rs",
+  "mpl-collection-verify": "mpl-collection-verify.rs",
+  "mpl-sign-metadata": "mpl-sign-metadata.rs",
 };
 
 /**
