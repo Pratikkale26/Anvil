@@ -46,8 +46,48 @@ export function parseInstructions(
   const constStringMap = extractStrConsts(source);
 
   const instructions: SolanaIR["instructions"] = [];
-  let currentAttrs: SyntaxNode[] = [];
 
+  // H3 — Anchor allows nested modules inside #[program]:
+  //
+  //   #[program]
+  //   pub mod my_program {
+  //       pub mod swap {
+  //           pub fn execute(ctx: Context<...>) -> Result<()> { ... }
+  //       }
+  //       pub fn other(ctx: Context<...>) -> Result<()> { ... }
+  //   }
+  //
+  // Pre-H3 the parser only walked direct-child `function_item` of the
+  // program module body. Nested-module handlers were silently invisible
+  // — they wouldn't show up in IR.instructions, the emit's router
+  // wouldn't dispatch them, and an Anchor program organizing its
+  // instructions into per-feature submodules would silently lose all
+  // its functionality.
+  //
+  // walkProgramBody recurses through mod_item children to collect every
+  // function_item reachable from the program module. Attributes that
+  // immediately precede a function_item still attach to it; attributes
+  // on `mod_item` (e.g. `#[cfg(feature = ...)]`) are not threaded —
+  // they're already handled by stripInactiveCfgItems upstream.
+  walkProgramBody(body, instructions, parser, accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog, constStringMap);
+
+  return instructions;
+}
+
+function walkProgramBody(
+  body: SyntaxNode,
+  out: SolanaIR["instructions"],
+  parser: Parser,
+  accountsStructs: { name: string; node: SyntaxNode; attrs: SyntaxNode[]; instructionArgs: string[] }[],
+  implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
+  functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[],
+  fromImpls: FromImplCatalogEntry[],
+  source: string,
+  collector?: WarningCollector,
+  helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
+  constStringMap?: Map<string, string>,
+): void {
+  let currentAttrs: SyntaxNode[] = [];
   for (let i = 0; i < body.namedChildCount; i++) {
     const child = body.namedChild(i);
     if (!child) continue;
@@ -56,16 +96,28 @@ export function parseInstructions(
       currentAttrs.push(child);
       continue;
     }
+    // Line / block comments between an attribute and the item it
+    // decorates must not flush currentAttrs. Mirror the guard in
+    // anchor-parser.ts's classifyTopLevel walker.
+    if (child.type === "line_comment" || child.type === "block_comment") {
+      continue;
+    }
 
     if (child.type === "function_item") {
       const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog, constStringMap);
-      if (instr) instructions.push(instr);
+      if (instr) out.push(instr);
+    } else if (child.type === "mod_item") {
+      // Recurse into nested module bodies. The module's attrs are not
+      // forwarded into the child walk — `walkProgramBody` only carries
+      // per-function attributes (`#[access_control(…)]` etc.).
+      const subBody = child.childForFieldName("body");
+      if (subBody) {
+        walkProgramBody(subBody, out, parser, accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog, constStringMap);
+      }
     }
 
     currentAttrs = [];
   }
-
-  return instructions;
 }
 
 /**
