@@ -6,18 +6,18 @@
 **Parser warnings:** 0
 **Validator issues:** 0
 **cargo-build verdict:** FAILED
-**cargo errors:** 9
-**cargo duration:** 254ms
+**cargo errors:** 8
+**cargo duration:** 236ms
 
 ## Cargo errors (first 8)
 
 ```
-cannot find macro `pubkey` in this scope
-failed to resolve: use of undeclared type `System`
+no function or associated item named `new_from_array` found for array `[u8; 32]` in the current scope
 no field `data` on type `&pinocchio::account_info::AccountInfo`
 no field `base_data` on type `&pinocchio::account_info::AccountInfo`
 no field `data` on type `&pinocchio::account_info::AccountInfo`
 no field `base_data_key` on type `&pinocchio::account_info::AccountInfo`
 no field `base_data` on type `&pinocchio::account_info::AccountInfo`
 no field `data` on type `&pinocchio::account_info::AccountInfo`
+no field `base_data_key` on type `&pinocchio::account_info::AccountInfo`
 ```

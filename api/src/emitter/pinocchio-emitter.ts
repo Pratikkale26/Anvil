@@ -2019,6 +2019,16 @@ ${invokeCall}
     return `    create_program_account(${account}, ${payer}, (${spaceExpr}) as usize, program_id, ${signerSeeds ?? "&[]"})?;`;
   }
 
+  /** task #41 — Pinocchio Pubkey is [u8; 32], not a struct, so the
+   *  `Pubkey::new_from_array([...])` constructor doesn't exist. The
+   *  array literal IS the Pubkey value already. Strip the wrap. */
+  protected override postProcessTopLevelConst(constText: string): string {
+    return constText.replace(
+      /\bPubkey\s*::\s*new_from_array\s*\(\s*(\[[\s\S]+?\])\s*\)/g,
+      "$1",
+    );
+  }
+
   override emitDiscriminatorWrite(accountName: string, typeName: string): string {
     return `    {
         let mut __init_data = unsafe { ${accountName}.borrow_mut_data_unchecked() };
@@ -2625,6 +2635,39 @@ ${writeLines}
     out = out.replace(
       /\*\*(\w+)\.try_borrow_mut_lamports\(\)\?/g,
       "*$1.try_borrow_mut_lamports()?",
+    );
+    // task #42-followup — Pinocchio's AccountInfo exposes is_writable /
+    // is_signer / executable as METHODS, not fields. anchor_lang's
+    // AccountInfo uses fields (`account_info.is_writable`), so user code
+    // surviving pass_through (e.g. inside a for-loop body the classifier
+    // doesn't recognize) compiles only on Native. Rewrite bare field
+    // access → method call when followed by anything that's not `(`
+    // (already a call) or a word char (`is_writable_something`).
+    // Surfaced by diff-arc on duplicate-mutable.use_remaining_accounts
+    // after the &slice::Iter fix (#42).
+    out = out.replace(
+      /\b(\w+)\.is_writable(?!\s*[(\w])/g,
+      "$1.is_writable()",
+    );
+    out = out.replace(
+      /\b(\w+)\.is_signer(?!\s*[(\w])/g,
+      "$1.is_signer()",
+    );
+    out = out.replace(
+      /\b(\w+)\.executable(?!\s*[(\w])/g,
+      "$1.executable()",
+    );
+    // task #41 — Pinocchio's Pubkey is [u8; 32] (a type alias). The
+    // parser-level `expandPubkeyMacro` rewrites `pubkey!("base58")` to
+    // `Pubkey::new_from_array([N, N, ...])` which works on solana-program
+    // (Native target) but fails on Pinocchio with "no function or associated
+    // item named `new_from_array` found for array `[u8; 32]`". Strip the
+    // constructor wrap so we end up with just the array literal — `[u8; 32]`
+    // is a Pubkey directly in pinocchio. Surfaced by diff-arc on
+    // pda-derivation's `pub const PUBKEY_CONST: Pubkey = pubkey!(...);`.
+    out = out.replace(
+      /\bPubkey\s*::\s*new_from_array\s*\(\s*(\[[^]]+?\])\s*\)/g,
+      "$1",
     );
     out = out.replace(
       /borsh::to_vec\(([^)]+)\)\?/g,

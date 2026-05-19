@@ -972,7 +972,7 @@ export abstract class BaseEmitter {
 
   private emitLibFile(ir: SolanaIR): string {
     const sections: string[] = [];
-    const constants = ir.constants ?? [];
+    const constants = (ir.constants ?? []).map((c) => this.postProcessTopLevelConst(c));
     const types = ir.types ?? [];
     const hasHelperModule = this.hasHelperModule(ir);
     sections.push(this.fileHeader(ir.name));
@@ -1226,7 +1226,7 @@ export abstract class BaseEmitter {
 
   protected emitSingleFile(ir: SolanaIR): string {
     const sections: string[] = [];
-    const constants = ir.constants ?? [];
+    const constants = (ir.constants ?? []).map((c) => this.postProcessTopLevelConst(c));
     const types = ir.types ?? [];
 
     sections.push(this.fileHeader(ir.name));
@@ -2466,6 +2466,18 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
     );
   }
 
+  /**
+   * task #41 — per-target rewrite of top-level user-written const items.
+   * The parser preserves them verbatim (just their raw source text);
+   * target-specific items (Pubkey::new_from_array, anchor_lang refs)
+   * need adapting per emitter. Default impl is a no-op; Pinocchio
+   * overrides to strip `Pubkey::new_from_array([...])` since its Pubkey
+   * is a `[u8; 32]` alias (no associated constructor).
+   */
+  protected postProcessTopLevelConst(constText: string): string {
+    return constText;
+  }
+
   protected normalizeInitSeedExpr(seed: string): string {
     const trimmed = cleanInlineExpr(seed);
     return trimmed
@@ -2482,7 +2494,16 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
       // Catch non-prefixed .key.as_ref() forms (e.g. authority.key.as_ref())
       .replace(/(\w+)\.key\.as_ref\(\)/g, (_full, name: string) =>
         this.emitAccountKeyAsRefExpr(snakeCase(name))
-      );
+      )
+      // task #41 — Anchor's `System::id()` (and similar program-id helpers
+      // from anchor_lang::system_program) carries through as bare type
+      // references the target doesn't have. The system program ID is the
+      // 32-byte zero pubkey; emit a 32-byte zero slice literal that works
+      // in both `seeds = [System::id().as_ref()]` (needs `&[u8]`) and
+      // `seeds::program = System::id()` (needs `&Pubkey`) contexts.
+      // pinocchio's Pubkey = [u8; 32] so `&[0u8; 32]` is a valid `&Pubkey`.
+      .replace(/\bSystem\s*::\s*id\s*\(\s*\)\s*\.\s*as_ref\s*\(\s*\)/g, "&[0u8; 32][..]")
+      .replace(/\bSystem\s*::\s*id\s*\(\s*\)/g, "&[0u8; 32]");
   }
 
   /**

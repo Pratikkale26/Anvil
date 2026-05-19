@@ -533,6 +533,14 @@ export class BodyWalker {
     // leaving it in trips up cargo check (no method `to_account_info` on
     // `&AccountInfo`).
     normalized = normalized.replace(/\.to_account_info\(\)/g, "");
+    // task #41 — Anchor's `System::id()` is anchor_lang::system_program::ID,
+    // a 32-byte zero pubkey. Targets don't have the `System` type, so the
+    // bare ref refuses to compile. Rewrite to the literal byte form that
+    // matches both pinocchio (Pubkey = [u8; 32]) and native (Pubkey
+    // newtype with `From<[u8;32]>`). Surfaced by diff-arc on pda-derivation
+    // which uses `seeds = [System::id().as_ref()]`.
+    normalized = normalized.replace(/\bSystem\s*::\s*id\s*\(\s*\)\s*\.\s*as_ref\s*\(\s*\)/g, "&[0u8; 32][..]");
+    normalized = normalized.replace(/\bSystem\s*::\s*id\s*\(\s*\)/g, "&[0u8; 32]");
     // Handle `ctx.accounts.X.key.as_ref()` / `ctx.accounts.X.key().as_ref()`
     // BEFORE the inner ctx.accounts.X.Y regex below — the inner regex matches
     // greedily on `ctx.accounts.X.key`, returning the AccountInfo var alone
