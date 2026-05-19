@@ -142,7 +142,7 @@ pinocchio-associated-token-account = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 # Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
 # emit on hand-rolled bytes (no crate dep needed). The source's
-# `get_feed_id_from_hex("0x…")?` is parsed at emit time into a byte
+# get_feed_id_from_hex("0x...") is parsed at emit time into a byte
 # array literal so the receiver-sdk isn't referenced at runtime either.
 `;
 
@@ -179,7 +179,7 @@ spl-token-metadata-interface = "0.4"
 mpl-token-metadata = "5.1"
 # Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
 # emit on hand-rolled bytes (see emitter-base.ts emitPythReadPrice*).
-# Source `use pyth_*::*` lines are filtered out by
+# Source 'use pyth_*::*' lines are filtered out by
 # filteredSourceImports. Adding the crates would re-introduce the
 # borsh-derive proc-macro interop issue.
 `;
