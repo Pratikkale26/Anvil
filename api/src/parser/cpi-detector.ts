@@ -526,6 +526,12 @@ export function detectCpi(
   ) {
     return extractMplCoreBurnV1(callNode, collector);
   }
+  if (
+    /\bCreateCollectionV2CpiBuilder\b/.test(funcText) &&
+    /\.(invoke|invoke_signed)$/.test(funcText)
+  ) {
+    return extractMplCoreCreateCollectionV2(callNode, collector);
+  }
 
   return null;
 }
@@ -1168,6 +1174,42 @@ function extractMplCoreCreateV2(callNode: SyntaxNode, collector?: WarningCollect
     name: fields.name ?? '""',
     uri: fields.uri ?? '""',
     dataState: fields.data_state ?? "DataState::AccountState",
+    signerSeeds,
+  };
+}
+
+/**
+ * task #48 S5 — CreateCollectionV2 (disc 21, 4 accounts). Simplest of
+ * the lifecycle-style instructions: no log_wrapper slot, no data_state
+ * arg. Source pattern:
+ *   mpl_core::CreateCollectionV2CpiBuilder::new(prog)
+ *       .collection(&ctx.accounts.collection.to_account_info())
+ *       .payer(&ctx.accounts.payer.to_account_info())
+ *       .system_program(&ctx.accounts.system_program.to_account_info())
+ *       .name(name)
+ *       .uri(uri)
+ *       .plugins(None)
+ *       .external_plugin_adapters(None)
+ *       .invoke()?;
+ */
+function extractMplCoreCreateCollectionV2(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const { fields, programArg, signerSeeds } = walkMplCoreBuilder(callNode);
+
+  if (!fields.collection || !fields.payer || !fields.system_program) {
+    warnClassificationLost(collector, "MPL Core CreateCollectionV2", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  return {
+    kind: "cpi_mpl_core_create_collection_v2",
+    programAccount: clean(programArg),
+    collection: clean(fields.collection),
+    updateAuthority: fields.update_authority ? `Some(${clean(stripSomeWrap(fields.update_authority))})` : "None",
+    payer: clean(fields.payer),
+    systemProgram: clean(fields.system_program),
+    name: fields.name ?? '""',
+    uri: fields.uri ?? '""',
     signerSeeds,
   };
 }

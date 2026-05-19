@@ -51,6 +51,7 @@ import {
   irNeedsMplCoreUpdateV2Helper,
   irNeedsMplCoreTransferV1Helper,
   irNeedsMplCoreBurnV1Helper,
+  irNeedsMplCoreCreateCollectionV2Helper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK } from "./markers.js";
 
@@ -253,7 +254,8 @@ export class NativeEmitter extends BaseEmitter {
       || irNeedsMplCoreCreateV2Helper(_ir)
       || irNeedsMplCoreUpdateV2Helper(_ir)
       || irNeedsMplCoreTransferV1Helper(_ir)
-      || irNeedsMplCoreBurnV1Helper(_ir);
+      || irNeedsMplCoreBurnV1Helper(_ir)
+      || irNeedsMplCoreCreateCollectionV2Helper(_ir);
     const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsHelper(_ir, "spl_transfer")
       || irNeedsUnsignedSplMintToHelper(_ir)
@@ -2826,6 +2828,54 @@ pub fn mpl_core_create_v2<'a>(
         update_authority_info.clone(),
         system_program.clone(),
         log_wrapper_info.clone(),
+    ];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreCreateCollectionV2Helper(_ir)) {
+      helpers.push(`/// MPL Core: CreateCollectionV2 (discriminator 21).
+/// 4 accounts, no log_wrapper. v1 scope: plugins / external_plugin_adapters both None.
+pub fn mpl_core_create_collection_v2<'a>(
+    program: &AccountInfo<'a>,
+    collection: &AccountInfo<'a>,
+    update_authority: Option<&AccountInfo<'a>>,
+    payer: &AccountInfo<'a>,
+    system_program: &AccountInfo<'a>,
+    name: &str,
+    uri: &str,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let name_bytes = name.as_bytes();
+    let uri_bytes = uri.as_bytes();
+    let mut data: Vec<u8> = Vec::with_capacity(1 + 4 + name_bytes.len() + 4 + uri_bytes.len() + 1 + 1);
+    data.push(21);
+    data.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+    data.extend_from_slice(name_bytes);
+    data.extend_from_slice(&(uri_bytes.len() as u32).to_le_bytes());
+    data.extend_from_slice(uri_bytes);
+    data.push(0);
+    data.push(0);
+    let update_authority_info = update_authority.unwrap_or(program);
+    let accounts = vec![
+        AccountMeta::new(*collection.key, true),
+        AccountMeta::new_readonly(*update_authority_info.key, false),
+        AccountMeta::new(*payer.key, true),
+        AccountMeta::new_readonly(*system_program.key, false),
+    ];
+    let ix = Instruction {
+        program_id: *program.key,
+        accounts,
+        data,
+    };
+    let infos = [
+        collection.clone(),
+        update_authority_info.clone(),
+        payer.clone(),
+        system_program.clone(),
     ];
     match signer_seeds {
         Some(seeds) => invoke_signed(&ix, &infos, seeds),

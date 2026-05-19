@@ -260,6 +260,17 @@ export function irNeedsMplCoreBurnV1Helper(ir: SolanaIR): boolean {
   );
 }
 
+/**
+ * MPL Core S5 — CreateCollectionV2. Hand-rolled invoke; discriminator 21;
+ * 4 accounts (no log_wrapper); Borsh args: name String + uri String +
+ * plugins=None + external_plugin_adapters=None.
+ */
+export function irNeedsMplCoreCreateCollectionV2Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_core_create_collection_v2")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

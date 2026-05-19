@@ -1160,6 +1160,29 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // MPL Core: CreateCollectionV2 (task #48 S5). Discriminator 21; just
+  // 4 accounts (collection writable+signer, update_authority optional
+  // readonly, payer writable+signer, system_program); no log_wrapper
+  // slot (unlike CreateV2). No data_state arg (unlike CreateV2). Borsh
+  // args: name String + uri String + plugins=None + external_plugin_adapters=None.
+  z.object({
+    kind: z.literal("cpi_mpl_core_create_collection_v2"),
+    programAccount: z.string(),
+    /** Collection account — writable + signer, REQUIRED. */
+    collection: z.string(),
+    /** Optional update_authority — "None" or "Some(<expr>)". */
+    updateAuthority: z.string().default("None"),
+    /** Payer — writable + signer. */
+    payer: z.string(),
+    /** System program. */
+    systemProgram: z.string(),
+    /** Asset name — raw String expression. */
+    name: z.string(),
+    /** Asset URI — raw String expression. */
+    uri: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // MPL Core: BurnV1 (task #48 S4 — closes asset lifecycle). Discriminator
   // 12; 6 accounts (asset writable non-signer, payer writable signer;
   // collection / authority / system_program / log_wrapper optional). Note

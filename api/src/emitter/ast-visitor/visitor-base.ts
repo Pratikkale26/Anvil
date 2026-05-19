@@ -730,6 +730,7 @@ type CpiMplCoreCreateV2 = Extract<BodyStatement, { kind: "cpi_mpl_core_create_v2
 type CpiMplCoreUpdateV2 = Extract<BodyStatement, { kind: "cpi_mpl_core_update_v2" }>;
 type CpiMplCoreTransferV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_transfer_v1" }>;
 type CpiMplCoreBurnV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_burn_v1" }>;
+type CpiMplCoreCreateCollectionV2 = Extract<BodyStatement, { kind: "cpi_mpl_core_create_collection_v2" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
 type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
 type ZeroCopyLoad = Extract<BodyStatement, { kind: "zero_copy_load" }>;
@@ -820,6 +821,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_mpl_core_update_v2",
   "cpi_mpl_core_transfer_v1",
   "cpi_mpl_core_burn_v1",
+  "cpi_mpl_core_create_collection_v2",
   "zero_copy_load_init",
   "zero_copy_load_mut",
   "zero_copy_load",
@@ -939,6 +941,8 @@ export class AstVisitorBase {
         return this.visitCpiMplCoreTransferV1(stmt);
       case "cpi_mpl_core_burn_v1":
         return this.visitCpiMplCoreBurnV1(stmt);
+      case "cpi_mpl_core_create_collection_v2":
+        return this.visitCpiMplCoreCreateCollectionV2(stmt);
       case "zero_copy_load_init":
         return this.visitZeroCopyLoadInit(stmt);
       case "zero_copy_load_mut":
@@ -3558,6 +3562,41 @@ export class AstVisitorBase {
       `        ${resolveOpt(stmt.authority)},`,
       `        ${resolve(stmt.systemProgram)},`,
       `        ${resolveOpt(stmt.logWrapper)},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * MPL Core CreateCollectionV2 typed CPI (task #48 S5). Disc 21; 4
+   * accounts (no log_wrapper, no data_state). Args: name + uri + plugins=None
+   * + external_plugin_adapters=None.
+   */
+  visitCpiMplCoreCreateCollectionV2(stmt: CpiMplCoreCreateCollectionV2): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const resolveOpt = (e: string): string => {
+      const trimmed = e.trim();
+      if (trimmed === "None" || trimmed === "") return "None";
+      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+      if (inner !== undefined) return `Some(${resolve(inner)})`;
+      return `Some(${resolve(trimmed)})`;
+    };
+    const lines: string[] = [
+      `    mpl_core_create_collection_v2(`,
+      `        ${resolve(stmt.programAccount)},`,
+      `        ${resolve(stmt.collection)},`,
+      `        ${resolveOpt(stmt.updateAuthority)},`,
+      `        ${resolve(stmt.payer)},`,
+      `        ${resolve(stmt.systemProgram)},`,
+      `        &${stmt.name},`,
+      `        &${stmt.uri},`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
         : `        None,`,

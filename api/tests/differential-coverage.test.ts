@@ -208,6 +208,8 @@ const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
   "cpi_mpl_core_transfer_v1",
   // MPL Core BurnV1 — task #48 S4. Closes asset lifecycle. Same status.
   "cpi_mpl_core_burn_v1",
+  // MPL Core CreateCollectionV2 — task #48 S5. Same fixture-pending status.
+  "cpi_mpl_core_create_collection_v2",
 ]);
 
 function listBodyStatementKinds(): string[] {

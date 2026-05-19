@@ -50,6 +50,7 @@ import {
   irNeedsMplCoreUpdateV2Helper,
   irNeedsMplCoreTransferV1Helper,
   irNeedsMplCoreBurnV1Helper,
+  irNeedsMplCoreCreateCollectionV2Helper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK, MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
@@ -407,7 +408,8 @@ export class PinocchioEmitter extends BaseEmitter {
       || irNeedsMplCoreCreateV2Helper(_ir)
       || irNeedsMplCoreUpdateV2Helper(_ir)
       || irNeedsMplCoreTransferV1Helper(_ir)
-      || irNeedsMplCoreBurnV1Helper(_ir);
+      || irNeedsMplCoreBurnV1Helper(_ir)
+      || irNeedsMplCoreCreateCollectionV2Helper(_ir);
     if (needsSeedSigner) {
       imports.push(`use pinocchio::instruction::{Seed, Signer};`);
     }
@@ -4057,6 +4059,62 @@ pub fn mpl_core_create_v2(
         system_program,
         log_wrapper_info,
     ];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    // MPL Core S5 — CreateCollectionV2. Discriminator 21; 4 accounts;
+    // no log_wrapper slot, no data_state arg. Args: name + uri + plugins=None
+    // + external_plugin_adapters=None.
+    if (irNeedsMplCoreCreateCollectionV2Helper(ir)) {
+      helpers.push(`/// MPL Core: CreateCollectionV2 (discriminator 21).
+/// Simplest of the lifecycle instructions — just 4 accounts (no log_wrapper)
+/// and no data_state arg. v1 scope: plugins / external_plugin_adapters both None.
+pub fn mpl_core_create_collection_v2(
+    program: &AccountInfo,
+    collection: &AccountInfo,
+    update_authority: Option<&AccountInfo>,
+    payer: &AccountInfo,
+    system_program: &AccountInfo,
+    name: &str,
+    uri: &str,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let name_bytes = name.as_bytes();
+    let uri_bytes = uri.as_bytes();
+    let mut data: Vec<u8> = Vec::with_capacity(1 + 4 + name_bytes.len() + 4 + uri_bytes.len() + 1 + 1);
+    data.push(21);
+    data.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+    data.extend_from_slice(name_bytes);
+    data.extend_from_slice(&(uri_bytes.len() as u32).to_le_bytes());
+    data.extend_from_slice(uri_bytes);
+    data.push(0);
+    data.push(0);
+    let update_authority_info = update_authority.unwrap_or(program);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(collection.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(update_authority_info.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [collection, update_authority_info, payer, system_program];
     match signer_seeds {
         Some(seeds) => {
             let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
