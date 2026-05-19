@@ -103,6 +103,7 @@ export function classifyBody(
   bodyNode: SyntaxNode,
   collector?: WarningCollector,
   helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
+  constStringMap?: Map<string, string>,
 ): ClassifiedBody {
   const statements: BodyStatement[] = [];
   const locs: Array<SourceLoc | undefined> = [];
@@ -181,7 +182,7 @@ export function classifyBody(
     // Skip comment nodes
     if (child.type === "line_comment" || child.type === "block_comment") continue;
 
-    const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog, pendingPythLoad);
+    const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog, pendingPythLoad, constStringMap);
     const childLoc = locFromNode(child);
 
     // Track seeds for PDA signer seeds grouping
@@ -407,12 +408,13 @@ function classifyStatement(
   collector?: WarningCollector,
   helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
   pendingPythLoad: { feedAccount: string; feedBinding: string } | null = null,
+  constStringMap?: Map<string, string>,
 ): ClassifyResult {
   const text = node.text;
 
   switch (node.type) {
     case "let_declaration":
-      return classifyLetDeclaration(node, pendingSeeds, cpiAccountsByVar, hasUserSeedsManagement, pendingPythLoad);
+      return classifyLetDeclaration(node, pendingSeeds, cpiAccountsByVar, hasUserSeedsManagement, pendingPythLoad, constStringMap);
 
     case "expression_statement":
       return classifyExpressionStatement(node, cpiContexts, collector, helperCpiCatalog);
@@ -484,6 +486,7 @@ function classifyLetDeclaration(
   cpiAccountsByVar: Map<string, CpiAccountsBinding>,
   hasUserSeedsManagement = false,
   pendingPythLoad: { feedAccount: string; feedBinding: string } | null = null,
+  constStringMap?: Map<string, string>,
 ): ClassifyResult {
   const text = node.text;
   const patternNode = node.childForFieldName("pattern");
@@ -538,43 +541,64 @@ function classifyLetDeclaration(
     }
   }
 
-  // ── N5b — get_feed_id_from_hex("0x...") inline-parse ──
+  // ── N5b/N5c — get_feed_id_from_hex(...) inline-parse ──
   // Source:
-  //   let feed_id: [u8; 32] = get_feed_id_from_hex("0xef0d8b...")?;
-  // or fully-qualified:
+  //   let feed_id: [u8; 32] = get_feed_id_from_hex("0xef0d8b...")?;       (N5b literal)
+  //   let feed_id: [u8; 32] = get_feed_id_from_hex(SOL_USD_FEED_ID)?;     (N5c const ident)
   //   let feed_id: [u8; 32] = pyth_solana_receiver_sdk::price_update::get_feed_id_from_hex("0x...")?;
-  // The literal hex string gets parsed at emit time into a [u8; 32]
+  // The hex bytes are computed at emit time into a [u8; 32]
   // byte-array literal. This means the receiver-sdk crate is NOT
   // referenced at emit-time, so the Pinocchio target compiles
   // without the pyth crates' borsh-derive interop issue.
   if (valueNode && localVar) {
     const v = valueNode.text.trim();
-    const hexCallRe =
+    // Accept either a string literal `"0x..."` OR an identifier whose
+    // const-resolved string-value matches a hex pattern. The fully-
+    // qualified `pyth_solana_receiver_sdk::price_update::` prefix is
+    // optional and stripped.
+    const hexLiteralRe =
       /^(?:[a-zA-Z_][\w:]*\s*::\s*)?get_feed_id_from_hex\s*\(\s*"(?:0x|0X)?([0-9a-fA-F]+)"\s*\)\s*\??\s*$/;
-    const m = v.match(hexCallRe);
-    if (m?.[1]) {
-      // 32 bytes = 64 hex chars. Accept shorter and pad with zeros,
-      // OR refuse if longer than 64. Pad-right is standard for
-      // feed-id hex (Pyth feed ids are exactly 32 bytes).
-      const raw = m[1];
-      if (raw.length <= 64) {
-        const padded = raw.padEnd(64, "0");
-        const bytes: number[] = [];
-        for (let i = 0; i < 64; i += 2) {
-          const b = parseInt(padded.slice(i, i + 2), 16);
-          bytes.push(b);
+    const constIdentRe =
+      /^(?:[a-zA-Z_][\w:]*\s*::\s*)?get_feed_id_from_hex\s*\(\s*([A-Za-z_][\w]*)\s*\)\s*\??\s*$/;
+    let hexValue: string | null = null;
+    const litMatch = v.match(hexLiteralRe);
+    if (litMatch?.[1]) {
+      hexValue = litMatch[1];
+    } else {
+      const identMatch = v.match(constIdentRe);
+      if (identMatch?.[1] && constStringMap) {
+        const constName = identMatch[1];
+        const lookup = constStringMap.get(constName);
+        if (lookup !== undefined) {
+          // Strip leading 0x/0X if present in the const value.
+          const stripped = lookup.replace(/^0[xX]/, "");
+          if (/^[0-9a-fA-F]+$/.test(stripped)) {
+            hexValue = stripped;
+          }
         }
-        return {
-          stmt: {
-            kind: "pyth_feed_id_literal",
-            localVar,
-            bytes,
-          },
-        };
       }
-      // Hex too long — fall through to pass_through; parser warning
-      // surfaces a misuse signal but emit stays best-effort.
     }
+    if (hexValue !== null && hexValue.length <= 64) {
+      // 32 bytes = 64 hex chars. Accept shorter and pad with zeros
+      // — Pyth feed ids are exactly 32 bytes.
+      const padded = hexValue.padEnd(64, "0");
+      const bytes: number[] = [];
+      for (let i = 0; i < 64; i += 2) {
+        const b = parseInt(padded.slice(i, i + 2), 16);
+        bytes.push(b);
+      }
+      return {
+        stmt: {
+          kind: "pyth_feed_id_literal",
+          localVar,
+          bytes,
+        },
+      };
+    }
+    // Hex unresolved (longer than 64 chars, non-hex chars, or const
+    // not in map) — fall through to pass_through. The downstream
+    // emit references get_feed_id_from_hex which then re-pulls the
+    // crate dep; the lint warning surfaces this.
   }
 
   // ── N5 — Pyth modern (receiver-sdk PriceUpdateV2) ──

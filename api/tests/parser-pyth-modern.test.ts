@@ -80,6 +80,84 @@ describe("N5 — modern Pyth read parser detection", () => {
     expect(kinds).not.toContain("cpi_pyth_read_price_modern");
   });
 
+  test("N5c — const-string identifier resolved to byte-array literal", async () => {
+    const source = `
+      use anchor_lang::prelude::*;
+      use pyth_solana_receiver_sdk::price_update::{get_feed_id_from_hex, PriceUpdateV2};
+      declare_id!("PythMod2222222222222222222222222222222222");
+
+      const SOL_USD_FEED_ID: &str = "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+
+      #[program]
+      pub mod p {
+        use super::*;
+        pub fn read(ctx: Context<R>) -> Result<()> {
+          let feed_id: [u8; 32] = get_feed_id_from_hex(SOL_USD_FEED_ID)?;
+          let price = ctx.accounts.price_update
+            .get_price_no_older_than(&Clock::get()?, 60, &feed_id)?;
+          Ok(())
+        }
+      }
+
+      #[derive(Accounts)]
+      pub struct R<'info> {
+        pub price_update: Account<'info, PriceUpdateV2>,
+      }
+    `;
+    const r = await parseAnchor(source);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const body = r.ir.instructions.find((i) => i.name === "read")!.body;
+    // The const-resolved hex should appear as a pyth_feed_id_literal
+    // with the parsed 32-byte array. The first byte of the SOL/USD
+    // feed id (0xef0d…) is 0xef.
+    const stmt = body.find((s) => s.kind === "pyth_feed_id_literal") as any;
+    expect(stmt).toBeDefined();
+    expect(stmt.localVar).toBe("feed_id");
+    expect(stmt.bytes.length).toBe(32);
+    expect(stmt.bytes[0]).toBe(0xef);
+    expect(stmt.bytes[1]).toBe(0x0d);
+    // The original get_feed_id_from_hex call must NOT survive as
+    // pass_through (this would re-pull the receiver-sdk dep).
+    const leaked = body.some(
+      (s) => s.kind === "pass_through" && (s as { code: string }).code.includes("get_feed_id_from_hex"),
+    );
+    expect(leaked).toBe(false);
+  });
+
+  test("N5c — unknown const ident stays pass_through (no silent zero-bytes)", async () => {
+    // If the const isn't defined anywhere, the parser must NOT
+    // invent a zero-filled feed_id — it should leave the call as
+    // pass_through so the lint warns + cargo errors on the missing
+    // identifier. Silent-zero would be a wrong-feed attack vector.
+    const source = `
+      use anchor_lang::prelude::*;
+      use pyth_solana_receiver_sdk::price_update::{get_feed_id_from_hex, PriceUpdateV2};
+      declare_id!("PythMod3333333333333333333333333333333333");
+
+      #[program]
+      pub mod p {
+        use super::*;
+        pub fn read(ctx: Context<R>) -> Result<()> {
+          let feed_id: [u8; 32] = get_feed_id_from_hex(UNDEFINED_FEED_ID)?;
+          let price = ctx.accounts.price_update
+            .get_price_no_older_than(&Clock::get()?, 60, &feed_id)?;
+          Ok(())
+        }
+      }
+
+      #[derive(Accounts)]
+      pub struct R<'info> {
+        pub price_update: Account<'info, PriceUpdateV2>,
+      }
+    `;
+    const r = await parseAnchor(source);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const body = r.ir.instructions.find((i) => i.name === "read")!.body;
+    expect(body.some((s) => s.kind === "pyth_feed_id_literal")).toBe(false);
+  });
+
   test("modern call without ctx.accounts. prefix still detected", async () => {
     // Programs that bind the PriceUpdate account to a local var first:
     //   let pu = &ctx.accounts.price_update;

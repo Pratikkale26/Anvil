@@ -25,18 +25,18 @@ use pyth_solana_receiver_sdk::price_update::{get_feed_id_from_hex, PriceUpdateV2
 declare_id!("PythRead22222222222222222222222222222222222");
 
 const MAX_AGE: u64 = 60;
+const SOL_USD_FEED_ID: &str = "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
 
 #[program]
 pub mod pyth_read_modern {
     use super::*;
 
     pub fn read_price(ctx: Context<ReadPrice>) -> Result<()> {
-        // Inline hex literal — the parser detects this and emits a
-        // [u8; 32] byte-array literal at compile time, dropping the
-        // pyth-solana-receiver-sdk dep. A const-string indirection
-        // (e.g. `get_feed_id_from_hex(SOL_USD_FEED_ID)`) survives as
-        // pass_through; future N5c could resolve constants too.
-        let feed_id: [u8; 32] = get_feed_id_from_hex("0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d")?;
+        // N5c — const-string identifier resolved at parse time. The
+        // parser scans `const SOL_USD_FEED_ID: &str = "0x..."` and
+        // inline-expands the bytes into a [u8; 32] literal, dropping
+        // the pyth-solana-receiver-sdk dep.
+        let feed_id: [u8; 32] = get_feed_id_from_hex(SOL_USD_FEED_ID)?;
         let price = ctx.accounts.price_update
             .get_price_no_older_than(&Clock::get()?, MAX_AGE, &feed_id)?;
         msg!("price={}, exponent={}", price.price, price.exponent);

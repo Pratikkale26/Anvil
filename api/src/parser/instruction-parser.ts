@@ -37,6 +37,14 @@ export function parseInstructions(
   const body = programModNode.childForFieldName("body");
   if (!body) return [];
 
+  // Pre-scan source for `const X: &str = "0x...";` and `pub const X: &str
+  // = "0x...";` items. N5c: when an instruction does
+  // `let feed_id: [u8; 32] = get_feed_id_from_hex(SOL_USD_FEED_ID)?;`
+  // the body-classifier looks up the const value here and inline-parses
+  // it just like a string literal would. Without this, the call falls
+  // through to pass_through and re-pulls the receiver-sdk crate dep.
+  const constStringMap = extractStrConsts(source);
+
   const instructions: SolanaIR["instructions"] = [];
   let currentAttrs: SyntaxNode[] = [];
 
@@ -50,7 +58,7 @@ export function parseInstructions(
     }
 
     if (child.type === "function_item") {
-      const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog);
+      const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog, constStringMap);
       if (instr) instructions.push(instr);
     }
 
@@ -58,6 +66,25 @@ export function parseInstructions(
   }
 
   return instructions;
+}
+
+/**
+ * Lightweight regex scan for top-level `const X: &str = "...";` items.
+ * Doesn't try to parse Rust syntactically (the file's tree-sitter parse
+ * already happened upstream); this is a targeted matcher for the
+ * const-string indirection that N5c needs to resolve. Picks up:
+ *   const X: &str = "0x...";
+ *   pub const X: &str = "0x...";
+ *   pub(crate) const X: &str = "0x...";
+ */
+function extractStrConsts(source: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const re =
+    /(?:pub(?:\([^)]+\))?\s+)?const\s+([A-Za-z_][\w]*)\s*:\s*&'?(?:static\s+)?str\s*=\s*"([^"]*)"\s*;/g;
+  for (const m of source.matchAll(re)) {
+    if (m[1] && m[2] !== undefined) map.set(m[1], m[2]);
+  }
+  return map;
 }
 
 function parseInstructionFn(
@@ -71,6 +98,7 @@ function parseInstructionFn(
   source: string,
   collector?: WarningCollector,
   helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
+  constStringMap?: Map<string, string>,
 ): SolanaIR["instructions"][0] | null {
   const fnName = fnNode.childForFieldName("name")?.text;
   if (!fnName) return null;
@@ -183,7 +211,7 @@ function parseInstructionFn(
   // see "instruction `foo`: SPL transfer carried as pass_through" rather
   // than a context-free message.
   const instrCollector = collector?.forInstruction(fnName);
-  const classified = bodyNode ? classifyBody(bodyNode, instrCollector, helperCpiCatalog) : { statements: [], locs: [] };
+  const classified = bodyNode ? classifyBody(bodyNode, instrCollector, helperCpiCatalog, constStringMap) : { statements: [], locs: [] };
   const bodyStatements: BodyStatement[] = classified.statements;
   const bodyLocs = classified.locs;
 
