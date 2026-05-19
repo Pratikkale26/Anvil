@@ -52,6 +52,8 @@ api/generated-outputs
 api/.anvil-data
 .anvil-data/
 codex-session.jsonl
+claude-session.jsonl
+AGENTIC-GRANT-APPLICATION.md
 .claude/
 api/scratch-*.ts
 video.md
