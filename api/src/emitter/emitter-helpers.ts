@@ -248,6 +248,18 @@ export function irNeedsMplCoreTransferV1Helper(ir: SolanaIR): boolean {
   );
 }
 
+/**
+ * MPL Core S4 — BurnV1. Hand-rolled invoke; discriminator 12; 6 accounts
+ * (asset writable non-signer, payer writable signer; collection writable
+ * when Some — that's the only diff from TransferV1's readonly collection
+ * meta). Borsh args: Option<CompressionProof> = None in v1 scope.
+ */
+export function irNeedsMplCoreBurnV1Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_core_burn_v1")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

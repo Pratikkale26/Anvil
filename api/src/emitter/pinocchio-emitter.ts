@@ -49,6 +49,7 @@ import {
   irNeedsMplCoreCreateV2Helper,
   irNeedsMplCoreUpdateV2Helper,
   irNeedsMplCoreTransferV1Helper,
+  irNeedsMplCoreBurnV1Helper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK, MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
@@ -405,7 +406,8 @@ export class PinocchioEmitter extends BaseEmitter {
       || irNeedsMplThawDelegatedHelper(_ir)
       || irNeedsMplCoreCreateV2Helper(_ir)
       || irNeedsMplCoreUpdateV2Helper(_ir)
-      || irNeedsMplCoreTransferV1Helper(_ir);
+      || irNeedsMplCoreTransferV1Helper(_ir)
+      || irNeedsMplCoreBurnV1Helper(_ir);
     if (needsSeedSigner) {
       imports.push(`use pinocchio::instruction::{Seed, Signer};`);
     }
@@ -4052,6 +4054,66 @@ pub fn mpl_core_create_v2(
         payer,
         owner_info,
         update_authority_info,
+        system_program,
+        log_wrapper_info,
+    ];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    // MPL Core S4 — BurnV1. Discriminator 12; 6 accounts; Borsh arg is
+    // Option<CompressionProof> = None in v1. Note: collection is writable
+    // when Some (kinobi's only diff from TransferV1's collection meta).
+    if (irNeedsMplCoreBurnV1Helper(ir)) {
+      helpers.push(`/// MPL Core: BurnV1 (discriminator 12).
+/// v1 scope: compression_proof always None. Closes asset lifecycle along
+/// with CreateV2 + UpdateV2 + TransferV1. Collection is WRITABLE when Some
+/// (kinobi diverges from TransferV1's readonly collection meta — burning
+/// from a collection updates the collection's asset count).
+pub fn mpl_core_burn_v1(
+    program: &AccountInfo,
+    asset: &AccountInfo,
+    collection: Option<&AccountInfo>,
+    payer: &AccountInfo,
+    authority: Option<&AccountInfo>,
+    system_program: &AccountInfo,
+    log_wrapper: Option<&AccountInfo>,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: [u8; 2] = [12, 0];
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(asset.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(collection_info.key(), collection.is_some(), false),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(authority_info.key(), false, authority.is_some()),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(log_wrapper_info.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [
+        asset,
+        collection_info,
+        payer,
+        authority_info,
         system_program,
         log_wrapper_info,
     ];

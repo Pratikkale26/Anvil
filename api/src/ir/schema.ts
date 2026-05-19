@@ -1160,6 +1160,31 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // MPL Core: BurnV1 (task #48 S4 — closes asset lifecycle). Discriminator
+  // 12; 6 accounts (asset writable non-signer, payer writable signer;
+  // collection / authority / system_program / log_wrapper optional). Note
+  // collection is WRITABLE when Some (kinobi differs from TransferV1 here —
+  // burning from a collection updates the collection's asset count).
+  // Borsh args: Option<CompressionProof> always None in v1 scope.
+  z.object({
+    kind: z.literal("cpi_mpl_core_burn_v1"),
+    /** The mpl_core program AccountInfo. */
+    programAccount: z.string(),
+    /** Asset account — writable, non-signer. */
+    asset: z.string(),
+    /** Optional collection — writable when Some. */
+    collection: z.string().default("None"),
+    /** Payer — writable + signer. */
+    payer: z.string(),
+    /** Optional authority — "None" or "Some(<expr>)". */
+    authority: z.string().default("None"),
+    /** System program — passed verbatim. */
+    systemProgram: z.string(),
+    /** Optional log_wrapper. */
+    logWrapper: z.string().default("None"),
+    signerSeeds: z.string().optional(),
+  }),
+
   // MPL Core: TransferV1 (task #48 S3). Discriminator 14; 7 accounts (asset
   // writable non-signer, payer writable signer, new_owner readonly required;
   // collection / authority / system_program / log_wrapper optional with the

@@ -248,6 +248,19 @@ const NEW_KIND_FIXTURES: Array<{
       logWrapper: "None",
     },
   },
+  {
+    name: "cpi_mpl_core_burn_v1 (task #48 S4)",
+    stmt: {
+      kind: "cpi_mpl_core_burn_v1",
+      programAccount: "mpl_core_program",
+      asset: "asset",
+      collection: "Some(collection)",
+      payer: "payer",
+      authority: "Some(owner)",
+      systemProgram: "system_program",
+      logWrapper: "None",
+    },
+  },
 ];
 
 describe("IR roundtrip — new kinds shipped 2026-05-18", () => {

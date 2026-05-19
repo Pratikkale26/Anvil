@@ -520,6 +520,12 @@ export function detectCpi(
   ) {
     return extractMplCoreTransferV1(callNode, collector);
   }
+  if (
+    /\bBurnV1CpiBuilder\b/.test(funcText) &&
+    /\.(invoke|invoke_signed)$/.test(funcText)
+  ) {
+    return extractMplCoreBurnV1(callNode, collector);
+  }
 
   return null;
 }
@@ -1162,6 +1168,38 @@ function extractMplCoreCreateV2(callNode: SyntaxNode, collector?: WarningCollect
     name: fields.name ?? '""',
     uri: fields.uri ?? '""',
     dataState: fields.data_state ?? "DataState::AccountState",
+    signerSeeds,
+  };
+}
+
+/**
+ * task #48 S4 — BurnV1 (disc 12, 6 accounts). Closes the lifecycle along
+ * with CreateV2 + UpdateV2 + TransferV1. Source pattern:
+ *   mpl_core::BurnV1CpiBuilder::new(prog)
+ *       .asset(&ctx.accounts.asset.to_account_info())
+ *       .payer(&ctx.accounts.payer.to_account_info())
+ *       .authority(Some(&ctx.accounts.owner.to_account_info()))
+ *       .system_program(&ctx.accounts.system_program.to_account_info())
+ *       .invoke()?;
+ */
+function extractMplCoreBurnV1(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const { fields, programArg, signerSeeds } = walkMplCoreBuilder(callNode);
+
+  if (!fields.asset || !fields.payer || !fields.system_program) {
+    warnClassificationLost(collector, "MPL Core BurnV1", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  return {
+    kind: "cpi_mpl_core_burn_v1",
+    programAccount: clean(programArg),
+    asset: clean(fields.asset),
+    collection: fields.collection ? `Some(${clean(stripSomeWrap(fields.collection))})` : "None",
+    payer: clean(fields.payer),
+    authority: fields.authority ? `Some(${clean(stripSomeWrap(fields.authority))})` : "None",
+    systemProgram: clean(fields.system_program),
+    logWrapper: fields.log_wrapper ? `Some(${clean(stripSomeWrap(fields.log_wrapper))})` : "None",
     signerSeeds,
   };
 }
