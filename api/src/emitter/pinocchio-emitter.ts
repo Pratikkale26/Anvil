@@ -3545,9 +3545,11 @@ pub fn mpl_revoke_collection_authority(
     signer_seeds: Option<&[&[&[u8]]]>,
 ) -> ProgramResult {
     let data: [u8; 1] = [24];
+    // MPL RevokeCollectionAuthority spec: delegate_authority is writable
+    // (writable=true, signer=false) — used in the record PDA close.
     let metas = [
         pinocchio::instruction::AccountMeta::new(collection_authority_record.key(), true, false),
-        pinocchio::instruction::AccountMeta::new(delegate_authority.key(), false, true),
+        pinocchio::instruction::AccountMeta::new(delegate_authority.key(), true, false),
         pinocchio::instruction::AccountMeta::new(revoke_authority.key(), true, true),
         pinocchio::instruction::AccountMeta::new(metadata.key(), false, false),
         pinocchio::instruction::AccountMeta::new(mint.key(), false, false),
