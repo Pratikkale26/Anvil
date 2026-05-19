@@ -7,6 +7,7 @@ import { type SolanaIR, SolanaIRSchema } from "../ir/schema.js";
 import { buildDeterministicReviewReport } from "../ai/review-report.js";
 import { checkSpendCap, recordSpend, shouldRefuseDueToSpendBackend } from "../ai/spend-tracker.js";
 import { AIError } from "../ai/errors.js";
+import { AnvilError, ErrorCode } from "../errors.js";
 import { diagnoseDifferentialFailure } from "../ai/diagnose-differential.js";
 
 export const aiRoute = Router();
@@ -34,10 +35,21 @@ function writeStreamChunk(res: Response, payload: Record<string, unknown>) {
  */
 aiRoute.post("/refine", async (req, res) => {
   // Parse and validate request
+  // S6 — error responses use AnvilError so clients (workbench, CLI)
+  // parse a consistent { error, code, status, details } shape instead
+  // of the prior plain `{ error, details }` which lacked the `code`
+  // field downstream parsers expect.
   const body = req.body as Record<string, unknown>;
   const refineData = RefineRequestSchema.safeParse(body);
   if (!refineData.success) {
-    res.status(422).json({ error: "Invalid refine request", details: refineData.error.message });
+    res.status(422).json(
+      new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "Invalid refine request",
+        refineData.error.message,
+        422,
+      ).toJSON(),
+    );
     return;
   }
 
@@ -54,19 +66,26 @@ aiRoute.post("/refine", async (req, res) => {
   // Callers that want a structural-only check can use a different code
   // path (or build a minimal IR themselves and own the trade-off).
   if (!body.ir) {
-    res.status(422).json({
-      error: "Missing required field: ir",
-      details:
+    res.status(422).json(
+      new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "Missing required field: ir",
         "POST /ai/refine requires the SolanaIR for cross-file accept-gate validation. Without it the validator can only check the patched file in isolation — a patch that breaks an unrelated file would pass silently. Send the IR returned by /parse or /emit alongside files + validationIssues.",
-    });
+        422,
+      ).toJSON(),
+    );
     return;
   }
   const irParsed = SolanaIRSchema.safeParse(body.ir);
   if (!irParsed.success) {
-    res.status(422).json({
-      error: "Invalid IR",
-      details: irParsed.error.message,
-    });
+    res.status(422).json(
+      new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "Invalid IR",
+        irParsed.error.message,
+        422,
+      ).toJSON(),
+    );
     return;
   }
   const ir: SolanaIR = irParsed.data;
@@ -186,36 +205,67 @@ aiRoute.post("/refine", async (req, res) => {
   }
 });
 
-const DiagnoseDifferentialRequestSchema = z.object({
+// Per-field caps for diagnose-differential. Same rationale as
+// RefineRequestSchema: an 8 MB body cap doesn't bound the prompt size
+// when individual fields are unbounded. Cap snippets at ~10 KB (well
+// above realistic instruction-handler size), hex strings at 8 KB
+// (5 KB Anchor account is plenty for diagnosis), and the nested
+// anchor/anvil field diffs to bounded JSON-stringify size via the
+// boundedJson refinement so an adversary can't nest pathologically.
+const DD_SNIPPET_MAX = 10_000;
+const DD_HEX_MAX = 8_000;
+const DD_NAME_MAX = 256;
+const DD_FIELD_DIFF_VALUE_MAX_BYTES = 4_000;
+const DD_FIELD_COUNT_MAX = 200;
+
+const boundedJsonValue = z.unknown().refine(
+  (v) => {
+    try {
+      return JSON.stringify(v).length <= DD_FIELD_DIFF_VALUE_MAX_BYTES;
+    } catch {
+      return false;
+    }
+  },
+  { message: `field diff value exceeds ${DD_FIELD_DIFF_VALUE_MAX_BYTES} bytes when JSON-serialized` },
+);
+
+export const DiagnoseDifferentialRequestSchema = z.object({
   target: z.enum(["pinocchio", "native"]).optional(),
   divergence: z.object({
-    accountName: z.string(),
-    accountType: z.string().optional(),
+    accountName: z.string().min(1).max(DD_NAME_MAX),
+    accountType: z.string().max(DD_NAME_MAX).optional(),
     fieldDiffs: z
       .array(
         z.object({
-          field: z.string(),
-          anchor: z.unknown(),
-          anvil: z.unknown(),
+          field: z.string().max(DD_NAME_MAX),
+          anchor: boundedJsonValue,
+          anvil: boundedJsonValue,
           equal: z.boolean(),
           sourceLink: z
             .object({
-              instruction: z.string(),
+              instruction: z.string().max(DD_NAME_MAX),
               line: z.number(),
               column: z.number(),
             })
             .optional(),
         }),
       )
+      .max(DD_FIELD_COUNT_MAX)
       .optional(),
     firstDiffByte: z.number().optional(),
-    anchorHex: z.string().optional(),
-    anvilHex: z.string().optional(),
+    anchorHex: z.string().max(DD_HEX_MAX).optional(),
+    anvilHex: z.string().max(DD_HEX_MAX).optional(),
   }),
-  sourceSnippet: z.string().optional(),
-  emittedSnippet: z.string().optional(),
+  sourceSnippet: z.string().max(DD_SNIPPET_MAX).optional(),
+  emittedSnippet: z.string().max(DD_SNIPPET_MAX).optional(),
   accountFields: z
-    .array(z.object({ name: z.string(), type: z.string() }))
+    .array(
+      z.object({
+        name: z.string().max(DD_NAME_MAX),
+        type: z.string().max(DD_NAME_MAX),
+      }),
+    )
+    .max(DD_FIELD_COUNT_MAX)
     .optional(),
 });
 
@@ -223,10 +273,15 @@ aiRoute.post("/diagnose-differential", async (req, res) => {
   const body = req.body as Record<string, unknown>;
   const parsed = DiagnoseDifferentialRequestSchema.safeParse(body);
   if (!parsed.success) {
-    res.status(422).json({
-      error: "Invalid diagnose-differential request",
-      details: parsed.error.message,
-    });
+    // S6 — AnvilError wrapper for client-side parsability.
+    res.status(422).json(
+      new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "Invalid diagnose-differential request",
+        parsed.error.message,
+        422,
+      ).toJSON(),
+    );
     return;
   }
 
