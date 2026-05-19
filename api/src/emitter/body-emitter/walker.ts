@@ -1164,46 +1164,38 @@ export class BodyWalker {
     // Collapse multi-line dot-chains so subsequent regexes can match in one piece.
     transformed = transformed.replace(/(\w|\))\s*\n\s*\./g, "$1.");
     transformed = transformed.replace(/\*\s*\n\s*ctx\./g, "*ctx.");
-    transformed = transformed.replace(
-      /ctx\.accounts\.(\w+)\.to_account_info\(\)\.key\(\)/g,
-      (_, name: string) =>
-        this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(name))),
-    );
-    transformed = transformed.replace(
-      /ctx\.accounts\.(\w+)\.to_account_info\(\)\.key\b/g,
-      (_, name: string) =>
-        this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(name))),
-    );
-    // `.key.as_ref()` / `.key().as_ref()` MUST come before the generic
-    // `.key` rewrite — the generic match would consume `.key` and leave a
-    // stray `.as_ref()` on the wrong shape (e.g. `*X.key.as_ref()`
-    // instead of `X.key.as_ref()`). Only fires for seed-list-style
-    // `&[…X.key.as_ref()…]` shapes; the seed normalizer has its own copy
-    // for the seed-extracted path.
-    transformed = transformed.replace(
-      /ctx\.accounts\.(\w+)\.key(?:\(\))?\.as_ref\(\)/g,
-      (_, name: string) =>
-        this.emitter.emitAccountKeyAsRefExpr(this.resolveAccountInfoVar(snakeCase(name))),
-    );
-    // #39 — `ctx.accounts.X.key().to_bytes()` must be rewritten BEFORE the
-    // bare `.key()` rewrite below. Anchor's Pubkey has ToBytes returning
-    // [u8; 32]; Pinocchio's Pubkey is [u8; 32] with no .to_bytes() method.
-    // The naïve `<acc>.key()` → `*<acc>.key()` rewrite leaves
-    // `*acc.key().to_bytes()` which parses as `*(acc.key().to_bytes())`
-    // by Rust's method-call precedence — `.to_bytes()` runs on `&Pubkey`
-    // and fails E0599. Strip `.to_bytes()` and yield the Pubkey value
-    // directly via emitAccountKeyExpr.
-    transformed = transformed.replace(
-      /ctx\.accounts\.(\w+)\.key\(\)\.to_bytes\(\)/g,
-      (_, name: string) =>
-        this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(name))),
-    );
-    transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\(\)/g, (_, name: string) =>
-      this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(name))),
-    );
-    transformed = transformed.replace(/ctx\.accounts\.(\w+)\.key\b/g, (_, name: string) =>
-      this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(name))),
-    );
+    // H7 Phase 3d — consolidated FIELD-KEY rewrites on `ctx.accounts.X.*`.
+    // Order matters: more-specific suffix shapes MUST fire before bare
+    // `.key()` / `.key` (which would consume the prefix and leave a stray
+    // `.as_ref()` / `.to_bytes()` on the wrong shape, surfaced as #39 /
+    // #44-followup). Each entry maps a suffix regex to the emitter
+    // helper for that semantic (Pubkey value vs `&[u8]` slice).
+    //
+    // Suffix breakdown (one branch per Anchor source idiom):
+    //   - .to_account_info().key() / .to_account_info().key
+    //     Anchor lift through Account<T> → AccountInfo → .key()
+    //   - .key().as_ref() / .key.as_ref()
+    //     Slice-form (seed-list shape) — emits `&[u8]`
+    //   - .key().to_bytes()  (#39)
+    //     Pinocchio's Pubkey is [u8;32]; no .to_bytes(); emit the value
+    //   - .key() / .key
+    //     Bare key reference; emit the Pubkey value
+    const ctxAccountKeyRules: Array<[RegExp, "value" | "asRef"]> = [
+      [/ctx\.accounts\.(\w+)\.to_account_info\(\)\.key\(\)/g, "value"],
+      [/ctx\.accounts\.(\w+)\.to_account_info\(\)\.key\b/g, "value"],
+      [/ctx\.accounts\.(\w+)\.key(?:\(\))?\.as_ref\(\)/g, "asRef"],
+      [/ctx\.accounts\.(\w+)\.key\(\)\.to_bytes\(\)/g, "value"],
+      [/ctx\.accounts\.(\w+)\.key\(\)/g, "value"],
+      [/ctx\.accounts\.(\w+)\.key\b/g, "value"],
+    ];
+    for (const [pattern, kind] of ctxAccountKeyRules) {
+      transformed = transformed.replace(pattern, (_full, name: string) => {
+        const ai = this.resolveAccountInfoVar(snakeCase(name));
+        return kind === "value"
+          ? this.emitter.emitAccountKeyExpr(ai)
+          : this.emitter.emitAccountKeyAsRefExpr(ai);
+      });
+    }
     transformed = transformed.replace(
       /ctx\.accounts\.(\w+)\.lamports\(\)/g,
       (_, name: string) =>
