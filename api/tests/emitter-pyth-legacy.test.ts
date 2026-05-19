@@ -32,15 +32,18 @@ async function emitFor(target: "pinocchio" | "native"): Promise<string> {
   return f.content;
 }
 
-describe("M2b — Pyth legacy read emit", () => {
-  test("native uses pyth_sdk_solana crate directly", async () => {
+describe("M2b/N5b — Pyth legacy read emit", () => {
+  test("native hand-rolls PriceAccountV2 bytes (N5b unification)", async () => {
+    // Pre-N5b Native used pyth_sdk_solana crate directly. The unified
+    // hand-rolled emit drops the crate dep entirely, so both targets
+    // produce identical byte deserialization (only Clock source path
+    // differs via emitClockGetExpr).
     const code = await emitFor("native");
-    expect(code).toContain("pyth_sdk_solana::load_price_feed_from_account_info");
-    expect(code).toContain("get_price_no_older_than");
-    expect(code).toContain("ok_or(ErrorCode::StalePrice)");
-    // Native should NOT hand-roll bytes when the crate is available.
-    expect(code).not.toContain("from_le_bytes");
-    expect(code).not.toContain("0xa1b2c3d4");
+    expect(code).toContain("0xa1b2c3d4");
+    expect(code).toContain("from_le_bytes");
+    expect(code).toContain("__pyth_data[208..216]");
+    // The pyth_sdk_solana crate is NOT referenced.
+    expect(code).not.toContain("pyth_sdk_solana::load_price_feed_from_account_info");
   });
 
   test("pinocchio hand-rolls PriceAccountV2 bytes", async () => {
@@ -68,8 +71,11 @@ describe("M2b — Pyth legacy read emit", () => {
   test("pinocchio age-check propagates the .ok_or(ErrorCode::StalePrice) arm", async () => {
     const code = await emitFor("pinocchio");
     // The error arm from `let p = ...get_price_no_older_than(...).ok_or(ErrorCode::StalePrice)?;`
-    // must surface in the if-age-too-large branch.
-    expect(code).toContain("return Err(ErrorCode::StalePrice)");
+    // must surface in the if-age-too-large branch. The hand-rolled
+    // emit wraps with `.into()` to convert ErrorCode → ProgramError
+    // (the source's trailing `?` was doing this implicitly).
+    expect(code).toContain("ErrorCode::StalePrice");
+    expect(code).toMatch(/return Err\(\(ErrorCode::StalePrice\)\.into\(\)\);/);
   });
 
   test("both targets bind the priceBinding to a struct with the expected fields", async () => {

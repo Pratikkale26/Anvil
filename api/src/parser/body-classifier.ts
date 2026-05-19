@@ -538,6 +538,45 @@ function classifyLetDeclaration(
     }
   }
 
+  // ── N5b — get_feed_id_from_hex("0x...") inline-parse ──
+  // Source:
+  //   let feed_id: [u8; 32] = get_feed_id_from_hex("0xef0d8b...")?;
+  // or fully-qualified:
+  //   let feed_id: [u8; 32] = pyth_solana_receiver_sdk::price_update::get_feed_id_from_hex("0x...")?;
+  // The literal hex string gets parsed at emit time into a [u8; 32]
+  // byte-array literal. This means the receiver-sdk crate is NOT
+  // referenced at emit-time, so the Pinocchio target compiles
+  // without the pyth crates' borsh-derive interop issue.
+  if (valueNode && localVar) {
+    const v = valueNode.text.trim();
+    const hexCallRe =
+      /^(?:[a-zA-Z_][\w:]*\s*::\s*)?get_feed_id_from_hex\s*\(\s*"(?:0x|0X)?([0-9a-fA-F]+)"\s*\)\s*\??\s*$/;
+    const m = v.match(hexCallRe);
+    if (m?.[1]) {
+      // 32 bytes = 64 hex chars. Accept shorter and pad with zeros,
+      // OR refuse if longer than 64. Pad-right is standard for
+      // feed-id hex (Pyth feed ids are exactly 32 bytes).
+      const raw = m[1];
+      if (raw.length <= 64) {
+        const padded = raw.padEnd(64, "0");
+        const bytes: number[] = [];
+        for (let i = 0; i < 64; i += 2) {
+          const b = parseInt(padded.slice(i, i + 2), 16);
+          bytes.push(b);
+        }
+        return {
+          stmt: {
+            kind: "pyth_feed_id_literal",
+            localVar,
+            bytes,
+          },
+        };
+      }
+      // Hex too long — fall through to pass_through; parser warning
+      // surfaces a misuse signal but emit stays best-effort.
+    }
+  }
+
   // ── N5 — Pyth modern (receiver-sdk PriceUpdateV2) ──
   // One-liner method call on an Anchor `Account<'info, PriceUpdateV2>`:
   //   let price = ctx.accounts.price_update

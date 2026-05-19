@@ -178,6 +178,10 @@ const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
   // per-target emit shipped; differential byte-equal against the
   // cloned Pyth Receiver validator is queued for M2c.
   "cpi_pyth_read_price_modern",
+  // N5b — inline-parsed feed-id helper. Pure compile-time-literal
+  // expansion; no runtime CPI, so a differential fixture would just
+  // verify byte-for-byte equality of the inlined array. Deferred.
+  "pyth_feed_id_literal",
 ]);
 
 function listBodyStatementKinds(): string[] {

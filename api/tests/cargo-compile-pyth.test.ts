@@ -73,51 +73,30 @@ const cargoAvailable = (() => {
 })();
 
 /**
- * Tracked-ceiling: this test currently EXPECTS the Pyth emits to FAIL
- * cargo check, because pyth-sdk-solana 0.10 + pyth-solana-receiver-sdk
- * 0.6 use borsh-derive in a way that conflicts with the Anvil
- * scaffold's borsh 1.5 pin (BorshDeserialize macro can't find borsh
- * in deps from the proc-macro context). Strict mode flips the
- * assertion: when ANVIL_PYTH_COMPILE_FIXED=1 is set (in the future
- * session that resolves the cargo-compat), the test inverts and
- * expects compile success — surfacing that the fix is real.
+ * N5b unified the Pyth emit on hand-rolled bytes (no pyth crate deps).
+ * Both targets now compile cleanly under the project scaffold. This
+ * test asserts compile success on all 4 combinations as the new
+ * regression contract.
  *
- * Pattern matches realworld-tracking.test.ts ceiling style — non-
- * blocking by default; the ceiling is the artefact tracked.
+ * If the cargo build infrastructure regresses (e.g. someone adds the
+ * pyth crates back to NATIVE_OPTIONAL_DEPS, re-introducing the borsh-
+ * derive interop issue), this test fires.
  */
-const PYTH_COMPILE_FIXED = process.env.ANVIL_PYTH_COMPILE_FIXED === "1";
-
-describe("Pyth emit — cargo check across the full project scaffold (tracked)", () => {
+describe("Pyth emit — cargo check across the full project scaffold", () => {
   const demos = ["pyth-read-legacy", "pyth-read-modern"];
   for (const demo of demos) {
     for (const target of ["pinocchio", "native"] as const) {
-      test(`${demo} / ${target} compiles (currently EXPECTED to fail per cargo-compat tracking)`, async () => {
+      test(`${demo} / ${target} compiles cleanly (N5b hand-rolled)`, async () => {
         if (!cargoAvailable) {
           if (STRICT_FIXTURES) throw new Error(`cargo not available — surfacing per ANVIL_TEST_STRICT_FIXTURES=1`);
           console.warn(`[cargo-compile-pyth] cargo not available — skipping ${demo}/${target}`);
           return;
         }
         const { ok, tail } = await buildAndCheck(demo, target);
-        if (PYTH_COMPILE_FIXED) {
-          // Future session — verify the compile now passes.
-          if (!ok) {
-            console.error(`\n[cargo-compile-pyth] ${demo}/${target} FAILED under ANVIL_PYTH_COMPILE_FIXED=1:\n${tail}`);
-          }
-          expect(ok).toBe(true);
-        } else {
-          // Default: expect the ceiling — borsh-derive proc-macro
-          // conflict makes the emit uncompilable until cargo-compat is
-          // resolved end-to-end. If this test starts passing without
-          // the env-var, the ceiling moved — flip the assertion (set
-          // ANVIL_PYTH_COMPILE_FIXED=1 and remove this branch).
-          const ceilingHint =
-            "Pyth cargo-compile ceiling: borsh-derive vs pyth_*sdk version pin still open. See api/src/cli/lint-analyzer.ts pyth_* blockers.";
-          if (ok) {
-            console.warn(`\n[cargo-compile-pyth] ${demo}/${target} COMPILED — ceiling has moved! Flip ANVIL_PYTH_COMPILE_FIXED=1 and update lint to "review".`);
-          }
-          expect(ok).toBe(false);
-          expect(ceilingHint).toBeTruthy();
+        if (!ok) {
+          console.error(`\n[cargo-compile-pyth] ${demo}/${target} FAILED:\n${tail}`);
         }
+        expect(ok).toBe(true);
       }, 300_000);
     }
   }

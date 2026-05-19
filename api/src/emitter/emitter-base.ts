@@ -520,51 +520,125 @@ export abstract class BaseEmitter {
   // ── Type mapping ──
   abstract rustTypeForFramework(typeName: string): string;
 
-  // ── M2b — Pyth legacy oracle read ──
-  // Emit the deserialize + age-check sequence that maps the legacy
-  // `let X = load_price_feed_from_account_info(&ACC)?; let Y =
-  // X.get_price_no_older_than(&clock, max_age)?;` source idiom to a
-  // target-portable read.
+  // ── M2b / N5 — Pyth oracle read (legacy + modern) ──
+  // Both targets hand-roll the byte deserialization. Pre-N5b the Native
+  // arm tried to re-use the pyth crates (pyth-sdk-solana for legacy,
+  // pyth-solana-receiver-sdk for modern) but those crates' borsh-derive
+  // proc-macros conflict with Anvil's borsh-1.5 pin — see
+  // posts/plan-pyth-m2.md "cargo-compat ceiling". Unifying on
+  // hand-rolled bytes drops the pyth dependency entirely. Trade-off:
+  // we maintain offsets ourselves; benefit: emit compiles cleanly.
   //
-  // Native: re-emits the `pyth_sdk_solana::*` call chain — Cargo.toml
-  //   auto-injects the crate via project-scaffold's NATIVE_OPTIONAL_DEPS.
-  //   Y is typed as `pyth_sdk_solana::Price` (fields price / conf /
-  //   exponent / publish_time).
-  // Pinocchio: hand-rolls the PriceAccountV2 byte deserialization (the
-  //   crate doesn't compile on the stripped target). Magic header
-  //   (0xa1b2c3d4) check + length guard + slice read of the documented
-  //   offsets. Y is typed as the locally-emitted `AnvilPythPrice`
-  //   struct (same field shape).
-  abstract emitPythReadPriceLegacy(
+  // Layout is target-portable. Clock sourced via emitClockGetExpr so
+  // each subclass's correct sysvar path is used.
+  emitPythReadPriceLegacy(
     feedAccount: string,
     priceBinding: string,
-    clockExpr: string,
+    _clockExpr: string,
     maxAgeExpr: string,
     staleErrExpr: string | undefined,
-  ): string;
+  ): string {
+    // Documented PriceAccountV2 offsets from pyth-sdk-solana 0.10
+    // PriceAccount struct. Magic at 0..4 (0xa1b2c3d4) fails loud on
+    // wrong account type; agg block at 208..224.
+    //
+    // staleErrExpr comes from the source `.ok_or(ErrorCode::Stale)?`
+    // arm. The original `?` converted the error type via From; our
+    // direct `return Err(...)` won't auto-convert, so append `.into()`
+    // when the expression isn't already a ProgramError literal.
+    const errArm = staleErrExpr
+      ? `return Err((${staleErrExpr}).into());`
+      : `return Err(ProgramError::Custom(0xa1b2c3d4));`;
+    const clockTs = this.emitClockGetExpr("unix_timestamp");
+    return [
+      `    let __pyth_data = ${feedAccount}.try_borrow_data()?;`,
+      `    if __pyth_data.len() < 240 {`,
+      `        return Err(ProgramError::InvalidAccountData);`,
+      `    }`,
+      `    // PriceAccountV2 magic = 0xa1b2c3d4 ("pyth" LE)`,
+      `    if u32::from_le_bytes(__pyth_data[0..4].try_into().map_err(|_| ProgramError::InvalidAccountData)?) != 0xa1b2c3d4 {`,
+      `        return Err(ProgramError::InvalidAccountData);`,
+      `    }`,
+      `    let __pyth_expo = i32::from_le_bytes(__pyth_data[20..24].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_publish_time = i64::from_le_bytes(__pyth_data[96..104].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_price = i64::from_le_bytes(__pyth_data[208..216].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_conf = u64::from_le_bytes(__pyth_data[216..224].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_now = ${clockTs};`,
+      `    if __pyth_now.saturating_sub(__pyth_publish_time) > (${maxAgeExpr}) as i64 {`,
+      `        ${errArm}`,
+      `    }`,
+      `    pub struct AnvilPythPrice {`,
+      `        pub price: i64,`,
+      `        pub conf: u64,`,
+      `        pub exponent: i32,`,
+      `        pub publish_time: i64,`,
+      `    }`,
+      `    let ${priceBinding} = AnvilPythPrice {`,
+      `        price: __pyth_price,`,
+      `        conf: __pyth_conf,`,
+      `        exponent: __pyth_expo,`,
+      `        publish_time: __pyth_publish_time,`,
+      `    };`,
+    ].join("\n");
+  }
 
-  // N5 — Pyth modern oracle read (receiver-sdk PriceUpdateV2). The
-  // source idiom is a single method call on an Anchor
-  // `Account<'info, PriceUpdateV2>`:
-  //   let X = ctx.accounts.price_update
-  //       .get_price_no_older_than(&Clock::get()?, max_age, &feed_id)?;
-  //
-  // Native: re-emits the receiver-sdk call chain — Cargo.toml gets
-  //   pyth-solana-receiver-sdk via NATIVE_OPTIONAL_DEPS. X is typed
-  //   `pyth_solana_receiver_sdk::price_update::Price`.
-  // Pinocchio: hand-rolls the PriceUpdateV2 byte deserialization.
-  //   Layout: 8B discriminator + 32B write_authority + 1-2B
-  //   verification_level + 84B PriceFeedMessage (32B feed_id +
-  //   i64+u64+i32+i64+i64+i64+u64) + 8B posted_slot. feed_id is
-  //   cross-checked against the user-supplied expression — fail loud
-  //   on the wrong feed.
-  abstract emitPythReadPriceModern(
+  emitPythReadPriceModern(
     priceUpdateAccount: string,
     priceBinding: string,
-    clockExpr: string,
+    _clockExpr: string,
     maxAgeExpr: string,
     feedIdExpr: string,
-  ): string;
+  ): string {
+    // PriceUpdateV2 layout (pyth-solana-receiver-sdk 0.6):
+    //   0..8     Anchor discriminator
+    //   8..40    write_authority (Pubkey)
+    //   40       verification_level Borsh tag (0=Partial+u8, 1=Full)
+    //   41       num_signatures (Partial only)
+    //   ...      84B PriceFeedMessage (32B feed_id + i64+u64+i32+i64+i64+i64+u64)
+    //   ...      8B posted_slot
+    // verification_level > 1 fails loud — catches silent layout
+    // version bumps (silent wrong-price = money loss).
+    const clockTs = this.emitClockGetExpr("unix_timestamp");
+    const feedIdRaw = feedIdExpr.replace(/^&/, "").trim();
+    return [
+      `    let __pyth_data = ${priceUpdateAccount}.try_borrow_data()?;`,
+      `    if __pyth_data.len() < 50 {`,
+      `        return Err(ProgramError::InvalidAccountData);`,
+      `    }`,
+      `    let __pyth_vl_tag = __pyth_data[40];`,
+      `    if __pyth_vl_tag > 1u8 {`,
+      `        return Err(ProgramError::Custom(0xa1b2c3e0));`,
+      `    }`,
+      `    let __pyth_msg_off: usize = if __pyth_vl_tag == 0u8 { 42 } else { 41 };`,
+      `    if __pyth_data.len() < __pyth_msg_off + 84 {`,
+      `        return Err(ProgramError::InvalidAccountData);`,
+      `    }`,
+      `    let __pyth_feed_id = &__pyth_data[__pyth_msg_off..__pyth_msg_off + 32];`,
+      `    if __pyth_feed_id != &${feedIdRaw}[..] {`,
+      `        return Err(ProgramError::Custom(0xfeed1d));`,
+      `    }`,
+      `    let __pyth_price = i64::from_le_bytes(__pyth_data[__pyth_msg_off + 32..__pyth_msg_off + 40].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_conf = u64::from_le_bytes(__pyth_data[__pyth_msg_off + 40..__pyth_msg_off + 48].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_expo = i32::from_le_bytes(__pyth_data[__pyth_msg_off + 48..__pyth_msg_off + 52].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_publish_time = i64::from_le_bytes(__pyth_data[__pyth_msg_off + 52..__pyth_msg_off + 60].try_into().map_err(|_| ProgramError::InvalidAccountData)?);`,
+      `    let __pyth_now = ${clockTs};`,
+      `    if __pyth_now.saturating_sub(__pyth_publish_time) > (${maxAgeExpr}) as i64 {`,
+      `        return Err(ProgramError::Custom(0xa1b2c3d4));`,
+      `    }`,
+      `    pub struct AnvilPythPrice {`,
+      `        pub price: i64,`,
+      `        pub conf: u64,`,
+      `        pub exponent: i32,`,
+      `        pub publish_time: i64,`,
+      `    }`,
+      `    let ${priceBinding} = AnvilPythPrice {`,
+      `        price: __pyth_price,`,
+      `        conf: __pyth_conf,`,
+      `        exponent: __pyth_expo,`,
+      `        publish_time: __pyth_publish_time,`,
+      `    };`,
+    ].join("\n");
+  }
 
   // ── Helpers that the framework might need ──
   abstract emitHelperFunctions(ir: SolanaIR): string;
@@ -743,12 +817,19 @@ export abstract class BaseEmitter {
           if (/\bnum_traits\b/.test(statement)) return false;
           if (/\bmpl_core\b/.test(statement)) return false;
           if (/\bmpl_token_metadata\b/.test(statement)) return false;
-          if (/\bpyth_solana_receiver_sdk\b/.test(statement)) return false;
           if (/\bswitchboard_on_demand\b/.test(statement)) return false;
           if (/\bsolana_keccak_hasher\b/.test(statement)) return false;
           if (/\bsolana_sha256_hasher\b/.test(statement)) return false;
           if (/\bsha2_const_stable\b/.test(statement)) return false;
         }
+        // Pyth crates dropped on BOTH targets — N5b unified the emit
+        // on hand-rolled bytes, so neither pyth_sdk_solana nor
+        // pyth_solana_receiver_sdk is referenced at emit time. Keeping
+        // the source `use pyth_*::*` lines would still pull the crates
+        // into Cargo.toml (and re-introduce the borsh-derive proc-macro
+        // interop issue that locked the M2/N5 ceiling pre-N5b).
+        if (/\bpyth_sdk_solana\b/.test(statement)) return false;
+        if (/\bpyth_solana_receiver_sdk\b/.test(statement)) return false;
         // Token-2022 transfer-hook helper crates. These are SBF-only crates
         // not in the Pinocchio OR Native scaffold (Native ships
         // spl_token_2022 + spl_pod, but not the transfer-hook-specific

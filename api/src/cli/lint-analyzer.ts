@@ -134,30 +134,33 @@ export const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
     verdict: () => "review",
   },
   // ── Pyth oracle ────────────────────────────────────────────────────────
-  // M2/N5 parser+IR+emit shipped (cpi_pyth_read_price_{legacy,modern}),
-  // but the Cargo.toml interop between the pyth-* crates and Anvil's
-  // scaffold's pinned borsh version is unresolved: pyth-solana-receiver-sdk
-  // 0.6 + pyth-sdk-solana 0.10 use borsh-derive in a way that conflicts
-  // with the scaffold's `borsh = "1.5"` (BorshDeserialize macro can't
-  // find borsh in deps from the proc-macro context). Until the version
-  // pin is solved end-to-end, the strict gate keeps refusing — the
-  // structural emit exists but produces uncompilable code under the
-  // current scaffold. Tracked: future session resolves the cargo-compat.
+  // N5b unified the Pyth emit on hand-rolled bytes — both targets
+  // compile cleanly under the project scaffold (no pyth crate deps
+  // required). The previous borsh-derive proc-macro conflict is
+  // closed by dropping the crate dependency entirely. Source `use
+  // pyth_*::*` lines are filtered out at emit time;
+  // `get_feed_id_from_hex("0x…")` is inline-parsed into a byte-array
+  // literal. Lint verdict relaxed to "review" — the emit is
+  // structurally correct but the byte offsets are best-effort
+  // (PriceAccountV2 + PriceUpdateV2 layouts pinned to pyth-sdk-solana
+  // 0.10 + pyth-solana-receiver-sdk 0.6); upstream layout drift would
+  // be caught by the embedded fail-loud checks (magic 0xa1b2c3d4 +
+  // feed_id cross-check + verification_level >1).
   {
     prefix: "pyth_solana_receiver_sdk",
     category: "Unsupported integration",
     title: "pyth_solana_receiver_sdk imports",
     detail: () =>
-      "Pyth modern (PriceUpdateV2) reads have parser+IR+emit shipped (N5), but the receiver-sdk crate's borsh-derive proc-macro conflicts with the Anvil scaffold's borsh pin. Strict gate refuses until the cargo-compat is resolved. Workaround: `--permissive` builds emit a structurally-correct skeleton you can hand-patch the deps on, or migrate the read to a manual deserialize.",
-    verdict: () => "blocker",
+      "Pyth modern (PriceUpdateV2) reads are transpiled (N5b) on both targets via hand-rolled byte deserialization. Source `use pyth_solana_receiver_sdk::*` is stripped. `get_feed_id_from_hex(\"0x…\")` is inline-parsed into a [u8; 32] literal. Byte offsets pinned to receiver-sdk 0.6; verification_level >1 fails loud to catch layout drift. Verify against a real PriceUpdateV2 account before deploy.",
+    verdict: () => "review",
   },
   {
     prefix: "pyth_sdk_solana",
     category: "Unsupported integration",
     title: "pyth_sdk_solana imports",
     detail: () =>
-      "Legacy Pyth SDK reads have parser+IR+emit shipped (M2b), but the pyth-sdk-solana crate's borsh-derive proc-macro conflicts with the Anvil scaffold's borsh pin. Strict gate refuses until the cargo-compat is resolved. Suggested fix: migrate to the receiver SDK (better long-term), or write the deserialization manually after emit.",
-    verdict: () => "blocker",
+      "Legacy Pyth (PriceAccountV2) reads are transpiled (M2b/N5b) on both targets via hand-rolled byte deserialization. Source `use pyth_sdk_solana::*` is stripped. Magic 0xa1b2c3d4 check fails loud on wrong-account-type; offsets pinned to pyth-sdk-solana 0.10. Verify against a real PriceAccountV2 payload before deploy.",
+    verdict: () => "review",
   },
   {
     prefix: "pythnet_sdk",

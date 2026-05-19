@@ -1182,6 +1182,21 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     accountType: z.string(),
   }),
 
+  // N5b — Inline-parsed `get_feed_id_from_hex("0x...")` call. The
+  // receiver-sdk's helper parses a hex string into [u8; 32] at runtime;
+  // since the input is invariably a literal, we parse it at emit time
+  // and produce a byte-array literal instead. This eliminates the
+  // Pinocchio dep on pyth-solana-receiver-sdk for the common case.
+  // Source pattern:
+  //   let feed_id: [u8; 32] = get_feed_id_from_hex("0xef0d8b...")?;
+  z.object({
+    kind: z.literal("pyth_feed_id_literal"),
+    /** Local variable bound to the feed id. */
+    localVar: z.string(),
+    /** 32-byte array literal, pre-parsed from the source hex string. */
+    bytes: z.array(z.number().int().min(0).max(255)).length(32),
+  }),
+
   // N5 — modern Pyth oracle read (pyth_solana_receiver_sdk crate /
   // PriceUpdateV2). One-line idiom (no load-prelude like legacy):
   //   let price = ctx.accounts.price_update

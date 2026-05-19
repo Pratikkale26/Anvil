@@ -731,6 +731,7 @@ type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
 type ZeroCopyLoad = Extract<BodyStatement, { kind: "zero_copy_load" }>;
 type CpiPythReadPriceLegacy = Extract<BodyStatement, { kind: "cpi_pyth_read_price_legacy" }>;
 type CpiPythReadPriceModern = Extract<BodyStatement, { kind: "cpi_pyth_read_price_modern" }>;
+type PythFeedIdLiteral = Extract<BodyStatement, { kind: "pyth_feed_id_literal" }>;
 
 /**
  * Every IR statement kind the visitor knows how to dispatch. Phase-1
@@ -931,6 +932,8 @@ export class AstVisitorBase {
         return this.visitCpiPythReadPriceLegacy(stmt);
       case "cpi_pyth_read_price_modern":
         return this.visitCpiPythReadPriceModern(stmt);
+      case "pyth_feed_id_literal":
+        return this.visitPythFeedIdLiteral(stmt);
     }
   }
 
@@ -3460,6 +3463,21 @@ export class AstVisitorBase {
       stmt.staleErrExpr,
     );
     return this.applyStructuralize([code]);
+  }
+
+  /**
+   * N5b — Inline-parsed feed-id from get_feed_id_from_hex("0x..."). Emit
+   * a byte-array literal so the receiver-sdk crate isn't referenced at
+   * emit time. Target-portable: same shape on Pinocchio + Native.
+   */
+  visitPythFeedIdLiteral(stmt: PythFeedIdLiteral): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const localVar = snakeCase(stmt.localVar);
+    const bytes = stmt.bytes.map((b) => `0x${b.toString(16).padStart(2, "0")}`).join(", ");
+    return this.applyStructuralize([
+      `    let ${localVar}: [u8; 32] = [${bytes}];`,
+    ]);
   }
 
   /**

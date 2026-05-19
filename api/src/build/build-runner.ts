@@ -140,10 +140,10 @@ pinocchio-associated-token-account = "0.4"
 # isZeroCopy entry; mirror that here so /build doesn't fail on
 # zero_copy_load / Pod-impl emit. See project-scaffold.ts.
 bytemuck = { version = "1", features = ["derive"] }
-# Pyth modern path (N5) keeps the pyth-solana-receiver-sdk import on
-# Pinocchio so the source's `get_feed_id_from_hex("0x…")?` survives.
-# The hand-rolled bytes emit doesn't otherwise depend on the crate.
-pyth-solana-receiver-sdk = "0.6"
+# Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
+# emit on hand-rolled bytes (no crate dep needed). The source's
+# `get_feed_id_from_hex("0x…")?` is parsed at emit time into a byte
+# array literal so the receiver-sdk isn't referenced at runtime either.
 `;
 
 // FUTURE: Emit-side blocker (c) — solana-vote-program scaffold dep.
@@ -173,17 +173,15 @@ spl-associated-token-account = { version = "6", features = ["no-entrypoint"] }
 #   - spl-memo: cpi_memo helper
 #   - spl-token-metadata-interface: T22 TokenMetadata extension CPIs
 #   - mpl-token-metadata: real-CPI MPL catalog (12 instructions)
-#   - pyth-sdk-solana: M2b legacy Pyth read (Native uses crate directly)
-#   - pyth-solana-receiver-sdk: N5 modern Pyth read
-#   - anchor-lang: needed by the AccountDeserialize trait
-#     reach-around in the N5 Native emit (try_deserialize call)
 bytemuck = { version = "1", features = ["derive"] }
 spl-memo = { version = "6", features = ["no-entrypoint"] }
 spl-token-metadata-interface = "0.4"
 mpl-token-metadata = "5.1"
-pyth-sdk-solana = "0.10"
-pyth-solana-receiver-sdk = "0.6"
-anchor-lang = "0.31"
+# Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
+# emit on hand-rolled bytes (see emitter-base.ts emitPythReadPrice*).
+# Source `use pyth_*::*` lines are filtered out by
+# filteredSourceImports. Adding the crates would re-introduce the
+# borsh-derive proc-macro interop issue.
 `;
 
 function cargoTomlFor(target: BuildTarget): string {

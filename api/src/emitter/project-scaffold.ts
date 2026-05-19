@@ -65,11 +65,16 @@ function capitalize(s: string): string {
  *      (mpl-core, mpl-token-metadata, pyth, switchboard)
  */
 const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
-  // External program SDKs
+  // External program SDKs.
+  // Note: pyth_sdk_solana and pyth_solana_receiver_sdk are NOT in this
+  // list. N5b unified Pyth emit on hand-rolled bytes (see emitter-base
+  // emitPythReadPriceLegacy / emitPythReadPriceModern), and the source's
+  // `use pyth_*::*` lines are filtered out by filteredSourceImports.
+  // Re-adding them would compile the pyth crates and re-introduce the
+  // borsh-derive proc-macro interop issue that locked the M2/N5
+  // ceiling pre-N5b.
   mpl_core:                  `mpl-core = "0.10"`,
   mpl_token_metadata:        `mpl-token-metadata = "5.1"`,
-  pyth_solana_receiver_sdk:  `pyth-solana-receiver-sdk = "0.6"`,
-  pyth_sdk_solana:           `pyth-sdk-solana = "0.10"`,
   switchboard_on_demand:     `switchboard-on-demand = "0.4"`,
   switchboard_v2:            `switchboard-v2 = "0.4"`,
   // SPL extensions (beyond core token + ATA + memo + token-2022)
@@ -120,13 +125,6 @@ const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
   // so they tend to compile on pinocchio with `default-features = false`)
   mpl_core:                  `mpl-core = { version = "0.10", default-features = false }`,
   mpl_token_metadata:        `mpl-token-metadata = { version = "5.1", default-features = false }`,
-  // Pyth (M2b legacy + N5 modern). The Pinocchio emit hand-rolls byte
-  // deserialization for the actual price read, but keeps source-side
-  // `use pyth_*` imports + `get_feed_id_from_hex` pass-through calls
-  // in scope — those need the crate to compile. The receiver SDK
-  // pulls anchor-lang transitively for the AccountDeserialize trait.
-  pyth_sdk_solana:           `pyth-sdk-solana = "0.10"`,
-  pyth_solana_receiver_sdk:  `pyth-solana-receiver-sdk = "0.6"`,
   // Common third-party crates
   bytemuck:                  `bytemuck = { version = "1", features = ["derive"] }`,
   arrayref:                  `arrayref = "0.3"`,
