@@ -179,7 +179,7 @@ For detail: [docs/architecture.md](docs/architecture.md).
 
 Pinocchio is the production target. Native is the reference.
 
-Quick read: parser at 100% on 27 real-world programs; SPL Token + Token-2022 + ATA + Memo + System CPIs all green; account constraints (`init`, `init_if_needed`, `mut`, `has_one`, `close`, `seeds`, `bump`, `realloc`) all green; `#[derive(InitSpace)]` + `#[max_len]` honored.
+Quick read: parser at 100% on 27 real-world programs; SPL Token + Token-2022 + ATA + Memo + System CPIs all green; full 12-slot Metaplex Token Metadata catalog emits real CPIs (no stubs); Pyth oracle reads (both legacy `pyth_sdk_solana` and modern `pyth_solana_receiver_sdk` PriceUpdateV2 paths) transpile to hand-rolled byte deserialization with magic-header + feed-id cross-check; account constraints (`init`, `init_if_needed`, `mut`, `has_one`, `close`, `seeds`, `bump`, `realloc`) all green; `#[derive(InitSpace)]` + `#[max_len]` honored.
 
 Full matrix and known gaps: [docs/feature-matrix.md](docs/feature-matrix.md).
 
@@ -255,4 +255,4 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 ## Contributing
 
-Issues + PRs welcome. Areas where help is most useful: new differential fixtures (the harness is designed for ~30-line additions — see [docs/differential-testing.md](docs/differential-testing.md)), Pyth / Switchboard / Metaplex IR kinds, real-world Anchor programs that fail to transpile (file the source + the divergence).
+Issues + PRs welcome. Areas where help is most useful: new differential fixtures (the harness is designed for ~30-line additions — see [docs/differential-testing.md](docs/differential-testing.md)), Switchboard oracle IR kinds (Pyth legacy + modern both supported as of M2/N5b — see api/src/demo-programs/pyth-read-{legacy,modern}.rs), Metaplex differential-against-real-bytecode fixtures, real-world Anchor programs that fail to transpile (file the source + the divergence).
