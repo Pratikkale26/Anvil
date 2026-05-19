@@ -1160,6 +1160,33 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // MPL Core: TransferV1 (task #48 S3). Discriminator 14; 7 accounts (asset
+  // writable non-signer, payer writable signer, new_owner readonly required;
+  // collection / authority / system_program / log_wrapper optional with the
+  // MPL_CORE_ID readonly fallback). Borsh args: Option<CompressionProof> —
+  // v1 scope always None (compressed-NFT case is rare and the proof's nested
+  // shape deferred until a real fixture surfaces).
+  z.object({
+    kind: z.literal("cpi_mpl_core_transfer_v1"),
+    /** The mpl_core program AccountInfo. */
+    programAccount: z.string(),
+    /** Asset account — writable, non-signer. */
+    asset: z.string(),
+    /** Optional collection — "None" or "Some(<expr>)". */
+    collection: z.string().default("None"),
+    /** Payer — writable + signer. */
+    payer: z.string(),
+    /** Optional authority — "None" or "Some(<expr>)". */
+    authority: z.string().default("None"),
+    /** Required new_owner — readonly, non-signer. */
+    newOwner: z.string(),
+    /** System program — passed verbatim, helper wraps in Some(). */
+    systemProgram: z.string(),
+    /** Optional log_wrapper — "None" or "Some(<expr>)". */
+    logWrapper: z.string().default("None"),
+    signerSeeds: z.string().optional(),
+  }),
+
   // MPL Core: UpdateV2 (task #48 S2). Discriminator 30; 7 accounts (asset
   // writable non-signer, payer writable signer, optionals fall back to
   // MPL_CORE_ID via the helper). Borsh args: Option<String> new_name +

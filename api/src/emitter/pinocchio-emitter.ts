@@ -48,6 +48,7 @@ import {
   irNeedsMplThawDelegatedHelper,
   irNeedsMplCoreCreateV2Helper,
   irNeedsMplCoreUpdateV2Helper,
+  irNeedsMplCoreTransferV1Helper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK, MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
@@ -403,7 +404,8 @@ export class PinocchioEmitter extends BaseEmitter {
       || irNeedsMplFreezeDelegatedHelper(_ir)
       || irNeedsMplThawDelegatedHelper(_ir)
       || irNeedsMplCoreCreateV2Helper(_ir)
-      || irNeedsMplCoreUpdateV2Helper(_ir);
+      || irNeedsMplCoreUpdateV2Helper(_ir)
+      || irNeedsMplCoreTransferV1Helper(_ir);
     if (needsSeedSigner) {
       imports.push(`use pinocchio::instruction::{Seed, Signer};`);
     }
@@ -4050,6 +4052,66 @@ pub fn mpl_core_create_v2(
         payer,
         owner_info,
         update_authority_info,
+        system_program,
+        log_wrapper_info,
+    ];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    // MPL Core S3 — TransferV1. Discriminator 14; 7 accounts; Borsh arg
+    // is Option<CompressionProof> = None in v1 scope (uncompressed assets).
+    if (irNeedsMplCoreTransferV1Helper(ir)) {
+      helpers.push(`/// MPL Core: TransferV1 (discriminator 14).
+/// v1 scope: compression_proof always None (uncompressed assets only).
+/// asset is writable but NOT a signer; new_owner is the new asset owner.
+pub fn mpl_core_transfer_v1(
+    program: &AccountInfo,
+    asset: &AccountInfo,
+    collection: Option<&AccountInfo>,
+    payer: &AccountInfo,
+    authority: Option<&AccountInfo>,
+    new_owner: &AccountInfo,
+    system_program: &AccountInfo,
+    log_wrapper: Option<&AccountInfo>,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: [u8; 2] = [14, 0];
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(asset.key(), true, false),
+        pinocchio::instruction::AccountMeta::new(collection_info.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(payer.key(), true, true),
+        pinocchio::instruction::AccountMeta::new(authority_info.key(), false, authority.is_some()),
+        pinocchio::instruction::AccountMeta::new(new_owner.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
+        pinocchio::instruction::AccountMeta::new(log_wrapper_info.key(), false, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: program.key(),
+        accounts: &metas,
+        data: &data,
+    };
+    let infos = [
+        asset,
+        collection_info,
+        payer,
+        authority_info,
+        new_owner,
         system_program,
         log_wrapper_info,
     ];

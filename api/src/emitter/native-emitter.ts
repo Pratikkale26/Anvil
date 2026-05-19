@@ -49,6 +49,7 @@ import {
   irNeedsMplThawDelegatedHelper,
   irNeedsMplCoreCreateV2Helper,
   irNeedsMplCoreUpdateV2Helper,
+  irNeedsMplCoreTransferV1Helper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK } from "./markers.js";
 
@@ -249,7 +250,8 @@ export class NativeEmitter extends BaseEmitter {
       || irNeedsMplFreezeDelegatedHelper(_ir)
       || irNeedsMplThawDelegatedHelper(_ir)
       || irNeedsMplCoreCreateV2Helper(_ir)
-      || irNeedsMplCoreUpdateV2Helper(_ir);
+      || irNeedsMplCoreUpdateV2Helper(_ir)
+      || irNeedsMplCoreTransferV1Helper(_ir);
     const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsHelper(_ir, "spl_transfer")
       || irNeedsUnsignedSplMintToHelper(_ir)
@@ -2820,6 +2822,58 @@ pub fn mpl_core_create_v2<'a>(
         payer.clone(),
         owner_info.clone(),
         update_authority_info.clone(),
+        system_program.clone(),
+        log_wrapper_info.clone(),
+    ];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsMplCoreTransferV1Helper(_ir)) {
+      helpers.push(`/// MPL Core: TransferV1 (discriminator 14).
+/// v1 scope: compression_proof always None.
+pub fn mpl_core_transfer_v1<'a>(
+    program: &AccountInfo<'a>,
+    asset: &AccountInfo<'a>,
+    collection: Option<&AccountInfo<'a>>,
+    payer: &AccountInfo<'a>,
+    authority: Option<&AccountInfo<'a>>,
+    new_owner: &AccountInfo<'a>,
+    system_program: &AccountInfo<'a>,
+    log_wrapper: Option<&AccountInfo<'a>>,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let data: Vec<u8> = vec![14, 0];
+    let collection_info = collection.unwrap_or(program);
+    let authority_info = authority.unwrap_or(program);
+    let log_wrapper_info = log_wrapper.unwrap_or(program);
+    let accounts = vec![
+        AccountMeta::new(*asset.key, false),
+        AccountMeta::new_readonly(*collection_info.key, false),
+        AccountMeta::new(*payer.key, true),
+        if authority.is_some() {
+            AccountMeta::new_readonly(*authority_info.key, true)
+        } else {
+            AccountMeta::new_readonly(*authority_info.key, false)
+        },
+        AccountMeta::new_readonly(*new_owner.key, false),
+        AccountMeta::new_readonly(*system_program.key, false),
+        AccountMeta::new_readonly(*log_wrapper_info.key, false),
+    ];
+    let ix = Instruction {
+        program_id: *program.key,
+        accounts,
+        data,
+    };
+    let infos = [
+        asset.clone(),
+        collection_info.clone(),
+        payer.clone(),
+        authority_info.clone(),
+        new_owner.clone(),
         system_program.clone(),
         log_wrapper_info.clone(),
     ];

@@ -204,6 +204,8 @@ const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
   "cpi_mpl_core_create_v2",
   // MPL Core UpdateV2 — task #48 S2. Same fixture-pending status as S1.
   "cpi_mpl_core_update_v2",
+  // MPL Core TransferV1 — task #48 S3. Same fixture-pending status as S1.
+  "cpi_mpl_core_transfer_v1",
 ]);
 
 function listBodyStatementKinds(): string[] {

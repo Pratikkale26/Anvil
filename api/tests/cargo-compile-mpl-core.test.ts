@@ -63,7 +63,7 @@ const cargoAvailable = (() => {
 })();
 
 describe("MPL Core — cargo check across project scaffold", () => {
-  const demos = ["mpl-core-create-v2", "mpl-core-update-v2"];
+  const demos = ["mpl-core-create-v2", "mpl-core-update-v2", "mpl-core-transfer-v1"];
   for (const demo of demos) {
     for (const target of ["pinocchio", "native"] as const) {
       test(`${demo} / ${target} compiles cleanly`, async () => {

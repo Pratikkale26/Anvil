@@ -514,6 +514,12 @@ export function detectCpi(
   ) {
     return extractMplCoreUpdateV2(callNode, collector);
   }
+  if (
+    /\bTransferV1CpiBuilder\b/.test(funcText) &&
+    /\.(invoke|invoke_signed)$/.test(funcText)
+  ) {
+    return extractMplCoreTransferV1(callNode, collector);
+  }
 
   return null;
 }
@@ -1156,6 +1162,39 @@ function extractMplCoreCreateV2(callNode: SyntaxNode, collector?: WarningCollect
     name: fields.name ?? '""',
     uri: fields.uri ?? '""',
     dataState: fields.data_state ?? "DataState::AccountState",
+    signerSeeds,
+  };
+}
+
+/**
+ * task #48 S3 — TransferV1 (disc 14, 7 accounts). Source pattern:
+ *   mpl_core::TransferV1CpiBuilder::new(prog)
+ *       .asset(&ctx.accounts.asset.to_account_info())
+ *       .payer(&ctx.accounts.payer.to_account_info())
+ *       .authority(Some(&ctx.accounts.owner.to_account_info()))
+ *       .new_owner(&ctx.accounts.recipient.to_account_info())
+ *       .system_program(&ctx.accounts.system_program.to_account_info())
+ *       .invoke()?;
+ */
+function extractMplCoreTransferV1(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const { fields, programArg, signerSeeds } = walkMplCoreBuilder(callNode);
+
+  if (!fields.asset || !fields.payer || !fields.new_owner || !fields.system_program) {
+    warnClassificationLost(collector, "MPL Core TransferV1", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+
+  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  return {
+    kind: "cpi_mpl_core_transfer_v1",
+    programAccount: clean(programArg),
+    asset: clean(fields.asset),
+    collection: fields.collection ? `Some(${clean(stripSomeWrap(fields.collection))})` : "None",
+    payer: clean(fields.payer),
+    authority: fields.authority ? `Some(${clean(stripSomeWrap(fields.authority))})` : "None",
+    newOwner: clean(fields.new_owner),
+    systemProgram: clean(fields.system_program),
+    logWrapper: fields.log_wrapper ? `Some(${clean(stripSomeWrap(fields.log_wrapper))})` : "None",
     signerSeeds,
   };
 }

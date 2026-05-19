@@ -236,6 +236,18 @@ export function irNeedsMplCoreUpdateV2Helper(ir: SolanaIR): boolean {
   );
 }
 
+/**
+ * MPL Core S3 — TransferV1. Hand-rolled invoke; discriminator 14; 7 accounts
+ * (asset writable non-signer, payer writable signer, new_owner readonly
+ * required; collection / authority / log_wrapper optional). Borsh args:
+ * Option<CompressionProof> = None in v1 scope.
+ */
+export function irNeedsMplCoreTransferV1Helper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_mpl_core_transfer_v1")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>
