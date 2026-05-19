@@ -51,6 +51,8 @@ import {
 } from "./differential-harness.ts";
 import {
   createMintIxs,
+  createTokenAccountIxs,
+  mintToIx,
   sendSetupTx,
 } from "./differential-setup-helpers.ts";
 import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
@@ -85,6 +87,7 @@ defineDifferential({
   setup: async () => {
     const payer = Keypair.generate();
     const mint = Keypair.generate();
+    const tokenAccount = Keypair.generate();
     const mplProgramId = new PublicKey(MPL_PROGRAM_ID);
     const [metadataPda] = PublicKey.findProgramAddressSync(
       [
@@ -94,18 +97,33 @@ defineDifferential({
       ],
       mplProgramId,
     );
-    return { payer, mint, metadataPda, mplProgramId };
+    const [editionPda] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("metadata"),
+        mplProgramId.toBuffer(),
+        mint.publicKey.toBuffer(),
+        Buffer.from("edition"),
+      ],
+      mplProgramId,
+    );
+    return { payer, mint, tokenAccount, metadataPda, editionPda, mplProgramId };
   },
 
   callScript: async (svm: LiteSVM, ctx, programId: PublicKey) => {
     svm.withDefaultPrograms();
     svm.airdrop(ctx.payer.publicKey, BigInt(10_000_000_000));
 
-    // 1) Allocate + initialize mint owned by payer (mint authority = payer).
-    const setupTx = new Transaction().add(
-      ...createMintIxs(svm, ctx.payer.publicKey, ctx.mint.publicKey, 0, ctx.payer.publicKey, ctx.payer.publicKey),
-    );
-    sendSetupTx(svm, setupTx, ctx.payer.publicKey, [ctx.payer, ctx.mint], "mint-init");
+    // 1) Allocate + initialize mint (decimals=0 for NFT), create a token
+    // account owned by payer, mint 1 token. NFT spec: create_master_edition_v3
+    // requires the mint to be initialized with decimals=0 + supply=1 BEFORE
+    // the CPI succeeds; otherwise MPL refuses with InvalidMintAuthority or
+    // EditionsMustHaveExactlyOneToken.
+    const setupTx = new Transaction()
+      .add(...createMintIxs(svm, ctx.payer.publicKey, ctx.mint.publicKey, 0, ctx.payer.publicKey, ctx.payer.publicKey))
+      .add(...createTokenAccountIxs(svm, ctx.payer.publicKey, ctx.tokenAccount.publicKey, ctx.mint.publicKey, ctx.payer.publicKey))
+      .add(mintToIx(ctx.mint.publicKey, ctx.tokenAccount.publicKey, ctx.payer.publicKey, 1n));
+    sendSetupTx(svm, setupTx, ctx.payer.publicKey,
+      [ctx.payer, ctx.mint, ctx.tokenAccount], "mint-init-and-mint-1");
 
     // 2) Call `make(name, symbol, uri)`. Account order MUST mirror the
     // demo's #[derive(Accounts)] struct: metadata, mint, payer,
@@ -137,6 +155,33 @@ defineDifferential({
     tx.sign(ctx.payer);
     const r = svm.sendTransaction(tx);
     if (isTxFailure(r)) throw new Error(`make failed: ${txFailureMessage(r)}`);
+
+    // 2.5) lock_supply: invoke create_master_edition_v3 to seal NFT supply.
+    // Account order mirrors LockSupply struct: edition, metadata, mint,
+    // payer, token_metadata_program, token_program, system_program, rent.
+    // The CPI inside Anvil's helper omits rent from the meta list (anchor-spl
+    // 0.31 passes rent: None) — the recent fix to mpl_create_master_edition_v3
+    // is what makes this byte-equal between Anchor reference + Anvil emit.
+    const lockIx = new TransactionInstruction({
+      programId,
+      keys: [
+        { pubkey: ctx.editionPda, isSigner: false, isWritable: true },
+        { pubkey: ctx.metadataPda, isSigner: false, isWritable: true },
+        { pubkey: ctx.mint.publicKey, isSigner: false, isWritable: true },
+        { pubkey: ctx.payer.publicKey, isSigner: true, isWritable: true },
+        { pubkey: ctx.mplProgramId, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
+      ],
+      data: Buffer.from(anchorIxDiscriminator("lock_supply")),
+    });
+    const lockTx = new Transaction().add(lockIx);
+    lockTx.recentBlockhash = svm.latestBlockhash();
+    lockTx.feePayer = ctx.payer.publicKey;
+    lockTx.sign(ctx.payer);
+    const r3 = svm.sendTransaction(lockTx);
+    if (isTxFailure(r3)) throw new Error(`lock_supply failed: ${txFailureMessage(r3)}`);
 
     // 3) Now rename: invoke update_metadata_accounts_v2. Payer is the
     // update_authority set during create. New DataV2 has different
@@ -171,8 +216,10 @@ defineDifferential({
   // The metadata PDA is what MPL writes — that's the byte-equal anchor.
   // The mint stays untouched (its mint_authority pubkey is what MPL reads,
   // but MPL doesn't write to it).
-  stripDiscriminator: false, // MPL metadata accounts don't have an Anchor 8-byte discriminator.
+  stripDiscriminator: false, // MPL metadata + master_edition accounts don't have an Anchor 8-byte discriminator.
   accountsToCompare: (ctx) => [
     { pubkey: ctx.metadataPda, label: "metadata_pda" },
+    { pubkey: ctx.editionPda, label: "master_edition_pda" },
+    { pubkey: ctx.mint.publicKey, label: "mint_after_master_edition" },
   ],
 });
