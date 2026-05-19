@@ -309,7 +309,16 @@ export function emitFormattedMsgPinocchio(segments: FormatSegment[]): string {
       lines.push(`        __log_buf[__log_len..__log_len + __seg${segIdx}.len()].copy_from_slice(__seg${segIdx});`);
       lines.push(`        __log_len += __seg${segIdx}.len();`);
     } else {
-      const helper = helperCall(seg.argKind, seg.expr);
+      const { expr: helper, warning } = helperCallResult(seg.argKind, seg.expr);
+      if (warning) {
+        // B8 — surface 128-bit truncation as a validator-visible marker.
+        // The truncation is documented but pre-B8 was invisible to anyone
+        // reading the emitted Rust. The marker survives the validator's
+        // checkUnsafeMarkers scan and lands as an ERROR severity issue,
+        // so strict-mode refuses to write output until the user replaces
+        // the {var} format with a manual hex/u64-pair print.
+        lines.push(`        // ${warning}`);
+      }
       lines.push(`        let (__a${segIdx}, __o${segIdx}) = ${helper};`);
       lines.push(`        let __ab${segIdx} = &__a${segIdx}[__o${segIdx}..];`);
       lines.push(`        __log_buf[__log_len..__log_len + __ab${segIdx}.len()].copy_from_slice(__ab${segIdx});`);
@@ -326,22 +335,47 @@ export function emitFormattedMsgPinocchio(segments: FormatSegment[]): string {
   return lines.join("\n");
 }
 
-function helperCall(kind: FormatArgKind, expr: string): string {
+interface HelperResult {
+  /** Rust expression returning `(buf, offset)` consumable by the buffer-builder. */
+  expr: string;
+  /** Optional comment line to emit ABOVE the helper call — picked up by the
+   *  output validator as a HARD marker when present. Used for the 128-bit
+   *  truncation case so the warning is visible in BOTH the compiled output
+   *  AND validator output. */
+  warning?: string;
+}
+
+import { MARKER_ANVIL_TODO_PREFIX } from "./markers.js";
+
+function helperCallResult(kind: FormatArgKind, expr: string): HelperResult {
   switch (kind) {
     case "u8": case "u16": case "u32": case "u64": case "usize":
-      return `u64_to_ascii(${expr} as u64)`;
+      return { expr: `u64_to_ascii(${expr} as u64)` };
     case "u128":
-      // u128 doesn't fit in u64 — for now route via u64_to_ascii on the
-      // low 64 bits with a comment-tagged limitation. Strict mode could
-      // refuse; we accept the truncation silently because real-world
-      // msg!() args of u128 are extremely rare.
-      return `u64_to_ascii(${expr} as u64)`;
+      // B8 — Pinocchio's no_std runtime has no u128 ASCII helper. Routing
+      // through `u64_to_ascii(x as u64)` silently truncates the high 64
+      // bits — a money-loss class bug for DeFi programs logging u128
+      // fixed-point math. Emit the truncation alongside an ⚠️ Anvil TODO
+      // marker so the validator's checkUnsafeMarkers fires ERROR severity
+      // and strict-mode CLI refuses to write the project.
+      return {
+        expr: `u64_to_ascii(${expr} as u64)`,
+        warning: `${MARKER_ANVIL_TODO_PREFIX} u128 truncated to u64 in msg!() — ` +
+          `Pinocchio has no 128-bit ASCII helper. Replace the {var} format with ` +
+          `a hex / two-u64-pair / split print before deploy.`,
+      };
     case "i8": case "i16": case "i32": case "i64": case "isize":
-      return `i64_to_ascii(${expr} as i64)`;
+      return { expr: `i64_to_ascii(${expr} as i64)` };
     case "i128":
-      return `i64_to_ascii(${expr} as i64)`;
+      // Symmetric to u128 — same truncation, same marker.
+      return {
+        expr: `i64_to_ascii(${expr} as i64)`,
+        warning: `${MARKER_ANVIL_TODO_PREFIX} i128 truncated to i64 in msg!() — ` +
+          `Pinocchio has no 128-bit ASCII helper. Replace the {var} format with ` +
+          `a hex / two-i64-pair / split print before deploy.`,
+      };
     case "pubkey":
-      return `pubkey_to_base58(&${expr})`;
+      return { expr: `pubkey_to_base58(&${expr})` };
   }
 }
 
