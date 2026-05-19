@@ -177,13 +177,19 @@ export function classifyBody(
   // `cpi_pyth_read_price_legacy` IR statement. Cleared after consumption
   // or when a non-let / unrelated statement intervenes.
   let pendingPythLoad: { feedAccount: string; feedBinding: string } | null = null;
+  // task #47 — mirror of pendingPythLoad for Switchboard On-Demand. The
+  // first line of the idiom (`let X = PullFeedAccountData::parse(...)?`)
+  // is dropped and registers the binding here; the next line
+  // (`let Y = X.value()...`) collapses both into a single
+  // cpi_switchboard_read_feed IR stmt.
+  let pendingSwitchboardLoad: { feedAccount: string; feedBinding: string } | null = null;
   for (const child of flatChildren) {
     if (!child) continue;
 
     // Skip comment nodes
     if (child.type === "line_comment" || child.type === "block_comment") continue;
 
-    const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog, pendingPythLoad, constStringMap);
+    const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog, pendingPythLoad, constStringMap, pendingSwitchboardLoad);
     const childLoc = locFromNode(child);
 
     // Track seeds for PDA signer seeds grouping
@@ -222,6 +228,10 @@ export function classifyBody(
       if (classified._pythLoadData) {
         pendingPythLoad = classified._pythLoadData;
       }
+      // task #47 — Switchboard parallel of the Pyth load registration.
+      if (classified._switchboardLoadData) {
+        pendingSwitchboardLoad = classified._switchboardLoadData;
+      }
       continue;
     }
 
@@ -231,6 +241,9 @@ export function classifyBody(
     // collapse against a stale binding.
     if (classified.stmt.kind === "cpi_pyth_read_price_legacy") {
       pendingPythLoad = null;
+    }
+    if (classified.stmt.kind === "cpi_switchboard_read_feed") {
+      pendingSwitchboardLoad = null;
     }
 
     // Track CPI context variables — don't emit the let statement
@@ -388,6 +401,11 @@ interface ClassifyResult {
    *  IR stmt instead of pass_through. _dropStmt: true is the carrier;
    *  this field hands the side-channel data to the loop. */
   _pythLoadData?: { feedAccount: string; feedBinding: string };
+  /** task #47 — `let X = PullFeedAccountData::parse(&<ACC>.data.borrow())?;`
+   *  was recognised. Mirrors the Pyth M2a pattern: register the feed
+   *  binding so the next `let Y = X.value()...` produces a typed
+   *  cpi_switchboard_read_feed IR stmt. */
+  _switchboardLoadData?: { feedAccount: string; feedBinding: string };
 }
 
 const SPL_CPI_STRUCT_NAMES = new Set([
@@ -410,12 +428,13 @@ function classifyStatement(
   helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
   pendingPythLoad: { feedAccount: string; feedBinding: string } | null = null,
   constStringMap?: Map<string, string>,
+  pendingSwitchboardLoad: { feedAccount: string; feedBinding: string } | null = null,
 ): ClassifyResult {
   const text = node.text;
 
   switch (node.type) {
     case "let_declaration":
-      return classifyLetDeclaration(node, pendingSeeds, cpiAccountsByVar, hasUserSeedsManagement, pendingPythLoad, constStringMap);
+      return classifyLetDeclaration(node, pendingSeeds, cpiAccountsByVar, hasUserSeedsManagement, pendingPythLoad, constStringMap, pendingSwitchboardLoad);
 
     case "expression_statement":
       return classifyExpressionStatement(node, cpiContexts, collector, helperCpiCatalog);
@@ -504,6 +523,7 @@ function classifyLetDeclaration(
   hasUserSeedsManagement = false,
   pendingPythLoad: { feedAccount: string; feedBinding: string } | null = null,
   constStringMap?: Map<string, string>,
+  pendingSwitchboardLoad: { feedAccount: string; feedBinding: string } | null = null,
 ): ClassifyResult {
   const text = node.text;
   const patternNode = node.childForFieldName("pattern");
@@ -525,6 +545,53 @@ function classifyLetDeclaration(
         stmt: { kind: "pass_through", code: "", needsReview: false },
         _dropStmt: true,
         _pythLoadData: { feedAccount: loadMatch[1], feedBinding: localVar },
+      };
+    }
+  }
+
+  // ── task #47 — Switchboard On-Demand reader, line 1: parse PullFeed ──
+  // Source patterns:
+  //   let feed = PullFeedAccountData::parse(&ctx.accounts.feed.data.borrow())?;
+  //   let feed = PullFeedAccountData::parse(ctx.accounts.feed.try_borrow_data()?)?;
+  //   let feed = switchboard_on_demand::accounts::PullFeedAccountData::parse(...)?;
+  // Mirrors the Pyth M2a load detection. Drop this stmt, register the
+  // binding; the next `.value()` line consumes it.
+  if (valueNode && localVar) {
+    const v = valueNode.text.trim();
+    const parseRe =
+      /^(?:[\w:]+::)?PullFeedAccountData\s*::\s*parse\s*\(\s*&?\s*(?:\*\s*)?(?:ctx\s*\.\s*accounts\s*\.\s*)?([A-Za-z_][A-Za-z0-9_]*)(?:\s*\.\s*(?:data\s*\.\s*borrow|try_borrow_data)\s*\(\s*\)\s*\??)?(?:\s*\[\s*\.\.\s*\])?\s*\)\s*\??\s*$/;
+    const m = v.match(parseRe);
+    if (m?.[1]) {
+      return {
+        stmt: { kind: "pass_through", code: "", needsReview: false },
+        _dropStmt: true,
+        _switchboardLoadData: { feedAccount: m[1], feedBinding: localVar },
+      };
+    }
+  }
+
+  // ── task #47 — Switchboard line 2: extract f64 value + staleness check ──
+  // Source patterns:
+  //   let price = feed.value().ok_or(MyError::StalePrice)?;
+  //   let price = feed.value()?;  (no error map)
+  //   let price = feed.value_with_max_staleness(100).ok_or(...)?;
+  // pendingSwitchboardLoad's feedBinding ident must match the receiver.
+  if (valueNode && localVar && pendingSwitchboardLoad) {
+    const v = valueNode.text.trim();
+    const callRe =
+      /^([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*(value|value_with_max_staleness)\s*\(\s*([\s\S]*?)\s*\)\s*(?:\.\s*ok_or\s*\(\s*([\s\S]+?)\s*\))?\s*\??\s*$/;
+    const m = v.match(callRe);
+    if (m && m[1] === pendingSwitchboardLoad.feedBinding) {
+      const isWithStaleness = m[2] === "value_with_max_staleness";
+      return {
+        stmt: {
+          kind: "cpi_switchboard_read_feed",
+          feedAccount: pendingSwitchboardLoad.feedAccount,
+          feedBinding: pendingSwitchboardLoad.feedBinding,
+          priceBinding: localVar,
+          ...(isWithStaleness && m[3] ? { maxStalenessSlots: m[3] } : {}),
+          ...(m[4] ? { staleErrExpr: m[4] } : {}),
+        },
       };
     }
   }

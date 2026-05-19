@@ -138,4 +138,15 @@ export interface BodyEmitterCallbacks {
     maxAgeExpr: string,
     feedIdExpr: string,
   ): string;
+  /**
+   * task #47 — Switchboard On-Demand PullFeed reader. Like Pyth, lives
+   * on BaseEmitter as a shared hand-rolled byte-read; both Pinocchio
+   * and Native inherit the same implementation.
+   */
+  emitSwitchboardReadFeed(
+    feedAccount: string,
+    priceBinding: string,
+    staleErrExpr: string | undefined,
+    maxStalenessSlots: string | undefined,
+  ): string;
 }

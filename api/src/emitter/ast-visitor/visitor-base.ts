@@ -730,6 +730,7 @@ type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
 type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
 type ZeroCopyLoad = Extract<BodyStatement, { kind: "zero_copy_load" }>;
 type CpiPythReadPriceLegacy = Extract<BodyStatement, { kind: "cpi_pyth_read_price_legacy" }>;
+type CpiSwitchboardReadFeed = Extract<BodyStatement, { kind: "cpi_switchboard_read_feed" }>;
 type CpiPythReadPriceModern = Extract<BodyStatement, { kind: "cpi_pyth_read_price_modern" }>;
 type PythFeedIdLiteral = Extract<BodyStatement, { kind: "pyth_feed_id_literal" }>;
 
@@ -930,6 +931,8 @@ export class AstVisitorBase {
         return this.visitZeroCopyLoad(stmt);
       case "cpi_pyth_read_price_legacy":
         return this.visitCpiPythReadPriceLegacy(stmt);
+      case "cpi_switchboard_read_feed":
+        return this.visitCpiSwitchboardReadFeed(stmt);
       case "cpi_pyth_read_price_modern":
         return this.visitCpiPythReadPriceModern(stmt);
       case "pyth_feed_id_literal":
@@ -3488,6 +3491,26 @@ export class AstVisitorBase {
       stmt.clockExpr,
       stmt.maxAgeExpr,
       stmt.staleErrExpr,
+    );
+    return this.applyStructuralize([code]);
+  }
+
+  /**
+   * task #47 — Switchboard On-Demand PullFeed reader visitor dispatch.
+   * Mirrors visitCpiPythReadPriceLegacy. Both targets share the
+   * BaseEmitter emitSwitchboardReadFeed implementation (hand-rolled
+   * byte reads, no per-target divergence).
+   */
+  visitCpiSwitchboardReadFeed(stmt: CpiSwitchboardReadFeed): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const priceBinding = snakeCase(stmt.priceBinding);
+    const feedAccount = w.resolveAccountInfoVar(snakeCase(stmt.feedAccount));
+    const code = w.emitter.emitSwitchboardReadFeed(
+      feedAccount,
+      priceBinding,
+      stmt.staleErrExpr,
+      stmt.maxStalenessSlots,
     );
     return this.applyStructuralize([code]);
   }

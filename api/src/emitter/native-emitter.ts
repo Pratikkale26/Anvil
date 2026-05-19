@@ -331,6 +331,7 @@ use solana_program::{
         // (modern via clockExpr verbatim, legacy via crate call chain).
         s.kind === 'cpi_pyth_read_price_legacy' ||
         s.kind === 'cpi_pyth_read_price_modern' ||
+        (s.kind === 'cpi_switchboard_read_feed' && s.maxStalenessSlots != null) ||
         (s.kind === 'pass_through' && /\bClock::get\(\)/.test(s.code)) ||
         (s.kind === 'state_field_assign' && /\bClock::get\(\)/.test(s.value))
       )

@@ -531,6 +531,97 @@ export abstract class BaseEmitter {
   //
   // Layout is target-portable. Clock sourced via emitClockGetExpr so
   // each subclass's correct sysvar path is used.
+  /**
+   * task #47 — Switchboard On-Demand PullFeed reader.
+   *
+   * Anchor source pattern:
+   *   let feed = PullFeedAccountData::parse(&ctx.accounts.feed.data.borrow())?;
+   *   let price = feed.value().ok_or(...)?;
+   *
+   * Emit hand-rolls byte deserialization from the documented PullFeed
+   * account layout, drops the switchboard-on-demand crate dep, and
+   * produces an `f64` bound to `priceBinding`.
+   *
+   * **OFFSETS PENDING BYTE-EQUAL VERIFICATION.** The layout is sourced
+   * from the public switchboard-on-demand 0.x crate's PullFeedAccountData
+   * struct. Byte-equal differential gate is deferred until a
+   * switchboard-on-demand `.so` fixture lands (per docs/plan-switchboard.md).
+   * Until then, the emit produces compilable code that reads the
+   * documented offsets — verify against current Switchboard source
+   * before deploy. Mirrors the Pyth M2a iterative-offset-validation path.
+   *
+   * Layout reference (zero_copy struct, offsets from start of account
+   * data; subtract 8 bytes if reading from a post-discriminator slice):
+   *   0..8         Anchor discriminator
+   *   8..40        submitter (Pubkey)
+   *   40..48       max_variance (u64)
+   *   48..52       min_responses (u32)
+   *   52..56       padding
+   *   56..88       name ([u8; 32])
+   *   88..120      queue (Pubkey)
+   *   120..152     feed_hash ([u8; 32])
+   *   152..160     initialized_at (i64)
+   *   160..168     permissions (u64)
+   *   168..176     max_staleness (u64)
+   *   176..200     padding (24 bytes)
+   *   200..216     result.value (i128, scaled by 10^18)
+   *   216..232     result.std_dev
+   *   232..248     result.mean
+   *   248..264     result.range
+   *   264..280     result.min_value
+   *   280..296     result.max_value
+   *   296..304     result.slot (u64)
+   *   ...
+   *
+   * `feed.value()` returns Option<f64>: None when slot is 0 (no
+   * publication yet), Some(value) otherwise. Anchor's source uses
+   * `.ok_or(...)?` to propagate; our emit collapses that into a single
+   * compile path with `staleErrExpr` controlling the None arm.
+   *
+   * Both Pinocchio + Native share this implementation — pure byte reads
+   * with no target-specific primitive.
+   */
+  emitSwitchboardReadFeed(
+    feedAccount: string,
+    priceBinding: string,
+    staleErrExpr: string | undefined,
+    maxStalenessSlots: string | undefined,
+  ): string {
+    const errArm = staleErrExpr
+      ? `return Err((${staleErrExpr}).into());`
+      : `return Err(ProgramError::Custom(0));`;
+    // PRECISION = 10^18 for Switchboard On-Demand i128 → f64 conversion.
+    // Cast through f64 since pinocchio is no_std and we can't use
+    // num-bigint-style arbitrary-precision; the precision loss above
+    // 2^52 mantissa is unavoidable and matches the SDK's `as f64` cast.
+    const stalenessGate = maxStalenessSlots
+      ? [
+          `    let __sb_now_slot = ${this.emitClockGetExpr("slot")};`,
+          `    if __sb_now_slot.saturating_sub(__sb_slot) > (${maxStalenessSlots}) as u64 {`,
+          `        ${errArm}`,
+          `    }`,
+        ].join("\n")
+      : `    if __sb_slot == 0 { ${errArm} }`;
+    return [
+      `    // task #47 — Switchboard On-Demand PullFeed read (hand-rolled)`,
+      `    let __sb_data = ${feedAccount}.try_borrow_data()?;`,
+      `    if __sb_data.len() < 304 {`,
+      `        return Err(ProgramError::InvalidAccountData);`,
+      `    }`,
+      `    // result.value (i128 scaled by 10^18) at offset 200`,
+      `    let __sb_value_bytes: [u8; 16] = __sb_data[200..216]`,
+      `        .try_into().map_err(|_| ProgramError::InvalidAccountData)?;`,
+      `    let __sb_value_i128 = i128::from_le_bytes(__sb_value_bytes);`,
+      `    // result.slot (u64) at offset 296 — 0 means no publication yet`,
+      `    let __sb_slot_bytes: [u8; 8] = __sb_data[296..304]`,
+      `        .try_into().map_err(|_| ProgramError::InvalidAccountData)?;`,
+      `    let __sb_slot = u64::from_le_bytes(__sb_slot_bytes);`,
+      stalenessGate,
+      `    // PRECISION = 18 decimal places — divide by 10^18 for f64 result`,
+      `    let ${priceBinding}: f64 = (__sb_value_i128 as f64) / 1_000_000_000_000_000_000.0;`,
+    ].join("\n");
+  }
+
   emitPythReadPriceLegacy(
     feedAccount: string,
     priceBinding: string,
