@@ -1302,6 +1302,37 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
      *  when absent, the emit raises `ProgramError::Custom(0)`. */
     staleErrExpr: z.string().optional(),
   }),
+
+  // task #47 — Switchboard On-Demand PullFeed reader. Pattern:
+  //   let feed_data = ctx.accounts.feed.try_borrow_data()?;
+  //   let feed = PullFeedAccountData::parse(feed_data)?;
+  //   let price = feed.value().ok_or(MyError::StalePrice)?;
+  // Mirrors the Pyth M2a legacy reader. Hand-rolled byte deserialization
+  // drops the switchboard-on-demand crate dep from emit; parser detects
+  // the two-line `PullFeedAccountData::parse(...)` + `.value()` idiom.
+  // Switchboard On-Demand's `value` field is an i128 scaled by PRECISION
+  // (=18 decimal places); the emit converts to f64 via the documented
+  // scale.
+  z.object({
+    kind: z.literal("cpi_switchboard_read_feed"),
+    /** AccountInfo binding for the Switchboard PullFeed account
+     *  (`ctx.accounts.<feed>` resolved to its snake_case binding name). */
+    feedAccount: z.string(),
+    /** Local variable that receives the parsed feed
+     *  (`let X = PullFeedAccountData::parse(...)?;`). Carried so the
+     *  body classifier can resolve the downstream `.value()` access. */
+    feedBinding: z.string().optional(),
+    /** Local variable that receives the f64 result
+     *  (`let Y = feed.value().ok_or(...)?;`). */
+    priceBinding: z.string(),
+    /** Optional `.ok_or(...)?` error expr — propagated through the
+     *  staleness failure branch on emit. Absent → ProgramError::Custom(0). */
+    staleErrExpr: z.string().optional(),
+    /** Optional max-staleness-slots expr from the
+     *  `.value_with_max_staleness(N)` variant. Absent → no staleness
+     *  gate, just read the latest value. */
+    maxStalenessSlots: z.string().optional(),
+  }),
 ]);
 
 export type BodyStatement = z.infer<typeof BodyStatementSchema>;
