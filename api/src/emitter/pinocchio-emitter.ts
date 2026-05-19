@@ -2026,6 +2026,19 @@ ${invokeCall}
     }`;
   }
 
+  override emitZeroAccountDiscriminatorWrite(accountName: string, typeName: string): string {
+    // task #43 — write disc only when buffer is zero-init (matches Anchor's
+    // #[account(zero)] precondition; non-zero leading bytes mean the account
+    // was previously initialised and the disc check downstream is trusted).
+    return `    // #[account(zero)]: write ${typeName}::DISCRIMINATOR on first access
+    {
+        let mut __zero_data = unsafe { ${accountName}.borrow_mut_data_unchecked() };
+        if __zero_data.len() >= 8 && __zero_data[..8].iter().all(|&b| b == 0) {
+            __zero_data[..8].copy_from_slice(&${typeName}::DISCRIMINATOR);
+        }
+    }`;
+  }
+
   override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string): string {
     // pinocchio_associated_token_account 0.4 takes &AccountView, but pinocchio
     // 0.9's account slice gives us &AccountInfo. Different types, no automatic

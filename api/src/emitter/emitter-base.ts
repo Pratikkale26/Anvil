@@ -1368,6 +1368,25 @@ export abstract class BaseEmitter {
       .map((a) => this.emitInitAccountPrelude(a, instr, ir))
       .filter(Boolean)
       .join("\n");
+    // task #43 — `#[account(zero)]` constraint. Anchor's macro writes
+    // T::DISCRIMINATOR to the first 8 bytes of a zero-initialized account
+    // on first access; subsequent `Account::try_accounts` reads only
+    // succeed when the disc matches. Without writing it, Anvil's emit
+    // produces an .so where the FIRST instruction works (no disc check
+    // anywhere) but every SUBSEQUENT instruction that re-reads the
+    // account fails with InvalidAccountData (8 zeros ≠ T::DISCRIMINATOR).
+    // Surfaced by diff-arc Phase C 2026-05-19 on Anchor's composite example.
+    // The write is gated: only fire when the existing 8 bytes are zero,
+    // matching Anchor's `#[account(zero)]` precondition that the caller
+    // pre-allocates a zero-init buffer.
+    const zeroPreludes = instr.accounts
+      .filter((a) =>
+        a.constraints.some((c) => c.kind === "zero")
+        && isCustomState(a.accountType),
+      )
+      .map((a) => this.emitZeroAccountPrelude(a, ir))
+      .filter(Boolean)
+      .join("\n");
     // Names of accounts whose bump was already derived in the preamble.
     // The body walker checks this before re-emitting on a `ctx.bumps.X`
     // reference, avoiding duplicate `let (expected_key, bump_X) = ...`
@@ -1396,7 +1415,9 @@ export abstract class BaseEmitter {
     // strip unresolvable references inside size expressions like
     // `space = ExtraAccountMetaList::size_of(...)`. Without this, prelude-
     // emitted lines bypassed the commentout pass and surfaced cargo errors.
-    const preBodyContent = `${initPreludes}${initPreludes && reallocPreludes ? "\n" : ""}${reallocPreludes}${(initPreludes || reallocPreludes) ? "\n" : ""}${rawBodyCode}`;
+    const preBodyContent = [initPreludes, zeroPreludes, reallocPreludes, rawBodyCode]
+      .filter((s) => s && s.length > 0)
+      .join("\n");
     const processedContent = this.postProcessInstructionBody(preBodyContent, instr, ir);
     // Re-split: the post-process may have rewritten the concatenated string
     // arbitrarily; we just take it as the final body. The function signature
@@ -2284,6 +2305,45 @@ ${indented}
 
     return [bumpPrelude, seedsPrelude, createCall, discriminatorWrite].filter(Boolean).join("\n");
   }
+
+  /**
+   * task #43 — emit prelude for `#[account(zero)]`.
+   *
+   * Anchor's `#[account(zero)]` constraint asserts the caller has
+   * pre-allocated an account whose data buffer is currently zero-init.
+   * Anchor's macro writes T::DISCRIMINATOR into the first 8 bytes on
+   * first access (Account::try_accounts → AccountSerialize::try_serialize).
+   * Without writing it, subsequent calls that read the account through
+   * `T::from_account_info` fail with InvalidAccountData (the 8-zero
+   * prefix doesn't match T::DISCRIMINATOR).
+   *
+   * Anvil's emit was missing this write — surfaced by diff-arc Phase C
+   * 2026-05-19 on Anchor's composite example: initialize() succeeded on
+   * both Anchor and Anvil sides but with different post-state bytes
+   * (Anchor wrote the disc, Anvil didn't); composite_update then failed
+   * on Anvil with "invalid account data". This method closes that gap.
+   *
+   * Gated: only fires when the existing 8 bytes are all zero, matching
+   * the constraint's precondition. If a non-zero disc is already there,
+   * the account was previously initialized — leave it alone.
+   */
+  protected emitZeroAccountPrelude(
+    accountRef: Instruction["accounts"][number],
+    ir: SolanaIR,
+  ): string {
+    const accountName = snakeCase(accountRef.name);
+    const stateType = ir.accounts.find((a) => a.name === accountRef.accountType);
+    if (!stateType) return "";
+    return this.emitZeroAccountDiscriminatorWrite(accountName, stateType.name);
+  }
+
+  /**
+   * Framework-specific: write Type::DISCRIMINATOR into the first 8 bytes
+   * of `accountName` IF currently zero. Pinocchio uses borrow_mut_data_unchecked;
+   * Native uses account.data.borrow_mut(). Re-uses the existing
+   * emitDiscriminatorWrite implementation with a wrapping if-zero guard.
+   */
+  abstract emitZeroAccountDiscriminatorWrite(accountName: string, typeName: string): string;
 
   /**
    * Emit realloc prelude — resize the account buffer to the expression

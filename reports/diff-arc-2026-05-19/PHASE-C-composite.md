@@ -1,44 +1,38 @@
 # Phase C v2 — composite — :8899 byte-equal verification
 
 **Source:** Anchor org composite example (post-H1).
-**Date:** 2026-05-19T15:10:48.263Z
+**Date:** 2026-05-19T15:16:50.443Z
 
 ## Programs
 
 | Side | Program ID | .so size |
 | --- | --- | --- |
-| Anchor | `6Hgb3Mh8sgKaVfxTtna8nb2SwwkccBUqJEwHnfDYCoJR` | 123216 bytes |
-| Anvil  | `2HwVje45RLuoUzBMqAr4Q4K34KKN28bHRQBpeK6hATZh` | 5840 bytes |
+| Anchor | `Dt4rbzVLx69qKFYg5mMaxnvJqYNcis5bhWkiC9deANHJ` | 123216 bytes |
+| Anvil  | `FgaE8PKvXJDxcuHcrMWSybgDWUp9vrDALWT7mXiEnVyc` | 6176 bytes |
 
-**.so size delta:** Anvil emit is 95.3% smaller than Anchor reference.
+**.so size delta:** Anvil emit is 95.0% smaller than Anchor reference.
 
 ## Step results
 
 ### initialize()
 - Anchor: OK ✓
 - Anvil:  OK ✓
-- post-init dummyA byte-equal: **NO**
-- post-init dummyB byte-equal: **NO**
+- post-init dummyA byte-equal: **YES**
+- post-init dummyB byte-equal: **YES**
 
 ### composite_update(dummy_a=7, dummy_b=13)
 - Anchor: OK ✓
-- Anvil:  FAIL — Simulation failed. 
-Message: Transaction simulation failed: Error processing Instruction 0: invalid account data for instruction. 
-Logs: 
-[
-  "Program 2HwVje45RLuoUzBMqAr4Q4K34KKN28bHRQBpeK6hATZh invoke [1]",
-  "Program 2HwVje45RLuoUzBMqAr4Q4K34KKN28bHRQBpeK6hATZh consumed 129 of 200000 compute units",
-  "Program 2HwVje45RLuoUzBMqAr4Q4K34KKN28bHRQBpeK6hATZh failed: invalid account data for instruc
-- post-update dummyA byte-equal: **NO**
-  - anchor: ``
-  - anvil:  ``
-- post-update dummyB byte-equal: **NO**
-  - anchor: ``
-  - anvil:  ``
+- Anvil:  OK ✓
+- post-update dummyA byte-equal: **YES**
+  - anchor: `f8ca38c22234a46f0700000000000000`
+  - anvil:  `f8ca38c22234a46f0700000000000000`
+- post-update dummyB byte-equal: **YES**
+  - anchor: `bddbfa36ea66f2840d00000000000000`
+  - anvil:  `bddbfa36ea66f2840d00000000000000`
 
 ## Verdict
 
-**PARTIAL** — see step results above. Investigate any FAIL or NO entries.
+**BYTE_EQUAL on real :8899 validator** — H1 composite-Accounts flatten produces SBF bytecode that the actual Solana runtime executes AND the resulting on-chain state byte-matches Anchor's reference across both instructions.
 
 ## What this proves
 

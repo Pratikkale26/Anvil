@@ -1416,6 +1416,18 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     }`;
   }
 
+  override emitZeroAccountDiscriminatorWrite(accountName: string, typeName: string): string {
+    // task #43 — write disc only when buffer is zero-init (Anchor #[account(zero)]
+    // precondition). Mirror of Pinocchio's emit, using AccountInfo::data.borrow_mut().
+    return `    // #[account(zero)]: write ${typeName}::DISCRIMINATOR on first access
+    {
+        let mut __zero_data = ${accountName}.data.borrow_mut();
+        if __zero_data.len() >= 8 && __zero_data[..8].iter().all(|&b| b == 0) {
+            __zero_data[..8].copy_from_slice(&${typeName}::DISCRIMINATOR);
+        }
+    }`;
+  }
+
   override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string): string {
     return `    // Create Associated Token Account: ${ata}
     let create_ata_ix = spl_create_ata_ix(
