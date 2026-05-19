@@ -637,6 +637,40 @@ export class BodyWalker {
    * source emit produces (the surrounding text has already been
    * normalized by earlier passes).
    */
+  /**
+   * H7 Phase 3b (FIELD-KEY consolidation, continued) — replace the
+   * `<receiver>.key()` and `<receiver>.key` value-form references with
+   * the target-specific emitter key expression. Negative lookahead
+   * preserves the `.as_ref()` chain shape so the slice-form rewrites
+   * (handled by rewriteAccountKeyChains) still fire on those occurrences.
+   *
+   * Pre-consolidation, transformAccountReferences duplicated this four
+   * times (.key() + .key, ×2 for accountName + state-var). Same
+   * receiver enumeration approach as rewriteAccountKeyChains keeps the
+   * intent local.
+   */
+  private rewriteAccountKeyValueRefs(code: string, accountName: string): string {
+    const accountInfoVar = this.resolveAccountInfoVar(accountName);
+    const keyExpr = this.emitter.emitAccountKeyExpr(accountInfoVar);
+    const stateVar = this.resolveStateVar(accountName);
+    const receivers = [accountName, stateVar];
+    let out = code;
+    for (const recv of receivers) {
+      const escRecv = recv.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // <recv>.key() form, exclude .as_ref suffix
+      out = out.replace(
+        new RegExp(`\\b${escRecv}\\.key\\(\\)(?!\\.as_ref\\b)`, "g"),
+        keyExpr,
+      );
+      // <recv>.key (field) form, exclude `(` (already matched above) and .as_ref
+      out = out.replace(
+        new RegExp(`\\b${escRecv}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
+        keyExpr,
+      );
+    }
+    return out;
+  }
+
   private rewriteAccountKeyChains(code: string, accountName: string): string {
     const accountInfoVar = this.resolveAccountInfoVar(accountName);
     const keyAsRef = this.emitter.emitAccountKeyAsRefExpr(accountInfoVar);
@@ -920,27 +954,13 @@ export class BodyWalker {
     for (const account of this.instr.accounts) {
       const accountName = snakeCase(account.name);
       const accountInfoVar = this.resolveAccountInfoVar(accountName);
-      // #44-followup — negative lookahead avoids matching `X.key().as_ref()`,
-      // which is correctly handled by the earlier `(?:ctx\.accounts\.)?\w+
-      // \.key(?:\(\))?\.as_ref\(\)` regex / split-rewrites below. Without
-      // the lookahead, `*X.key().as_ref()` gets emitted — token-fundraiser
-      // refund seeds.
-      transformed = transformed.replace(
-        new RegExp(`\\b${accountName}\\.key\\(\\)(?!\\.as_ref\\b)`, "g"),
-        () => `${this.emitter.emitAccountKeyExpr(accountInfoVar)}`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`\\b${accountName}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
-        () => `${this.emitter.emitAccountKeyExpr(accountInfoVar)}`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`\\b${this.resolveStateVar(accountName)}\\.key\\(\\)(?!\\.as_ref\\b)`, "g"),
-        () => `${this.emitter.emitAccountKeyExpr(accountInfoVar)}`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`\\b${this.resolveStateVar(accountName)}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
-        () => `${this.emitter.emitAccountKeyExpr(accountInfoVar)}`,
-      );
+      // H7 Phase 3b — consolidate the 4 .key()/.key duplicates. Each
+      // receiver (AccountInfo binding + state-var alias) has two forms:
+      // `<recv>.key()` and `<recv>.key`. Negative lookaheads preserve
+      // the `.as_ref()` suffix shapes for the separate rewrite below
+      // (#44-followup — without the lookahead, `*X.key().as_ref()`
+      // emits and token-fundraiser refund seeds break).
+      transformed = this.rewriteAccountKeyValueRefs(transformed, accountName);
       transformed = transformed.replace(
         new RegExp(`\\b${accountName}\\.lamports\\(\\)`, "g"),
         () => `${this.emitter.emitAccountLamportsExpr(accountInfoVar)}`,
