@@ -552,9 +552,26 @@ function extractInstructionArgs(attrs: SyntaxNode[]): string[] {
   return [];
 }
 
+/**
+ * Detect the Anchor crate version from the source text. Three shapes
+ * supported, in order of precedence:
+ *
+ *   1. `anchor-lang = { version = "0.31.1", features = [...] }` (extended form)
+ *   2. `anchor-lang = "0.31"`        (terse form)
+ *   3. `anchor-lang = "=0.31.0"`     (exact pin — leading = stripped)
+ *
+ * Task #27 (P4.1). Fall-through default is "0.30.0" — the baseline
+ * Anchor version Anvil's parser was originally written against.
+ */
 function detectAnchorVersion(source: string): string {
-  const vMatch = source.match(/anchor[_-]lang\s*=\s*"([^"]+)"/);
-  return vMatch?.[1] ?? "0.30.0";
+  // Extended form: `anchor-lang = { version = "0.31.1", ... }`
+  const extended = source.match(/anchor[_-]lang\s*=\s*\{\s*[^}]*\bversion\s*=\s*"([^"]+)"/);
+  if (extended?.[1]) {
+    return extended[1].replace(/^=/, "");
+  }
+  // Terse form: `anchor-lang = "0.31"`
+  const terse = source.match(/anchor[_-]lang\s*=\s*"([^"]+)"/);
+  return terse?.[1]?.replace(/^=/, "") ?? "0.30.0";
 }
 
 /**

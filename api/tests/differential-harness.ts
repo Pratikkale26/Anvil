@@ -219,6 +219,17 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    */
   anchorLangFeatures?: string[];
   /**
+   * Anchor version override for the matrix run. Defaults to "0.31" (the
+   * baseline differential corpus version). Setting this swaps the
+   * scaffold Cargo.toml's `anchor-lang` + `anchor-spl` pins to the
+   * specified semver. Used by the P4.x version-matrix arc (task #28).
+   *
+   * The matrix run is driven by env var `ANVIL_ANCHOR_VERSION` — fixtures
+   * that opt into per-version testing read this and pass it as
+   * anchorVersionOverride. The default keeps single-version behavior.
+   */
+  anchorVersionOverride?: string;
+  /**
    * One-time setup before both scenarios. Generates shared keypairs,
    * derives PDAs, etc. Called exactly once per test invocation.
    */
@@ -656,8 +667,8 @@ cpi = ["no-entrypoint"]
 default = []
 [dependencies]
 ${fixture.anchorLangFeatures && fixture.anchorLangFeatures.length > 0
-  ? `anchor-lang = { version = "0.31", features = ["${fixture.anchorLangFeatures.join('", "')}"] }`
-  : `anchor-lang = "0.31"`}
+  ? `anchor-lang = { version = "${fixture.anchorVersionOverride ?? "0.31"}", features = ["${fixture.anchorLangFeatures.join('", "')}"] }`
+  : `anchor-lang = "${fixture.anchorVersionOverride ?? "0.31"}"`}
 ${fixture.anchorExtraDeps ?? ""}
 `;
   writeFileSync(join(scratch, "Cargo.toml"), cargoToml);
