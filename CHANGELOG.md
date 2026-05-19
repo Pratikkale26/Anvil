@@ -8,9 +8,60 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ## Unreleased
 
-Late-night session 2026-05-18 — concrete bug catches + audit-driven cleanup.
+### Added — Pyth oracle transpile (2026-05-19, 10 commits)
 
-### Fixed
+Full Pyth M2/N5 oracle transpile arc shipped. Both legacy
+(`pyth_sdk_solana::load_price_feed_from_account_info`) and modern
+(`pyth_solana_receiver_sdk::PriceUpdateV2`) read patterns are now
+recognized by the parser and emitted to compile-clean target code
+on BOTH Pinocchio and Native — no Pyth crate runtime dependency.
+
+- **M2a** (`825e1e5`): parser detects the legacy two-line idiom
+  (`load_price_feed_from_account_info` + chained `get_price_no_older_than`)
+  and collapses it to one `cpi_pyth_read_price_legacy` IR statement.
+- **M2b** (`da53880` → unified by N5b): structural emit for legacy.
+- **N5** (`0f4250f`): modern PriceUpdateV2 path (`cpi_pyth_read_price_modern`)
+  distinguished from legacy by 3-arg `get_price_no_older_than(clock, max_age, feed_id)`.
+- **N5b** (`6fbc3d3`): **Unified hand-rolled byte deserialization** for
+  both targets, closing the pyth-crate borsh-derive cargo-compat
+  ceiling. `get_feed_id_from_hex("0x...")` is inline-parsed at emit
+  time into a `[u8; 32]` byte-array literal (`pyth_feed_id_literal`
+  IR kind), so the receiver-sdk crate isn't referenced at runtime.
+  All 4 demo × target combinations cargo-check cleanly.
+- **N5c** (`d0abf28`): const-string resolution for the common Anchor
+  idiom `const SOL_USD_FEED_ID: &str = "0x..."; ... get_feed_id_from_hex(SOL_USD_FEED_ID)`.
+  Parser scans top-level `[pub] const X: &str = "..."` items;
+  undefined consts fall through to pass_through (NOT silent-zero —
+  closes wrong-feed attack vector).
+- **Audit `#69`** (`c68bed9`): refactored 24 T22-ext dispatch sites
+  in cpi-detector.ts to a strict `isExtCall` matcher (closes
+  substring-collision class — `transfer_fee_initialize_v2` no longer
+  silently shadows v1 IR kind).
+- **Safety**: magic-header check (0xa1b2c3d4) on legacy fails loud
+  on wrong account type; feed_id cross-check on modern fails loud
+  with ProgramError::Custom(0xfeed1d) on wrong-feed-account attack;
+  verification_level tag >1 fails loud with Custom(0xa1b2c3e0) for
+  unrecognized layout versions.
+- **Infrastructure**: Pyth Solana Receiver `.so` saved as fixture
+  (`api/tests/fixtures/programs/pyth_solana_receiver.so`); LiteSVM
+  smoke test locks fixture availability + load. Unlocks future M2c
+  differential gating against a synthesized PriceUpdateV2 account.
+- **Tests**: `cargo-compile-pyth.test.ts` (4 cargo-check builds,
+  regression contract); `pyth-byte-offsets.test.ts` (7 unit tests
+  re-implementing the Pinocchio emit's offset reads in TS, locks
+  byte-layout contract). Validator + lint verdict: `pyth_sdk_solana`
+  + `pyth_solana_receiver_sdk` relaxed `blocker` → `review`.
+
+### Pending (M2c)
+
+Differential byte-equal gate against real Anchor reference output.
+Requires (a) a synthesized PriceUpdateV2 setup helper, (b) demo with
+a write-back state account so the post-read state is comparable, and
+(c) integration with the existing differential harness. The .so
+fixture + KNOWN_PROGRAMS wiring (`5c8de68`) does the infrastructure
+prep; the test itself is a future session.
+
+### Fixed (late-night session 2026-05-18 — earlier in Unreleased)
 
 - **HIGH: Path 2 v1 runtime dispatch silently broken on Pinocchio**
   (commit `935e8b7`). The visitor for `cpi_spl_transfer` was dropping
