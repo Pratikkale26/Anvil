@@ -8,10 +8,10 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ## Unreleased
 
-### Added — MPL byte-equal coverage doubled (2026-05-19 PM, 4 commits)
+### Added — MPL byte-equal coverage 3/12 → 9/12 (2026-05-19 PM, 5 commits)
 
-Pushed MPL byte-equal differential coverage from 3/12 to **8/12** in one
-session. Three new differentials chain multiple slots per program for
+Pushed MPL byte-equal differential coverage from 3/12 to **9/12** in one
+session. Four new differentials chain multiple slots per program for
 build-time efficiency:
 
 - **N1c** (`088973d` + `3f8f801`) — set_and_verify_collection (disc 25,
@@ -23,6 +23,10 @@ build-time efficiency:
 - **N1e** (`14b087f`) — approve_collection_authority (disc 23, slot
   7/12) + revoke_collection_authority (disc 24, slot 8/12). Differential:
   make_nft + approve + revoke, byte-compare record_pda + metadata.
+- **N1f** (`32e7da1`) — mint_new_edition_from_master_edition_via_token
+  (disc 11, slot 9/12). Differential: make_master(max_supply=10) + SPL
+  setup of new mint/token + print_edition(1), byte-compare
+  new_metadata + new_edition + edition_mark_pda + master_edition.
 
 Surfaced + fixed **6 new wire-format bugs** during these arcs:
 
@@ -61,8 +65,14 @@ MPL rejects the CPI with "Mint given does not match mint on Metadata"
 (0xf) on BOTH Anchor source and Anvil emit. Documented in
 `differential-mpl-collection-verify.test.ts` header.
 
-KPI: MPL byte-equal coverage **3/12 → 8/12**. Grant primary KPI target
-(7/12 by 2026-06-15) hit **4 weeks early**.
+KPI: MPL byte-equal coverage **3/12 → 9/12**. Grant primary KPI target
+(7/12 by 2026-06-15) **exceeded 4 weeks early**. The remaining 3 slots
+(`sign_metadata`, `verify_collection`, `unverify_collection`) are
+blocked: the first two need DataV2.creators/collection IR support
+(Task #84); the third needs an anchor-spl 0.31 wrapper fix (their
+`unverify_collection` wrapper sets MPL's `collection` field to
+`metadata.key` — a known upstream bug that prevents byte-equal of the
+success path).
 
 ### Added — Metaplex byte-equal differential (2026-05-19, 11 commits)
 
