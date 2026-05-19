@@ -1148,11 +1148,16 @@ export class BodyWalker {
     // instead of `ctx`. The normalization is safe because `<name>.accounts`,
     // `<name>.bumps`, etc. are Context<T> field accesses — not generic
     // identifier patterns that could collide.
-    transformed = transformed
-      .replace(/\bcontext\.accounts\b/g, "ctx.accounts")
-      .replace(/\bcontext\.bumps\b/g, "ctx.bumps")
-      .replace(/\bcontext\.program_id\b/g, "ctx.program_id")
-      .replace(/\bcontext\.remaining_accounts\b/g, "ctx.remaining_accounts");
+    // H7 Phase 4b — alternative-context-name aliasing. Some sources
+    // (program-examples/favorites) use `context: Context<T>` instead of
+    // `ctx`. Rewrite the four known field-access shapes in one regex
+    // with an alternation rather than four separate replace calls. Safe
+    // because `<name>.accounts`, `<name>.bumps`, etc. are Context<T>
+    // field accesses — not patterns that could match unrelated text.
+    transformed = transformed.replace(
+      /\bcontext\.(accounts|bumps|program_id|remaining_accounts)\b/g,
+      "ctx.$1",
+    );
     // Strip `.to_account_info()` universally — Anchor's Account<'info, T>
     // method that's a noop on bare AccountInfo (native) and unresolvable
     // on pinocchio. Constraint-check emit + helper bodies + impl-
