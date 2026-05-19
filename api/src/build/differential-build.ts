@@ -118,11 +118,83 @@ export interface DifferentialBuildOptions {
 }
 
 /**
+ * N5 — Per-replica concurrency cap for differential builds.
+ *
+ * The per-IP build-sbf cap (ANVIL_BUILD_SBF_PER_IP_CAP, default 2 in
+ * build-runner.ts) bounds ONE caller's pipeline. It doesn't bound the
+ * total number of concurrent cargo-build-sbf processes on a single
+ * host: 10 IPs each firing 2 differential requests = 20 simultaneous
+ * SBF builds. cargo-build-sbf is CPU-heavy + RAM-heavy (each invocation
+ * easily uses 1-2 GiB during link); a small VPS can be DOS-ed by fan-out
+ * across IPs.
+ *
+ * This cap is per-PROCESS (per replica). Multi-replica deploys still
+ * get N × cap total concurrency across the cluster — that's the
+ * intended scaling lever. Operator can override via
+ * ANVIL_DIFFERENTIAL_REPLICA_CAP, default 2.
+ *
+ * Implementation: a counting semaphore wrapping buildBothSos. Excess
+ * requests wait on a Promise queue (FIFO). Wait-time is bounded by the
+ * existing rate-limit + per-IP-cap layers so the queue can't grow
+ * unbounded.
+ */
+const DIFFERENTIAL_REPLICA_CAP = (() => {
+  const raw = process.env.ANVIL_DIFFERENTIAL_REPLICA_CAP;
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 2;
+})();
+let differentialInflight = 0;
+const differentialWaitQueue: Array<() => void> = [];
+
+function acquireDifferentialSlot(): Promise<void> {
+  if (differentialInflight < DIFFERENTIAL_REPLICA_CAP) {
+    differentialInflight++;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    differentialWaitQueue.push(() => {
+      differentialInflight++;
+      resolve();
+    });
+  });
+}
+function releaseDifferentialSlot(): void {
+  differentialInflight--;
+  const next = differentialWaitQueue.shift();
+  if (next) next();
+}
+
+/**
+ * Test-only handle exposing the current in-flight + queue depth.
+ * Useful for asserting the cap is enforced; not part of the public API.
+ */
+export function _differentialSlotStateForTests(): { inflight: number; queued: number; cap: number } {
+  return {
+    inflight: differentialInflight,
+    queued: differentialWaitQueue.length,
+    cap: DIFFERENTIAL_REPLICA_CAP,
+  };
+}
+
+/**
  * Build the Anchor reference + Anvil emitted .so files. Reuses cached
  * artifacts when source-hash matches. Both builds run inside the
  * sandbox layer.
  */
 export async function buildBothSos(opts: DifferentialBuildOptions): Promise<BuildArtifacts> {
+  // N5 — acquire one of DIFFERENTIAL_REPLICA_CAP semaphore slots before
+  // touching the SBF toolchain. Cache hits skip the cargo invocation
+  // BUT we still hold the slot through the artifact check; that's fine
+  // because cache hits are millisecond-scale.
+  await acquireDifferentialSlot();
+  try {
+    return await buildBothSosImpl(opts);
+  } finally {
+    releaseDifferentialSlot();
+  }
+}
+
+async function buildBothSosImpl(opts: DifferentialBuildOptions): Promise<BuildArtifacts> {
   // Both hashes include programIdBase58 so a request that overrides the
   // deploy ID gets a fresh .so rather than a cached one baked with the
   // source's original `declare_id!()`. Without this, Anchor's owner check
