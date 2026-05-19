@@ -25,15 +25,19 @@
 | AI under byte-equal differential gate (`/build/auto-fix?with_differential=1`) | Y (shared) | Y (shared) |
 | Verify Build + Auto-fix loop | Y (shared) | Y (shared) |
 | AST visitor (Phase 2 — dead code, structural emit incrementally retiring regex layer) | Y (shared, scaffold + 4 IR kinds structurally ported) | Y (shared) |
-| Zero-copy account layouts (`#[account(zero_copy)]`) | — | — |
-| Pyth / MPL Core / Switchboard CPIs | lint | lint |
+| Zero-copy account layouts (`#[account(zero_copy)]`) | Y (`#[repr(C)]` + bytemuck `Pod`/`Zeroable`, byte-equal verified 2026-05-08) | Y |
+| Metaplex Token Metadata CPIs (create_metadata_v3, master_edition_v3, verify/sign collection, freeze/thaw, mint_new_edition, approve/revoke collection authority) | Y (12 IR kinds, 11/12 slots byte-equal differential-gated) | Y |
+| Pyth price feed reads (legacy `PriceAccountV2` + modern `PriceUpdateV2`) | Y (byte-equal differential against Pyth Receiver `.so`) | Y |
+| MPL Core / Switchboard CPIs | lint | lint |
+| Confidential T22 family (ConfidentialTransfer{Mint,Fee,MintBurn}) | lint (zk-proof prelude arc not started) | lint |
 | Impl-method inlining (`ctx.accounts.foo()`) | partial | partial |
+| Composite `#[derive(Accounts)]` flatten (`pub foo: Inner<'info>`) | Y (3-layer parser+classifier+emitter port, 2026-05-19; BYTE_EQUAL verified on real :8899 validator for Anchor org composite example) | Y |
 
 ## Locked under byte-equal differential gate
 
 These run on every Anvil release; any emit divergence fails the gate.
 
-**34 byte-equal differential fixtures** — 28 demos + 6 externally-authored real-world Anchor programs.
+**73 byte-equal differential fixtures** — covering SPL Token, Token-2022 (all 12 non-confidential extensions), Metaplex Token Metadata (12 IR kinds), Pyth (legacy + modern), composite Accounts, and a slate of real-world programs.
 
 ### Real-world programs (cloned verbatim)
 
@@ -79,10 +83,11 @@ Quasar emit was deleted from the production path on 2026-05-05 (`quasar-lang` ha
 
 ## Known gaps
 
-- **Zero-copy accounts.** Affects high-perf programs (Drift, Mango). New IR kind required; emit `#[repr(C)]` + bytemuck derives.
-- **External CPIs (Pyth, Switchboard, Metaplex Token Metadata + Core).** Imports preserve, structural rewrites don't. Programs using these emit a TODO stub for the call site. Listed as grant M2 / M3 deliverables.
+- **MPL Core** (the newer Metaplex format, separate from Token Metadata). Not supported — no IR kinds; emit produces a TODO stub. Token Metadata IS fully supported (12 IR kinds, byte-equal differential-gated).
+- **Switchboard oracle CPIs.** Allowlist entry only; no IR kinds. Emit produces a TODO stub.
+- **Confidential T22 family** (`ConfidentialTransferMint`, `ConfidentialTransferFee`, `ConfidentialMintBurn`). Lint-only — requires zk-proof prelude arc (Groth16 verification, encrypted amounts, decryption-handle handling); fundamentally different architecture than the byte-payload T22 extensions, scoped as its own multi-week effort.
 - **Impl-method inlining for `ctx.accounts.foo()`.** Partial: the flattener preserves impl-scoped names, but inlining method bodies into instruction handlers interacts with the CPI-consolidation regex. Affects some escrow-style programs. Tracked-ceiling in `realworld-tracking.test.ts`.
-- **`token_interface` extensions** (transfer-fee, transfer-hook, confidential-transfer). Tracked-ceiling only.
+- **Jupiter aggregator + other sibling-program CPIs.** Routed through `cpi_custom` with a manual TODO marker; user must hand-roll the CPI against the target program ID since the sibling program's instruction layout isn't accessible from the consumer's IDL.
 
 ## CU savings
 

@@ -147,12 +147,17 @@ Real-world repo pass rate: 6/6 (unchanged, still locked).
 - **CPI catalog status** — body-level CPIs Anvil rewrites structurally:
   - System transfer, SPL token transfer/mint_to/burn/close_account, ATA create, **SPL Memo** (R2): ✅ native + ✅ pinocchio.
   - **Token-2022 routing** (R2): native emitter now routes to `spl_token_2022::instruction::transfer_checked / mint_to_checked / burn_checked` when the IR carries `tokenProgram = "token_2022"`. Detector extracts mint + decimals from the TransferChecked struct + trailing decimals arg, and inlines a `Mint::unpack` prelude when decimals references `<mint>.decimals` (Anchor auto-derefs InterfaceAccount<Mint>; native unpacks by hand). Pinocchio's `pinocchio_token` helpers already work for both programs at runtime, so they pass through unchanged.
-  - Metaplex Core / Pyth / Switchboard / MPL: out of scope; emit carries the imports verbatim and lint flags them.
+  - **Token-2022 extensions** — all 12 non-confidential extensions Y on both targets with byte-equal differential gates (TransferFee, MintCloseAuthority, InterestBearing, NonTransferable, DefaultAccountState, ImmutableOwner, PermanentDelegate, MetadataPointer, TokenMetadata, GroupPointer/MemberPointer, TransferHook + CpiGuard compat). See `docs/token-2022-extensions.md`.
+  - **Metaplex Token Metadata** — full 12-IR-kind catalog with byte-equal differentials for 11/12 slots: create_metadata_v3 (full DataV2 — creators, collection, uses), create_master_edition_v3, update_metadata_accounts_v2, mint_new_edition_from_master, set_and_verify_collection / verify_collection / unverify_collection, sign_metadata, freeze_delegated / thaw_delegated, approve_collection_authority / revoke_collection_authority.
+  - **Pyth oracle reads** — both legacy `load_price_feed_from_account_info` + modern `PriceUpdateV2.get_price_no_older_than_with_custom_verification_level` paths emit hand-rolled byte deserialization (no SDK dep) with magic-header + feed-id cross-check, byte-equal differential against the bundled Pyth Receiver `.so`.
+  - **MPL Core / Switchboard**: out of scope; emit carries the imports verbatim and lint flags them.
+  - **Confidential T22** (ConfidentialTransferMint/Fee/MintBurn): lint only — separate zk-proof prelude arc.
 - **Multi-statement wrapper inlining** — done in R2. `pub fn foo` bodies with 2+ statements ending in a `Type::method(ctx, ...)` delegate (e.g. dice's `ResolveBet::verify_sig(...)?; ResolveBet::handler(ctx, sig)`) now inline correctly.
 - **Macro support** — standard Anchor macros (`require!`, `require_{eq,neq,gt,gte,lt,lte,keys_eq,keys_neq}!`, `msg!`, `emit!`) are all transformed today. Custom user `macro_rules!` macros aren't expanded (would need a separate hygienic-expansion pass); the corpus surveyed didn't actually need them.
 - **Auth / per-key quotas on `/emit?refine=1` and `/build/auto-fix`** — public endpoints with AI cost. Rate-limited per IP but not AI-cost-bounded per caller.
-- **Zero-copy accounts** (`#[account(zero_copy)]`) — `#[repr(C)]` layout preservation needed.
-- **Pyth / MPL / Switchboard source-level CPI rewrites** — out of scope until grant.
+- **Zero-copy accounts** (`#[account(zero_copy)]`) — shipped 2026-05-08 with byte-equal verification (`#[repr(C)]` + bytemuck `Pod`/`Zeroable`).
+- **Pyth + MPL Token Metadata source-level CPI rewrites** — shipped (see CPI catalog above). MPL Core + Switchboard remain out of scope.
+- **Composite `#[derive(Accounts)]` flatten** — shipped 2026-05-19 (3-layer parser+classifier+emitter port). BYTE_EQUAL verified on real `:8899` validator for Anchor org composite example. Unblocks Drift v2 / Mango v4 / Squads v4 coverage.
 - **Demo video, tech demo, pitch deck** — Colosseum Frontier deadline May 11–12 2026.
 
 ## Local development
