@@ -25,6 +25,7 @@ import {
   findTopLevelComma,
   findLastTopLevelComma,
   containsAnchorPatterns,
+  detectUnrecognizedCpiShape,
 } from "./ast-helpers.js";
 import { detectCpi } from "./cpi-detector.js";
 import { type WarningCollector, locFromNode } from "./warning-collector.js";
@@ -465,6 +466,22 @@ function passThroughDefault(
       snippet: text,
       loc: locFromNode(node),
     });
+  }
+  // B6 — same unrecognized-CPI surface inside control-flow blocks. An
+  // anchor_spl::token::transfer(...) buried inside `if/for/match` would
+  // otherwise pass through without any signal.
+  if (collector) {
+    const cpiShape = detectUnrecognizedCpiShape(text);
+    if (cpiShape) {
+      collector.add({
+        code: "cpi_unrecognized_dropped",
+        message:
+          `Unrecognized CPI shape "${cpiShape}" found inside control-flow pass-through. ` +
+          `Same hazard as a top-level miss: Pinocchio emit will strip it.`,
+        snippet: text.slice(0, 200),
+        loc: locFromNode(node),
+      });
+    }
   }
   return {
     stmt: {
@@ -996,6 +1013,33 @@ function classifyExpressionStatement(
   // api/tests/fixture-if-let-ctx-accounts.test.ts for the known-gap
   // documentation.
   const hasAnchor = containsAnchorPatterns(text);
+
+  // B6 — but DO emit a loud warning when the text contains a recognizable
+  // CPI shape (anchor_spl / token_interface / <crate>::cpi / invoke). At
+  // this point in the function we've already tried every typed extractor
+  // and they all missed; the statement is about to land in pass_through
+  // where the post-process either strips it (Pinocchio) or leaves
+  // Anchor-only types in (Native). Either way it's a silent on-chain
+  // CPI loss class without this warning. Strict-mode validator promotes
+  // the warning to ERROR via the parser-warnings surface.
+  if (collector) {
+    const cpiShape = detectUnrecognizedCpiShape(text);
+    if (cpiShape) {
+      collector.add({
+        code: "cpi_unrecognized_dropped",
+        message:
+          `Unrecognized CPI shape "${cpiShape}" fell into pass_through. ` +
+          `The parser couldn't match this call against any typed extractor (SPL, T22, MPL, Pyth, ` +
+          `invoke). Pinocchio emit will strip it as Anchor-only; Native emit may leave Anchor ` +
+          `types in. If this CPI is load-bearing for your program's on-chain behavior, file a ` +
+          `bug with the call site so we add a typed extractor — or rewrite the call into one of ` +
+          `the recognized shapes before deploy.`,
+        snippet: text.slice(0, 200),
+        loc: locFromNode(node),
+      });
+    }
+  }
+
   return {
     stmt: {
       kind: "pass_through",

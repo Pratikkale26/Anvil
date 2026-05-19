@@ -413,6 +413,66 @@ export function containsAnchorPatterns(text: string): boolean {
     /\berror!\s*[\(A-Z]/.test(text);
 }
 
+/**
+ * B6 — Look for CPI-shape call sites that should have been caught by a
+ * typed extractor but landed in pass_through. This is the loud-degradation
+ * surface for the "parser silently dropped my CPI" class of regression
+ * (most users' bug reports about Anvil compile to "the on-chain transfer
+ * disappeared").
+ *
+ * Returns the matched function call text (truncated) when an unrecognized
+ * CPI pattern is found, or null when the text contains no CPI shape.
+ *
+ * The detection is precise: we strip line/block comments + string literals
+ * (so a `// invoke(...)` comment or a string literal containing the word
+ * doesn't false-positive) and only match shapes that look like actual
+ * function invocations (`<ns>::<fn>(...)`, `invoke(`, `invoke_signed(`).
+ *
+ * Patterns caught:
+ *   - `anchor_spl::<mod>::<fn>(` — the typed-CPI surface (transfer, mint_to,
+ *     burn, etc.). A miss here is the parser losing a recognized SPL CPI.
+ *   - `token_interface::<fn>(` — the runtime-dispatching SPL CPI surface.
+ *   - `<mod>::cpi::<fn>(` — explicit cross-program CPI namespace used by
+ *     Anchor-generated cpi modules (mpl_token_metadata::cpi::*, etc.).
+ *   - `invoke(` / `invoke_signed(` — raw solana_program CPI primitives.
+ *     These are intentionally generic; the parser has a typed `cpi_custom`
+ *     IR slot but only the explicit shape (`invoke(&Instruction { … },
+ *     &[accounts])`) — anything else slips.
+ */
+export function detectUnrecognizedCpiShape(text: string): string | null {
+  // Strip comments + string literals so text-content false-positives don't
+  // fire. We don't need to be perfect — false-negatives just leave the
+  // existing pass_through behavior (no new warning); false-positives leak
+  // a noisy warning that the user can dismiss.
+  const stripped = text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+
+  // anchor_spl::X::fn( — capture function name for the warning detail.
+  const sp = stripped.match(/\banchor_spl\s*::\s*\w+\s*::\s*(\w+)\s*\(/);
+  if (sp) return `anchor_spl::…::${sp[1]}(...)`;
+
+  // token_interface::fn(
+  const ti = stripped.match(/\btoken_interface\s*::\s*(\w+)\s*\(/);
+  if (ti) return `token_interface::${ti[1]}(...)`;
+
+  // <crate>::cpi::fn(
+  // Match a single identifier followed by `::cpi::FN(`. Match the FULL
+  // crate name (no ambiguity from std::cpi-ish text — `cpi` isn't a
+  // standard std submodule).
+  const crateCpi = stripped.match(/\b([a-z_][a-z0-9_]*)\s*::\s*cpi\s*::\s*(\w+)\s*\(/);
+  if (crateCpi) return `${crateCpi[1]}::cpi::${crateCpi[2]}(...)`;
+
+  // Raw invoke(...) / invoke_signed(...). Catch the call shape (followed
+  // by an open paren). We bias toward false-negatives — there's a typed
+  // `cpi_custom` extractor; only the shapes IT misses land here.
+  const inv = stripped.match(/\b(invoke|invoke_signed)\s*\(/);
+  if (inv) return `${inv[1]}(...)`;
+
+  return null;
+}
+
 // ─── Scope helpers ──────────────────────────────────────────────────────────
 
 /**
