@@ -54,14 +54,20 @@ export function DifferentialVerdict(props: {
 }) {
   const { verdict, scenario, target, onRunAgain, onReset } = props;
   const isPass = verdict.verdict === "BYTE_EQUAL";
+  const isPassWithWarnings = verdict.verdict === "BYTE_EQUAL_WITH_WARNINGS";
   const isFail = verdict.verdict === "DIVERGED";
   const isErrored = verdict.verdict === "SCENARIO_FAILED";
 
+  // B4 — distinct banner for BYTE_EQUAL_WITH_WARNINGS. Same green icon as
+  // full BYTE_EQUAL (bytes did match), but amber tone + label so the user
+  // sees the sanity warnings weakened the verdict.
   const banner = isPass
     ? { tone: "green", icon: CheckCircle2, label: "BYTE-EQUAL", caption: `Both targets succeeded byte-identical · ${verdict.durationMs}ms` }
-    : isFail
-      ? { tone: "red", icon: XCircle, label: "DIVERGED", caption: `Anchor reference and Anvil emit produced different state · ${verdict.durationMs}ms` }
-      : { tone: "amber", icon: AlertTriangle, label: "SCENARIO FAILED", caption: `One or more steps couldn’t execute · ${verdict.durationMs}ms` };
+    : isPassWithWarnings
+      ? { tone: "amber", icon: AlertTriangle, label: "BYTE-EQUAL (with warnings)", caption: `Bytes match, but sanity warnings weaken the verdict — see below · ${verdict.durationMs}ms` }
+      : isFail
+        ? { tone: "red", icon: XCircle, label: "DIVERGED", caption: `Anchor reference and Anvil emit produced different state · ${verdict.durationMs}ms` }
+        : { tone: "amber", icon: AlertTriangle, label: "SCENARIO FAILED", caption: `One or more steps couldn’t execute · ${verdict.durationMs}ms` };
 
   const palette = {
     green: { border: "rgba(14,168,128,0.32)", bg: "rgba(14,168,128,0.08)", fg: "#7be3bf" },

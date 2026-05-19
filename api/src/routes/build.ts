@@ -426,7 +426,7 @@ buildRoute.post("/auto-fix", async (req, res) => {
   let bestFiles: BuildFile[] = [...initialFiles];
   let bestErrorCount = Number.POSITIVE_INFINITY;
   type DifferentialOutcome = {
-    verdict: "BYTE_EQUAL" | "DIVERGED" | "SCENARIO_FAILED";
+    verdict: "BYTE_EQUAL" | "BYTE_EQUAL_WITH_WARNINGS" | "DIVERGED" | "SCENARIO_FAILED";
     accountDiffs: { name: string; status: string; firstDiffByte?: number }[];
     durationMs: number;
   };
@@ -502,7 +502,15 @@ buildRoute.post("/auto-fix", async (req, res) => {
       );
       iter.differential = diffOutcome;
       emit("differential-result", { iteration: i, ...diffOutcome });
-      if (diffOutcome.verdict === "BYTE_EQUAL") {
+      // B4 — BYTE_EQUAL_WITH_WARNINGS exits the loop too. The bytes match,
+      // so further refining would just churn; but the verdict surfaces the
+      // sanity warnings (partial_compare_scope, zero_mutation) the loop
+      // shouldn't suppress. Downstream consumers gate strict-mode on the
+      // exact verdict value rather than on a boolean.
+      if (
+        diffOutcome.verdict === "BYTE_EQUAL" ||
+        diffOutcome.verdict === "BYTE_EQUAL_WITH_WARNINGS"
+      ) {
         stoppedReason = "differential_byte_equal";
         break;
       }
@@ -811,7 +819,7 @@ async function runDifferentialCheck(
   programName: string,
   ir: SolanaIR,
 ): Promise<{
-  verdict: "BYTE_EQUAL" | "DIVERGED" | "SCENARIO_FAILED";
+  verdict: "BYTE_EQUAL" | "BYTE_EQUAL_WITH_WARNINGS" | "DIVERGED" | "SCENARIO_FAILED";
   accountDiffs: { name: string; status: string; firstDiffByte?: number }[];
   durationMs: number;
 }> {
@@ -876,7 +884,10 @@ function differentialDivergenceIssues(outcome: {
   verdict: string;
   accountDiffs: { name: string; status: string; firstDiffByte?: number }[];
 }): ValidationIssue[] {
-  if (outcome.verdict === "BYTE_EQUAL") return [];
+  // B4 — both green-ish verdicts skip feedback. WITH_WARNINGS doesn't
+  // need refine attention: the bytes match, the warnings are about the
+  // scope of comparison not the correctness of emit.
+  if (outcome.verdict === "BYTE_EQUAL" || outcome.verdict === "BYTE_EQUAL_WITH_WARNINGS") return [];
   if (outcome.accountDiffs.length === 0) {
     return [{
       severity: "error",

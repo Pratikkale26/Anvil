@@ -183,7 +183,12 @@ export type AutoFixResponse = {
    * Undefined when the gate wasn't requested. The badge renders
    * "verified" only when this is explicitly "BYTE_EQUAL".
    */
-  differentialVerdict?: "BYTE_EQUAL" | "DIVERGED" | "SCENARIO_FAILED" | "NOT_RUN";
+  differentialVerdict?:
+    | "BYTE_EQUAL"
+    | "BYTE_EQUAL_WITH_WARNINGS"
+    | "DIVERGED"
+    | "SCENARIO_FAILED"
+    | "NOT_RUN";
 };
 
 export type ErrorDelta = { before: number; after: number };
@@ -321,7 +326,9 @@ export interface StepOutcome {
 }
 
 export interface DifferentialVerdict {
-  verdict: "BYTE_EQUAL" | "DIVERGED" | "SCENARIO_FAILED";
+  /** Includes BYTE_EQUAL_WITH_WARNINGS (B4): bytes match, sanity warnings present.
+   *  Workbench renders this amber rather than green. */
+  verdict: "BYTE_EQUAL" | "BYTE_EQUAL_WITH_WARNINGS" | "DIVERGED" | "SCENARIO_FAILED";
   durationMs: number;
   steps: { anchor: StepOutcome[]; anvil: StepOutcome[] };
   accountDiffs: AccountDiff[];

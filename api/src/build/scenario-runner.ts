@@ -1200,7 +1200,24 @@ export interface SanityWarning {
 }
 
 export interface ScenarioVerdict {
-  verdict: "BYTE_EQUAL" | "DIVERGED" | "SCENARIO_FAILED";
+  /**
+   * Verdict on the post-scenario state comparison.
+   *
+   * - `BYTE_EQUAL`: All compared bytes match AND no sanity warnings fired
+   *   that would weaken the claim (partial_compare_scope, zero_mutation).
+   * - `BYTE_EQUAL_WITH_WARNINGS`: B4 — bytes match BUT one or more
+   *   sanityWarnings fired. The byte-comparison itself is honest, but the
+   *   verdict overstates the program's coverage (e.g. only 2 of 8 touched
+   *   accounts were compared; or every compared account post-state was
+   *   all-zero so the equality is trivial). Downstream consumers (CLI
+   *   --strict, workbench badge) should treat this as amber, not green.
+   * - `DIVERGED`: At least one compared account / event log / msg log /
+   *   assertion mismatched between Anchor and Anvil runs.
+   * - `SCENARIO_FAILED`: One or both runs hit a build / instruction
+   *   construction failure that wasn't expected — no meaningful comparison
+   *   was possible.
+   */
+  verdict: "BYTE_EQUAL" | "BYTE_EQUAL_WITH_WARNINGS" | "DIVERGED" | "SCENARIO_FAILED";
   durationMs: number;
   steps: {
     anchor: StepOutcome[];
@@ -1547,6 +1564,23 @@ export function compareScenarioRuns(
           `Add to compare.accounts to widen the verifiable claim.`,
       });
     }
+  }
+
+  // B4 — downgrade BYTE_EQUAL → BYTE_EQUAL_WITH_WARNINGS when a sanity
+  // warning fired that materially weakens the claim. The byte-comparison
+  // itself is still honest (bytes match), but the verdict overstates the
+  // scope of what was verified. Two cases:
+  //   - partial_compare_scope: only a subset of touched accounts compared.
+  //   - zero_mutation: all compared post-states were zero — equality is
+  //     trivial because nothing changed.
+  // Downstream consumers (CLI --strict, workbench badge) treat the
+  // downgraded verdict as amber. The original BYTE_EQUAL stays for the
+  // case where ALL compares are tight + non-trivial.
+  if (verdict === "BYTE_EQUAL") {
+    const weakening = sanityWarnings.some(
+      (w) => w.kind === "partial_compare_scope" || w.kind === "zero_mutation",
+    );
+    if (weakening) verdict = "BYTE_EQUAL_WITH_WARNINGS";
   }
 
   return {

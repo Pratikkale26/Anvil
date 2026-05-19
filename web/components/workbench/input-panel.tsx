@@ -1032,16 +1032,20 @@ function VerifyBuildBody(props: {
                 title={
                   autoFixResult.differentialVerdict === "BYTE_EQUAL"
                     ? "AI patches compiled AND produced byte-equal post-scenario state vs Anchor reference."
-                    : "AI patches compiled but the byte-equal differential gate found divergence — audit before deploy."
+                    : autoFixResult.differentialVerdict === "BYTE_EQUAL_WITH_WARNINGS"
+                      ? "Bytes match but sanity warnings weaken the verdict (partial compare scope or zero-mutation). See verdict view."
+                      : "AI patches compiled but the byte-equal differential gate found divergence — audit before deploy."
                 }
               >
                 {autoFixResult.differentialVerdict === "BYTE_EQUAL"
                   ? "✓ byte-equal verified"
-                  : autoFixResult.differentialVerdict === "DIVERGED"
-                    ? "⚠ diverged"
-                    : autoFixResult.differentialVerdict === "SCENARIO_FAILED"
-                      ? "⚠ scenario failed"
-                      : "differential not run"}
+                  : autoFixResult.differentialVerdict === "BYTE_EQUAL_WITH_WARNINGS"
+                    ? "⚠ byte-equal w/ warnings"
+                    : autoFixResult.differentialVerdict === "DIVERGED"
+                      ? "⚠ diverged"
+                      : autoFixResult.differentialVerdict === "SCENARIO_FAILED"
+                        ? "⚠ scenario failed"
+                        : "differential not run"}
               </span>
             )}
             {autoFixResult && (
