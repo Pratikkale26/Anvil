@@ -131,11 +131,20 @@ function fnBodyHasAnyErrorReturn(fnBody: string): boolean {
 
 function extractStateAliases(fnBody: string, accountName: string): string[] {
   const aliases = new Set([accountName]);
+  // task #36 — emit shapes for SPL TokenAccount / Mint deserialize use
+  // fully-qualified paths like `pinocchio_token::state::TokenAccount::
+  // from_account_info(<acc>)`. The has_one validator needs to follow
+  // these aliases to find the field-access (`__ha_from.owner()`)
+  // downstream. Pre-fix regex required exactly one namespace level
+  // (`\w+::from_account_info`), so multi-segment paths weren't aliased
+  // and the validator wrongly reported has_one as not enforced.
+  // Surfaced by diff-arc on cashiers-check 2026-05-19.
+  const TYPE_PATH = "(?:\\w+\\s*::\\s*)*\\w+";
   const patterns = [
-    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*\\w+::from_account_info\\(\\s*${accountName}\\s*\\)\\?;`, "g"),
-    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*\\w+::from_account_info\\(\\s*${accountName}_account\\s*\\)\\?;`, "g"),
-    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*\\w+::read\\([^;]*\\b${accountName}\\b[^;]*\\)\\?;`, "g"),
-    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*\\w+::read\\([^;]*\\b${accountName}_account\\b[^;]*\\)\\?;`, "g"),
+    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*${TYPE_PATH}::from_account_info\\(\\s*${accountName}\\s*\\)\\?;`, "g"),
+    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*${TYPE_PATH}::from_account_info\\(\\s*${accountName}_account\\s*\\)\\?;`, "g"),
+    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*${TYPE_PATH}::read\\([^;]*\\b${accountName}\\b[^;]*\\)\\?;`, "g"),
+    new RegExp(`let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*${TYPE_PATH}::read\\([^;]*\\b${accountName}_account\\b[^;]*\\)\\?;`, "g"),
   ];
 
   for (const pattern of patterns) {
