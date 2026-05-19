@@ -57,6 +57,9 @@ import {
   irNeedsMplCoreUpdatePluginV1Helper,
   irNeedsMplCoreApprovePluginAuthorityV1Helper,
   irNeedsMplCoreRevokePluginAuthorityV1Helper,
+  irNeedsT22ConfidentialTransferInitMintHelper,
+  irNeedsT22ConfidentialTransferFeeInitHelper,
+  irNeedsT22ConfidentialMintBurnInitMintHelper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK } from "./markers.js";
 
@@ -265,7 +268,10 @@ export class NativeEmitter extends BaseEmitter {
       || irNeedsMplCoreRemovePluginV1Helper(_ir)
       || irNeedsMplCoreUpdatePluginV1Helper(_ir)
       || irNeedsMplCoreApprovePluginAuthorityV1Helper(_ir)
-      || irNeedsMplCoreRevokePluginAuthorityV1Helper(_ir);
+      || irNeedsMplCoreRevokePluginAuthorityV1Helper(_ir)
+      || irNeedsT22ConfidentialTransferInitMintHelper(_ir)
+      || irNeedsT22ConfidentialTransferFeeInitHelper(_ir)
+      || irNeedsT22ConfidentialMintBurnInitMintHelper(_ir);
     const needsInvoke = irNeedsUnsignedLamportsHelper(_ir)
       || irNeedsHelper(_ir, "spl_transfer")
       || irNeedsUnsignedSplMintToHelper(_ir)
@@ -3315,6 +3321,86 @@ pub fn mpl_sign_metadata<'a>(
         data,
     };
     let infos = [metadata.clone(), creator.clone()];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsT22ConfidentialTransferInitMintHelper(_ir)) {
+      helpers.push(`/// Token-2022 Confidential Transfer extension: initialize_mint.
+pub fn t22_confidential_transfer_initialize_mint<'a>(
+    mint: &AccountInfo<'a>,
+    token_program: &AccountInfo<'a>,
+    authority: Option<Pubkey>,
+    auto_approve_new_accounts: bool,
+    auditor_elgamal_pubkey: Option<[u8; 32]>,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut d = [0u8; 67];
+    d[0] = 27;
+    d[1] = 0;
+    if let Some(a) = authority {
+        d[2..34].copy_from_slice(a.as_ref());
+    }
+    d[34] = if auto_approve_new_accounts { 1 } else { 0 };
+    if let Some(e) = auditor_elgamal_pubkey {
+        d[35..67].copy_from_slice(&e);
+    }
+    let accounts = vec![AccountMeta::new(*mint.key, false)];
+    let ix = Instruction { program_id: *token_program.key, accounts, data: d.to_vec() };
+    let infos = [mint.clone()];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsT22ConfidentialTransferFeeInitHelper(_ir)) {
+      helpers.push(`/// Token-2022 ConfidentialTransferFee extension: init config.
+pub fn t22_confidential_transfer_fee_init<'a>(
+    mint: &AccountInfo<'a>,
+    token_program: &AccountInfo<'a>,
+    authority: Option<Pubkey>,
+    withdraw_withheld_authority_elgamal_pubkey: [u8; 32],
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut d = [0u8; 66];
+    d[0] = 37;
+    d[1] = 0;
+    if let Some(a) = authority {
+        d[2..34].copy_from_slice(a.as_ref());
+    }
+    d[34..66].copy_from_slice(&withdraw_withheld_authority_elgamal_pubkey);
+    let accounts = vec![AccountMeta::new(*mint.key, false)];
+    let ix = Instruction { program_id: *token_program.key, accounts, data: d.to_vec() };
+    let infos = [mint.clone()];
+    match signer_seeds {
+        Some(seeds) => invoke_signed(&ix, &infos, seeds),
+        None => invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsT22ConfidentialMintBurnInitMintHelper(_ir)) {
+      helpers.push(`/// Token-2022 ConfidentialMintBurn extension: initialize_mint.
+pub fn t22_confidential_mint_burn_initialize_mint<'a>(
+    mint: &AccountInfo<'a>,
+    token_program: &AccountInfo<'a>,
+    supply_elgamal_pubkey: [u8; 32],
+    decryptable_supply: [u8; 36],
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut d = [0u8; 70];
+    d[0] = 42;
+    d[1] = 0;
+    d[2..34].copy_from_slice(&supply_elgamal_pubkey);
+    d[34..70].copy_from_slice(&decryptable_supply);
+    let accounts = vec![AccountMeta::new(*mint.key, false)];
+    let ix = Instruction { program_id: *token_program.key, accounts, data: d.to_vec() };
+    let infos = [mint.clone()];
     match signer_seeds {
         Some(seeds) => invoke_signed(&ix, &infos, seeds),
         None => invoke(&ix, &infos),

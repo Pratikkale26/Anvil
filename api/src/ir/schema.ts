@@ -1276,6 +1276,65 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // Token-2022 Confidential family — task #49.
+  //
+  // These extension instructions are accessed via raw `invoke(&fn(...))`
+  // patterns since anchor-spl 0.31 doesn't yet wrap them. The init shapes
+  // are simple Pod struct payloads (no zk-proofs at init time — proofs
+  // only enter on Configure/Transfer/Deposit/Withdraw, which remain
+  // lint-only). v1 scope: just the three init slots:
+  //
+  //   ConfidentialTransfer.InitializeMint:
+  //     wire: [outer=27, inner=0, authority(32), auto_approve(1), auditor_elgamal(32)] = 67 bytes
+  //     accounts: [writable mint]
+  //
+  //   ConfidentialTransferFee.InitializeConfidentialTransferFeeConfig:
+  //     wire: [outer=37, inner=0, authority(32), withdraw_withheld_elgamal(32)] = 66 bytes
+  //     accounts: [writable mint]
+  //
+  //   ConfidentialMintBurn.InitializeMint:
+  //     wire: [outer=42, inner=0, supply_elgamal(32), decryptable_supply(36)] = 70 bytes
+  //     accounts: [writable mint]
+  //
+  // OptionalNonZeroPubkey: 32 zero bytes = None; non-zero = Some(pubkey).
+  // PodElGamalPubkey: 32-byte ElGamal public key (always non-Optional).
+  // PodAeCiphertext: 36-byte authenticated-encryption ciphertext.
+  z.object({
+    kind: z.literal("cpi_t22_confidential_transfer_initialize_mint"),
+    /** Mint account — writable, non-signer. */
+    mint: z.string(),
+    /** Token-2022 program AccountInfo. */
+    tokenProgram: z.string(),
+    /** Option<Pubkey> authority — raw text "None" or "Some(<expr>)". */
+    authority: z.string().default("None"),
+    /** bool auto_approve_new_accounts — raw expression. */
+    autoApproveNewAccounts: z.string().default("false"),
+    /** Option<PodElGamalPubkey> auditor_elgamal_pubkey — raw text. */
+    auditorElgamalPubkey: z.string().default("None"),
+    signerSeeds: z.string().optional(),
+  }),
+
+  z.object({
+    kind: z.literal("cpi_t22_confidential_transfer_fee_init"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    authority: z.string().default("None"),
+    /** PodElGamalPubkey withdraw_withheld_authority_elgamal_pubkey — raw expression. */
+    withdrawWithheldAuthorityElgamalPubkey: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
+  z.object({
+    kind: z.literal("cpi_t22_confidential_mint_burn_initialize_mint"),
+    mint: z.string(),
+    tokenProgram: z.string(),
+    /** PodElGamalPubkey supply_elgamal_pubkey — raw expression. */
+    supplyElgamalPubkey: z.string(),
+    /** PodAeCiphertext decryptable_supply — raw expression. */
+    decryptableSupply: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // MPL Core: CreateCollectionV2 (task #48 S5). Discriminator 21; just
   // 4 accounts (collection writable+signer, update_authority optional
   // readonly, payer writable+signer, system_program); no log_wrapper

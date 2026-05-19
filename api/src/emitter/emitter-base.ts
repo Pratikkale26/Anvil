@@ -912,6 +912,14 @@ export abstract class BaseEmitter {
           if (/\bsolana_keccak_hasher\b/.test(statement)) return false;
           if (/\bsolana_sha256_hasher\b/.test(statement)) return false;
           if (/\bsha2_const_stable\b/.test(statement)) return false;
+          // task #49 — `use spl_token_2022::extension::confidential_*` in
+          // source. The Pinocchio target doesn't pull in spl-token-2022
+          // (it has its own pinocchio-token + hand-rolled extension paths).
+          // The visitor handles the Confidential T22 init IR kinds by
+          // emitting a typed helper-fn call; the original `use` line is
+          // dead-code on this target.
+          if (/\bspl_token_2022\b/.test(statement)) return false;
+          if (/\bsolana_program::program\b/.test(statement)) return false;
         }
         // Pyth crates dropped on BOTH targets — N5b unified the emit
         // on hand-rolled bytes, so neither pyth_sdk_solana nor

@@ -736,6 +736,9 @@ type CpiMplCoreRemovePluginV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_rem
 type CpiMplCoreUpdatePluginV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_update_plugin_v1" }>;
 type CpiMplCoreApprovePluginAuthorityV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_approve_plugin_authority_v1" }>;
 type CpiMplCoreRevokePluginAuthorityV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_revoke_plugin_authority_v1" }>;
+type CpiT22ConfidentialTransferInitMint = Extract<BodyStatement, { kind: "cpi_t22_confidential_transfer_initialize_mint" }>;
+type CpiT22ConfidentialTransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_confidential_transfer_fee_init" }>;
+type CpiT22ConfidentialMintBurnInitMint = Extract<BodyStatement, { kind: "cpi_t22_confidential_mint_burn_initialize_mint" }>;
 type ZeroCopyLoadInit = Extract<BodyStatement, { kind: "zero_copy_load_init" }>;
 type ZeroCopyLoadMut = Extract<BodyStatement, { kind: "zero_copy_load_mut" }>;
 type ZeroCopyLoad = Extract<BodyStatement, { kind: "zero_copy_load" }>;
@@ -832,6 +835,9 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_mpl_core_update_plugin_v1",
   "cpi_mpl_core_approve_plugin_authority_v1",
   "cpi_mpl_core_revoke_plugin_authority_v1",
+  "cpi_t22_confidential_transfer_initialize_mint",
+  "cpi_t22_confidential_transfer_fee_init",
+  "cpi_t22_confidential_mint_burn_initialize_mint",
   "zero_copy_load_init",
   "zero_copy_load_mut",
   "zero_copy_load",
@@ -963,6 +969,12 @@ export class AstVisitorBase {
         return this.visitCpiMplCoreApprovePluginAuthorityV1(stmt);
       case "cpi_mpl_core_revoke_plugin_authority_v1":
         return this.visitCpiMplCoreRevokePluginAuthorityV1(stmt);
+      case "cpi_t22_confidential_transfer_initialize_mint":
+        return this.visitCpiT22ConfidentialTransferInitMint(stmt);
+      case "cpi_t22_confidential_transfer_fee_init":
+        return this.visitCpiT22ConfidentialTransferFeeInit(stmt);
+      case "cpi_t22_confidential_mint_burn_initialize_mint":
+        return this.visitCpiT22ConfidentialMintBurnInitMint(stmt);
       case "zero_copy_load_init":
         return this.visitZeroCopyLoadInit(stmt);
       case "zero_copy_load_mut":
@@ -3840,6 +3852,91 @@ export class AstVisitorBase {
       `        ${resolve(stmt.systemProgram)},`,
       `        ${resolveOpt(stmt.logWrapper)},`,
       `        ${pluginTypeDisc}u8,`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * Token-2022 Confidential family init slots (task #49). All three use
+   * the same wire-shape template: [outer_disc, inner_disc=0, ...fixed-size
+   * Pod payload]. Each emits a self-contained block; the helper-fn
+   * approach used by MPL Core helpers isn't needed here because the
+   * data buffer is statically sized.
+   */
+  visitCpiT22ConfidentialTransferInitMint(stmt: CpiT22ConfidentialTransferInitMint): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const unwrapSome = (expr: string): string => {
+      const m = expr.trim().match(/^Some\(\s*([\s\S]+)\s*\)$/);
+      return (m?.[1] ?? expr).trim().replace(/^&/, "");
+    };
+    const auth = stmt.authority.trim() === "None"
+      ? "None"
+      : `Some(${resolve(unwrapSome(stmt.authority))})`;
+    const auditor = stmt.auditorElgamalPubkey.trim() === "None"
+      ? "None"
+      : `Some(${resolve(unwrapSome(stmt.auditorElgamalPubkey))})`;
+    const lines: string[] = [
+      `    t22_confidential_transfer_initialize_mint(`,
+      `        ${resolve(stmt.mint)},`,
+      `        ${resolve(stmt.tokenProgram)},`,
+      `        ${auth},`,
+      `        ${stmt.autoApproveNewAccounts},`,
+      `        ${auditor},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22ConfidentialTransferFeeInit(stmt: CpiT22ConfidentialTransferFeeInit): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const unwrapSome = (expr: string): string => {
+      const m = expr.trim().match(/^Some\(\s*([\s\S]+)\s*\)$/);
+      return (m?.[1] ?? expr).trim().replace(/^&/, "");
+    };
+    const auth = stmt.authority.trim() === "None"
+      ? "None"
+      : `Some(${resolve(unwrapSome(stmt.authority))})`;
+    const lines: string[] = [
+      `    t22_confidential_transfer_fee_init(`,
+      `        ${resolve(stmt.mint)},`,
+      `        ${resolve(stmt.tokenProgram)},`,
+      `        ${auth},`,
+      `        ${stmt.withdrawWithheldAuthorityElgamalPubkey},`,
+      stmt.signerSeeds
+        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
+        : `        None,`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22ConfidentialMintBurnInitMint(stmt: CpiT22ConfidentialMintBurnInitMint): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const resolve = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const lines: string[] = [
+      `    t22_confidential_mint_burn_initialize_mint(`,
+      `        ${resolve(stmt.mint)},`,
+      `        ${resolve(stmt.tokenProgram)},`,
+      `        ${stmt.supplyElgamalPubkey},`,
+      `        ${stmt.decryptableSupply},`,
       stmt.signerSeeds
         ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
         : `        None,`,

@@ -347,6 +347,37 @@ const NEW_KIND_FIXTURES: Array<{
       pluginType: "ImmutableMetadata",
     },
   },
+  {
+    name: "cpi_t22_confidential_transfer_initialize_mint (task #49)",
+    stmt: {
+      kind: "cpi_t22_confidential_transfer_initialize_mint",
+      mint: "mint",
+      tokenProgram: "token_program",
+      authority: "None",
+      autoApproveNewAccounts: "true",
+      auditorElgamalPubkey: "None",
+    },
+  },
+  {
+    name: "cpi_t22_confidential_transfer_fee_init (task #49)",
+    stmt: {
+      kind: "cpi_t22_confidential_transfer_fee_init",
+      mint: "mint",
+      tokenProgram: "token_program",
+      authority: "None",
+      withdrawWithheldAuthorityElgamalPubkey: "elgamal_pubkey",
+    },
+  },
+  {
+    name: "cpi_t22_confidential_mint_burn_initialize_mint (task #49)",
+    stmt: {
+      kind: "cpi_t22_confidential_mint_burn_initialize_mint",
+      mint: "mint",
+      tokenProgram: "token_program",
+      supplyElgamalPubkey: "supply_elgamal",
+      decryptableSupply: "decryptable_supply",
+    },
+  },
 ];
 
 describe("IR roundtrip — new kinds shipped 2026-05-18", () => {

@@ -306,6 +306,31 @@ export function irNeedsMplCoreRevokePluginAuthorityV1Helper(ir: SolanaIR): boole
   );
 }
 
+/**
+ * task #49 — Confidential T22 init slots. Same shape across all 3: a
+ * fixed-size Pod payload preceded by [outer_disc, inner_disc=0]. The
+ * helper takes a Pubkey/ElGamalPubkey ref as `&[u8; 32]` so the call
+ * sites can pass either `account.key()` (Pinocchio) or `*account.key`
+ * (Native) directly.
+ */
+export function irNeedsT22ConfidentialTransferInitMintHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_t22_confidential_transfer_initialize_mint")
+  );
+}
+
+export function irNeedsT22ConfidentialTransferFeeInitHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_t22_confidential_transfer_fee_init")
+  );
+}
+
+export function irNeedsT22ConfidentialMintBurnInitMintHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_t22_confidential_mint_burn_initialize_mint")
+  );
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

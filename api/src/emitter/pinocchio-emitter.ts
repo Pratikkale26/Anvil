@@ -56,6 +56,9 @@ import {
   irNeedsMplCoreUpdatePluginV1Helper,
   irNeedsMplCoreApprovePluginAuthorityV1Helper,
   irNeedsMplCoreRevokePluginAuthorityV1Helper,
+  irNeedsT22ConfidentialTransferInitMintHelper,
+  irNeedsT22ConfidentialTransferFeeInitHelper,
+  irNeedsT22ConfidentialMintBurnInitMintHelper,
 } from "./emitter-helpers.js";
 import { MARKER_DECIMALS_FALLBACK, MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
@@ -419,7 +422,10 @@ export class PinocchioEmitter extends BaseEmitter {
       || irNeedsMplCoreRemovePluginV1Helper(_ir)
       || irNeedsMplCoreUpdatePluginV1Helper(_ir)
       || irNeedsMplCoreApprovePluginAuthorityV1Helper(_ir)
-      || irNeedsMplCoreRevokePluginAuthorityV1Helper(_ir);
+      || irNeedsMplCoreRevokePluginAuthorityV1Helper(_ir)
+      || irNeedsT22ConfidentialTransferInitMintHelper(_ir)
+      || irNeedsT22ConfidentialTransferFeeInitHelper(_ir)
+      || irNeedsT22ConfidentialMintBurnInitMintHelper(_ir);
     if (needsSeedSigner) {
       imports.push(`use pinocchio::instruction::{Seed, Signer};`);
     }
@@ -4621,6 +4627,141 @@ pub fn mpl_sign_metadata(
         data: &data,
     };
     let infos = [metadata, creator];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    // task #49 — Confidential T22 init slots. Each helper hand-rolls a
+    // fixed-size [outer_disc, 0, ...payload] byte buffer and invokes the
+    // T22 program directly.
+    if (irNeedsT22ConfidentialTransferInitMintHelper(ir)) {
+      helpers.push(`/// Token-2022 Confidential Transfer extension: initialize_mint.
+/// Outer disc 27 (ConfidentialTransferExtension) + inner disc 0.
+/// 67-byte payload = [27, 0, authority(32, OptionalNonZeroPubkey),
+/// auto_approve(1, PodBool), auditor_elgamal_pubkey(32, OptionalNonZeroElGamalPubkey)].
+pub fn t22_confidential_transfer_initialize_mint(
+    mint: &AccountInfo,
+    token_program: &AccountInfo,
+    authority: Option<Pubkey>,
+    auto_approve_new_accounts: bool,
+    auditor_elgamal_pubkey: Option<[u8; 32]>,
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut d = [0u8; 67];
+    d[0] = 27;
+    d[1] = 0;
+    if let Some(a) = authority {
+        d[2..34].copy_from_slice(a.as_ref());
+    }
+    d[34] = if auto_approve_new_accounts { 1 } else { 0 };
+    if let Some(e) = auditor_elgamal_pubkey {
+        d[35..67].copy_from_slice(&e);
+    }
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(mint.key(), true, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: token_program.key(),
+        accounts: &metas,
+        data: &d,
+    };
+    let infos = [mint];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsT22ConfidentialTransferFeeInitHelper(ir)) {
+      helpers.push(`/// Token-2022 ConfidentialTransferFee extension: init config.
+/// Outer disc 37 + inner disc 0. 66-byte payload = [37, 0,
+/// authority(32, OptionalNonZeroPubkey), withdraw_withheld_elgamal(32, PodElGamalPubkey)].
+pub fn t22_confidential_transfer_fee_init(
+    mint: &AccountInfo,
+    token_program: &AccountInfo,
+    authority: Option<Pubkey>,
+    withdraw_withheld_authority_elgamal_pubkey: [u8; 32],
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut d = [0u8; 66];
+    d[0] = 37;
+    d[1] = 0;
+    if let Some(a) = authority {
+        d[2..34].copy_from_slice(&a);
+    }
+    d[34..66].copy_from_slice(&withdraw_withheld_authority_elgamal_pubkey);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(mint.key(), true, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: token_program.key(),
+        accounts: &metas,
+        data: &d,
+    };
+    let infos = [mint];
+    match signer_seeds {
+        Some(seeds) => {
+            let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+            let mut sd: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+            for (i, s) in seed_group.iter().enumerate() {
+                if i >= sd.len() { return Err(ProgramError::InvalidSeeds); }
+                sd[i] = Seed::from(*s);
+            }
+            let signer = Signer::from(&sd[..seed_group.len()]);
+            pinocchio::cpi::invoke_signed(&ix, &infos, &[signer])
+        }
+        None => pinocchio::cpi::invoke(&ix, &infos),
+    }
+}`);
+    }
+
+    if (irNeedsT22ConfidentialMintBurnInitMintHelper(ir)) {
+      helpers.push(`/// Token-2022 ConfidentialMintBurn extension: initialize_mint.
+/// Outer disc 42 + inner disc 0. 70-byte payload = [42, 0,
+/// supply_elgamal(32, PodElGamalPubkey), decryptable_supply(36, PodAeCiphertext)].
+pub fn t22_confidential_mint_burn_initialize_mint(
+    mint: &AccountInfo,
+    token_program: &AccountInfo,
+    supply_elgamal_pubkey: [u8; 32],
+    decryptable_supply: [u8; 36],
+    signer_seeds: Option<&[&[&[u8]]]>,
+) -> ProgramResult {
+    let mut d = [0u8; 70];
+    d[0] = 42;
+    d[1] = 0;
+    d[2..34].copy_from_slice(&supply_elgamal_pubkey);
+    d[34..70].copy_from_slice(&decryptable_supply);
+    let metas = [
+        pinocchio::instruction::AccountMeta::new(mint.key(), true, false),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: token_program.key(),
+        accounts: &metas,
+        data: &d,
+    };
+    let infos = [mint];
     match signer_seeds {
         Some(seeds) => {
             let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;

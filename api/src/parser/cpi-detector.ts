@@ -405,6 +405,21 @@ export function detectCpi(
 
   // ── Generic invoke / invoke_signed ──
   if (funcText === "invoke" || funcText === "invoke_signed") {
+    const argsNode = callNode.childForFieldName("arguments");
+    const args = argsNode ? getArguments(argsNode) : [];
+    const firstArgText = args[0]?.text ?? "";
+    // task #49 — Confidential T22 init slots are accessed via raw invoke
+    // since anchor-spl 0.31 doesn't yet wrap them. Detect by inspecting
+    // the first argument's function path.
+    if (/confidential_transfer::instruction::initialize_mint/.test(firstArgText)) {
+      return extractT22ConfidentialTransferInitMint(callNode, collector);
+    }
+    if (/confidential_transfer_fee::instruction::initialize_confidential_transfer_fee_config/.test(firstArgText)) {
+      return extractT22ConfidentialTransferFeeInit(callNode, collector);
+    }
+    if (/confidential_mint_burn::instruction::initialize_mint/.test(firstArgText)) {
+      return extractT22ConfidentialMintBurnInitMint(callNode, collector);
+    }
     return extractCustomCpi(callNode, collector);
   }
 
@@ -3329,4 +3344,131 @@ function fallbackPassThrough(node: SyntaxNode): BodyStatement {
     needsReview: true,
     reviewReason: "CPI pattern detected but could not extract details",
   };
+}
+
+// ─── Confidential T22 init slots (task #49) ───────────────────────────────
+//
+// All three follow the same raw-invoke pattern. The user source typically
+// looks like one of:
+//
+//   invoke(
+//     &spl_token_2022::extension::confidential_transfer::instruction::
+//       initialize_mint(&token_program.key(), &mint.key(), authority,
+//                       auto_approve, auditor_elgamal)?,
+//     &[mint.to_account_info()],
+//   )?;
+//
+// The first arg to invoke is a Borrow of the returned Instruction; we
+// extract the constructor call's arguments (mint reference, authority,
+// elgamal). The account accounts arg to invoke is the second argument
+// but its content is implied by the spec (just the mint account).
+
+/**
+ * Extract `confidential_transfer::instruction::initialize_mint(
+ *     token_program_id, mint, authority, auto_approve, auditor_elgamal_pubkey)`
+ * args from the raw invoke wrapping. Both `&token_program.key()` and
+ * `&mint.key()` are passed in as the first two positional args; the rest
+ * are the data payload.
+ */
+function extractT22ConfidentialTransferInitMint(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArgText = args[0]?.text ?? "";
+  // Pull out the 5 positional args from initialize_mint(...). The first
+  // arg is the token_program_id Pubkey ref, the second is the mint ref.
+  const inner = firstArgText.match(/initialize_mint\s*\(([\s\S]+)\)\s*\?/);
+  if (!inner?.[1]) {
+    warnClassificationLost(collector, "Confidential Transfer initialize_mint", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+  const innerArgs = splitTopLevelArgs(inner[1]);
+  if (innerArgs.length < 5) {
+    warnClassificationLost(collector, "Confidential Transfer initialize_mint", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, "").replace(/\.key\(\)$/, ""));
+  return {
+    kind: "cpi_t22_confidential_transfer_initialize_mint",
+    tokenProgram: clean(innerArgs[0]!),
+    mint: clean(innerArgs[1]!),
+    authority: innerArgs[2]?.trim() ?? "None",
+    autoApproveNewAccounts: innerArgs[3]?.trim() ?? "false",
+    auditorElgamalPubkey: innerArgs[4]?.trim() ?? "None",
+  };
+}
+
+function extractT22ConfidentialTransferFeeInit(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArgText = args[0]?.text ?? "";
+  const inner = firstArgText.match(/initialize_confidential_transfer_fee_config\s*\(([\s\S]+)\)\s*\?/);
+  if (!inner?.[1]) {
+    warnClassificationLost(collector, "Confidential TransferFee init", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+  const innerArgs = splitTopLevelArgs(inner[1]);
+  if (innerArgs.length < 4) {
+    warnClassificationLost(collector, "Confidential TransferFee init", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, "").replace(/\.key\(\)$/, ""));
+  return {
+    kind: "cpi_t22_confidential_transfer_fee_init",
+    tokenProgram: clean(innerArgs[0]!),
+    mint: clean(innerArgs[1]!),
+    authority: innerArgs[2]?.trim() ?? "None",
+    withdrawWithheldAuthorityElgamalPubkey: innerArgs[3]?.trim() ?? "",
+  };
+}
+
+function extractT22ConfidentialMintBurnInitMint(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) return extractCustomCpi(callNode, collector);
+  const args = getArguments(argsNode);
+  const firstArgText = args[0]?.text ?? "";
+  const inner = firstArgText.match(/initialize_mint\s*\(([\s\S]+)\)\s*\?/);
+  if (!inner?.[1]) {
+    warnClassificationLost(collector, "Confidential MintBurn initialize_mint", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+  const innerArgs = splitTopLevelArgs(inner[1]);
+  if (innerArgs.length < 4) {
+    warnClassificationLost(collector, "Confidential MintBurn initialize_mint", callNode);
+    return extractCustomCpi(callNode, collector);
+  }
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, "").replace(/\.key\(\)$/, ""));
+  return {
+    kind: "cpi_t22_confidential_mint_burn_initialize_mint",
+    tokenProgram: clean(innerArgs[0]!),
+    mint: clean(innerArgs[1]!),
+    supplyElgamalPubkey: innerArgs[2]?.trim() ?? "",
+    decryptableSupply: innerArgs[3]?.trim() ?? "",
+  };
+}
+
+/**
+ * Split a top-level comma-separated argument list, respecting nested
+ * parens / braces / brackets. The function arg lists in raw invoke
+ * patterns often contain method calls and nested struct expressions
+ * (e.g. `mint.key()`, `Some(authority)`) that must not split on internal
+ * commas.
+ */
+function splitTopLevelArgs(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of text) {
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) out.push(current);
+  return out;
 }

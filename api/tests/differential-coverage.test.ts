@@ -212,6 +212,16 @@ const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
   // (MPL Core slots S1-S10 ALL promoted out of deferred list 2026-05-19
   // — byte-equal differentials green against real mpl_core.so loaded into
   // LiteSVM. Tests at differential-mpl-core-*.test.ts.)
+  // Confidential T22 init slots (task #49) — IR + parser + emit + cargo-check
+  // shipped; byte-equal differential against spl_token_2022.so deferred
+  // because the setup needs an existing mint allocated with the
+  // ConfidentialTransferMint extension via the T22 extension-init flow,
+  // which is its own scenario harness work. cargo-check is the available
+  // signal until that wiring lands. Future arc: pair with a real auditor
+  // ElGamal pubkey + verify post-init mint extension state byte-equal.
+  "cpi_t22_confidential_transfer_initialize_mint",
+  "cpi_t22_confidential_transfer_fee_init",
+  "cpi_t22_confidential_mint_burn_initialize_mint",
 ]);
 
 function listBodyStatementKinds(): string[] {
