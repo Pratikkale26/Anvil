@@ -115,4 +115,27 @@ export interface BodyEmitterCallbacks {
   emitProgramAccountClose(account: string, destination: string): string;
   emitCreateAccountCpi(from: string, to: string, lamports: string, space: string, owner: string): string;
   transformAmountExpr(amount: string): string;
+  /**
+   * N6 — Pyth legacy / modern read emits. These already exist on
+   * BaseEmitter (api/src/emitter/emitter-base.ts:534, 585) and are
+   * called from ast-visitor/visitor-base.ts:3485, 3521 — TS flagged
+   * the missing-on-interface gap on every typecheck. Declared here
+   * to close the loop. The signatures mirror the BaseEmitter
+   * methods; subclasses (Pinocchio / Native) inherit a single
+   * implementation from emitter-base.
+   */
+  emitPythReadPriceLegacy(
+    feedAccount: string,
+    priceBinding: string,
+    clockExpr: string,
+    maxAgeExpr: string,
+    staleErrExpr: string | undefined,
+  ): string;
+  emitPythReadPriceModern(
+    priceUpdateAccount: string,
+    priceBinding: string,
+    clockExpr: string,
+    maxAgeExpr: string,
+    feedIdExpr: string,
+  ): string;
 }
