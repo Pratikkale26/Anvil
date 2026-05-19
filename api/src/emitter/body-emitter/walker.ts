@@ -1452,19 +1452,25 @@ export class BodyWalker {
         return `${cpi.helperBase}(${args}${amountArg})?;`;
       });
     }
-    replaceCpi(
-      // System program transfer w/ signer — qualified OR unqualified (via `use anchor_lang::system_program::transfer`).
-      // Trailing commas are optional throughout; the consolidated inline form
-      // doesn't add them, the hand-written Anchor form often does.
-      /(?:(?:anchor_lang::)?system_program::)?transfer\(\s*CpiContext::new_with_signer\(\s*[\s\S]*?\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),?\s*\}\s*,\s*([\w\[\]&\s.]+?)\s*,?\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
-      (from, to, signerSeeds, amount) =>
-        `transfer_lamports_signed(${this.normalizeAccountExpr(from)}, ${this.normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`,
+    // H7 Phase 5d — system_program::transfer signed/unsigned pair. Same
+    // approach as Phase 5c: generator function with a `signed` flag.
+    // Qualified OR unqualified path (via `use anchor_lang::system_program
+    // ::transfer`); trailing commas optional throughout.
+    const buildSysTransferRegex = (signed: boolean): RegExp => {
+      const ctor = signed ? "CpiContext::new_with_signer" : "CpiContext::new";
+      const postStruct = signed
+        ? `\\s*\\}\\s*,\\s*([\\w\\[\\]&\\s.]+?)\\s*,?\\s*\\)`
+        : `\\s*\\}\\s*,?\\s*\\)`;
+      return new RegExp(
+        `(?:(?:anchor_lang::)?system_program::)?transfer\\(\\s*${ctor}\\(\\s*[\\s\\S]*?\\.to_account_info\\(\\),\\s*(?:anchor_lang::system_program::)?Transfer\\s*\\{\\s*from:\\s*([\\w.]+)\\.to_account_info\\(\\),\\s*to:\\s*([\\w.]+)\\.to_account_info\\(\\),?${postStruct}\\s*,\\s*([\\s\\S]*?)\\s*\\)\\?;`,
+        "g",
+      );
+    };
+    replaceCpi(buildSysTransferRegex(true), (from, to, signerSeeds, amount) =>
+      `transfer_lamports_signed(${this.normalizeAccountExpr(from)}, ${this.normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`,
     );
-    replaceCpi(
-      // System program transfer (no signer) — qualified OR unqualified.
-      /(?:(?:anchor_lang::)?system_program::)?transfer\(\s*CpiContext::new\(\s*[\s\S]*?\.to_account_info\(\),\s*(?:anchor_lang::system_program::)?Transfer\s*\{\s*from:\s*([\w.]+)\.to_account_info\(\),\s*to:\s*([\w.]+)\.to_account_info\(\),?\s*\}\s*,?\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
-      (from, to, amount) =>
-        `transfer_lamports(${this.normalizeAccountExpr(from)}, ${this.normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)})?;`,
+    replaceCpi(buildSysTransferRegex(false), (from, to, amount) =>
+      `transfer_lamports(${this.normalizeAccountExpr(from)}, ${this.normalizeAccountExpr(to)}, ${cleanInlineExpr(amount)})?;`,
     );
     // H7 Phase 5b — let-bound SPL CPI pairs. Mirror of Phase 5a but for
     // the let-bound source shape:
