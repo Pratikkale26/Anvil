@@ -1437,6 +1437,41 @@ function classifyMacroInvocation(node: SyntaxNode): BodyStatement {
     ? tokenTree.text.slice(1, -1).trim() // remove surrounding ( ) or { }
     : "";
 
+  // task #38 — comparison variants of `require!`. Anchor provides
+  // require_keys_eq! / require_keys_neq! / require_eq! / require_neq! /
+  // require_gt! / require_gte! — each one's args are (lhs, rhs[, error]).
+  // We desugar to the equivalent boolean condition + reuse the `require`
+  // IR kind so the emitter doesn't grow per-variant branches. Without
+  // this, these macros fell to the `default` arm and carried as
+  // pass_through, with their embedded `ctx.accounts.*` references
+  // tripping the validator's passthrough audit.
+  const requireCmpOp: Record<string, string> = {
+    require_eq: "==",
+    require_neq: "!=",
+    require_keys_eq: "==",
+    require_keys_neq: "!=",
+    require_gt: ">",
+    require_gte: ">=",
+  };
+  if (macroName in requireCmpOp) {
+    const op = requireCmpOp[macroName]!;
+    // Args shape: `lhs, rhs` or `lhs, rhs, ErrorCode::X`.
+    // Walk top-level commas; first split = end of lhs, second = end of rhs.
+    const firstComma = findTopLevelComma(argsText);
+    if (firstComma === -1) {
+      // Single-arg invocation — unusual but treat as pass-through.
+      return { kind: "pass_through", code: node.text, needsReview: true };
+    }
+    const lhs = argsText.slice(0, firstComma).trim();
+    const restAfterFirst = argsText.slice(firstComma + 1).trim();
+    const secondComma = findTopLevelComma(restAfterFirst);
+    const rhs = (secondComma === -1 ? restAfterFirst : restAfterFirst.slice(0, secondComma)).trim();
+    const error = secondComma === -1
+      ? "ProgramError::Custom(0)"
+      : restAfterFirst.slice(secondComma + 1).trim();
+    return { kind: "require", condition: `${lhs} ${op} ${rhs}`, error };
+  }
+
   switch (macroName) {
     case "require": {
       const commaIdx = findLastTopLevelComma(argsText);
