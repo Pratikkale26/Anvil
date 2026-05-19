@@ -44,6 +44,12 @@ const KNOWN_PROGRAMS: Record<string, string> = {
   associated_token: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
   memo: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
   mpl_token_metadata: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+  // Pyth Solana Receiver (modern PriceUpdateV2 path). Pinned to the
+  // canonical mainnet program id; loaded into LiteSVM via the .so
+  // fixture under tests/fixtures/programs/pyth_solana_receiver.so.
+  // Unlocks M2c differential gating for the cpi_pyth_read_price_modern
+  // IR kind once a synthesized PriceUpdateV2 setup helper lands.
+  pyth_solana_receiver: "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
   rent: "SysvarRent111111111111111111111111111111111",
   clock: "SysvarC1ock11111111111111111111111111111111",
   stake_history: "SysvarStakeHistory1111111111111111111111111",
@@ -455,6 +461,7 @@ function loadAuxiliaryPrograms(svm: LiteSVM, scenario: Scenario): void {
 // Map from $program: tag → .so filename in tests/fixtures/programs/.
 const AUX_PROGRAM_SOS: Record<string, string> = {
   mpl_token_metadata: "mpl_token_metadata.so",
+  pyth_solana_receiver: "pyth_solana_receiver.so",
 };
 
 export function installMintAccounts(svm: LiteSVM, ctx: ResolvedScenarioContext): void {
