@@ -16,6 +16,37 @@ import { normalizeSolanaType } from "./utils.js";
 import { locFromNode } from "./warning-collector.js";
 import type { WarningCollector } from "./warning-collector.js";
 
+/**
+ * H1 — registry entry for the composite-flatten pre-pass. Built once per
+ * source by the caller, then handed to parseAccountsStructFields so a
+ * composite field's inner struct can be looked up + recursively flattened.
+ */
+export interface AccountsStructRegistryEntry {
+  node: SyntaxNode;
+  attrs: SyntaxNode[];
+}
+export type AccountsStructRegistry = Map<string, AccountsStructRegistryEntry>;
+
+/**
+ * H1 — error raised when a composite Accounts struct transitively contains
+ * itself. Rust itself refuses recursive types (E0072 "recursive type has
+ * infinite size") so this should never appear from real source, but the
+ * parser detects it defensively to avoid infinite recursion on corrupt
+ * input.
+ */
+export class CompositeAccountsCycleError extends Error {
+  constructor(
+    public readonly structName: string,
+    public readonly cyclePath: readonly string[],
+  ) {
+    super(
+      `Composite Accounts cycle detected: ${cyclePath.join(" → ")} → ${structName}. ` +
+        `An #[derive(Accounts)] struct cannot transitively contain itself.`,
+    );
+    this.name = "CompositeAccountsCycleError";
+  }
+}
+
 // ─── Accounts context struct parsing ────────────────────────────────────────
 
 export function parseAccountsStructFields(
@@ -29,6 +60,33 @@ export function parseAccountsStructFields(
     accountsStructNames?: ReadonlySet<string>;
     /** Where composite-detection warnings land. */
     collector?: WarningCollector;
+    /**
+     * H1 — registry of every #[derive(Accounts)] struct in the source,
+     * keyed by struct name. When set together with flattenComposites=true,
+     * composite fields are recursively flattened: the parent field is
+     * dropped, the inner struct's fields are inlined with renamed names
+     * `<outer-field>_<inner-field>`, and compositeFieldPathMap is
+     * populated so body-classifier can resolve `ctx.accounts.outer.inner`
+     * chains.
+     */
+    accountsStructRegistry?: AccountsStructRegistry;
+    /** H1 — enable composite-flatten. Default false preserves the prior
+     *  composite_accounts_field warning behavior so existing tests stay
+     *  green; the integration commit flips this default to true. */
+    flattenComposites?: boolean;
+    /**
+     * H1 — output side-channel. Caller passes an empty Map; parseAccounts
+     * populates `<outer>.<inner>` (and deeper) dotted source paths to their
+     * flat names so body-classifier can rewrite `ctx.accounts.outer.inner`
+     * → `ctx.accounts.<flatName>` before standard classification runs.
+     */
+    compositeFieldPathMap?: Map<string, string>;
+    /** Internal: structs currently on the flatten stack, for cycle detection. */
+    _flattenStack?: readonly string[];
+    /** Internal: prefix to prepend to flat names in recursive calls. */
+    _flattenPrefix?: string;
+    /** Internal: source-path prefix for the field-path map (`<outer>.`). */
+    _sourcePathPrefix?: string;
   },
 ): AccountRef[] {
   const accounts: AccountRef[] = [];
@@ -49,28 +107,81 @@ export function parseAccountsStructFields(
     }
 
     if (child.type === "field_declaration") {
+      const nameNodeRaw = child.childForFieldName("name");
+      const typeNodeRaw = child.childForFieldName("type");
+      const rawFieldName = nameNodeRaw?.text ?? "";
+      const rawType = typeNodeRaw?.text ?? "";
+      const rawAccountTypeBase = extractAccountType(rawType).split("<")[0]!.trim();
+
+      // H1 — composite flatten path. When flattenComposites is enabled
+      // and the field's type matches another Accounts struct, recurse:
+      // splice the inner struct's accounts in at this position with names
+      // rewritten to `<outer>_<inner>` so chained `ctx.accounts.outer.inner`
+      // references resolve to a single flat slot. The composite parent
+      // field itself is DROPPED — it's a logical group, not an on-chain
+      // slot.
+      if (
+        opts?.flattenComposites
+        && opts.accountsStructRegistry
+        && rawFieldName
+        && opts.accountsStructRegistry.has(rawAccountTypeBase)
+      ) {
+        const stack = opts._flattenStack ?? [];
+        if (stack.includes(rawAccountTypeBase) || parentStructName === rawAccountTypeBase) {
+          throw new CompositeAccountsCycleError(rawAccountTypeBase, [
+            ...stack,
+            parentStructName,
+          ]);
+        }
+        const innerEntry = opts.accountsStructRegistry.get(rawAccountTypeBase)!;
+        const prefix = opts._flattenPrefix ?? "";
+        const sourcePathPrefix = opts._sourcePathPrefix ?? "";
+        // Recurse: inner struct's accounts get prefixed with `<rawFieldName>_`
+        // and their dotted source paths get prefixed with `<rawFieldName>.`
+        // so the path map records every leaf reachable via the outer chain.
+        const innerAccounts = parseAccountsStructFields(
+          innerEntry.node,
+          innerEntry.attrs,
+          {
+            ...opts,
+            // accountsStructNames stays — inner struct may itself contain
+            // a composite to recurse into.
+            _flattenStack: [...stack, parentStructName],
+            _flattenPrefix: `${prefix}${rawFieldName}_`,
+            _sourcePathPrefix: `${sourcePathPrefix}${rawFieldName}.`,
+          },
+        );
+        accounts.push(...innerAccounts);
+        currentAttrs = [];
+        continue;
+      }
+
       const account = parseAccountField(child, currentAttrs, {
         collector: opts?.collector,
         structName: parentStructName,
       });
       if (account) {
-        // Composite-Accounts detection (#21): if the field's accountType
-        // matches the name of another #[derive(Accounts)] struct in the
-        // source, Anchor flattens at IDL gen but Anvil emits the field
-        // as a regular AccountInfo binding. Downstream
-        // `ctx.accounts.<field>.<subfield>` references compile-refuse
-        // with E0609 "no field <subfield> on type AccountInfo".
-        //
-        // Emit a loud parser warning so the validator can refuse the
-        // emit before users hit cargo. Skip uppercase Anchor wrapper
-        // types (Signer, Account, Program, etc.) which never appear in
-        // the Accounts-struct-names set.
-        // accountType may carry generics: `Foo<'info>`, `Foo<'info, T>`.
-        // Strip them before checking against the Set of Accounts struct
-        // names (which contains bare identifiers).
+        // H1 — apply the recursion prefix to leaf field names so the flat
+        // slot list carries unique `<outer>_<inner>...` identifiers + record
+        // each leaf's source path so the body classifier can resolve chains.
+        const flatName = (opts?._flattenPrefix ?? "") + account.name;
+        if (flatName !== account.name) account.name = flatName;
+        if (opts?.compositeFieldPathMap && opts._sourcePathPrefix) {
+          opts.compositeFieldPathMap.set(
+            `${opts._sourcePathPrefix}${nameNodeRaw?.text ?? account.name}`,
+            flatName,
+          );
+        }
+
+        // Composite-Accounts detection (#21): if flatten is OFF and the
+        // field's accountType matches another #[derive(Accounts)] struct,
+        // emit the loud warning so the validator refuses emit before users
+        // hit cargo. With flatten ON this branch never fires (the recurse
+        // path above handles it).
         const accountTypeBase = account.accountType.split("<")[0]!.trim();
         if (
-          opts?.accountsStructNames?.has(accountTypeBase)
+          !opts?.flattenComposites
+          && opts?.accountsStructNames?.has(accountTypeBase)
           && opts.collector
         ) {
           opts.collector.add({
