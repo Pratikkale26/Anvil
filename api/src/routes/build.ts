@@ -293,8 +293,16 @@ buildRoute.post("/auto-fix", async (req, res) => {
     anchorLangFeatures?: string[];
     programId: PublicKey;
   };
+  // B5 — opt-out flag. When the body carries the `differential` field, the
+  // gate runs by default; `?with_differential=0` (or `false`) lets a caller
+  // skip the gate without restructuring the body. Mirrors the README's
+  // documented `?with_differential=1` shape but inverts the default since
+  // having an Anchor source + scenario in-flight already signals intent.
+  const withDifferentialQuery = String(req.query.with_differential ?? "").toLowerCase();
+  const differentialDisabled = withDifferentialQuery === "0" || withDifferentialQuery === "false";
+
   let differentialCfg: DifferentialCfg | null = null;
-  if (parsed.data.differential) {
+  if (parsed.data.differential && !differentialDisabled) {
     if (!differentialAvailable()) {
       const e = new AnvilError(
         ErrorCode.VALIDATION_FAILED,

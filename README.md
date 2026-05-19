@@ -86,7 +86,7 @@ Reproduce: `solana-test-validator --reset --quiet &` in one terminal, then `bun 
 
 What we **don't** claim:
 
-- **AI patches now have an opt-in differential gate.** `/build/auto-fix?with_differential=1` runs the byte-equal compare after each cargo-green iteration; patches that compile but diverge at runtime are flagged and fed back to the next refine call. The workbench's auto-fix card shows a green "✓ byte-equal verified" badge when the gate passes vs a yellow "⚠ diverged" badge when it doesn't. When the gate is NOT requested, the workbench's persistent yellow banner reminds you to audit before deploy.
+- **AI patches now have a default-on differential gate.** `/build/auto-fix` runs the byte-equal compare after each cargo-green iteration whenever the request body carries `differential: { anchorSource, scenario, ... }`; patches that compile but diverge at runtime are flagged and fed back to the next refine call. The workbench's auto-fix card shows a green "✓ byte-equal verified" badge when the gate passes vs a yellow "⚠ diverged" badge when it doesn't. Pass `?with_differential=0` to skip the gate without restructuring the body. When the request omits the `differential` body entirely (no Anchor reference available), the workbench's persistent yellow banner reminds you to audit before deploy.
 - The CU table in the workbench is a heuristic estimator (constant-table per-construct sum). The measurement script above is the source of truth for absolute numbers.
 - Quasar emit was deleted from the production path on 2026-05-05 (Blueshift hadn't shipped a stable 1.0). Pinocchio + Native are the supported targets.
 
@@ -222,9 +222,9 @@ The web playground at [anvilsol.xyz](https://anvilsol.xyz):
 
 ## Public API
 
-`/parse` `/emit` `/lint` `/build` `/build/auto-fix` `/build/auto-fix?with_differential=1` `/build/differential` `/build/differential/auto-scenario` `/ai/refine` `/ai/diagnose-differential` `/evidence` `/demo` `/health` `/metrics`. Every cargo invocation runs inside firejail / bwrap / unshare with prlimit caps and a stripped env (no `ANTHROPIC_API_KEY`-class secrets reach user code). Per-IP daily AI spend cap, per-IP build-sbf concurrency cap, per-minute rate limit.
+`/parse` `/emit` `/lint` `/build` `/build/auto-fix` `/build/differential` `/build/differential/auto-scenario` `/ai/refine` `/ai/diagnose-differential` `/evidence` `/demo` `/health` `/metrics`. Every cargo invocation runs inside firejail / bwrap / unshare with prlimit caps and a stripped env (no `ANTHROPIC_API_KEY`-class secrets reach user code). Per-IP daily AI spend cap, per-IP build-sbf concurrency cap, per-minute rate limit.
 
-`/build/auto-fix?with_differential=1` accepts an additional `differential` body field with `anchorSource` + `scenario`. After each cargo-green iteration, the byte-equal compare runs; on `DIVERGED`, synthetic `differential_diverge` ValidationIssues feed back into the next refine call so patches converge toward both compile-AND-byte-equal. `finalPayload.differentialVerdict` carries the terminal verdict for badge consumption.
+`/build/auto-fix` accepts an additional `differential` body field with `anchorSource` + `scenario`. When that field is present, the byte-equal compare runs after each cargo-green iteration (default-on; pass `?with_differential=0` to skip). On `DIVERGED`, synthetic `differential_diverge` ValidationIssues feed back into the next refine call so patches converge toward both compile-AND-byte-equal. `finalPayload.differentialVerdict` carries the terminal verdict for badge consumption.
 
 Threat model: [SECURITY.md](SECURITY.md). Production deploy reqs are listed at the bottom.
 
