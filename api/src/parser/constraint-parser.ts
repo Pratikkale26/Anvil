@@ -27,6 +27,10 @@ const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
   "mint::authority":        "mint::authority",
   "mint::freeze_authority": "mint::freeze_authority",
   realloc:                        "realloc",
+  // Anchor 1.0 (task #78): `dup = <other>` — preserve in IR so the
+  // validator + AI refine see the intent. Target emit ignores it
+  // (Pinocchio + Native don't enforce anti-duplicate by default).
+  dup:                            "dup",
 };
 
 /**

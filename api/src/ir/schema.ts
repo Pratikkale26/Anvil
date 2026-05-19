@@ -91,6 +91,14 @@ export const ConstraintKindSchema = z.enum([
   "mint::authority",
   "mint::freeze_authority",
   "realloc",
+  // Anchor 1.0 — `dup = <other_account>` declares this account is a
+  // duplicate of another in the struct (same pubkey is allowed where
+  // Anchor would otherwise reject). Anvil preserves the constraint as
+  // a no-op semantic marker — Pinocchio + Native targets don't enforce
+  // anti-duplicate validation by default, so the runtime semantics are
+  // already permissive. The IR carries the value so validators + AI
+  // refine can see the intent.
+  "dup",
 ]);
 
 export type ConstraintKind = z.infer<typeof ConstraintKindSchema>;
