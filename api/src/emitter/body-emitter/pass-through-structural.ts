@@ -714,12 +714,25 @@ export function transformCtxAccountsStructural(code: string, ctx: PassContext): 
             return false;
           }
           if (fld.text === "remaining_accounts" && ctx.namedAccountCount !== undefined) {
+            // task #42 — when the parent is a method/field chain (`.iter()`,
+            // `.len()`, `.is_empty()`, etc.) the leading `&` binds to the
+            // CHAIN RESULT, not the slice. `&accounts[N..].iter()` parses as
+            // `&(accounts[N..].iter())` and rustc refuses with
+            // "&std::slice::Iter is not an iterator". Drop the `&` in that
+            // context — slice indexing on `&[T]` returns the right shape
+            // for method-call chains. The bare-slice form (passed to a
+            // function expecting `&[AccountInfo]`) still needs the `&`.
+            const isChainReceiver =
+              n.parent?.type === "field_expression"
+              || n.parent?.type === "method_call_expression";
             const start = n.startIndex - parsed.bodyOffset;
             const end = n.endIndex - parsed.bodyOffset;
             edits.push({
               start,
               end,
-              replacement: `&accounts[${ctx.namedAccountCount}..]`,
+              replacement: isChainReceiver
+                ? `accounts[${ctx.namedAccountCount}..]`
+                : `&accounts[${ctx.namedAccountCount}..]`,
             });
             return false;
           }
