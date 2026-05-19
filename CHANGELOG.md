@@ -8,6 +8,57 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ## Unreleased
 
+### Added — Metaplex byte-equal differential (2026-05-19, 7 commits)
+
+First three MPL catalog slots locked under byte-equal runtime verification
+(task #51 / N1). The MPL Token Metadata `.so` already staged at
+`tests/fixtures/programs/` now loads into LiteSVM via a new
+`auxiliaryPrograms` field on the differential harness, and Anchor reference
++ Anvil emit are compared at the metadata + master_edition + mint
+account-bytes level after each MPL CPI.
+
+- `create_metadata_v3`: metadata PDA byte-equal post-creation.
+- `create_master_edition_v3`: master edition PDA byte-equal + mint state
+  (with mint_authority transferred to the master_edition PDA) byte-equal.
+- `update_metadata_accounts_v2`: metadata PDA byte-equal after rename.
+
+Surfaces + closes 4 real bugs discovered during the wire-up:
+
+1. **Parser (`8bc7270`)** — `DataV2` shorthand fields
+   (`DataV2 { name, symbol, uri, ... }`) silently coerced to literal
+   `"unknown"` / `"UNK"` / `""` in the IR. The emit would hard-code
+   those strings into the CPI while Anchor forwarded the user's
+   argument — money-loss class for NFT minters whose metadata name
+   comes from instruction args.
+2. **Pinocchio import gate (`28bed30`)** — MPL helpers use bare
+   `Seed::from(...)` / `Signer::from(...)` inside `signer_seeds` match
+   arms, but the `needsSeedSigner` predicate omitted all 12 mpl_*
+   helper predicates. helpers.rs failed cargo with `E0433 use of
+   undeclared type Seed` when any MPL kind was emitted. Locked at the
+   emit layer by `emitter-pinocchio-mpl-imports.test.ts` so future
+   regressions surface before the SBF round-trip.
+3. **`mpl_create_master_edition_v3` (`4bca2cf`)** — Both Native +
+   Pinocchio helpers included the rent sysvar in the account list.
+   anchor-spl 0.31 hard-codes `rent: None` (sibling pattern to
+   create_metadata_v3), producing 8 accounts not 9. Anvil's CPI would
+   diverge from Anchor on every master-edition emit.
+4. **`mpl_update_metadata_accounts_v2` field-order inversion
+   (`4bca2cf`)** — MPL 5.1.1's args struct is
+   `{data, new_update_authority, primary_sale_happened, is_mutable}`
+   (Borsh serializes in declaration order). Anvil's helper wrote
+   `new_update_authority` first and `data` second; MPL parsed
+   `new_update_authority`'s Option tag as data's, continued from the
+   wrong offset, and rejected with InvalidInstructionData. Locked
+   diagnostically by `litesvm-mpl-disc-15.test.ts` which hand-rolls
+   bytes in the correct order and verifies the staged .so accepts
+   them.
+
+New parser warning `mpl_datav2_fields_dropped` (`365415b`) surfaces a
+remaining IR-level limitation: `DataV2.creators / collection / uses` are
+not captured in the IR; the emit hard-codes them to `None`. NFT minters
+using royalty creators would have those silently dropped without this
+warning. Full IR extension tracked as task #84.
+
 ### Added — Pyth oracle transpile (2026-05-19, 10 commits)
 
 Full Pyth M2/N5 oracle transpile arc shipped. Both legacy
