@@ -9,6 +9,78 @@
 import type { SyntaxNode } from "./ts-init.js";
 
 /**
+ * task #37 — rewrite `let X = ctx.accounts.Y.deref_mut(); ... *X = T { ... };`
+ * to `ctx.accounts.Y.set_inner(T { ... });` so the existing set_inner
+ * classifier decomposes it to per-field state_field_assign statements.
+ *
+ * Pre-fix the pattern survived as pass_through, validator flagged the
+ * residual ctx.accounts.* references, and cargo refused the emitted Rust
+ * with "no method deref_mut" / "no field `authority` on AccountInfo".
+ *
+ * Recognized shape (idiomatic Anchor 0.30+ init handler):
+ *   let <localVar> = ctx.accounts.<acc>.deref_mut();
+ *   ... arbitrary intermediate statements ...
+ *   *<localVar> = <TypeName> { f1: v1, f2: v2, ... };
+ *
+ * Output:
+ *   // anvil: deref_mut → set_inner rewrite (#37)
+ *   ... arbitrary intermediate statements ...
+ *   ctx.accounts.<acc>.set_inner(<TypeName> { f1: v1, f2: v2, ... });
+ *
+ * Brace-balanced for nested struct literals. Only fires when both the
+ * let-binding AND the deref-assign appear in the same body — if the let
+ * exists without a matching assign (or vice versa) the rewrite skips so
+ * we don't silently break partial patterns.
+ *
+ * Surfaced by diff-arc Phase B 2026-05-19 on anchor-tutorial-basic-4.
+ */
+export function rewriteDerefMutAssigns(bodyText: string): string {
+  // Find every let-binding of the deref_mut shape.
+  const letRe = /let\s+(\w+)\s*=\s*ctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*deref_mut\s*\(\s*\)\s*;/g;
+  const bindings: Array<{ localVar: string; account: string; letMatch: string }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = letRe.exec(bodyText)) !== null) {
+    bindings.push({ localVar: m[1]!, account: m[2]!, letMatch: m[0]! });
+  }
+  if (bindings.length === 0) return bodyText;
+
+  let out = bodyText;
+  for (const b of bindings) {
+    // Find the matching `*<localVar> = TypeName { ... };` AFTER the let.
+    // Brace-balanced scan starting from the `{` after `=`.
+    const assignRe = new RegExp(`\\*\\s*${b.localVar}\\s*=\\s*(\\w+(?:::\\w+)*)\\s*\\{`);
+    const assignMatch = assignRe.exec(out);
+    if (!assignMatch) continue;
+    const typeName = assignMatch[1]!;
+    // Start at the `{`. assignMatch.index points at the `*`; brace position
+    // = assignMatch.index + assignMatch[0].length - 1 (last char of match is the `{`).
+    const braceStart = assignMatch.index + assignMatch[0].length - 1;
+    let depth = 1;
+    let i = braceStart + 1;
+    while (i < out.length && depth > 0) {
+      const ch = out[i]!;
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      i++;
+    }
+    if (depth !== 0) continue; // unbalanced — refuse to rewrite
+    const braceEnd = i - 1; // index of the closing `}`
+    // Consume trailing whitespace + optional `;`.
+    let after = braceEnd + 1;
+    while (after < out.length && /\s/.test(out[after]!)) after++;
+    if (out[after] === ";") after++;
+    const structBody = out.slice(braceStart + 1, braceEnd);
+    const setInnerCall = `ctx.accounts.${b.account}.set_inner(${typeName} {${structBody}});`;
+    // Splice: replace the original `*X = TypeName { ... };` slice with set_inner.
+    out = out.slice(0, assignMatch.index) + setInnerCall + out.slice(after);
+    // Drop the let-binding by replacing with a comment so line numbers stay
+    // stable for downstream source mapping.
+    out = out.replace(b.letMatch, `// anvil: deref_mut → set_inner rewrite (#37)`);
+  }
+  return out;
+}
+
+/**
  * H1 Layer 2 — rewrite composite Accounts chains in a handler body's
  * source text BEFORE the body is classified.
  *

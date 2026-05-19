@@ -14,7 +14,7 @@ import type {
 } from "../ir/schema.js";
 import { parseGuarded } from "./ts-init.js";
 import type { Parser, SyntaxNode } from "./ts-init.js";
-import { findDescendant, findTopLevelComma, rewriteCompositeChainsInBodyText } from "./ast-helpers.js";
+import { findDescendant, findTopLevelComma, rewriteCompositeChainsInBodyText, rewriteDerefMutAssigns } from "./ast-helpers.js";
 import { normalizeSolanaType } from "./utils.js";
 import { classifyBody } from "./body-classifier.js";
 import type { WarningCollector } from "./warning-collector.js";
@@ -285,6 +285,25 @@ function parseInstructionFn(
     const rewritten = rewriteCompositeChainsInBodyText(original, compositeFieldPathMap);
     if (rewritten !== original) {
       const synthetic = parseGuarded(parser, `fn __anvil_composite_norm__() ${rewritten}`);
+      if (synthetic) {
+        const fn = findDescendant(synthetic.rootNode, "function_item");
+        const synBody = fn?.childForFieldName("body");
+        if (synBody) bodyNode = synBody;
+      }
+    }
+  }
+  // task #37 — deref_mut + struct-init pattern. Anchor's `*ctx.accounts.X
+  // .deref_mut() = T { ... }` shape (often spelled via a let-binding for
+  // readability) is the same semantics as `ctx.accounts.X.set_inner(T { ... })`.
+  // The existing set_inner classifier decomposes set_inner into per-field
+  // assigns, so once we rewrite the source text the rest of the pipeline
+  // handles it. Without this the pattern survives as pass_through and
+  // emits invalid Rust on the target.
+  if (bodyNode) {
+    const original = bodyNode.text;
+    const rewritten = rewriteDerefMutAssigns(original);
+    if (rewritten !== original) {
+      const synthetic = parseGuarded(parser, `fn __anvil_derefmut_norm__() ${rewritten}`);
       if (synthetic) {
         const fn = findDescendant(synthetic.rootNode, "function_item");
         const synBody = fn?.childForFieldName("body");
