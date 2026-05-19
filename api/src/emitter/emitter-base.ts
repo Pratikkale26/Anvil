@@ -1833,7 +1833,9 @@ ${fields}
     // returns a generic error. Same fallback shape as the unsalvageable-helper
     // commentout pass but applied at the impl-item level.
     for (const raw of (typeDef.implItems ?? [])) {
-      const stubbed = rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw))));
+      const stubbed = stripAnchorLangPrefixes(
+        rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))),
+      );
       items.push(`    ${stubbed}`);
     }
     if (items.length === 0) return "";
@@ -2939,6 +2941,39 @@ export function rewriteAnchorResultAlias(body: string): string {
 }
 
 /**
+ * task #40 — strip `anchor_lang::` and `anchor_lang::prelude::` prefixes
+ * from type references in user-carried code (impl methods, helper fns).
+ *
+ * Anchor's prelude exports many sibling-crate types (Pubkey, Result,
+ * AccountInfo, etc.) under `anchor_lang::prelude::*`. Trait impl methods
+ * in user source spell them fully qualified (e.g. `anchor_lang::Result
+ * <Self>` or `anchor_lang::prelude::Pubkey`). Anvil's targets have these
+ * types in scope via different paths (pinocchio::*, solana_program::*),
+ * so the qualified path doesn't resolve at cargo time even when the
+ * unqualified name would.
+ *
+ * Strip the prefix so the unqualified identifier (which IS in scope)
+ * survives. Two passes:
+ *   - `anchor_lang::prelude::<Name>` → `<Name>`
+ *   - `anchor_lang::<Name>` → `<Name>` (catches non-prelude exports
+ *     like anchor_lang::Result that the prelude re-exports anyway)
+ *
+ * Surfaced by diff-arc on interface-account 2026-05-19 where user trait
+ * impls' bodies were stubbed but the signatures kept the prefix.
+ *
+ * Trait declaration itself (`impl anchor_lang::Trait for X`) is handled
+ * separately — `stubAnchorOnlyImplItem` already comments out the whole
+ * item when the body is anchor-only.
+ */
+export function stripAnchorLangPrefixes(body: string): string {
+  // Order matters: handle the more-specific `anchor_lang::prelude::` first
+  // so we don't half-strip and leave `prelude::` orphaned.
+  return body
+    .replace(/\banchor_lang\s*::\s*prelude\s*::\s*/g, "")
+    .replace(/\banchor_lang\s*::\s*/g, "");
+}
+
+/**
  * Comment out a `impl <Trait> for <sibling>::<...>` block when the target
  * type lives in a sibling Anchor program (not a known ecosystem crate).
  * squads-mpl/roles' lib.rs has `impl From<IncomingInstruction> for
@@ -3184,6 +3219,27 @@ export function rewriteSiblingCpiCalls(body: string): string {
 
 const STUB_BODY = ` {\n        // ${MARKER_ANVIL_TODO_PREFIX} Anchor-only impl method body — manual port required.\n        // Original referenced CpiContext / ctx.accounts / require! macros that\n        // have no pinocchio/native equivalent at this layer.\n        Err(ProgramError::Custom(0))\n    }`;
 
+// task #40 — fallback stub for impl methods whose return type isn't a
+// Result. The default STUB_BODY returns `Err(ProgramError::Custom(0))`
+// which only typechecks for `-> Result<X, ProgramError>` shapes. Trait
+// impls like `fn owners() -> &'static [Pubkey]` (Anchor's Owners trait)
+// need a body that diverges (returns `!`) so it satisfies any return
+// type. `unimplemented!()` panics at runtime if reached — acceptable
+// for a manual-port stub since the unsafe-marker already gates deploy.
+// Surfaced by diff-arc on interface-account 2026-05-19.
+const STUB_BODY_UNIMPLEMENTED = ` {\n        // ${MARKER_ANVIL_TODO_PREFIX} Anchor-only impl method body — manual port required.\n        // Non-Result return type; stub diverges via unimplemented!() so the\n        // signature typechecks. Calling this stub panics — deploy gates on\n        // the unsafe-marker validator pass.\n        unimplemented!()\n    }`;
+
+function pickStubBody(sig: string): string {
+  // Look for `-> Result<...>` or `-> ProgramResult` (which IS Result<()>);
+  // either form works with the Err(...) body. Default to Result.
+  if (/->\s*Result\s*</.test(sig)) return STUB_BODY;
+  if (/->\s*ProgramResult\b/.test(sig)) return STUB_BODY;
+  // No return-arrow means default-unit (`-> ()`) — Err() doesn't typecheck
+  // there either, fall through to unimplemented.
+  if (!/->/.test(sig)) return STUB_BODY_UNIMPLEMENTED;
+  return STUB_BODY_UNIMPLEMENTED;
+}
+
 const ANCHOR_ONLY_MACRO_NAMES = new Set([
   "require", "require_eq", "require_neq",
   "require_keys_eq", "require_keys_neq",
@@ -3268,7 +3324,7 @@ export function stubAnchorOnlyImplItem(raw: string): string {
             if (body && body.type === "block") {
               if (!nodeHasAnchorOnlyPattern(top)) return raw;
               const sig = raw.slice(0, body.startIndex).trimEnd();
-              return `${sig}${STUB_BODY}`;
+              return `${sig}${pickStubBody(sig)}`;
             }
           }
         }
@@ -3302,7 +3358,7 @@ export function stubAnchorOnlyImplItem(raw: string): string {
       depth--;
       if (depth === 0 && bodyStart !== -1) {
         const sig = raw.slice(0, bodyStart).trimEnd();
-        return `${sig}${STUB_BODY}`;
+        return `${sig}${pickStubBody(sig)}`;
       }
     }
   }
