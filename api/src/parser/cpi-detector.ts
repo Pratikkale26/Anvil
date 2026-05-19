@@ -532,8 +532,18 @@ function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCol
     extractStructField(accountsStruct, field) ?? field;
   const dataText = args[1]?.text ?? "";
   const dataField = (field: string): string => {
-    const m = dataText.match(new RegExp(`\\b${field}\\s*:\\s*([^,}]+)`));
-    return m?.[1]?.trim() ?? "";
+    // Shorthand: `DataV2 { name, symbol, uri, ... }` — when the field has
+    // no `:`, the value is implicitly the variable of the same name.
+    // Common idiom when a handler receives instruction args named after
+    // the struct fields. Match shorthand FIRST so the explicit-form regex
+    // below doesn't false-match `name` in the trailing tail of a previous
+    // field's value.
+    const shorthand = dataText.match(
+      new RegExp(`(?:[{,]\\s*)${field}(?=\\s*[,}])`),
+    );
+    if (shorthand) return field;
+    const explicit = dataText.match(new RegExp(`\\b${field}\\s*:\\s*([^,}]+)`));
+    return explicit?.[1]?.trim() ?? "";
   };
 
   return {
@@ -604,6 +614,10 @@ function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: Wa
   if (dataV2Match && dataV2Match[1]) {
     const inner = dataV2Match[1];
     const grabField = (field: string): string | undefined => {
+      const shorthand = inner.match(
+        new RegExp(`(?:[{,]\\s*)${field}(?=\\s*[,}])`),
+      );
+      if (shorthand) return field;
       const m = inner.match(new RegExp(`\\b${field}\\s*:\\s*([^,}]+)`));
       return m?.[1]?.trim();
     };
