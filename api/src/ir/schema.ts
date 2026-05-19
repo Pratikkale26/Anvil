@@ -914,10 +914,16 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
      * `Some(vec![Creator { address: ctx.accounts.payer.key(), verified: true, share: 100 }])`
      * or `None`. When set to anything other than None / undefined, the
      * emit serializes the Vec<Creator> into the Borsh DataV2 payload.
-     * Task #84 — first of three DataV2 Option fields to land (collection
-     * + uses still pending).
+     * Task #84 phase 1-3.
      */
     creators: z.string().optional(),
+    /**
+     * DataV2.collection — raw text expression. Captures patterns like
+     * `Some(Collection { verified: false, key: collection_mint.key() })`
+     * or `None`. Emit serializes Option<Collection> = 1 byte tag +
+     * (if Some) 1 byte verified + 32 byte key. Task #84 phase 4.
+     */
+    collection: z.string().optional(),
     /** Whether the metadata is mutable after creation. */
     isMutable: z.string().default("true"),
     /** Update authority is a signer. */
@@ -951,9 +957,14 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     newSellerFeeBasisPoints: z.string().default("0"),
     /**
      * DataV2.creators raw text expression. Same shape + parsing as
-     * `cpi_mpl_create_metadata_v3.creators`. Task #84.
+     * `cpi_mpl_create_metadata_v3.creators`. Task #84 phase 1-3.
      */
     creators: z.string().optional(),
+    /**
+     * DataV2.collection raw text expression. Same shape + parsing as
+     * `cpi_mpl_create_metadata_v3.collection`. Task #84 phase 4.
+     */
+    collection: z.string().optional(),
     /** Option<bool> primary_sale_happened — raw text. */
     primarySaleHappened: z.string().default("None"),
     /** Option<bool> is_mutable — raw text. */

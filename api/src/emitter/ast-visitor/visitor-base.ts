@@ -2994,6 +2994,9 @@ export class AstVisitorBase {
     const creatorsArg = stmt.creators && stmt.creators !== "None"
       ? resolve(stmt.creators)
       : "None";
+    const collectionArg = stmt.collection && stmt.collection !== "None"
+      ? resolve(stmt.collection)
+      : "None";
     const lines: string[] = [
       `    mpl_create_metadata_accounts_v3(`,
       `        ${resolve(stmt.metadata)},`,
@@ -3009,6 +3012,7 @@ export class AstVisitorBase {
       `        &${stmt.uri},`,
       `        ${stmt.sellerFeeBasisPoints},`,
       `        ${creatorsArg},`,
+      `        ${collectionArg},`,
       `        ${stmt.isMutable},`,
       `        ${stmt.updateAuthorityIsSigner},`,
       stmt.signerSeeds
@@ -3041,6 +3045,9 @@ export class AstVisitorBase {
     const creatorsArg = stmt.creators && stmt.creators !== "None"
       ? resolve(stmt.creators)
       : "None";
+    const collectionArg = stmt.collection && stmt.collection !== "None"
+      ? resolve(stmt.collection)
+      : "None";
     const lines: string[] = [
       `    mpl_update_metadata_accounts_v2(`,
       `        ${resolve(stmt.metadata)},`,
@@ -3053,6 +3060,7 @@ export class AstVisitorBase {
       hasDataUpdate ? `        &${stmt.newUri ?? `""`},` : `        "",`,
       `        ${stmt.newSellerFeeBasisPoints ?? "0"},`,
       `        ${creatorsArg},`,
+      `        ${collectionArg},`,
       `        ${stmt.primarySaleHappened},`,
       `        ${stmt.isMutable},`,
       stmt.signerSeeds

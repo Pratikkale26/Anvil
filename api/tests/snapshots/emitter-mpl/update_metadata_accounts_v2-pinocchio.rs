@@ -9,6 +9,7 @@ pub fn mpl_update_metadata_accounts_v2(
     new_uri: &str,
     new_seller_fee_basis_points: u16,
     creators: Option<Vec<Creator>>,
+    collection: Option<Collection>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -52,11 +53,20 @@ pub fn mpl_update_metadata_accounts_v2(
             }
             None => data.push(0),
         }
-        // DataV2.collection = None, uses = None
-        data.push(0);
+        // DataV2.collection
+        match collection {
+            Some(cc) => {
+                data.push(1);
+                data.push(if cc.verified { 1 } else { 0 });
+                data.extend_from_slice(&cc.key[..]);
+            }
+            None => data.push(0),
+        }
+        // DataV2.uses = None
         data.push(0);
     } else {
         let _ = creators;
+        let _ = collection;
         data.push(0);
     }
     // Option<Pubkey> new_update_authority

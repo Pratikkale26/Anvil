@@ -545,10 +545,9 @@ function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCol
     const explicit = dataText.match(new RegExp(`\\b${field}\\s*:\\s*([^,}]+)`));
     return explicit?.[1]?.trim() ?? "";
   };
-  // Task #84 Phase 1: `creators` is now captured in the IR (extracted
-  // below + emitted as Borsh Option<Vec<Creator>>). `collection` and
-  // `uses` are still IR-less; warning kept for those two.
-  for (const f of ["collection", "uses"]) {
+  // Task #84 Phases 1-4: `creators` + `collection` captured. `uses`
+  // still IR-less; warning kept for it.
+  for (const f of ["uses"]) {
     const val = dataField(f);
     if (val && val !== "None") {
       collector?.add({
@@ -559,7 +558,8 @@ function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCol
       });
     }
   }
-  const creatorsExpr = extractDataV2CreatorsExpression(dataText);
+  const creatorsExpr = extractDataV2NestedExpression(dataText, "creators");
+  const collectionExpr = extractDataV2NestedExpression(dataText, "collection");
 
   return {
     kind: "cpi_mpl_create_metadata_v3",
@@ -573,6 +573,7 @@ function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCol
     uri: dataField("uri") || `""`,
     sellerFeeBasisPoints: dataField("seller_fee_basis_points") || "0",
     creators: creatorsExpr,
+    collection: collectionExpr,
     isMutable: args[2]?.text.trim() ?? "true",
     updateAuthorityIsSigner: args[3]?.text.trim() ?? "true",
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
@@ -580,22 +581,22 @@ function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCol
 }
 
 /**
- * Extract the raw text of DataV2.creators by walking the bracket
- * structure — `Some(vec![Creator { ... }, Creator { ... }])` contains
- * nested `{}`, so the simple `\b<field>:[^,}]+` regex (used for
- * non-nested fields) cuts off at the first `,` inside Creator.
+ * Extract a raw-text expression for a nested-shape DataV2 field
+ * (`creators`, `collection`, `uses`). These take values like
+ * `Some(vec![Creator { ... }])` or `Some(Collection { ... })` —
+ * the simple `\b<field>:[^,}]+` regex (used for scalar fields)
+ * cuts off at the first `,` inside the nested struct literal.
  *
- * Returns undefined if creators is missing OR set to literal "None".
+ * Returns undefined if the field is missing OR set to literal "None".
  * Anything else (including `Some(...)`, a variable name, or shorthand)
  * is returned verbatim for the emit visitor to inline.
  */
-function extractDataV2CreatorsExpression(dataText: string): string | undefined {
-  const re = /\bcreators\s*:\s*/;
+function extractDataV2NestedExpression(dataText: string, field: string): string | undefined {
+  const re = new RegExp(`\\b${field}\\s*:\\s*`);
   const m = re.exec(dataText);
   if (!m) {
-    // Shorthand: `DataV2 { creators, ... }` — value is the binding of the same name
-    const shorthand = /(?:[{,]\s*)creators(?=\s*[,}])/.exec(dataText);
-    return shorthand ? "creators" : undefined;
+    const shorthand = new RegExp(`(?:[{,]\\s*)${field}(?=\\s*[,}])`).exec(dataText);
+    return shorthand ? field : undefined;
   }
   const start = m.index + m[0].length;
   let depth = 0;
@@ -612,6 +613,11 @@ function extractDataV2CreatorsExpression(dataText: string): string | undefined {
   const value = dataText.slice(start, i).trim();
   if (!value || value === "None") return undefined;
   return value;
+}
+
+// Back-compat alias — keeps the old name for any internal callers.
+function extractDataV2CreatorsExpression(dataText: string): string | undefined {
+  return extractDataV2NestedExpression(dataText, "creators");
 }
 
 /**
@@ -662,6 +668,7 @@ function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: Wa
   let newUri: string | undefined;
   let newSellerFeeBasisPoints = "0";
   let creatorsExpr: string | undefined;
+  let collectionExpr: string | undefined;
   const dataV2Match = newDataText.match(/Some\s*\(\s*DataV2\s*\{([\s\S]*)\}\s*\)/);
   if (dataV2Match && dataV2Match[1]) {
     const inner = dataV2Match[1];
@@ -677,9 +684,9 @@ function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: Wa
     newSymbol = grabField("symbol");
     newUri = grabField("uri");
     newSellerFeeBasisPoints = grabField("seller_fee_basis_points") ?? "0";
-    // Task #84 Phase 1: creators captured in IR now. Collection + uses
-    // remain IR-less; warning kept for those two only.
-    for (const f of ["collection", "uses"]) {
+    // Task #84 Phases 1-4: creators + collection captured. Uses
+    // remains IR-less; warning kept for it.
+    for (const f of ["uses"]) {
       const val = grabField(f);
       if (val && val !== "None") {
         collector?.add({
@@ -690,7 +697,8 @@ function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: Wa
         });
       }
     }
-    creatorsExpr = extractDataV2CreatorsExpression(inner);
+    creatorsExpr = extractDataV2NestedExpression(inner, "creators");
+    collectionExpr = extractDataV2NestedExpression(inner, "collection");
   }
 
   return {
@@ -703,6 +711,7 @@ function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: Wa
     newUri,
     newSellerFeeBasisPoints,
     creators: creatorsExpr,
+    collection: collectionExpr,
     primarySaleHappened,
     isMutable,
     signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,

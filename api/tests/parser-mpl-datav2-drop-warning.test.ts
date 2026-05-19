@@ -1,9 +1,9 @@
 /**
  * Locks the parser's `mpl_datav2_fields_dropped` warning. The IR for
  * cpi_mpl_create_metadata_v3 / cpi_mpl_update_metadata_accounts_v2
- * now carries `creators` (task #84 Phase 1), but still drops
- * `collection` and `uses`. This warning surfaces those two remaining
- * silent-drop classes at lint time.
+ * now carries `creators` + `collection` (task #84 phases 1-4). Only
+ * `uses` remains IR-less. This warning surfaces that last silent-drop
+ * class at lint time.
  */
 import { describe, test, expect } from "bun:test";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
@@ -12,12 +12,12 @@ const HEADER = `
 use anchor_lang::prelude::*;
 use anchor_spl::metadata::{create_metadata_accounts_v3, update_metadata_accounts_v2, CreateMetadataAccountsV3, Metadata, UpdateMetadataAccountsV2};
 use anchor_spl::token::{Mint, Token};
-use anchor_spl::metadata::mpl_token_metadata::types::{DataV2, Creator, Collection};
+use anchor_spl::metadata::mpl_token_metadata::types::{DataV2, Creator, Collection, Uses, UseMethod};
 declare_id!("11111111111111111111111111111111");
 `;
 
 describe("parser warns on DataV2 fields the IR drops", () => {
-  test("collection: Some(...) in create_metadata_v3 → mpl_datav2_fields_dropped warning", async () => {
+  test("uses: Some(...) in create_metadata_v3 → mpl_datav2_fields_dropped warning", async () => {
     const src = `${HEADER}
 #[program]
 pub mod p {
@@ -39,8 +39,8 @@ pub mod p {
             DataV2 {
                 name, symbol, uri, seller_fee_basis_points: 500,
                 creators: None,
-                collection: Some(Collection { verified: false, key: ctx.accounts.payer.key() }),
-                uses: None,
+                collection: None,
+                uses: Some(Uses { use_method: UseMethod::Burn, remaining: 10, total: 10 }),
             },
             true, true, None,
         )?;
@@ -63,7 +63,7 @@ pub struct MakeNft<'info> {
     if (!r.ok) return;
     const w = r.ir.warnings?.find((x) => x.code === "mpl_datav2_fields_dropped");
     expect(w).toBeDefined();
-    expect(w?.message).toMatch(/collection/);
+    expect(w?.message).toMatch(/uses/);
   });
 
   test("creators: Some(vec![...]) NO LONGER fires warning — IR captures it now (task #84 Phase 1)", async () => {

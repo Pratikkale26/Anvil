@@ -2111,6 +2111,14 @@ pub struct Creator {
     pub address: Pubkey,
     pub verified: bool,
     pub share: u8,
+}
+
+/// Mirrors mpl-token-metadata 5.1.1's Collection struct. 33 bytes
+/// (1 byte verified + 32 byte key). Task #84 phase 4.
+#[derive(Clone, Copy)]
+pub struct Collection {
+    pub verified: bool,
+    pub key: Pubkey,
 }`);
     }
     if (irNeedsMplCreateMetadataV3Helper(_ir)) {
@@ -2133,6 +2141,7 @@ pub fn mpl_create_metadata_accounts_v3<'a>(
     uri: &str,
     seller_fee_basis_points: u16,
     creators: Option<Vec<Creator>>,
+    collection: Option<Collection>,
     is_mutable: bool,
     update_authority_is_signer: bool,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -2159,7 +2168,14 @@ pub fn mpl_create_metadata_accounts_v3<'a>(
         }
         None => data.push(0),
     }
-    data.push(0);
+    match collection {
+        Some(cc) => {
+            data.push(1);
+            data.push(if cc.verified { 1 } else { 0 });
+            data.extend_from_slice(cc.key.as_ref());
+        }
+        None => data.push(0),
+    }
     data.push(0);
     data.push(if is_mutable { 1 } else { 0 });
     data.push(0);
@@ -2267,6 +2283,7 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
     new_uri: &str,
     new_seller_fee_basis_points: u16,
     creators: Option<Vec<Creator>>,
+    collection: Option<Collection>,
     primary_sale_happened: Option<bool>,
     is_mutable: Option<bool>,
     signer_seeds: Option<&[&[&[u8]]]>,
@@ -2297,10 +2314,18 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
             }
             None => data.push(0),
         }
-        data.push(0); // collection = None
+        match collection {
+            Some(cc) => {
+                data.push(1);
+                data.push(if cc.verified { 1 } else { 0 });
+                data.extend_from_slice(cc.key.as_ref());
+            }
+            None => data.push(0),
+        }
         data.push(0); // uses = None
     } else {
         let _ = creators;
+        let _ = collection;
         data.push(0);
     }
     match new_update_authority {
