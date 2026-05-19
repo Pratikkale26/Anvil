@@ -16,15 +16,15 @@ pub fn mpl_update_metadata_accounts_v2(
         Vec::with_capacity(64 + new_name.len() + new_symbol.len() + new_uri.len());
     // UpdateMetadataAccountV2 discriminator
     data.push(15);
-    // Option<Pubkey> new_update_authority
-    match new_update_authority {
-        Some(pk) => {
-            data.push(1);
-            data.extend_from_slice(pk);
-        }
-        None => data.push(0),
-    }
-    // Option<DataV2>
+    // MPL 5.1.1 UpdateMetadataAccountV2InstructionArgs field order:
+    //   data: Option<DataV2>,
+    //   new_update_authority: Option<Pubkey>,
+    //   primary_sale_happened: Option<bool>,
+    //   is_mutable: Option<bool>.
+    // Anchor's wrapper uses named struct-literal init so its source-text
+    // order doesn't matter; what's on the wire is determined by the
+    // struct declaration. Borsh serializes fields in declaration order.
+    // Option<DataV2> data
     if has_data_update {
         data.push(1);
         // DataV2.name
@@ -44,6 +44,14 @@ pub fn mpl_update_metadata_accounts_v2(
         data.push(0);
     } else {
         data.push(0);
+    }
+    // Option<Pubkey> new_update_authority
+    match new_update_authority {
+        Some(pk) => {
+            data.push(1);
+            data.extend_from_slice(pk);
+        }
+        None => data.push(0),
     }
     // Option<bool> primary_sale_happened
     match primary_sale_happened {

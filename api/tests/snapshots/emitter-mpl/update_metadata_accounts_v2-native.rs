@@ -15,10 +15,8 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
     let mut data: Vec<u8> =
         Vec::with_capacity(64 + new_name.len() + new_symbol.len() + new_uri.len());
     data.push(15);
-    match new_update_authority {
-        Some(pk) => { data.push(1); data.extend_from_slice(pk.as_ref()); }
-        None => data.push(0),
-    }
+    // MPL 5.1.1 UpdateMetadataAccountV2InstructionArgs Borsh field order:
+    // data, new_update_authority, primary_sale_happened, is_mutable.
     if has_data_update {
         data.push(1);
         data.extend_from_slice(&(new_name.len() as u32).to_le_bytes());
@@ -33,6 +31,10 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
         data.push(0); // uses = None
     } else {
         data.push(0);
+    }
+    match new_update_authority {
+        Some(pk) => { data.push(1); data.extend_from_slice(pk.as_ref()); }
+        None => data.push(0),
     }
     match primary_sale_happened {
         Some(b) => { data.push(1); data.push(if b { 1 } else { 0 }); }

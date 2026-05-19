@@ -137,6 +137,35 @@ defineDifferential({
     tx.sign(ctx.payer);
     const r = svm.sendTransaction(tx);
     if (isTxFailure(r)) throw new Error(`make failed: ${txFailureMessage(r)}`);
+
+    // 3) Now rename: invoke update_metadata_accounts_v2. Payer is the
+    // update_authority set during create. New DataV2 has different
+    // name/symbol/uri/sellerFeeBasisPoints; is_mutable explicitly = true.
+    // This exercises BOTH cpi_mpl_create_metadata_v3 (above) AND
+    // cpi_mpl_update_metadata_accounts_v2 in one cargo cycle.
+    const newName = "Anvil NFT v2";
+    const newSymbol = "ANV2";
+    const newUri = "ipfs://QmExampleV2";
+    const renameIx = new TransactionInstruction({
+      programId,
+      keys: [
+        { pubkey: ctx.metadataPda, isSigner: false, isWritable: true },
+        { pubkey: ctx.payer.publicKey, isSigner: true, isWritable: false },
+        { pubkey: ctx.mplProgramId, isSigner: false, isWritable: false },
+      ],
+      data: Buffer.from(concatBytes(
+        anchorIxDiscriminator("rename"),
+        borshString(newName),
+        borshString(newSymbol),
+        borshString(newUri),
+      )),
+    });
+    const rtx = new Transaction().add(renameIx);
+    rtx.recentBlockhash = svm.latestBlockhash();
+    rtx.feePayer = ctx.payer.publicKey;
+    rtx.sign(ctx.payer);
+    const r2 = svm.sendTransaction(rtx);
+    if (isTxFailure(r2)) throw new Error(`rename failed: ${txFailureMessage(r2)}`);
   },
 
   // The metadata PDA is what MPL writes — that's the byte-equal anchor.

@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::metadata::{
-    create_metadata_accounts_v3, CreateMetadataAccountsV3, Metadata,
+    create_metadata_accounts_v3, update_metadata_accounts_v2,
+    CreateMetadataAccountsV3, Metadata, UpdateMetadataAccountsV2,
 };
 use anchor_spl::token::{Mint, Token};
 use anchor_spl::metadata::mpl_token_metadata::types::DataV2;
@@ -45,6 +46,36 @@ pub mod mpl_create_metadata {
         )?;
         Ok(())
     }
+
+    pub fn rename(
+        ctx: Context<UpdateNft>,
+        new_name: String,
+        new_symbol: String,
+        new_uri: String,
+    ) -> Result<()> {
+        update_metadata_accounts_v2(
+            CpiContext::new(
+                ctx.accounts.token_metadata_program.to_account_info(),
+                UpdateMetadataAccountsV2 {
+                    metadata: ctx.accounts.metadata.to_account_info(),
+                    update_authority: ctx.accounts.update_authority.to_account_info(),
+                },
+            ),
+            None,
+            Some(DataV2 {
+                name: new_name,
+                symbol: new_symbol,
+                uri: new_uri,
+                seller_fee_basis_points: 750,
+                creators: None,
+                collection: None,
+                uses: None,
+            }),
+            None,
+            Some(true),
+        )?;
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -60,4 +91,13 @@ pub struct MakeNft<'info> {
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
     pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateNft<'info> {
+    /// CHECK: written by MPL CPI; existence enforced by MPL itself.
+    #[account(mut)]
+    pub metadata: UncheckedAccount<'info>,
+    pub update_authority: Signer<'info>,
+    pub token_metadata_program: Program<'info, Metadata>,
 }

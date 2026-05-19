@@ -3105,8 +3105,12 @@ pub fn mpl_create_metadata_accounts_v3(
 
     // #45 — Metaplex create_master_edition_v3 hand-rolled helper. Layout
     // verified against mpl-token-metadata 5.1.1: discriminator 17, args =
-    // Option<u64> max_supply. 9 accounts (edition, mint, update_authority,
-    // mint_authority, payer, metadata, token_program, system_program, rent).
+    // Option<u64> max_supply. 8 accounts (edition, mint, update_authority,
+    // mint_authority, payer, metadata, token_program, system_program).
+    // anchor-spl 0.31's wrapper hard-codes `rent: None` (mirroring
+    // create_metadata_v3 / sibling pattern), so the rent slot is OMITTED
+    // from the meta list to keep byte-equal with the Anchor reference
+    // build's CPI invocation.
     if (irNeedsMplCreateMasterEditionV3Helper(ir)) {
       helpers.push(`/// Metaplex Token Metadata: create_master_edition_v3 (discriminator 17).
 /// Hand-rolled invoke; max_supply is the only arg.
@@ -3135,6 +3139,11 @@ pub fn mpl_create_master_edition_v3(
         }
         None => data.push(0),
     }
+    // Anchor's anchor_spl::metadata::create_master_edition_v3 wrapper hard-
+    // codes \`rent: None\` — the rent slot is OMITTED from the account
+    // list. The \`rent\` param stays for ABI compat; the let _ binding
+    // silences unused.
+    let _ = rent;
     let metas = [
         pinocchio::instruction::AccountMeta::new(edition.key(), true, false),
         pinocchio::instruction::AccountMeta::new(mint.key(), true, false),
@@ -3144,14 +3153,13 @@ pub fn mpl_create_master_edition_v3(
         pinocchio::instruction::AccountMeta::new(metadata.key(), true, false),
         pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
         pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
-        pinocchio::instruction::AccountMeta::new(rent.key(), false, false),
     ];
     let ix = pinocchio::instruction::Instruction {
         program_id: token_metadata_program.key(),
         accounts: &metas,
         data: &data,
     };
-    let infos = [edition, mint, update_authority, mint_authority, payer, metadata, token_program, system_program, rent];
+    let infos = [edition, mint, update_authority, mint_authority, payer, metadata, token_program, system_program];
     match signer_seeds {
         Some(seeds) => {
             let seed_group = seeds.first().ok_or(ProgramError::InvalidSeeds)?;
@@ -3197,15 +3205,15 @@ pub fn mpl_update_metadata_accounts_v2(
         Vec::with_capacity(64 + new_name.len() + new_symbol.len() + new_uri.len());
     // UpdateMetadataAccountV2 discriminator
     data.push(15);
-    // Option<Pubkey> new_update_authority
-    match new_update_authority {
-        Some(pk) => {
-            data.push(1);
-            data.extend_from_slice(pk);
-        }
-        None => data.push(0),
-    }
-    // Option<DataV2>
+    // MPL 5.1.1 UpdateMetadataAccountV2InstructionArgs field order:
+    //   data: Option<DataV2>,
+    //   new_update_authority: Option<Pubkey>,
+    //   primary_sale_happened: Option<bool>,
+    //   is_mutable: Option<bool>.
+    // Anchor's wrapper uses named struct-literal init so its source-text
+    // order doesn't matter; what's on the wire is determined by the
+    // struct declaration. Borsh serializes fields in declaration order.
+    // Option<DataV2> data
     if has_data_update {
         data.push(1);
         // DataV2.name
@@ -3225,6 +3233,14 @@ pub fn mpl_update_metadata_accounts_v2(
         data.push(0);
     } else {
         data.push(0);
+    }
+    // Option<Pubkey> new_update_authority
+    match new_update_authority {
+        Some(pk) => {
+            data.push(1);
+            data.extend_from_slice(pk);
+        }
+        None => data.push(0),
     }
     // Option<bool> primary_sale_happened
     match primary_sale_happened {

@@ -2193,6 +2193,12 @@ pub fn mpl_create_master_edition_v3<'a>(
         }
         None => data.push(0),
     }
+    // Anchor's anchor_spl::metadata::create_master_edition_v3 wrapper
+    // hard-codes \`rent: None\` — the rent slot is OMITTED from the
+    // account list. Matching that produces byte-equal CPI invocations
+    // (mirrors the create_metadata_v3 sibling fix). The \`rent\` param
+    // stays for ABI compat; the let _ binding silences unused.
+    let _ = rent;
     let accounts = vec![
         AccountMeta::new(*edition.key, false),
         AccountMeta::new(*mint.key, false),
@@ -2202,7 +2208,6 @@ pub fn mpl_create_master_edition_v3<'a>(
         AccountMeta::new(*metadata.key, false),
         AccountMeta::new_readonly(*token_program.key, false),
         AccountMeta::new_readonly(*system_program.key, false),
-        AccountMeta::new_readonly(*rent.key, false),
     ];
     let ix = Instruction {
         program_id: *token_metadata_program.key,
@@ -2212,7 +2217,7 @@ pub fn mpl_create_master_edition_v3<'a>(
     let infos = [
         edition.clone(), mint.clone(), update_authority.clone(),
         mint_authority.clone(), payer.clone(), metadata.clone(),
-        token_program.clone(), system_program.clone(), rent.clone(),
+        token_program.clone(), system_program.clone(),
     ];
     match signer_seeds {
         Some(seeds) => invoke_signed(&ix, &infos, seeds),
@@ -2242,10 +2247,8 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
     let mut data: Vec<u8> =
         Vec::with_capacity(64 + new_name.len() + new_symbol.len() + new_uri.len());
     data.push(15);
-    match new_update_authority {
-        Some(pk) => { data.push(1); data.extend_from_slice(pk.as_ref()); }
-        None => data.push(0),
-    }
+    // MPL 5.1.1 UpdateMetadataAccountV2InstructionArgs Borsh field order:
+    // data, new_update_authority, primary_sale_happened, is_mutable.
     if has_data_update {
         data.push(1);
         data.extend_from_slice(&(new_name.len() as u32).to_le_bytes());
@@ -2260,6 +2263,10 @@ pub fn mpl_update_metadata_accounts_v2<'a>(
         data.push(0); // uses = None
     } else {
         data.push(0);
+    }
+    match new_update_authority {
+        Some(pk) => { data.push(1); data.extend_from_slice(pk.as_ref()); }
+        None => data.push(0),
     }
     match primary_sale_happened {
         Some(b) => { data.push(1); data.push(if b { 1 } else { 0 }); }
