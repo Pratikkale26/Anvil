@@ -8,6 +8,33 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ## Unreleased
 
+### Added — DataV2.creators IR + sign_metadata byte-equal (task #84 phases 1-3 + slot 10, 2026-05-19 evening, 4 commits)
+
+Task #84 phase 1-3 lands DataV2.creators end-to-end:
+- **Schema** (`1213c51`) — `cpi_mpl_create_metadata_v3` and
+  `cpi_mpl_update_metadata_accounts_v2` gain optional `creators`
+  field holding the raw expression text.
+- **Parser** (`1213c51`) — depth-aware bracket walker extracts
+  `Some(vec![Creator { ... }, ...])` (the existing non-nested regex
+  cut at the first `,` inside Creator). Warning dropped for creators
+  (kept for collection + uses, still pending).
+- **Emit** (`6705245`) — local `Creator` struct in helpers.rs (both
+  Pinocchio + Native) mirrors mpl-token-metadata 5.1.1's wire shape
+  (Pubkey + bool + u8 = 34 bytes). Helper signatures gain
+  `Option<Vec<Creator>>` slot; Borsh serializer writes Option tag +
+  u32 LE Vec length + N × 34 bytes per creator.
+- **Differential** (`deffd71`) — mpl-create-metadata demo now uses
+  `creators: Some(vec![Creator { ..., verified: true, share: 100 }])`
+  in both make + rename. Both sides byte-equal the metadata PDA,
+  proving the hand-rolled Borsh matches MPL's serialization.
+
+Slot 10/12 unblocked by the IR landing:
+- **N1g** (`3d90003`) — sign_metadata byte-equal. Demo creates
+  metadata with one unverified creator, signs as that creator,
+  byte-compares metadata after. Disc 7, 2 accounts. Pre-task-#84
+  this was impossible: emit dropped creators to None, MPL refused
+  sign_metadata with "no creators present".
+
 ### Added — MPL byte-equal coverage 3/12 → 9/12 (2026-05-19 PM, 5 commits)
 
 Pushed MPL byte-equal differential coverage from 3/12 to **9/12** in one
