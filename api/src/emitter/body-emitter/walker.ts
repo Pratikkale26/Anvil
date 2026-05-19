@@ -795,28 +795,34 @@ export class BodyWalker {
       }
       return `bump_${normalized}`;
     };
-    // Method-call form: `*ctx.bumps.get("X").unwrap()` — Anchor's bumps
-    // are a HashMap<String, u8>, so the get/unwrap pattern is idiomatic.
-    // Both `*ctx.bumps.get("X").unwrap()` and `ctx.bumps.get("X").unwrap()`
-    // collapse to `bump_X`. Pinocchio + Native both compute bumps per-call
-    // via find_program_address, so the local binding from onMatch's
-    // normalizedBumpLine path resolves correctly. Squads-mpl/roles uses
-    // `ctx.bumps.get("roles_manager")` — pre-fix that leaked through as
-    // `bump_get("roles_manager")` (a u8 called like a function).
-    const onGetMatch = (_full: string, key: string) => onMatch(_full, key);
-    let transformed = code
-      .replace(/\*\s*ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/g, onGetMatch)
-      .replace(/ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/g, onGetMatch);
-    // Match the wrapped forms first — `(&ctx.bumps).field`, `(ctx.bumps).field`,
-    // and `&ctx.bumps.field` — which arise when the impl-method inliner
-    // substitutes a `&ctx.bumps` arg into a body that uses `bumps.field`. The
-    // bare form `ctx.bumps.field` runs last so the broader regex doesn't
-    // partial-match inside an already-rewritten parens form.
-    transformed = transformed
-      .replace(/\(\s*&\s*ctx\.bumps\s*\)\.(\w+)/g, onMatch)
-      .replace(/\(\s*ctx\.bumps\s*\)\.(\w+)/g, onMatch)
-      .replace(/&\s*ctx\.bumps\.(\w+)/g, onMatch)
-      .replace(/ctx\.bumps\.(\w+)/g, onMatch);
+    // H7 Phase 4a — BUMPS family consolidation. Six receiver shapes all
+    // map to `bump_${name}` via the same onMatch callback. Order is the
+    // precedence guarantee: method-call shapes (`.get("X").unwrap()`)
+    // first because the surrounding `*…unwrap()` would otherwise be
+    // half-consumed by the bare `.field` matchers; wrapped forms
+    // (`(&ctx.bumps).field`, `(ctx.bumps).field`) before bare so the
+    // broader regex doesn't partial-match inside an already-rewritten
+    // parens form; the leading-`&` form (`&ctx.bumps.field`) before the
+    // bare form for the same precedence reason.
+    //
+    // Surfaced examples:
+    //   - Squads-mpl/roles: `ctx.bumps.get("roles_manager").unwrap()`
+    //     (pre-fix leaked as `bump_get("roles_manager")` — a u8 called
+    //     like a function).
+    //   - impl-method inliner substituting `&ctx.bumps` into a body that
+    //     reads `bumps.field` → `(&ctx.bumps).field`.
+    const bumpRules: RegExp[] = [
+      /\*\s*ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/g,
+      /ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/g,
+      /\(\s*&\s*ctx\.bumps\s*\)\.(\w+)/g,
+      /\(\s*ctx\.bumps\s*\)\.(\w+)/g,
+      /&\s*ctx\.bumps\.(\w+)/g,
+      /ctx\.bumps\.(\w+)/g,
+    ];
+    let transformed = code;
+    for (const pattern of bumpRules) {
+      transformed = transformed.replace(pattern, onMatch);
+    }
     // Bare `&ctx.bumps` (no .field) — the whole bumps map is being passed as
     // an argument. Surfaces in multi-file Anchor programs that delegate
     // instruction bodies to impl methods declared in sibling files
