@@ -10,7 +10,7 @@
 use anchor_lang::prelude::*;
 use mpl_core::instructions::TransferV1CpiBuilder;
 
-declare_id!("MPLcoreTransferV1DemoProgram111111111111111");
+declare_id!("2BNqVtFYLMr8MbvEQbjbDNw4sNvJp4Xo2fBpeVWWZCxj");
 
 #[program]
 pub mod mpl_core_transfer_demo {
@@ -22,7 +22,7 @@ pub mod mpl_core_transfer_demo {
             .payer(&ctx.accounts.payer.to_account_info())
             .authority(Some(&ctx.accounts.owner.to_account_info()))
             .new_owner(&ctx.accounts.recipient.to_account_info())
-            .system_program(&ctx.accounts.system_program.to_account_info())
+            .system_program(Some(&ctx.accounts.system_program.to_account_info()))
             .invoke()?;
         Ok(())
     }
@@ -34,7 +34,7 @@ pub mod mpl_core_transfer_demo {
             .payer(&ctx.accounts.payer.to_account_info())
             .authority(Some(&ctx.accounts.owner.to_account_info()))
             .new_owner(&ctx.accounts.recipient.to_account_info())
-            .system_program(&ctx.accounts.system_program.to_account_info())
+            .system_program(Some(&ctx.accounts.system_program.to_account_info()))
             .invoke()?;
         Ok(())
     }

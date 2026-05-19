@@ -29,8 +29,8 @@
 | Metaplex Token Metadata CPIs (create_metadata_v3, master_edition_v3, verify/sign collection, freeze/thaw, mint_new_edition, approve/revoke collection authority) | Y (12 IR kinds, 11/12 slots byte-equal differential-gated) | Y |
 | Pyth price feed reads (legacy `PriceAccountV2` + modern `PriceUpdateV2`) | Y (byte-equal differential against Pyth Receiver `.so`) | Y |
 | Switchboard On-Demand PullFeed reads (`PullFeedAccountData::parse(...)` + `.value()` / `.value_with_max_staleness(N)`) | Y (parser + hand-rolled byte read; byte-equal differential pending fixture) | Y |
-| MPL Core asset lifecycle + collection (CreateV2 / UpdateV2 / TransferV1 / BurnV1 / CreateCollectionV2) | Y (parser + hand-rolled bytes; byte-equal differential pending fixture) | Y |
-| MPL Core plugin family (AddPluginV1 / RemovePluginV1 / UpdatePluginV1 / Approve / Revoke) | Y on 8 simple Plugin variants (statically-sized payloads); complex variants (Royalties, Attributes, UpdateDelegate, Edition, MasterEdition, VerifiedCreators, Autograph, BubblegumV2, FreezeExecute) fall back to `lint` | Y (same scope) |
+| MPL Core asset lifecycle + collection (CreateV2 / UpdateV2 / TransferV1 / BurnV1 / CreateCollectionV2) | Y (byte-equal differential against real mpl_core.so loaded into LiteSVM) | Y |
+| MPL Core plugin family (AddPluginV1 / RemovePluginV1 / UpdatePluginV1 / Approve / Revoke) | Y on 8 simple Plugin variants (statically-sized payloads), byte-equal differential-gated; complex variants (Royalties, Attributes, UpdateDelegate, Edition, MasterEdition, VerifiedCreators, Autograph, BubblegumV2, FreezeExecute) fall back to `lint` | Y (same scope) |
 | Confidential T22 family (ConfidentialTransfer{Mint,Fee,MintBurn}) | lint (zk-proof prelude arc not started) | lint |
 | Impl-method inlining (`ctx.accounts.foo()`) | partial | partial |
 | Composite `#[derive(Accounts)]` flatten (`pub foo: Inner<'info>`) | Y (3-layer parser+classifier+emitter port, 2026-05-19; BYTE_EQUAL verified on real :8899 validator for Anchor org composite example) | Y |
@@ -39,7 +39,7 @@
 
 These run on every Anvil release; any emit divergence fails the gate.
 
-**73 byte-equal differential fixtures** — covering SPL Token, Token-2022 (all 12 non-confidential extensions), Metaplex Token Metadata (12 IR kinds), Pyth (legacy + modern), composite Accounts, and a slate of real-world programs.
+**82 byte-equal differential fixtures** — covering SPL Token, Token-2022 (all 12 non-confidential extensions), Metaplex Token Metadata (12 IR kinds), MPL Core (9 IR kinds), Pyth (legacy + modern), composite Accounts, and a slate of real-world programs.
 
 ### Real-world programs (cloned verbatim)
 

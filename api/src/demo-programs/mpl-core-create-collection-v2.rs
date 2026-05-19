@@ -7,7 +7,7 @@
 use anchor_lang::prelude::*;
 use mpl_core::instructions::CreateCollectionV2CpiBuilder;
 
-declare_id!("MPLcoreCreateCollectionV2Demo11111111111111");
+declare_id!("2H287qf7yi8uGcS23oR1yRRRn3HfrbYPmCffb9UAwUnv");
 
 #[program]
 pub mod mpl_core_collection_demo {
@@ -24,8 +24,6 @@ pub mod mpl_core_collection_demo {
             .system_program(&ctx.accounts.system_program.to_account_info())
             .name(name)
             .uri(uri)
-            .plugins(None)
-            .external_plugin_adapters(None)
             .invoke()?;
         Ok(())
     }
@@ -42,8 +40,6 @@ pub mod mpl_core_collection_demo {
             .system_program(&ctx.accounts.system_program.to_account_info())
             .name(name)
             .uri(uri)
-            .plugins(None)
-            .external_plugin_adapters(None)
             .invoke()?;
         Ok(())
     }

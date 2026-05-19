@@ -8,7 +8,7 @@
 use anchor_lang::prelude::*;
 use mpl_core::instructions::BurnV1CpiBuilder;
 
-declare_id!("MPLcoreBurnV1DemoProgram1111111111111111111");
+declare_id!("ohtS18nre3TJyrqaExvFT46z5YuTKrSJCBDj5CZEYHC");
 
 #[program]
 pub mod mpl_core_burn_demo {
@@ -19,7 +19,7 @@ pub mod mpl_core_burn_demo {
             .asset(&ctx.accounts.asset.to_account_info())
             .payer(&ctx.accounts.payer.to_account_info())
             .authority(Some(&ctx.accounts.owner.to_account_info()))
-            .system_program(&ctx.accounts.system_program.to_account_info())
+            .system_program(Some(&ctx.accounts.system_program.to_account_info()))
             .invoke()?;
         Ok(())
     }
@@ -30,7 +30,7 @@ pub mod mpl_core_burn_demo {
             .collection(Some(&ctx.accounts.collection.to_account_info()))
             .payer(&ctx.accounts.payer.to_account_info())
             .authority(Some(&ctx.accounts.owner.to_account_info()))
-            .system_program(&ctx.accounts.system_program.to_account_info())
+            .system_program(Some(&ctx.accounts.system_program.to_account_info()))
             .invoke()?;
         Ok(())
     }

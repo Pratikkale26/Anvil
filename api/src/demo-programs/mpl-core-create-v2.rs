@@ -17,7 +17,7 @@ use mpl_core::{
     types::DataState,
 };
 
-declare_id!("MPLcoreV2DemoMintProgram111111111111111111111");
+declare_id!("2C8CSADSG723SRbT2EisHGtZPniw2afXF3wtyRDUeW9A");
 
 #[program]
 pub mod mpl_core_create_demo {
@@ -35,8 +35,6 @@ pub mod mpl_core_create_demo {
             .name(name)
             .uri(uri)
             .data_state(DataState::AccountState)
-            .plugins(None)
-            .external_plugin_adapters(None)
             .invoke()?;
         Ok(())
     }
@@ -56,8 +54,6 @@ pub mod mpl_core_create_demo {
             .name(name)
             .uri(uri)
             .data_state(DataState::AccountState)
-            .plugins(None)
-            .external_plugin_adapters(None)
             .invoke()?;
         Ok(())
     }

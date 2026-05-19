@@ -13,7 +13,7 @@ use mpl_core::{
     types::{PluginAuthority, PluginType},
 };
 
-declare_id!("MPLcoreApproveRevokeV1DemoProgram111111111");
+declare_id!("9YHYExwoZSJ9pExXniEDTWZaRZTK4xhhkmU7MBtocR8d");
 
 #[program]
 pub mod mpl_core_authority_demo {

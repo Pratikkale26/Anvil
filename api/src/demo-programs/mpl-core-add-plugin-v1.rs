@@ -10,7 +10,7 @@ use mpl_core::{
     types::{FreezeDelegate, ImmutableMetadata, Plugin},
 };
 
-declare_id!("MPLcoreAddPluginV1DemoProgram11111111111111");
+declare_id!("7EPEQWHoYysCt5PtVXVsi3jmgteWXScfnnRjLLCLZTYY");
 
 #[program]
 pub mod mpl_core_add_plugin_demo {

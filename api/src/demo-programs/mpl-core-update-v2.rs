@@ -11,7 +11,7 @@
 use anchor_lang::prelude::*;
 use mpl_core::instructions::UpdateV2CpiBuilder;
 
-declare_id!("MPLcoreUpdateV2DemoProgram111111111111111111");
+declare_id!("H8RFHvzoYujBW2mGqUVA1Ua5Pzu6bEjaWQmXjgviQinR");
 
 #[program]
 pub mod mpl_core_update_demo {
@@ -27,9 +27,8 @@ pub mod mpl_core_update_demo {
             .payer(&ctx.accounts.payer.to_account_info())
             .authority(Some(&ctx.accounts.authority.to_account_info()))
             .system_program(&ctx.accounts.system_program.to_account_info())
-            .new_name(Some(new_name))
-            .new_uri(Some(new_uri))
-            .new_update_authority(None)
+            .new_name(new_name)
+            .new_uri(new_uri)
             .invoke()?;
         Ok(())
     }
@@ -43,9 +42,7 @@ pub mod mpl_core_update_demo {
             .payer(&ctx.accounts.payer.to_account_info())
             .authority(Some(&ctx.accounts.authority.to_account_info()))
             .system_program(&ctx.accounts.system_program.to_account_info())
-            .new_name(None)
-            .new_uri(Some(new_uri))
-            .new_update_authority(None)
+            .new_uri(new_uri)
             .invoke()?;
         Ok(())
     }

@@ -6,7 +6,7 @@
 use anchor_lang::prelude::*;
 use mpl_core::{instructions::RemovePluginV1CpiBuilder, types::PluginType};
 
-declare_id!("MPLcoreRemovePluginV1DemoProgram1111111111");
+declare_id!("CeTsVG4VZpHpBRPPoyLh2cTtH3p6Pgud6ChP24DrF8Z8");
 
 #[program]
 pub mod mpl_core_remove_plugin_demo {

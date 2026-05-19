@@ -10,7 +10,7 @@ use mpl_core::{
     types::{FreezeDelegate, Plugin},
 };
 
-declare_id!("MPLcoreUpdatePluginV1DemoProgram1111111111");
+declare_id!("DUQi6HWn21FueDByFQ98uyG6ca3JQhd9aQAj89Xoup8S");
 
 #[program]
 pub mod mpl_core_update_plugin_demo {

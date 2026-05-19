@@ -1190,7 +1190,7 @@ function extractMplCoreCreateV2(callNode: SyntaxNode, collector?: WarningCollect
     return extractCustomCpi(callNode, collector);
   }
 
-  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, ""));
   return {
     kind: "cpi_mpl_core_create_v2",
     programAccount: clean(programArg),
@@ -1315,7 +1315,7 @@ function extractMplCoreAddPluginV1(callNode: SyntaxNode, collector?: WarningColl
     return extractCustomCpi(callNode, collector);
   }
 
-  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, ""));
   return {
     kind: "cpi_mpl_core_add_plugin_v1",
     programAccount: clean(programArg),
@@ -1347,7 +1347,7 @@ function extractMplCoreRemovePluginV1(callNode: SyntaxNode, collector?: WarningC
     return extractCustomCpi(callNode, collector);
   }
 
-  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, ""));
   return {
     kind: "cpi_mpl_core_remove_plugin_v1",
     programAccount: clean(programArg),
@@ -1376,7 +1376,7 @@ function extractMplCoreUpdatePluginV1(callNode: SyntaxNode, collector?: WarningC
     return extractCustomCpi(callNode, collector);
   }
 
-  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, ""));
   return {
     kind: "cpi_mpl_core_update_plugin_v1",
     programAccount: clean(programArg),
@@ -1409,7 +1409,7 @@ function extractMplCoreApprovePluginAuthorityV1(callNode: SyntaxNode, collector?
     return extractCustomCpi(callNode, collector);
   }
 
-  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, ""));
   return {
     kind: "cpi_mpl_core_approve_plugin_authority_v1",
     programAccount: clean(programArg),
@@ -1439,7 +1439,7 @@ function extractMplCoreRevokePluginAuthorityV1(callNode: SyntaxNode, collector?:
     return extractCustomCpi(callNode, collector);
   }
 
-  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, ""));
   return {
     kind: "cpi_mpl_core_revoke_plugin_authority_v1",
     programAccount: clean(programArg),
@@ -1476,7 +1476,7 @@ function extractMplCoreCreateCollectionV2(callNode: SyntaxNode, collector?: Warn
     return extractCustomCpi(callNode, collector);
   }
 
-  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, ""));
   return {
     kind: "cpi_mpl_core_create_collection_v2",
     programAccount: clean(programArg),
@@ -1508,7 +1508,7 @@ function extractMplCoreBurnV1(callNode: SyntaxNode, collector?: WarningCollector
     return extractCustomCpi(callNode, collector);
   }
 
-  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, ""));
   return {
     kind: "cpi_mpl_core_burn_v1",
     programAccount: clean(programArg),
@@ -1540,7 +1540,7 @@ function extractMplCoreTransferV1(callNode: SyntaxNode, collector?: WarningColle
     return extractCustomCpi(callNode, collector);
   }
 
-  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, ""));
   return {
     kind: "cpi_mpl_core_transfer_v1",
     programAccount: clean(programArg),
@@ -1574,7 +1574,7 @@ function extractMplCoreUpdateV2(callNode: SyntaxNode, collector?: WarningCollect
     return extractCustomCpi(callNode, collector);
   }
 
-  const clean = (s: string) => cleanAccountRef(s.trim().replace(/^&\s*/, ""));
+  const clean = (s: string) => cleanAccountRef(stripSomeWrap(s.trim()).replace(/^&\s*/, ""));
   // Option<String> args pass through verbatim — preserve the Some(...) form.
   const passOpt = (raw: string | undefined): string => {
     if (!raw) return "None";

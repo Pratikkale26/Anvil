@@ -113,6 +113,18 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   "mpl-freeze-thaw": "mpl-freeze-thaw.rs",
   "mpl-collection-verify": "mpl-collection-verify.rs",
   "mpl-sign-metadata": "mpl-sign-metadata.rs",
+  // MPL Core byte-equal fixtures (task #48 — 2026-05-19). The differential
+  // gate runs mpl_core.so loaded into LiteSVM via svm.addProgram. All 10
+  // slots have a demo + byte-equal differential.
+  "mpl-core-create-v2": "mpl-core-create-v2.rs",
+  "mpl-core-update-v2": "mpl-core-update-v2.rs",
+  "mpl-core-transfer-v1": "mpl-core-transfer-v1.rs",
+  "mpl-core-burn-v1": "mpl-core-burn-v1.rs",
+  "mpl-core-create-collection-v2": "mpl-core-create-collection-v2.rs",
+  "mpl-core-add-plugin-v1": "mpl-core-add-plugin-v1.rs",
+  "mpl-core-remove-plugin-v1": "mpl-core-remove-plugin-v1.rs",
+  "mpl-core-update-plugin-v1": "mpl-core-update-plugin-v1.rs",
+  "mpl-core-approve-revoke-plugin-authority-v1": "mpl-core-approve-revoke-plugin-authority-v1.rs",
 };
 
 /**
@@ -197,27 +209,9 @@ const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
   // byte-equal differential gate deferred until a switchboard .so
   // fixture lands. cargo-build is the available correctness signal.
   "cpi_switchboard_read_feed",
-  // MPL Core CreateV2 — task #48 S1. IR + parser + emit landed; byte-equal
-  // differential against a real mpl_core .so fixture is deferred until the
-  // fixture is bundled (parallel to the Pyth Receiver pattern). cargo-check
-  // across the full project scaffold is the available signal.
-  "cpi_mpl_core_create_v2",
-  // MPL Core UpdateV2 — task #48 S2. Same fixture-pending status as S1.
-  "cpi_mpl_core_update_v2",
-  // MPL Core TransferV1 — task #48 S3. Same fixture-pending status as S1.
-  "cpi_mpl_core_transfer_v1",
-  // MPL Core BurnV1 — task #48 S4. Closes asset lifecycle. Same status.
-  "cpi_mpl_core_burn_v1",
-  // MPL Core CreateCollectionV2 — task #48 S5. Same fixture-pending status.
-  "cpi_mpl_core_create_collection_v2",
-  // MPL Core plugin family — task #48 S6-S10. Same fixture-pending status.
-  // Real-program byte-equal validation lives in differential-mpl-core.test.ts
-  // once the mpl_core.so + LiteSVM harness wiring matures.
-  "cpi_mpl_core_add_plugin_v1",
-  "cpi_mpl_core_remove_plugin_v1",
-  "cpi_mpl_core_update_plugin_v1",
-  "cpi_mpl_core_approve_plugin_authority_v1",
-  "cpi_mpl_core_revoke_plugin_authority_v1",
+  // (MPL Core slots S1-S10 ALL promoted out of deferred list 2026-05-19
+  // — byte-equal differentials green against real mpl_core.so loaded into
+  // LiteSVM. Tests at differential-mpl-core-*.test.ts.)
 ]);
 
 function listBodyStatementKinds(): string[] {
