@@ -909,6 +909,15 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     uri: z.string(),
     /** Seller fee basis points (0-10000). */
     sellerFeeBasisPoints: z.string().default("0"),
+    /**
+     * DataV2.creators — raw text expression. Captures patterns like
+     * `Some(vec![Creator { address: ctx.accounts.payer.key(), verified: true, share: 100 }])`
+     * or `None`. When set to anything other than None / undefined, the
+     * emit serializes the Vec<Creator> into the Borsh DataV2 payload.
+     * Task #84 — first of three DataV2 Option fields to land (collection
+     * + uses still pending).
+     */
+    creators: z.string().optional(),
     /** Whether the metadata is mutable after creation. */
     isMutable: z.string().default("true"),
     /** Update authority is a signer. */
@@ -940,6 +949,11 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     newUri: z.string().optional(),
     /** DataV2.seller_fee_basis_points when newName is set. */
     newSellerFeeBasisPoints: z.string().default("0"),
+    /**
+     * DataV2.creators raw text expression. Same shape + parsing as
+     * `cpi_mpl_create_metadata_v3.creators`. Task #84.
+     */
+    creators: z.string().optional(),
     /** Option<bool> primary_sale_happened — raw text. */
     primarySaleHappened: z.string().default("None"),
     /** Option<bool> is_mutable — raw text. */
