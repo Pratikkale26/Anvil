@@ -1371,46 +1371,87 @@ export class BodyWalker {
       });
     };
 
-    replaceCpi(
-      /(?:anchor_spl::)?token::transfer\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
-      (from, to, authority, signerSeeds, amount) =>
-        `spl_token_transfer_signed(${snakeCase(from)}, ${snakeCase(to)}, ${this.resolveAccountInfoVar(snakeCase(authority))}, ${this.resolveAmountExpr(cleanInlineExpr(amount))}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`,
-    );
-    replaceCpi(
-      /(?:anchor_spl::)?token::transfer\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Transfer\s*\{\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
-      (from, to, authority, amount) =>
-        `spl_token_transfer(${snakeCase(from)}, ${snakeCase(to)}, ${this.resolveAccountInfoVar(snakeCase(authority))}, ${this.resolveAmountExpr(cleanInlineExpr(amount))})?;`,
-    );
-    replaceCpi(
-      /(?:anchor_spl::)?token::mint_to\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
-      (mint, to, authority, signerSeeds, amount) =>
-        `spl_token_mint_to_signed(${snakeCase(mint)}, ${snakeCase(to)}, ${this.resolveAccountInfoVar(snakeCase(authority))}, ${this.resolveAmountExpr(cleanInlineExpr(amount))}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`,
-    );
-    replaceCpi(
-      /(?:anchor_spl::)?token::mint_to\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?MintTo\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*to:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
-      (mint, to, authority, amount) =>
-        `spl_token_mint_to(${snakeCase(mint)}, ${snakeCase(to)}, ${this.resolveAccountInfoVar(snakeCase(authority))}, ${this.resolveAmountExpr(cleanInlineExpr(amount))})?;`,
-    );
-    replaceCpi(
-      /(?:anchor_spl::)?token::burn\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
-      (mint, from, authority, signerSeeds, amount) =>
-        `spl_token_burn_signed(${snakeCase(from)}, ${snakeCase(mint)}, ${this.resolveAccountInfoVar(snakeCase(authority))}, ${this.resolveAmountExpr(cleanInlineExpr(amount))}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`,
-    );
-    replaceCpi(
-      /(?:anchor_spl::)?token::burn\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?Burn\s*\{\s*mint:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*from:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*,\s*([\s\S]*?)\s*\)\?;/g,
-      (mint, from, authority, amount) =>
-        `spl_token_burn(${snakeCase(from)}, ${snakeCase(mint)}, ${this.resolveAccountInfoVar(snakeCase(authority))}, ${this.resolveAmountExpr(cleanInlineExpr(amount))})?;`,
-    );
-    replaceCpi(
-      /(?:anchor_spl::)?token::close_account\(\s*CpiContext::new_with_signer\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\},\s*([\w\[\]&\s.]+?)\s*,\s*\)\s*\)\?;/g,
-      (account, destination, authority, signerSeeds) =>
-        `spl_token_close_account_signed(${snakeCase(account)}, ${snakeCase(destination)}, ${this.resolveAccountInfoVar(snakeCase(authority))}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`,
-    );
-    replaceCpi(
-      /(?:anchor_spl::)?token::close_account\(\s*CpiContext::new\(\s*ctx\.accounts\.\w+\.to_account_info\(\),\s*(?:anchor_spl::token::)?CloseAccount\s*\{\s*account:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*destination:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*authority:\s*ctx\.accounts\.(\w+)\.to_account_info\(\),\s*\}\s*,\s*\)\s*\)\?;/g,
-      (account, destination, authority) =>
-        `spl_token_close_account(${snakeCase(account)}, ${snakeCase(destination)}, ${this.resolveAccountInfoVar(snakeCase(authority))})?;`,
-    );
+    // H7 Phase 5a — consolidated SPL token CPI rewrites. Four CPI families
+    // (transfer / mint_to / burn / close_account) × two signer modes
+    // (CpiContext::new vs new_with_signer) = 8 rules with near-identical
+    // structure. Pre-consolidation, each pair lived as two side-by-side
+    // replaceCpi() calls with hand-written regex strings that diverged
+    // only at the `new_with_signer` vs `new` keyword + the trailing
+    // signer-seeds capture.
+    //
+    // The byte-equal contract for these CPI rewrites is load-bearing —
+    // each rule's helper-call output is verified by the differential
+    // fixtures (amm, escrow-2025, token-fundraiser, etc.). To preserve
+    // exact behavior, we generate the same regex bytes from a shared
+    // template; a precondition check at PR review time can verify
+    // `buildSplCpiRegex(...).source === <existing literal>`.
+    //
+    // Field order in `structFields` matches the Anchor source struct
+    // literal (e.g. Burn has `mint`-first, but `argOrder` maps to the
+    // helper's `from`-first signature). authorityIdx names which field
+    // becomes the resolveAccountInfoVar() arg vs the snakeCase() arg.
+    type SplCpi = {
+      tokenFn: string;
+      structName: string;
+      structFields: readonly string[];
+      helperBase: string;
+      authorityIdx: number;
+      /** Permutation: which captured field goes to which helper-arg slot. */
+      argOrder: readonly number[];
+      hasAmount: boolean;
+    };
+    const splCpis: readonly SplCpi[] = [
+      { tokenFn: "token::transfer",      structName: "Transfer",     structFields: ["from", "to", "authority"],        helperBase: "spl_token_transfer",      authorityIdx: 2, argOrder: [0, 1, 2], hasAmount: true },
+      { tokenFn: "token::mint_to",       structName: "MintTo",       structFields: ["mint", "to", "authority"],        helperBase: "spl_token_mint_to",       authorityIdx: 2, argOrder: [0, 1, 2], hasAmount: true },
+      { tokenFn: "token::burn",          structName: "Burn",         structFields: ["mint", "from", "authority"],      helperBase: "spl_token_burn",          authorityIdx: 2, argOrder: [1, 0, 2], hasAmount: true },
+      { tokenFn: "token::close_account", structName: "CloseAccount", structFields: ["account", "destination", "authority"], helperBase: "spl_token_close_account", authorityIdx: 2, argOrder: [0, 1, 2], hasAmount: false },
+    ];
+    const fieldRe = (name: string) =>
+      `${name}:\\s*ctx\\.accounts\\.(\\w+)\\.to_account_info\\(\\),\\s*`;
+    const buildSplCpiRegex = (cpi: SplCpi, signed: boolean): RegExp => {
+      const fields = cpi.structFields.map(fieldRe).join("");
+      const ctor = signed ? "CpiContext::new_with_signer" : "CpiContext::new";
+      const post = signed
+        ? "\\},\\s*([\\w\\[\\]&\\s.]+?)\\s*,\\s*\\)"
+        : "\\}\\s*,\\s*\\)";
+      const tail = cpi.hasAmount ? "\\s*,\\s*([\\s\\S]*?)\\s*" : "\\s*";
+      return new RegExp(
+        `(?:anchor_spl::)?${cpi.tokenFn}\\(\\s*${ctor}\\(\\s*ctx\\.accounts\\.\\w+\\.to_account_info\\(\\),\\s*(?:anchor_spl::token::)?${cpi.structName}\\s*\\{\\s*${fields}${post}${tail}\\)\\?;`,
+        "g",
+      );
+    };
+    const buildHelperArgs = (cpi: SplCpi, captures: string[]): string => {
+      return cpi.argOrder
+        .map((srcIdx) => {
+          const captured = captures[srcIdx]!;
+          return srcIdx === cpi.authorityIdx
+            ? this.resolveAccountInfoVar(snakeCase(captured))
+            : snakeCase(captured);
+        })
+        .join(", ");
+    };
+    for (const cpi of splCpis) {
+      // Signed first (more specific — has trailing signer-seeds capture).
+      replaceCpi(buildSplCpiRegex(cpi, true), (...groups) => {
+        const captured = groups.slice(0, cpi.structFields.length);
+        const signerSeeds = groups[cpi.structFields.length]!;
+        const amount = cpi.hasAmount ? groups[cpi.structFields.length + 1]! : undefined;
+        const args = buildHelperArgs(cpi, captured);
+        const amountArg = amount !== undefined
+          ? `, ${this.resolveAmountExpr(cleanInlineExpr(amount))}`
+          : "";
+        return `${cpi.helperBase}_signed(${args}${amountArg}, ${this.normalizeSignerSeedsExpr(signerSeeds)})?;`;
+      });
+      replaceCpi(buildSplCpiRegex(cpi, false), (...groups) => {
+        const captured = groups.slice(0, cpi.structFields.length);
+        const amount = cpi.hasAmount ? groups[cpi.structFields.length]! : undefined;
+        const args = buildHelperArgs(cpi, captured);
+        const amountArg = amount !== undefined
+          ? `, ${this.resolveAmountExpr(cleanInlineExpr(amount))}`
+          : "";
+        return `${cpi.helperBase}(${args}${amountArg})?;`;
+      });
+    }
     replaceCpi(
       // System program transfer w/ signer — qualified OR unqualified (via `use anchor_lang::system_program::transfer`).
       // Trailing commas are optional throughout; the consolidated inline form
