@@ -38,13 +38,15 @@ export const parseRoute = Router();
  * ```
  */
 parseRoute.post("/", async (req, res) => {
-  const { source, sourcePath, projectPath, repoUrl, repoRef, repoSubpath, files, entryPath } = req.body as {
+  const { source, sourcePath, projectPath, repoUrl, repoRef, repoSubpath, programName, files, entryPath } = req.body as {
     source?: string;
     sourcePath?: string;
     projectPath?: string;
     repoUrl?: string;
     repoRef?: string;
     repoSubpath?: string;
+    /** H2 — Cargo workspace program selection (e.g. "drift" / "perp_market"). */
+    programName?: string;
     files?: ProjectFile[];
     entryPath?: string;
   };
@@ -52,6 +54,10 @@ parseRoute.post("/", async (req, res) => {
   let resolvedSource = source;
   let resolvedPath: string | undefined;
   let candidates: string[] | undefined;
+  // H2 — program-candidate list (for repo input only). Populated when
+  // the repo is a Cargo workspace; surfaces to the caller so they can
+  // see what workspace members exist.
+  let resolvedProgramCandidates: { name: string; entryPath: string }[] | undefined;
   // B9 — accumulate cfg(feature=...) drops across whichever input path was
   // used so parseAnchor can surface them as `cfg_gated_item_dropped`
   // warnings. The single-string `source` input goes through parseAnchor's
@@ -99,12 +105,13 @@ parseRoute.post("/", async (req, res) => {
       resolvedCfgDrops = resolved.cfgDrops;
     }
 
-    // ── 4. GitHub repo: { repoUrl, repoRef?, repoSubpath? } ────────────────
+    // ── 4. GitHub repo: { repoUrl, repoRef?, repoSubpath?, programName? } ──
     if ((!resolvedSource || typeof resolvedSource !== "string") && typeof repoUrl === "string") {
-      const resolved = await resolveRepoSource({ repoUrl, repoRef, repoSubpath });
+      const resolved = await resolveRepoSource({ repoUrl, repoRef, repoSubpath, programName });
       resolvedSource = resolved.source;
       resolvedPath = resolved.resolvedPath;
       candidates = resolved.candidates;
+      resolvedProgramCandidates = resolved.programCandidates;
       resolvedCfgDrops = resolved.cfgDrops;
     }
   } catch (error) {
@@ -165,5 +172,9 @@ parseRoute.post("/", async (req, res) => {
     candidates: candidates ?? null,
     repoUrl: repoUrl ?? null,
     source: resolvedSource,
+    // H2 — workspace program candidates (one entry per
+    // `programs/<name>/src/lib.rs` hit). Empty / undefined for non-
+    // workspace repos. Workbench can render a dropdown when length > 1.
+    programCandidates: resolvedProgramCandidates ?? null,
   });
 });

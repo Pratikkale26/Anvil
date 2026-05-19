@@ -5,6 +5,17 @@ export interface RepoSourceInput {
   repoUrl: string;
   repoRef?: string;
   repoSubpath?: string;
+  /**
+   * H2 — explicit program selection for Cargo workspaces. When a repo
+   * has multiple `programs/<name>/src/lib.rs` entries (Drift, Mango v4,
+   * Squads v4 pattern), filename-priority alone is ambiguous: the
+   * resolver previously picked alphabetically without surfacing what
+   * was passed over. Callers can now pin the program by name (e.g.
+   * "drift" / "perp_market") or by subpath (e.g. "programs/drift"); the
+   * resolver will refuse to silently auto-pick when this hint is unset
+   * AND multiple candidates exist.
+   */
+  programName?: string;
 }
 
 export interface RepoSourceResolution {
@@ -15,6 +26,14 @@ export interface RepoSourceResolution {
   projectEntryPath: string;
   /** B9 — cfg(feature=...) items dropped during flattening; surface as parser warnings. */
   cfgDrops?: CfgGatedDrop[];
+  /**
+   * H2 — list of every program candidate the repo contains (one entry
+   * per `programs/<name>/src/lib.rs` hit). Populated even when only one
+   * candidate exists so the caller can display the auto-picked name
+   * for transparency. Empty when the repo isn't a Cargo workspace
+   * shape.
+   */
+  programCandidates?: { name: string; entryPath: string }[];
 }
 
 interface ParsedGitHubInput {
@@ -86,7 +105,38 @@ async function fetchRepoTree(owner: string, repo: string, ref: string): Promise<
     .map((node) => node.path);
 }
 
-function pickBestEntry(paths: string[], subpath?: string): string | null {
+/**
+ * H2 — Detect every `programs/<name>/src/lib.rs` candidate in a Cargo
+ * workspace shape. Returns one entry per matched candidate so callers
+ * can surface the full list to the user instead of silently picking
+ * the alphabetical-first one. Empty array when the repo isn't a
+ * workspace shape (no `programs/<name>/src/lib.rs` entries).
+ */
+export function findProgramCandidates(paths: string[]): { name: string; entryPath: string }[] {
+  const out: { name: string; entryPath: string }[] = [];
+  for (const path of paths) {
+    const m = path.replace(/\\/g, "/").match(/(?:^|\/)programs\/([^/]+)\/src\/lib\.rs$/);
+    if (m?.[1]) out.push({ name: m[1], entryPath: path });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function pickBestEntry(paths: string[], subpath?: string, programName?: string): string | null {
+  // H2 — programName takes precedence over subpath. Used when caller
+  // knows the workspace member they want but doesn't care about the
+  // exact subpath form.
+  if (programName) {
+    const candidates = findProgramCandidates(paths);
+    const hit = candidates.find((c) => c.name === programName);
+    if (hit) return hit.entryPath;
+    // Caller asked for a name we couldn't find — surface the available
+    // names in the error rather than silently falling through. Throws
+    // out of pickBestEntry into resolveRepoSource's error path.
+    throw new Error(
+      `programName='${programName}' not found in repo. ` +
+        `Available: ${candidates.map((c) => c.name).join(", ") || "(none)"}`,
+    );
+  }
   if (subpath) {
     const trimmed = subpath.replace(/\/$/, "");
     if (trimmed.endsWith(".rs")) return paths.includes(trimmed) ? trimmed : null;
@@ -167,7 +217,25 @@ export async function resolveRepoSource(input: RepoSourceInput): Promise<RepoSou
     throw new Error("No Rust (.rs) files found in this repository");
   }
 
-  const entry = pickBestEntry(allRustPaths, repoSubpath);
+  // H2 — collect ALL program candidates for transparency. Even when we
+  // pick one we want the caller to see what was passed over.
+  const programCandidates = findProgramCandidates(allRustPaths);
+
+  // H2 — when multiple workspace programs exist and the caller didn't
+  // pin one via programName / repoSubpath, refuse to silently auto-pick.
+  // Pre-H2 the resolver alphabetically picked the first and never told
+  // the caller about the rest. For real workspaces (Drift / Mango v4 /
+  // Squads v4) that meant a paste-the-repo flow silently transpiled the
+  // wrong program. Throw with the candidate list so the caller chooses.
+  if (programCandidates.length > 1 && !input.programName && !repoSubpath) {
+    throw new Error(
+      `Repo is a Cargo workspace with ${programCandidates.length} program candidates. ` +
+        `Pin one via 'programName' (e.g. '${programCandidates[0]?.name}') or 'repoSubpath' ` +
+        `(e.g. 'programs/${programCandidates[0]?.name}'). Candidates: ${programCandidates.map((c) => c.name).join(", ")}.`,
+    );
+  }
+
+  const entry = pickBestEntry(allRustPaths, repoSubpath, input.programName);
   if (!entry) {
     throw new Error(`No suitable Rust entry file found${repoSubpath ? ` under '${repoSubpath}'` : ""}`);
   }
@@ -189,5 +257,6 @@ export async function resolveRepoSource(input: RepoSourceInput): Promise<RepoSou
     projectFiles,
     projectEntryPath,
     cfgDrops: build.cfgDrops,
+    programCandidates: programCandidates.length > 0 ? programCandidates : undefined,
   };
 }
