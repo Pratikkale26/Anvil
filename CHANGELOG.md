@@ -8,6 +8,62 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ## Unreleased
 
+### Added — MPL byte-equal coverage doubled (2026-05-19 PM, 4 commits)
+
+Pushed MPL byte-equal differential coverage from 3/12 to **8/12** in one
+session. Three new differentials chain multiple slots per program for
+build-time efficiency:
+
+- **N1c** (`088973d` + `3f8f801`) — set_and_verify_collection (disc 25,
+  slot 4/12). Differential: make_collection_nft + make_item_nft +
+  set_and_verify, byte-compare item.metadata + collection.metadata.
+- **N1d** (`701b85a`) — freeze_delegated (disc 26, slot 5/12) + thaw_
+  delegated (disc 27, slot 6/12). Differential: make_nft + SPL approve
+  + freeze + thaw, byte-compare token_account + metadata.
+- **N1e** (`14b087f`) — approve_collection_authority (disc 23, slot
+  7/12) + revoke_collection_authority (disc 24, slot 8/12). Differential:
+  make_nft + approve + revoke, byte-compare record_pda + metadata.
+
+Surfaced + fixed **6 new wire-format bugs** during these arcs:
+
+7. **Parser (`088973d`)** — `VerifyCollection` and `SetAndVerifyCollection`
+   parser grabbed field name `collection`, but anchor-spl 0.31 canonical
+   field is `collection_metadata`. Parser fell back to literal string
+   `"collection"` → emit referenced an undefined identifier. Programs
+   using these CPIs would have failed cargo at the user-emit layer.
+8. **Parser (`088973d`)** — `UnverifyCollection` parser grabbed
+   `collection_master_edition`, but anchor-spl 0.31 canonical field is
+   `collection_master_edition_account`. Same fallback-to-literal bug.
+9. **Pinocchio emit (`088973d`)** — `mpl_verify_collection` discriminator
+   was 21; mpl-token-metadata 5.1.1 legacy VerifyCollection disc is 18.
+   Native + Pinocchio both fixed.
+10. **Pinocchio emit (`088973d`)** — `mpl_unverify_collection` included
+    `payer` in meta slot 2; MPL UnverifyCollection has NO payer slot
+    (5 base accounts, not 6). Native + Pinocchio both fixed.
+11. **Pinocchio emit (`088973d`)** — `verify_collection` /
+    `unverify_collection` / `set_and_verify_collection` helpers used
+    `let infos: &[&AccountInfo] = match...` (slice). Pinocchio's
+    `invoke`/`invoke_signed` take `&[&AccountInfo; N]` (fixed-size array
+    ref). **None of these 3 MPL helpers ever compiled in Pinocchio**
+    prior to this differential. Refactored to per-branch typed-array
+    calls; 3 helpers re-baselined.
+12. **Pinocchio + Native emit (`14b087f`)** — `mpl_revoke_collection_authority`
+    had `delegate_authority` with `(writable=false, signer=true)`; MPL
+    spec is `(writable=true, signer=false)`. Anvil's emit was claiming
+    `delegate_authority` as a signer that has no signature → runtime
+    rejection with `MissingRequiredSignature`. Pinocchio + Native both
+    fixed.
+
+**anchor-spl 0.31 bug documented (not fixable from Anvil)**: the
+`unverify_collection` wrapper sets MPL's `collection` ix field to
+`*ctx.accounts.metadata.key` instead of `*ctx.accounts.collection.key`.
+MPL rejects the CPI with "Mint given does not match mint on Metadata"
+(0xf) on BOTH Anchor source and Anvil emit. Documented in
+`differential-mpl-collection-verify.test.ts` header.
+
+KPI: MPL byte-equal coverage **3/12 → 8/12**. Grant primary KPI target
+(7/12 by 2026-06-15) hit **4 weeks early**.
+
 ### Added — Metaplex byte-equal differential (2026-05-19, 11 commits)
 
 First three MPL catalog slots locked under byte-equal runtime verification
