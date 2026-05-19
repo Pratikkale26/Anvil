@@ -31,7 +31,7 @@ import { readFileSync } from "node:fs";
 import { AnvilError, ErrorCode } from "../errors.js";
 import { ScenarioSchema, lintScenario } from "../ir/scenario.js";
 import { SolanaIRSchema } from "../ir/schema.js";
-import { buildBothSos, differentialAvailable } from "../build/differential-build.js";
+import { buildBothSos, differentialAvailable, validateAnchorExtraDeps } from "../build/differential-build.js";
 import { buildProjectScaffold } from "../emitter/project-scaffold.js";
 
 type ScaffoldTarget = "pinocchio" | "native";
@@ -146,6 +146,21 @@ differentialRoute.post("/", async (req, res) => {
     return;
   }
   const scenario = scenarioParsed.data;
+
+  // (2.5) B1 — strict allowlist for anchorExtraDeps. Refuse off-allowlist
+  // crate names + any non-version source override (git/path/registry/
+  // package-rename) before paying quota or compute. The defensive check
+  // inside buildAnchor() also throws, but a clean 400 here means the
+  // caller sees the refusal at the request boundary instead of mid-build.
+  try {
+    validateAnchorExtraDeps(parsed.data.anchorExtraDeps ?? "");
+  } catch (err) {
+    if (err instanceof AnvilError) {
+      res.status(err.statusCode).json(err.toJSON());
+      return;
+    }
+    throw err;
+  }
 
   // (3) Pre-flight scenario lint — catches authoring errors before paying compute.
   const lintIssues = lintScenario(scenario);
@@ -284,6 +299,18 @@ differentialRoute.post("/", async (req, res) => {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // Surface AnvilError with its real status code + details (e.g. the B1
+    // allowlist refusal lands as 400, not a confusing 500). Generic
+    // failures still 500.
+    if (err instanceof AnvilError) {
+      if (wantsStream) {
+        emit("error", { message, code: err.code, details: err.details, statusCode: err.statusCode });
+        if (!res.writableEnded) res.end();
+      } else {
+        res.status(err.statusCode).json(err.toJSON());
+      }
+      return;
+    }
     if (wantsStream) {
       emit("error", { message });
       if (!res.writableEnded) res.end();

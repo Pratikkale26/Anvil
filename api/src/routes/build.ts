@@ -23,7 +23,7 @@ import { AIError } from "../ai/errors.js";
 import { checkSpendCap, recordSpend } from "../ai/spend-tracker.js";
 import type { ValidationIssue } from "../emitter/output-validator.js";
 import { ScenarioSchema, lintScenario, type Scenario } from "../ir/scenario.js";
-import { buildBothSos, differentialAvailable } from "../build/differential-build.js";
+import { buildBothSos, differentialAvailable, validateAnchorExtraDeps } from "../build/differential-build.js";
 import { buildProjectScaffold } from "../emitter/project-scaffold.js";
 import {
   resolveScenarioContext,
@@ -347,6 +347,21 @@ buildRoute.post("/auto-fix", async (req, res) => {
       );
       res.status(e.statusCode).json(e.toJSON());
       return;
+    }
+    // B1 — refuse off-allowlist anchorExtraDeps at the route boundary
+    // before entering the auto-fix loop. The defensive check inside
+    // buildAnchor() also throws, but doing it here means the caller sees
+    // a clean 400 instead of a SCENARIO_FAILED feedback message that
+    // would land as a synthetic ValidationIssue to refine (the AI can't
+    // fix allowlist refusal, so feeding it would waste a refine round).
+    try {
+      validateAnchorExtraDeps(parsed.data.differential.anchorExtraDeps ?? "");
+    } catch (err) {
+      if (err instanceof AnvilError) {
+        res.status(err.statusCode).json(err.toJSON());
+        return;
+      }
+      throw err;
     }
     differentialCfg = {
       anchorSource: parsed.data.differential.anchorSource,

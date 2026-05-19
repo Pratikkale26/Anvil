@@ -30,6 +30,7 @@ import { join, dirname as nodeDirname } from "node:path";
 import { createHash } from "node:crypto";
 import type { SolanaIR } from "../ir/schema.js";
 import { spawnSandboxed, sandboxedEnv } from "./sandbox.js";
+import { AnvilError, ErrorCode } from "../errors.js";
 
 const CACHE_ROOT =
   process.env.ANVIL_DIFF_CACHE ??
@@ -202,6 +203,18 @@ async function buildAnchor(opts: DifferentialBuildOptions, outPath: string): Pro
   // back to 0.31 (current) if not found. We use the same version for
   // both anchor-lang and anchor-spl so they resolve consistently.
   const anchorLangVersion = sniffAnchorLangVersion(opts.anchorSource);
+  // B1 — strict allowlist of anchorExtraDeps. The warmup at line ~252
+  // runs `cargo fetch` OUTSIDE the sandbox with network access (it
+  // needs the network to populate $CARGO_HOME). The body content of
+  // Cargo.toml dictates which crates that fetch downloads. Without
+  // validation, a request body containing `evil = { git = "..." }`
+  // would clone arbitrary HTTPS/SSH from inside the deploy VPC, or
+  // `random-typosquat = "1.0"` would land in the shared $CARGO_HOME.
+  // SECURITY.md previously claimed CARGO_NET_OFFLINE=true was forced
+  // on every invocation; the warmup explicitly disables it, so this
+  // allowlist is the actual cut. Throws a typed Error that the route
+  // layer maps to a 400 — never reaches warmup.
+  const validatedExtraDeps = validateAnchorExtraDeps(extraDeps);
   const cargoToml = `[package]
 name = "${opts.programName}"
 version = "0.1.0"
@@ -219,7 +232,7 @@ default = []
 ${langFeatures.length > 0
   ? `anchor-lang = { version = "${anchorLangVersion}", features = ["${langFeatures.join('", "')}"] }`
   : `anchor-lang = "${anchorLangVersion}"`}
-${extraDeps.replace(/version = "0\.31"/g, `version = "${anchorLangVersion}"`).replace(/anchor-spl = "0\.31"/g, `anchor-spl = "${anchorLangVersion}"`)}
+${validatedExtraDeps.replace(/version = "0\.31"/g, `version = "${anchorLangVersion}"`).replace(/anchor-spl = "0\.31"/g, `anchor-spl = "${anchorLangVersion}"`)}
 `;
   writeFileSync(join(scratch, "Cargo.toml"), cargoToml);
   writeFileSync(
@@ -359,6 +372,162 @@ function sniffAnchorLangFeatures(source: string): string[] {
   // but surfaces in some Anchor 0.30+ programs that ship IDL hooks.
   if (/\bidl_build\b/.test(source)) features.push("idl-build");
   return features;
+}
+
+/**
+ * Crate names callers may pass via `anchorExtraDeps`. The differential
+ * harness's Anchor reference build needs the standard SPL / oracle /
+ * helper crates and nothing else. Any other crate name → 400. The
+ * names cover anchor-lang 0.29 → 1.0 + the typed-CPI surface Anvil
+ * actively transpiles (SPL, Token-2022, ATA, Memo, Metaplex, Pyth,
+ * Switchboard) plus the well-known helper crates that appear in real
+ * Anchor programs (bytemuck, borsh, thiserror, etc.).
+ *
+ * Adding a name here means: trusting that crate's authors + crates.io
+ * publishing path. Don't add anything you wouldn't want a `build.rs`
+ * from that crate to execute (sandboxed) on this host. NEVER add a
+ * crate that ships proc-macros doing arbitrary I/O at compile time
+ * unless we've audited the macro.
+ */
+const ANCHOR_EXTRA_DEPS_ALLOWLIST = new Set<string>([
+  // Anchor + ecosystem
+  "anchor-lang",
+  "anchor-spl",
+  "anchor-syn",
+  "anchor-derive-accounts",
+  "anchor-derive-space",
+  "anchor-attribute-account",
+  // SPL Token family
+  "spl-token",
+  "spl-token-2022",
+  "spl-token-metadata-interface",
+  "spl-pod",
+  "spl-type-length-value",
+  "spl-associated-token-account",
+  "spl-memo",
+  "spl-discriminator",
+  // Metaplex
+  "mpl-token-metadata",
+  // Oracle SDKs (legacy + modern)
+  "pyth-sdk-solana",
+  "pyth-solana-receiver-sdk",
+  "switchboard-v2",
+  "switchboard-on-demand",
+  "switchboard-solana",
+  // Solana base
+  "solana-program",
+  "solana-security-txt",
+  // Common helper crates that show up in real Anchor programs
+  "bytemuck",
+  "borsh",
+  "borsh-derive",
+  "num-derive",
+  "num-traits",
+  "thiserror",
+  "arrayref",
+  "static_assertions",
+  "static-assertions",
+  "ahash",
+  "uint",
+  "fixed",
+  "ux",
+  "rust_decimal",
+]);
+
+/**
+ * Tokens that signal an out-of-registry source override inside a Cargo.toml
+ * dependency spec. Any of these in `anchorExtraDeps` → 400. We allow only
+ * `version = "..."` (and optional `features = [...]`, `default-features
+ * = false`, `optional = ...`) — everything else (git/path/branch/tag/rev/
+ * registry/package-rename) gets refused.
+ *
+ * Why each is blocked:
+ *  - `git=` / `path=` — arbitrary URL/FS source bypasses crates.io trust.
+ *  - `branch=`/`tag=`/`rev=` — only meaningful alongside `git=`; reject
+ *    independently so a half-stripped attack still fails.
+ *  - `registry=` — alternate registries trust their own publishers.
+ *  - `package=` — package-rename lets `cute-name = { package = "evil" }`
+ *    smuggle an off-allowlist crate under an allowed alias.
+ */
+const ANCHOR_EXTRA_DEPS_BANNED_KEYS = [
+  "git",
+  "path",
+  "branch",
+  "tag",
+  "rev",
+  "registry",
+  "registry-index",
+  "package",
+];
+
+/**
+ * Validate user-supplied `[dependencies]` snippet before it lands in the
+ * Anchor reference Cargo.toml. Throws AnvilError-shaped failure if any
+ * unrecognized crate name or banned key appears. Returns the input
+ * unchanged on success (no normalization — the existing version-pin
+ * rewrites in buildAnchor() operate on the same text).
+ */
+export function validateAnchorExtraDeps(extraDeps: string): string {
+  if (!extraDeps || extraDeps.trim() === "") return extraDeps;
+  // Strip line / block comments first so the line walker doesn't
+  // false-positive on `# git = "..."` style hints.
+  const stripped = extraDeps
+    .split(/\r?\n/)
+    .map((l) => l.replace(/#.*$/, ""))
+    .filter((l) => l.trim() !== "");
+  for (const line of stripped) {
+    // Each line should be `<name> = "<version>"` or `<name> = { ... }`.
+    // The TOML form we accept is single-line per dep; multi-line tables
+    // would require a real TOML parser and aren't generated by the
+    // sniffer or the fixture catalog.
+    const eqIdx = line.indexOf("=");
+    if (eqIdx === -1) {
+      throw new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "anchorExtraDeps: malformed dependency line",
+        `Expected "<name> = <version-or-table>" on each line; saw "${line.trim().slice(0, 80)}".`,
+        400,
+      );
+    }
+    const rawName = line.slice(0, eqIdx).trim();
+    // Strip TOML key quoting if present (`"foo" = "1.0"` is valid TOML).
+    const name = rawName.replace(/^["'`]/, "").replace(/["'`]$/, "");
+    if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+      throw new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        "anchorExtraDeps: invalid crate name",
+        `"${name}" contains characters outside [A-Za-z0-9_.-].`,
+        400,
+      );
+    }
+    if (!ANCHOR_EXTRA_DEPS_ALLOWLIST.has(name)) {
+      throw new AnvilError(
+        ErrorCode.VALIDATION_FAILED,
+        `anchorExtraDeps: crate "${name}" is not on the differential-build allowlist`,
+        `Allowed: ${[...ANCHOR_EXTRA_DEPS_ALLOWLIST].sort().join(", ")}`,
+        400,
+      );
+    }
+    const rhs = line.slice(eqIdx + 1).trim();
+    // If RHS is a table-shape value, scan it for banned keys. Use a
+    // simple token regex (`\bKEY\s*=`) — tolerates whitespace, doesn't
+    // need a full TOML parser since the surface is one line per dep.
+    if (rhs.startsWith("{")) {
+      for (const banned of ANCHOR_EXTRA_DEPS_BANNED_KEYS) {
+        const tokenRe = new RegExp(`\\b${banned.replace(/[-]/g, "[-]")}\\s*=`, "i");
+        if (tokenRe.test(rhs)) {
+          throw new AnvilError(
+            ErrorCode.VALIDATION_FAILED,
+            `anchorExtraDeps: source-override key "${banned}" is not permitted on dependency "${name}"`,
+            "Only registry-resolved version pins are accepted (crates.io). " +
+              "git / path / branch / tag / rev / registry / package-rename are blocked.",
+            400,
+          );
+        }
+      }
+    }
+  }
+  return extraDeps;
 }
 
 function sniffAnchorExtraDeps(source: string): string {
