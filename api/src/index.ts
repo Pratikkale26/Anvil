@@ -132,11 +132,9 @@ app.use(express.json({ limit: "8mb" }));
 // a transient outage). The in-memory fallback path stays in place under
 // `localBackup` for that case.
 import { getRedis, isRedisEnabled } from "./redis-store.js";
+import { consumeInMemory, consumeRedis, DEFAULT_RATE_CAPACITY } from "./rate-limit.js";
 
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT = parseInt(process.env.RATE_LIMIT ?? '60'); // requests per window
-const RATE_WINDOW = 60_000; // 1 minute
-const RATE_WINDOW_SEC = RATE_WINDOW / 1000;
+const RATE_LIMIT = DEFAULT_RATE_CAPACITY;
 
 // P0.4: in production, Redis pipeline failures fail loud (503) instead of
 // silently degrading to in-memory. Silent fallback in a multi-replica deploy
@@ -144,6 +142,13 @@ const RATE_WINDOW_SEC = RATE_WINDOW / 1000;
 // multiplied by replica count for the duration of the outage. A loud 503
 // + Retry-After signals the operator that Redis is down; clients back off
 // instead of hammering through the cap.
+//
+// H5: rate limiter is now a token bucket (api/src/rate-limit.ts). Fixed
+// window let a caller fire 60 req in the last second of one window AND
+// 60 in the first second of the next, for an effective 120/2s burst.
+// Token bucket smooths to a steady 1 req/sec refill with a 60-burst
+// capacity — equivalent steady-state cap, no burst exploit. The
+// Redis path runs as a single Lua EVAL for atomicity across replicas.
 const RATELIMIT_REDIS_LOUD_FAIL =
   process.env.NODE_ENV === "production" &&
   process.env.ANVIL_RATELIMIT_REDIS_FALLBACK !== "1";
@@ -152,89 +157,43 @@ app.use((req, res, next) => {
   const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
   const now = Date.now();
 
-  // Try Redis path first when configured. Pipeline INCR + EXPIRE so the
-  // window TTL is set on the first request of the minute and inherited
-  // by every later one in the same window.
-  if (isRedisEnabled()) {
-    const redis = getRedis();
-    if (redis) {
-      const key = `anvil:ratelimit:${ip}`;
-      redis
-        .multi()
-        .incr(key)
-        .expire(key, RATE_WINDOW_SEC, "NX")
-        .exec()
-        .then((results) => {
-          const count = results?.[0]?.[1] as number | undefined;
-          const used = count ?? 0;
-          res.setHeader('X-RateLimit-Limit', RATE_LIMIT);
-          res.setHeader('X-RateLimit-Remaining', Math.max(0, RATE_LIMIT - used));
-          if (used > RATE_LIMIT) {
-            const err = new AnvilError(ErrorCode.RATE_LIMITED, "Too many requests", undefined, 429);
-            res.status(err.statusCode).json(err.toJSON());
-            return;
-          }
-          next();
-        })
-        .catch((err) => {
-          if (RATELIMIT_REDIS_LOUD_FAIL) {
-            // Production + Redis failure = 503 with Retry-After. Silent
-            // degradation here was a rate-limit-bypass window on
-            // multi-replica deploys. Operators wanting the old behavior
-            // can set ANVIL_RATELIMIT_REDIS_FALLBACK=1.
-            console.error(
-              `[ratelimit] redis pipeline failed in production (${err.message}) — returning 503. Set ANVIL_RATELIMIT_REDIS_FALLBACK=1 to opt into silent in-memory fallback.`,
-            );
-            const aerr = new AnvilError(
-              ErrorCode.RATE_LIMITED,
-              "Rate-limit backend temporarily unavailable",
-              err.message,
-              503,
-            );
-            res.setHeader("Retry-After", "5");
-            res.status(aerr.statusCode).json(aerr.toJSON());
-            return;
-          }
-          // Dev (or operator opt-in): warn once and fall through to in-memory.
-          console.warn(`[ratelimit] redis pipeline failed (${err.message}) — falling back to in-memory for this request.`);
-          inMemoryRateLimit(ip, now, res, next);
-        });
+  const finish = (decision: { allowed: boolean; remaining: number; retryAfterSec: number }): void => {
+    res.setHeader("X-RateLimit-Limit", RATE_LIMIT);
+    res.setHeader("X-RateLimit-Remaining", decision.remaining);
+    if (!decision.allowed) {
+      res.setHeader("Retry-After", String(decision.retryAfterSec));
+      const err = new AnvilError(ErrorCode.RATE_LIMITED, "Too many requests", undefined, 429);
+      res.status(err.statusCode).json(err.toJSON());
       return;
     }
-  }
-  inMemoryRateLimit(ip, now, res, next);
-});
+    next();
+  };
 
-function inMemoryRateLimit(
-  ip: string,
-  now: number,
-  res: express.Response,
-  next: express.NextFunction,
-): void {
-  let entry = rateLimitMap.get(ip);
-  if (!entry || now > entry.resetAt) {
-    entry = { count: 0, resetAt: now + RATE_WINDOW };
-    rateLimitMap.set(ip, entry);
-  }
-  entry.count++;
-  res.setHeader('X-RateLimit-Limit', RATE_LIMIT);
-  res.setHeader('X-RateLimit-Remaining', Math.max(0, RATE_LIMIT - entry.count));
-  if (entry.count > RATE_LIMIT) {
-    const err = new AnvilError(ErrorCode.RATE_LIMITED, "Too many requests", undefined, 429);
-    res.status(err.statusCode).json(err.toJSON());
+  if (isRedisEnabled() && getRedis()) {
+    consumeRedis(ip, now)
+      .then(finish)
+      .catch((err) => {
+        if (RATELIMIT_REDIS_LOUD_FAIL) {
+          console.error(
+            `[ratelimit] redis EVAL failed in production (${err.message}) — returning 503. Set ANVIL_RATELIMIT_REDIS_FALLBACK=1 to opt into silent in-memory fallback.`,
+          );
+          const aerr = new AnvilError(
+            ErrorCode.RATE_LIMITED,
+            "Rate-limit backend temporarily unavailable",
+            err.message,
+            503,
+          );
+          res.setHeader("Retry-After", "5");
+          res.status(aerr.statusCode).json(aerr.toJSON());
+          return;
+        }
+        console.warn(`[ratelimit] redis EVAL failed (${err.message}) — falling back to in-memory for this request.`);
+        finish(consumeInMemory(ip, now));
+      });
     return;
   }
-  next();
-}
-
-// Clean up stale in-memory entries every 5 minutes (Redis entries
-// auto-expire via TTL).
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of rateLimitMap) {
-    if (now > entry.resetAt) rateLimitMap.delete(ip);
-  }
-}, 300_000);
+  finish(consumeInMemory(ip, now));
+});
 
 // Request ID
 app.use((req, _res, next) => {
@@ -458,19 +417,30 @@ app.get("/whoami", async (req, res) => {
   // Redis is on, read the same key the rate-limit middleware writes; when
   // off, fall back to the in-memory Map snapshot. Either way the response
   // includes `limit` so the caller can compute remaining locally.
+  // H5 — token bucket replaces the fixed-window counter. We surface
+  // bucket state via the same `usedThisWindow` shape callers already
+  // expect: it's now an estimate of consumed tokens (capacity - remaining).
+  // Redis read is the source of truth when configured; falls back to the
+  // in-memory bucket state otherwise. A read-only probe per /whoami
+  // doesn't decrement the bucket.
   let usedThisWindow = 0;
   if (isRedisEnabled()) {
     try {
       const redis = getRedis();
       if (redis) {
-        const v = await redis.get(`anvil:ratelimit:${ip}`);
-        if (v) usedThisWindow = parseInt(v, 10) || 0;
+        // Tokens remaining HMGET; default to capacity (full bucket) when unseen.
+        const data = await redis.hmget(`anvil:ratelimit:tb:${ip}`, "tokens");
+        const tokensStr = data?.[0];
+        if (tokensStr != null) {
+          const tokens = parseFloat(tokensStr);
+          if (Number.isFinite(tokens)) usedThisWindow = Math.max(0, RATE_LIMIT - Math.floor(tokens));
+        }
       }
     } catch { /* fall through */ }
-  } else {
-    const entry = rateLimitMap.get(ip);
-    if (entry && Date.now() < entry.resetAt) usedThisWindow = entry.count;
   }
+  // No in-memory probe; the bucket state is module-internal to rate-limit.ts
+  // and /whoami stays cheap. Acceptable: dev probes report 0/used until
+  // operator wires Redis, which is the recommended config anyway.
 
   res.json({
     ip: maskIpForResponse(ip),
