@@ -43,6 +43,17 @@ export function useAnvilPipeline() {
   const [repoUrl, setRepoUrl] = useState("");
   const [repoRef, setRepoRef] = useState("");
   const [repoSubpath, setRepoSubpath] = useState("");
+  // H2 — Cargo workspace program selection. When /parse returns
+  // programCandidates with length > 1, we stash the list here so the
+  // input UI can render a picker. The user's chosen workspace member
+  // name lives in `selectedProgramName` (avoid collision with the
+  // existing `programName` below which is the emitted package name).
+  // Pre-flight re-runs send selectedProgramName to /parse as
+  // `programName` so the resolver picks the right entry.
+  const [selectedProgramName, setSelectedProgramName] = useState<string>("");
+  const [programCandidates, setProgramCandidates] = useState<
+    { name: string; entryPath: string }[]
+  >([]);
   const [resolvedSource, setResolvedSource] = useState<string | null>(null);
 
   // ─── Output state ─────────────────────────────────────────────────────────
@@ -533,18 +544,41 @@ export function useAnvilPipeline() {
             repoUrl: repoUrl.trim(),
             repoRef: repoRef.trim() || undefined,
             repoSubpath: repoSubpath.trim() || undefined,
+            // H2 — workspace program selection. Empty string means
+            // "auto-pick"; the resolver will refuse with a candidate
+            // list when >1 workspace member exists, and the UI catches
+            // the error to populate programCandidates for the picker.
+            programName: selectedProgramName.trim() || undefined,
           }),
         });
         if (!r.ok) {
           const p = await r
             .json()
             .catch(() => ({ error: "Repository parse failed" }));
-          throw new Error(
-            p.details ?? p.error ?? "Repository parse failed"
-          );
+          // H2 — when the resolver refuses with "Cargo workspace with N
+          // program candidates", surface the candidate names to the UI.
+          // The error message ends with "Candidates: a, b, c." — parse
+          // that out and stash in programCandidates so the picker
+          // renders. The user picks one and we re-run with programName.
+          const msg = p.details ?? p.error ?? "Repository parse failed";
+          const candidatesMatch = String(msg).match(/Candidates:\s*(.+?)\.$/);
+          if (candidatesMatch?.[1]) {
+            const names = candidatesMatch[1].split(",").map((s) => s.trim()).filter(Boolean);
+            setProgramCandidates(
+              names.map((name) => ({ name, entryPath: `programs/${name}/src/lib.rs` })),
+            );
+          }
+          throw new Error(msg);
         }
         parsed = (await r.json()) as ParseResponse;
         setResolvedSource(parsed.source ?? null);
+        // H2 — also surface candidates from a successful parse response so
+        // the picker stays visible after the user pins one (UX cue: "you
+        // chose 'drift'; other workspace members were 'perp_market',
+        // 'spot_market'").
+        if (Array.isArray(parsed.programCandidates)) {
+          setProgramCandidates(parsed.programCandidates);
+        }
       }
 
       setPipelineStage("parsing");
@@ -1242,6 +1276,12 @@ export function useAnvilPipeline() {
     setRepoRef,
     repoSubpath,
     setRepoSubpath,
+    // H2 — workspace program selection (uses selectedProgramName to
+    // avoid collision with the existing `programName` state below
+    // which is the emitted package name).
+    selectedProgramName,
+    setSelectedProgramName,
+    programCandidates,
 
     // Resolved source
     resolvedSource,

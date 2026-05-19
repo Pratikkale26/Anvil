@@ -61,6 +61,9 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
     setRepoRef,
     repoSubpath,
     setRepoSubpath,
+    selectedProgramName,
+    setSelectedProgramName,
+    programCandidates,
     hasOutput,
     validationIssues,
     transformSummary,
@@ -290,6 +293,40 @@ export function InputPanel({ state }: { state: AnvilPipelineState }) {
                     className="w-full rounded-xl border border-anvil-card-border bg-white/[0.03] text-anvil-text px-3 py-2.5 text-[13px] outline-none"
                   />
                 </div>
+                {/* H2 — Cargo workspace program picker. Renders after the
+                    resolver detects multiple `programs/<name>/src/lib.rs`
+                    entries OR a successful parse surfaces the full list.
+                    Pre-H2 the resolver alphabetically auto-picked; users
+                    pasting Drift / Mango v4 / Squads silently transpiled
+                    the wrong program. Now: dropdown with each member's
+                    name, user picks, Run re-fires with programName set. */}
+                {programCandidates && programCandidates.length > 1 && (
+                  <div>
+                    <InputLabel>
+                      Workspace program{" "}
+                      <span className="text-anvil-text-dim">
+                        ({programCandidates.length} candidates detected)
+                      </span>
+                    </InputLabel>
+                    <select
+                      value={selectedProgramName}
+                      onChange={(e) => setSelectedProgramName(e.target.value)}
+                      className="w-full rounded-xl border border-anvil-card-border bg-white/[0.03] text-anvil-text px-3 py-2.5 text-[13px] outline-none cursor-pointer"
+                    >
+                      <option value="">— pick one —</option>
+                      {programCandidates.map((c) => (
+                        <option key={c.name} value={c.name}>
+                          {c.name} ({c.entryPath})
+                        </option>
+                      ))}
+                    </select>
+                    {!selectedProgramName && (
+                      <p className="mt-1.5 text-[11px] text-anvil-text-dim">
+                        This repo is a Cargo workspace. Pick a program to transpile.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

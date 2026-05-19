@@ -25,6 +25,10 @@ export type ParseResponse = {
   candidates: string[] | null;
   repoUrl?: string | null;
   source?: string | null;
+  /** H2 — Cargo workspace program candidates. Populated when the repo
+   *  has one or more `programs/<name>/src/lib.rs` entries. Workbench
+   *  renders a picker when length > 1. */
+  programCandidates?: { name: string; entryPath: string }[] | null;
 };
 
 export type EmitFile = { path: string; content: string };
