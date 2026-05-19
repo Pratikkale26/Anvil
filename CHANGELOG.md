@@ -8,6 +8,20 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ## Unreleased
 
+### Added — DataV2 fully IR-typed + slot 11 + Anchor 1.0 dup + version matrix (2026-05-19 night, 4 commits)
+
+Task #84 fully closed in two follow-on commits:
+
+- **Phase 4** (`52501fd`) — DataV2.collection field. Local `Collection` struct (33 bytes: 1 verified + 32 key) in helpers.rs (both targets). Borsh write at the create+update DataV2 site. **Slot 11/12 byte-equal**: new `mpl-verify-collection-direct` demo sets `collection: Some(Collection { verified: false, key: collection_mint })` in DataV2 on item-NFT create, then `verify_collection()` flips verified=true. Byte-compare item.metadata.
+- **Phase 5** (`4d6975c`) — DataV2.uses field + `Uses` struct + `UseMethod` enum (Burn=0, Multiple=1, Single=2). Borsh write: 1 byte tag + 1 byte variant + 8 byte u64 LE remaining + 8 byte u64 LE total. `mpl_datav2_fields_dropped` warning retired (no fields silently dropped now).
+
+Plus parser + harness work:
+
+- **Anchor 1.0 `dup` constraint** (`8cafdaf`, task #78) — `#[account(mut, dup = primary)]` flows through as `Constraint { kind: 'dup', value: 'primary' }` in IR. Target emit ignores (Pinocchio + Native have no anti-duplicate validation by default), preserves semantic intent for validator + AI refine.
+- **Anchor version matrix plumbing** (`bed03c1`, tasks #27/#28/#29) — `detectAnchorVersion` handles 3 shapes (terse, extended, exact-pin). Differential harness gains `anchorVersionOverride` field for matrix runs. Infrastructure ready; actual cross-version matrix is an env-gated job.
+
+KPI: **11/12 MPL byte-equal** + Anchor 1.0 syntax coverage complete. Only `unverify_collection` remains blocked — anchor-spl 0.31 upstream wrapper bug.
+
 ### Added — DataV2.creators IR + sign_metadata byte-equal (task #84 phases 1-3 + slot 10, 2026-05-19 evening, 4 commits)
 
 Task #84 phase 1-3 lands DataV2.creators end-to-end:

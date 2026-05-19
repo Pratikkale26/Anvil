@@ -25,7 +25,7 @@ Cargo green is necessary but not sufficient. This is the actual correctness sign
 
 ## What's verified today
 
-**49 byte-equal differential fixtures** lock these emit shapes against the Anchor reference on every commit. **Data + lamports + owner all byte-compared in a real VM** — not just `cargo build` green, not just IDL match. The MPL Token Metadata + Pyth Receiver `.so` are bundled as test fixtures and loaded into LiteSVM via `svm.addProgram` so CPI shape correctness is also verified end-to-end. **MPL byte-equal coverage 10/12** as of 2026-05-19: `create_metadata_v3` (with full DataV2.creators support), `create_master_edition_v3`, `update_metadata_accounts_v2`, `set_and_verify_collection`, `freeze_delegated`, `thaw_delegated`, `approve_collection_authority`, `revoke_collection_authority`, `mint_new_edition_from_master_edition`, `sign_metadata`.
+**50 byte-equal differential fixtures** lock these emit shapes against the Anchor reference on every commit. **Data + lamports + owner all byte-compared in a real VM** — not just `cargo build` green, not just IDL match. The MPL Token Metadata + Pyth Receiver `.so` are bundled as test fixtures and loaded into LiteSVM via `svm.addProgram` so CPI shape correctness is also verified end-to-end. **MPL byte-equal coverage 11/12** as of 2026-05-19: `create_metadata_v3` (with full DataV2 support — creators, collection, uses), `create_master_edition_v3`, `update_metadata_accounts_v2`, `set_and_verify_collection`, `freeze_delegated`, `thaw_delegated`, `approve_collection_authority`, `revoke_collection_authority`, `mint_new_edition_from_master_edition`, `sign_metadata`, `verify_collection`.
 
 ### 6 real-world Anchor programs verified byte-equal
 
