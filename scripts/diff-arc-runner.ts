@@ -17,13 +17,36 @@
  * Usage:
  *   bun run scripts/diff-arc-runner.ts [--phase=ab] [--out=...]
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync } from "node:fs";
+import { join, dirname, relative } from "node:path";
 import { parseAnchor } from "../api/src/parser/anchor-parser.ts";
 import { emitPinocchioFull } from "../api/src/emitter/pinocchio-emitter.ts";
 import { validateEmitterOutput } from "../api/src/emitter/output-validator.ts";
 import { buildProjectScaffold } from "../api/src/emitter/project-scaffold.ts";
 import { runBuild } from "../api/src/build/build-runner.ts";
+import { buildProjectSourceGraph, type ProjectFile } from "../api/src/parser/project-source.ts";
+
+/**
+ * Collect every .rs file under the same `src/` directory as the entry file.
+ * Used to feed buildProjectSourceGraph for fixtures that declare external
+ * modules (`mod other;`) — pda-derivation has this shape.
+ */
+function collectProjectFiles(entryPath: string): ProjectFile[] {
+  const srcDir = dirname(entryPath);
+  const out: ProjectFile[] = [];
+  function walk(dir: string) {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      const stat = statSync(p);
+      if (stat.isDirectory()) walk(p);
+      else if (name.endsWith(".rs")) {
+        out.push({ path: relative(srcDir, p), content: readFileSync(p, "utf8") });
+      }
+    }
+  }
+  walk(srcDir);
+  return out;
+}
 
 const REPO_ROOT = "/tmp/anvil-diff-arc/repos/anchor-org";
 const SPL_ROOT = "/tmp/anvil-diff-arc/repos/spl";
@@ -82,7 +105,22 @@ async function processOne(c: Candidate): Promise<ProgramResult> {
     res.parseError = "source file not found";
     return res;
   }
-  const source = readFileSync(c.source, "utf8");
+  // task #44 — multi-file Account<crate::other::X>. Some fixtures (e.g.
+  // pda-derivation) declare external modules (`mod other;`) and reference
+  // types from those modules. Walk the project src/ tree to collect all
+  // .rs files, then use buildProjectSourceGraph to flatten into a single
+  // source string that parseAnchor can handle.
+  const projectFiles = collectProjectFiles(c.source);
+  const entryRel = relative(dirname(c.source), c.source); // "lib.rs"
+  let source: string;
+  try {
+    const graph = buildProjectSourceGraph(entryRel, projectFiles);
+    source = graph.source;
+  } catch {
+    // Fallback: single-file read when graph build fails (e.g. entry not
+    // identified by buildProjectSourceGraph for some shape).
+    source = readFileSync(c.source, "utf8");
+  }
 
   // Phase A — parse + emit
   const parsed = await parseAnchor(source);

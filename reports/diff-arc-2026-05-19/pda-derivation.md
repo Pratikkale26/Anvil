@@ -6,13 +6,12 @@
 **Parser warnings:** 0
 **Validator issues:** 0
 **cargo-build verdict:** FAILED
-**cargo errors:** 7
-**cargo duration:** 194ms
+**cargo errors:** 6
+**cargo duration:** 196ms
 
 ## Cargo errors (first 8)
 
 ```
-no field `data` on type `&pinocchio::account_info::AccountInfo`
 no field `base_data` on type `&pinocchio::account_info::AccountInfo`
 no field `data` on type `&pinocchio::account_info::AccountInfo`
 no field `base_data_key` on type `&pinocchio::account_info::AccountInfo`
