@@ -134,6 +134,8 @@ mod helpers;
 
 use instructions::*;
 
+use helpers::*;
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(

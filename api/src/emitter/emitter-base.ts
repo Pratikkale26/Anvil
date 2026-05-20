@@ -1144,14 +1144,19 @@ export abstract class BaseEmitter {
     if (ir.errors.length > 0) {
       sections.push("pub use errors::*;");
     }
-    // User trait impls land AFTER `mod state;` so account-struct types
-    // emitted into state.rs resolve when referenced. We pull them into
-    // lib.rs scope with `use state::*;` since trait-impl bodies often
-    // reference state structs verbatim (coral-multisig:
+    // G14: bring state + helpers symbols into lib.rs scope so impl
+    // blocks / functions that survive at lib.rs can reference them
+    // (raydium-clmm's `impl SwapState { fn new(pool_state: &PoolState
+    // …) }` stays in lib.rs and needs PoolState + tick_spacing_index
+    // _from_tick visible). Previously gated on userTraitImpls being
+    // non-empty, which raydium doesn't have.
+    if (ir.accounts.length > 0) sections.push("use state::*;");
+    if (hasHelperModule) sections.push("use helpers::*;");
+    // User trait impls land AFTER the use lines so account-struct types
+    // emitted into state.rs resolve when referenced (coral-multisig:
     // `impl From<&Transaction> for Instruction { … }`).
     const userTraitImpls = this.emitUserTraitImpls(ir);
     if (userTraitImpls) {
-      if (ir.accounts.length > 0) sections.push("use state::*;");
       sections.push(userTraitImpls);
     }
 

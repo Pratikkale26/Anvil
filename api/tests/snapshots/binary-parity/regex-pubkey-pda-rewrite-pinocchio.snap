@@ -118,6 +118,8 @@ use instructions::*;
 
 pub use errors::*;
 
+use helpers::*;
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(

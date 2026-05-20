@@ -266,6 +266,10 @@ use instructions::*;
 
 pub use errors::*;
 
+use state::*;
+
+use helpers::*;
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(

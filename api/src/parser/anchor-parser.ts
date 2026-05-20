@@ -143,6 +143,20 @@ export async function parseAnchor(
   // macros only).
   source = rewriteErrMacroToExplicit(source);
   source = rewriteAnchorRequireMacros(source);
+  // G11 — Arcium framework support. Source uses `#[arcium_program]` +
+  // sibling attribute macros (`#[arcium_callback]`,
+  // `#[queue_computation_accounts]`, `#[callback_accounts]`,
+  // `#[init_computation_definition_accounts]`) which Anvil's parser
+  // doesn't recognize. The bare swap to `#[program]` makes parsing
+  // succeed (downstream issues like `use arcium_anchor::*` filtering
+  // get handled by the standard import scrubber + unsalvageable-
+  // helper commentout). Bodies that call arcium runtime fns are
+  // expected to be unsalvageable — manual port required.
+  source = source.replace(/#\[\s*arcium_program\s*\]/g, "#[program]");
+  source = source.replace(/#\[\s*arcium_callback\s*\([^)]*\)\s*\]/g, "");
+  source = source.replace(/#\[\s*queue_computation_accounts\s*\([^)]*\)\s*\]/g, "");
+  source = source.replace(/#\[\s*callback_accounts\s*\([^)]*\)\s*\]/g, "");
+  source = source.replace(/#\[\s*init_computation_definition_accounts\s*\([^)]*\)\s*\]/g, "");
   // task #41 — same fix for `pubkey!("...")` macro. Anchor's prelude
   // provides it; Pinocchio doesn't. Single-file parseAnchor was bypassing
   // buildProjectSource's expansion; surfaced by diff-arc on pda-derivation

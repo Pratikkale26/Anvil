@@ -77,6 +77,8 @@ mod instructions;
 
 use instructions::*;
 
+use state::*;
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(

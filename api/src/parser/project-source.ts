@@ -660,8 +660,18 @@ export function neutralizeUnsupportedMacros(source: string): string {
   for (const name of macroNames) {
     const re = new RegExp(`\\b${name}!\\s*[(\\[{]`, "g");
     for (const m of out.matchAll(re)) {
-      const start = m.index ?? 0;
-      const openIdx = start + m[0].length - 1;
+      let start = m.index ?? 0;
+      // G13: extend range START backward through any leading `(\w+::)+`
+      // path prefix so `config_items::for_named_field!(...)` matches
+      // including the `config_items::` qualifier. Without this the
+      // qualifier is left behind, dangling against the commented body.
+      // Caught by kamino-klend.
+      const prefixWindow = out.slice(Math.max(0, start - 200), start);
+      const prefixMatch = prefixWindow.match(/(?:[A-Za-z_][A-Za-z0-9_]*\s*::\s*)+$/);
+      if (prefixMatch) {
+        start -= prefixMatch[0].length;
+      }
+      const openIdx = (m.index ?? 0) + m[0].length - 1;
       const opener = out[openIdx];
       const closer = opener === "(" ? ")" : opener === "[" ? "]" : "}";
       let depth = 1;
@@ -711,30 +721,29 @@ export function neutralizeUnsupportedMacros(source: string): string {
   for (let i = merged.length - 1; i >= 0; i--) {
     const r = merged[i]!;
     const block = out.slice(r.start, r.end);
-    // Let-binding form: `let x = MACRO!(args);` or `let x = MACRO!(args)?;`.
-    // Substituting with `let x = todo!(...)` keeps the binding name in
-    // scope for downstream references. Without this, commenting out the
-    // entire line drops `x` from scope and any later use of `x` cascades
-    // into E0425 unresolved-name errors. Pattern is: preceding text
-    // ends with `let <ident>(: <type>)? =` immediately before the
-    // macro invocation. Walk back to detect.
+    // Two non-statement-form cases to detect (both need todo!() inline
+    // substitution to preserve enclosing delimiters):
+    //  a) let-binding RHS: `let x = MACRO!(...)?;`
+    //  b) inner-expression: `f(MACRO!(...))`, `chain.method(MACRO!(...))`,
+    //     `Err(MACRO!(...).into())`, `_ => MACRO!(...)`, etc.
+    // For both, line-commenting the invocation breaks parens/braces.
     const lookBefore = out.slice(Math.max(0, r.start - 80), r.start);
     const letMatch = lookBefore.match(/let\s+(\w+)(?:\s*:\s*[^=]+?)?\s*=\s*$/);
-    if (letMatch) {
-      // Replace the macro invocation with `todo!("anvil: macro NAME unsupported")`,
-      // preserving the trailing `?;` if the original had it. Look at the
-      // raw block to detect.
-      const hasQ = /\?\s*;\s*$/.test(block);
-      const replacement = hasQ
-        ? `todo!("anvil: macro_rules! expansion required")?;`
-        : `todo!("anvil: macro_rules! expansion required");`;
-      // Add a single-line TODO comment ABOVE the let-stmt.
-      // Walk back to find the let-stmt's line start.
-      const lineStart = out.lastIndexOf("\n", r.start - 1) + 1;
-      const lineLead = out.slice(lineStart, r.start - (lookBefore.length - (lookBefore.length - (letMatch.index ?? 0))));
-      const leadingWS = out.slice(lineStart, r.start).match(/^(\s*)/)?.[1] ?? "";
-      void lineLead;
-      out = out.slice(0, r.start) + replacement + `\n${leadingWS}// ⚠️ Anvil TODO: macro_rules! expansion required` + out.slice(r.end);
+    // Inner-expression detection: preceded by `(`, `,`, `=`, `:`, `=>`,
+    // `&&`, `||`, `?`, or `.<ident>(` (method-call arg context). The
+    // common shape from drift: `Err(math_error!()).into()`. Don't fire
+    // for line-start statement contexts.
+    const innerExprPre = lookBefore.match(/(?:[(,:=]|=>|&&|\|\||\?|\.\s*\w+\s*\()\s*$/);
+    if (letMatch || innerExprPre) {
+      // Preserve trailing `?` and `;` if the original block has them
+      // (the let-binding form usually does; inner-expression usually
+      // doesn't — but be lenient).
+      const trailingMatch = block.match(/\)\s*(\?)?\s*(;)?\s*$/);
+      const hasQ = trailingMatch?.[1] === "?";
+      const hasSemi = trailingMatch?.[2] === ";";
+      const tail = `${hasQ ? "?" : ""}${hasSemi ? ";" : ""}`;
+      const replacement = `todo!("anvil: macro_rules! expansion required")${tail}`;
+      out = out.slice(0, r.start) + replacement + out.slice(r.end);
       continue;
     }
     const commented = block

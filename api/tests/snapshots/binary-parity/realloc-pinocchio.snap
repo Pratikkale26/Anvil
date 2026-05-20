@@ -212,6 +212,10 @@ mod helpers;
 
 use instructions::*;
 
+use state::*;
+
+use helpers::*;
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
