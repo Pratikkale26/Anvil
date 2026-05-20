@@ -4965,6 +4965,14 @@ export const PINOCCHIO_T22_TYPE_BLACKLIST: ReadonlyArray<string> = [
   // to any program that pokes at spl_token_2022's extension surface
   // outside the typed cpi_t22_* IR kinds (raydium-clmm pattern).
   "spl_token_2022",
+  // G5-followup — switchboard_on_demand body refs (the crate is no
+  // longer in scaffold deps). RandomnessAccountData and its
+  // PullFeedAccountData sibling are the common references; without
+  // the crate, body code cascades into "use of undeclared type".
+  // Caught by arjun-merkle-tree (Native).
+  "RandomnessAccountData",
+  "PullFeedAccountData",
+  "switchboard_on_demand",
 ];
 
 // Native subset — types whose chains break post-emit regardless of whether
@@ -4980,6 +4988,12 @@ export const NATIVE_T22_TYPE_BLACKLIST: ReadonlyArray<string> = [
   "ExecuteInstruction",
   "InitializeExtraAccountMetaList",
   "InterfaceAccount",
+  // G5 — switchboard types also need Native commentout because the
+  // crate is filtered from deps (transitive borsh-0.10 conflict).
+  // Caught by arjun-merkle-tree Native side.
+  "RandomnessAccountData",
+  "PullFeedAccountData",
+  "switchboard_on_demand",
 ];
 
 // FN blacklist for Pinocchio's commentout pass. These are raw

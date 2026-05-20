@@ -479,6 +479,22 @@ use solana_program::{
     return `Pubkey::new_from_array(${sliceExpr}.try_into().map_err(|_| ProgramError::InvalidInstructionData)?)`;
   }
 
+  /** G5-followup — apply NATIVE_T22 blacklist to carried helper-fn bodies
+   *  too (mirrors PinocchioEmitter's override). Source helpers that
+   *  reference switchboard types (RandomnessAccountData /
+   *  PullFeedAccountData) or other unsupported Anchor-method chains
+   *  fail at link time on Native; comment-out matches the typed
+   *  cpi_t22_* IR kinds' fall-back behavior. Caught by
+   *  arjun-merkle-tree (Native). */
+  protected override carriedFunctionBlock(rawCode: string, ir?: SolanaIR): string {
+    const baseOutput = super.carriedFunctionBlock(rawCode, ir);
+    return applyT22ExtensionCommentout(baseOutput, {
+      typeBlacklist: NATIVE_T22_TYPE_BLACKLIST,
+      fnBlacklist: NATIVE_T22_FN_BLACKLIST,
+      matchDataBorrow: false,
+    });
+  }
+
   override emitEntrypoint(_ir: SolanaIR): string {
     return `entrypoint!(process_instruction);
 
