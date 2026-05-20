@@ -388,6 +388,118 @@ const WELL_KNOWN_PROGRAM_IDS: Record<string, string> = {
 };
 
 /**
+ * Disambiguate `pub const NAME: ... = ...;` declarations that live inside
+ * non-program `pub mod X { ... }` blocks when multiple sibling modules
+ * each declare the same NAME. Without this, the flattened source has
+ * multiple `pub const ID` decls at top level (raydium-clmm pattern) that
+ * collide as E0428 "the name `ID` is defined multiple times".
+ *
+ * The rewrite is purely textual:
+ *   1. Find every `pub mod NAME { ... }` block (skip `#[program]` ones).
+ *   2. For each top-level `pub const X` inside, rename to `NAME_X` and
+ *      rewrite any `NAME::X` reference elsewhere in the source.
+ *
+ * Idempotent for sources without the pattern. Safe to run after
+ * vendorExternalProgramIDs (which adds top-level consts, not nested).
+ *
+ * Exported for unit testing.
+ */
+export function disambiguateSiblingModConsts(source: string): string {
+  // Quick pre-flight — if no `pub mod` or no `pub const`, nothing to do.
+  if (!/\bpub\s+mod\s+\w+\s*\{/.test(source)) return source;
+  if (!/\bpub\s+const\b/.test(source)) return source;
+
+  // Walk to find every `pub mod NAME { ... }` block by scanning for
+  // openers and matching their `{...}` with a brace counter. Skip
+  // `#[program]`-annotated mods (they're the entry handler module —
+  // never has bare consts to disambiguate).
+  const renames = new Map<string, string>();  // "modName::origName" → "modName_origName"
+  const modRegex = /(?:#\[(?:program)\]\s*)?\bpub\s+mod\s+(\w+)\s*\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = modRegex.exec(source)) !== null) {
+    // Skip if this match started inside `#[program]` attribute.
+    const matchStart = m.index;
+    if (/#\[program\]/.test(source.slice(Math.max(0, matchStart - 60), matchStart))) {
+      continue;
+    }
+    const modName = m[1]!;
+    // Find matching closing `}` for the mod body.
+    const bodyStart = m.index + m[0].length;
+    let depth = 1;
+    let bodyEnd = bodyStart;
+    for (let i = bodyStart; i < source.length; i++) {
+      const ch = source[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) { bodyEnd = i; break; }
+      }
+    }
+    if (depth !== 0) continue;
+    const body = source.slice(bodyStart, bodyEnd);
+    // Find top-level `pub const NAME` in the body (depth 0 within body).
+    // Anchor convention puts const decls on their own line; a narrow
+    // regex over the body text suffices.
+    const constRegex = /\bpub\s+const\s+(\w+)\s*:/g;
+    let cm: RegExpExecArray | null;
+    while ((cm = constRegex.exec(body)) !== null) {
+      const origName = cm[1]!;
+      // Skip renaming when origName already starts with the modName
+      // prefix — that's our own previous-pass output, which would
+      // otherwise be re-renamed to `<modName>_<modName>_<...>` and
+      // diverge on every subsequent pass. Idempotency guard.
+      if (origName.startsWith(`${modName}_`)) continue;
+      const newName = `${modName}_${origName}`;
+      renames.set(`${modName}::${origName}`, newName);
+    }
+  }
+  if (renames.size === 0) return source;
+
+  // Apply renames: for each entry, rewrite `<modName>::<origName>` →
+  // `<modName>_<origName>` AND rewrite the in-mod `pub const <origName>`
+  // → `pub const <newName>`. The latter requires re-scanning per mod
+  // because the const decl is the one site where the qualifier-strip
+  // doesn't apply.
+  let out = source;
+  for (const [qualified, newName] of renames) {
+    const [modName, origName] = qualified.split("::");
+    if (!modName || !origName) continue;
+    // 1. Rewrite all qualified references `modName::origName` →
+    //    `modName_origName`. Word-boundary protection so we don't
+    //    rewrite things like `modName_extra::origName` (very rare).
+    out = out.replace(
+      new RegExp(`\\b${modName}\\s*::\\s*${origName}\\b`, "g"),
+      newName,
+    );
+    // 2. Rewrite the const decl itself. Need to be careful: there
+    //    are multiple mods that might have the same const name
+    //    (admin::ID, limit_order_admin::ID), and each needs to
+    //    rename to its OWN newName. Scope the rewrite to the
+    //    specific mod's body.
+    const modMatch = out.match(new RegExp(`\\bpub\\s+mod\\s+${modName}\\s*\\{`));
+    if (!modMatch) continue;
+    const bodyStart = modMatch.index! + modMatch[0].length;
+    let depth = 1;
+    let bodyEnd = bodyStart;
+    for (let i = bodyStart; i < out.length; i++) {
+      const ch = out[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") { depth--; if (depth === 0) { bodyEnd = i; break; } }
+    }
+    if (depth !== 0) continue;
+    const before = out.slice(0, bodyStart);
+    const body = out.slice(bodyStart, bodyEnd);
+    const after = out.slice(bodyEnd);
+    const newBody = body.replace(
+      new RegExp(`(\\bpub\\s+const\\s+)${origName}\\b`),
+      `$1${newName}`,
+    );
+    out = before + newBody + after;
+  }
+  return out;
+}
+
+/**
  * Detect `use <known_crate>::{ID as <ALIAS>, ...}` and `use <known_crate>::
  * ID as <ALIAS>;` patterns in source and append vendored `pub const`
  * declarations to the end. The original `use` line is left untouched
@@ -1218,6 +1330,11 @@ function buildFlattenedSource(
   // Vendor well-known external program IDs (mpl_core::ID etc.) — see
   // anchor-parser for full rationale.
   source = vendorExternalProgramIDs(source);
+  // Rename consts inside non-program `pub mod X { ... }` blocks so
+  // sibling-module collisions like raydium-clmm's `admin::ID` +
+  // `limit_order_admin::ID` resolve to unique flat names. See
+  // disambiguateSiblingModConsts.
+  source = disambiguateSiblingModConsts(source);
 
   return { source, includedFiles, missingModules, cfgDrops, wasFlattened: true };
 }
