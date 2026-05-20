@@ -815,9 +815,15 @@ export abstract class BaseEmitter {
     return [...extracted, ...(ir.imports ?? [])]
       .map((statement) => {
         const trimmed = statement.trim().replace(/;$/, "");
-        const normalized = trimmed.startsWith("use ") || trimmed.startsWith("pub use ")
-          ? `${trimmed};`
-          : `use ${trimmed};`;
+        // Recognize all `pub`/`pub(crate)`/`pub(super)`/`pub(in ...)` forms
+        // followed by `use ...` as already-prefixed. Without this, the
+        // fallback `use ${trimmed};` branch produces malformed output
+        // like `use pub(crate) use for_named_field;` (caught by kamino-
+        // klend's macro re-exports).
+        const isAlreadyUse =
+          trimmed.startsWith("use ") ||
+          /^pub(?:\s*\(\s*[\w:]+\s*\))?\s+use\s/.test(trimmed);
+        const normalized = isAlreadyUse ? `${trimmed};` : `use ${trimmed};`;
         // Anchor re-exports solana-program, so users often write
         // `use anchor_lang::solana_program::instruction::Instruction;`.
         // The anchor_lang filter below would strip that, leaving the

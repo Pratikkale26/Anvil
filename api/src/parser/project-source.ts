@@ -720,6 +720,12 @@ function isInternalUse(line: string, resolvedModules: Set<string>): boolean {
  */
 function collectExternalUseStatements(source: string, resolvedModules: Set<string>): string[] {
   const uses: string[] = [];
+  // Compute ranges of `macro_rules! NAME { ... }` bodies so use statements
+  // inside them are skipped. The macro body uses `$ident` metavariables
+  // that must NOT be pulled out — `use $crate::X;` inside a macro is
+  // valid Rust, but at top-level becomes the cargo error "expected
+  // identifier, found `$`". Caught by kamino-klend's `try_block!` macro.
+  const macroRanges = computeMacroRulesRanges(source);
   // Multi-line use statements (e.g. wrapped `use a::{b,\n  c,\n  d};`) need
   // to be captured up to the terminating `;` regardless of newlines, then
   // flattened into individual `use a::b::c;` statements. Without this,
@@ -728,11 +734,43 @@ function collectExternalUseStatements(source: string, resolvedModules: Set<strin
   // strings and emits both — E0252 "name `Mint` is defined multiple times".
   for (const match of source.matchAll(/^\s*(?:pub\s+)?use\s+[^;]*;/gm)) {
     const line = match[0];
+    const matchOffset = match.index ?? -1;
+    if (matchOffset >= 0 && isInMacroBody(matchOffset, macroRanges)) continue;
     if (line && !isInternalUse(line, resolvedModules)) {
       uses.push(...flattenUseStatement(line));
     }
   }
   return uses;
+}
+
+/** Compute byte-range pairs `[start, end)` covering every `macro_rules!
+ *  NAME { ... }` body in the source. The body is delimited by the brace
+ *  immediately after the macro name and its matching closer. Skips uses
+ *  inside these ranges. */
+function computeMacroRulesRanges(source: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (const match of source.matchAll(/\bmacro_rules!\s*\w+\s*\{/g)) {
+    const openBrace = (match.index ?? 0) + match[0].length - 1;
+    let depth = 1;
+    let close = openBrace;
+    for (let i = openBrace + 1; i < source.length; i++) {
+      const ch = source[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) { close = i; break; }
+      }
+    }
+    if (depth === 0) ranges.push([openBrace, close]);
+  }
+  return ranges;
+}
+
+function isInMacroBody(offset: number, ranges: Array<[number, number]>): boolean {
+  for (const [start, end] of ranges) {
+    if (offset >= start && offset <= end) return true;
+  }
+  return false;
 }
 
 /** Flatten a `use a::{b::c, d::{e, f}};` statement into individual
