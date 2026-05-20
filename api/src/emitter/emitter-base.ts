@@ -2162,6 +2162,21 @@ ${fields}
         offset += ${size};`;
     }
     if (typeDef?.kind === "enum") {
+      // Complex enums (tuple OR struct variants) can't be encoded in a
+      // single byte — their size depends on which variant is active.
+      // For these, fall through to Borsh's variable-length deserialize:
+      // it reads the variant discriminator, dispatches to the payload
+      // decode, and advances the cursor by exactly the consumed bytes.
+      // Caught by arjun-tic-tac-toe: `state: GameState` where GameState
+      // has a `Won { winner: Pubkey }` struct variant; the previous
+      // try_from(u8) emit failed `the trait bound GameState: TryFrom<u8>`.
+      const isComplexEnum = !!typeDef.rawCode && /\w+\s*[({]/.test(typeDef.rawCode);
+      if (isComplexEnum) {
+        return `        let mut ${fieldName}_bytes = &__data_buf[offset..];
+        let ${fieldName}: ${typeName} = BorshDeserialize::deserialize(&mut ${fieldName}_bytes)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        offset = __data_buf.len() - ${fieldName}_bytes.len();`;
+      }
       return `        let ${fieldName}: ${typeName} = ${typeName}::try_from(__data_buf[offset])
             .map_err(|_| ProgramError::InvalidAccountData)?;
         offset += 1;`;
@@ -2224,6 +2239,18 @@ ${fields}
         offset += ${size};`;
     }
     if (typeDef?.kind === "enum") {
+      // Mirror the decode side: complex enums (tuple / struct variants)
+      // can't `as u8` cast — Rust rejects with "an `as` expression can
+      // be used to convert enum types to numeric types only if the
+      // enum type is unit-only or field-less". Borsh-serialize the
+      // whole field and advance the cursor by the actual byte count.
+      const isComplexEnum = !!typeDef.rawCode && /\w+\s*[({]/.test(typeDef.rawCode);
+      if (isComplexEnum) {
+        return `        let __${fieldName}_serialized = ::borsh::to_vec(&value.${fieldName})
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        __data_buf[offset..offset + __${fieldName}_serialized.len()].copy_from_slice(&__${fieldName}_serialized);
+        offset += __${fieldName}_serialized.len();`;
+      }
       return `        __data_buf[offset] = value.${fieldName} as u8;
         offset += 1;`;
     }

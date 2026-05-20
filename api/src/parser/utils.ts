@@ -200,6 +200,10 @@ export function normalizeSolanaType(rustType: string): string {
   // Bare `Pubkey` substring (after the container checks above) catches
   // qualified paths like `solana_program::pubkey::Pubkey` — collapse to
   // the bare type since that's what the rest of the pipeline expects.
-  if (/\bPubkey\b/.test(t) && !/[<>]/.test(t)) return "Pubkey";
+  // BUT keep arrays + slices verbatim: `[Pubkey; 2]` / `&[Pubkey]` must
+  // NOT collapse to `Pubkey` (caught by arjun-tic-tac-toe — players:
+  // [Pubkey; 2] was wrongly returning just "Pubkey", state-struct emit
+  // then indexed a scalar field).
+  if (/\bPubkey\b/.test(t) && !/[<>\[\]]/.test(t)) return "Pubkey";
   return t; // custom type
 }
