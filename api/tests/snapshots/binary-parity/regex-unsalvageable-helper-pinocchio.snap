@@ -81,8 +81,8 @@ pub fn do_xfer(
     remaining = rest;
     let amount: u64 = u64::from_le_bytes(
         arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
 // ⚠️ Anvil TODO: call site of unsalvageable helper commented out — manual port required
-//     );
 //     if !remaining.is_empty() {
 //         return Err(ProgramError::InvalidInstructionData);
 //     }

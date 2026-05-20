@@ -106,16 +106,60 @@ export function commentOutUnsalvageableCallSites(text: string, helpers: Set<stri
       else if (ch === ")" || ch === "}" || ch === "]") fwdDepth--;
       else if (ch === ";" && fwdDepth === 0) { stmtEnd = i + 1; break; }
     }
-    // Block-closer detection: when the walk-back stopped at a `;` whose
-    // preceding non-whitespace was `}`, that's a `};` shape — the line
-    // also contains the closer of an outer block (e.g. `let X = { … };`)
-    // that we MUST NOT comment out. Advance stmtStart past the trailing
-    // `;\n` to the next line. Same advance for `?;` shape: the prior
-    // statement is a `?`-postfix fallible call.
+    // Whenever the walk-back stopped at a `;`, the actual statement we
+    // want to comment out starts on the line AFTER that `;`. Advance
+    // past trailing whitespace + newline so the previous statement's
+    // tail (e.g. `.as_u64();` continuing a multi-line chain) isn't
+    // accidentally included in the comment-out range. Caught by
+    // raydium-clmm: `).ok_or(...)?\n    .as_u64();\nlet transfer_fee =
+    // util::get_transfer_inverse_fee(...);` — the unsalvageable
+    // `get_transfer_inverse_fee` walk-back hit `.as_u64();`'s `;`, but
+    // the line-number conversion then included that line in the
+    // comment-out, leaving the prior `?`-postfix chain dangling
+    // without a terminator (E0001 "expected `;`, found `let`" on
+    // the next statement).
     let normalizedStart = stmtStart;
-    if (stopChar === ";" && (stopPrevChar === "}" || stopPrevChar === "?")) {
+    if (stopChar === ";") {
       while (normalizedStart < text.length && /[ \t]/.test(text[normalizedStart] ?? "")) normalizedStart++;
       if (text[normalizedStart] === "\n") normalizedStart++;
+    }
+    // Brace-balance the range. If [normalizedStart, stmtEnd) opens more
+    // braces than it closes (e.g. `if X { unsalvageable_call(...)?;` —
+    // the walk-back picked up the `if X {` opener but the walk-forward
+    // stopped at the inner `;` before the matching `}`), extend forward
+    // to find the missing close-braces. Otherwise the comment-out leaves
+    // the inner `}` as a stray close that breaks compile with "unexpected
+    // closing delimiter". Caught by raydium-clmm close_position.rs.
+    // Brace-balance the comment-out range at the LINE level. Find the
+    // start-of-line for normalizedStart (the comment-out is line-based,
+    // so we have to count braces in the full lines we'd be commenting
+    // out, not just the byte range — when walk-back stops at `{`, the
+    // line-conversion includes the `if X {` line even though the byte
+    // position lands AFTER the `{`).
+    let lineStartOffset = normalizedStart;
+    while (lineStartOffset > 0 && text[lineStartOffset - 1] !== "\n") {
+      lineStartOffset--;
+    }
+    let netOpenBraces = 0;
+    for (let i = lineStartOffset; i < stmtEnd; i++) {
+      const ch = text[i];
+      if (ch === "{") netOpenBraces++;
+      else if (ch === "}") netOpenBraces--;
+    }
+    if (netOpenBraces > 0) {
+      for (let i = stmtEnd; i < text.length && netOpenBraces > 0; i++) {
+        const ch = text[i];
+        if (ch === "{") netOpenBraces++;
+        else if (ch === "}") {
+          netOpenBraces--;
+          if (netOpenBraces === 0) {
+            // Include this `}` in the range. Advance stmtEnd past it.
+            // The line-conversion below will include any trailing
+            // whitespace on the same line automatically.
+            stmtEnd = i + 1;
+          }
+        }
+      }
     }
     // Convert offsets to line numbers.
     const startLine = text.slice(0, normalizedStart).split("\n").length - 1;
