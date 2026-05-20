@@ -1020,6 +1020,18 @@ export class AstVisitorBase {
     }
     const accountName = snakeCase(stmt.account);
     const localVar = snakeCase(stmt.localVar);
+    // Register the user's localVar as an alias to the canonical account
+    // name when the state-read carried a non-default localVar (e.g.
+    // `let account_data = &mut ctx.accounts.message_account` → IR
+    // localVar="account_data"). Without this, downstream
+    // state_field_assigns keyed on the alias fail canonicalAccountName
+    // lookup, the assignment emits `account_data.X = …` against an
+    // undefined ident (E0425). Caught by arjun-pda-crud's update fn.
+    // Mirror this even on the short-circuit path below — the alias
+    // registration is independent of whether we emit a fresh read.
+    if (localVar !== accountName) {
+      w.localAliases.set(localVar, accountName);
+    }
     if (w.stateVars.has(accountName)) return [];
 
     const accountRef = w.instr.accounts.find((acc) => snakeCase(acc.name) === accountName);
