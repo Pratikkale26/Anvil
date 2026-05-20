@@ -118,6 +118,16 @@ export interface ParseOptions {
    * such items were dropped.
    */
   cfgDrops?: import("./project-source.js").CfgGatedDrop[];
+  /**
+   * Truthy when source has already been flattened via
+   * buildProjectSourceGraph. The flag suppresses the "single-file shim
+   * detected" warning that fires when raw `mod X;` decls leak through to
+   * the parser — those decls survive intentionally on the flatten path
+   * (they're replaced inline) but represent a real gap on the
+   * single-file path. Set this from any caller that already walked the
+   * module graph.
+   */
+  wasFlattened?: boolean;
 }
 
 export async function parseAnchor(
@@ -224,6 +234,40 @@ export async function parseAnchor(
             `feature, re-run Anvil with the relevant cfg flags in scope OR upgrade your code to be ` +
             `unconditional.`,
           loc: { line: drop.line, column: 0 },
+        });
+      }
+    }
+
+    // Multi-file shim detection. The single-file parseAnchor sees lib.rs
+    // verbatim — if that file is a shim like `mod instructions; #[program]
+    // pub mod p { use super::*; pub fn foo(ctx: Context<Foo>) -> Result<()>
+    // { instructions::foo::handler(ctx) } }`, the parser captures `foo`
+    // but its body references `instructions::foo::handler` which lives in
+    // a sibling file the single-file path never reads. Result: emit
+    // contains an unresolvable function call. Callers using the multi-file
+    // route (buildProjectSourceGraph → parseAnchor with wasFlattened=true)
+    // skip this warning because mod-decls there are intentional markers
+    // for the flatten step. Strips cfg(test) decls first so the warning
+    // doesn't fire on test-only modules.
+    if (!opts?.wasFlattened) {
+      const externalModuleNames: string[] = [];
+      const cfgTestStripped = source.replace(/^\s*#\[cfg\([^\]]*test[^\]]*\)\]\s*(pub\s+)?mod\s+\w+\s*;/gm, "");
+      for (const match of cfgTestStripped.matchAll(/^\s*(pub\s+)?mod\s+(\w+)\s*;/gm)) {
+        if (!match[2]) continue;
+        externalModuleNames.push(match[2]);
+      }
+      if (externalModuleNames.length > 0) {
+        warningCollector.add({
+          code: "multi_file_shim_detected",
+          message:
+            `Found ${externalModuleNames.length} external module declaration(s) ` +
+            `(${externalModuleNames.slice(0, 5).join(", ")}` +
+            `${externalModuleNames.length > 5 ? ", …" : ""}) but parser only sees lib.rs. ` +
+            `Bodies that delegate to sibling files (e.g. ${externalModuleNames[0]}::X::handler(...)) ` +
+            `will emit as unresolved references. Re-run with the multi-file route: pass ` +
+            `{ projectPath } or { files, entryPath } to /parse so buildProjectSourceGraph can ` +
+            `walk the module tree.`,
+          loc: { line: 1, column: 0 },
         });
       }
     }

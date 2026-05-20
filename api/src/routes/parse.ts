@@ -65,6 +65,10 @@ parseRoute.post("/", async (req, res) => {
   // so drops still surface — that's the only path that doesn't populate
   // resolvedCfgDrops here.
   let resolvedCfgDrops: CfgGatedDrop[] | undefined;
+  // Set when source resolution went through the multi-file flatten path.
+  // parseAnchor uses it to suppress the multi-file-shim warning that
+  // fires on raw `mod X;` decls in single-file mode.
+  let resolvedWasFlattened = false;
 
   try {
     // ── 1. Folder upload: { files, entryPath } ──────────────────────────────
@@ -85,6 +89,7 @@ parseRoute.post("/", async (req, res) => {
       resolvedPath = entryPath;
       candidates = projectFiles.map((file) => file.path);
       resolvedCfgDrops = build.cfgDrops;
+      resolvedWasFlattened = build.wasFlattened ?? false;
     }
 
     // ── 2. Local server path: { sourcePath } ───────────────────────────────
@@ -94,6 +99,7 @@ parseRoute.post("/", async (req, res) => {
       resolvedPath = resolved.resolvedPath;
       candidates = resolved.candidates;
       resolvedCfgDrops = resolved.cfgDrops;
+      resolvedWasFlattened = (resolved as { wasFlattened?: boolean }).wasFlattened ?? false;
     }
 
     // ── 3. Local server path: { projectPath } ──────────────────────────────
@@ -103,6 +109,7 @@ parseRoute.post("/", async (req, res) => {
       resolvedPath = resolved.resolvedPath;
       candidates = resolved.candidates;
       resolvedCfgDrops = resolved.cfgDrops;
+      resolvedWasFlattened = (resolved as { wasFlattened?: boolean }).wasFlattened ?? false;
     }
 
     // ── 4. GitHub repo: { repoUrl, repoRef?, repoSubpath?, programName? } ──
@@ -151,7 +158,7 @@ parseRoute.post("/", async (req, res) => {
     return;
   }
 
-  const result = await parseAnchor(resolvedSource, { cfgDrops: resolvedCfgDrops });
+  const result = await parseAnchor(resolvedSource, { cfgDrops: resolvedCfgDrops, wasFlattened: resolvedWasFlattened });
   metrics.recordParse(result.ok);
   if (!result.ok) {
     const code = result.error.includes("No Anchor #[program] module")

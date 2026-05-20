@@ -18,6 +18,13 @@ export interface ProjectSourceBuild {
    * cfg-gated items were dropped (the common case).
    */
   cfgDrops?: CfgGatedDrop[];
+  /**
+   * Set on the multi-file flatten path so downstream parseAnchor knows the
+   * `mod X;` decls in the flattened source were intentional (inline
+   * replacement happened) and shouldn't trigger the
+   * `multi_file_shim_detected` warning.
+   */
+  wasFlattened?: boolean;
 }
 
 interface ExternalModuleDecl {
@@ -1212,7 +1219,7 @@ function buildFlattenedSource(
   // anchor-parser for full rationale.
   source = vendorExternalProgramIDs(source);
 
-  return { source, includedFiles, missingModules, cfgDrops };
+  return { source, includedFiles, missingModules, cfgDrops, wasFlattened: true };
 }
 
 /**

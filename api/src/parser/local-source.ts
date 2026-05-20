@@ -101,6 +101,7 @@ export function resolveLocalSource(inputPath: string): LocalSourceResolution {
       projectFiles,
       projectEntryPath,
       cfgDrops: build.cfgDrops,
+      wasFlattened: build.wasFlattened ?? false,
     };
   }
 

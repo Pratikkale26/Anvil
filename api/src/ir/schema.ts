@@ -1944,6 +1944,12 @@ export const ParserWarningCodeSchema = z.enum([
    * Anvil's IR completeness invisibly.
    */
   "constraint_key_unrecognized",
+  // Source contained raw external `mod X;` declarations not stripped by
+  // cfg(test) gates and not replaced by the multi-file flatten path.
+  // Bodies likely delegate to sibling files; the single-file emit will
+  // contain unresolved references. Re-run /parse with projectPath or
+  // files+entryPath so buildProjectSourceGraph can walk the module tree.
+  "multi_file_shim_detected",
 ]);
 
 export type ParserWarningCode = z.infer<typeof ParserWarningCodeSchema>;
