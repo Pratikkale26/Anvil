@@ -948,6 +948,15 @@ export abstract class BaseEmitter {
         // while the program crate uses borsh 1.5, surfacing as wave of
         // "Pubkey: BorshSerialize not satisfied" across PluginRegistryV1.
         if (/\bmpl_core\b/.test(statement)) return false;
+        // switchboard_on_demand dropped on BOTH targets — the crate
+        // transitively depends on borsh 0.10 (vs our 1.6), and pulls
+        // solana_program::address_lookup_table (absent in 2.2). Same
+        // borsh-derive interop problem as Pyth/mpl-core. Body usages
+        // referencing switchboard types (RandomnessAccountData etc.)
+        // would still need separate handling but at least the import
+        // line doesn't cascade unresolvable-module errors. Caught by
+        // arjun-merkle-tree (Native).
+        if (/\bswitchboard_on_demand\b/.test(statement)) return false;
         // Token-2022 transfer-hook helper crates. These are SBF-only crates
         // not in the Pinocchio OR Native scaffold (Native ships
         // spl_token_2022 + spl_pod, but not the transfer-hook-specific
