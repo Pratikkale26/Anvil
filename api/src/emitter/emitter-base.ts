@@ -22,6 +22,7 @@ import type {
   EmitterOutput,
   EmitterFile,
   TypeDef,
+  HelperFn,
 } from "../ir/schema.js";
 
 // ─── Re-export utilities for backward compatibility ──────────────────────────
@@ -1082,6 +1083,16 @@ export abstract class BaseEmitter {
     const hasHelperModule = this.hasHelperModule(ir);
     sections.push(this.fileHeader(ir.name));
     sections.push(this.emitUseStatements(ir));
+    // Hoist const-fn helpers referenced by top-level constants. Rust's
+    // const-evaluator requires the called fn to be visible at the const
+    // decl's scope; without this lift, a source `pub const ZERO_HASHES =
+    // make_zero_hashes()` whose `make_zero_hashes` lives in helpers.rs
+    // fails at cargo with "cannot find function `make_zero_hashes` in
+    // this scope". Caught by arjun-merkle-tree-incremental.
+    const hoistedHelpers = this.helpersReferencedByConsts(ir, constants);
+    if (hoistedHelpers.length > 0) {
+      sections.push(hoistedHelpers.map((h) => h.rawCode).join("\n\n"));
+    }
     if (constants.length > 0) sections.push(constants.join("\n\n"));
     if (types.length > 0) sections.push(this.emitCustomTypes({ ...ir, types }));
 
@@ -1321,7 +1332,13 @@ export abstract class BaseEmitter {
     // (Anchor-only types in signature/body) get a comment-out block so
     // helpers.rs still compiles; instruction files have their call sites
     // commented out by the post-process pass below.
+    // Helpers hoisted into lib.rs (because top-level consts reference
+    // them and Rust's const-eval requires same-scope visibility) get
+    // skipped here to avoid duplicate definitions.
+    const constantsForHoist = (ir.constants ?? []).map((c) => this.postProcessTopLevelConst(c));
+    const hoistedNames = new Set(this.helpersReferencedByConsts(ir, constantsForHoist).map((h) => h.name));
     for (const helper of ir.helperFns) {
+      if (hoistedNames.has(helper.name)) continue;
       // Known CPI-wrapper helpers — emit target-typed replacement body
       // instead of the source. Call sites in user code get rewritten
       // (& stripped from AccountInfo args) via applyCpiWrapperCallSiteRewrites.
@@ -1339,6 +1356,32 @@ export abstract class BaseEmitter {
 
     if (sections.length === 1) return "";
     return `//! Helper functions for ${toPascalCase(ir.name)}\n\n` + sections.join("\n\n");
+  }
+
+  /**
+   * Top-level const decls in lib.rs can call `const fn` helpers; Rust
+   * requires those helpers to be visible at the const's scope. When the
+   * helpers live in helpers.rs (their default home), the const-call is
+   * unresolved. Returns the helpers referenced by any top-level const
+   * so the lib.rs emit can hoist their bodies inline. The helpers.rs
+   * emit then skips these to avoid duplicate definitions.
+   *
+   * Detection is text-based: for each helper, check if its identifier
+   * appears as a call expression (`name(`) in any const decl. Skips
+   * helpers that are CPI-wrapper templates or unsalvageable — only
+   * carried-source helpers can be hoisted byte-for-byte.
+   */
+  protected helpersReferencedByConsts(ir: SolanaIR, processedConsts: string[]): HelperFn[] {
+    if (processedConsts.length === 0) return [];
+    const out: HelperFn[] = [];
+    for (const helper of ir.helperFns ?? []) {
+      if (this.unsalvageableHelpers.has(helper.name)) continue;
+      const callRe = new RegExp(`\\b${helper.name}\\s*\\(`);
+      if (processedConsts.some((c) => callRe.test(c))) {
+        out.push(helper);
+      }
+    }
+    return out;
   }
 
   protected hasHelperModule(ir: SolanaIR): boolean {
