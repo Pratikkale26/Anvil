@@ -759,6 +759,15 @@ function classifyLetDeclaration(
       // reference `signer_seeds` end up with E0425 not-in-scope.
       && localVar !== "signer_seeds"
       && !localVar.endsWith("_signer_seeds")
+      // Same exception for the plural `signers_seeds` / `*_signers_seeds`
+      // form (anchor-escrow cohort writes `let signers_seeds = [&seeds[..]]`
+      // explicitly and references `&signers_seeds` at the CpiContext::new_
+      // with_signer call site). The typed cpi_spl_* IR captures the
+      // `&signers_seeds` reference verbatim — without preserving the
+      // binding the emit references an undefined ident (E0425 cannot find
+      // value `signers_seeds`). Caught by arjun-escrow.
+      && localVar !== "signers_seeds"
+      && !localVar.endsWith("_signers_seeds")
     ) {
       return {
         stmt: { kind: "pass_through", code: "", needsReview: false },
