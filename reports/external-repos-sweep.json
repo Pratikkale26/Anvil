@@ -4,24 +4,24 @@
     "category": "arjun-mpl",
     "parse": {
       "ok": true,
-      "latencyMs": 308,
+      "latencyMs": 173,
       "size": 6371
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 333
+      "latencyMs": 130
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 101
+      "latencyMs": 43
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 1645
+      "latencyMs": 830
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1438
+      "latencyMs": 1184
     }
   },
   {
@@ -29,24 +29,24 @@
     "category": "arjun-cpi",
     "parse": {
       "ok": true,
-      "latencyMs": 31,
+      "latencyMs": 16,
       "size": 3541
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 60
+      "latencyMs": 48
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 41
+      "latencyMs": 38
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 1008
+      "latencyMs": 599
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1808
+      "latencyMs": 1090
     }
   },
   {
@@ -54,24 +54,24 @@
     "category": "arjun-defi",
     "parse": {
       "ok": true,
-      "latencyMs": 13,
+      "latencyMs": 8,
       "size": 3137
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 26
+      "latencyMs": 18
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 29
+      "latencyMs": 25
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 708
+      "latencyMs": 520
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1051
+      "latencyMs": 972
     }
   },
   {
@@ -79,25 +79,25 @@
     "category": "arjun-merkle",
     "parse": {
       "ok": true,
-      "latencyMs": 15,
+      "latencyMs": 14,
       "size": 651
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 49
+      "latencyMs": 51
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 61
+      "latencyMs": 53
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 478,
+      "latencyMs": 407,
       "error": "failed to resolve: use of unresolved module or unlinked crate `solana_sha256_hasher`"
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1302
+      "latencyMs": 1154
     }
   },
   {
@@ -110,19 +110,19 @@
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 87
+      "latencyMs": 79
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 73
+      "latencyMs": 53
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 657
+      "latencyMs": 618
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 2080
+      "latencyMs": 1925
     }
   },
   {
@@ -130,7 +130,7 @@
     "category": "arjun-mpl",
     "parse": {
       "ok": true,
-      "latencyMs": 3,
+      "latencyMs": 4,
       "size": 331
     },
     "emitPin": {
@@ -139,15 +139,15 @@
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 3
+      "latencyMs": 4
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 393
+      "latencyMs": 414
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 763
+      "latencyMs": 734
     }
   },
   {
@@ -155,25 +155,25 @@
     "category": "arjun-merkle",
     "parse": {
       "ok": true,
-      "latencyMs": 26,
+      "latencyMs": 22,
       "size": 1569
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 110
+      "latencyMs": 122
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 91
+      "latencyMs": 85
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 304,
+      "latencyMs": 310,
       "error": "cannot find function `hashv` in this scope"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 502,
+      "latencyMs": 472,
       "error": "unresolved import `switchboard_on_demand`"
     }
   },
@@ -191,15 +191,15 @@
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 10
+      "latencyMs": 13
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 508
+      "latencyMs": 492
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 877
+      "latencyMs": 923
     }
   },
   {
@@ -207,24 +207,24 @@
     "category": "arjun-pda",
     "parse": {
       "ok": true,
-      "latencyMs": 6,
+      "latencyMs": 8,
       "size": 2670
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 15
+      "latencyMs": 28
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 19
+      "latencyMs": 20
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 694
+      "latencyMs": 631
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1098
+      "latencyMs": 1081
     }
   },
   {
@@ -232,7 +232,7 @@
     "category": "arjun-arcium",
     "parse": {
       "ok": false,
-      "latencyMs": 5,
+      "latencyMs": 4,
       "error": "{\"error\":\"No Anchor #[program] module found\",\"code\":1001,\"details\":\"This parser currently supports Anchor entry files. Native multi-file Solana programs like many SPL crates are not transpiled yet.\",\"sourcePath\":\"/tmp/anvil-external-repos/solana-programs-list/anchor-arcium-hello-world/programs/hello_world/src/lib.rs\",\"candidates\":[\"/tmp/anvil-external-repos/solana-programs-list/anchor-arcium-hello"
     },
     "emitPin": {
@@ -266,15 +266,15 @@
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 8
+      "latencyMs": 7
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 522
+      "latencyMs": 493
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 955
+      "latencyMs": 980
     }
   },
   {
@@ -282,24 +282,24 @@
     "category": "arjun-spl",
     "parse": {
       "ok": true,
-      "latencyMs": 21,
+      "latencyMs": 15,
       "size": 4770
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 74
+      "latencyMs": 72
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 44
+      "latencyMs": 45
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 640
+      "latencyMs": 564
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1700
+      "latencyMs": 1947
     }
   },
   {
@@ -307,24 +307,24 @@
     "category": "arjun-defi",
     "parse": {
       "ok": true,
-      "latencyMs": 42,
+      "latencyMs": 38,
       "size": 2191
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 336
+      "latencyMs": 434
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 241
+      "latencyMs": 275
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 737
+      "latencyMs": 704
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1806
+      "latencyMs": 2138
     }
   },
   {
@@ -332,24 +332,24 @@
     "category": "arjun-defi",
     "parse": {
       "ok": true,
-      "latencyMs": 10,
+      "latencyMs": 12,
       "size": 4156
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 22
+      "latencyMs": 31
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 23
+      "latencyMs": 36
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 603
+      "latencyMs": 650
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1077
+      "latencyMs": 1104
     }
   },
   {
@@ -357,24 +357,24 @@
     "category": "arjun-defi",
     "parse": {
       "ok": true,
-      "latencyMs": 15,
+      "latencyMs": 21,
       "size": 862
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 84
+      "latencyMs": 72
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 50
+      "latencyMs": 79
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 571
+      "latencyMs": 652
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1685
+      "latencyMs": 1959
     }
   },
   {
@@ -382,7 +382,7 @@
     "category": "arjun-basic",
     "parse": {
       "ok": true,
-      "latencyMs": 5,
+      "latencyMs": 4,
       "size": 1493
     },
     "emitPin": {
@@ -391,15 +391,15 @@
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 12
+      "latencyMs": 20
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 487
+      "latencyMs": 602
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1003
+      "latencyMs": 1035
     }
   },
   {
@@ -407,24 +407,24 @@
     "category": "arjun-defi",
     "parse": {
       "ok": true,
-      "latencyMs": 9,
+      "latencyMs": 11,
       "size": 4881
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 29
+      "latencyMs": 33
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 24
+      "latencyMs": 32
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 546
+      "latencyMs": 651
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1139
+      "latencyMs": 1253
     }
   },
   {
@@ -432,25 +432,25 @@
     "category": "drift",
     "parse": {
       "ok": true,
-      "latencyMs": 2434,
+      "latencyMs": 2072,
       "size": 78938
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 743
+      "latencyMs": 718
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 627
+      "latencyMs": 699
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 193,
+      "latencyMs": 211,
       "error": "this file contains an unclosed delimiter"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 349,
+      "latencyMs": 373,
       "error": "this file contains an unclosed delimiter"
     }
   },
@@ -459,26 +459,26 @@
     "category": "kamino",
     "parse": {
       "ok": true,
-      "latencyMs": 499,
+      "latencyMs": 634,
       "size": 38448
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 6927
+      "latencyMs": 5492
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 6677
+      "latencyMs": 5132
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 21584,
-      "error": "unknown character escape: ` `"
+      "latencyMs": 18461,
+      "error": "expected one of `,`, `.`, `?`, `}`, or an operator, found `;`"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 21251,
-      "error": "unknown character escape: ` `"
+      "latencyMs": 19152,
+      "error": "expected one of `,`, `.`, `?`, `}`, or an operator, found `;`"
     }
   },
   {
@@ -486,25 +486,25 @@
     "category": "raydium",
     "parse": {
       "ok": true,
-      "latencyMs": 678,
+      "latencyMs": 581,
       "size": 28247
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 1476
+      "latencyMs": 1232
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 1231
+      "latencyMs": 1083
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 2792,
+      "latencyMs": 2536,
       "error": "failed to resolve: use of unresolved module or unlinked crate `spl_token_2022`"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 3897,
+      "latencyMs": 3180,
       "error": "cannot find type `U128` in this scope"
     }
   }

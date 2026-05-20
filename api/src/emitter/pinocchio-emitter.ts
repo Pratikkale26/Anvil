@@ -2364,7 +2364,12 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
     // The previous naïve `indexOf(",")` treated commas *inside* string literals
     // as format separators, truncating `"Hello, Solana!"` to `"Hello`. Now we
     // only trust the full-literal match.
-    const literalMatch = message.match(/^"([^"\\]|\\.)*"/);
+    // Use [\s\S] instead of `.` in the escape alternative so multi-line
+    // strings with `\\<newline>` line-continuation match correctly. The
+    // default `.` doesn't match newlines; without this flag, the literal
+    // capture truncates at the first `\<newline>`, leaving the tail of
+    // the msg!() to fall through as raw text. Caught by kamino-klend.
+    const literalMatch = message.match(/^"([^"\\]|\\[\s\S])*"/);
     if (literalMatch?.[0]) {
       const literal = literalMatch[0];
       if (literal === message.trim()) {

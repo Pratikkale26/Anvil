@@ -212,12 +212,89 @@ export function cleanInlineExpr(value: string): string {
   // `// Mint tokens)?;` becomes a single comment, breaking the call).
   // Block comments also go; lossy vs. string-embedded `//` but those are
   // rare in amount/account expressions.
-  return value
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/\/\/[^\n]*/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/,$/, "");
+  //
+  // STRING-AWARE: skip content inside `"..."` literals so multi-line
+  // strings with `\\\n   ` line-continuation (Rust syntax for
+  // suppressing the newline + leading whitespace) don't get collapsed
+  // to `\\ ` (single backslash + space — invalid escape). Caught by
+  // kamino-klend's multi-line `msg!("WARNING: ... \\\n   more")`.
+  //
+  // The string detector tracks `"` boundaries, respecting `\"` escapes.
+  // Anything between an opening `"` and matching `"` passes through
+  // verbatim; everything else gets the comment-strip + ws-collapse.
+  let out = "";
+  let i = 0;
+  let inStr = false;
+  let buf = "";
+  while (i < value.length) {
+    const ch = value[i]!;
+    if (inStr) {
+      buf += ch;
+      if (ch === "\\" && i + 1 < value.length) {
+        // Preserve any escape sequence verbatim — `\\`, `\n`, `\"`,
+        // `\\\n` (line-continuation), etc. Don't peek-validate; just
+        // consume the next char.
+        buf += value[i + 1];
+        i += 2;
+        continue;
+      }
+      if (ch === '"') {
+        out += buf;
+        buf = "";
+        inStr = false;
+      }
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      buf = ch;
+      i++;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  // Apply the cleanup ONLY to non-string segments. Re-walk the output
+  // to find string-literal byte ranges (they're already verbatim in
+  // `out`); for the rest, do the comment+ws collapse. We approximate
+  // by splitting on the same boundaries we just tracked.
+  const segments: string[] = [];
+  let segStart = 0;
+  let segInStr = false;
+  for (let j = 0; j < out.length; j++) {
+    const ch = out[j]!;
+    if (segInStr) {
+      if (ch === "\\" && j + 1 < out.length) { j++; continue; }
+      if (ch === '"') {
+        segments.push(out.slice(segStart, j + 1));
+        segStart = j + 1;
+        segInStr = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      if (j > segStart) {
+        const before = out.slice(segStart, j);
+        segments.push(
+          before
+            .replace(/\/\*[\s\S]*?\*\//g, " ")
+            .replace(/\/\/[^\n]*/g, " ")
+            .replace(/\s+/g, " "),
+        );
+      }
+      segStart = j;
+      segInStr = true;
+    }
+  }
+  if (segStart < out.length) {
+    const tail = out.slice(segStart);
+    segments.push(segInStr ? tail : tail
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/\/\/[^\n]*/g, " ")
+      .replace(/\s+/g, " "));
+  }
+  return segments.join("").trim().replace(/,$/, "");
 }
 
 export function stripAnchorConstraintError(value: string): string {

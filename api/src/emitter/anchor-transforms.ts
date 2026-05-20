@@ -7,6 +7,68 @@
  * rewrite them for native/pinocchio targets.
  */
 
+/**
+ * Paren-balanced + string-aware msg!() arg extraction. Walks `source`,
+ * finds each `msg!(` call site, balances `(...)` accounting for
+ * `"..."` literals (with `\\"` escapes), and feeds the contents to
+ * `emitMsg`. Multi-statement msg! invocations with `);` inside string
+ * literals (kamino-klend pattern) work correctly here where the prior
+ * `\\s\\S]*?` lazy regex truncated.
+ */
+function rewriteMsgCalls(source: string, emitMsg: (message: string) => string): string {
+  let out = "";
+  let i = 0;
+  while (i < source.length) {
+    const idx = source.indexOf("msg!", i);
+    if (idx === -1) { out += source.slice(i); break; }
+    // Reject `myname_msg!` etc. — only standalone macro invocations.
+    const prevCh = idx > 0 ? source[idx - 1]! : "";
+    const isWordBoundary = prevCh === "" || !/[A-Za-z0-9_]/.test(prevCh);
+    if (!isWordBoundary) {
+      out += source.slice(i, idx + 4);
+      i = idx + 4;
+      continue;
+    }
+    // Skip whitespace, expect `(`.
+    let parenStart = idx + 4;
+    while (parenStart < source.length && /\s/.test(source[parenStart]!)) parenStart++;
+    if (source[parenStart] !== "(") {
+      out += source.slice(i, idx + 4);
+      i = idx + 4;
+      continue;
+    }
+    // Paren-balance, respecting `"..."` literals with `\\.` escapes.
+    let depth = 0;
+    let parenEnd = -1;
+    let inStr = false;
+    for (let j = parenStart; j < source.length; j++) {
+      const ch = source[j]!;
+      if (inStr) {
+        if (ch === "\\" && j + 1 < source.length) { j++; continue; }
+        if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') { inStr = true; continue; }
+      if (ch === "(") depth++;
+      else if (ch === ")") { depth--; if (depth === 0) { parenEnd = j; break; } }
+    }
+    if (parenEnd === -1) {
+      out += source.slice(i, idx + 4);
+      i = idx + 4;
+      continue;
+    }
+    // Optional trailing `;` after `)`.
+    let endIdx = parenEnd + 1;
+    while (endIdx < source.length && /[ \t]/.test(source[endIdx]!)) endIdx++;
+    if (source[endIdx] === ";") endIdx++;
+    const message = source.slice(parenStart + 1, parenEnd);
+    const replacement = emitMsg(cleanInlineExpr(message)).replace(/^    /gm, "");
+    out += source.slice(i, idx) + replacement;
+    i = endIdx;
+  }
+  return out;
+}
+
 import {
   cleanInlineExpr,
   emitRequireGuard,
@@ -146,10 +208,14 @@ export function transformHelperCode(
     /emit!\(\s*(\w+)\s*\{\s*([\s\S]*?)\s*\}\s*\);/g,
     (_full, event: string, fields: string) => emitEmit(event, fields).replace(/^    /gm, "")
   );
-  next = next.replace(
-    /(^|[^\w:])msg!\(([\s\S]*?)\);/g,
-    (_full, prefix: string, message: string) => `${prefix}${emitMsg(cleanInlineExpr(message)).replace(/^    /gm, "")}`
-  );
+  // Paren-balanced + string-aware walk to find `msg!(...)` args. The
+  // prior `[\\s\\S]*?` lazy regex stopped at the first `);` inside the
+  // message — when the msg literal contains text like `(reserve == 0);`
+  // (kamino-klend pattern), the rest of the call leaked through as raw
+  // tokens. Walk the source, find each `msg!(`, paren-balance to the
+  // matching `)` (skipping content inside `"..."` literals), then
+  // pipe through emitMsg.
+  next = rewriteMsgCalls(next, emitMsg);
   // Replace error!(ErrorType::Variant) with ProgramError::from(ErrorType::Variant)
   next = next.replace(/error!\s*\(\s*([^)]+)\s*\)/g, 'ProgramError::from($1)');
   next = next.replace(/error!\s*([A-Z]\w+::\w+)/g, 'ProgramError::from($1)');
