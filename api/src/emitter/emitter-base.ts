@@ -912,7 +912,11 @@ export abstract class BaseEmitter {
           if (/\bswitchboard_on_demand\b/.test(statement)) return false;
           if (/\bsolana_keccak_hasher\b/.test(statement)) return false;
           if (/\bsolana_sha256_hasher\b/.test(statement)) return false;
-          if (/\bsha2_const_stable\b/.test(statement)) return false;
+          // sha2_const_stable kept on Pinocchio (2026-05-20): the crate is
+          // no_std-compatible and now in PINOCCHIO_CARGO_TOML. Carried
+          // helpers (e.g. merkle-tree-incremental's `const fn
+          // make_zero_hashes` using ConstSha256) need the import to
+          // resolve.
           // task #49 — `use spl_token_2022::extension::confidential_*` in
           // source. The Pinocchio target doesn't pull in spl-token-2022
           // (it has its own pinocchio-token + hand-rolled extension paths).

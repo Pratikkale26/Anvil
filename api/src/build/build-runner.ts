@@ -140,6 +140,12 @@ pinocchio-associated-token-account = "0.4"
 # isZeroCopy entry; mirror that here so /build doesn't fail on
 # zero_copy_load / Pod-impl emit. See project-scaffold.ts.
 bytemuck = { version = "1", features = ["derive"] }
+# Const-fn + numeric-derive crates frequently used in carried source.
+# All no_std-compatible / proc-macro only; no borsh dep so no conflict
+# with the borsh 1.5 baseline.
+sha2-const-stable = "0.1"
+num-derive = "0.4"
+num-traits = { version = "0.2", default-features = false }
 # Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
 # emit on hand-rolled bytes (no crate dep needed). The source's
 # get_feed_id_from_hex("0x...") is parsed at emit time into a byte
@@ -177,6 +183,16 @@ bytemuck = { version = "1", features = ["derive"] }
 spl-memo = { version = "6", features = ["no-entrypoint"] }
 spl-token-metadata-interface = "0.4"
 mpl-token-metadata = "5.1"
+# Carried-source hash helpers + numeric-derive crates frequently used in
+# real-world Anchor programs (merkle trees, tic-tac-toe, etc.). All are
+# either solana-program-aligned (keccak/sha256 hashers) or proc-macro
+# crates (num-derive) with no borsh dep, so they don't reintroduce the
+# borsh-derive interop conflict that gates pyth_* + mpl-core.
+solana-keccak-hasher = "2.2"
+solana-sha256-hasher = "2.2"
+sha2-const-stable = "0.1"
+num-derive = "0.4"
+num-traits = "0.2"
 # Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
 # emit on hand-rolled bytes (see emitter-base.ts emitPythReadPrice*).
 # Source 'use pyth_*::*' lines are filtered out by
