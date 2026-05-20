@@ -7,7 +7,7 @@ Supersedes v2. This run delivered the 5 items from the user-confirmed plan plus 
 | Metric | v2 baseline | v3 final | Δ |
 |---|---|---|---|
 | Live API sweep | 160/160 (100%) | 160/160 (100%) | — |
-| Curated differential corpus | 68/70 (97.1%) | 68/70 (97.1%) | — |
+| Curated differential corpus | 68/70 (97.1%) | 68/70 (snapshot-stable; full SBF suite not re-run) | likely — |
 | Fast suite isolated | 1623/1623 | **1646/1646** | +23 new tests, all green |
 | External Arjun + big-3 sweep (both targets clean) | 3/20 (15%) | **8/20 (40%)** | **+5 fixtures** |
 | Byte-equal on **external** code | 0/3 | **3/3** | **+3 fixtures, 6 differential tests** |
