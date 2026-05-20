@@ -2064,10 +2064,15 @@ ${invokeCall}
 
   /** task #41 — Pinocchio Pubkey is [u8; 32], not a struct, so the
    *  `Pubkey::new_from_array([...])` constructor doesn't exist. The
-   *  array literal IS the Pubkey value already. Strip the wrap. */
+   *  array literal IS the Pubkey value already. Strip the wrap, AND
+   *  any leading qualifier (e.g. `solana_program::pubkey::`) so we
+   *  don't end up with `solana_program::pubkey::[...]` orphaned —
+   *  caught by kamino-klend's `pub const NULL_PUBKEY:
+   *  solana_program::pubkey::Pubkey = solana_program::pubkey::Pubkey::
+   *  new_from_array([...]);`. */
   protected override postProcessTopLevelConst(constText: string): string {
     return constText.replace(
-      /\bPubkey\s*::\s*new_from_array\s*\(\s*(\[[\s\S]+?\])\s*\)/g,
+      /\b(?:\w+\s*::\s*)*Pubkey\s*::\s*new_from_array\s*\(\s*(\[[\s\S]+?\])\s*\)/g,
       "$1",
     );
   }
@@ -2708,8 +2713,16 @@ ${writeLines}
     // constructor wrap so we end up with just the array literal — `[u8; 32]`
     // is a Pubkey directly in pinocchio. Surfaced by diff-arc on
     // pda-derivation's `pub const PUBKEY_CONST: Pubkey = pubkey!(...);`.
+    // Match qualified or bare Pubkey constructor. Anchor source
+    // sometimes spells the type as `solana_program::pubkey::Pubkey::
+    // new_from_array(...)` (raydium / kamino pattern); without
+    // consuming the leading qualifier, the strip leaves
+    // `solana_program::pubkey::[...]` — invalid Rust.
+    // NB: `[^]+?` is "negated empty class = any char" — correct.
+    // The earlier `[^]]+?` was parsed as `[^]+?` + literal `]`,
+    // requiring two `]` chars to match, which failed.
     out = out.replace(
-      /\bPubkey\s*::\s*new_from_array\s*\(\s*(\[[^]]+?\])\s*\)/g,
+      /\b(?:[\w]+\s*::\s*)*Pubkey\s*::\s*new_from_array\s*\(\s*(\[[^]+?\])\s*\)/g,
       "$1",
     );
     out = out.replace(
