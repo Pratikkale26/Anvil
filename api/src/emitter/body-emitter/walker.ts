@@ -859,9 +859,13 @@ export class BodyWalker {
     // which bump fields the receiver dereferences. Tag with a TODO marker
     // so the validator's "ctx.bumps leaked" error message points the
     // user at the right thing instead of just rejecting the emit silently.
+    // NB: avoid `/*` or `*/` inside this comment body — Rust nests block
+    // comments, and `contexts/*.rs` (literal slash-star) opens a second
+    // comment that the closing `*/` then attempts to close, leaving the
+    // outer one unterminated. Caught by arjun-merkle-tree build failure.
     transformed = transformed.replace(
       /&\s*ctx\.bumps\b(?!\.\w)/g,
-      `&__BUMPS_FULL_STRUCT_TODO__ /* ${MARKER_ANVIL_PREFIX}: full bumps struct passed as ref (multi-file impl-method delegate). Anvil doesn't parse contexts/*.rs yet — port the receiver inline or pass individual bump fields. */`,
+      `&__BUMPS_FULL_STRUCT_TODO__ /* ${MARKER_ANVIL_PREFIX}: full bumps struct passed as ref (multi-file impl-method delegate). Anvil parses lib.rs only; receiver lives in a sibling impl-method file. Port it inline or pass individual bump fields. */`,
     );
     // Bare `ctx.bumps` (no .field, no leading &) — same rationale.
     transformed = transformed.replace(
