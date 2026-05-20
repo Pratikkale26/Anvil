@@ -1,0 +1,770 @@
+[
+  {
+    "name": "counter",
+    "category": "basic-pda",
+    "parse": {
+      "ok": true,
+      "latencyMs": 27
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 48
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 30
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 1006
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1187
+    }
+  },
+  {
+    "name": "has-one",
+    "category": "basic-pda",
+    "parse": {
+      "ok": true,
+      "latencyMs": 5
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 13
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 18
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 487
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": -1552
+    }
+  },
+  {
+    "name": "bumps-access",
+    "category": "basic-pda",
+    "parse": {
+      "ok": true,
+      "latencyMs": 5
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 13
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 13
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 468
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 897
+    }
+  },
+  {
+    "name": "close-account",
+    "category": "lifecycle",
+    "parse": {
+      "ok": true,
+      "latencyMs": 5
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 16
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 15
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 504
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 870
+    }
+  },
+  {
+    "name": "init-if-needed",
+    "category": "lifecycle",
+    "parse": {
+      "ok": true,
+      "latencyMs": 8
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 12
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 10
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 455
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 948
+    }
+  },
+  {
+    "name": "realloc",
+    "category": "lifecycle",
+    "parse": {
+      "ok": true,
+      "latencyMs": 7
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 22
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 18
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 589
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1020
+    }
+  },
+  {
+    "name": "spl-transfer",
+    "category": "spl",
+    "parse": {
+      "ok": true,
+      "latencyMs": 5
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 7
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 6
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 404
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 931
+    }
+  },
+  {
+    "name": "vault",
+    "category": "spl",
+    "parse": {
+      "ok": true,
+      "latencyMs": 12
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 37
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 31
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 501
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 979
+    }
+  },
+  {
+    "name": "ata-mint",
+    "category": "spl",
+    "parse": {
+      "ok": true,
+      "latencyMs": 7
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 11
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 8
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 471
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1770
+    }
+  },
+  {
+    "name": "t22-transfer-fee-init",
+    "category": "t22-ext",
+    "parse": {
+      "ok": true,
+      "latencyMs": 9
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 45
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 26
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 528
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1747
+    }
+  },
+  {
+    "name": "t22-default-account-state",
+    "category": "t22-ext",
+    "parse": {
+      "ok": true,
+      "latencyMs": 5
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 10
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 6
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 420
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1590
+    }
+  },
+  {
+    "name": "t22-metadata-pointer",
+    "category": "t22-ext",
+    "parse": {
+      "ok": true,
+      "latencyMs": 7
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 9
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 5
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 410
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1588
+    }
+  },
+  {
+    "name": "t22-transfer-hook",
+    "category": "t22-ext",
+    "parse": {
+      "ok": true,
+      "latencyMs": 5
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 12
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 7
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 410
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1549
+    }
+  },
+  {
+    "name": "mpl-create-metadata",
+    "category": "mpl-tm",
+    "parse": {
+      "ok": true,
+      "latencyMs": 9
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 33
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 21
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 555
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1066
+    }
+  },
+  {
+    "name": "mpl-freeze-thaw",
+    "category": "mpl-tm",
+    "parse": {
+      "ok": true,
+      "latencyMs": 7
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 18
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 20
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 543
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1004
+    }
+  },
+  {
+    "name": "mpl-sign-metadata",
+    "category": "mpl-tm",
+    "parse": {
+      "ok": true,
+      "latencyMs": 4
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 10
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 11
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 501
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1086
+    }
+  },
+  {
+    "name": "mpl-core-create-v2",
+    "category": "mpl-core",
+    "parse": {
+      "ok": true,
+      "latencyMs": 9
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 15
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 12
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 532
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 960
+    }
+  },
+  {
+    "name": "mpl-core-transfer-v1",
+    "category": "mpl-core",
+    "parse": {
+      "ok": true,
+      "latencyMs": 7
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 12
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 10
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 423
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 959
+    }
+  },
+  {
+    "name": "mpl-core-add-plugin-v1",
+    "category": "mpl-core",
+    "parse": {
+      "ok": true,
+      "latencyMs": 5
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 9
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 10
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 476
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 930
+    }
+  },
+  {
+    "name": "pyth-read-modern",
+    "category": "oracle",
+    "parse": {
+      "ok": true,
+      "latencyMs": 4
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 11
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 11
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 457
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 716
+    }
+  },
+  {
+    "name": "switchboard-read",
+    "category": "oracle",
+    "parse": {
+      "ok": true,
+      "latencyMs": 7
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 14
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 10
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 453
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 770
+    }
+  },
+  {
+    "name": "amm",
+    "category": "defi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 28
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 209
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 172
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 756
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1284
+    }
+  },
+  {
+    "name": "marketplace",
+    "category": "defi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 12
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 66
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 58
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 654
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1989
+    }
+  },
+  {
+    "name": "escrow",
+    "category": "defi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 10
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 47
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 60
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": -1891
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1976
+    }
+  },
+  {
+    "name": "multisig",
+    "category": "defi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 8
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 43
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 42
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 645
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1152
+    }
+  },
+  {
+    "name": "event-emit",
+    "category": "events",
+    "parse": {
+      "ok": true,
+      "latencyMs": 4
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 12
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 13
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 519
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1046
+    }
+  },
+  {
+    "name": "msg-emit",
+    "category": "events",
+    "parse": {
+      "ok": true,
+      "latencyMs": 4
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 14
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 9
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 425
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 722
+    }
+  },
+  {
+    "name": "return-err",
+    "category": "events",
+    "parse": {
+      "ok": true,
+      "latencyMs": 4
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 17
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 15
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 505
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 932
+    }
+  },
+  {
+    "name": "cpi-custom",
+    "category": "cpi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 8
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 6
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 4
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 365
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 667
+    }
+  },
+  {
+    "name": "cpi-memo",
+    "category": "cpi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 4
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 9
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 5
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 463
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 950
+    }
+  },
+  {
+    "name": "sysvar-rent",
+    "category": "sysvar",
+    "parse": {
+      "ok": true,
+      "latencyMs": 3
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 10
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 10
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 462
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 926
+    }
+  },
+  {
+    "name": "zero-copy-foo",
+    "category": "zero-copy",
+    "parse": {
+      "ok": true,
+      "latencyMs": 5
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 15
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 11
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 455
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 783
+    }
+  }
+]

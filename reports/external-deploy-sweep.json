@@ -1,0 +1,101 @@
+[
+  {
+    "name": "arjun-counterapp",
+    "anchor": {
+      "build": {
+        "ok": true,
+        "soPath": "/tmp/anvil-external-deploy/anchor_counterapp-anchor/target/deploy/anchor_counterapp.so"
+      },
+      "deploy": {
+        "ok": true,
+        "programId": "9y19dw2KYRppKd4DSzQi3gSeM2x3YS113QSfKUYmc1A6"
+      }
+    },
+    "pinocchio": {
+      "build": {
+        "ok": true,
+        "soPath": "/tmp/anvil-external-deploy/anchor_counterapp-pinocchio/target/deploy/anchor_counterapp.so"
+      },
+      "deploy": {
+        "ok": true,
+        "programId": "3UfSCsZ19vKFunwgFZSKGXdomCM8Y2a2ZSqXDcMbDoA5"
+      }
+    },
+    "native": {
+      "build": {
+        "ok": true,
+        "soPath": "/tmp/anvil-external-deploy/anchor_counterapp-native/target/deploy/anchor_counterapp.so"
+      },
+      "deploy": {
+        "ok": true,
+        "programId": "2QqPQbmyMJ99zczp3931P1yDqXoC8hS5jVWjEgV4ugP8"
+      }
+    }
+  },
+  {
+    "name": "arjun-pda",
+    "anchor": {
+      "build": {
+        "ok": true,
+        "soPath": "/tmp/anvil-external-deploy/anchor_pda-anchor/target/deploy/anchor_pda.so"
+      },
+      "deploy": {
+        "ok": true,
+        "programId": "3AGS4G4TPTkUpjC6RzgkQU34nEEuJW3g9bYXML63F1BE"
+      }
+    },
+    "pinocchio": {
+      "build": {
+        "ok": true,
+        "soPath": "/tmp/anvil-external-deploy/anchor_pda-pinocchio/target/deploy/anchor_pda.so"
+      },
+      "deploy": {
+        "ok": true,
+        "programId": "E7WmFauSnDhqUVcNUDBQd91a5s6hFty2ANhYWiyWnHzg"
+      }
+    },
+    "native": {
+      "build": {
+        "ok": true,
+        "soPath": "/tmp/anvil-external-deploy/anchor_pda-native/target/deploy/anchor_pda.so"
+      },
+      "deploy": {
+        "ok": true,
+        "programId": "14aWAbWZ4joP7GpkSVWEe67WmV6uuP8Gu9Dqf77YFf76"
+      }
+    }
+  },
+  {
+    "name": "arjun-p-nft",
+    "anchor": {
+      "build": {
+        "ok": true,
+        "soPath": "/tmp/anvil-external-deploy/anchor_p_nft-anchor/target/deploy/anchor_p_nft.so"
+      },
+      "deploy": {
+        "ok": true,
+        "programId": "4UxQXfcJY47ghCnr6yGVWispYKPUZDzbgbZY7oRc5zpv"
+      }
+    },
+    "pinocchio": {
+      "build": {
+        "ok": true,
+        "soPath": "/tmp/anvil-external-deploy/anchor_p_nft-pinocchio/target/deploy/anchor_p_nft.so"
+      },
+      "deploy": {
+        "ok": true,
+        "programId": "EfsFYgfvf9PQW9nX6QjYkWEkQVWc37wgkWnZWD1jdA7t"
+      }
+    },
+    "native": {
+      "build": {
+        "ok": true,
+        "soPath": "/tmp/anvil-external-deploy/anchor_p_nft-native/target/deploy/anchor_p_nft.so"
+      },
+      "deploy": {
+        "ok": true,
+        "programId": "BMaBdc1R6yYQWMZSXNTsxh7nPC4X7uJAv8oUtehxzj76"
+      }
+    }
+  }
+]

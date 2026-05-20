@@ -1,0 +1,142 @@
+[
+  {
+    "fixture": "counter",
+    "cached_so": "/home/pk/.anvil-diff-cache/counter-698fa012fa5d-33482a82/counter_anvil.so",
+    "programId": "3WnqeEihQb9t9tVb39B4CejaVb8e8eQM4cfSuoEQa55A",
+    "deploy": {
+      "ok": true,
+      "tookMs": 2410
+    },
+    "invoke": {
+      "ok": true,
+      "signature": "48z8MozDgF4aLXwT4uF33vrhDDfEwWhqgqCb7LjJw8EY4oToNxJeob2jSoRJSqjEwVbYPYNfG8h3tF1FX3aEUBo7",
+      "accountDataLen": 49
+    }
+  },
+  {
+    "fixture": "has-one",
+    "cached_so": "/home/pk/.anvil-diff-cache/has-one-64a6b2afe38d-442aa18d/has-one_anvil.so",
+    "programId": "C3tcndocNrox9xcSJhJtbn7kv5nfvrCoUqWs1uo9iK4C",
+    "deploy": {
+      "ok": true,
+      "tookMs": 2276
+    },
+    "invoke": {
+      "ok": true,
+      "signature": "rUqKCvSdt8JGJB5LaRGMKJTJBLecaP16737FSgmAFhEy6HKjkUbKHGQ7xcoGC3u5FhBkCQi2QVqp6Bc1wtmwbfG",
+      "accountDataLen": 48
+    }
+  },
+  {
+    "fixture": "bumps-access",
+    "cached_so": "/home/pk/.anvil-diff-cache/bumps-access-0ac128df77f4-442aa18d/bumps-access_anvil.so",
+    "programId": "J1X533eJ5T4hp699gWnUoCmufjjWsu8FEZ699xQ7Z4iu",
+    "deploy": {
+      "ok": true,
+      "tookMs": 2396
+    },
+    "invoke": {
+      "ok": true,
+      "signature": "4yGYaqE1YVKxxQtzM8jVDA1ZGvgwBamHRhXUKeapLL8xVDv98NMwkd11ZwbfExgz3JiLPtT2KZy33HyJDJKaoLjK",
+      "accountDataLen": 41
+    }
+  },
+  {
+    "fixture": "close-account",
+    "cached_so": "/home/pk/.anvil-diff-cache/close-account-0544368f68d7-650f6695/close-account_anvil.so",
+    "programId": "3n3zsXgRS49a8vAV2QyJ1QJtwyK9CNcWQzD1zBFUJKYJ",
+    "deploy": {
+      "ok": true,
+      "tookMs": 2433
+    },
+    "invoke": {
+      "ok": true,
+      "signature": "51rHPdFRBZEdhsJsgnbHcgQd9piZbKRVmHpT3wutTgFxV3vsXGctDNGarQsxt6tJ2EqwNwQvT38useeHmKthZLRC",
+      "accountDataLen": 48
+    }
+  },
+  {
+    "fixture": "vault",
+    "cached_so": "/home/pk/.anvil-diff-cache/vault-5d0ef3de9f69-7ea5a071/vault_anvil.so",
+    "programId": "5mQMeoKeUyppdxsgTTFSGmxGWDRHS2Pue4Pnntd8SUMH",
+    "deploy": {
+      "ok": true,
+      "tookMs": 2320
+    },
+    "invoke": {
+      "ok": true,
+      "signature": "<no-invoke>",
+      "accountDataLen": -1
+    }
+  },
+  {
+    "fixture": "favorites",
+    "cached_so": "/home/pk/.anvil-diff-cache/favorites-9c8571e487b5-33482a82/favorites_anvil.so",
+    "programId": "7BbGo6zxqh3PLDZZjbuYf99tQUbhHpKpvydQPdHNBRb2",
+    "deploy": {
+      "ok": true,
+      "tookMs": 2928
+    },
+    "invoke": {
+      "ok": true,
+      "signature": "<no-invoke>",
+      "accountDataLen": -1
+    }
+  },
+  {
+    "fixture": "ata-mint",
+    "cached_so": "/home/pk/.anvil-diff-cache/ata-mint-387a596604f0-442aa18d/ata-mint_anvil.so",
+    "programId": "3dhdZgci1FuD68U2dgKJBtAjiRoT3mNQhFLJhSygg9oE",
+    "deploy": {
+      "ok": true,
+      "tookMs": 2238
+    },
+    "invoke": {
+      "ok": true,
+      "signature": "<no-invoke>",
+      "accountDataLen": -1
+    }
+  },
+  {
+    "fixture": "return-data",
+    "cached_so": "/home/pk/.anvil-diff-cache/return-data-df872bec5b01-442aa18d/return-data_anvil.so",
+    "programId": "6QGdSgbzdBZ2RwWoxmm76ye5qGGj4XTqexNRQTPm162y",
+    "deploy": {
+      "ok": true,
+      "tookMs": 2270
+    },
+    "invoke": {
+      "ok": true,
+      "signature": "<no-invoke>",
+      "accountDataLen": -1
+    }
+  },
+  {
+    "fixture": "spl-transfer",
+    "cached_so": "/home/pk/.anvil-diff-cache/spl-transfer-397a2b6cd172-442aa18d/spl-transfer_anvil.so",
+    "programId": "263XkxuXJR71BtyBtBmQnofoPG2SqS4D788rjSm1hDhV",
+    "deploy": {
+      "ok": true,
+      "tookMs": 2713
+    },
+    "invoke": {
+      "ok": true,
+      "signature": "<no-invoke>",
+      "accountDataLen": -1
+    }
+  },
+  {
+    "fixture": "escrow",
+    "cached_so": "/home/pk/.anvil-diff-cache/escrow-562e5983f454-f889c76f/escrow_anvil.so",
+    "programId": "DK1WnHcGjy9V84PpcetoZhzi9yFPGfrHSYEPMry6apv1",
+    "deploy": {
+      "ok": true,
+      "tookMs": 2298
+    },
+    "invoke": {
+      "ok": true,
+      "signature": "<no-invoke>",
+      "accountDataLen": -1
+    }
+  }
+]

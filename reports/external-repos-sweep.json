@@ -1,0 +1,534 @@
+[
+  {
+    "name": "arjun-nft-metaplex",
+    "category": "arjun-mpl",
+    "parse": {
+      "ok": true,
+      "latencyMs": 25,
+      "size": 6371
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 36
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 27
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 410,
+      "error": "cannot find value `MPL_CORE_PROGRAM_ID` in this scope"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 662,
+      "error": "cannot find value `MPL_CORE_PROGRAM_ID` in this scope"
+    }
+  },
+  {
+    "name": "arjun-cpi",
+    "category": "arjun-cpi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 7,
+      "size": 3541
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 30
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 28
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 208,
+      "error": "cannot find value `cpi_context` in this scope"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 423,
+      "error": "cannot find function `transfer` in this scope"
+    }
+  },
+  {
+    "name": "arjun-vault-blueshift",
+    "category": "arjun-defi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 4,
+      "size": 3137
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 15
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 11
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 201,
+      "error": "failed to resolve: use of undeclared type `Rent`"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 410,
+      "error": "failed to resolve: use of undeclared type `Rent`"
+    }
+  },
+  {
+    "name": "arjun-merkle-tree-incremental",
+    "category": "arjun-merkle",
+    "parse": {
+      "ok": true,
+      "latencyMs": 3,
+      "size": 651
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 11
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 8
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 195,
+      "error": "cannot find function `handler` in module `instructions::initialize`"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 506,
+      "error": "cannot find function `handler` in module `instructions::initialize`"
+    }
+  },
+  {
+    "name": "arjun-escrow-blueshift",
+    "category": "arjun-defi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 2,
+      "size": 687
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 7
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 6
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 10086,
+      "error": "cannot find function `handler` in module `make`"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 800,
+      "error": "cannot find function `handler` in module `make`"
+    }
+  },
+  {
+    "name": "arjun-p-nft",
+    "category": "arjun-mpl",
+    "parse": {
+      "ok": true,
+      "latencyMs": 3,
+      "size": 331
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 3
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 3
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 391
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 868
+    }
+  },
+  {
+    "name": "arjun-merkle-tree",
+    "category": "arjun-merkle",
+    "parse": {
+      "ok": true,
+      "latencyMs": 7,
+      "size": 1569
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 51
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 21
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 8823,
+      "error": "unterminated block comment"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 380,
+      "error": "unterminated block comment"
+    }
+  },
+  {
+    "name": "arjun-tic-tac-toe",
+    "category": "arjun-game",
+    "parse": {
+      "ok": true,
+      "latencyMs": 21,
+      "size": 3798
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 21
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 27
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 783,
+      "error": "mismatched types"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 1053,
+      "error": "unresolved import `num_derive`"
+    }
+  },
+  {
+    "name": "arjun-pda-crud",
+    "category": "arjun-pda",
+    "parse": {
+      "ok": true,
+      "latencyMs": 14,
+      "size": 2670
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 62
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 45
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 572,
+      "error": "cannot find value `account_data` in this scope"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 822,
+      "error": "cannot find value `account_data` in this scope"
+    }
+  },
+  {
+    "name": "arjun-arcium-hello-world",
+    "category": "arjun-arcium",
+    "parse": {
+      "ok": false,
+      "latencyMs": 6,
+      "error": "{\"error\":\"No Anchor #[program] module found\",\"code\":1001,\"details\":\"This parser currently supports Anchor entry files. Native multi-file Solana programs like many SPL crates are not transpiled yet.\",\"sourcePath\":null,\"candidates\":null}"
+    },
+    "emitPin": {
+      "ok": false,
+      "latencyMs": 0
+    },
+    "emitNative": {
+      "ok": false,
+      "latencyMs": 0
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 0
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 0
+    }
+  },
+  {
+    "name": "arjun-pda",
+    "category": "arjun-pda",
+    "parse": {
+      "ok": true,
+      "latencyMs": 5,
+      "size": 939
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 22
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 14
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 800
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 1865
+    }
+  },
+  {
+    "name": "arjun-spl-token",
+    "category": "arjun-spl",
+    "parse": {
+      "ok": true,
+      "latencyMs": 7,
+      "size": 4770
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 51
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 55
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 229,
+      "error": "cannot find value `mint` in this scope"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 405,
+      "error": "cannot find value `mint` in this scope"
+    }
+  },
+  {
+    "name": "arjun-collateral-stablecoin",
+    "category": "arjun-defi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 3,
+      "size": 2191
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 15
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 53
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 392,
+      "error": "cannot find value `__BUMPS_FULL_STRUCT_TODO__` in this scope"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 1319,
+      "error": "cannot find value `__BUMPS_FULL_STRUCT_TODO__` in this scope"
+    }
+  },
+  {
+    "name": "arjun-sol-vault",
+    "category": "arjun-defi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 5,
+      "size": 4156
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 22
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 30
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 278,
+      "error": "failed to resolve: use of undeclared type `Clock`"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 526,
+      "error": "failed to resolve: use of undeclared type `Clock`"
+    }
+  },
+  {
+    "name": "arjun-escrow",
+    "category": "arjun-defi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 4,
+      "size": 862
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 31
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 18
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 1835,
+      "error": "unterminated block comment"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 257,
+      "error": "unterminated block comment"
+    }
+  },
+  {
+    "name": "arjun-counterapp",
+    "category": "arjun-basic",
+    "parse": {
+      "ok": true,
+      "latencyMs": 7,
+      "size": 1493
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 38
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 47
+    },
+    "buildPin": {
+      "ok": true,
+      "latencyMs": 1051
+    },
+    "buildNative": {
+      "ok": true,
+      "latencyMs": 2238
+    }
+  },
+  {
+    "name": "arjun-vault-manager",
+    "category": "arjun-defi",
+    "parse": {
+      "ok": true,
+      "latencyMs": 15,
+      "size": 4881
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 68
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 51
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 669,
+      "error": "cannot find value `tx_instruct` in this scope"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 879,
+      "error": "cannot find function `transfer` in this scope"
+    }
+  },
+  {
+    "name": "drift-protocol",
+    "category": "drift",
+    "parse": {
+      "ok": true,
+      "latencyMs": 1709,
+      "size": 78938
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 1064
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 1003
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 358,
+      "error": "this file contains an unclosed delimiter"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 546,
+      "error": "this file contains an unclosed delimiter"
+    }
+  },
+  {
+    "name": "kamino-klend",
+    "category": "kamino",
+    "parse": {
+      "ok": true,
+      "latencyMs": 560,
+      "size": 38448
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 4878
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 5720
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 23,
+      "error": "{\"error\":\"Invalid /build request\",\"code\":2003,\"details\":\"[\\n  {\\n    \\\"origin\\\": \\\"array\\\",\\n    \\\"code\\\": \\\"too_big\\\",\\n    \\\"maximum\\\": 64,\\n    \\\"inclusive\\\": true,\\n    \\\"path\\\": [\\n      \\\"files\\"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 12,
+      "error": "{\"error\":\"Invalid /build request\",\"code\":2003,\"details\":\"[\\n  {\\n    \\\"origin\\\": \\\"array\\\",\\n    \\\"code\\\": \\\"too_big\\\",\\n    \\\"maximum\\\": 64,\\n    \\\"inclusive\\\": true,\\n    \\\"path\\\": [\\n      \\\"files\\"
+    }
+  },
+  {
+    "name": "raydium-clmm",
+    "category": "raydium",
+    "parse": {
+      "ok": true,
+      "latencyMs": 1537,
+      "size": 28247
+    },
+    "emitPin": {
+      "ok": true,
+      "latencyMs": 2864
+    },
+    "emitNative": {
+      "ok": true,
+      "latencyMs": 2129
+    },
+    "buildPin": {
+      "ok": false,
+      "latencyMs": 676,
+      "error": "expected expression, found `let` statement"
+    },
+    "buildNative": {
+      "ok": false,
+      "latencyMs": 1174,
+      "error": "expected expression, found `let` statement"
+    }
+  }
+]
