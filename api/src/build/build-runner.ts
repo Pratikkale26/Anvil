@@ -147,6 +147,8 @@ sha2-const-stable = "0.1"
 num-derive = "0.4"
 num-traits = { version = "0.2", default-features = false }
 arrayref = "0.3"
+sha2 = { version = "0.10", default-features = false }
+sha3 = { version = "0.10", default-features = false }
 # Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
 # emit on hand-rolled bytes (no crate dep needed). The source's
 # get_feed_id_from_hex("0x...") is parsed at emit time into a byte
@@ -195,6 +197,8 @@ sha2-const-stable = "0.1"
 num-derive = "0.4"
 num-traits = "0.2"
 arrayref = "0.3"
+sha2 = "0.10"
+sha3 = "0.10"
 # Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
 # emit on hand-rolled bytes (see emitter-base.ts emitPythReadPrice*).
 # Source 'use pyth_*::*' lines are filtered out by

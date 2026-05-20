@@ -727,6 +727,103 @@ export function neutralizeUnsupportedMacros(source: string): string {
 }
 
 /**
+ * G1 — rewrite Solana hash helper calls to use vendored anvil_*_hashv
+ * functions. `solana_sha256_hasher::hashv(slices).to_bytes()` becomes
+ * `anvil_sha256_hashv(slices)`; same shape for keccak. The vendored
+ * helpers (emitted by the emitter when this source has been touched)
+ * use sha2/sha3 crates which compile no_std-compatible on Pinocchio.
+ *
+ * Returns the source plus a flag indicating which helpers are needed,
+ * so the emitter can inject them conditionally.
+ *
+ * Generalizes to: merkle trees, randomness consumers, any program
+ * using Solana's hash syscalls in carried code.
+ *
+ * Exported for unit testing.
+ */
+export function rewriteSolanaHashCalls(source: string): {
+  source: string;
+  needsSha256: boolean;
+  needsKeccak: boolean;
+} {
+  let needsSha256 = false;
+  let needsKeccak = false;
+  let out = source;
+  const rewriteHashCall = (prefix: string, replacement: string, setFlag: () => void): void => {
+    // Paren-balanced walk to find each `prefix(...)` call site, with
+    // optional trailing `.to_bytes()` / `.0` consumed into the
+    // replacement. Walking by hand (not regex) so nested parens in
+    // args (`right.as_ref()` inside the slice literal) don't trip
+    // lazy-quantifier matching.
+    let i = 0;
+    let rewritten = "";
+    while (i < out.length) {
+      const idx = out.indexOf(prefix, i);
+      if (idx === -1) { rewritten += out.slice(i); break; }
+      const prevCh = idx > 0 ? out[idx - 1]! : "";
+      if (prevCh !== "" && /[A-Za-z0-9_]/.test(prevCh)) {
+        // Word-prefix collision; skip.
+        rewritten += out.slice(i, idx + prefix.length);
+        i = idx + prefix.length;
+        continue;
+      }
+      let openParen = idx + prefix.length;
+      while (openParen < out.length && /\s/.test(out[openParen]!)) openParen++;
+      if (out[openParen] !== "(") {
+        rewritten += out.slice(i, idx + prefix.length);
+        i = idx + prefix.length;
+        continue;
+      }
+      let depth = 0;
+      let closeParen = -1;
+      let inStr = false;
+      for (let j = openParen; j < out.length; j++) {
+        const ch = out[j];
+        if (inStr) {
+          if (ch === "\\" && j + 1 < out.length) { j++; continue; }
+          if (ch === '"') inStr = false;
+          continue;
+        }
+        if (ch === '"') { inStr = true; continue; }
+        if (ch === "(") depth++;
+        else if (ch === ")") { depth--; if (depth === 0) { closeParen = j; break; } }
+      }
+      if (closeParen === -1) {
+        rewritten += out.slice(i, idx + prefix.length);
+        i = idx + prefix.length;
+        continue;
+      }
+      const args = out.slice(openParen + 1, closeParen).trim();
+      // Consume optional `.to_bytes()` or `.0` suffix.
+      let suffixEnd = closeParen + 1;
+      const tailMatch = out.slice(suffixEnd).match(/^\s*\.\s*(?:to_bytes\s*\(\s*\)|0)/);
+      if (tailMatch) suffixEnd += tailMatch[0].length;
+      setFlag();
+      rewritten += out.slice(i, idx) + `${replacement}(${args})`;
+      i = suffixEnd;
+    }
+    out = rewritten;
+  };
+  rewriteHashCall("solana_sha256_hasher::hashv", "anvil_sha256_hashv", () => { needsSha256 = true; });
+  rewriteHashCall("solana_sha256_hasher::hash", "anvil_sha256_hash", () => { needsSha256 = true; });
+  rewriteHashCall("solana_keccak_hasher::hashv", "anvil_keccak_hashv", () => { needsKeccak = true; });
+  rewriteHashCall("solana_keccak_hasher::hash", "anvil_keccak_hash", () => { needsKeccak = true; });
+  // Bare `hashv(...)` invocations — only rewrite if the source has a
+  // matching `use solana_X_hasher::hashv` import. The use line is
+  // dropped downstream; without rewriting bare call sites, they
+  // reference an undefined function. Caught by arjun-merkle-tree's
+  // `use solana_keccak_hasher::hashv;\n let h = hashv(&[..]).0;`.
+  const hasKeccakUse = /\buse\s+solana_keccak_hasher\s*::\s*(?:hashv|hash|\*|\{[^}]*hashv[^}]*\})/.test(out);
+  const hasSha256Use = /\buse\s+solana_sha256_hasher\s*::\s*(?:hashv|hash|\*|\{[^}]*hashv[^}]*\})/.test(out);
+  if (hasKeccakUse) {
+    rewriteHashCall("hashv", "anvil_keccak_hashv", () => { needsKeccak = true; });
+  } else if (hasSha256Use) {
+    rewriteHashCall("hashv", "anvil_sha256_hashv", () => { needsSha256 = true; });
+  }
+  return { source: out, needsSha256, needsKeccak };
+}
+
+/**
  * Disambiguate `pub const NAME: ... = ...;` declarations that live inside
  * non-program `pub mod X { ... }` blocks when multiple sibling modules
  * each declare the same NAME. Without this, the flattened source has
@@ -1735,6 +1832,35 @@ function buildFlattenedSource(
   // construct_uint!{ pub struct UN(K); } → stub UN type so downstream
   // type references resolve.
   source = neutralizeUnsupportedMacros(source);
+  // G1 — rewrite Solana hash helper calls to vendored anvil_* shapes
+  // that work in no_std/Pinocchio via sha2/sha3 crates. The emitter
+  // injects the helpers when needed.
+  const hashRewrite = rewriteSolanaHashCalls(source);
+  source = hashRewrite.source;
+  if (hashRewrite.needsSha256 || hashRewrite.needsKeccak) {
+    // Append helper definitions at source tail. Both targets ship sha2
+    // (Native via NATIVE_CARGO_TOML; Pin via PINOCCHIO_OPTIONAL_DEPS
+    // auto-detect). The functions are no_std-safe.
+    const helpers: string[] = [];
+    if (hashRewrite.needsSha256) {
+      helpers.push(`pub fn anvil_sha256_hashv(slices: &[&[u8]]) -> [u8; 32] {
+    use sha2::{Sha256, Digest};
+    let mut h = Sha256::new();
+    for s in slices { h.update(s); }
+    h.finalize().into()
+}
+pub fn anvil_sha256_hash(data: &[u8]) -> [u8; 32] { anvil_sha256_hashv(&[data]) }`);
+    }
+    if (hashRewrite.needsKeccak) {
+      helpers.push(`pub fn anvil_keccak_hashv(slices: &[&[u8]]) -> [u8; 32] {
+    use sha3::{Keccak256, Digest};
+    let mut h = Keccak256::new();
+    for s in slices { h.update(s); }
+    h.finalize().into()
+}`);
+    }
+    source = `${source}\n\n// Anvil-vendored hash helpers (G1 — no_std-compat replacements\n// for solana_sha256_hasher::hashv / solana_keccak_hasher::hashv)\n${helpers.join("\n\n")}\n`;
+  }
 
   return { source, includedFiles, missingModules, cfgDrops, wasFlattened: true };
 }
