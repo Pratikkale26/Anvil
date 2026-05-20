@@ -80,6 +80,96 @@ fn check(p: &Pubkey) -> bool { *p == admin::ID || *p == limit_order_admin::ID }`
   });
 });
 
+describe("G17 — ZeroCopy / Owner / Discriminator trait stubs", () => {
+  // Raydium-clmm and similar programs define user wrappers like
+  //   pub struct AccountLoad<'info, T: ZeroCopy + Owner> { ... }
+  // which carry anchor_lang trait bounds verbatim into emitted helpers.rs.
+  // Anvil strips anchor_lang imports, so those bounds need somewhere to
+  // resolve. G17 emits stub traits at lib.rs scope when any account or
+  // typedef is isZeroCopy, plus impl blocks per zero-copy account.
+  test("ZeroCopy traits emitted at lib.rs scope when isZeroCopy account present", async () => {
+    const { PinocchioEmitter } = await import("../src/emitter/pinocchio-emitter.ts");
+    const ir: any = {
+      name: "zc_program",
+      accounts: [
+        { name: "PoolState", isZeroCopy: true, fields: [{ name: "owner", type: "Pubkey" }, { name: "tick", type: "u16" }], implItems: [] },
+      ],
+      types: [],
+      helperFns: [],
+      events: [],
+      errors: [],
+      constants: [],
+      instructions: [],
+    };
+    const out = new PinocchioEmitter().emit(ir);
+    const lib = out.files.find((f: any) => f.path === "lib.rs")?.content ?? "";
+    expect(lib).toContain("pub trait Discriminator {");
+    expect(lib).toContain("pub trait Owner {");
+    expect(lib).toContain("pub trait ZeroCopy: Discriminator + Owner {}");
+    const state = out.files.find((f: any) => f.path === "state.rs")?.content ?? "";
+    expect(state).toContain("impl Discriminator for PoolState");
+    expect(state).toContain("impl Owner for PoolState");
+    expect(state).toContain("impl ZeroCopy for PoolState");
+  });
+
+  test("Native target emits owner() with Pubkey::default()", async () => {
+    const { NativeEmitter } = await import("../src/emitter/native-emitter.ts");
+    const ir: any = {
+      name: "zc_program",
+      accounts: [
+        { name: "PoolState", isZeroCopy: true, fields: [{ name: "owner", type: "Pubkey" }], implItems: [] },
+      ],
+      types: [], helperFns: [], events: [], errors: [], constants: [], instructions: [],
+    };
+    const out = new NativeEmitter().emit(ir);
+    const state = out.files.find((f: any) => f.path === "state.rs")?.content ?? "";
+    expect(state).toContain("fn owner() -> Pubkey { Pubkey::default() }");
+  });
+
+  test("Pinocchio target emits owner() with [0u8; 32]", async () => {
+    const { PinocchioEmitter } = await import("../src/emitter/pinocchio-emitter.ts");
+    const ir: any = {
+      name: "zc_program",
+      accounts: [
+        { name: "PoolState", isZeroCopy: true, fields: [{ name: "owner", type: "Pubkey" }], implItems: [] },
+      ],
+      types: [], helperFns: [], events: [], errors: [], constants: [], instructions: [],
+    };
+    const out = new PinocchioEmitter().emit(ir);
+    const state = out.files.find((f: any) => f.path === "state.rs")?.content ?? "";
+    expect(state).toContain("fn owner() -> Pubkey { [0u8; 32] }");
+  });
+
+  test("No trait stubs emitted when no isZeroCopy account/typeDef exists", async () => {
+    const { PinocchioEmitter } = await import("../src/emitter/pinocchio-emitter.ts");
+    const ir: any = {
+      name: "regular_program",
+      accounts: [{ name: "Foo", fields: [{ name: "v", type: "u64" }], implItems: [] }],
+      types: [], helperFns: [], events: [], errors: [], constants: [], instructions: [],
+    };
+    const out = new PinocchioEmitter().emit(ir);
+    const lib = out.files.find((f: any) => f.path === "lib.rs")?.content ?? "";
+    expect(lib).not.toContain("pub trait ZeroCopy");
+    expect(lib).not.toContain("pub trait Owner");
+  });
+
+  test("Regular accounts do not get trait impls", async () => {
+    const { PinocchioEmitter } = await import("../src/emitter/pinocchio-emitter.ts");
+    const ir: any = {
+      name: "zc_program",
+      accounts: [
+        { name: "PoolState", isZeroCopy: true, fields: [{ name: "owner", type: "Pubkey" }], implItems: [] },
+        { name: "RegularAcc", fields: [{ name: "v", type: "u64" }], implItems: [] },
+      ],
+      types: [], helperFns: [], events: [], errors: [], constants: [], instructions: [],
+    };
+    const out = new PinocchioEmitter().emit(ir);
+    const state = out.files.find((f: any) => f.path === "state.rs")?.content ?? "";
+    expect(state).not.toMatch(/impl\s+ZeroCopy\s+for\s+RegularAcc/);
+    expect(state).not.toMatch(/impl\s+Owner\s+for\s+RegularAcc/);
+  });
+});
+
 describe("G16 — kamino orphan-chain + drift overshoot prevention", () => {
   // Layer A: pre-filter drops nested invocations inside macro_rules!
   // definition bodies — chain walker can no longer overshoot the def

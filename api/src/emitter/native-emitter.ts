@@ -1828,8 +1828,9 @@ impl ${acc.name} {
     pub const INIT_SPACE: usize = ${bodyLen};
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
-    pub const SIZE: usize = Self::TOTAL_LEN;
-}${this.emitInherentImplItems(acc)}`;
+}${this.emitInherentImplItems(acc)}
+
+${this.emitZeroCopyTraitImpls(acc.name)}`;
   }
 
   /**

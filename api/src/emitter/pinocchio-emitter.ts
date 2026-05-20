@@ -2577,7 +2577,9 @@ impl ${acc.name} {
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;${accessorBlock}
-}${this.emitInherentImplItems(acc)}`;
+}${this.emitInherentImplItems(acc)}
+
+${this.emitZeroCopyTraitImpls(acc.name)}`;
     }
 
     const bodyLen = acc.fields.reduce((s, f) => s + this.resolveTypeSize(f.type, f.maxLen), 0);

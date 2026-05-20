@@ -1115,6 +1115,17 @@ export abstract class BaseEmitter {
     const hasHelperModule = this.hasHelperModule(ir);
     sections.push(this.fileHeader(ir.name));
     sections.push(this.emitUseStatements(ir));
+    // G17: emit ZeroCopy / Owner / Discriminator trait stubs when any
+    // account/typeDef is `#[account(zero_copy)]` or bare `#[zero_copy]`.
+    // User-defined wrappers like raydium-clmm's `AccountLoad<'info, T:
+    // ZeroCopy + Owner>` carry the bounds verbatim into helpers.rs; the
+    // bounds need a resolvable trait somewhere in scope. Anchor's stock
+    // traits live in `anchor_lang`, which we strip — these stubs fill
+    // that gap with the minimal shape needed for cargo to type-check.
+    const zeroCopyTraits = this.emitZeroCopyTraits(ir);
+    if (zeroCopyTraits) {
+      sections.push(zeroCopyTraits);
+    }
     // Hoist const-fn helpers referenced by top-level constants. Rust's
     // const-evaluator requires the called fn to be visible at the const
     // decl's scope; without this lift, a source `pub const ZERO_HASHES =
@@ -1429,6 +1440,60 @@ export abstract class BaseEmitter {
       (h) => !this.unsalvageableHelpers.has(h.name),
     ).length;
     return Boolean(this.emitHelperFunctions(ir).trim()) || salvageableCount > 0;
+  }
+
+  /**
+   * G17 — emit ZeroCopy / Owner / Discriminator trait STUBS at lib.rs
+   * scope so user-defined wrappers like raydium-clmm's
+   *   pub struct AccountLoad<'info, T: ZeroCopy + Owner> { … }
+   * resolve their trait bounds. Anchor's actual traits live in
+   * `anchor_lang::ZeroCopy + Owner + Discriminator`; Anvil strips
+   * anchor_lang imports, so any user code carrying these bounds
+   * verbatim breaks at cargo with "cannot find trait ZeroCopy".
+   *
+   * Trait shapes mirror Anchor's surface:
+   *   - Discriminator: `const DISCRIMINATOR: [u8; 8]`
+   *   - Owner: `fn owner() -> Pubkey`
+   *   - ZeroCopy: marker, super-trait of Discriminator + Owner
+   *
+   * Fires when at least one AccountDef OR TypeDef has isZeroCopy = true.
+   * Skipped otherwise so non-zero-copy programs don't see stub noise.
+   *
+   * The corresponding `impl Discriminator/Owner/ZeroCopy for X` blocks
+   * are emitted per-account in each target emitter's emitAccountStruct.
+   */
+  protected emitZeroCopyTraits(ir: SolanaIR): string {
+    const hasZcAcc = ir.accounts.some((a) => a.isZeroCopy);
+    const hasZcType = (ir.types ?? []).some((t) => t.isZeroCopy);
+    if (!hasZcAcc && !hasZcType) return "";
+    return `// ⚠️ Anvil: ZeroCopy / Owner / Discriminator trait stubs for user-defined
+// generic wrappers (e.g. AccountLoad<'info, T: ZeroCopy + Owner>). Anchor
+// supplies these traits via anchor_lang; Anvil strips anchor_lang imports,
+// so the bounds need somewhere to resolve. Shapes mirror Anchor's surface
+// to satisfy cargo type-check. Runtime semantics for owner() default to
+// the zero-Pubkey — user code that compares ownership against T::owner()
+// will need to hand-port if real validation is required.
+pub trait Discriminator {
+    const DISCRIMINATOR: [u8; 8];
+}
+pub trait Owner {
+    fn owner() -> Pubkey;
+}
+pub trait ZeroCopy: Discriminator + Owner {}`;
+  }
+
+  /**
+   * G17 — emit `impl Discriminator + Owner + ZeroCopy for X { … }` block
+   * for a zero-copy account. Called by per-target emitAccountStruct.
+   *
+   * Discriminator delegates to the inherent const `Self::DISCRIMINATOR`
+   * already emitted on the account struct. Owner returns a target-typed
+   * zero-Pubkey stub.
+   */
+  protected emitZeroCopyTraitImpls(accName: string): string {
+    return `impl Discriminator for ${accName} { const DISCRIMINATOR: [u8; 8] = Self::DISCRIMINATOR; }
+impl Owner for ${accName} { fn owner() -> Pubkey { ${this.defaultPubkeyValue()} } }
+impl ZeroCopy for ${accName} {}`;
   }
 
   // ── Combined single-file output ──
