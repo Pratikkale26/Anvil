@@ -69,6 +69,52 @@ function rewriteMsgCalls(source: string, emitMsg: (message: string) => string): 
   return out;
 }
 
+/**
+ * Strip `//` line-comments per-field from an `emit!` struct-literal body.
+ *
+ * Drift's controller/funding.rs has shapes like:
+ *   emit!(FundingPaymentRecord {
+ *       ts: now,
+ *       base_asset_amount: market_position.base_asset_amount, //1e9
+ *   });
+ *
+ * The carried-helper rewrite collapses this to a single-line template
+ *   `let __evt = Event { ${fields} };`
+ * so any `//` on the last field swallows the trailing `};` — cargo
+ * reports "unclosed delimiter" at the file's final brace.
+ *
+ * Mirror visitor-base.ts:152 — depth-aware split on top-level commas
+ * (string-aware), strip `//[^\n]*$` from each part, rejoin with `, `.
+ */
+function stripFieldComments(fields: string): string {
+  const trimmed = fields.trim().replace(/,\s*$/, "");
+  if (trimmed.length === 0) return "";
+  const parts: string[] = [];
+  let depth = 0;
+  let inStr: '"' | "'" | null = null;
+  let start = 0;
+  for (let k = 0; k < trimmed.length; k++) {
+    const c = trimmed[k];
+    if (inStr) {
+      if (c === "\\") { k++; continue; }
+      if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { inStr = c as '"' | "'"; continue; }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      parts.push(trimmed.slice(start, k));
+      start = k + 1;
+    }
+  }
+  parts.push(trimmed.slice(start));
+  const cleaned = parts
+    .map((p) => p.replace(/\/\/[^\n]*/g, "").trim())
+    .filter((p) => p.length > 0);
+  return cleaned.join(", ");
+}
+
 import {
   cleanInlineExpr,
   emitRequireGuard,
@@ -206,7 +252,7 @@ export function transformHelperCode(
   );
   next = next.replace(
     /emit!\(\s*(\w+)\s*\{\s*([\s\S]*?)\s*\}\s*\);/g,
-    (_full, event: string, fields: string) => emitEmit(event, fields).replace(/^    /gm, "")
+    (_full, event: string, fields: string) => emitEmit(event, stripFieldComments(fields)).replace(/^    /gm, "")
   );
   // Paren-balanced + string-aware walk to find `msg!(...)` args. The
   // prior `[\\s\\S]*?` lazy regex stopped at the first `);` inside the

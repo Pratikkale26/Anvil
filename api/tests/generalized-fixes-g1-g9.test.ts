@@ -79,3 +79,51 @@ fn check(p: &Pubkey) -> bool { *p == admin::ID || *p == limit_order_admin::ID }`
     expect(out).toContain("admin_ID || *p == limit_order_admin_ID");
   });
 });
+
+describe("G15 — drift carried-helper emit! comment strip", () => {
+  // Drift's controller/funding.rs has emit!(Event { f: v, //1e9 ... });
+  // shapes. transformHelperCode collapses to single-line `};`, so any
+  // trailing `//comment` on the last field swallows the closer →
+  // "unclosed delimiter" cargo error at file end. stripFieldComments
+  // mirrors the IR path's per-field comment scrub.
+  test("trailing // comments on emit! fields don't swallow }; in carried-helper rewrite", async () => {
+    const { transformHelperCode } = await import("../src/emitter/anchor-transforms.ts");
+    const { PinocchioEmitter } = await import("../src/emitter/pinocchio-emitter.ts");
+    const emitter = new PinocchioEmitter();
+    const src = `fn x() -> Result<()> {
+  emit!(Evt {
+    ts: now,
+    funding_payment: payment, //1e6
+    base_asset_amount: market.base_asset_amount, //1e9
+  });
+  Ok(())
+}`;
+    const out = transformHelperCode(
+      src,
+      (e, f) => emitter.emitEmit(e, f),
+      (m) => `pinocchio::msg!(${m});`,
+    );
+    expect(out).not.toMatch(/\/\/[^\n]*\};/);
+    expect(out).toContain("base_asset_amount: market.base_asset_amount }");
+    // braces balance
+    let depth = 0;
+    for (const ch of out) {
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+    }
+    expect(depth).toBe(0);
+  });
+
+  test("emit! with no comments survives unchanged in structure", async () => {
+    const { transformHelperCode } = await import("../src/emitter/anchor-transforms.ts");
+    const { PinocchioEmitter } = await import("../src/emitter/pinocchio-emitter.ts");
+    const emitter = new PinocchioEmitter();
+    const src = `fn x() -> Result<()> { emit!(Evt { a: 1, b: 2 }); Ok(()) }`;
+    const out = transformHelperCode(
+      src,
+      (e, f) => emitter.emitEmit(e, f),
+      (m) => `pinocchio::msg!(${m});`,
+    );
+    expect(out).toContain("Evt { a: 1, b: 2 }");
+  });
+});
