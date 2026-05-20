@@ -976,7 +976,10 @@ export abstract class BaseEmitter {
         // cfg(test)-block strip pass anyway, so the imports are dead.
         if (/\bproptest\b/.test(statement)) return false;
         if (/\bquickcheck\b/.test(statement)) return false;
-        if (/\barrayref\b/.test(statement)) return false;
+        // arrayref kept on both targets (2026-05-20): the crate is in
+        // NATIVE_OPTIONAL_DEPS + PINOCCHIO_OPTIONAL_DEPS + the static
+        // /build templates now. Runtime usages like raydium-clmm's
+        // `array_ref![data, 0, 8]` macro need the import to resolve.
         if (/\buint::construct_uint\b/.test(statement)) return false;
         if (/^use\s+rand(?:::|;)/.test(statement)) return false;
         // solana_security_txt is a dev-time annotation macro that emits a

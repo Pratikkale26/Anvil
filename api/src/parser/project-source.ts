@@ -1243,6 +1243,18 @@ function buildFlattenedSource(
     // declaration line still needs to disappear from the emitted output.
     processed = stripCfgTestModuleDecls(processed);
 
+    // Strip ALL inactive cfg-gated items (including INLINE `#[cfg(test)]
+    // pub mod tests { ... }` blocks AND `#[cfg(feature = "...")]`
+    // predicates evaluating false). Without this, raydium-clmm's
+    // `#[cfg(test)] pub mod tick_array_bitmap_extension_test { ... }`
+    // inline blocks survived and their internal `use ...` lines were
+    // hoisted by collectExternalUseStatements below, producing
+    // unresolved-import errors at lib.rs top level. The single-file
+    // buildProjectSourceGraph path already does this; multi-file was
+    // missing it.
+    const cfgStripped = stripInactiveCfgItemsWithDrops(processed);
+    processed = cfgStripped.source;
+
     // Strip mod declarations
     const moduleDecls = extractExternalModuleDecls(processed);
     processed = stripExternalModuleDeclarations(
