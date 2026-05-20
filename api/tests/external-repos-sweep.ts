@@ -92,8 +92,22 @@ async function runFixture(f: Fixture): Promise<FixtureResult> {
     return { name: f.name, category: f.category, parse: failed, emitPin: failed, emitNative: failed, buildPin: failed, buildNative: failed };
   }
 
-  // Try projectPath first if available (handles multi-file). Otherwise source.
-  const parseBody = f.projectPath ? { projectPath: f.projectPath, programName: f.programName } : { source };
+  // Always try the multi-file path. If a fixture lib.rs sits at
+  // `programs/X/src/lib.rs`, the parent of src/ (programs/X) is the
+  // project root that contains Cargo.toml and the full module graph.
+  // For an explicit projectPath override (the big-3 programs), honor
+  // that. For everything else, derive from libPath. The parser falls
+  // back to single-file behavior automatically when no mod-decls are
+  // present in lib.rs.
+  let projectPathToUse = f.projectPath;
+  if (!projectPathToUse && f.libPath) {
+    // libPath = .../programs/X/src/lib.rs → projectPath = .../programs/X
+    const srcDir = f.libPath.replace(/\/src\/lib\.rs$/, "");
+    projectPathToUse = srcDir;
+  }
+  const parseBody = projectPathToUse
+    ? { projectPath: projectPathToUse, programName: f.programName }
+    : { source };
   const parsed = await post("/parse", parseBody);
   const failedStep: StepResult = { ok: false, latencyMs: 0 };
   if (!parsed.ok || !parsed.json?.ir) {
