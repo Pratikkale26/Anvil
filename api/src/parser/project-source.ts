@@ -358,6 +358,80 @@ export function expandPubkeyMacro(source: string): string {
   );
 }
 
+/**
+ * Well-known external program ID constants for crates Anvil intentionally
+ * does NOT pull into the scaffold (borsh-derive version conflicts). When
+ * source references one of these as an aliased `use crate::ID as ALIAS`
+ * pattern, the import line gets filtered out at emit, leaving the alias
+ * unbound. This map vendors the known base58 so an equivalent `pub const`
+ * can be appended to the source before parsing.
+ *
+ * Add a crate here when:
+ *   1. Anvil hand-rolls the CPI helpers for that program (so the body
+ *      doesn't actually need the crate at link time), AND
+ *   2. The source uses `crate::ID` as a constraint value or in a body
+ *      that survives the filter.
+ *
+ * Don't add a crate that the body still needs (CPI builders, struct
+ * types, etc.) — vendoring the ID alone won't unblock those.
+ */
+const WELL_KNOWN_PROGRAM_IDS: Record<string, string> = {
+  mpl_core: "CoREENRdpMR1mpvDVA9XzMbCydzL3wK9hLckCcuhuYr",
+  mpl_token_metadata: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+};
+
+/**
+ * Detect `use <known_crate>::{ID as <ALIAS>, ...}` and `use <known_crate>::
+ * ID as <ALIAS>;` patterns in source and append vendored `pub const`
+ * declarations to the end. The original `use` line is left untouched
+ * (the emitter's filteredSourceImports will drop it), but the alias is
+ * now bound to a top-level constant the parser captures into ir.constants
+ * and the emitter re-emits.
+ *
+ * Idempotent: a second pass over already-vendored source is a no-op
+ * because we look for the `use <crate>::` form, not the const decl shape.
+ *
+ * Exported for unit testing.
+ */
+export function vendorExternalProgramIDs(source: string): string {
+  const consts: string[] = [];
+  const seenAliases = new Set<string>();
+  for (const [crate, base58] of Object.entries(WELL_KNOWN_PROGRAM_IDS)) {
+    const bytes = decodeBase58(base58);
+    if (!bytes || bytes.length !== 32) continue;
+    // Block form: `use crate::{...ID as ALIAS...}`. Single regex over a
+    // possibly-multi-line block. Match content between `{` and matching `}`
+    // by scanning forward — keep it simple with a non-greedy capture and
+    // `[\s\S]*?` instead of `.*?` so newlines pass.
+    const escapedCrate = crate.replace(/_/g, "_");
+    const blockBlock = new RegExp(
+      `\\buse\\s+${escapedCrate}\\s*::\\s*\\{[\\s\\S]*?\\bID\\s+as\\s+([A-Z_][A-Za-z_0-9]*)[\\s\\S]*?\\}`,
+      "g",
+    );
+    for (const m of source.matchAll(blockBlock)) {
+      const alias = m[1];
+      if (alias && !seenAliases.has(alias)) {
+        seenAliases.add(alias);
+        consts.push(`pub const ${alias}: Pubkey = Pubkey::new_from_array([${bytes.join(", ")}]);`);
+      }
+    }
+    // Single-line: `use crate::ID as ALIAS;`
+    const singleLine = new RegExp(
+      `\\buse\\s+${escapedCrate}\\s*::\\s*ID\\s+as\\s+([A-Z_][A-Za-z_0-9]*)\\s*;`,
+      "g",
+    );
+    for (const m of source.matchAll(singleLine)) {
+      const alias = m[1];
+      if (alias && !seenAliases.has(alias)) {
+        seenAliases.add(alias);
+        consts.push(`pub const ${alias}: Pubkey = Pubkey::new_from_array([${bytes.join(", ")}]);`);
+      }
+    }
+  }
+  if (consts.length === 0) return source;
+  return `${source}\n\n// Anvil-vendored: external program ID constants pulled out of\n// imports for crates Anvil doesn't ship in the scaffold deps.\n${consts.join("\n")}\n`;
+}
+
 function decodeBase58(s: string): number[] | null {
   // Inline base58 decode to avoid importing bs58 from a parser module;
   // 32-byte pubkeys decode to ~44 base58 chars, well under any quadratic
@@ -1134,6 +1208,9 @@ function buildFlattenedSource(
   // ID = pubkey!("...") }`) hit this. The expanded form compiles in any
   // target framework that exposes a Pubkey type.
   source = expandPubkeyMacro(source);
+  // Vendor well-known external program IDs (mpl_core::ID etc.) — see
+  // anchor-parser for full rationale.
+  source = vendorExternalProgramIDs(source);
 
   return { source, includedFiles, missingModules, cfgDrops };
 }

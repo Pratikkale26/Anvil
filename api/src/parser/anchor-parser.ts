@@ -39,7 +39,7 @@ import { parseAccountDataStruct } from "./account-parser.js";
 import { parseErrorEnum, parseHelperFn, parseCustomType, extractImports, extractProgramId } from "./type-parser.js";
 import { createWarningCollector } from "./warning-collector.js";
 import { buildHelperCpiCatalog } from "./helper-cpi-catalog.js";
-import { rewriteErrMacroToExplicit, expandPubkeyMacro } from "./project-source.js";
+import { rewriteErrMacroToExplicit, expandPubkeyMacro, vendorExternalProgramIDs } from "./project-source.js";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -138,6 +138,13 @@ export async function parseAnchor(
   // ("cannot find macro `pubkey`"). Both targets accept the expanded
   // `Pubkey::new_from_array([...])` form.
   source = expandPubkeyMacro(source);
+  // Vendor well-known external program ID constants (mpl_core::ID etc.).
+  // The `use mpl_core::{...}` source line is dropped by filteredSourceImports
+  // at emit, so any `MPL_CORE_PROGRAM_ID` alias would otherwise leave the
+  // body unresolved. Append `pub const MPL_CORE_PROGRAM_ID: Pubkey = ...;`
+  // here so the parser captures it as a top-level const and the emitter
+  // re-emits it.
+  source = vendorExternalProgramIDs(source);
 
   // Auto-scale deadline by source size unless caller pinned one. Skip the
   // .split() on small sources (cheaper to assume small).
