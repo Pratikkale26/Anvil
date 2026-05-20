@@ -1,0 +1,61 @@
+/**
+ * arjun-p-nft differential (Pinocchio target). Third byte-equal proof on
+ * real-world external Anchor source. Sourced from
+ * github.com/aarjn/solana-programs-list/anchor-p-nft.
+ *
+ * As-shipped this program has one no-op instruction with an empty Initialize
+ * accounts struct — minimum-surface entry-point byte-equal check. The
+ * fee-payer's lamports are compared post-tx; both LiteSVM instances charge
+ * the same per-signature fee, so an entrypoint-cleanly-returns scenario
+ * yields identical payer balances on both targets.
+ */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { Transaction, TransactionInstruction } from "@solana/web3.js";
+import {
+  defineDifferential,
+  anchorIxDiscriminator,
+  Keypair,
+  PublicKey,
+  LiteSVM,
+} from "./differential-harness.ts";
+import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
+
+const SRC = join(import.meta.dir, "..", "src", "demo-programs", "external", "arjun-p-nft.rs");
+const PROGRAM_ID = "ArjnNft1111111111111111111111111111111111111";
+
+defineDifferential({
+  fixtureName: "arjun-p-nft-pin",
+  programIdBase58: PROGRAM_ID,
+  anchorSource: readFileSync(SRC, "utf-8"),
+  anchorPackageName: "arjun_p_nft_anchor_diff",
+  anvilTarget: "pinocchio",
+  // Wallet accounts have no anchor discriminator; comparing them with
+  // stripDiscriminator=true on a 0-byte buffer is a no-op (subarray(8) of
+  // empty is empty), but flipping it off makes the intent clearer.
+  stripDiscriminator: false,
+
+  setup: async () => {
+    const user = Keypair.generate();
+    return { user };
+  },
+
+  callScript: async (svm: LiteSVM, ctx, programId: PublicKey) => {
+    svm.airdrop(ctx.user.publicKey, BigInt(1_000_000_000));
+    const ix = new TransactionInstruction({
+      programId,
+      keys: [],
+      data: Buffer.from(anchorIxDiscriminator("initialize")),
+    });
+    const tx = new Transaction().add(ix);
+    tx.recentBlockhash = svm.latestBlockhash();
+    tx.feePayer = ctx.user.publicKey;
+    tx.sign(ctx.user);
+    const r = svm.sendTransaction(tx);
+    if (isTxFailure(r)) throw new Error(`tx initialize: ${txFailureMessage(r)}`);
+  },
+
+  accountsToCompare: (ctx) => [
+    { pubkey: ctx.user.publicKey, label: "fee_payer" },
+  ],
+});
