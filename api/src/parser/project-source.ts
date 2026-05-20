@@ -1179,11 +1179,15 @@ function findItemEnd(source: string, start: number): number {
   // Walk forward from `start` looking for either:
   //   1. A balanced `{...}` block whose `{` is at depth 0 → return position
   //      after closing `}` (and any trailing `;`).
-  //   2. A `;` at depth 0 (no preceding `{`) → return position after `;`.
+  //   2. A `;` at depth 0 (no preceding `{`) AND outside `[]`/`()` brackets.
+  // G22 — track `[]` and `()` bracket depth so a `;` inside a type
+  // expression like `pub feed_hash: [u8; 32],` (marginfi cfg-gated
+  // struct field) doesn't falsely terminate the item.
   // Strings/comments tracked to avoid false delimiter hits.
   let i = start;
   const n = source.length;
   let depth = 0;
+  let bracketDepth = 0; // [] + () bracket depth
   let inString = false;
   let inLine = false;
   let inBlock = false;
@@ -1197,12 +1201,13 @@ function findItemEnd(source: string, start: number): number {
     if (ch === "/" && next === "/") { inLine = true; i += 2; continue; }
     if (ch === "/" && next === "*") { inBlock = true; i += 2; continue; }
     if (ch === '"') { inString = true; i++; continue; }
+    if (ch === "[" || ch === "(") { bracketDepth++; i++; continue; }
+    if (ch === "]" || ch === ")") { if (bracketDepth > 0) bracketDepth--; i++; continue; }
     if (ch === "{") { depth++; firstBraceSeen = true; i++; continue; }
     if (ch === "}") {
       depth--;
       i++;
       if (depth === 0 && firstBraceSeen) {
-        // Optional trailing `;` (e.g. `struct X { ... };` is uncommon but legal).
         let k = i;
         while (k < n && /\s/.test(source[k] ?? "")) k++;
         if (source[k] === ";") return k + 1;
@@ -1210,7 +1215,7 @@ function findItemEnd(source: string, start: number): number {
       }
       continue;
     }
-    if (ch === ";" && depth === 0 && !firstBraceSeen) return i + 1;
+    if (ch === ";" && depth === 0 && bracketDepth === 0 && !firstBraceSeen) return i + 1;
     i++;
   }
   return -1;
