@@ -26,6 +26,7 @@ pub fn spl_token_mint_to<'a>(
 
 === instructions/mint_with_ata.rs ===
 use super::*;
+use solana_program::program::invoke;
 
 pub fn mint_with_ata(
     program_id: &Pubkey,

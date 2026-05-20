@@ -9,6 +9,7 @@ pub use write_memo::write_memo;
 
 === instructions/write_memo.rs ===
 use super::*;
+use solana_program::program::invoke;
 
 pub fn write_memo(
     program_id: &Pubkey,

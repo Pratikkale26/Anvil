@@ -1198,7 +1198,31 @@ export abstract class BaseEmitter {
     // resolve to "cannot find value" on cargo build. Only emit when the
     // IR has errors to import — keeps single-error-free programs clean.
     const errorImport = ir.errors.length > 0 ? `use crate::errors::*;\n` : "";
-    let raw = `use super::*;\n${errorImport}\n${this.emitInstructionFunction(instr, ir)}`;
+    const body = this.emitInstructionFunction(instr, ir);
+    // Per-instruction body-level imports for symbols that lib.rs-only
+    // `use` statements don't reach. `use super::*;` resolves to
+    // instructions/mod.rs's scope (which has `use crate::*;`), and
+    // `use crate::*;` only re-exports items declared at the crate
+    // root — not `use`-imported types/fns. Anchor sources commonly
+    // `use anchor_lang::solana_program::program::{invoke, invoke_signed};`
+    // and call bare; emit re-routes the import to `solana_program::...`
+    // for Native, but the rewrite lands in lib.rs only, so the bare
+    // call inside instructions/X.rs goes unresolved. Detect references
+    // in the body and add the corresponding use here.
+    const bodyImports: string[] = [];
+    if (this.frameworkName === "Native") {
+      const refsInvoke = /\binvoke\s*\(/.test(body);
+      const refsInvokeSigned = /\binvoke_signed\s*\(/.test(body);
+      if (refsInvoke && refsInvokeSigned) {
+        bodyImports.push("use solana_program::program::{invoke, invoke_signed};");
+      } else if (refsInvoke) {
+        bodyImports.push("use solana_program::program::invoke;");
+      } else if (refsInvokeSigned) {
+        bodyImports.push("use solana_program::program::invoke_signed;");
+      }
+    }
+    const bodyImportBlock = bodyImports.length > 0 ? bodyImports.join("\n") + "\n" : "";
+    let raw = `use super::*;\n${errorImport}${bodyImportBlock}\n${body}`;
     if (this.unsalvageableHelpers.size > 0) {
       raw = commentOutUnsalvageableCallSites(raw, this.unsalvageableHelpers);
     }
@@ -1408,6 +1432,18 @@ export abstract class BaseEmitter {
   // ─── Generic instruction function emitter ──────────────────────────────────
 
   protected emitInstructionFunction(instr: Instruction, ir: SolanaIR): string {
+    // Defect B fix: instructions containing `cpi_custom` (bare `invoke()`
+    // calls in source) can't be auto-ported. They typically have a
+    // companion `let ix = system_instruction::transfer(...)` pass_through
+    // binding that fails to compile on Pinocchio (no `system_instruction`
+    // crate) AND a Native over-deref of `.key` (which is a struct field
+    // not a method). Emit a stub body instead so the scaffold compiles;
+    // the user gets a clear `unimplemented!()` marker with the original
+    // source preserved as a comment to manually port.
+    const cpiCustomStatements = instr.body.filter((s) => s.kind === "cpi_custom");
+    if (cpiCustomStatements.length > 0) {
+      return this.emitCpiCustomStubFunction(instr, ir, cpiCustomStatements as Array<{ kind: "cpi_custom"; rawCode: string; programAccount: string }>);
+    }
     const requiredAccountCount = instr.accounts.filter((a) => !a.isOptional).length;
 
     // Account bindings
@@ -1484,10 +1520,25 @@ export abstract class BaseEmitter {
     // The write is gated: only fire when the existing 8 bytes are zero,
     // matching Anchor's `#[account(zero)]` precondition that the caller
     // pre-allocates a zero-init buffer.
+    // Defect D fix: skip the zero-disc prelude when the body already
+    // has a zero_copy_load_init for the same account. The visitor's
+    // load_init emits its own borrow + disc write, AND it requires
+    // the buffer to be all-zero. If we write the disc as a prelude
+    // FIRST, the load_init's zero-check then fires AccountAlreadyInitialized.
+    // The prelude was added for non-zero-copy `#[account(zero)]` paths
+    // (like Anchor's composite example) where the body uses Account<T>
+    // directly without load_init — there the disc write is needed.
+    const zeroCopyLoadInitAccounts = new Set<string>();
+    for (const stmt of instr.body) {
+      if (stmt.kind === "zero_copy_load_init" && stmt.account) {
+        zeroCopyLoadInitAccounts.add(stmt.account);
+      }
+    }
     const zeroPreludes = instr.accounts
       .filter((a) =>
         a.constraints.some((c) => c.kind === "zero")
-        && isCustomState(a.accountType),
+        && isCustomState(a.accountType)
+        && !zeroCopyLoadInitAccounts.has(a.name),
       )
       .map((a) => this.emitZeroAccountPrelude(a, ir))
       .filter(Boolean)
@@ -1564,6 +1615,39 @@ ${bodyCode}
 ${needsOkReturn ? "\n    Ok(())" : ""}
 }`;
     return prefixUnusedProphylacticBindings(fn);
+  }
+
+  /** Defect B helper — emit a stub function body for instructions containing
+   *  cpi_custom statements. Pinocchio doesn't have `system_instruction` or
+   *  `invoke()`; Native has them but over-derefs `.key` on AccountInfo.
+   *  Both targets get a clean `unimplemented!()` stub so the scaffold
+   *  compiles, with the original Anchor source preserved as a comment. */
+  private emitCpiCustomStubFunction(
+    instr: Instruction,
+    _ir: SolanaIR,
+    cpiStatements: Array<{ kind: "cpi_custom"; rawCode: string; programAccount: string }>,
+  ): string {
+    const programs = [...new Set(cpiStatements.map((s) => s.programAccount))].join(", ");
+    this.warnings.push(
+      `Instruction '${instr.name}' contains cpi_custom CPI(s) to '${programs}' — stubbed as unimplemented!(). Manual port required for ${this.frameworkName}.`,
+    );
+    const originalLines = cpiStatements
+      .map((s) => s.rawCode.split("\n").map((l) => `    // ${l}`).join("\n"))
+      .join("\n    //\n");
+    return `pub fn ${snakeCase(instr.name)}(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    // ${MARKER_ANVIL_PREFIX}: cpi_custom CPI(s) to '${programs}' — manual port required.
+    // Anvil can't auto-port bare \`invoke()\` / \`invoke_signed()\` calls:
+    //   - Pinocchio uses pinocchio::cpi::* with different ownership semantics
+    //   - Native uses solana_program::program::invoke and \`.key\` as a struct field
+    // Original (raw) source preserved below for manual reference:
+${originalLines}
+    let _ = (program_id, accounts, data);
+    unimplemented!("Anvil: cpi_custom to '${programs}' in '${instr.name}' — manual port required for ${this.frameworkName}");
+}`;
   }
 
   // ─── Body statement walker ─────────────────────────────────────────────────

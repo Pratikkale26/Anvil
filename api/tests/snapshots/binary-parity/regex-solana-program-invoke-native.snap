@@ -9,6 +9,7 @@ pub use raw_invoke::raw_invoke;
 
 === instructions/raw_invoke.rs ===
 use super::*;
+use solana_program::program::invoke;
 
 pub fn raw_invoke(
     program_id: &Pubkey,

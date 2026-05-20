@@ -26,6 +26,7 @@ pub fn spl_token_burn<'a>(
 
 === instructions/do_burn.rs ===
 use super::*;
+use solana_program::program::invoke;
 
 pub fn do_burn(
     program_id: &Pubkey,

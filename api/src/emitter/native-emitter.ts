@@ -1387,8 +1387,12 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     // the sources expression (typically a Vec<AccountInfo> or
     // ctx.remaining_accounts slice). Account list for invoke includes
     // mint, token_program, then each source AccountInfo.
+    // Defect C fix in the line below: source iterables are typically
+    // Vec<&AccountInfo> (from vec![&account, ...]), so .iter().cloned()
+    // yields &AccountInfo not AccountInfo. Use map+deref+clone to
+    // materialise owned AccountInfos.
     return `    // Token-2022 TransferFee — harvest_withheld_tokens_to_mint
-    let hwtm_sources_vec: Vec<AccountInfo> = (${sourcesExpr}).iter().cloned().collect();
+    let hwtm_sources_vec: Vec<AccountInfo> = (${sourcesExpr}).iter().map(|a| (*a).clone()).collect();
     let hwtm_source_keys: Vec<&Pubkey> = hwtm_sources_vec.iter().map(|a| a.key).collect();
     let hwtm_ix = spl_token_2022::extension::transfer_fee::instruction::harvest_withheld_tokens_to_mint(
         &spl_token_2022::id(),

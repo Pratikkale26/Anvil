@@ -142,6 +142,7 @@ pub fn close_program_account<'a>(
 === instructions/accept_escrow.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::{invoke, invoke_signed};
 
 pub fn accept_escrow(
     program_id: &Pubkey,
@@ -289,6 +290,7 @@ pub fn accept_escrow(
 === instructions/cancel_escrow.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::invoke_signed;
 
 pub fn cancel_escrow(
     program_id: &Pubkey,
@@ -392,6 +394,7 @@ pub fn cancel_escrow(
 === instructions/create_escrow.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::{invoke, invoke_signed};
 
 pub fn create_escrow(
     program_id: &Pubkey,

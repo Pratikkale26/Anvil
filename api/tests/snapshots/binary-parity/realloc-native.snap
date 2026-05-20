@@ -30,6 +30,7 @@ pub fn create_program_account<'a>(
 
 === instructions/append.rs ===
 use super::*;
+use solana_program::program::invoke;
 
 pub fn append(
     program_id: &Pubkey,

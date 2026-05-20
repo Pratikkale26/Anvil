@@ -96,6 +96,7 @@ pub fn transfer_lamports_signed<'a>(
 === instructions/deposit.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::invoke;
 
 pub fn deposit(
     program_id: &Pubkey,
@@ -246,6 +247,7 @@ pub use withdraw::withdraw;
 === instructions/withdraw.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::invoke_signed;
 
 pub fn withdraw(
     program_id: &Pubkey,

@@ -208,6 +208,7 @@ pub use close_jar::close_jar;
 === instructions/tip.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::invoke;
 
 pub fn tip(
     program_id: &Pubkey,

@@ -203,6 +203,7 @@ pub fn vested_amount(
 === instructions/close.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::invoke_signed;
 
 pub fn close(
     program_id: &Pubkey,
@@ -283,6 +284,7 @@ pub fn close(
 === instructions/create_vesting.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::{invoke, invoke_signed};
 
 pub fn create_vesting(
     program_id: &Pubkey,
@@ -493,6 +495,7 @@ pub use close::close;
 === instructions/release.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::invoke_signed;
 
 pub fn release(
     program_id: &Pubkey,

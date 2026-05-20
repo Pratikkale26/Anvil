@@ -30,6 +30,7 @@ pub fn create_program_account<'a>(
 
 === instructions/append_four.rs ===
 use super::*;
+use solana_program::program::invoke;
 
 pub fn append_four(
     program_id: &Pubkey,
@@ -120,6 +121,7 @@ pub fn append_four(
 
 === instructions/append_one.rs ===
 use super::*;
+use solana_program::program::invoke;
 
 pub fn append_one(
     program_id: &Pubkey,
@@ -189,6 +191,7 @@ pub fn append_one(
 
 === instructions/append_two.rs ===
 use super::*;
+use solana_program::program::invoke;
 
 pub fn append_two(
     program_id: &Pubkey,

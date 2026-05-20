@@ -167,6 +167,7 @@ pub fn close_program_account<'a>(
 === instructions/delist.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::invoke_signed;
 
 pub fn delist(
     program_id: &Pubkey,
@@ -347,6 +348,7 @@ pub fn initialize(
 === instructions/list.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::invoke;
 
 pub fn list(
     program_id: &Pubkey,
@@ -504,6 +506,7 @@ pub use update_fee::update_fee;
 === instructions/purchase.rs ===
 use super::*;
 use crate::errors::*;
+use solana_program::program::{invoke, invoke_signed};
 
 pub fn purchase(
     program_id: &Pubkey,
