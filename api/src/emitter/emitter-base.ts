@@ -105,6 +105,51 @@ import {
 import { getParserSync, type SyntaxNode } from "../parser/ts-init.js";
 import { MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
 
+/**
+ * G22 — given a generic-params clause like `<'a, 'info: 'a>` or
+ * `<T: Trait + Send, U: Clone + 'static>`, return the bare-param form
+ * `<'a, 'info>` / `<T, U>` for type-instantiation use. Empty input → "".
+ *
+ * Depth-aware split on `,` (angle brackets tracked), then per-param trim
+ * everything after the first `:` at depth 0.
+ */
+function stripGenericBounds(generics: string): string {
+  const trimmed = generics.trim();
+  if (trimmed.length === 0) return "";
+  // Strip leading `<` and trailing `>` so we can split the inside.
+  let inside = trimmed;
+  if (inside.startsWith("<") && inside.endsWith(">")) {
+    inside = inside.slice(1, -1);
+  }
+  if (inside.length === 0) return generics; // empty inside — preserve
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < inside.length; i++) {
+    const c = inside[i];
+    if (c === "<") depth++;
+    else if (c === ">") depth--;
+    else if (c === "," && depth === 0) {
+      parts.push(inside.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(inside.slice(start));
+  const bareParts = parts.map((p) => {
+    const t = p.trim();
+    // Cut at first `:` at depth 0.
+    let d = 0;
+    for (let i = 0; i < t.length; i++) {
+      const c = t[i];
+      if (c === "<") d++;
+      else if (c === ">") d--;
+      else if (c === ":" && d === 0) return t.slice(0, i).trim();
+    }
+    return t;
+  });
+  return `<${bareParts.join(", ")}>`;
+}
+
 // ─── Abstract Emitter Interface ──────────────────────────────────────────────
 
 export abstract class BaseEmitter {
@@ -1504,6 +1549,14 @@ pub trait ZeroCopy: Discriminator + Owner {}`;
   }
 
   /**
+   * G22 helper — given a generic-params clause like `<'a, 'info: 'a>` or
+   * `<T: Trait + Send, U: Clone>`, return the bare-param form `<'a, 'info>`
+   * or `<T, U>` suitable for type instantiation. Empty input → empty out.
+   *
+   * Depth-aware split on `,` (parens/brackets/angles tracked), then per-
+   * param trim everything after the first `:` at depth 0.
+   */
+  /**
    * G19b — detect whether carried helper code references the anchor_lang
    * `Error` type. Scan helper-fn body text AND impl items (raw code) for
    * `Error::` (constructor / static call) or `: Error,` (field/param type)
@@ -2336,7 +2389,14 @@ ${fields}
       items.push(`    ${stubbed}`);
     }
     if (items.length === 0) return "";
-    return `\n\nimpl${gen} ${typeDef.name}${gen} {\n${items.join("\n\n")}\n}`;
+    // G22 — for impl block, the impl declaration carries bounds verbatim
+    // (`<'a, 'info: 'a>` or `<T: Trait>`), but the type instantiation
+    // must use bare param names (`<'a, 'info>` or `<T>`). Openbook-v2's
+    //   impl<'a, 'info: 'a> AccountInfoRef<'a, 'info: 'a> { … }
+    // bug came from re-using gen on both sides. Strip bounds for the
+    // type-side; keep bounds on the impl side.
+    const typeGen = stripGenericBounds(gen);
+    return `\n\nimpl${gen} ${typeDef.name}${typeGen} {\n${items.join("\n\n")}\n}`;
   }
 
   // ─── File header ───────────────────────────────────────────────────────────

@@ -43,11 +43,13 @@ const ARJUN_PROGRAMS: Fixture[] = [
 ];
 
 const BIG_PROGRAMS: Fixture[] = [
-  // 3 big multi-file Anchor programs — likely too large for single-source parse
-  // but worth attempting via projectPath
+  // Big multi-file Anchor programs — attempt via projectPath
   { name: "drift-protocol", category: "drift", libPath: `${REPO_ROOT}/drift-protocol/programs/drift/src/lib.rs`, projectPath: `${REPO_ROOT}/drift-protocol/programs/drift`, programName: "drift" },
   { name: "kamino-klend", category: "kamino", libPath: `${REPO_ROOT}/kamino-lending/programs/klend/src/lib.rs`, projectPath: `${REPO_ROOT}/kamino-lending/programs/klend`, programName: "kamino_lending" },
   { name: "raydium-clmm", category: "raydium", libPath: `${REPO_ROOT}/raydium-clmm/programs/amm/src/lib.rs`, projectPath: `${REPO_ROOT}/raydium-clmm/programs/amm`, programName: "amm_v3" },
+  { name: "openbook-v2", category: "dex", libPath: `${REPO_ROOT}/openbook-v2/programs/openbook-v2/src/lib.rs`, projectPath: `${REPO_ROOT}/openbook-v2/programs/openbook-v2`, programName: "openbook_v2" },
+  { name: "marginfi-v2", category: "lending", libPath: `${REPO_ROOT}/marginfi-v2/programs/marginfi/src/lib.rs`, projectPath: `${REPO_ROOT}/marginfi-v2/programs/marginfi`, programName: "marginfi" },
+  { name: "marinade", category: "staking", libPath: `${REPO_ROOT}/marinade/programs/marinade-finance/src/lib.rs`, projectPath: `${REPO_ROOT}/marinade/programs/marinade-finance`, programName: "marinade_finance" },
 ];
 
 type StepResult = { ok: boolean; latencyMs: number; error?: string; size?: number };
