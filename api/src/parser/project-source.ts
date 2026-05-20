@@ -385,6 +385,20 @@ export function expandPubkeyMacro(source: string): string {
 const WELL_KNOWN_PROGRAM_IDS: Record<string, string> = {
   mpl_core: "CoREENRdpMR1mpvDVA9XzMbCydzL3wK9hLckCcuhuYr",
   mpl_token_metadata: "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+  // Common SPL programs — Anchor source frequently references these via
+  // `use spl_token::ID as TOKEN_PROGRAM_ID` aliases or bare
+  // `spl_token::ID` in constraints. Filtered out by emit-side
+  // anchor_spl-stripping; vendoring the constant keeps the reference
+  // resolvable at lib.rs scope.
+  spl_token: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  spl_token_2022: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+  spl_associated_token_account: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+  spl_memo: "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+  // Pyth & Switchboard oracles — used in DeFi cohort even when the
+  // crate itself is filtered, callers often reference IDs in
+  // constraints. Pyth Receiver = pythSolanaReceiver (current mainnet).
+  pyth_solana_receiver_sdk: "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
+  switchboard_on_demand: "SBondMDrcV3K4kxZR1HNVT7osZxAHVHgYXL5Ze1oMUv",
 };
 
 /**
@@ -557,6 +571,159 @@ function splitTopLevelArgs(text: string): string[] {
   }
   parts.push(text.slice(start));
   return parts.filter((p) => p.trim().length > 0);
+}
+
+/**
+ * G2/G3 — macro_rules! safe-commentout + construct_uint! stub.
+ *
+ * Anvil doesn't expand user-defined macro_rules. Without intervention,
+ * source like:
+ *   macro_rules! gen_seeds { (...) => { ... } }
+ *   let s = gen_seeds!(authority, bump);
+ * passes through verbatim. The macro_rules definition can stay (it's a
+ * valid item) but the body usually references `$crate::X` and other
+ * macro-only patterns that work at macro-expansion but break if the
+ * body is read as raw code. The invocation site also references the
+ * macro name, which still resolves if the definition is in scope.
+ *
+ * In practice both definitions and invocations are best COMMENTED OUT
+ * with a TODO marker — Anvil emits programs that compile, with
+ * clearly-marked manual port sites. This is more graceful than the
+ * prior cascade-into-syntax-errors behavior.
+ *
+ * SPECIAL CASE: `construct_uint!` from the `uint` crate defines big
+ * integer types (U128, U256, U512). Lots of DeFi programs use these
+ * type names downstream. Detect the canonical shape and emit a stub
+ * struct so downstream type references resolve (the methods don't,
+ * but cargo gets past the type-resolution layer).
+ *
+ * Exported for unit testing.
+ */
+export function neutralizeUnsupportedMacros(source: string): string {
+  let out = source;
+  const macroNames = new Set<string>();
+  const constructUintStubs: string[] = [];
+
+  // First pass: find every `macro_rules! NAME { ... }` block.
+  const defRegex = /\bmacro_rules!\s*(\w+)\s*\{/g;
+  const definitionRanges: Array<{ start: number; end: number; name: string }> = [];
+  for (const match of out.matchAll(defRegex)) {
+    const name = match[1];
+    if (!name) continue;
+    const openBrace = (match.index ?? 0) + match[0].length - 1;
+    let depth = 1;
+    let close = openBrace;
+    for (let i = openBrace + 1; i < out.length; i++) {
+      const ch = out[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") { depth--; if (depth === 0) { close = i; break; } }
+    }
+    if (depth === 0) {
+      const startOfDecl = match.index ?? 0;
+      definitionRanges.push({ start: startOfDecl, end: close + 1, name });
+      macroNames.add(name);
+    }
+  }
+
+  // Detect `construct_uint! { pub struct UN(K); }` and emit a stub. Walk
+  // every macro INVOCATION (not definition) of `construct_uint`. The
+  // body has the form `pub struct UN(K);` or `pub struct UN(K)` with
+  // optional attrs.
+  const constructUintInvoke = /\bconstruct_uint!\s*\{/g;
+  for (const m of out.matchAll(constructUintInvoke)) {
+    const openBrace = (m.index ?? 0) + m[0].length - 1;
+    let depth = 1;
+    let close = openBrace;
+    for (let i = openBrace + 1; i < out.length; i++) {
+      const ch = out[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") { depth--; if (depth === 0) { close = i; break; } }
+    }
+    if (depth !== 0) continue;
+    const body = out.slice(openBrace + 1, close);
+    const stubMatch = body.match(/pub\s+struct\s+(\w+)\s*\(\s*(\d+)\s*\)\s*;?/);
+    if (stubMatch?.[1] && stubMatch[2]) {
+      const name = stubMatch[1];
+      const n = parseInt(stubMatch[2], 10);
+      constructUintStubs.push(
+        `// Anvil-stubbed: construct_uint!{ ${name}(${n}) } — type-only stub; method calls require manual port\n` +
+        `#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, BorshSerialize, BorshDeserialize)]\n` +
+        `pub struct ${name}(pub [u64; ${n}]);`,
+      );
+    }
+  }
+
+  // Second pass: scan for invocations of any macro_rules name we found
+  // AND collect their ranges. Range = from name start to matching
+  // closer (`;` for stmt form, balanced for expr form).
+  const invocationRanges: Array<{ start: number; end: number }> = [];
+  for (const name of macroNames) {
+    const re = new RegExp(`\\b${name}!\\s*[(\\[{]`, "g");
+    for (const m of out.matchAll(re)) {
+      const start = m.index ?? 0;
+      const openIdx = start + m[0].length - 1;
+      const opener = out[openIdx];
+      const closer = opener === "(" ? ")" : opener === "[" ? "]" : "}";
+      let depth = 1;
+      let close = openIdx;
+      // Be string-literal aware so `"..." has "(" inside` doesn't unbalance.
+      let inStr = false;
+      for (let i = openIdx + 1; i < out.length; i++) {
+        const ch = out[i];
+        if (inStr) {
+          if (ch === "\\" && i + 1 < out.length) { i++; continue; }
+          if (ch === '"') inStr = false;
+          continue;
+        }
+        if (ch === '"') { inStr = true; continue; }
+        if (ch === opener) depth++;
+        else if (ch === closer) { depth--; if (depth === 0) { close = i; break; } }
+      }
+      if (depth !== 0) continue;
+      // Consume trailing `;` if statement form.
+      let endIdx = close + 1;
+      while (endIdx < out.length && /[ \t]/.test(out[endIdx] ?? "")) endIdx++;
+      if (out[endIdx] === ";") endIdx++;
+      invocationRanges.push({ start, end: endIdx });
+    }
+  }
+
+  // Combine + sort + dedupe all ranges to comment out. Apply from
+  // RIGHT to LEFT so offsets remain valid as we rewrite.
+  const allRanges = [
+    ...definitionRanges.map((d) => ({ start: d.start, end: d.end })),
+    ...invocationRanges,
+  ].sort((a, b) => a.start - b.start);
+
+  // Merge overlapping ranges (an invocation site inside a definition
+  // body shouldn't double-process).
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const r of allRanges) {
+    const last = merged[merged.length - 1];
+    if (last && r.start < last.end) {
+      last.end = Math.max(last.end, r.end);
+    } else {
+      merged.push({ ...r });
+    }
+  }
+
+  // Rewrite RIGHT to LEFT.
+  for (let i = merged.length - 1; i >= 0; i--) {
+    const r = merged[i]!;
+    const block = out.slice(r.start, r.end);
+    const commented = block
+      .split("\n")
+      .map((line, idx) => idx === 0 ? `// ⚠️ Anvil TODO: macro_rules! unsupported — manual port required\n// ${line}` : `// ${line}`)
+      .join("\n");
+    out = out.slice(0, r.start) + commented + out.slice(r.end);
+  }
+
+  // Append construct_uint! stubs at the END so they're at top level.
+  if (constructUintStubs.length > 0) {
+    out += `\n\n${constructUintStubs.join("\n\n")}\n`;
+  }
+
+  return out;
 }
 
 /**
@@ -1562,6 +1729,12 @@ function buildFlattenedSource(
   // `limit_order_admin::ID` resolve to unique flat names. See
   // disambiguateSiblingModConsts.
   source = disambiguateSiblingModConsts(source);
+  // Neutralize user-defined macro_rules — comment out both definitions
+  // and call sites with a TODO marker. Anvil doesn't expand macros, and
+  // bare invocations cascade into syntax errors. Special-cases
+  // construct_uint!{ pub struct UN(K); } → stub UN type so downstream
+  // type references resolve.
+  source = neutralizeUnsupportedMacros(source);
 
   return { source, includedFiles, missingModules, cfgDrops, wasFlattened: true };
 }

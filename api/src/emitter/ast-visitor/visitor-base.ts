@@ -138,8 +138,18 @@ function parseEvtStructFields(text: string): { name: string; value: RustExpr; sh
       continue;
     }
     const name = t.slice(0, colonIdx).trim();
-    const valueText = t.slice(colonIdx + 1).trim();
+    let valueText = t.slice(colonIdx + 1).trim();
     if (!/^[A-Za-z_]\w*$/.test(name)) return null;
+    // Strip `//` line-comments from the value text. Drift's source has
+    // `emit!(EvtName { field: expr, //10e13 ... })` shapes where the
+    // `//10e13` comment was originally harmless because the closing
+    // `})` lived on its own line. After Anvil's `firstOnOpen` printer
+    // compresses struct literals to single-line form, the `//` swallows
+    // the trailing `})` and the surrounding fn body's closing brace
+    // never matches its opener — cargo errors with "this file contains
+    // an unclosed delimiter". Strip the comments here, before
+    // tryStructuralizeExpr or parseSimpleExpr sees them.
+    valueText = valueText.replace(/\/\/[^\n]*$/g, "").trim();
     // Tree-sitter first (handles `as` casts, complex method chains, etc.);
     // parseSimpleExpr fallback covers shapes tree-sitter punts on or
     // when the parser isn't ready yet.
