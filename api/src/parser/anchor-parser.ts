@@ -108,6 +108,68 @@ function computeParseTimeout(lineCount: number): number {
   return Math.min(PARSE_TIMEOUT_MAX_MS, Math.max(PARSE_TIMEOUT_BASE_MS, scaled));
 }
 
+/**
+ * G18 — strip `#[access_control(...)]` attributes paren-balanced.
+ *
+ * Drift uses multi-line access_control attributes with multiple function
+ * calls and no comma separation — a shape tree-sitter's rust grammar
+ * cannot parse, propagating into ERROR top-level nodes that mask the
+ * entire surrounding #[program] block.
+ *
+ * Walk the source, find each `#[access_control(`, paren-balance
+ * (string-aware), strip the whole attribute including `]`. Idempotent
+ * on already-stripped sources.
+ */
+function stripAccessControlAttrs(source: string): string {
+  let out = "";
+  let i = 0;
+  while (i < source.length) {
+    const idx = source.indexOf("#[", i);
+    if (idx === -1) { out += source.slice(i); break; }
+    out += source.slice(i, idx);
+    // Match a leading whitespace pattern `#[\s*access_control\s*\(`.
+    const probe = source.slice(idx, idx + 50);
+    const m = probe.match(/^#\[\s*access_control\s*\(/);
+    if (!m) {
+      out += "#[";
+      i = idx + 2;
+      continue;
+    }
+    const parenStart = idx + m[0].length - 1; // position of `(`
+    let depth = 1;
+    let inStr = false;
+    let j = parenStart + 1;
+    for (; j < source.length; j++) {
+      const ch = source[j];
+      if (inStr) {
+        if (ch === "\\" && j + 1 < source.length) { j++; continue; }
+        if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') { inStr = true; continue; }
+      if (ch === "(") depth++;
+      else if (ch === ")") { depth--; if (depth === 0) break; }
+    }
+    if (depth !== 0) {
+      // Unbalanced — keep verbatim, bail.
+      out += "#[";
+      i = idx + 2;
+      continue;
+    }
+    // Expect closing `]` after `)` (with optional whitespace).
+    let k = j + 1;
+    while (k < source.length && /\s/.test(source[k] ?? "")) k++;
+    if (source[k] !== "]") {
+      out += "#[";
+      i = idx + 2;
+      continue;
+    }
+    // Strip the whole attribute (don't append anything for it).
+    i = k + 1;
+  }
+  return out;
+}
+
 export interface ParseOptions {
   timeoutMs?: number;
   /**
@@ -157,6 +219,19 @@ export async function parseAnchor(
   source = source.replace(/#\[\s*queue_computation_accounts\s*\([^)]*\)\s*\]/g, "");
   source = source.replace(/#\[\s*callback_accounts\s*\([^)]*\)\s*\]/g, "");
   source = source.replace(/#\[\s*init_computation_definition_accounts\s*\([^)]*\)\s*\]/g, "");
+  // G18 — strip `#[access_control(...)]` attributes paren-balanced.
+  // Drift's source has:
+  //   #[access_control(
+  //       perp_market_valid(&ctx.accounts.perp_market)
+  //       valid_oracle_for_perp_market(&ctx.accounts.oracle, ...)
+  //   )]
+  // — multi-line, two function calls without comma separation. Tree-sitter
+  // can't parse this attribute shape; the whole top-level item gets
+  // classified as ERROR. Anvil's instruction parser already extracts
+  // access_control info from `attrs` via a separate pass; the runtime
+  // check itself isn't transpiled today. Strip the attribute pre-parse
+  // so tree-sitter can see the surrounding fn / mod_item.
+  source = stripAccessControlAttrs(source);
   // task #41 — same fix for `pubkey!("...")` macro. Anchor's prelude
   // provides it; Pinocchio doesn't. Single-file parseAnchor was bypassing
   // buildProjectSource's expansion; surfaced by diff-arc on pda-derivation

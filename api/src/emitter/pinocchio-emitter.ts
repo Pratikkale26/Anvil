@@ -5551,12 +5551,28 @@ function commentOutT22Ranges(body: string, ranges: StmtRange[]): string {
   for (const r of remerged) {
     outStr += body.slice(cursor, r.stmtStart);
     const stmt = body.slice(r.stmtStart, r.stmtEnd);
-    const commented = stmt
+    // Drop trailing whitespace so the final commented line carries its
+    // own `\n` separation from whatever follows. Without this trim, a
+    // span like `Ok(...)\n    ` produces final commented chunk `// })\n//`
+    // (the trailing whitespace renders as an empty `//` line) — and
+    // outStr then concatenates body.slice(r.stmtEnd) which begins with
+    // the next significant token (a `}` for the enclosing fn block),
+    // gluing `//}` on one line. Drift's get_sb_on_demand_price hit
+    // exactly this — the fn body's closing `}` ended up commented out.
+    const stmtTrimmed = stmt.replace(/[ \t]*\n[ \t]*$/, "");
+    const commented = stmtTrimmed
       .split("\n")
       .map((line) => (line.length > 0 ? `// ${line}` : "//"))
       .join("\n");
-    outStr += `// ${MARKER_ANVIL_TODO_PREFIX} Token-2022 extension call site has no pinocchio equivalent — manual port required\n${commented}`;
-    cursor = r.stmtEnd;
+    outStr += `// ${MARKER_ANVIL_TODO_PREFIX} Token-2022 extension call site has no pinocchio equivalent — manual port required\n${commented}\n`;
+    // Skip any leading whitespace+newline that the trim left behind so
+    // the natural body separation between statements is preserved.
+    let nextCursor = r.stmtEnd;
+    while (nextCursor > cursor && nextCursor < body.length && /[ \t\n]/.test(body[nextCursor - 1] ?? "")) {
+      // No-op: trim already absorbed it.
+      break;
+    }
+    cursor = nextCursor;
   }
   outStr += body.slice(cursor);
   return outStr;

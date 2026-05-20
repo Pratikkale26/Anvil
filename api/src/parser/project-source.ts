@@ -603,19 +603,38 @@ function splitTopLevelArgs(text: string): string[] {
 function walkMacroChainEnd(out: string, startIdx: number): number {
   let i = startIdx;
   while (i < out.length) {
-    // Skip whitespace including newlines.
+    // Skip whitespace including newlines, but remember the pre-ws
+    // index so we can REVERT if nothing consumable follows. Without
+    // this, the walker eats trailing whitespace + newlines that
+    // separate the macro from its surrounding context (drift's
+    // `validate!(...)?\n}` pattern → the `}` from the enclosing
+    // match-arm/fn body ends up concatenated onto the last commented
+    // line, breaking the surrounding brace balance).
+    const beforeWs = i;
     while (i < out.length && /[ \t\n\r]/.test(out[i] ?? "")) i++;
-    if (i >= out.length) break;
+    if (i >= out.length) { i = beforeWs; break; }
     const ch = out[i];
     if (ch === ".") {
-      // Method-call: `.<ident>` optionally followed by `(<balanced>)`.
+      // Method-call: `.<ident>` optionally followed by turbofish
+      // `::<…>` then `(<balanced>)`.
       const after = i + 1;
       // Must be followed by an identifier start (not `..` range op).
       if (!/[A-Za-z_]/.test(out[after] ?? "")) break;
       let j = after;
       while (j < out.length && /[A-Za-z0-9_]/.test(out[j] ?? "")) j++;
       // Optional turbofish `::<...>` — consume balanced `<...>`.
-      // Skip for now (rare); just check for `(`.
+      // Kamino's `.representing_u8_enum::<ReserveStatus>()` pattern.
+      if (out[j] === ":" && out[j + 1] === ":" && out[j + 2] === "<") {
+        let tDepth = 1;
+        let k = j + 3;
+        for (; k < out.length; k++) {
+          const c = out[k];
+          if (c === "<") tDepth++;
+          else if (c === ">") { tDepth--; if (tDepth === 0) { k++; break; } }
+        }
+        if (tDepth !== 0) break; // unbalanced — stop conservatively
+        j = k;
+      }
       if (out[j] === "(") {
         // Balanced paren walk (string-aware).
         let depth = 1;
@@ -646,7 +665,8 @@ function walkMacroChainEnd(out: string, startIdx: number): number {
     if (ch === ";") {
       return i + 1; // terminal, consume + stop
     }
-    break; // anything else — stop without consuming
+    i = beforeWs; // revert ws — preserve newline separation for clean line-comment-out
+    break;
   }
   return i;
 }
@@ -828,7 +848,15 @@ export function neutralizeUnsupportedMacros(source: string): string {
     // common shape from drift: `Err(math_error!()).into()`. Don't fire
     // for line-start statement contexts.
     const innerExprPre = lookBefore.match(/(?:[(,:=]|=>|&&|\|\||\?|\.\s*\w+\s*\()\s*$/);
-    if (letMatch || innerExprPre) {
+    // G16 follow-up: closure-arg expression context — narrow to literal
+    // closure-args (`_`, identifier, identifier list with optional type
+    // ascription). Without this gate, the `|_| MACRO!(X)` body gets
+    // line-commented, leaving the closure body empty + the surrounding
+    // `.method_chain(...)?,` text on the next line orphaned. Surfaced
+    // by kamino's `.map_err(|_| dbg_msg!(...))?,` pattern. The narrow
+    // regex avoids matching bit-OR shapes (`a | b | MACRO!()`).
+    const closurePre = lookBefore.match(/\|\s*(?:_|(?:mut\s+)?\w+(?:\s*:\s*[\w<>:&'\s,]+)?(?:\s*,\s*(?:_|(?:mut\s+)?\w+(?:\s*:\s*[\w<>:&'\s,]+)?))*)?\s*\|\s+$/);
+    if (letMatch || innerExprPre || closurePre) {
       // Preserve trailing `?` and `;` if the original block has them
       // (the let-binding form usually does; inner-expression usually
       // doesn't — but be lenient).
