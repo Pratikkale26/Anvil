@@ -1916,6 +1916,28 @@ ${originalLines}
     for (const impl of ir.userTraitImpls ?? []) {
       recordPrefixes(impl);
     }
+    // Account impl items — programs frequently put validation methods
+    // like `impl Game { fn start() { require!(... ErrorCode::X); } }`
+    // directly on state structs. After my source-level
+    // rewriteAnchorRequireMacros desugars `require!` outside
+    // `#[program]` mod, the `ErrorCode::X` reference lives in the
+    // accountDef.implItems raw text. Without this scan, the detection
+    // falls back to `${PascalCase(ir.name)}Error` and the emit's
+    // renamed enum (e.g. AnchorTicTacToeError) won't match the
+    // helper-rewritten code's reference (TicTacToeError → undeclared).
+    // Caught by arjun-tic-tac-toe.
+    for (const account of ir.accounts ?? []) {
+      for (const item of account.implItems ?? []) {
+        recordPrefixes(item);
+      }
+    }
+    // Custom type impl items — same shape on user-defined enums /
+    // structs that carry validation methods.
+    for (const typeDef of ir.types ?? []) {
+      for (const item of typeDef.implItems ?? []) {
+        recordPrefixes(item);
+      }
+    }
 
     const ranked = [...prefixes.entries()].sort((a, b) => b[1] - a[1]);
     return ranked[0]?.[0] ?? `${toPascalCase(ir.name)}Error`;

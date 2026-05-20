@@ -534,13 +534,20 @@ function computeProgramModRanges(source: string): Array<[number, number]> {
 }
 
 function splitTopLevelArgs(text: string): string[] {
+  // Track only `()`, `[]`, `{}` for depth — NOT `<` / `>`. The latter
+  // are comparison operators in Anchor source's require macros (e.g.
+  // `require!(amount > 0, err)`) far more often than they're generic
+  // brackets, and conflating them broke require-macro arg-splitting
+  // (caught by arjun-escrow-blueshift: depth went negative on `>`,
+  // the `,` separator was at non-zero depth, the args didn't split,
+  // and the rewrite produced `if !(amount > 0, err) { ... }`).
   const parts: string[] = [];
   let depth = 0;
   let start = 0;
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]!;
-    if (ch === "(" || ch === "[" || ch === "{" || ch === "<") depth++;
-    else if (ch === ")" || ch === "]" || ch === "}" || ch === ">") depth--;
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
     else if (ch === "," && depth === 0) {
       parts.push(text.slice(start, i));
       start = i + 1;
