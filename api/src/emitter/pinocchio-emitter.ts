@@ -2077,6 +2077,19 @@ ${invokeCall}
     );
   }
 
+  /** G9 — apply T22 / spl_token_2022 commentout to carried helper fn
+   *  bodies. Pinocchio doesn't ship spl-token-2022; any bare reference
+   *  in a helper body (raydium-clmm's
+   *  `spl_token_2022::extension::permanent_delegate::get_permanent_delegate(...)`)
+   *  fails with "unresolved module". The base carriedFunctionBlock
+   *  emits user helper bodies verbatim; this override wraps the result
+   *  with the existing T22 statement-commentout pass that already
+   *  knows how to walk to statement boundaries. */
+  protected override carriedFunctionBlock(rawCode: string, ir?: SolanaIR): string {
+    const baseOutput = super.carriedFunctionBlock(rawCode, ir);
+    return commentOutT22ExtensionCallSites(baseOutput);
+  }
+
   override emitDiscriminatorWrite(accountName: string, typeName: string): string {
     return `    {
         let mut __init_data = unsafe { ${accountName}.borrow_mut_data_unchecked() };
@@ -4945,6 +4958,13 @@ export const PINOCCHIO_T22_TYPE_BLACKLIST: ReadonlyArray<string> = [
   "ExecuteInstruction",
   "InitializeExtraAccountMetaList",
   "InterfaceAccount",
+  // G9 — bare `spl_token_2022::` qualified references in pass-through
+  // bodies cascade to "unresolved module" on Pinocchio (which doesn't
+  // ship the crate). Any statement with this prefix is unsalvageable
+  // — comment it out with the standard T22 TODO marker. Generalizes
+  // to any program that pokes at spl_token_2022's extension surface
+  // outside the typed cpi_t22_* IR kinds (raydium-clmm pattern).
+  "spl_token_2022",
 ];
 
 // Native subset — types whose chains break post-emit regardless of whether
