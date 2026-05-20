@@ -711,6 +711,32 @@ export function neutralizeUnsupportedMacros(source: string): string {
   for (let i = merged.length - 1; i >= 0; i--) {
     const r = merged[i]!;
     const block = out.slice(r.start, r.end);
+    // Let-binding form: `let x = MACRO!(args);` or `let x = MACRO!(args)?;`.
+    // Substituting with `let x = todo!(...)` keeps the binding name in
+    // scope for downstream references. Without this, commenting out the
+    // entire line drops `x` from scope and any later use of `x` cascades
+    // into E0425 unresolved-name errors. Pattern is: preceding text
+    // ends with `let <ident>(: <type>)? =` immediately before the
+    // macro invocation. Walk back to detect.
+    const lookBefore = out.slice(Math.max(0, r.start - 80), r.start);
+    const letMatch = lookBefore.match(/let\s+(\w+)(?:\s*:\s*[^=]+?)?\s*=\s*$/);
+    if (letMatch) {
+      // Replace the macro invocation with `todo!("anvil: macro NAME unsupported")`,
+      // preserving the trailing `?;` if the original had it. Look at the
+      // raw block to detect.
+      const hasQ = /\?\s*;\s*$/.test(block);
+      const replacement = hasQ
+        ? `todo!("anvil: macro_rules! expansion required")?;`
+        : `todo!("anvil: macro_rules! expansion required");`;
+      // Add a single-line TODO comment ABOVE the let-stmt.
+      // Walk back to find the let-stmt's line start.
+      const lineStart = out.lastIndexOf("\n", r.start - 1) + 1;
+      const lineLead = out.slice(lineStart, r.start - (lookBefore.length - (lookBefore.length - (letMatch.index ?? 0))));
+      const leadingWS = out.slice(lineStart, r.start).match(/^(\s*)/)?.[1] ?? "";
+      void lineLead;
+      out = out.slice(0, r.start) + replacement + `\n${leadingWS}// ⚠️ Anvil TODO: macro_rules! expansion required` + out.slice(r.end);
+      continue;
+    }
     const commented = block
       .split("\n")
       .map((line, idx) => idx === 0 ? `// ⚠️ Anvil TODO: macro_rules! unsupported — manual port required\n// ${line}` : `// ${line}`)

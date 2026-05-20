@@ -83,8 +83,18 @@ const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
   // `use mpl_core::*` source line is dropped by filteredSourceImports for
   // CreateV2 — other MPL Core CPIs are still lint-flagged.
   mpl_token_metadata:        `mpl-token-metadata = "5.1"`,
-  switchboard_on_demand:     `switchboard-on-demand = "0.4"`,
-  switchboard_v2:            `switchboard-v2 = "0.4"`,
+  // G5 — switchboard-on-demand 0.4.x transitively pulls borsh 0.10 (vs
+  // our 1.6) AND references solana_program::address_lookup_table (absent
+  // in 2.2). Adding the crate as a dep cascades unresolvable trait-bound
+  // errors across every BorshSerialize derive in the workspace. Source-
+  // level `use switchboard_on_demand::*` lines are filtered by
+  // filteredSourceImports; body refs are commented out by the T22-style
+  // statement walker. Keeping the crate OUT of the dep map is the
+  // architectural blocker until upstream fixes the borsh/solana-program
+  // pins. Same fix applies to switchboard_v2 (older but same conflict
+  // surface). Caught by drift-protocol.
+  //   switchboard_on_demand:     `switchboard-on-demand = "0.4"`,
+  //   switchboard_v2:            `switchboard-v2 = "0.4"`,
   // SPL extensions (beyond core token + ATA + memo + token-2022)
   spl_account_compression:   `spl-account-compression = "0.4"`,
   spl_governance:            `spl-governance = "4.0"`,

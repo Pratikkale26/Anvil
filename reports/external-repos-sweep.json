@@ -4,24 +4,24 @@
     "category": "arjun-mpl",
     "parse": {
       "ok": true,
-      "latencyMs": 126,
+      "latencyMs": 138,
       "size": 6371
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 105
+      "latencyMs": 109
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 51
+      "latencyMs": 38
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 861
+      "latencyMs": 852
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1178
+      "latencyMs": 1171
     }
   },
   {
@@ -29,24 +29,24 @@
     "category": "arjun-cpi",
     "parse": {
       "ok": true,
-      "latencyMs": 16,
+      "latencyMs": 17,
       "size": 3541
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 41
+      "latencyMs": 43
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 35
+      "latencyMs": 39
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 696
+      "latencyMs": 661
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1106
+      "latencyMs": 1136
     }
   },
   {
@@ -59,19 +59,19 @@
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 17
+      "latencyMs": 18
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 19
+      "latencyMs": 18
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 568
+      "latencyMs": 531
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1044
+      "latencyMs": 955
     }
   },
   {
@@ -79,24 +79,24 @@
     "category": "arjun-merkle",
     "parse": {
       "ok": true,
-      "latencyMs": 16,
+      "latencyMs": 14,
       "size": 651
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 52
+      "latencyMs": 46
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 52
+      "latencyMs": 47
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 866
+      "latencyMs": 814
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1327
+      "latencyMs": 1245
     }
   },
   {
@@ -109,19 +109,19 @@
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 85
+      "latencyMs": 76
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 75
+      "latencyMs": 64
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 670
+      "latencyMs": 625
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1684
+      "latencyMs": 1724
     }
   },
   {
@@ -134,19 +134,19 @@
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 5
+      "latencyMs": 4
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 3
+      "latencyMs": 5
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 423
+      "latencyMs": 464
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 812
+      "latencyMs": 830
     }
   },
   {
@@ -154,24 +154,24 @@
     "category": "arjun-merkle",
     "parse": {
       "ok": true,
-      "latencyMs": 22,
+      "latencyMs": 21,
       "size": 1569
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 119
+      "latencyMs": 98
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 83
+      "latencyMs": 98
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 716
+      "latencyMs": 731
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 539,
+      "latencyMs": 543,
       "error": "failed to resolve: use of undeclared type `RandomnessAccountData`"
     }
   },
@@ -185,7 +185,7 @@
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 13
+      "latencyMs": 12
     },
     "emitNative": {
       "ok": true,
@@ -193,11 +193,11 @@
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 556
+      "latencyMs": 544
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 873
+      "latencyMs": 898
     }
   },
   {
@@ -214,7 +214,7 @@
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 19
+      "latencyMs": 20
     },
     "buildPin": {
       "ok": true,
@@ -222,7 +222,7 @@
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1268
+      "latencyMs": 1085
     }
   },
   {
@@ -260,19 +260,19 @@
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 8
+      "latencyMs": 9
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 9
+      "latencyMs": 8
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 526
+      "latencyMs": 504
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 927
+      "latencyMs": 933
     }
   },
   {
@@ -280,12 +280,12 @@
     "category": "arjun-spl",
     "parse": {
       "ok": true,
-      "latencyMs": 18,
+      "latencyMs": 21,
       "size": 4770
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 85
+      "latencyMs": 72
     },
     "emitNative": {
       "ok": true,
@@ -293,11 +293,11 @@
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 594
+      "latencyMs": 612
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1607
+      "latencyMs": 1653
     }
   },
   {
@@ -305,7 +305,7 @@
     "category": "arjun-defi",
     "parse": {
       "ok": true,
-      "latencyMs": 53,
+      "latencyMs": 40,
       "size": 2191
     },
     "emitPin": {
@@ -314,15 +314,15 @@
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 276
+      "latencyMs": 249
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 734
+      "latencyMs": 664
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1766
+      "latencyMs": 1702
     }
   },
   {
@@ -330,24 +330,24 @@
     "category": "arjun-defi",
     "parse": {
       "ok": true,
-      "latencyMs": 9,
+      "latencyMs": 10,
       "size": 4156
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 23
+      "latencyMs": 24
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 27
+      "latencyMs": 24
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 609
+      "latencyMs": 619
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1182
+      "latencyMs": 1123
     }
   },
   {
@@ -355,24 +355,24 @@
     "category": "arjun-defi",
     "parse": {
       "ok": true,
-      "latencyMs": 15,
+      "latencyMs": 16,
       "size": 862
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 67
+      "latencyMs": 71
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 56
+      "latencyMs": 64
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 590
+      "latencyMs": 595
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 1756
+      "latencyMs": 1816
     }
   },
   {
@@ -385,19 +385,19 @@
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 13
+      "latencyMs": 19
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 12
+      "latencyMs": 18
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 518
+      "latencyMs": 558
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 998
+      "latencyMs": 971
     }
   },
   {
@@ -405,24 +405,24 @@
     "category": "arjun-defi",
     "parse": {
       "ok": true,
-      "latencyMs": 10,
+      "latencyMs": 8,
       "size": 4881
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 33
+      "latencyMs": 30
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 26
+      "latencyMs": 27
     },
     "buildPin": {
       "ok": true,
-      "latencyMs": 547
+      "latencyMs": 579
     },
     "buildNative": {
       "ok": true,
-      "latencyMs": 985
+      "latencyMs": 1000
     }
   },
   {
@@ -430,26 +430,26 @@
     "category": "drift",
     "parse": {
       "ok": true,
-      "latencyMs": 10469,
+      "latencyMs": 10953,
       "size": 78938
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 9357
+      "latencyMs": 9617
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 8972
+      "latencyMs": 7149
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 256,
-      "error": "expected expression, found `let` statement"
+      "latencyMs": 226,
+      "error": "mismatched closing delimiter: `}`"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 450,
-      "error": "expected expression, found `let` statement"
+      "latencyMs": 353,
+      "error": "mismatched closing delimiter: `}`"
     }
   },
   {
@@ -457,25 +457,25 @@
     "category": "kamino",
     "parse": {
       "ok": true,
-      "latencyMs": 844,
+      "latencyMs": 821,
       "size": 38448
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 5034
+      "latencyMs": 4821
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 4365
+      "latencyMs": 4405
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 220,
+      "latencyMs": 230,
       "error": "expected identifier, found `}`"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 362,
+      "latencyMs": 346,
       "error": "expected identifier, found `}`"
     }
   },
@@ -484,25 +484,25 @@
     "category": "raydium",
     "parse": {
       "ok": true,
-      "latencyMs": 578,
+      "latencyMs": 644,
       "size": 28247
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 1104
+      "latencyMs": 1182
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 1044
+      "latencyMs": 1039
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 1388,
+      "latencyMs": 1410,
       "error": "cannot find type `PoolState` in this scope"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 1898,
+      "latencyMs": 1887,
       "error": "cannot find function `tick_spacing_index_from_tick` in this scope"
     }
   }
