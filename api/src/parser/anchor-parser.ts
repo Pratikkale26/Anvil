@@ -39,7 +39,7 @@ import { parseAccountDataStruct } from "./account-parser.js";
 import { parseErrorEnum, parseHelperFn, parseCustomType, extractImports, extractProgramId } from "./type-parser.js";
 import { createWarningCollector } from "./warning-collector.js";
 import { buildHelperCpiCatalog } from "./helper-cpi-catalog.js";
-import { rewriteErrMacroToExplicit, expandPubkeyMacro, vendorExternalProgramIDs } from "./project-source.js";
+import { rewriteErrMacroToExplicit, expandPubkeyMacro, vendorExternalProgramIDs, rewriteAnchorRequireMacros } from "./project-source.js";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -142,6 +142,7 @@ export async function parseAnchor(
   // rewritten source is a no-op (the rewriter scans for the source-shape
   // macros only).
   source = rewriteErrMacroToExplicit(source);
+  source = rewriteAnchorRequireMacros(source);
   // task #41 — same fix for `pubkey!("...")` macro. Anchor's prelude
   // provides it; Pinocchio doesn't. Single-file parseAnchor was bypassing
   // buildProjectSource's expansion; surfaced by diff-arc on pda-derivation

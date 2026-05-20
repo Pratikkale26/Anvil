@@ -388,6 +388,169 @@ const WELL_KNOWN_PROGRAM_IDS: Record<string, string> = {
 };
 
 /**
+ * Rewrite Anchor's `require_*!()` comparison macros in helper-fn bodies
+ * into plain `if !(cond) { return Err(err.into()); }` so callers that
+ * don't have anchor_lang in scope still compile. The body-classifier
+ * already handles these inside instruction-handler bodies (typed
+ * `require` IR kind); this pass covers SOURCE-level usages in
+ * sibling-file helpers that pass through verbatim. Caught by
+ * raydium-clmm (51 `require_*!` invocations in liquidity_math and
+ * friends).
+ *
+ * Supported macros (a, b are operands; err is optional):
+ *   require!(cond, err)        → if !(cond)   { return Err(err.into()); }
+ *   require_eq!(a, b, err)     → if !(a==b)   { return Err(err.into()); }
+ *   require_neq!(a, b, err)    → if !(a!=b)   { return Err(err.into()); }
+ *   require_gt!(a, b, err)     → if !(a>b)    { return Err(err.into()); }
+ *   require_gte!(a, b, err)    → if !(a>=b)   { return Err(err.into()); }
+ *   require_keys_eq!(a, b,err) → if !(a==b)   { return Err(err.into()); }
+ *   require_keys_neq!(a, b,err)→ if !(a!=b)   { return Err(err.into()); }
+ *
+ * Missing `err` arg defaults to `ProgramError::Custom(0)`. The
+ * rewrite is paren-balanced to handle nested calls inside args.
+ *
+ * Exported for unit testing.
+ */
+export function rewriteAnchorRequireMacros(source: string): string {
+  const macroOps: Record<string, string | null> = {
+    "require!": null,            // unary: cond
+    "require_eq!": "==",
+    "require_neq!": "!=",
+    "require_gt!": ">",
+    "require_gte!": ">=",
+    "require_keys_eq!": "==",
+    "require_keys_neq!": "!=",
+  };
+  // Compute byte-range pairs covering every `#[program] pub mod NAME
+  // { ... }` block. Macros INSIDE these blocks are handled by the
+  // body-classifier's typed `require` IR kind — rewriting them at
+  // source level would bypass that path and degrade existing demo
+  // emits. Macros OUTSIDE (sibling-file helper fns, raydium pattern)
+  // get the source-level rewrite as the only viable path.
+  const programRanges = computeProgramModRanges(source);
+  let out = source;
+  for (const [name, op] of Object.entries(macroOps)) {
+    out = rewriteMacroInvocations(out, name, (argsText, matchOffset) => {
+      if (isInMacroBody(matchOffset, programRanges)) return null;
+      // Split on top-level commas to get args.
+      const parts = splitTopLevelArgs(argsText);
+      if (parts.length === 0) return null;
+      let cond: string;
+      let err: string;
+      if (op === null) {
+        // require!(cond, err?) → if !(cond) { ... }
+        cond = parts[0]!.trim();
+        err = parts.length >= 2 ? parts.slice(1).join(",").trim() : "ProgramError::Custom(0)";
+      } else {
+        // require_X!(a, b, err?) → if !(a op b) { ... }
+        if (parts.length < 2) return null;
+        const lhs = parts[0]!.trim();
+        const rhs = parts[1]!.trim();
+        cond = `(${lhs}) ${op} (${rhs})`;
+        err = parts.length >= 3 ? parts.slice(2).join(",").trim() : "ProgramError::Custom(0)";
+      }
+      return `if !(${cond}) { return Err((${err}).into()); }`;
+    });
+  }
+  return out;
+}
+
+/**
+ * Find `name(` invocations in source, paren-balanced-walk to find the
+ * matching `)`, optional trailing `;`. Calls `rewrite(argsText)` to
+ * produce a replacement; returns null to leave unchanged.
+ */
+function rewriteMacroInvocations(
+  source: string,
+  name: string,
+  rewrite: (argsText: string, matchOffset: number) => string | null,
+): string {
+  let out = "";
+  let i = 0;
+  while (i < source.length) {
+    const idx = source.indexOf(name, i);
+    if (idx === -1) { out += source.slice(i); break; }
+    const prev = idx > 0 ? source[idx - 1]! : "";
+    if (prev !== "" && /[A-Za-z0-9_]/.test(prev)) {
+      // Word-character prefix → not the macro we're looking for.
+      out += source.slice(i, idx + name.length);
+      i = idx + name.length;
+      continue;
+    }
+    let parenStart = idx + name.length;
+    while (parenStart < source.length && /\s/.test(source[parenStart]!)) parenStart++;
+    if (source[parenStart] !== "(") {
+      out += source.slice(i, idx + name.length);
+      i = idx + name.length;
+      continue;
+    }
+    let depth = 0;
+    let parenEnd = -1;
+    for (let j = parenStart; j < source.length; j++) {
+      const ch = source[j]!;
+      if (ch === "(") depth++;
+      else if (ch === ")") { depth--; if (depth === 0) { parenEnd = j; break; } }
+    }
+    if (parenEnd === -1) {
+      out += source.slice(i, idx + name.length);
+      i = idx + name.length;
+      continue;
+    }
+    const argsText = source.slice(parenStart + 1, parenEnd);
+    const replacement = rewrite(argsText, idx);
+    if (replacement === null) {
+      out += source.slice(i, parenEnd + 1);
+      i = parenEnd + 1;
+      continue;
+    }
+    // Consume an optional trailing `;`.
+    let endIdx = parenEnd + 1;
+    while (endIdx < source.length && /\s/.test(source[endIdx]!)) endIdx++;
+    if (source[endIdx] === ";") endIdx++;
+    out += source.slice(i, idx) + replacement;
+    i = endIdx;
+  }
+  return out;
+}
+
+/** Byte ranges covering every `#[program] pub mod NAME { ... }` body. */
+function computeProgramModRanges(source: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (const match of source.matchAll(/#\[program\]\s*pub\s+mod\s+\w+\s*\{/g)) {
+    const openBrace = (match.index ?? 0) + match[0].length - 1;
+    let depth = 1;
+    let close = openBrace;
+    for (let i = openBrace + 1; i < source.length; i++) {
+      const ch = source[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) { close = i; break; }
+      }
+    }
+    if (depth === 0) ranges.push([openBrace, close]);
+  }
+  return ranges;
+}
+
+function splitTopLevelArgs(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === "(" || ch === "[" || ch === "{" || ch === "<") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}" || ch === ">") depth--;
+    else if (ch === "," && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts.filter((p) => p.trim().length > 0);
+}
+
+/**
  * Disambiguate `pub const NAME: ... = ...;` declarations that live inside
  * non-program `pub mod X { ... }` blocks when multiple sibling modules
  * each declare the same NAME. Without this, the flattened source has
@@ -1347,6 +1510,11 @@ function buildFlattenedSource(
   // various others) which classify as opaque pass-through. Rewriting at
   // the source-flattening level catches every form before the AST walk.
   source = rewriteErrMacroToExplicit(source);
+  // Same idea for Anchor's `require!()` / `require_eq!()` / etc. macros
+  // that appear in sibling-file helper bodies. Desugars to explicit
+  // `if !(cond) { return Err(...into()); }` so callers without
+  // anchor_lang in scope still compile.
+  source = rewriteAnchorRequireMacros(source);
 
   // Consolidate multi-statement SPL CPI patterns into the inline form the
   // CPI detector understands. Anchor codebases commonly write:
@@ -1780,7 +1948,7 @@ export function buildProjectSourceGraph(entryPath: string, files: ProjectFile[])
   // BEFORE the err! rewrite would have touched it (no overlap today, but
   // safe ordering).
   const cfgRes = stripInactiveCfgItemsWithDrops(
-    rewriteErrMacroToExplicit(consolidateMultiStatementCpi(entryFile.content)),
+    rewriteAnchorRequireMacros(rewriteErrMacroToExplicit(consolidateMultiStatementCpi(entryFile.content))),
   );
   return {
     source: expandPubkeyMacro(cfgRes.source),
