@@ -513,10 +513,12 @@ function rewriteMacroInvocations(
   return out;
 }
 
-/** Byte ranges covering every `#[program] pub mod NAME { ... }` body. */
+/** Byte ranges covering every `#[program] (pub)? mod NAME { ... }` body. */
 function computeProgramModRanges(source: string): Array<[number, number]> {
   const ranges: Array<[number, number]> = [];
-  for (const match of source.matchAll(/#\[program\]\s*pub\s+mod\s+\w+\s*\{/g)) {
+  // `pub` is optional — real-world Anchor source usually has it, but
+  // synthetic test sources (and a few user sources) drop it.
+  for (const match of source.matchAll(/#\[program\]\s*(?:pub\s+)?mod\s+\w+\s*\{/g)) {
     const openBrace = (match.index ?? 0) + match[0].length - 1;
     let depth = 1;
     let close = openBrace;
