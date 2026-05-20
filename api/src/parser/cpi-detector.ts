@@ -3330,10 +3330,17 @@ function extractSignerSeedsExpr(firstArgText: string): string {
     }
   }
   if (args.length < 4) return "signer_seeds";
-  let expr = firstArgText.slice(args[2]!, args[3]!).trim().replace(/,\s*$/, "");
-  if (/^&\s*signer_seeds\s*$/.test(expr)) {
-    expr = "signer_seeds";
-  }
+  const expr = firstArgText.slice(args[2]!, args[3]!).trim().replace(/,\s*$/, "");
+  // Do NOT strip a leading `&` here — preserving it is critical for the
+  // case where the user's binding shape is a value array
+  // (`let signer_seeds: [&[&[u8]]; 1] = [...]`) rather than the
+  // prelude-generated reference. Anchor's escrow-blueshift cohort uses
+  // the value form and references it as `&signer_seeds` at the CPI call
+  // site; stripping the `&` causes the emit to pass the bare ident to a
+  // helper expecting `&[&[&[u8]]]`, which fails to coerce from the
+  // value array type. The downstream emit (resolveSignerSeedsExpr) is
+  // responsible for any normalization specific to the typed prelude
+  // path.
   return expr.length > 0 ? expr : "signer_seeds";
 }
 

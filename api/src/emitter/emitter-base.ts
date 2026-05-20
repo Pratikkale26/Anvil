@@ -1954,9 +1954,17 @@ ${originalLines}
 
   protected emitCustomTypes(ir: SolanaIR): string {
     return ir.types.map((typeDef) => {
-      if (typeDef.rawCode && typeDef.kind === "enum" && /\w+\s*\([^)]*\)/.test(typeDef.rawCode)) {
-        // Complex enums with tuple variants need derive macros so they can be
-        // used inside structs that derive BorshSerialize/BorshDeserialize.
+      // Complex enums need rawCode-verbatim emit:
+      //   - tuple variants  : `Foo(i32, String)`           → `\\w+\\(...\\)`
+      //   - struct variants : `Won { winner: Pubkey }`     → `\\w+\\s*\\{...\\}`
+      // Without struct-variant detection, the IR's bare `variants: ["Won"]`
+      // would emit `Won = N` losing the inner fields, then any later
+      // `GameState::Won { winner }` literal fails E0559 "variant has no
+      // field named `winner`". Caught by arjun-tic-tac-toe.
+      if (typeDef.rawCode && typeDef.kind === "enum" && /\w+\s*[({]/.test(typeDef.rawCode)) {
+        // Complex enums with tuple or struct variants need derive macros so
+        // they can be used inside structs that derive BorshSerialize /
+        // BorshDeserialize.
         const rawCode = typeDef.rawCode.trim();
         const alreadyHasDerive = /^#\[derive\(/.test(rawCode);
         // Include Copy when every tuple-variant payload is Copy-safe — i.e.
