@@ -460,7 +460,27 @@ export class PinocchioEmitter extends BaseEmitter {
     // — `irNeedsTokenAccountInitHelper` ORs into needsRent, which pulls
     // both `Rent` and `Sysvar` into scope without duplicating either.
 
-    // Add Clock import when any instruction uses sysvar_clock or pass_through references Clock::get
+    // Body-text scanner shared across the sysvar gates. Adding a new
+    // text-carrying body kind requires extending this. Caught by
+    // arjun-sol-vault: `emit!()` event field referenced Clock::get() and
+    // the prior gate (pass_through + state_field_assign only) missed it.
+    const bodyTextHasPattern = (re: RegExp): boolean =>
+      _ir.instructions.some((i) =>
+        i.body.some((s) => {
+          if (s.kind === "pass_through") return re.test((s as { code: string }).code);
+          if (s.kind === "state_field_assign") return re.test((s as { value: string }).value);
+          if (s.kind === "require") return re.test((s as { condition: string }).condition);
+          if (s.kind === "emit") return re.test((s as { fields: string }).fields);
+          if (s.kind === "msg") {
+            const m = s as { message: string; args?: string };
+            return re.test(m.message) || (m.args ? re.test(m.args) : false);
+          }
+          return false;
+        }),
+      );
+
+    // Add Clock import when any instruction uses sysvar_clock or any body
+    // text-field references Clock::get.
     const needsClock = _ir.instructions.some(i =>
       i.body.some(s =>
         s.kind === 'sysvar_clock' ||
@@ -469,25 +489,21 @@ export class PinocchioEmitter extends BaseEmitter {
         // cargo refuses with `no function get found for Clock`.
         s.kind === 'cpi_pyth_read_price_legacy' ||
         s.kind === 'cpi_pyth_read_price_modern' ||
-        (s.kind === 'cpi_switchboard_read_feed' && s.maxStalenessSlots != null) ||
-        (s.kind === 'pass_through' && /\bClock::get\(\)/.test(s.code)) ||
-        (s.kind === 'state_field_assign' && /\bClock::get\(\)/.test(s.value))
+        (s.kind === 'cpi_switchboard_read_feed' && s.maxStalenessSlots != null)
       )
-    );
+    ) || bodyTextHasPattern(/\bClock::get\(\)/);
     const needsRent = _ir.instructions.some(i =>
-      i.body.some(s =>
-        s.kind === 'sysvar_rent' ||
-        // `\bRent::get\(\)` for explicit forms; the `.minimum_balance|...`
-        // patterns surface the post-rewrite Rent::get()?.method shape via
-        // postProcessInstructionBody (rewriteRentSysvarMethods).
-        (s.kind === 'pass_through' && /\bRent::get\(\)|\.(?:minimum_balance|exempt_minimum|burn_percent)\s*\(/.test(s.code))
-      ) ||
+      i.body.some(s => s.kind === 'sysvar_rent') ||
       // Realloc prelude (emitReallocPrelude in emitter-base) calls
       // Rent::get() to compute the rent delta. Without this account-side
       // check the import is missed and cargo build fails with E0599
       // 'no function get found for Rent in this scope.'
       i.accounts.some(a => a.constraints?.some(c => c.kind === 'realloc'))
-    ) || irNeedsTokenAccountInitHelper(_ir);
+    ) || irNeedsTokenAccountInitHelper(_ir)
+      // `\bRent::get\(\)` for explicit forms; the `.minimum_balance|...`
+      // patterns surface the post-rewrite Rent::get()?.method shape via
+      // postProcessInstructionBody (rewriteRentSysvarMethods).
+      || bodyTextHasPattern(/\bRent::get\(\)|\.(?:minimum_balance|exempt_minimum|burn_percent)\s*\(/);
     if (needsClock) {
       imports.push(`use pinocchio::sysvars::clock::Clock;`);
     }

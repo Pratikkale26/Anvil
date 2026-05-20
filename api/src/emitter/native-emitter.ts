@@ -349,7 +349,27 @@ use solana_program::{
     // preamble; Rent is added below by the needsRent check (which we
     // OR with this trigger).
 
-    // Add Clock import when any instruction uses sysvar_clock or pass_through references Clock::get
+    // Add Clock import when any instruction uses sysvar_clock or any body
+    // text-field references Clock::get. The per-kind list below covers
+    // every body kind that carries user-written expression text — adding
+    // a new kind that does so requires extending this list. Caught by
+    // arjun-sol-vault: `emit!()` event field initializer referenced
+    // `Clock::get()` and the gate missed it.
+    const bodyTextHasPattern = (re: RegExp): boolean =>
+      _ir.instructions.some((i) =>
+        i.body.some((s) => {
+          if (s.kind === "pass_through") return re.test((s as { code: string }).code);
+          if (s.kind === "state_field_assign") return re.test((s as { value: string }).value);
+          if (s.kind === "require") return re.test((s as { condition: string }).condition);
+          if (s.kind === "emit") return re.test((s as { fields: string }).fields);
+          if (s.kind === "msg") {
+            const m = s as { message: string; args?: string };
+            return re.test(m.message) || (m.args ? re.test(m.args) : false);
+          }
+          return false;
+        }),
+      );
+
     const needsClock = _ir.instructions.some(i =>
       i.body.some(s =>
         s.kind === 'sysvar_clock' ||
@@ -357,28 +377,23 @@ use solana_program::{
         // (modern via clockExpr verbatim, legacy via crate call chain).
         s.kind === 'cpi_pyth_read_price_legacy' ||
         s.kind === 'cpi_pyth_read_price_modern' ||
-        (s.kind === 'cpi_switchboard_read_feed' && s.maxStalenessSlots != null) ||
-        (s.kind === 'pass_through' && /\bClock::get\(\)/.test(s.code)) ||
-        (s.kind === 'state_field_assign' && /\bClock::get\(\)/.test(s.value))
+        (s.kind === 'cpi_switchboard_read_feed' && s.maxStalenessSlots != null)
       )
-    );
+    ) || bodyTextHasPattern(/\bClock::get\(\)/);
     if (needsClock) {
       imports.push(`use solana_program::sysvar::clock::Clock;`);
     }
     const needsRent = _ir.instructions.some(i =>
-      i.body.some(s =>
-        s.kind === 'sysvar_rent' ||
-        // `\bRent::\w` for explicit Rent::get() / Rent::default() in source.
-        // `.minimum_balance|.exempt_minimum|.burn_percent` for `<sysvar>.<method>`
-        // forms which postProcessInstructionBody rewrites to `Rent::get()?.<method>` —
-        // detect the pre-rewrite form so the auto-import fires too.
-        (s.kind === 'pass_through' && /\bRent::\w|\.(?:minimum_balance|exempt_minimum|burn_percent)\s*\(/.test(s.code)) ||
-        (s.kind === 'state_field_assign' && /\bRent::\w|\.(?:minimum_balance|exempt_minimum|burn_percent)\s*\(/.test(s.value))
-      ) ||
+      i.body.some(s => s.kind === 'sysvar_rent') ||
       // Realloc prelude (emitReallocPrelude) emits Rent::get()?.minimum_balance(...)
       // via the rent-delta computation. Mirrors pinocchio's needsRent check.
       i.accounts.some(a => a.constraints?.some(c => c.kind === 'realloc'))
-    ) || irNeedsTokenAccountInitHelper(_ir);
+    ) || irNeedsTokenAccountInitHelper(_ir)
+      // `\bRent::\w` for explicit Rent::get() / Rent::default() in source.
+      // `.minimum_balance|.exempt_minimum|.burn_percent` for `<sysvar>.<method>`
+      // forms which postProcessInstructionBody rewrites to `Rent::get()?.<method>` —
+      // detect the pre-rewrite form so the auto-import fires too.
+      || bodyTextHasPattern(/\bRent::\w|\.(?:minimum_balance|exempt_minimum|burn_percent)\s*\(/);
     if (needsRent) {
       imports.push(`use solana_program::sysvar::rent::Rent;`);
     }
