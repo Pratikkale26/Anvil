@@ -38,9 +38,18 @@ const BuildFileSchema = z.object({
   content: z.string().max(2_000_000), // 2 MB hard cap per file
 });
 
+// File-count cap. Bumped from 64 to 256 (2026-05-20) to admit larger
+// real-world projects whose flattened emit exceeds 64 files (e.g.
+// kamino-klend = 69 emit files). Defense-in-depth still bounded by the
+// 2 MB per-file content cap × 256 = ~512 MB worst case, well under any
+// realistic memory pressure on the API worker for a single request.
+// Combined with /parse's 5 MB source cap, this puts a real ceiling on
+// pipeline work without rejecting legitimate large programs.
+const MAX_FILES_PER_REQUEST = 256;
+
 const BuildRequestSchema = z.object({
   target: z.enum(["pinocchio", "native"]),
-  files: z.array(BuildFileSchema).min(1).max(64),
+  files: z.array(BuildFileSchema).min(1).max(MAX_FILES_PER_REQUEST),
   programName: z.string().min(1).max(128),
   // 3-tier UX:
   //   "check"     — fastest, type-only (workbench's "Quick Check" button)
@@ -51,7 +60,7 @@ const BuildRequestSchema = z.object({
 
 const AutoFixRequestSchema = z.object({
   target: z.enum(["pinocchio", "native"]),
-  files: z.array(BuildFileSchema).min(1).max(64),
+  files: z.array(BuildFileSchema).min(1).max(MAX_FILES_PER_REQUEST),
   programName: z.string().min(1).max(128),
   ir: z.unknown(), // validated below with SolanaIRSchema
   maxIterations: z.number().int().min(1).max(5).optional(),

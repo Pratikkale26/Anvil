@@ -73,13 +73,17 @@ const FileSchema = z.object({
   content: z.string().max(2_000_000),
 });
 
+// File-count cap. See build.ts MAX_FILES_PER_REQUEST rationale: bumped to
+// 256 to admit larger real-world projects (kamino-klend = 69 emit files).
+const MAX_FILES_PER_REQUEST = 256;
+
 const RequestSchema = z.object({
   anchorSource: z.string().min(1).max(5_000_000),
-  anvilEmittedFiles: z.array(FileSchema).min(1).max(64),
+  anvilEmittedFiles: z.array(FileSchema).min(1).max(MAX_FILES_PER_REQUEST),
   // Optional: workbench /emit doesn't return scaffold (Cargo.toml etc.) by
   // default. When omitted or empty, the server synthesises scaffold from IR
   // using `target` (defaults to pinocchio).
-  anvilScaffoldFiles: z.array(FileSchema).max(64).optional(),
+  anvilScaffoldFiles: z.array(FileSchema).max(MAX_FILES_PER_REQUEST).optional(),
   target: z.enum(["pinocchio", "native"]).optional(),
   ir: z.unknown(),
   scenario: z.unknown(),
