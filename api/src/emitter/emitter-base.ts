@@ -1006,6 +1006,14 @@ export abstract class BaseEmitter {
 
   protected rustTypeForCustomType(typeName: string): string {
     if (typeName === "String" || typeName === "Vec<u8>") return typeName;
+    // G4 — Strip Anchor wrapper types that don't exist on Pin/Native.
+    // Source struct fields use `Signer<'info>`, `Account<'info, T>`,
+    // `Box<Account<'info, T>>`, etc. With anchor_lang filtered out, these
+    // references fail with "cannot find type `Signer`". Rewrite to
+    // type-agnostic AccountInfo equivalents — target-aware because Pin's
+    // AccountInfo has no lifetime parameter while Native's takes one.
+    const rewritten = stripAnchorWrapperTypes(typeName, this.frameworkName === "Pinocchio" ? "pin" : "native");
+    if (rewritten !== typeName) return rewritten;
     return this.rustTypeForFramework(typeName);
   }
 
@@ -3379,6 +3387,44 @@ function extractUserDerives(rawCode: string): string[] {
     }
   }
   return out;
+}
+
+/**
+ * G4 — Rewrite Anchor wrapper type names (Account, Signer, TokenAccount,
+ * Box<Account>, etc.) to type-agnostic AccountInfo equivalents. Used by
+ * rustTypeForCustomType to clean up struct field types in carried-source
+ * structs that survive into emit. Without this, "cannot find type
+ * `Signer`" errors cascade because anchor_lang is filtered.
+ *
+ * Generalizes to any Anchor program with helper structs (raydium-clmm's
+ * SwapAccounts wrapper, drift's various Context-shaped structs).
+ *
+ * Returns the input verbatim when no Anchor wrapper is detected.
+ */
+function stripAnchorWrapperTypes(typeName: string, target: "pin" | "native"): string {
+  let t = typeName.trim();
+  // Pin's Pubkey is [u8; 32] type alias and AccountInfo has no lifetime
+  // param. Native's AccountInfo<'a> takes a lifetime — when source has
+  // a struct generic like `<'b, 'info>`, downstream fields should reference
+  // 'info. We always emit 'info because that's the convention; the carry-
+  // through struct generic must include 'info (Anvil-generated struct
+  // headers usually do).
+  const ai = target === "pin"
+    ? "pinocchio::account_info::AccountInfo"
+    : "solana_program::account_info::AccountInfo<'info>";
+  // Box<Account<'info, T>> → AccountInfo (Box dropped — Anvil doesn't carry boxed wrappers).
+  t = t.replace(/Box\s*<\s*Account\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>\s*>/g, ai);
+  t = t.replace(/Box\s*<\s*InterfaceAccount\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>\s*>/g, ai);
+  // Account<'info, T> → AccountInfo (T is dropped — type-agnostic emit)
+  t = t.replace(/Account\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
+  t = t.replace(/InterfaceAccount\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
+  // Signer<'info> / SystemAccount<'info> / UncheckedAccount<'info> / Program<'info, T>
+  t = t.replace(/Signer\s*<\s*'?\w+\s*>/g, ai);
+  t = t.replace(/SystemAccount\s*<\s*'?\w+\s*>/g, ai);
+  t = t.replace(/UncheckedAccount\s*<\s*'?\w+\s*>/g, ai);
+  t = t.replace(/Program\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
+  t = t.replace(/AccountLoader\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
+  return t;
 }
 
 function isKnownExternalCrate(crate: string): boolean {
