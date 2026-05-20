@@ -1027,7 +1027,7 @@ export class BodyWalker {
             (_full, prefix: string) =>
               this.emitter.frameworkName === "Pinocchio"
                 ? `${prefix}pinocchio_token::state::Mint::from_account_info(${accountInfoVar})?.${field}()`
-                : `${prefix}spl_token::state::Mint::unpack(&${accountInfoVar}.data.borrow())?.${field}`,
+                : `${prefix}{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&${accountInfoVar}.data.borrow())?.${field} }`,
           );
         }
         for (const field of mintU8Fields) {
@@ -1036,7 +1036,7 @@ export class BodyWalker {
             (_full, prefix: string) =>
               this.emitter.frameworkName === "Pinocchio"
                 ? `${prefix}pinocchio_token::state::Mint::from_account_info(${accountInfoVar})?.${field}()`
-                : `${prefix}spl_token::state::Mint::unpack(&${accountInfoVar}.data.borrow())?.${field}`,
+                : `${prefix}{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&${accountInfoVar}.data.borrow())?.${field} }`,
           );
         }
       }
@@ -1986,8 +1986,8 @@ export class BodyWalker {
                   ? `pinocchio_token::state::Mint::from_account_info(${accountInfo})?`
                   : `pinocchio_token::state::TokenAccount::from_account_info(${accountInfo})?`)
               : (typeName === "Mint"
-                  ? `spl_token::state::Mint::unpack(&${accountInfo}.data.borrow())?`
-                  : `spl_token::state::Account::unpack(&${accountInfo}.data.borrow())?`);
+                  ? `{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&${accountInfo}.data.borrow())? }`
+                  : `{ use solana_program::program_pack::Pack; spl_token::state::Account::unpack(&${accountInfo}.data.borrow())? }`);
             this.lines.push(`    let ${localVar} = ${readExpr};`);
             this.lines.push(`    if ${condition} {`);
             this.lines.push(`        return Err(ProgramError::InvalidAccountData);`);
