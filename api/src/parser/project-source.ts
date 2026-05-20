@@ -574,6 +574,84 @@ function splitTopLevelArgs(text: string): string[] {
 }
 
 /**
+ * G16 — Whitelist-only walker that extends a macro_rules! invocation's
+ * range to include any trailing method-chain + ?-runs + terminal `;`.
+ *
+ * Starting at `idx` (which must point just past the macro's matching
+ * close-bracket), walks forward consuming ONLY:
+ *   - `[ \t\n\r]+` (whitespace + newlines — Rust chains span lines)
+ *   - `.<ident>` optionally followed by a balanced `(...)` group
+ *     (string-aware; `\\` escapes preserved)
+ *   - `?` (try operator, anywhere in chain)
+ *   - `;` — terminal, returns index after consuming
+ *
+ * Stops without consuming on anything else: `,`, `}`, `)`, `]`, `=`,
+ * `+`, `-`, `*`, `/`, `%`, `<`, `>`, `&`, `|`, `^`, `:`, any
+ * identifier/keyword not preceded by `.`, etc.
+ *
+ * Closes kamino's `MACRO!(x).validating(v).set(&y)?;` orphan-chain.
+ * Conservative by construction — won't overshoot into surrounding
+ * code because the whitelist halts on the first non-matching byte.
+ *
+ * Note: this walker is ONLY safe when called for invocations that
+ * have been pre-filtered to exclude those inside `macro_rules!`
+ * definition bodies (Layer A in neutralizeUnsupportedMacros). Without
+ * the pre-filter, walking past a nested invocation's `?` or `;` can
+ * engulf the definition's closing `}` and beyond — drift's macros.rs
+ * regression.
+ */
+function walkMacroChainEnd(out: string, startIdx: number): number {
+  let i = startIdx;
+  while (i < out.length) {
+    // Skip whitespace including newlines.
+    while (i < out.length && /[ \t\n\r]/.test(out[i] ?? "")) i++;
+    if (i >= out.length) break;
+    const ch = out[i];
+    if (ch === ".") {
+      // Method-call: `.<ident>` optionally followed by `(<balanced>)`.
+      const after = i + 1;
+      // Must be followed by an identifier start (not `..` range op).
+      if (!/[A-Za-z_]/.test(out[after] ?? "")) break;
+      let j = after;
+      while (j < out.length && /[A-Za-z0-9_]/.test(out[j] ?? "")) j++;
+      // Optional turbofish `::<...>` — consume balanced `<...>`.
+      // Skip for now (rare); just check for `(`.
+      if (out[j] === "(") {
+        // Balanced paren walk (string-aware).
+        let depth = 1;
+        let inStr = false;
+        let k = j + 1;
+        for (; k < out.length; k++) {
+          const c = out[k];
+          if (inStr) {
+            if (c === "\\" && k + 1 < out.length) { k++; continue; }
+            if (c === '"') inStr = false;
+            continue;
+          }
+          if (c === '"') { inStr = true; continue; }
+          if (c === "(") depth++;
+          else if (c === ")") { depth--; if (depth === 0) { k++; break; } }
+        }
+        if (depth !== 0) break; // unbalanced — stop conservatively
+        i = k;
+      } else {
+        i = j; // bare `.field` access (no call)
+      }
+      continue;
+    }
+    if (ch === "?") {
+      i++;
+      continue;
+    }
+    if (ch === ";") {
+      return i + 1; // terminal, consume + stop
+    }
+    break; // anything else — stop without consuming
+  }
+  return i;
+}
+
+/**
  * G2/G3 — macro_rules! safe-commentout + construct_uint! stub.
  *
  * Anvil doesn't expand user-defined macro_rules. Without intervention,
@@ -655,7 +733,7 @@ export function neutralizeUnsupportedMacros(source: string): string {
 
   // Second pass: scan for invocations of any macro_rules name we found
   // AND collect their ranges. Range = from name start to matching
-  // closer (`;` for stmt form, balanced for expr form).
+  // closer + any trailing chain through `;` (G16 walker).
   const invocationRanges: Array<{ start: number; end: number }> = [];
   for (const name of macroNames) {
     const re = new RegExp(`\\b${name}!\\s*[(\\[{]`, "g");
@@ -690,19 +768,35 @@ export function neutralizeUnsupportedMacros(source: string): string {
         else if (ch === closer) { depth--; if (depth === 0) { close = i; break; } }
       }
       if (depth !== 0) continue;
-      // Consume trailing `;` if statement form.
-      let endIdx = close + 1;
-      while (endIdx < out.length && /[ \t]/.test(out[endIdx] ?? "")) endIdx++;
-      if (out[endIdx] === ";") endIdx++;
+      // G16 Layer B: whitelist-only chain walker. After the macro's
+      // matching `)`, consume `.ident(...)` / `?` / `;` runs (with
+      // whitespace+newlines allowed between). Stop on ANYTHING ELSE.
+      // Closes kamino's `MACRO!(x).validating(v).set(&y)?;` orphan
+      // chain. Conservative by construction — stops on `,`, `}`, `=`,
+      // `+`, `-`, etc.
+      const endIdx = walkMacroChainEnd(out, close + 1);
       invocationRanges.push({ start, end: endIdx });
     }
   }
+
+  // G16 Layer A: pre-filter — drop any invocation whose start falls
+  // inside a macro_rules! definition body. The definition will be
+  // commented out wholesale; nested invocations don't need separate
+  // processing. Without this filter, the chain walker on a nested
+  // invocation can overshoot the definition's closing `}` and engulf
+  // surrounding code (drift's macros.rs → #[program] regression).
+  const filteredInvocations = invocationRanges.filter((inv) => {
+    for (const def of definitionRanges) {
+      if (inv.start >= def.start && inv.start < def.end) return false;
+    }
+    return true;
+  });
 
   // Combine + sort + dedupe all ranges to comment out. Apply from
   // RIGHT to LEFT so offsets remain valid as we rewrite.
   const allRanges = [
     ...definitionRanges.map((d) => ({ start: d.start, end: d.end })),
-    ...invocationRanges,
+    ...filteredInvocations,
   ].sort((a, b) => a.start - b.start);
 
   // Merge overlapping ranges (an invocation site inside a definition

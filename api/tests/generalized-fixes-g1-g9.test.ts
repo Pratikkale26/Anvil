@@ -80,6 +80,103 @@ fn check(p: &Pubkey) -> bool { *p == admin::ID || *p == limit_order_admin::ID }`
   });
 });
 
+describe("G16 — kamino orphan-chain + drift overshoot prevention", () => {
+  // Layer A: pre-filter drops nested invocations inside macro_rules!
+  // definition bodies — chain walker can no longer overshoot the def
+  // closer (drift macros.rs → #[program] regression class).
+  // Layer B: whitelist-only walker after macro's matching `)` extends
+  // range through `.ident(...)`, `?`, terminal `;` — closes kamino's
+  // `MACRO!(x).validating(v).set(&y)?;` orphan-chain.
+  test("Kamino orphan-chain after macro_rules! is fully consumed", async () => {
+    const { neutralizeUnsupportedMacros } = await import("../src/parser/project-source.ts");
+    const src = `macro_rules! for_named_field {
+    ($expr:expr) => { for_field($expr).named(stringify!($expr)) };
+}
+
+fn update(value: u8, market: &mut Market) -> Result<()> {
+    for_named_field!(&mut market.emergency_mode)
+        .validating(validations::check_bool)
+        .set(&value)?;
+    Ok(())
+}`;
+    const out = neutralizeUnsupportedMacros(src);
+    // .validating( and .set( must NOT remain on uncommented lines.
+    expect(out).not.toMatch(/^(?!\s*\/\/).*\.validating\(/m);
+    expect(out).not.toMatch(/^(?!\s*\/\/).*\.set\(\&value\)/m);
+  });
+
+  test("Drift macro_rules! body invocation doesn't overshoot definition closer", async () => {
+    const { neutralizeUnsupportedMacros } = await import("../src/parser/project-source.ts");
+    const src = `macro_rules! validate {
+    ($cond:expr, $err:expr) => {
+        if !$cond {
+            msg!("validation failed");
+            return Err($err.into());
+        }
+    };
+}
+
+#[program]
+pub mod drift {
+    use super::*;
+    pub fn initialize(ctx: Context<Init>) -> Result<()> {
+        validate!(ctx.accounts.foo.bar > 0, ErrorCode::Invalid);
+        Ok(())
+    }
+}`;
+    const out = neutralizeUnsupportedMacros(src);
+    // #[program] line must exist and not be commented out.
+    const programLine = out.split("\n").find((l) => l.includes("#[program]"));
+    expect(programLine).toBeDefined();
+    expect(programLine!.trim().startsWith("//")).toBe(false);
+    // `pub mod drift` must still be present uncommented.
+    expect(out).toMatch(/^(?!\s*\/\/).*pub mod drift/m);
+  });
+
+  test("Statement-form macro with trailing ; gets line-commented", async () => {
+    const { neutralizeUnsupportedMacros } = await import("../src/parser/project-source.ts");
+    const src = `macro_rules! my_macro { ($a:expr, $b:expr) => { () } }
+fn x() {
+    my_macro!(a, b);
+}`;
+    const out = neutralizeUnsupportedMacros(src);
+    // `my_macro!(a, b);` line must be commented.
+    const myMacroLine = out.split("\n").find((l) => l.includes("my_macro!(a, b);"));
+    expect(myMacroLine).toBeDefined();
+    expect(myMacroLine!.trim().startsWith("//")).toBe(true);
+  });
+
+  test("Inner-expression macro substitutes todo!() preserving outer parens", async () => {
+    const { neutralizeUnsupportedMacros } = await import("../src/parser/project-source.ts");
+    const src = `macro_rules! my_macro { ($e:expr) => { || $e.into() } }
+fn x() -> Result<()> {
+    Err(my_macro!(ErrorCode::Foo)())
+}`;
+    const out = neutralizeUnsupportedMacros(src);
+    expect(out).toContain("todo!");
+    // Outer `Err(` and `)` should remain balanced.
+    let depth = 0;
+    let inComment = false;
+    let inStr = false;
+    for (let i = 0; i < out.length; i++) {
+      if (inComment) {
+        if (out[i] === "\n") inComment = false;
+        continue;
+      }
+      if (out[i] === "/" && out[i + 1] === "/") { inComment = true; continue; }
+      if (inStr) {
+        if (out[i] === "\\") { i++; continue; }
+        if (out[i] === '"') inStr = false;
+        continue;
+      }
+      if (out[i] === '"') { inStr = true; continue; }
+      if (out[i] === "(") depth++;
+      else if (out[i] === ")") depth--;
+    }
+    expect(depth).toBe(0);
+  });
+});
+
 describe("G15 — drift carried-helper emit! comment strip", () => {
   // Drift's controller/funding.rs has emit!(Event { f: v, //1e9 ... });
   // shapes. transformHelperCode collapses to single-line `};`, so any
