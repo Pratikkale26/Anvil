@@ -80,6 +80,86 @@ fn check(p: &Pubkey) -> bool { *p == admin::ID || *p == limit_order_admin::ID }`
   });
 });
 
+describe("G19 — pub fn id() + pub const ID emit + Error stub", () => {
+  // Anchor's declare_id!() expands to `pub const ID: Pubkey = ...;` and
+  // `pub fn id() -> Pubkey { ID }`. Anvil's emit previously skipped both;
+  // carried code referencing crate::id() / crate::ID hit E0425/E0433.
+  // Raydium-clmm had 6x crate::id() and 3x crate::ID references.
+  test("ID const + id() fn emitted when ir.programId present (Pinocchio)", async () => {
+    const { PinocchioEmitter } = await import("../src/emitter/pinocchio-emitter.ts");
+    const ir: any = {
+      name: "my_program",
+      programId: "11111111111111111111111111111111", // base58 for [0u8; 32]
+      accounts: [], types: [], helperFns: [], events: [], errors: [], constants: [], instructions: [],
+    };
+    const out = new PinocchioEmitter().emit(ir);
+    const lib = out.files.find((f: any) => f.path === "lib.rs")?.content ?? "";
+    expect(lib).toContain("pub const ID: Pubkey =");
+    expect(lib).toContain("pub fn id() -> Pubkey { ID }");
+    // Pinocchio uses [u8; 32] bare literal.
+    expect(lib).toContain("pub const ID: Pubkey = [0, 0, 0, 0, 0, 0, 0, 0,");
+  });
+
+  test("Native target wraps with Pubkey::new_from_array()", async () => {
+    const { NativeEmitter } = await import("../src/emitter/native-emitter.ts");
+    const ir: any = {
+      name: "my_program",
+      programId: "11111111111111111111111111111111",
+      accounts: [], types: [], helperFns: [], events: [], errors: [], constants: [], instructions: [],
+    };
+    const out = new NativeEmitter().emit(ir);
+    const lib = out.files.find((f: any) => f.path === "lib.rs")?.content ?? "";
+    expect(lib).toContain("pub const ID: Pubkey = Pubkey::new_from_array([");
+  });
+
+  test("No ID const when ir.programId is undefined", async () => {
+    const { PinocchioEmitter } = await import("../src/emitter/pinocchio-emitter.ts");
+    const ir: any = {
+      name: "p", accounts: [], types: [], helperFns: [], events: [], errors: [], constants: [], instructions: [],
+    };
+    const out = new PinocchioEmitter().emit(ir);
+    const lib = out.files.find((f: any) => f.path === "lib.rs")?.content ?? "";
+    expect(lib).not.toContain("pub const ID:");
+    expect(lib).not.toContain("pub fn id()");
+  });
+
+  test("Error stub emitted when helper code references Error::", async () => {
+    const { PinocchioEmitter } = await import("../src/emitter/pinocchio-emitter.ts");
+    const ir: any = {
+      name: "p",
+      accounts: [], types: [],
+      helperFns: [
+        {
+          name: "h", signature: "fn h() -> Result<(), ProgramError>",
+          rawCode: `fn h() -> Result<(), ProgramError> { Err(Error::from(MyErr::X)) }`,
+          body: `Err(Error::from(MyErr::X))`,
+        },
+      ],
+      events: [], errors: [], constants: [], instructions: [],
+    };
+    const out = new PinocchioEmitter().emit(ir);
+    const lib = out.files.find((f: any) => f.path === "lib.rs")?.content ?? "";
+    expect(lib).toContain("pub struct Error(pub ProgramError)");
+    expect(lib).toContain("pub fn with_pubkeys<T>");
+    expect(lib).toContain("pub fn with_source<T>");
+  });
+
+  test("No Error stub when carried code doesn't reference Error", async () => {
+    const { PinocchioEmitter } = await import("../src/emitter/pinocchio-emitter.ts");
+    const ir: any = {
+      name: "p",
+      accounts: [], types: [],
+      helperFns: [
+        { name: "h", signature: "fn h() -> u64", rawCode: `fn h() -> u64 { 42 }`, body: `42` },
+      ],
+      events: [], errors: [], constants: [], instructions: [],
+    };
+    const out = new PinocchioEmitter().emit(ir);
+    const lib = out.files.find((f: any) => f.path === "lib.rs")?.content ?? "";
+    expect(lib).not.toContain("pub struct Error");
+  });
+});
+
 describe("G17 — ZeroCopy / Owner / Discriminator trait stubs", () => {
   // Raydium-clmm and similar programs define user wrappers like
   //   pub struct AccountLoad<'info, T: ZeroCopy + Owner> { ... }

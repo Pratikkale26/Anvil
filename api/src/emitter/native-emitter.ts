@@ -479,6 +479,12 @@ use solana_program::{
     return `Pubkey::new_from_array(${sliceExpr}.try_into().map_err(|_| ProgramError::InvalidInstructionData)?)`;
   }
 
+  /** G19 — Native target wraps the byte array with Pubkey::new_from_array
+   * because Pubkey here is the solana_program type (not a bare alias). */
+  protected override programIdConstExpr(byteList: string): string {
+    return `Pubkey::new_from_array([${byteList}])`;
+  }
+
   /** G5-followup — apply NATIVE_T22 blacklist to carried helper-fn bodies
    *  too (mirrors PinocchioEmitter's override). Source helpers that
    *  reference switchboard types (RandomnessAccountData /

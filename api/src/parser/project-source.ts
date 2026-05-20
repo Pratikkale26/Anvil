@@ -1144,7 +1144,7 @@ export function vendorExternalProgramIDs(source: string): string {
   return `${source}\n\n// Anvil-vendored: external program ID constants pulled out of\n// imports for crates Anvil doesn't ship in the scaffold deps.\n${consts.join("\n")}\n`;
 }
 
-function decodeBase58(s: string): number[] | null {
+export function decodeBase58(s: string): number[] | null {
   // Inline base58 decode to avoid importing bs58 from a parser module;
   // 32-byte pubkeys decode to ~44 base58 chars, well under any quadratic
   // concern. Standard Bitcoin alphabet.

@@ -125,6 +125,12 @@ use solana_program::{
 };
 use spl_associated_token_account::instruction::create_associated_token_account as spl_create_ata_ix;
 
+// G19 — Anchor's declare_id!() expands to these two items at crate root.
+// Carried code may reference `crate::ID` or `crate::id()` for ownership
+// checks and PDA derivations — stub them so emit stays compilable.
+pub const ID: Pubkey = Pubkey::new_from_array([2, 136, 139, 32, 73, 245, 198, 255, 203, 98, 89, 60, 137, 131, 59, 232, 200, 91, 173, 167, 252, 104, 99, 33, 82, 40, 148, 144, 0, 0, 0, 0]);
+pub fn id() -> Pubkey { ID }
+
 mod instructions;
 
 mod helpers;

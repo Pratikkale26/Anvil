@@ -220,6 +220,12 @@ use pinocchio::{
 use pinocchio::instruction::{Seed, Signer};
 use pinocchio_system::create_account_with_minimum_balance_signed;
 
+// G19 — Anchor's declare_id!() expands to these two items at crate root.
+// Carried code may reference `crate::ID` or `crate::id()` for ownership
+// checks and PDA derivations — stub them so emit stays compilable.
+pub const ID: Pubkey = [168, 131, 26, 146, 36, 192, 111, 208, 209, 232, 226, 128, 3, 249, 47, 220, 141, 226, 4, 20, 199, 248, 230, 248, 0, 202, 129, 53, 0, 0, 0, 0];
+pub fn id() -> Pubkey { ID }
+
 mod state;
 
 mod instructions;

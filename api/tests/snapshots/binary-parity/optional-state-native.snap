@@ -258,6 +258,12 @@ use solana_program::{
     sysvar::Sysvar,
 };
 
+// G19 — Anchor's declare_id!() expands to these two items at crate root.
+// Carried code may reference `crate::ID` or `crate::id()` for ownership
+// checks and PDA derivations — stub them so emit stays compilable.
+pub const ID: Pubkey = Pubkey::new_from_array([11, 254, 222, 161, 124, 175, 78, 49, 239, 132, 80, 193, 106, 170, 87, 126, 49, 79, 115, 149, 225, 119, 248, 116, 134, 33, 169, 128, 0, 0, 0, 0]);
+pub fn id() -> Pubkey { ID }
+
 mod state;
 
 mod instructions;

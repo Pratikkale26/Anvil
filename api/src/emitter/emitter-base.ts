@@ -24,6 +24,7 @@ import type {
   TypeDef,
   HelperFn,
 } from "../ir/schema.js";
+import { decodeBase58 } from "../parser/project-source.js";
 
 // ─── Re-export utilities for backward compatibility ──────────────────────────
 
@@ -1126,6 +1127,26 @@ export abstract class BaseEmitter {
     if (zeroCopyTraits) {
       sections.push(zeroCopyTraits);
     }
+    // G19: emit `pub const ID: Pubkey = ...` + `pub fn id() -> Pubkey { ID }`
+    // at crate root when the IR has a programId. Anchor auto-generates
+    // these from `declare_id!("...")` — Anvil's emit previously skipped
+    // them, so carried code referencing `crate::id()` or `crate::ID`
+    // failed at cargo with E0425/E0433. Raydium-clmm hit 6× crate::id().
+    const programIdConst = this.emitProgramIdConst(ir);
+    if (programIdConst) {
+      sections.push(programIdConst);
+    }
+    // G19b: stub anchor_lang::Error type when carried code references it.
+    // Anchor's Error is a struct with chainable builder methods
+    // (.with_pubkeys, .with_source, .with_account_name, .with_values, etc).
+    // Anvil strips anchor_lang imports — carried code references the type
+    // directly and breaks. Stub with no-op builders that return self.
+    // Detection: only emit when at least one helper-fn body or impl item
+    // references `Error::` or `: Error,` as a type. Conservative — fires
+    // for the raydium AccountLoad helper pattern.
+    if (this.shouldEmitErrorStub(ir)) {
+      sections.push(this.emitErrorStub());
+    }
     // Hoist const-fn helpers referenced by top-level constants. Rust's
     // const-evaluator requires the called fn to be visible at the const
     // decl's scope; without this lift, a source `pub const ZERO_HASHES =
@@ -1480,6 +1501,96 @@ pub trait Owner {
     fn owner() -> Pubkey;
 }
 pub trait ZeroCopy: Discriminator + Owner {}`;
+  }
+
+  /**
+   * G19b — detect whether carried helper code references the anchor_lang
+   * `Error` type. Scan helper-fn body text AND impl items (raw code) for
+   * `Error::` (constructor / static call) or `: Error,` (field/param type)
+   * or `-> Error` (return type) or `<Error>` (generic arg) shapes.
+   *
+   * Conservative: only fires when a real reference exists. Programs that
+   * don't carry such code see no change.
+   */
+  protected shouldEmitErrorStub(ir: SolanaIR): boolean {
+    const RE = /\bError(?:::|\s*[,>;)])/;
+    for (const h of ir.helperFns ?? []) {
+      if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+    }
+    for (const acc of ir.accounts) {
+      for (const item of acc.implItems ?? []) {
+        if (RE.test(item)) return true;
+      }
+    }
+    for (const t of ir.types ?? []) {
+      for (const item of t.implItems ?? []) {
+        if (RE.test(item)) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * G19b — emit a builder-pattern stub for anchor_lang::Error. Wraps
+   * ProgramError; chainable methods return self verbatim (no runtime
+   * effect). Lets cargo type-check `Error::from(X).with_pubkeys(...)`
+   * shapes without runtime semantics.
+   */
+  protected emitErrorStub(): string {
+    return `// G19b — Anchor's anchor_lang::Error type stub. Carried code uses
+// Error::from(X).with_pubkeys(...).with_source(...) chains; Anvil strips
+// anchor_lang, so we provide a builder shape that satisfies cargo
+// type-check. Runtime semantics: the builder no-ops; the inner
+// ProgramError is what surfaces.
+pub struct Error(pub ProgramError);
+impl Error {
+    pub fn from<E: Into<ProgramError>>(e: E) -> Self { Self(e.into()) }
+    pub fn with_pubkeys<T>(self, _arg: T) -> Self { self }
+    pub fn with_source<T>(self, _arg: T) -> Self { self }
+    pub fn with_account_name<T>(self, _arg: T) -> Self { self }
+    pub fn with_values<T>(self, _arg: T) -> Self { self }
+}
+impl From<Error> for ProgramError {
+    fn from(e: Error) -> Self { e.0 }
+}`;
+  }
+
+  /**
+   * G19 — emit `pub const ID: Pubkey = …;` + `pub fn id() -> Pubkey { ID }`
+   * at the crate root. Anchor's `declare_id!("...")` expands to these
+   * two items, both publicly accessible from carried code as `crate::ID`
+   * and `crate::id()`. Anvil's emit previously skipped them — programs
+   * with helper bodies that reference these (raydium-clmm:
+   *   pub fn unpack_owner(info: &AccountInfo) -> Result<Pubkey> {
+   *       if info.owner != &crate::id() { ... }
+   *   }
+   * ) failed with E0425/E0433. Idempotent on programs without ir.programId.
+   *
+   * Pubkey representation differs per-target ([u8;32] for Pinocchio,
+   * solana_program::Pubkey for Native) — `defaultPubkeyValue` is the
+   * "constructor" wrapper. For the const, we emit the byte array
+   * directly since Pubkey::new_from_array is const-stable on both.
+   */
+  protected emitProgramIdConst(ir: SolanaIR): string {
+    const programId = ir.programId;
+    if (!programId) return "";
+    const bytes = decodeBase58(programId);
+    if (!bytes || bytes.length !== 32) return "";
+    const byteList = bytes.join(", ");
+    return `// G19 — Anchor's declare_id!() expands to these two items at crate root.
+// Carried code may reference \`crate::ID\` or \`crate::id()\` for ownership
+// checks and PDA derivations — stub them so emit stays compilable.
+pub const ID: Pubkey = ${this.programIdConstExpr(byteList)};
+pub fn id() -> Pubkey { ID }`;
+  }
+
+  /**
+   * Target-specific Pubkey construction for the program ID const.
+   * Pinocchio: bare `[u8; 32]` literal (Pubkey IS the array).
+   * Native: `solana_program::pubkey::Pubkey::new_from_array([...])`.
+   */
+  protected programIdConstExpr(byteList: string): string {
+    return `[${byteList}]`;
   }
 
   /**

@@ -120,6 +120,12 @@ use pinocchio::{
     ProgramResult,
 };
 
+// G19 — Anchor's declare_id!() expands to these two items at crate root.
+// Carried code may reference `crate::ID` or `crate::id()` for ownership
+// checks and PDA derivations — stub them so emit stays compilable.
+pub const ID: Pubkey = [20, 196, 101, 96, 68, 103, 30, 234, 199, 11, 32, 95, 224, 87, 147, 137, 75, 45, 103, 136, 7, 224, 255, 87, 35, 34, 76, 28, 129, 172, 220, 111];
+pub fn id() -> Pubkey { ID }
+
 mod instructions;
 
 mod helpers;

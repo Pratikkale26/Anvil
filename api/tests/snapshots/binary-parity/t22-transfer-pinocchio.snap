@@ -165,6 +165,12 @@ use pinocchio::{
 use pinocchio::instruction::{Seed, Signer};
 use pinocchio_token::instructions::Transfer as TokenTransfer;
 
+// G19 — Anchor's declare_id!() expands to these two items at crate root.
+// Carried code may reference `crate::ID` or `crate::id()` for ownership
+// checks and PDA derivations — stub them so emit stays compilable.
+pub const ID: Pubkey = [53, 115, 120, 183, 183, 227, 64, 227, 93, 54, 160, 207, 254, 12, 144, 19, 242, 131, 19, 141, 210, 117, 182, 201, 45, 196, 11, 123, 159, 218, 64, 152];
+pub fn id() -> Pubkey { ID }
+
 mod instructions;
 
 mod helpers;
