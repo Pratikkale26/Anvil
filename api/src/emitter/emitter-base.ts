@@ -911,8 +911,10 @@ export abstract class BaseEmitter {
         // matching deps to Cargo.toml). Pinocchio filters them out
         // because there's no compatible dep in their Cargo.toml.
         if (!isNative) {
-          if (/\bnum_derive\b/.test(statement)) return false;
-          if (/\bnum_traits\b/.test(statement)) return false;
+          // num_derive / num_traits kept on Pinocchio (2026-05-20): the
+          // crates are no_std-compatible and now in PINOCCHIO_CARGO_TOML.
+          // Carried-source `#[derive(FromPrimitive)]` on enums needs the
+          // derive macro to resolve at expansion time.
           if (/\bmpl_core\b/.test(statement)) return false;
           if (/\bmpl_token_metadata\b/.test(statement)) return false;
           if (/\bswitchboard_on_demand\b/.test(statement)) return false;
@@ -2009,15 +2011,37 @@ ${originalLines}
         // its own derive list.
         const hasNonCopyField = /\b(String|Vec|Box|HashMap|BTreeMap|Rc|Arc)\b/.test(rawCode);
         const copyDerive = hasNonCopyField ? "" : "Copy, ";
-        const decl = alreadyHasDerive
-          ? rawCode
-          : `#[derive(Clone, ${copyDerive}Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = true)]\n${rawCode}`;
+        let decl: string;
+        if (alreadyHasDerive) {
+          // Filter Anchor-specific derives that don't exist on the
+          // target. Replace AnchorSerialize→BorshSerialize and
+          // AnchorDeserialize→BorshDeserialize since the user's intent
+          // is just the trait. Keep FromPrimitive / ToPrimitive
+          // (num_derive) verbatim since they're target-compatible
+          // when num-derive is in scaffold deps.
+          decl = rawCode
+            .replace(/\bAnchorSerialize\b/g, "BorshSerialize")
+            .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+        } else {
+          decl = `#[derive(Clone, ${copyDerive}Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = true)]\n${rawCode}`;
+        }
         return `${decl}${this.emitTypeInherentImpl(typeDef)}`;
       }
       if (typeDef.kind === "enum") {
         const variants = (typeDef.variants ?? []).map((variant, index) => `    ${variant} = ${index},`).join("\n");
         const arms = (typeDef.variants ?? []).map((variant, index) => `            ${index} => Ok(Self::${variant}),`).join("\n");
-        return `#[derive(Clone, Copy, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
+        // Extract user-source derives so target-compatible ones
+        // (FromPrimitive, ToPrimitive from num_derive) survive the
+        // re-stamp. Drops Anchor-specific derives (AnchorSerialize /
+        // AnchorDeserialize) since neither target ships anchor_lang.
+        // Caught by arjun-tic-tac-toe: Sign enum needed FromPrimitive
+        // for the carried-source `Sign::from_usize(...)` call.
+        const userDerives = extractUserDerives(typeDef.rawCode ?? "");
+        const extraDerives = userDerives
+          .filter((d) => d === "FromPrimitive" || d === "ToPrimitive")
+          .join(", ");
+        const extraSuffix = extraDerives ? `, ${extraDerives}` : "";
+        return `#[derive(Clone, Copy, Debug, PartialEq, BorshDeserialize, BorshSerialize${extraSuffix})]
 #[borsh(use_discriminant = true)]
 #[repr(u8)]
 pub enum ${typeDef.name} {
@@ -3328,6 +3352,25 @@ const SIBLING_KNOWN_EXTERNAL_CRATES = new Set([
   "core", "std", "alloc",
 ]);
 const SIBLING_KNOWN_EXTERNAL_PREFIXES = ["spl_", "mpl_", "pyth_", "switchboard_"];
+
+/**
+ * Extract the comma-separated derive names from any `#[derive(...)]`
+ * attribute preceding the item in `rawCode`. Returns an empty array
+ * when there are no derives. Used to preserve user-source derives like
+ * FromPrimitive / ToPrimitive that target-stamped emit would otherwise
+ * drop.
+ */
+function extractUserDerives(rawCode: string): string[] {
+  const out: string[] = [];
+  for (const m of rawCode.matchAll(/#\[derive\(([^)]+)\)\]/g)) {
+    const args = m[1] ?? "";
+    for (const part of args.split(",")) {
+      const name = part.trim();
+      if (name) out.push(name);
+    }
+  }
+  return out;
+}
 
 function isKnownExternalCrate(crate: string): boolean {
   if (SIBLING_KNOWN_EXTERNAL_CRATES.has(crate)) return true;

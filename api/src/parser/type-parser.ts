@@ -100,9 +100,22 @@ export function parseCustomType(
     (a) => /^#\[\s*zero_copy(\s*\([^\)]*\))?\s*\]/.test(a.text.replace(/\s+/g, " ")),
   );
 
+  // Build rawCode with any preceding #[derive(...)] / #[repr(...)] / etc.
+  // attributes prepended so the emitter's emitCustomTypes's
+  // alreadyHasDerive check fires and the user's derive list is
+  // preserved verbatim. Without this, FromPrimitive / ToPrimitive
+  // derives from num_derive get stripped, breaking calls like
+  // `Sign::from_usize(...)` in carried impl methods. Caught by
+  // arjun-tic-tac-toe.
+  const attrPrefix = (attrs ?? [])
+    .map((a) => a.text)
+    .filter((t) => /^#\[/.test(t.trim()))
+    .join("\n");
+  const fullRawCode = attrPrefix ? `${attrPrefix}\n${node.text}` : node.text;
+
   if (kind === "struct") {
     const fields = parseStructFields(node);
-    return { name, kind: "struct", fields, rawCode: node.text, generics, ...(isZeroCopy ? { isZeroCopy } : {}) };
+    return { name, kind: "struct", fields, rawCode: fullRawCode, generics, ...(isZeroCopy ? { isZeroCopy } : {}) };
   }
 
   // Enum variants
@@ -128,7 +141,7 @@ export function parseCustomType(
     }
   }
 
-  return { name, kind: "enum", variants, rawCode: node.text, generics, ...(isZeroCopy ? { isZeroCopy } : {}) };
+  return { name, kind: "enum", variants, rawCode: fullRawCode, generics, ...(isZeroCopy ? { isZeroCopy } : {}) };
 }
 
 // ─── Import extraction ──────────────────────────────────────────────────────
