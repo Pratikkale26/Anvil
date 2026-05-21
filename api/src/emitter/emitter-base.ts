@@ -1382,6 +1382,13 @@ export abstract class BaseEmitter {
     if (this.referencesAnchorAccountLoader(ir)) {
       sections.push(this.emitAnchorAccountLoaderStub());
     }
+    // G79 — stub other anchor_lang trait references (Discriminator,
+    // AccountDeserialize, AccountSerialize, Owner). Real-world Anchor
+    // programs (marinade) implement these via macros on every state
+    // account. The user-written impl blocks survive Anvil's flatten but
+    // the trait definitions don't (we strip anchor_lang imports). Bare
+    // trait stubs are compile-clean.
+    sections.push(this.emitAnchorMiscTraitStubs(ir));
     // G66 attempted CpiContext stub; regressed cohort (+22 errors net)
     // because `alloc::vec::Vec` requires `extern crate alloc;` which
     // isn't always in scope, AND because the stub's typed fluent
@@ -1914,6 +1921,37 @@ impl<'a, 'b, 'c, 'info, T> CpiContext<'a, 'b, 'c, 'info, T> {
     for (const ut of ir.userTraits ?? []) if (RE.test(ut)) return true;
     for (const uti of ir.userTraitImpls ?? []) if (RE.test(uti)) return true;
     return false;
+  }
+
+  /** G79 — emit per-trait stubs for anchor_lang traits referenced by carried
+   * code. Each trait gates emit on whether its name appears in any user-
+   * written impl/helper body — we don't add unused stubs. */
+  protected emitAnchorMiscTraitStubs(ir: SolanaIR): string {
+    const allCarried: string[] = [];
+    for (const h of ir.helperFns ?? []) {
+      if (h.rawCode) allCarried.push(h.rawCode);
+      if (h.body) allCarried.push(h.body);
+    }
+    for (const acc of ir.accounts) for (const item of acc.implItems ?? []) allCarried.push(item);
+    for (const t of ir.types ?? []) for (const item of t.implItems ?? []) allCarried.push(item);
+    for (const ut of ir.userTraits ?? []) allCarried.push(ut);
+    for (const uti of ir.userTraitImpls ?? []) allCarried.push(uti);
+    const all = allCarried.join("\n");
+    const stubs: string[] = [];
+    if (/\bDiscriminator\b/.test(all)) {
+      stubs.push(`pub trait Discriminator { const DISCRIMINATOR: [u8; 8]; }`);
+    }
+    if (/\bAccountDeserialize\b/.test(all)) {
+      stubs.push(`pub trait AccountDeserialize: Sized {\n    fn try_deserialize(buf: &mut &[u8]) -> Result<Self, ProgramError>;\n    fn try_deserialize_unchecked(buf: &mut &[u8]) -> Result<Self, ProgramError>;\n}`);
+    }
+    if (/\bAccountSerialize\b/.test(all)) {
+      stubs.push(`pub trait AccountSerialize {\n    fn try_serialize<W: borsh::io::Write>(&self, writer: &mut W) -> Result<(), ProgramError>;\n}`);
+    }
+    if (/\bOwner\b(?!\s*\()/.test(all) && !/\bcollection_authority\.Owner\b/.test(all)) {
+      stubs.push(`pub trait Owner {\n    fn owner() -> Pubkey;\n}`);
+    }
+    if (stubs.length === 0) return "";
+    return `// G79 — anchor_lang trait stubs. Carried impl blocks ($Anchor's\n// #[account]/#[zero_copy] macros expand to impl Owner/Discriminator/\n// Account[De]Serialize) reference these traits; we strip the anchor_lang\n// import but the impl blocks survive. Minimal compile-clean shape; real\n// semantics need the wire-format/owner data Anvil already emits separately.\n${stubs.join("\n\n")}`;
   }
 
   /** G65 — stub AccountLoader<T> as an opaque wrapper. Minimal compile-
