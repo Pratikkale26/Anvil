@@ -381,7 +381,26 @@ use solana_program::{
         s.kind === 'cpi_pyth_read_price_modern' ||
         (s.kind === 'cpi_switchboard_read_feed' && s.maxStalenessSlots != null)
       )
-    ) || bodyTextHasPattern(/\bClock::get\(\)/);
+    ) || bodyTextHasPattern(/\bClock::get\(\)/) || (() => {
+      // G63 — same as G43/G49b on Pinocchio: also detect Clock as TYPE
+      // in carried impl items + helper sigs (marinade `pub fn new(...
+      // clock: &Clock, ...)`) and Clock::get() in those contexts.
+      const TYPE_RE = /\b(?:&\s*)?Clock\b(?!\s*::\s*\w)/;
+      const GET_RE = /\bClock::get\s*\(/;
+      const RE_COMBINED = new RegExp(`${TYPE_RE.source}|${GET_RE.source}`);
+      for (const h of _ir.helperFns ?? []) {
+        if (RE_COMBINED.test(h.rawCode ?? "") || RE_COMBINED.test(h.body ?? "")) return true;
+      }
+      for (const acc of _ir.accounts) {
+        for (const item of acc.implItems ?? []) if (RE_COMBINED.test(item)) return true;
+      }
+      for (const t of _ir.types ?? []) {
+        for (const item of t.implItems ?? []) if (RE_COMBINED.test(item)) return true;
+      }
+      for (const ut of _ir.userTraits ?? []) if (RE_COMBINED.test(ut)) return true;
+      for (const uti of _ir.userTraitImpls ?? []) if (RE_COMBINED.test(uti)) return true;
+      return false;
+    })();
     if (needsClock) {
       imports.push(`use solana_program::sysvar::clock::Clock;`);
     }
@@ -467,6 +486,20 @@ use solana_program::{
     if (items.length > 0) {
       imports.push(`use solana_program::instruction::{${items.join(", ")}};`);
     }
+    // G63 — auto-import spl_token::state::{Mint, TokenAccount} when carried
+    // code references the bare types in signatures (Anchor's
+    // anchor_spl::token::{Mint, TokenAccount} is filtered). Skip when user
+    // defines their own type with the same name.
+    const userTypeNamesG63 = new Set<string>([
+      ...(_ir.types ?? []).map((t) => t.name),
+      ...(_ir.accounts ?? []).map((a) => a.name),
+    ]);
+    const mintRE = /\b(?:&\s*(?:mut\s+)?)?Mint\b(?!\s*::)/;
+    const taRE = /\b(?:&\s*(?:mut\s+)?)?TokenAccount\b(?!\s*::)/;
+    const refsMintG63 = !userTypeNamesG63.has("Mint") && mintRE.test(allCarriedText);
+    const refsTokenAccountG63 = !userTypeNamesG63.has("TokenAccount") && taRE.test(allCarriedText);
+    if (refsMintG63) imports.push(`use spl_token::state::Mint;`);
+    if (refsTokenAccountG63) imports.push(`use spl_token::state::Account as TokenAccount;`);
 
     // Auto-import SPL Token-2022 extension types when the source body
     // references them. Source typically pulls these in through nested
