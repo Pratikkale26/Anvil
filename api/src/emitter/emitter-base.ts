@@ -2702,6 +2702,18 @@ ${originalLines}
           decl = rawCode
             .replace(/\bAnchorSerialize\b/g, "BorshSerialize")
             .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+          // G47 — strip `Copy` from derive when any variant contains a
+          // mutable reference (`&mut T` or `&'a mut T`). Mutable refs aren't
+          // Copy in Rust, so `#[derive(Copy)]` on an enum like `NodeRefMut<'a>
+          // { Inner(&'a mut InnerNode), Leaf(&'a mut LeafNode) }` fails
+          // E0204. `\b&` doesn't work because `(` (preceding `&`) is non-word
+          // — use `&\s*(?:'\w+\s+)?mut\b` without leading word-boundary.
+          const hasMutRefInVariants = /&\s*(?:'\w+\s+)?mut\b/.test(decl);
+          if (hasMutRefInVariants) {
+            decl = decl.replace(/(#\[derive\([^)]*?)\bCopy\s*,\s*/g, "$1");
+            decl = decl.replace(/(#\[derive\([^)]*?),\s*Copy\b/g, "$1");
+            decl = decl.replace(/#\[derive\(\s*Copy\s*\)\]/g, "");
+          }
           // G24 — borsh-derive 1.x requires explicit `#[borsh(use_discriminant
           // = true/false)]` on enums with explicit discriminator values when
           // the BorshSerialize/Deserialize derive is present. Inject the attr
@@ -2722,7 +2734,11 @@ ${originalLines}
             );
           }
         } else {
-          decl = `#[derive(Clone, ${copyDerive}Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = true)]\n${rawCode}`;
+          // G47 — also strip Copy when re-stamping the derive list, if
+          // raw enum body has `&mut` references (NodeRefMut pattern).
+          const hasMutRef = /&\s*(?:'\w+\s+)?mut\b/.test(rawCode);
+          const effectiveCopy = hasMutRef ? "" : copyDerive;
+          decl = `#[derive(Clone, ${effectiveCopy}Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = true)]\n${rawCode}`;
         }
         return `${decl}${this.emitTypeInherentImpl(typeDef)}`;
       }
