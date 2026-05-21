@@ -1261,6 +1261,12 @@ export abstract class BaseEmitter {
     if (typeAliases.length > 0) {
       sections.push(`// User type aliases preserved verbatim from source\n${typeAliases.join("\n")}`);
     }
+    // G27g — emit user-defined traits at lib.rs scope. Openbook's
+    // KeyedAccountReader / AccountReader patterns.
+    const userTraits = (ir as any).userTraits ?? [];
+    if (userTraits.length > 0) {
+      sections.push(`// User-defined traits preserved verbatim from source\n${userTraits.join("\n\n")}`);
+    }
     if (constants.length > 0) sections.push(constants.join("\n\n"));
     if (types.length > 0) sections.push(this.emitCustomTypes({ ...ir, types }));
 

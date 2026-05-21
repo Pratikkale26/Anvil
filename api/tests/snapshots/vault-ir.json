@@ -681,6 +681,7 @@
     "use super::*"
   ],
   "typeAliases": [],
+  "userTraits": [],
   "userTraitImpls": [],
   "warnings": [],
   "metadata": {

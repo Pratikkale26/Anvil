@@ -2001,6 +2001,13 @@ export const SolanaIRSchema = z.object({
    */
   typeAliases: z.array(z.string()).default([]),
   /**
+   * G27g — user-defined trait declarations (`pub trait X { ... }`).
+   * Anvil's parser used to drop these. Openbook's KeyedAccountReader +
+   * AccountReader traits (used by AccountInfoRef wrapper) generated
+   * 9 E0405 errors when not preserved. Emitted verbatim into lib.rs.
+   */
+  userTraits: z.array(z.string()).default([]),
+  /**
    * User-defined trait impls between user types (e.g. `impl From<&Transaction>
    * for Instruction { … }`) preserved verbatim from the source. Only impls
    * whose body is "Anchor-clean" (no Anchor wrapper types, CpiContext, etc.)

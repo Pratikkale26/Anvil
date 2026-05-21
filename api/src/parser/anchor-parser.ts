@@ -497,6 +497,7 @@ export async function parseAnchor(
       events,
       imports,
       typeAliases: topLevel.typeAliases,
+      userTraits: topLevel.userTraits,
       userTraitImpls,
       warnings: warningCollector.drain(),
       metadata: {
@@ -568,6 +569,9 @@ interface TopLevelItems {
    * them. Kamino's `pub type Fraction = U68F60;` and openbook's
    * `pub type NodeHandle = u32;` patterns. */
   typeAliases: string[];
+  /** G27g — `pub trait X { ... }` user-defined trait declarations.
+   * Openbook's KeyedAccountReader / AccountReader patterns. */
+  userTraits: string[];
 }
 
 function classifyTopLevel(root: SyntaxNode): TopLevelItems {
@@ -586,6 +590,7 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
     functionIndex: [],
     constants: [],
     typeAliases: [],
+    userTraits: [],
   };
 
   function walk(node: SyntaxNode, modulePath: string[] = [], inProgramModule = false): void {
@@ -741,6 +746,16 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
           const raw = child.text;
           if (/^pub\s+type\b/.test(raw)) {
             items.typeAliases.push(raw);
+          }
+          break;
+        }
+
+        case "trait_item": {
+          // G27g — capture `pub trait X { ... }` user-defined traits.
+          // Openbook's KeyedAccountReader pattern. Preserved verbatim.
+          const raw = child.text;
+          if (/^pub\s+(?:unsafe\s+)?trait\b/.test(raw)) {
+            items.userTraits.push(raw);
           }
           break;
         }
