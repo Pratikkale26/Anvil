@@ -9,7 +9,7 @@
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorLangPrefixes, stripAnchorWrappersInCode } from "./emitter-base.js";
-import { rewriteMsgCalls } from "./anchor-transforms.js";
+import { rewriteMsgCalls, collapseModulePaths } from "./anchor-transforms.js";
 import { rewriteRequireVariantsInCode } from "../parser/project-source.js";
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
 import {
@@ -2612,7 +2612,7 @@ impl ${acc.name} {
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;${accessorBlock}
-}${this.emitInherentImplItems(acc)}
+}${this.emitInherentImplItems(acc, this._irForAccountEmit)}
 
 ${this.emitZeroCopyTraitImpls(acc.name)}`;
     }
@@ -2670,7 +2670,7 @@ ${writeLines}
         let mut data = unsafe { account.borrow_mut_data_unchecked() };
         Self::write(&mut data, value)
     }
-}${this.emitInherentImplItems(acc)}`;
+}${this.emitInherentImplItems(acc, this._irForAccountEmit)}`;
   }
 
   /**
@@ -2824,12 +2824,13 @@ ${writeLines}
   }
 
   /** See native-emitter.ts:emitInherentImplItems for rationale. */
-  private emitInherentImplItems(acc: AccountDef): string {
+  private emitInherentImplItems(acc: AccountDef, ir?: SolanaIR): string {
     if (!acc.implItems || acc.implItems.length === 0) return "";
+    const knownNames = ir ? this.collectKnownTopLevelNames(ir) : new Set<string>();
     const filtered = acc.implItems
       .filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw))
-      .map((raw) =>
-        rewriteRequireVariantsInCode(
+      .map((raw) => {
+        let processed = rewriteRequireVariantsInCode(
           rewriteMsgCalls(
             stripAnchorWrappersInCode(
               promoteImplFnVisibility(
@@ -2841,8 +2842,18 @@ ${writeLines}
             ),
             (m: string) => this.emitMsg(m),
           ),
-        ),
-      );
+        );
+        // G45 — collapse module paths like `oracle::oracle_state_unchecked`
+        // → `oracle_state_unchecked` when the bare name is a known top-level
+        // helper. Previously only run on instruction body + carried helper
+        // fn bodies; impl items on accounts/types missed it, so user impls
+        // like Market::oracle_price_from_a referenced `oracle::*` calls
+        // that became E0433. Openbook-v2 state.rs hit this on 5 sites.
+        if (knownNames.size > 0) {
+          processed = collapseModulePaths(processed, knownNames);
+        }
+        return processed;
+      });
     if (filtered.length === 0) return "";
     return `\n\nimpl ${acc.name} {\n${filtered.map((s) => `    ${s}`).join("\n\n")}\n}`;
   }

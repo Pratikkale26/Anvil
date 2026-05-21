@@ -9,7 +9,7 @@
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorWrappersInCode } from "./emitter-base.js";
-import { rewriteMsgCalls } from "./anchor-transforms.js";
+import { rewriteMsgCalls, collapseModulePaths } from "./anchor-transforms.js";
 import { rewriteRequireVariantsInCode } from "../parser/project-source.js";
 import { applyT22ExtensionCommentout, NATIVE_T22_TYPE_BLACKLIST, NATIVE_T22_FN_BLACKLIST } from "./pinocchio-emitter.js";
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
@@ -1802,7 +1802,7 @@ ${writeLines}
         let data = account.try_borrow_data()?;
         Self::read(&data)
     }
-}${this.emitInherentImplItems(acc)}`;
+}${this.emitInherentImplItems(acc, this._irForAccountEmit)}`;
   }
 
   /**
@@ -1837,7 +1837,7 @@ impl ${acc.name} {
     pub const INIT_SPACE: usize = ${bodyLen};
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
-}${this.emitInherentImplItems(acc)}
+}${this.emitInherentImplItems(acc, this._irForAccountEmit)}
 
 ${this.emitZeroCopyTraitImpls(acc.name)}`;
   }
@@ -1853,12 +1853,13 @@ ${this.emitZeroCopyTraitImpls(acc.name)}`;
    * are dropped — standard emit wins because it's based on the IR's
    * computed layout, while the user's value may be stale or wrong.
    */
-  private emitInherentImplItems(acc: AccountDef): string {
+  private emitInherentImplItems(acc: AccountDef, ir?: SolanaIR): string {
     if (!acc.implItems || acc.implItems.length === 0) return "";
+    const knownNames = ir ? this.collectKnownTopLevelNames(ir) : new Set<string>();
     const filtered = acc.implItems
       .filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw))
-      .map((raw) =>
-        rewriteRequireVariantsInCode(
+      .map((raw) => {
+        let processed = rewriteRequireVariantsInCode(
           rewriteMsgCalls(
             stripAnchorWrappersInCode(
               promoteImplFnVisibility(
@@ -1868,8 +1869,12 @@ ${this.emitZeroCopyTraitImpls(acc.name)}`;
             ),
             (m: string) => this.emitMsg(m),
           ),
-        ),
-      );
+        );
+        if (knownNames.size > 0) {
+          processed = collapseModulePaths(processed, knownNames);
+        }
+        return processed;
+      });
     if (filtered.length === 0) return "";
     return `\n\nimpl ${acc.name} {\n${filtered.map((s) => `    ${s}`).join("\n\n")}\n}`;
   }

@@ -155,6 +155,11 @@ function stripGenericBounds(generics: string): string {
 export abstract class BaseEmitter {
   abstract readonly frameworkName: string;
   protected currentIr: SolanaIR | null = null;
+  /** G45 — context shuttled from emitAccountStructsFile/Single down to
+   *  emitAccountStruct (which doesn't take IR as a parameter today).
+   *  Used by per-target emitInherentImplItems to access knownTopLevelNames
+   *  for collapseModulePaths. */
+  protected _irForAccountEmit: SolanaIR | undefined = undefined;
 
   /** Warnings accumulated during emission */
   protected warnings: string[] = [];
@@ -1441,7 +1446,9 @@ export abstract class BaseEmitter {
     }
 
     for (const acc of ir.accounts) {
+      this._irForAccountEmit = ir;
       sections.push(this.emitAccountStruct(acc));
+      this._irForAccountEmit = undefined;
     }
     return sections.join("\n\n");
   }
@@ -2111,7 +2118,9 @@ impl ZeroCopy for ${accName} {}`;
     }
 
     for (const acc of ir.accounts) {
+      this._irForAccountEmit = ir;
       sections.push(this.emitAccountStruct(acc));
+      this._irForAccountEmit = undefined;
     }
 
     const helpers = this.emitHelperFunctions(ir);
