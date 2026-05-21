@@ -1424,6 +1424,15 @@ export abstract class BaseEmitter {
     if (ir.instructions.length > 0) {
       sections.push("use instructions::*;");
     }
+    // G49 — re-export events at crate root so bodies in lib.rs (carried
+    // helper fns, impl items inlined into the #[program] mod) can
+    // reference event types by bare name. Openbook-v2's `emit_stack(
+    // TotalOrderFillEvent { ... })` invocations otherwise fail E0422
+    // "cannot find struct" because mod events; declares the events module
+    // but doesn't re-export its contents at the parent scope.
+    if ((ir.events ?? []).length > 0) {
+      sections.push("pub use events::*;");
+    }
     // #42 — re-export the error enum at the crate root so bodies that
     // reference `crate::FundraiserError::X` (a common shape when the
     // source has `pub use error::*;` in its lib.rs and references stay
