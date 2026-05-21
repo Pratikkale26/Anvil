@@ -295,7 +295,13 @@ export function stripInactiveCfgItemsWithDrops(
     let j = attrEnd;
     while (j < n && /\s/.test(source[j] ?? "")) j++;
     const itemStart = j;
-    const itemEnd = findItemEnd(source, itemStart);
+    // G42 — try struct-field detection first. When `#[cfg(...)]` precedes
+    // `ident: value,` shape (struct literal field), the terminator is `,`,
+    // not `;`/`}`. findItemEnd's `;/}/` semantics overshoots into other
+    // files when applied to a field. findStructFieldEnd returns -1 when
+    // it doesn't match, so we fall back to findItemEnd safely.
+    const structFieldEnd = findStructFieldEnd(source, itemStart);
+    const itemEnd = structFieldEnd > 0 ? structFieldEnd : findItemEnd(source, itemStart);
     if (itemEnd < 0) {
       // Couldn't find item bounds — keep attribute + bail this iteration.
       out += attrText;
@@ -1334,6 +1340,54 @@ function findItemEnd(source: string, start: number): number {
   return -1;
 }
 
+/** G42 — struct/literal field cfg-gating: when a `#[cfg(...)]` attribute
+ *  precedes a single struct field of the form `ident: <value>,` (with no
+ *  trailing `;` or `{}` body), the terminator is `,`. findItemEnd's
+ *  default `;`/`}` lookahead walks past, engulfing subsequent items.
+ *  Recognize this shape from the item-start text and return the comma's
+ *  end offset directly. Used by stripInactiveCfgItems for the
+ *  cfg-gated-struct-field case (marginfi's LitePullFeedAccountData
+ *  pattern). */
+function findStructFieldEnd(source: string, start: number): number {
+  // Allowed shape: `ident: ...,` with no `{`, no `;`, no open `<`/`(` at depth 0
+  // through the whole item, terminated by `,`. Allow nested `()` `[]` `{}`
+  // (e.g. type args, indexing) — those just need to balance.
+  const n = source.length;
+  let i = start;
+  // Match leading `ident :` to confirm it's a struct field. Skip whitespace.
+  while (i < n && /\s/.test(source[i] ?? "")) i++;
+  const m = source.slice(i).match(/^(\w+)\s*:/);
+  if (!m) return -1;
+  i += m[0].length;
+  let paren = 0, bracket = 0, brace = 0;
+  let inStr = false, inLine = false, inBlock = false;
+  while (i < n) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (inLine) { if (ch === "\n") inLine = false; i++; continue; }
+    if (inBlock) { if (ch === "*" && next === "/") { inBlock = false; i += 2; continue; } i++; continue; }
+    if (inStr) { if (ch === "\\") { i += 2; continue; } if (ch === '"') inStr = false; i++; continue; }
+    if (ch === "/" && next === "/") { inLine = true; i += 2; continue; }
+    if (ch === "/" && next === "*") { inBlock = true; i += 2; continue; }
+    if (ch === '"') { inStr = true; i++; continue; }
+    if (ch === "(") { paren++; i++; continue; }
+    if (ch === ")") { if (paren > 0) paren--; i++; continue; }
+    if (ch === "[") { bracket++; i++; continue; }
+    if (ch === "]") { if (bracket > 0) bracket--; i++; continue; }
+    if (ch === "{") { brace++; i++; continue; }
+    if (ch === "}") {
+      if (brace > 0) { brace--; i++; continue; }
+      // Hit an unmatched `}` — we're inside an outer struct literal. The
+      // field ends at the preceding character (no comma — last field).
+      return i;
+    }
+    if (ch === "," && paren === 0 && bracket === 0 && brace === 0) return i + 1;
+    if (ch === ";" && paren === 0 && bracket === 0 && brace === 0) return -1; // ;-terminated → not a struct field
+    i++;
+  }
+  return -1;
+}
+
 /** External module declarations like `mod X;` or `pub mod X;`. */
 function extractExternalModuleDecls(source: string): ExternalModuleDecl[] {
   // Strip cfg(test)-gated declarations first so the resolver never tries to
@@ -1651,10 +1705,22 @@ function computeHandlerRenames(root: FileNode): Map<string, Map<string, string>>
     const src = node.content;
     let implDepth = 0;      // >0 when we're inside `impl ... {}`
     let blockDepth = 0;     // nested `{ }` depth relative to the impl opener
+    let skipDepth = 0;      // >0 when inside macro_rules! body or pub trait body
+    let skipBlockDepth = 0; // nested `{ }` depth inside the skip opener
     let inStr = false;
     let strQuote = "";
     let escaped = false;
     const implEntryRe = /\bimpl\b[^{]*\{/g;
+    // G42 — skip fn detection inside macro_rules! definition bodies (the
+    // expansion bodies contain `fn ...` tokens that look like real defs
+    // but only manifest after the macro is invoked) and inside `pub trait
+    // X { ... }` blocks (method signatures aren't linkable symbols, so
+    // they don't collide with real impls). Marginfi's `macro_rules!
+    // impl_dual_window_rate_limiter` + paired `pub trait BankRateLimiter`
+    // triggered three apparent dups of `configure_hourly`, renaming the
+    // ACTUAL `fn from(...)` body content to use `rate_limiter_configure_*`.
+    const macroEntryRe = /\bmacro_rules!\s*\w+\s*\{/g;
+    const traitEntryRe = /\b(?:pub(?:\s*\([^)]*\))?\s+)?(?:unsafe\s+)?trait\b[^{]*\{/g;
     // Scan forward; on each `fn` or block-delim, decide whether to accept.
     for (let i = 0; i < src.length; i++) {
       const ch = src[i]!;
@@ -1685,6 +1751,14 @@ function computeHandlerRenames(root: FileNode): Map<string, Map<string, string>>
         }
         continue;
       }
+      if (skipDepth > 0) {
+        if (ch === "{") skipBlockDepth++;
+        else if (ch === "}") {
+          skipBlockDepth--;
+          if (skipBlockDepth === 0) skipDepth--;
+        }
+        continue;
+      }
       if (implDepth > 0) {
         if (ch === "{") blockDepth++;
         else if (ch === "}") {
@@ -1698,6 +1772,27 @@ function computeHandlerRenames(root: FileNode): Map<string, Map<string, string>>
         if (m && m.index === i) {
           implDepth++;
           blockDepth = 1;
+          i = m.index + m[0].length - 1;
+          continue;
+        }
+      } else if (ch === "m") {
+        // Check for `macro_rules! NAME { ... }` body starting here.
+        macroEntryRe.lastIndex = i;
+        const m = macroEntryRe.exec(src);
+        if (m && m.index === i) {
+          skipDepth++;
+          skipBlockDepth = 1;
+          i = m.index + m[0].length - 1;
+          continue;
+        }
+      } else if (ch === "p" || ch === "t" || ch === "u") {
+        // Check for `[pub ][unsafe ]trait NAME { ... }` body starting here.
+        // Anchored at potential leading-char positions only.
+        traitEntryRe.lastIndex = i;
+        const m = traitEntryRe.exec(src);
+        if (m && m.index === i) {
+          skipDepth++;
+          skipBlockDepth = 1;
           i = m.index + m[0].length - 1;
           continue;
         }
@@ -2116,7 +2211,19 @@ function buildFlattenedSource(
   // BorshSchema requires borsh's `schema` feature (off by default).
   // Marinade's `#[derive(BorshSchema, ...)]` triggers E0405 / E0432
   // without it; the schema impl is IDL-generation-only, runtime-irrelevant.
-  source = stripFilteredDeriveIdentifiers(source, ["BitFlags", "Derivative", "BorshSchema"]);
+  // G42 — strip Anchor-only derives:
+  //   - `Event` (anchor_lang's emit! event marker, runtime-irrelevant)
+  //   - `EnumString` (strum's, off-target proc-macro)
+  // and rewrite `AnchorSerialize` / `AnchorDeserialize` to the underlying
+  // Borsh derives that the file prelude imports. Keep BorshSchema strip too.
+  source = stripFilteredDeriveIdentifiers(source, ["BitFlags", "Derivative", "BorshSchema", "Event", "EnumString"]);
+  // Inline rewrite for the alias forms.
+  source = source.replace(/#\[derive\(([^)]+)\)\]/g, (match, list: string) => {
+    let next = list
+      .replace(/\bAnchorSerialize\b/g, "BorshSerialize")
+      .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+    return next === list ? match : `#[derive(${next})]`;
+  });
   // G1 — rewrite Solana hash helper calls to vendored anvil_* shapes
   // that work in no_std/Pinocchio via sha2/sha3 crates. The emitter
   // injects the helpers when needed.

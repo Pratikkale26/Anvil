@@ -3799,10 +3799,27 @@ export function commentOutSiblingStateAccesses(
         .split("\n")
         .map((line) => (line.length > 0 ? `// ${line}` : "//"))
         .join("\n");
-      return `${prelude}// ${MARKER_ANVIL_TODO_PREFIX} AccountsRef struct parse failed (likely seeds::program = sibling::ID constraint or similar) — body references unresolved accounts. Manual port required.
+      // G42 — balance check. Some bodies arrive with the fn-close `}`
+      // outside the prelude (so commenting userCode buries it inside
+      // comments → unclosed delimiter). Others have it already supplied
+      // by the outer wrapper. Count uncommented braces in the assembled
+      // output; pad missing closes with synthetic `}`.
+      const assembled = `${prelude}// ${MARKER_ANVIL_TODO_PREFIX} AccountsRef struct parse failed (likely seeds::program = sibling::ID constraint or similar) — body references unresolved accounts. Manual port required.
 ${stubbed}
     Ok(())
 `;
+      let openCount = 0;
+      let closeCount = 0;
+      for (const line of assembled.split("\n")) {
+        const trimmed = line.trimStart();
+        if (trimmed.startsWith("//")) continue;
+        for (const ch of line) {
+          if (ch === "{") openCount++;
+          else if (ch === "}") closeCount++;
+        }
+      }
+      const padCloses = Math.max(0, openCount - closeCount);
+      return padCloses > 0 ? `${assembled}${"}\n".repeat(padCloses)}` : assembled;
     }
     return body;
   }

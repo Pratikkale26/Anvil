@@ -69,6 +69,21 @@ export function commentOutUnsalvageableCallSites(text: string, helpers: Set<stri
   helperPattern.lastIndex = 0;
   while ((m = helperPattern.exec(text)) !== null) {
     const matchOffset = m.index;
+    // G42 — skip matches sitting inside a `// `-prefixed line. The match
+    // is on a helper call substring that was ALREADY commented out by an
+    // earlier pass (typically commentOutSiblingStateAccesses for fixtures
+    // whose Accounts struct failed to parse). Re-commenting it would
+    // double-`// `-prefix the line AND extend the range to swallow
+    // subsequent uncommented `}` of the surrounding fn body — leaving
+    // the file with an unclosed delimiter. Marginfi's super_admin_withdraw
+    // hit this. Walk back to the line start; if it's `// `-prefixed,
+    // skip the match.
+    {
+      let lineStart = matchOffset;
+      while (lineStart > 0 && text[lineStart - 1] !== "\n") lineStart--;
+      const linePrefix = text.slice(lineStart, matchOffset).trimStart();
+      if (linePrefix.startsWith("//")) continue;
+    }
     // Walk backward to find the statement start.
     let depth = 0;
     let stmtStart = 0;

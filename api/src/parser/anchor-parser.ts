@@ -720,12 +720,40 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
           const implName = extractImplTargetName(child);
           const implBody = child.childForFieldName("body") ?? findDescendant(child, "declaration_list");
           if (!implName || !implBody) break;
+          // G42 — guard against tree-sitter brace-misparse. When the impl is
+          // `impl Trait for X` (has a trait field) AND the trait is From or
+          // similar single-method, the body should contain exactly one fn.
+          // Marginfi-v2 hits a tree-sitter grammar gap that swallows the
+          // closing `}` of the `impl From<Ref<...>> for LitePullFeedAccountData`,
+          // so subsequent top-level `pub fn ...` helpers end up inside the
+          // impl's declaration_list, polluting LitePullFeedAccountData's
+          // implItems with 25+ helpers that should be free fns. Limit
+          // single-method trait impls to their first matching function.
+          const traitText = traitField?.text ?? "";
+          const singleMethodTrait = traitField && (/^From\s*</.test(traitText) || /^Into\s*</.test(traitText) || /^Deref\s*$/.test(traitText) || /^DerefMut\s*$/.test(traitText));
+          const expectedMethodName = singleMethodTrait
+            ? (/^From\b/.test(traitText) ? "from" : /^Into\b/.test(traitText) ? "into" : /^DerefMut\b/.test(traitText) ? "deref_mut" : /^Deref\b/.test(traitText) ? "deref" : null)
+            : null;
+          let collectedExpectedMethod = false;
           for (let j = 0; j < implBody.namedChildCount; j++) {
             const implChild = implBody.namedChild(j);
             if (!implChild) continue;
             if (implChild.type === "function_item") {
               const methodName = implChild.childForFieldName("name")?.text;
               if (!methodName) continue;
+              if (expectedMethodName) {
+                if (methodName !== expectedMethodName) {
+                  // Misclassified — treat as a free fn carried by the file.
+                  items.helperFns.push({ node: implChild, attrs: [], modulePath });
+                  continue;
+                }
+                if (collectedExpectedMethod) {
+                  // Duplicate method in single-method trait impl — also misclassified.
+                  items.helperFns.push({ node: implChild, attrs: [], modulePath });
+                  continue;
+                }
+                collectedExpectedMethod = true;
+              }
               items.implMethods.push({ implName, name: methodName, node: implChild, modulePath });
               items.implItems.push({ implName, kind: "fn", name: methodName, rawText: implChild.text });
             } else if (implChild.type === "const_item") {
