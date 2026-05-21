@@ -577,6 +577,34 @@ export class PinocchioEmitter extends BaseEmitter {
     if (refsInstruction) {
       imports.push(`use pinocchio::instruction::Instruction;`);
     }
+    // G61 — auto-import pinocchio_token::state::{Mint, TokenAccount} when
+    // carried code references bare Mint / TokenAccount types in
+    // signatures. Anchor source uses `&Mint` / `&TokenAccount` (from
+    // anchor_spl::token::*); after the import strip, the type is
+    // undeclared. Skip when user has their own type with the same name
+    // (in ir.types or ir.accounts) — that user type wins.
+    const userTypeNamesG61 = new Set<string>([
+      ...(_ir.types ?? []).map((t) => t.name),
+      ...(_ir.accounts ?? []).map((a) => a.name),
+    ]);
+    const refsMint = !userTypeNamesG61.has("Mint") && (() => {
+      const RE = /\b(?:&\s*(?:mut\s+)?)?Mint\b(?!\s*::)/;
+      for (const acc of _ir.accounts) for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+      for (const t of _ir.types ?? []) for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+      for (const h of _ir.helperFns ?? []) if (RE.test(h.rawCode ?? "")) return true;
+      for (const ut of _ir.userTraits ?? []) if (RE.test(ut)) return true;
+      return false;
+    })();
+    const refsTokenAccount = !userTypeNamesG61.has("TokenAccount") && (() => {
+      const RE = /\b(?:&\s*(?:mut\s+)?)?TokenAccount\b(?!\s*::)/;
+      for (const acc of _ir.accounts) for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+      for (const t of _ir.types ?? []) for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+      for (const h of _ir.helperFns ?? []) if (RE.test(h.rawCode ?? "")) return true;
+      for (const ut of _ir.userTraits ?? []) if (RE.test(ut)) return true;
+      return false;
+    })();
+    if (refsMint) imports.push(`use pinocchio_token::state::Mint;`);
+    if (refsTokenAccount) imports.push(`use pinocchio_token::state::TokenAccount;`);
 
     // Auto-import set_return_data / get_return_data when any instruction
     // references either. Source code typically uses
