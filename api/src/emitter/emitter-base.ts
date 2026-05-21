@@ -1078,12 +1078,15 @@ export abstract class BaseEmitter {
         if (/\bdrift_macros\b/.test(statement)) return false;
         if (/\benumflags2\b/.test(statement)) return false;
         if (/\bpyth_lazer\b/.test(statement)) return false;
-        // G29 — openbook-v2 external oracle/math crates. fixed (fixed-point
-        // math), derivative (derive macro helper), pyth_sdk_solana, and the
-        // switchboard devnet/mainnet adapters aren't shipped in Anvil's
-        // Pin/Native scaffold. Body references get the unsalvageable-helper
+        // G29 — openbook-v2 external oracle/math crates. derivative
+        // (derive macro helper), pyth_sdk_solana, and the switchboard
+        // devnet/mainnet adapters aren't shipped in Anvil's Pin/Native
+        // scaffold. Body references get the unsalvageable-helper
         // commentout downstream (G29 body gate).
-        if (/\bfixed::/.test(statement) || /^use\s+fixed(?:::|;)/.test(statement)) return false;
+        // G53 — `fixed` IS in both NATIVE_OPTIONAL_DEPS and
+        // PINOCCHIO_OPTIONAL_DEPS (added later). The original G29 filter
+        // for `fixed::` is obsolete and was blocking
+        // `use fixed::traits::{FromFixed, ToFixed};` etc. in kamino.
         if (/\bderivative::/.test(statement) || /^use\s+derivative(?:::|;)/.test(statement)) return false;
         if (/\bpyth_sdk_solana::/.test(statement) || /^use\s+pyth_sdk_solana(?:::|;)/.test(statement)) return false;
         if (/\bswitchboard_v1_devnet_oracle::/.test(statement) || /^use\s+switchboard_v1_devnet_oracle(?:::|;)/.test(statement)) return false;
