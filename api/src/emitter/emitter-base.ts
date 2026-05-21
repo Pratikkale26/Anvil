@@ -3552,6 +3552,13 @@ ${fields}
       const m = c.match(/(?:^|\s)(?:pub\s+)?const\s+(\w+)\s*:/);
       if (m && m[1]) out.add(m[1]);
     }
+    // G36 — attempted to add explicit-import names to known set so that
+    // `external::types::X` collapses to `X`. Reverted: caused
+    // cross-fixture cascading collapses because the imported names
+    // (Clock, Pubkey, AccountInfo, etc.) collide with external-crate
+    // sysvar/wrapper paths that we don't want to collapse. Marinade
+    // +6, kamino +6, raydium +7 in trial. Future fix: scope the
+    // import-name addition to specific suspect crates only.
     return out;
   }
 
