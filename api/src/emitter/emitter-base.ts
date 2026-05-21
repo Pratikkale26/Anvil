@@ -2758,8 +2758,11 @@ ${arms}
       const implBlock = this.emitTypeInherentImpl(typeDef);
       // Preserve `<'info>` / generic params on the struct decl so fields
       // that reference them (e.g. `MarketAccounts<'info>`) compile.
-      // Preserve `<'info>` / generic params on the struct decl so fields
-      // that reference them (e.g. `MarketAccounts<'info>`) compile.
+      // G46 tried dropUnusedLifetimes here; works for struct decl but
+      // doesn't propagate to USERS of the struct (instruction bodies that
+      // pass `PerpMarketMap<'a>` arg → E0107 "struct takes 0 lifetime
+      // arguments but 1 supplied"). Until we have a body-rewrite for
+      // bare-arg site, leave generics untouched.
       const generics = typeDef.generics ?? "";
 
       // #27 — standalone `#[zero_copy]` struct: emit Pod-shape so the
