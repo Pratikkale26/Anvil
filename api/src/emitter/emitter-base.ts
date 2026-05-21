@@ -3148,8 +3148,15 @@ ${allFields}
     // native target — replace the body with a compile-clean TODO stub that
     // returns a generic error. Same fallback shape as the unsalvageable-helper
     // commentout pass but applied at the impl-item level.
+    // G68 — collapseModulePaths needs known names; pull from
+    // _irForAccountEmit (set in emitAccountStructsFile* paths) or from
+    // this.currentIr. emitTypeInherentImpl is also called from type
+    // emit paths that may not have set _irForAccountEmit, so fall back
+    // to a no-op when neither is available (preserves correctness).
+    const irForCollapse = this._irForAccountEmit ?? this.currentIr;
+    const knownNamesG68 = irForCollapse ? this.collectKnownTopLevelNames(irForCollapse) : new Set<string>();
     for (const raw of (typeDef.implItems ?? [])) {
-      const stubbed = rewriteRequireVariantsInCode(
+      let stubbed = rewriteRequireVariantsInCode(
         rewriteMsgCallsImpl(
           stripAnchorWrappersInCode(
             stripAnchorLangPrefixes(
@@ -3160,6 +3167,12 @@ ${allFields}
           (m: string) => this.emitMsg(m),
         ),
       );
+      // G68 — collapseModulePaths so refs like `tick_math::MIN_TICK`
+      // (where MIN_TICK is a flattened constant at crate root) become
+      // bare `MIN_TICK`. Mirrors G45 for account impl items.
+      if (knownNamesG68.size > 0) {
+        stubbed = collapseModulePaths(stubbed, knownNamesG68);
+      }
       items.push(`    ${stubbed}`);
     }
     if (items.length === 0) return "";
