@@ -2799,7 +2799,14 @@ ${originalLines}
         // they can be used inside structs that derive BorshSerialize /
         // BorshDeserialize.
         const rawCode = typeDef.rawCode.trim();
-        const alreadyHasDerive = /^#\[derive\(/.test(rawCode);
+        // G51 — alreadyHasDerive check must look for `#[derive(...)]` anywhere
+        // in the attribute prelude, not just at byte 0. User code commonly
+        // puts `#[repr(u8)]` (or other attrs) BEFORE the derive. Anvil's
+        // simple `^#\[derive\(/` check missed this case, prepending our own
+        // derive list AND keeping the user's → double derives → conflicting
+        // impls of PartialEq / Copy / Borsh* (E0119). Surfaced by kamino's
+        // `#[repr(u8)]\n#[derive(PartialEq, ...)] pub enum ConditionType {`.
+        const alreadyHasDerive = /#\[derive\(/.test(rawCode.split(/\bpub\b|\benum\b|\bstruct\b/)[0] ?? "");
         // Include Copy when every tuple-variant payload is Copy-safe — i.e.
         // primitives + Pubkey only, no String/Vec/Box/HashMap. Without
         // Copy, `let x = compute(); apply(x); emit!(... x ...)` fails E0382
