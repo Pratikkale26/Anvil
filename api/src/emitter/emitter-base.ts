@@ -2290,6 +2290,22 @@ ${originalLines}
           decl = rawCode
             .replace(/\bAnchorSerialize\b/g, "BorshSerialize")
             .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+          // G24 — borsh-derive 1.x requires explicit `#[borsh(use_discriminant
+          // = true/false)]` on enums with explicit discriminator values when
+          // the BorshSerialize/Deserialize derive is present. Inject the attr
+          // after the existing derive line when the enum has `= N` variants
+          // and no `#[borsh(...)]` attr already present.
+          const hasBorshDerive = /\bBorsh(?:Serialize|Deserialize)\b/.test(decl);
+          const hasExplicitDisc = /\b\w+\s*=\s*\d+\b/.test(decl);
+          const hasBorshAttr = /#\[\s*borsh\s*\(/.test(decl);
+          if (hasBorshDerive && hasExplicitDisc && !hasBorshAttr) {
+            // Insert after first `#[derive(...)]` line. The derive attribute
+            // spans up through its matching `)]`.
+            decl = decl.replace(
+              /^(#\[derive\([^\]]*\)\])\s*\n/m,
+              `$1\n#[borsh(use_discriminant = true)]\n`,
+            );
+          }
         } else {
           decl = `#[derive(Clone, ${copyDerive}Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = true)]\n${rawCode}`;
         }
