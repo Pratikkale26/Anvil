@@ -2400,8 +2400,11 @@ ${fields}
     // returns a generic error. Same fallback shape as the unsalvageable-helper
     // commentout pass but applied at the impl-item level.
     for (const raw of (typeDef.implItems ?? [])) {
-      const stubbed = stripAnchorLangPrefixes(
-        rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))),
+      const stubbed = stripAnchorWrappersInCode(
+        stripAnchorLangPrefixes(
+          rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))),
+        ),
+        this.frameworkName === "Pinocchio" ? "pin" : "native",
       );
       items.push(`    ${stubbed}`);
     }
@@ -3612,6 +3615,65 @@ export function stripAnchorLangPrefixes(body: string): string {
   return body
     .replace(/\banchor_lang\s*::\s*prelude\s*::\s*/g, "")
     .replace(/\banchor_lang\s*::\s*/g, "");
+}
+
+/**
+ * G23 — strip Anchor wrapper types in arbitrary code (impl items, helper
+ * fn signatures + bodies). Operates on the raw text — same regex shapes
+ * used in transformHelperCode for fn parameters, plus a few extensions
+ * for impl-item shapes (struct field/return-type positions).
+ *
+ * Closes raydium-clmm's state.rs impl-method signatures like:
+ *   amm_config: &Account<AmmConfig>,            -> &AccountInfo
+ *   token_mint: &InterfaceAccount<Mint>,        -> &AccountInfo
+ *   token_mint_freeze_authority: COption<Pubkey>,  -> Option<Pubkey>
+ * Without this, those parameter types reference Account / InterfaceAccount
+ * / Mint / COption — all of which Anvil filters out as anchor_lang/
+ * anchor_spl re-exports.
+ *
+ * Conservative: only strips wrappers with explicit generics or explicit
+ * Anchor-wrapper shape. Bare `Mint` / `TokenAccount` / `Account` could
+ * be user-defined types, so we don't touch them.
+ *
+ * `target`: "pin" produces `AccountInfo` (no lifetime), "native"
+ * produces `AccountInfo<'info>` (matches solana_program shape).
+ */
+export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"): string {
+  const ai = target === "pin" ? "AccountInfo" : "AccountInfo<'info>";
+  const aiRef = target === "pin" ? "&AccountInfo" : "&AccountInfo<'info>";
+  let out = body;
+  // Box<Account<'info, T>> → AccountInfo (Box dropped)
+  out = out.replace(/Box\s*<\s*Account\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>\s*>/g, ai);
+  out = out.replace(/Box\s*<\s*InterfaceAccount\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>\s*>/g, ai);
+  // &mut Account<'info, T> → &mut AccountInfo (mut markers preserved)
+  out = out.replace(/&\s*mut\s+Account\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, target === "pin" ? "&mut AccountInfo" : "&mut AccountInfo<'info>");
+  out = out.replace(/&\s*mut\s+InterfaceAccount\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, target === "pin" ? "&mut AccountInfo" : "&mut AccountInfo<'info>");
+  // &Account<'info, T> → &AccountInfo
+  out = out.replace(/&\s*Account\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, aiRef);
+  out = out.replace(/&\s*InterfaceAccount\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, aiRef);
+  // Bare Account<'info, T> in parameter/return-type positions: prefer the
+  // referenced shape. Hardest case — `Account` could be the user type, but
+  // when followed by `<'lifetime, ...>` it's the Anchor wrapper.
+  out = out.replace(/\bAccount\s*<\s*'(?:\w+)\s*,\s*[\w:]+\s*>/g, ai);
+  out = out.replace(/\bInterfaceAccount\s*<\s*'(?:\w+)\s*,\s*[\w:]+\s*>/g, ai);
+  out = out.replace(/\bAccount\s*<\s*[A-Z]\w*\s*>/g, ai); // Account<Foo> bare, no lifetime
+  out = out.replace(/\bInterfaceAccount\s*<\s*[A-Z]\w*\s*>/g, ai);
+  // Signer<'info> / SystemAccount<'info> / UncheckedAccount<'info>
+  out = out.replace(/&\s*mut\s+Signer\s*<\s*'?\w+\s*>/g, target === "pin" ? "&mut AccountInfo" : "&mut AccountInfo<'info>");
+  out = out.replace(/&\s*Signer\s*<\s*'?\w+\s*>/g, aiRef);
+  out = out.replace(/\bSigner\s*<\s*'?\w+\s*>/g, ai);
+  out = out.replace(/&\s*SystemAccount\s*<\s*'?\w+\s*>/g, aiRef);
+  out = out.replace(/\bSystemAccount\s*<\s*'?\w+\s*>/g, ai);
+  out = out.replace(/&\s*UncheckedAccount\s*<\s*'?\w+\s*>/g, aiRef);
+  out = out.replace(/\bUncheckedAccount\s*<\s*'?\w+\s*>/g, ai);
+  out = out.replace(/&\s*Program\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, aiRef);
+  out = out.replace(/\bProgram\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
+  out = out.replace(/&\s*AccountLoader\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, aiRef);
+  out = out.replace(/\bAccountLoader\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
+  // COption<T> → Option<T> — anchor_lang's C-compatible Option wrapper.
+  // Rust's std Option is structurally equivalent for emit purposes.
+  out = out.replace(/\bCOption\s*</g, "Option<");
+  return out;
 }
 
 /**

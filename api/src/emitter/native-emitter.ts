@@ -8,7 +8,7 @@
 
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
-import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen } from "./emitter-base.js";
+import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorWrappersInCode } from "./emitter-base.js";
 import { applyT22ExtensionCommentout, NATIVE_T22_TYPE_BLACKLIST, NATIVE_T22_FN_BLACKLIST } from "./pinocchio-emitter.js";
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
 import {
@@ -1855,8 +1855,11 @@ ${this.emitZeroCopyTraitImpls(acc.name)}`;
     const filtered = acc.implItems
       .filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw))
       .map((raw) =>
-        promoteImplFnVisibility(
-          rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))),
+        stripAnchorWrappersInCode(
+          promoteImplFnVisibility(
+            rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))),
+          ),
+          "native",
         ),
       );
     if (filtered.length === 0) return "";

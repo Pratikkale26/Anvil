@@ -8,7 +8,7 @@
 
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
-import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorLangPrefixes } from "./emitter-base.js";
+import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorLangPrefixes, stripAnchorWrappersInCode } from "./emitter-base.js";
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
 import {
   instrDiscriminator,
@@ -2794,10 +2794,13 @@ ${writeLines}
     const filtered = acc.implItems
       .filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw))
       .map((raw) =>
-        promoteImplFnVisibility(
-          stripAnchorLangPrefixes(
-            rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))),
+        stripAnchorWrappersInCode(
+          promoteImplFnVisibility(
+            stripAnchorLangPrefixes(
+              rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))),
+            ),
           ),
+          "pin",
         ),
       );
     if (filtered.length === 0) return "";
