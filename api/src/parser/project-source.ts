@@ -886,6 +886,15 @@ export function neutralizeUnsupportedMacros(source: string): string {
     // common shape from drift: `Err(math_error!()).into()`. Don't fire
     // for line-start statement contexts.
     const innerExprPre = lookBefore.match(/(?:[(,:=]|=>|&&|\|\||\?|\.\s*\w+\s*\()\s*$/);
+    // G27b — extra inner-expression contexts that the above pattern misses:
+    //   - `&MACRO!()`        — reference position
+    //   - `&mut MACRO!()`    — mut-reference position (drift's
+    //                          `let user = &mut load_mut!(user)?;`)
+    //   - `return MACRO!()`  — return expression position
+    //   - `*MACRO!()`        — deref position
+    //   - `-MACRO!()` / `!MACRO!()` — unary op position
+    const innerExprPre2 = lookBefore.match(/(?:&|&\s*mut|return|[*!])\s+$/) ||
+                          lookBefore.match(/-\s+$/);
     // G16 follow-up: closure-arg expression context — narrow to literal
     // closure-args (`_`, identifier, identifier list with optional type
     // ascription). Without this gate, the `|_| MACRO!(X)` body gets
@@ -894,7 +903,7 @@ export function neutralizeUnsupportedMacros(source: string): string {
     // by kamino's `.map_err(|_| dbg_msg!(...))?,` pattern. The narrow
     // regex avoids matching bit-OR shapes (`a | b | MACRO!()`).
     const closurePre = lookBefore.match(/\|\s*(?:_|(?:mut\s+)?\w+(?:\s*:\s*[\w<>:&'\s,]+)?(?:\s*,\s*(?:_|(?:mut\s+)?\w+(?:\s*:\s*[\w<>:&'\s,]+)?))*)?\s*\|\s+$/);
-    if (letMatch || innerExprPre || closurePre) {
+    if (letMatch || innerExprPre || innerExprPre2 || closurePre) {
       // Preserve trailing `?` and `;` if the original block has them
       // (the let-binding form usually does; inner-expression usually
       // doesn't — but be lenient).
