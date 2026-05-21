@@ -496,18 +496,25 @@ export class PinocchioEmitter extends BaseEmitter {
     ) || bodyTextHasPattern(/\bClock::get\(\)/) || (() => {
       // G43 — Clock referenced as a TYPE in carried impl items + helper
       // signatures (marinade's `pub fn new(... clock: &Clock, ...)`).
-      // Match bare `Clock` followed by space/comma/close-paren/`>` so we
-      // don't false-fire on identifiers containing "Clock" as substring.
-      const RE = /\b(?:&\s*)?Clock\b(?!\s*::\s*\w)/;
+      // G49b — also catch `Clock::get(` (method call) in carried impl
+      // items. The bodyTextHasPattern above only walks IR instruction
+      // bodies; impl-item text doesn't pass through. openbook-v2's
+      // `impl OrderParams { fn ... { Clock::get().unwrap() ... } }`
+      // hit this.
+      const TYPE_RE = /\b(?:&\s*)?Clock\b(?!\s*::\s*\w)/;
+      const GET_RE = /\bClock::get\s*\(/;
+      const RE_COMBINED = new RegExp(`${TYPE_RE.source}|${GET_RE.source}`);
       for (const h of _ir.helperFns ?? []) {
-        if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+        if (RE_COMBINED.test(h.rawCode ?? "") || RE_COMBINED.test(h.body ?? "")) return true;
       }
       for (const acc of _ir.accounts) {
-        for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+        for (const item of acc.implItems ?? []) if (RE_COMBINED.test(item)) return true;
       }
       for (const t of _ir.types ?? []) {
-        for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+        for (const item of t.implItems ?? []) if (RE_COMBINED.test(item)) return true;
       }
+      for (const ut of _ir.userTraits ?? []) if (RE_COMBINED.test(ut)) return true;
+      for (const uti of _ir.userTraitImpls ?? []) if (RE_COMBINED.test(uti)) return true;
       return false;
     })();
     const needsRent = _ir.instructions.some(i =>
