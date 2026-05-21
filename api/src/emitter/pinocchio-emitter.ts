@@ -558,6 +558,25 @@ export class PinocchioEmitter extends BaseEmitter {
     if (refsAccountMeta) {
       imports.push(`use pinocchio::instruction::AccountMeta;`);
     }
+    // G54 — same shape for pinocchio::instruction::Instruction. Carried
+    // helpers + impls reference `Instruction` as a bare type (e.g.
+    // `fn build_ix(...) -> Instruction { ... }`). Without the import,
+    // E0412 "cannot find type Instruction in this scope". Marginfi
+    // helpers.rs hit this on 6+ sites.
+    const refsInstruction = (() => {
+      // Word-bounded `Instruction` NOT followed by `::` (avoid matching
+      // `pinocchio::instruction::Instruction` which is already qualified).
+      const RE = /\bInstruction\b(?!\s*::)/;
+      for (const acc of _ir.accounts) for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+      for (const t of _ir.types ?? []) for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+      for (const h of _ir.helperFns ?? []) if (RE.test(h.rawCode ?? "")) return true;
+      for (const ut of _ir.userTraits ?? []) if (RE.test(ut)) return true;
+      for (const uti of _ir.userTraitImpls ?? []) if (RE.test(uti)) return true;
+      return false;
+    })();
+    if (refsInstruction) {
+      imports.push(`use pinocchio::instruction::Instruction;`);
+    }
 
     // Auto-import set_return_data / get_return_data when any instruction
     // references either. Source code typically uses
