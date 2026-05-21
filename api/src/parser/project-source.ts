@@ -461,6 +461,46 @@ export function rewriteRequireVariantsInCode(source: string): string {
   return out;
 }
 
+/**
+ * G33 — strip `// comment` from the end of each line of a multi-line
+ * argument, so that when we inline the value into a single-line
+ * `if !(cond) { return Err((err).into()); }` expansion, the comment
+ * doesn't swallow the trailing `.into()`. Block comments are kept
+ * (they don't span lines and are paren-safe).
+ *
+ * Caught by mango-v4's `require!(cond, MangoError::SomeError // todo)`
+ * which expanded to `Err((MangoError::SomeError // todo).into())` with
+ * the comment killing `.into())` on the same line.
+ *
+ * Exported for unit testing.
+ */
+export function stripInlineLineComments(s: string): string {
+  return s
+    .split("\n")
+    .map((line) => {
+      // Find // outside strings/chars on the line.
+      let inStr = false, inChr = false, esc = false;
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (esc) { esc = false; continue; }
+        if (c === "\\") { esc = true; continue; }
+        if (inStr) { if (c === '"') inStr = false; continue; }
+        if (inChr) { if (c === "'") inChr = false; continue; }
+        if (c === '"') { inStr = true; continue; }
+        if (c === "'") {
+          // Skip lifetime: 'a, 'info etc.
+          if (/^'[a-zA-Z_]/.test(line.slice(i))) { i++; while (i < line.length && /[a-zA-Z0-9_]/.test(line[i]!)) i++; i--; continue; }
+          inChr = true; continue;
+        }
+        if (c === "/" && line[i + 1] === "/") {
+          return line.slice(0, i).trimEnd();
+        }
+      }
+      return line;
+    })
+    .join("\n");
+}
+
 export function rewriteAnchorRequireMacros(source: string): string {
   const macroOps: Record<string, string | null> = {
     "require!": null,            // unary: cond
@@ -491,15 +531,15 @@ export function rewriteAnchorRequireMacros(source: string): string {
       let err: string;
       if (op === null) {
         // require!(cond, err?) → if !(cond) { ... }
-        cond = parts[0]!.trim();
-        err = parts.length >= 2 ? parts.slice(1).join(",").trim() : "ProgramError::Custom(0)";
+        cond = stripInlineLineComments(parts[0]!.trim());
+        err = parts.length >= 2 ? stripInlineLineComments(parts.slice(1).join(",").trim()) : "ProgramError::Custom(0)";
       } else {
         // require_X!(a, b, err?) → if !(a op b) { ... }
         if (parts.length < 2) return null;
-        const lhs = parts[0]!.trim();
-        const rhs = parts[1]!.trim();
+        const lhs = stripInlineLineComments(parts[0]!.trim());
+        const rhs = stripInlineLineComments(parts[1]!.trim());
         cond = `(${lhs}) ${op} (${rhs})`;
-        err = parts.length >= 3 ? parts.slice(2).join(",").trim() : "ProgramError::Custom(0)";
+        err = parts.length >= 3 ? stripInlineLineComments(parts.slice(2).join(",").trim()) : "ProgramError::Custom(0)";
       }
       return `if !(${cond}) { return Err((${err}).into()); }`;
     });

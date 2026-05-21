@@ -1143,7 +1143,13 @@ export abstract class BaseEmitter {
     const files: EmitterFile[] = [];
 
     // ── lib.rs ──
-    const libContent = this.emitLibFile(ir);
+    const libContentRaw = this.emitLibFile(ir);
+    // G33 — post-emit brace balance pass. Marginfi/mango/squads emit
+    // an extra unmatched `}` (likely an impl-block closer surviving
+    // after the impl was stripped by source rewrites). Drop the first
+    // depth-negative `}` outside strings/chars/comments — preserves
+    // every legitimate brace, only removes the stray.
+    const libContent = balanceLibBraces(libContentRaw);
     files.push({ path: "lib.rs", content: libContent });
 
     const hasHelperModule = this.hasHelperModule(ir);
@@ -3907,6 +3913,70 @@ export function dropUnusedLifetimes(generics: string, body: string): string {
   }
   if (kept.length === 0) return "";
   return `<${kept.join(", ")}>`;
+}
+
+/**
+ * G33 — post-emit lib.rs brace balance. When source-rewrite passes strip
+ * an `impl X { ... }` block but leave one of its braces behind, the
+ * emitted lib.rs has a stray unmatched `}` (marginfi/mango hit this).
+ * Walk the content tracking depth, ignoring `{`/`}` inside strings,
+ * char literals, line comments, and block comments. If depth goes
+ * negative, drop that `}`. Repeat until balanced or no more changes.
+ *
+ * Conservative: never adds braces (additions risk breaking something
+ * meaningful). Only removes the FIRST stray `}` per pass to limit
+ * blast radius.
+ *
+ * Exported for unit testing.
+ */
+export function balanceLibBraces(content: string): string {
+  let out = content;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const dropIdx = firstStrayCloseBrace(out);
+    if (dropIdx < 0) return out;
+    out = out.slice(0, dropIdx) + out.slice(dropIdx + 1);
+  }
+  return out;
+}
+
+function firstStrayCloseBrace(src: string): number {
+  let depth = 0;
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '"') {
+      i++;
+      while (i < src.length && src[i] !== '"') {
+        if (src[i] === '\\') i += 2;
+        else i++;
+      }
+      i++;
+      continue;
+    }
+    if (c === "'") {
+      const m = src.slice(i).match(/^'(?:\\.|[^'])'/);
+      if (m) { i += m[0].length; continue; }
+      i++;
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '/') {
+      const nl = src.indexOf('\n', i);
+      i = nl < 0 ? src.length : nl + 1;
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      const end = src.indexOf('*/', i + 2);
+      i = end < 0 ? src.length : end + 2;
+      continue;
+    }
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth < 0) return i;
+    }
+    i++;
+  }
+  return -1;
 }
 
 export function stripAnchorLangPrefixes(body: string): string {
