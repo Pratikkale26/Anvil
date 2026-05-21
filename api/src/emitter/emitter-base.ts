@@ -1372,6 +1372,14 @@ export abstract class BaseEmitter {
     // G52 attempted Event trait stub + per-struct impl. Significantly
     // helped raydium (-300) but cascaded openbook (+170) and others.
     // Reverted; needs targeted scoping to avoid making fixtures worse.
+    // G65 — stub anchor_lang::accounts::account_loader::AccountLoader<T>
+    // when referenced. Carried helpers (openbook's process_out_event)
+    // and impl items use `AccountLoader::try_from(acc)?` to wrap an
+    // AccountInfo for zero-copy access. Real semantics need type-aware
+    // mapping; here we provide a minimal compile-clean stub.
+    if (this.referencesAnchorAccountLoader(ir)) {
+      sections.push(this.emitAnchorAccountLoaderStub());
+    }
     // G27f: stub spl_token_2022::extension::ExtensionType enum with all known
     // variants. Kamino-klend uses ExtensionType variants in a const slice
     // for supported-extension validation. Each program may use a subset;
@@ -1808,6 +1816,44 @@ pub trait ZeroCopy: Discriminator + Owner {}`;
   /**
    * G27a — detect references to anchor_lang's SysInstructions sysvar.
    */
+  /** G65 — detect references to anchor_lang's AccountLoader<T>. */
+  protected referencesAnchorAccountLoader(ir: SolanaIR): boolean {
+    const RE = /\bAccountLoader\b/;
+    for (const h of ir.helperFns ?? []) {
+      if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+    }
+    for (const acc of ir.accounts) {
+      for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const t of ir.types ?? []) {
+      for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const ut of ir.userTraits ?? []) if (RE.test(ut)) return true;
+    for (const uti of ir.userTraitImpls ?? []) if (RE.test(uti)) return true;
+    return false;
+  }
+
+  /** G65 — stub AccountLoader<T> as an opaque wrapper. Minimal compile-
+   *  clean shape; real zero-copy semantics need type-aware mapping. */
+  protected emitAnchorAccountLoaderStub(): string {
+    return `// G65 — anchor_lang::accounts::account_loader::AccountLoader<T> stub.
+// Wraps an AccountInfo; \`try_from\` is a placeholder that returns
+// the AccountInfo's pubkey context as the stored value. Real
+// load()/load_mut() semantics need type-aware bytemuck casts —
+// the helper bodies that use these methods will surface as cargo
+// errors at call sites, but the TYPE resolves so downstream
+// code compiles.
+pub struct AccountLoader<'info, T> {
+    pub ai: &'info AccountInfo,
+    _phantom: core::marker::PhantomData<T>,
+}
+impl<'info, T> AccountLoader<'info, T> {
+    pub fn try_from(ai: &'info AccountInfo) -> Result<Self, ProgramError> {
+        Ok(Self { ai, _phantom: core::marker::PhantomData })
+    }
+}`;
+  }
+
   /** G52 — detect references to anchor_lang's Event trait. */
   protected referencesAnchorEventTrait(ir: SolanaIR): boolean {
     // Match `T: Event` trait bound or `dyn Event` or `impl Event` shapes.
