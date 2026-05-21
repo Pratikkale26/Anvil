@@ -1369,9 +1369,11 @@ export abstract class BaseEmitter {
     if (this.referencesAnchorErrorCode(ir) && this.sourceErrorEnumName(ir) !== "ErrorCode") {
       sections.push(this.emitAnchorErrorCodeStub());
     }
-    // G52 attempted Event trait stub + per-struct impl. Significantly
-    // helped raydium (-300) but cascaded openbook (+170) and others.
-    // Reverted; needs targeted scoping to avoid making fixtures worse.
+    // G75 attempted Event trait stub. Even the trait alone caused
+    // openbook +165 regression (carried code casts events via `T::
+    // DISCRIMINATOR` where T isn't bound by Event in the strip-mode
+    // emit). Reverted; the helper-bound errors are net-better than the
+    // cascade.
     // G65 — stub anchor_lang::accounts::account_loader::AccountLoader<T>
     // when referenced. Carried helpers (openbook's process_out_event)
     // and impl items use `AccountLoader::try_from(acc)?` to wrap an
@@ -1506,7 +1508,16 @@ export abstract class BaseEmitter {
       sections.push(this.emitAccountStruct(acc));
       this._irForAccountEmit = undefined;
     }
-    return sections.join("\n\n");
+    let combined = sections.join("\n\n");
+    // G74 — also comment out unsalvageable-helper call sites in state.rs.
+    // emitInstructionFile and emit-combined already run this pass; state.rs
+    // (account impl methods) was the gap — openbook's oracle.rs helper is
+    // commented out as Anchor-only, but its callers in state.rs's
+    // `oracle_price_from_a*` impl methods survived and failed E0425.
+    if (this.unsalvageableHelpers.size > 0) {
+      combined = commentOutUnsalvageableCallSites(combined, this.unsalvageableHelpers);
+    }
+    return combined;
   }
 
   /**

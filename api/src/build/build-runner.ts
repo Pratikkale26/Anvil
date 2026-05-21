@@ -146,6 +146,7 @@ bytemuck = { version = "1", features = ["derive"] }
 sha2-const-stable = "0.1"
 num-derive = "0.4"
 num-traits = { version = "0.2", default-features = false }
+num_enum = { version = "0.7", default-features = false }
 arrayref = "0.3"
 sha2 = { version = "0.10", default-features = false }
 sha3 = { version = "0.10", default-features = false }
@@ -201,6 +202,7 @@ solana-sha256-hasher = "2.2"
 sha2-const-stable = "0.1"
 num-derive = "0.4"
 num-traits = "0.2"
+num_enum = "0.7"
 arrayref = "0.3"
 # G53 — fixed-point math, in NATIVE_OPTIONAL_DEPS via project-scaffold
 # for emit, but the /build static template was missing it.
