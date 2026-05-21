@@ -72,9 +72,19 @@ export function rewriteMsgCalls(source: string, emitMsg: (message: string) => st
     // Optional trailing `;` after `)`.
     let endIdx = parenEnd + 1;
     while (endIdx < source.length && /[ \t]/.test(source[endIdx]!)) endIdx++;
-    if (source[endIdx] === ";") endIdx++;
+    const hadSemi = source[endIdx] === ";";
+    if (hadSemi) endIdx++;
     const message = source.slice(parenStart + 1, parenEnd);
-    const replacement = emitMsg(cleanInlineExpr(message)).replace(/^    /gm, "");
+    let replacement = emitMsg(cleanInlineExpr(message)).replace(/^    /gm, "");
+    // G27i — if the original msg!() didn't have a trailing `;`, neither
+    // should the replacement. Match-arm bodies (`Err(e) => msg!("...")`)
+    // are expression positions; an unwanted `;` makes it a statement
+    // followed by `,` which doesn't parse. Caught by kamino's
+    // `match check_price_heuristics(...) { Ok(()) => ..., Err(e) =>
+    // msg!("..."), }` pattern.
+    if (!hadSemi) {
+      replacement = replacement.replace(/;\s*$/, "");
+    }
     out += source.slice(i, idx) + replacement;
     i = endIdx;
   }
