@@ -1220,6 +1220,13 @@ export abstract class BaseEmitter {
     if (this.shouldEmitSysInstructionsStub(ir)) {
       sections.push(this.emitSysInstructionsStub());
     }
+    // G27e: stub solana_program::clock::Slot when referenced. Slot is a
+    // u64 type alias in solana_program. Carried code uses it as parameter
+    // / field type — kamino's `pub fn new(slot: Slot)`. Drop a
+    // `pub type Slot = u64;` so references resolve.
+    if (this.shouldEmitSlotAlias(ir)) {
+      sections.push("// G27e — solana_program::clock::Slot is a u64 alias\npub type Slot = u64;");
+    }
     // G19b: stub anchor_lang::Error type when carried code references it.
     // Anchor's Error is a struct with chainable builder methods
     // (.with_pubkeys, .with_source, .with_account_name, .with_values, etc).
@@ -1611,6 +1618,23 @@ pub trait ZeroCopy: Discriminator + Owner {}`;
   /**
    * G27a — detect references to anchor_lang's SysInstructions sysvar.
    */
+  /** G27e — detect references to solana_program::clock::Slot (a u64 alias). */
+  protected shouldEmitSlotAlias(ir: SolanaIR): boolean {
+    // Match `Slot` as a TYPE position (parameter, field, return). Skip
+    // `crate::Slot`, `something::Slot`, `Slot::method()` etc.
+    const RE = /(?:^|[\s,:(<&])Slot(?:[\s,)>;=]|$)/;
+    for (const h of ir.helperFns ?? []) {
+      if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+    }
+    for (const acc of ir.accounts) {
+      for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const t of ir.types ?? []) {
+      for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+    }
+    return false;
+  }
+
   protected shouldEmitSysInstructionsStub(ir: SolanaIR): boolean {
     const RE = /\bSysInstructions\b/;
     for (const h of ir.helperFns ?? []) {
