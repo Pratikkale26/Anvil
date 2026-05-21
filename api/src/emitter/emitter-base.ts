@@ -897,6 +897,13 @@ export abstract class BaseEmitter {
         if (/^use\s+(?:std|core)::convert::TryInto\s*;?$/.test(t)) return "";
         if (/^use\s+(?:std|core)::convert::TryFrom\s*;?$/.test(t)) return "";
         if (/^use\s+(?:std|core)::convert::From\s*;?$/.test(t)) return "";
+        // G27d — std<->core type duplicates: source code often has both
+        // `use core::slice::Iter;` and `use std::slice::Iter;` (one
+        // selected via #[cfg] gates the source uses; after cfg-strip
+        // both can survive). Prefer the core form (no_std-compatible
+        // for SBF targets) and drop the std form.
+        if (/^use\s+std::slice::Iter\s*;?$/.test(t)) return "";
+        if (/^use\s+std::slice::IterMut\s*;?$/.test(t)) return "";
         return rewritten;
       })
       .filter((stmt) => stmt.length > 0)
@@ -1057,6 +1064,20 @@ export abstract class BaseEmitter {
         // Pinocchio nor Native scaffold ships the crate, so this is a
         // universal filter (futarchy/mint_governor surfaced it).
         if (/\bsolana_security_txt\b/.test(statement)) return false;
+        // G27d — drop additional drift-specific external crate imports.
+        // These are crates drift uses but Anvil's Pinocchio/Native scaffold
+        // doesn't ship. Body references get commented out separately;
+        // dropping the import lines prevents cascade of E0432 errors.
+        if (/\bopenbook_v2_light\b/.test(statement)) return false;
+        if (/\bbyteorder\b/.test(statement)) return false;
+        if (/\bdrift_macros\b/.test(statement)) return false;
+        if (/\benumflags2\b/.test(statement)) return false;
+        if (/\bpyth_lazer\b/.test(statement)) return false;
+        // static_assertions is a no_std-compatible dev macro crate.
+        // Anvil's scaffold doesn't ship it. Body usages (e.g. compile-time
+        // size assertions) are stripped at carry-source level by the
+        // unsalvageable-helper pass.
+        if (/\bstatic_assertions\b/.test(statement)) return false;
         return true;
       });
   }
@@ -2355,7 +2376,10 @@ ${originalLines}
           // after the existing derive line when the enum has `= N` variants
           // and no `#[borsh(...)]` attr already present.
           const hasBorshDerive = /\bBorsh(?:Serialize|Deserialize)\b/.test(decl);
-          const hasExplicitDisc = /\b\w+\s*=\s*\d+\b/.test(decl);
+          // G27d — discriminator patterns: decimal (= 0), binary (= 0b001),
+          // hex (= 0x1A), and underscore-separated literals (1_000). Drift's
+          // OrderParamsBitFlag uses `= 0b00000001` shape.
+          const hasExplicitDisc = /\b\w+\s*=\s*(?:0b[01_]+|0o[0-7_]+|0x[0-9a-fA-F_]+|[0-9_]+)\b/.test(decl);
           const hasBorshAttr = /#\[\s*borsh\s*\(/.test(decl);
           if (hasBorshDerive && hasExplicitDisc && !hasBorshAttr) {
             // Insert after first `#[derive(...)]` line. The derive attribute
