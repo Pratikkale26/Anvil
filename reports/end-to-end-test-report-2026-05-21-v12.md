@@ -1,4 +1,4 @@
-# End-to-end test report — 2026-05-21 (v12, G28-G31c arc)
+# End-to-end test report — 2026-05-21 (v12, G28-G32b arc)
 
 Path C continuation arc. User authorized "complete remaining, then tests with more contracts, then publish publicly" — this session closed 6 class-level commits closing 170+ errors across the stuck cohort + added 5 fresh fixtures.
 
@@ -11,7 +11,34 @@ G30  376892d  drift long-tail — serum_dex/num_integer filters + BitFlags deriv
 G31  db1f881  multi-level module-path collapse to bare flattened identifier
 G31b 7fd0789  include instruction names in module-path collapse known-set
 G31c 4e5ed34  COption::None strip + source error enum in collapse + cache perf fix
+G32  3127866  rescue #[program] mod when tree-sitter misparses (marginfi unlock)
+G32b 8338b7f  loosen rescue gate to root.hasError (mango-v4 unlock)
 ```
+
+## Late-session marginfi + mango unlocks
+
+After the cohort consolidation, traced tree-sitter parse failures
+on real-world programs to a single class:
+
+- **marginfi-v2**, **mango-v4**, **squads-v4** all hit a tree-sitter
+  Rust grammar gap. Marginfi's flattened source becomes a single
+  giant `ERROR` root; mango-v4's root is `source_file` but
+  `hasError = true` with the program mod buried deeper. In both
+  cases the `#[program]` mod ends up at path
+  `<root>... > impl_item > declaration_list > mod_item` and
+  classifyTopLevel's normal walk doesn't find it.
+
+- G32 adds a fallback rescue: when (a) root has parse errors AND
+  (b) the normal walk didn't find a program mod, recursively
+  descend through impl_item/declaration_list/ERROR containers
+  looking for `mod_item` with `#[program]`. Once found, run normal
+  walk on its body.
+
+- **Marginfi NO PARSE → 1 build error** (mismatched closing delimiter
+  in emitted lib.rs — separate fix).
+- **Mango-v4 NO PARSE → 1 build error** (same shape as marginfi).
+- **Squads-v4 still "Parse failed"** (different failure mode, likely
+  tree-sitter timeout — separate fix).
 
 ## Cohort error reduction this arc
 
