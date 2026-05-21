@@ -92,7 +92,7 @@ import {
   type BodyEmitterCallbacks,
   type Token2022Opts,
 } from "./body-emitter/index.js";
-import { transformHelperCode as transformHelperCodeImpl, rewriteMsgCalls as rewriteMsgCallsImpl, rewriteSelfReferences, collapseModulePaths } from "./anchor-transforms.js";
+import { transformHelperCode as transformHelperCodeImpl, rewriteMsgCalls as rewriteMsgCallsImpl, rewriteSelfReferences, collapseModulePaths, rewriteCtxAccountsDestructure } from "./anchor-transforms.js";
 import { hasResidualAnchorPatterns, hasUnsalvageableHelperSignature, recognizeCpiWrapperHelper, rewriteCpiWrapperCallSites } from "./emitter-helpers.js";
 import {
   commentOutHelperBlock,
@@ -1591,8 +1591,11 @@ export abstract class BaseEmitter {
     const knownNames = this.collectKnownTopLevelNames(ir);
     const body = collapseModulePaths(
       rewriteSelfReferences(
-        rewriteRequireVariantsInCode(
-          rewriteMsgCallsImpl(rawBody, (m: string) => this.emitMsg(m)),
+        rewriteCtxAccountsDestructure(
+          rewriteRequireVariantsInCode(
+            rewriteMsgCallsImpl(rawBody, (m: string) => this.emitMsg(m)),
+          ),
+          accountNames,
         ),
         accountNames,
       ),

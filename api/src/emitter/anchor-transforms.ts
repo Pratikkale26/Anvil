@@ -63,6 +63,113 @@ export function collapseModulePaths(source: string, knownNames: Set<string>): st
   });
 }
 
+/**
+ * G76 — rewrite `let <Struct> { f1: b1, f2, .. } = &ctx.accounts;` into per-
+ * field re-bindings. Anchor Anchor source frequently destructures the
+ * Accounts struct inside flattened impl method bodies:
+ *
+ *   let EndExecuteOrder { marginfi_account: m_loader, order: o_loader, .. }
+ *       = &ctx.accounts;
+ *
+ * After inlining, `ctx` doesn't exist but the per-account local bindings
+ * (`marginfi_account`, `order`) DO — emitted at fn top by emitAccountBinding.
+ * Rewrite each destructured field to a re-binding from its local account,
+ * keeping the rest of the carried body's references compile-clean.
+ *
+ * `accountNames` is the set of snakeCase account names available in scope
+ * (matches the set passed to rewriteSelfReferences).
+ */
+export function rewriteCtxAccountsDestructure(body: string, accountNames: Set<string>): string {
+  if (accountNames.size === 0 || !body.includes("ctx.accounts")) return body;
+  let out = "";
+  let i = 0;
+  const re = /\blet\s+(\w+)\s*\{/g;
+  let m: RegExpExecArray | null;
+  let lastEnd = 0;
+  while ((m = re.exec(body)) !== null) {
+    const openIdx = m.index + m[0].length - 1;
+    // Brace-balance to find closing }.
+    let depth = 1;
+    let closeIdx = -1;
+    for (let j = openIdx + 1; j < body.length; j++) {
+      const ch = body[j];
+      if (ch === "{") depth++;
+      else if (ch === "}") { depth--; if (depth === 0) { closeIdx = j; break; } }
+    }
+    if (closeIdx < 0) continue;
+    // Skip trailing whitespace and check for `= &?ctx.accounts;`.
+    let k = closeIdx + 1;
+    while (k < body.length && /\s/.test(body[k] ?? "")) k++;
+    if (body[k] !== "=") continue;
+    k++;
+    while (k < body.length && /\s/.test(body[k] ?? "")) k++;
+    if (body[k] === "&") {
+      k++;
+      while (k < body.length && /\s/.test(body[k] ?? "")) k++;
+    }
+    if (body.slice(k, k + 12) !== "ctx.accounts") continue;
+    k += 12;
+    while (k < body.length && /\s/.test(body[k] ?? "")) k++;
+    if (body[k] !== ";") continue;
+    const stmtEnd = k + 1;
+    // Parse fields. Split inner text on `,` at depth 0.
+    const inner = body.slice(openIdx + 1, closeIdx);
+    const fields: Array<{ name: string; binding: string }> = [];
+    let buf = "";
+    let parenDepth = 0;
+    for (let j = 0; j < inner.length; j++) {
+      const ch = inner[j];
+      if (ch === "(" || ch === "{" || ch === "[") parenDepth++;
+      else if (ch === ")" || ch === "}" || ch === "]") parenDepth--;
+      if (ch === "," && parenDepth === 0) {
+        const part = buf.trim();
+        if (part && part !== "..") {
+          const colon = part.indexOf(":");
+          if (colon >= 0) {
+            const name = part.slice(0, colon).trim();
+            const binding = part.slice(colon + 1).trim();
+            fields.push({ name, binding });
+          } else {
+            fields.push({ name: part, binding: part });
+          }
+        }
+        buf = "";
+      } else {
+        buf += ch;
+      }
+    }
+    {
+      const part = buf.trim();
+      if (part && part !== "..") {
+        const colon = part.indexOf(":");
+        if (colon >= 0) {
+          const name = part.slice(0, colon).trim();
+          const binding = part.slice(colon + 1).trim();
+          fields.push({ name, binding });
+        } else {
+          fields.push({ name: part, binding: part });
+        }
+      }
+    }
+    // Only rewrite if at least one field name matches a known account.
+    const matches = fields.filter((f) => accountNames.has(f.name));
+    if (matches.length === 0) continue;
+    out += body.slice(lastEnd, m.index);
+    const indentMatch = body.slice(Math.max(0, m.index - 80), m.index).match(/(?:^|\n)([ \t]*)$/);
+    const indent = indentMatch ? indentMatch[1] : "";
+    const lines = matches.map((f) =>
+      f.binding === f.name
+        ? `${indent}let ${f.name} = ${f.name};  // anvil: G76 ctx.accounts destructure no-op`
+        : `${indent}let ${f.binding} = ${f.name};  // anvil: G76 ctx.accounts destructure`
+    );
+    // Comment out the rest of the original line if non-matching fields exist
+    out += lines.join("\n");
+    lastEnd = stmtEnd;
+  }
+  out += body.slice(lastEnd);
+  return out;
+}
+
 export function rewriteSelfReferences(body: string, accountNames: Set<string>): string {
   if (accountNames.size === 0) return body;
   const sortedAccounts = [...accountNames].sort((a, b) => b.length - a.length);
