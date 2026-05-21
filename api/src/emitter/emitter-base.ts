@@ -4741,18 +4741,26 @@ function stripAnchorWrapperTypes(typeName: string, target: "pin" | "native"): st
   const ai = target === "pin"
     ? "pinocchio::account_info::AccountInfo"
     : "solana_program::account_info::AccountInfo<'info>";
+  // G59 — when source carries a lifetime arg, preserve it instead of
+  // forcing `'info`. Helper that emits AccountInfo with the captured
+  // lifetime. Pinocchio always drops the lifetime.
+  const aiWithLt = (lt: string | undefined): string => {
+    if (target === "pin") return "pinocchio::account_info::AccountInfo";
+    return lt ? `solana_program::account_info::AccountInfo<${lt}>` : "solana_program::account_info::AccountInfo<'info>";
+  };
   // Box<Account<'info, T>> → AccountInfo (Box dropped — Anvil doesn't carry boxed wrappers).
-  t = t.replace(/Box\s*<\s*Account\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>\s*>/g, ai);
-  t = t.replace(/Box\s*<\s*InterfaceAccount\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>\s*>/g, ai);
+  t = t.replace(/Box\s*<\s*Account\s*<\s*(?:('?\w+)\s*,\s*)?[\w:]+\s*>\s*>/g, (_full, lt) => aiWithLt(lt));
+  t = t.replace(/Box\s*<\s*InterfaceAccount\s*<\s*(?:('?\w+)\s*,\s*)?[\w:]+\s*>\s*>/g, (_full, lt) => aiWithLt(lt));
   // Account<'info, T> → AccountInfo (T is dropped — type-agnostic emit)
-  t = t.replace(/Account\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
-  t = t.replace(/InterfaceAccount\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
+  t = t.replace(/Account\s*<\s*(?:('?\w+)\s*,\s*)?[\w:]+\s*>/g, (_full, lt) => aiWithLt(lt));
+  t = t.replace(/InterfaceAccount\s*<\s*(?:('?\w+)\s*,\s*)?[\w:]+\s*>/g, (_full, lt) => aiWithLt(lt));
   // Signer<'info> / SystemAccount<'info> / UncheckedAccount<'info> / Program<'info, T>
-  t = t.replace(/Signer\s*<\s*'?\w+\s*>/g, ai);
-  t = t.replace(/SystemAccount\s*<\s*'?\w+\s*>/g, ai);
-  t = t.replace(/UncheckedAccount\s*<\s*'?\w+\s*>/g, ai);
-  t = t.replace(/Program\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
-  t = t.replace(/AccountLoader\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
+  t = t.replace(/Signer\s*<\s*('?\w+)\s*>/g, (_full, lt) => aiWithLt(lt));
+  t = t.replace(/SystemAccount\s*<\s*('?\w+)\s*>/g, (_full, lt) => aiWithLt(lt));
+  t = t.replace(/UncheckedAccount\s*<\s*('?\w+)\s*>/g, (_full, lt) => aiWithLt(lt));
+  t = t.replace(/Program\s*<\s*(?:('?\w+)\s*,\s*)?[\w:]+\s*>/g, (_full, lt) => aiWithLt(lt));
+  t = t.replace(/AccountLoader\s*<\s*(?:('?\w+)\s*,\s*)?[\w:]+\s*>/g, (_full, lt) => aiWithLt(lt));
+  void ai;
   // G27h — strip / normalize AccountInfo<'X> lifetime arg. Pinocchio's
   // AccountInfo has no lifetime; user fields like `AccountInfo<'a>` in
   // nested generics (drift's OracleMap.oracles) fail E0107.
