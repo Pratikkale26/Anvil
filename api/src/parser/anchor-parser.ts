@@ -575,11 +575,11 @@ interface TopLevelItems {
 }
 
 function classifyTopLevel(root: SyntaxNode): TopLevelItems {
-  // G32 — detect tree-sitter parse failure (root wrapped in ERROR). Used
-  // to enable a special-case impl_item body recursion below so that
-  // marginfi-v2 / mango-v4 / squads-v4 (which hit a tree-sitter grammar
-  // gap on 4-lifetime Context types) still surface their #[program] mod.
-  const rootIsError = root.type === "ERROR";
+  // G32 — detect tree-sitter parse failure. Marginfi shows up as
+  // root.type === "ERROR"; mango-v4 has root.type === "source_file" but
+  // root.hasError === true (somewhere a deeper ERROR node wraps the
+  // #[program] mod). Either signal triggers the rescue pass below.
+  const rootIsError = root.type === "ERROR" || root.hasError;
   const items: TopLevelItems = {
     programModule: null,
     accountsStructs: [],
