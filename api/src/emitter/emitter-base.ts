@@ -1087,6 +1087,12 @@ export abstract class BaseEmitter {
         // PINOCCHIO_OPTIONAL_DEPS (added later). The original G29 filter
         // for `fixed::` is obsolete and was blocking
         // `use fixed::traits::{FromFixed, ToFixed};` etc. in kamino.
+        // G55 — but `use fixed::types::I80F48` (without alias) clashes
+        // with openbook-v2's user-defined `pub struct I80F48` in the
+        // flattened lib.rs. Filter ONLY the bare types::TYPE-named
+        // imports to prevent name shadowing — keep traits and the full
+        // `use fixed::types::*;` wildcards.
+        if (/^use\s+fixed::types::(I\d+F\d+|U\d+F\d+)\s*;?$/.test(statement.trim())) return false;
         if (/\bderivative::/.test(statement) || /^use\s+derivative(?:::|;)/.test(statement)) return false;
         if (/\bpyth_sdk_solana::/.test(statement) || /^use\s+pyth_sdk_solana(?:::|;)/.test(statement)) return false;
         if (/\bswitchboard_v1_devnet_oracle::/.test(statement) || /^use\s+switchboard_v1_devnet_oracle(?:::|;)/.test(statement)) return false;
