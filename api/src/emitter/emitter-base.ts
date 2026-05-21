@@ -1380,6 +1380,12 @@ export abstract class BaseEmitter {
     if (this.referencesAnchorAccountLoader(ir)) {
       sections.push(this.emitAnchorAccountLoaderStub());
     }
+    // G66 attempted CpiContext stub; regressed cohort (+22 errors net)
+    // because `alloc::vec::Vec` requires `extern crate alloc;` which
+    // isn't always in scope, AND because the stub's typed fluent
+    // surface conflicts with Anchor's actual CpiContext shape some
+    // bodies expect. Reverted; would need narrower stub + correct
+    // alloc/std handling per target.
     // G27f: stub spl_token_2022::extension::ExtensionType enum with all known
     // variants. Kamino-klend uses ExtensionType variants in a const slice
     // for supported-extension validation. Each program may use a subset;
@@ -1816,6 +1822,69 @@ pub trait ZeroCopy: Discriminator + Owner {}`;
   /**
    * G27a — detect references to anchor_lang's SysInstructions sysvar.
    */
+  /** G66 — detect references to anchor_lang's CpiContext<T>. */
+  protected referencesAnchorCpiContext(ir: SolanaIR): boolean {
+    const RE = /\bCpiContext\b/;
+    for (const h of ir.helperFns ?? []) {
+      if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+    }
+    for (const acc of ir.accounts) {
+      for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const t of ir.types ?? []) {
+      for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const ut of ir.userTraits ?? []) if (RE.test(ut)) return true;
+    for (const uti of ir.userTraitImpls ?? []) if (RE.test(uti)) return true;
+    for (const instr of ir.instructions ?? []) {
+      for (const stmt of instr.body ?? []) {
+        if ("code" in stmt && stmt.code && RE.test(stmt.code)) return true;
+        if ("rawCode" in stmt && stmt.rawCode && RE.test(stmt.rawCode)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** G66 — stub CpiContext<T>. Just the fluent surface for type-resolution. */
+  protected emitAnchorCpiContextStub(): string {
+    return `// G66 — anchor_lang::context::CpiContext<T> stub. Fluent builder
+// surface for typed Anchor CPIs (\`CpiContext::new(...)\`,
+// \`CpiContext::new_with_signer(...)\`, \`.with_signer(...)\`,
+// \`.with_remaining_accounts(...)\`). Real CPI execution lives in
+// per-CPI typed IR — call sites that pass this to anchor_spl::token::*
+// fns won't compile since those are stripped. The TYPE resolves so
+// downstream code parses.
+pub struct CpiContext<'a, 'b, 'c, 'info, T> {
+    pub accounts: T,
+    pub remaining_accounts: alloc::vec::Vec<&'info AccountInfo>,
+    pub program: &'a AccountInfo,
+    pub signer_seeds: &'b [&'c [&'c [u8]]],
+}
+impl<'a, 'b, 'c, 'info, T> CpiContext<'a, 'b, 'c, 'info, T> {
+    pub fn new(program: &'a AccountInfo, accounts: T) -> Self {
+        Self { accounts, remaining_accounts: alloc::vec::Vec::new(), program, signer_seeds: &[] }
+    }
+    pub fn new_with_signer(
+        program: &'a AccountInfo,
+        accounts: T,
+        signer_seeds: &'b [&'c [&'c [u8]]],
+    ) -> Self {
+        Self { accounts, remaining_accounts: alloc::vec::Vec::new(), program, signer_seeds }
+    }
+    pub fn with_signer(mut self, signer_seeds: &'b [&'c [&'c [u8]]]) -> Self {
+        self.signer_seeds = signer_seeds;
+        self
+    }
+    pub fn with_remaining_accounts(
+        mut self,
+        ras: alloc::vec::Vec<&'info AccountInfo>,
+    ) -> Self {
+        self.remaining_accounts = ras;
+        self
+    }
+}`;
+  }
+
   /** G65 — detect references to anchor_lang's AccountLoader<T>. */
   protected referencesAnchorAccountLoader(ir: SolanaIR): boolean {
     const RE = /\bAccountLoader\b/;
