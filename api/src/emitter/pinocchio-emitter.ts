@@ -516,6 +516,22 @@ export class PinocchioEmitter extends BaseEmitter {
       imports.push(`use pinocchio::sysvars::Sysvar;`);
     }
 
+    // G35 — auto-import pinocchio::instruction::AccountMeta when carried
+    // code references `AccountMeta` (typically from user impl methods
+    // converting between solana_program::AccountMeta and the
+    // TransactionAccount wrapper). Coral-multisig + mango-v4 + squads-v4
+    // all use this shape.
+    const refsAccountMeta = (() => {
+      const RE = /\bAccountMeta\b/;
+      for (const acc of _ir.accounts) for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+      for (const t of _ir.types ?? []) for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+      for (const h of _ir.helperFns ?? []) if (RE.test(h.rawCode ?? "")) return true;
+      return false;
+    })();
+    if (refsAccountMeta) {
+      imports.push(`use pinocchio::instruction::AccountMeta;`);
+    }
+
     // Auto-import set_return_data / get_return_data when any instruction
     // references either. Source code typically uses
     // `anchor_lang::solana_program::program::set_return_data` (filtered
@@ -5675,10 +5691,24 @@ function findIdentDeclAndMutationRanges(body: string, idents: Set<string>): Stmt
     }
     // Match field-mutation statements `<ident>.X = …;` that operate on the
     // commented binding. These reference fields on the now-missing type.
-    const mutRe = new RegExp(`${ident}\\s*\\.\\s*\\w+\\s*=\\s*[^;]*;`, "g");
+    // G35 — paren/brace-aware end detection. The previous `[^;]*;` regex
+    // stopped at the FIRST `;` inside multi-line closures
+    // (`ix.accounts = ix.accounts.iter().map(|acc| { let x = ...; ... }).collect();`)
+    // leaving the rest of the expression uncommented and syntactically
+    // broken. Coral-multisig hit this.
+    const mutStartRe = new RegExp(`\\b${ident}\\s*\\.\\s*\\w+\\s*=`, "g");
     let m: RegExpExecArray | null;
-    while ((m = mutRe.exec(body)) !== null) {
-      out.push({ stmtStart: m.index, stmtEnd: m.index + m[0].length });
+    while ((m = mutStartRe.exec(body)) !== null) {
+      const stmtStart = m.index;
+      let depth = 0;
+      let stmtEnd = body.length;
+      for (let i = m.index; i < body.length; i++) {
+        const ch = body[i];
+        if (ch === "(" || ch === "{" || ch === "[") depth++;
+        else if (ch === ")" || ch === "}" || ch === "]") depth--;
+        else if (ch === ";" && depth === 0) { stmtEnd = i + 1; break; }
+      }
+      out.push({ stmtStart, stmtEnd });
     }
   }
   return out;
