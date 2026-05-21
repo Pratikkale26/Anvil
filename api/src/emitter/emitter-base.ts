@@ -3141,12 +3141,18 @@ unsafe impl bytemuck::Pod for ${typeDef.name} {}${implBlock}`;
       // 'a is "used" via that declaration. Field-only is the right scope.
       const phantomFields = synthesizePhantomLifetimeFields(generics, fields);
       const allFields = phantomFields ? `${fields}\n${phantomFields}` : fields;
-      // G72 — preserve `Default` from the source derive line. Carried bodies
-      // calling `T::default()` need it (raydium `LimitOrderMatchResult::default()`,
-      // `SwapComputationResult::default()`).
+      // G72/G78 — preserve `Default`, `Copy`, and `Eq` from the source derive
+      // line. Carried bodies calling `T::default()` need Default; structs
+      // used as fields of zero-copy parent structs need Copy; HashMap keys etc
+      // need Eq. The auto-emitted derive list shadows the source's so without
+      // explicit preservation user code that depended on these derives fails.
       const userDerivesStruct = extractUserDerives(typeDef.rawCode ?? "");
-      const extraDefault = userDerivesStruct.includes("Default") ? ", Default" : "";
-      return `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize${extraDefault})]
+      const extras: string[] = [];
+      if (userDerivesStruct.includes("Copy")) extras.push("Copy");
+      if (userDerivesStruct.includes("Default")) extras.push("Default");
+      if (userDerivesStruct.includes("Eq")) extras.push("Eq");
+      const extraSuffix = extras.length ? `, ${extras.join(", ")}` : "";
+      return `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize${extraSuffix})]
 pub struct ${typeDef.name}${generics} {
 ${allFields}
 }${implBlock}`;
