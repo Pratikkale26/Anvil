@@ -5153,6 +5153,61 @@ function commentOutT22ExtensionCallSites(
 
   if (markedSpanIdx.size === 0) return body;
 
+  // G41 — destructuring-LHS extension pass: when a marked span starts
+  // with `=` (continuation after the `}` of a `let X { ... } = expr;`
+  // destructuring pattern), walk backward through preceding spans to
+  // absorb the `let X {`, every field-line span, and the closing `}`.
+  // Without this, kamino's `let PriceUpdateV2 { write_authority: _, ... }
+  // = PriceUpdateV2::try_deserialize(&mut data.as_ref())?;` gets the
+  // `= ...;` half commented but leaves the destructuring LHS live →
+  // tree-sitter parse error "expected `;`, found keyword `if`" at the
+  // next live statement.
+  {
+    const startsWithEq = (idx: number): boolean => {
+      const span = stmtSpans[idx];
+      if (!span) return false;
+      const text = (spanCodeText[idx] ?? "").trimStart();
+      return text.startsWith("=");
+    };
+    let changed3 = true;
+    while (changed3) {
+      changed3 = false;
+      for (const idx of [...markedSpanIdx]) {
+        if (!startsWithEq(idx)) continue;
+        // Walk backward through preceding spans counting `{`/`}` depth.
+        // We need to find the matching `{` for the `}` that precedes this
+        // `= ...` span. The destructuring pattern looks like:
+        //   span N-K: `let X {`        (ends with `{`)
+        //   span N-K+1..N-2: field lines
+        //   span N-1: `}`              (single `}` span)
+        //   span N: `= rhs;`
+        // Walk back from idx-1 until depthBack returns to 0 after seeing
+        // one `}` opener.
+        let depth = 0;
+        let startIdx = -1;
+        for (let j = idx - 1; j >= 0; j--) {
+          const code = (spanCodeText[j] ?? "");
+          for (const ch of code) {
+            if (ch === "}") depth++;
+            else if (ch === "{") depth--;
+          }
+          if (depth <= 0) { startIdx = j; break; }
+        }
+        if (startIdx === -1) continue;
+        // Sanity check: startIdx should contain `let` (or `match`, but
+        // match is its own statement) — confirm before marking.
+        const startCode = spanCodeText[startIdx] ?? "";
+        if (!/\blet\s+/.test(startCode)) continue;
+        for (let j = startIdx; j < idx; j++) {
+          if (!markedSpanIdx.has(j)) {
+            markedSpanIdx.add(j);
+            changed3 = true;
+          }
+        }
+      }
+    }
+  }
+
   // Block-cohesion pass: when a marked span sits inside an emitted T22
   // inline block (e.g. cpi_t22_harvest emits `{ const ...; let __hwtm_srcs;
   // for ... { } match ... { ... } }` as one logical unit), we must mark
