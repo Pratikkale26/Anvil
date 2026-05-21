@@ -1150,6 +1150,13 @@ export abstract class BaseEmitter {
         // filter cascade pushed marginfi 406 -> 640.
         if (/^use\s+(?:crate::)?(?:kamino_mocks|drift_mocks|juplend_mocks)(?:::|;)/.test(statement)) return false;
         if (/\bpyth_solana_receiver_sdk::/.test(statement) || /^use\s+pyth_solana_receiver_sdk(?:::|;)/.test(statement)) return false;
+        // G47 attempted to filter drift's local-module hoisted use lines
+        // (perp_lp_pool_settlement, prelude, switchboard). Cascade still
+        // happens: drift 6 → 1171 errors. The 6 baseline was a syntactic
+        // E0432 shadow that stopped cargo from analyzing ~1100 downstream
+        // body refs to types that the wildcards were exposing. Better to
+        // leave the unresolved-import errors visible — they're the
+        // honest representation. Revert.
         // static_assertions is a no_std-compatible dev macro crate.
         // Anvil's scaffold doesn't ship it. Body usages (e.g. compile-time
         // size assertions) are stripped at carry-source level by the
@@ -2785,9 +2792,19 @@ unsafe impl bytemuck::Zeroable for ${typeDef.name} {}
 unsafe impl bytemuck::Pod for ${typeDef.name} {}${implBlock}`;
       }
 
+      // G46 — when generics declares a lifetime that fields don't use,
+      // inject `_phantom_X: core::marker::PhantomData<&'X ()>` to make the
+      // lifetime "used". Keeps struct arity unchanged at use sites
+      // (avoiding the cascade we saw when trying to DROP the lifetime).
+      // Drift's PerpMarketMap<'a> (empty body after wrapper-strip) hits
+      // this. Pass ONLY the fields text — the implBlock declares `impl<'a>
+      // PerpMarketMap<'a> { ... }` and the regex would falsely conclude
+      // 'a is "used" via that declaration. Field-only is the right scope.
+      const phantomFields = synthesizePhantomLifetimeFields(generics, fields);
+      const allFields = phantomFields ? `${fields}\n${phantomFields}` : fields;
       return `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
 pub struct ${typeDef.name}${generics} {
-${fields}
+${allFields}
 }${implBlock}`;
     }).join("\n\n");
   }
@@ -4124,6 +4141,39 @@ export function rewriteAnchorResultAlias(body: string): string {
  *
  * Exported for unit testing.
  */
+/** G46 — generate `_phantom_X: core::marker::PhantomData<&'X ()>,` fields
+ *  for each lifetime declared in `generics` that doesn't appear in `body`.
+ *  Empty string when all declared lifetimes are used (or none declared).
+ *  Empty when generics has type parameters (`<T>`) or bounds — those need
+ *  real handling, not phantom injection.
+ *
+ *  PhantomData implements BorshSerialize/BorshDeserialize as no-ops in
+ *  borsh 1.x, so the struct's derive list stays compatible.
+ */
+export function synthesizePhantomLifetimeFields(generics: string, body: string): string {
+  if (!generics) return "";
+  const m = generics.match(/^\s*<\s*(.*?)\s*>\s*$/);
+  if (!m) return "";
+  const inner = m[1];
+  if (!inner) return "";
+  const params = inner.split(",").map((p) => p.trim()).filter(Boolean);
+  // Only fire for the simple case: all-lifetime generics, no bounds, no types.
+  const allLifetimesNoBounds = params.every((p) => /^'[a-zA-Z_]\w*$/.test(p));
+  if (!allLifetimesNoBounds) return "";
+  const phantoms: string[] = [];
+  for (const p of params) {
+    const lifetime = p; // `'X`
+    const ltUseRe = new RegExp(`${lifetime}\\b`);
+    // Filter out lifetime use inside the synthesized impl block declaration
+    // line itself; we only care about whether FIELDS use it.
+    if (!ltUseRe.test(body)) {
+      const name = lifetime.slice(1); // strip leading `'`
+      phantoms.push(`    pub _phantom_${name}: core::marker::PhantomData<&${lifetime} ()>,`);
+    }
+  }
+  return phantoms.join("\n");
+}
+
 export function dropUnusedLifetimes(generics: string, body: string): string {
   if (!generics) return "";
   const m = generics.match(/^\s*<\s*(.*?)\s*>\s*$/);
