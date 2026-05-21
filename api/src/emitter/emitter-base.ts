@@ -3086,6 +3086,15 @@ unsafe impl bytemuck::Zeroable for ${typeDef.name} {}
 unsafe impl bytemuck::Pod for ${typeDef.name} {}${implBlock}`;
       }
 
+      // G67 — when rawCode declares a tuple struct (`pub struct X(...)`)
+      // emit it verbatim. parseCustomType doesn't preserve tuple-struct
+      // field shape, so without this passthrough we'd emit an EMPTY
+      // braced struct `pub struct X { }` and lose the constructor.
+      // Raydium's construct_uint stubs (U128, U256, U512, U1024) all
+      // hit this — 80+ tuple-construction call sites failed E0423.
+      if (typeDef.rawCode && /\bpub\s+struct\s+\w+\s*\(/.test(typeDef.rawCode)) {
+        return `${typeDef.rawCode}${implBlock}`;
+      }
       // G46 — when generics declares a lifetime that fields don't use,
       // inject `_phantom_X: core::marker::PhantomData<&'X ()>` to make the
       // lifetime "used". Keeps struct arity unchanged at use sites
