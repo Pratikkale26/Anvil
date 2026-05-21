@@ -583,7 +583,16 @@ export function hasResidualAnchorPatterns(value: string): boolean {
     /\btoken_2022::(?:transfer_checked|mint_to|burn|close_account)\(/.test(value) ||
     /\btoken_interface::(?:transfer_checked|mint_to|burn|close_account)\(/.test(value) ||
     /\bemit!\(/.test(value) ||
-    /\brequire!\(/.test(value);
+    /\brequire!\(/.test(value) ||
+    // G29 — filtered external crates. If the import was stripped (emitter-
+    // base use-statement filter), any body reference to the crate path
+    // resolves to E0433. Mark the helper unsalvageable so the call site
+    // gets the standard comment-out treatment instead of a hard build fail.
+    /\bpyth_sdk_solana::/.test(value) ||
+    /\bswitchboard_v1_devnet_oracle::/.test(value) ||
+    /\bswitchboard_v2_mainnet_oracle::/.test(value) ||
+    /\bfixed::types::/.test(value) ||
+    /\bderivative::/.test(value);
 }
 
 /**

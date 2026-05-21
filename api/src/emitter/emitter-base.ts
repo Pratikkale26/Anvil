@@ -1073,6 +1073,16 @@ export abstract class BaseEmitter {
         if (/\bdrift_macros\b/.test(statement)) return false;
         if (/\benumflags2\b/.test(statement)) return false;
         if (/\bpyth_lazer\b/.test(statement)) return false;
+        // G29 — openbook-v2 external oracle/math crates. fixed (fixed-point
+        // math), derivative (derive macro helper), pyth_sdk_solana, and the
+        // switchboard devnet/mainnet adapters aren't shipped in Anvil's
+        // Pin/Native scaffold. Body references get the unsalvageable-helper
+        // commentout downstream (G29 body gate).
+        if (/\bfixed::/.test(statement) || /^use\s+fixed(?:::|;)/.test(statement)) return false;
+        if (/\bderivative::/.test(statement) || /^use\s+derivative(?:::|;)/.test(statement)) return false;
+        if (/\bpyth_sdk_solana::/.test(statement) || /^use\s+pyth_sdk_solana(?:::|;)/.test(statement)) return false;
+        if (/\bswitchboard_v1_devnet_oracle::/.test(statement) || /^use\s+switchboard_v1_devnet_oracle(?:::|;)/.test(statement)) return false;
+        if (/\bswitchboard_v2_mainnet_oracle::/.test(statement) || /^use\s+switchboard_v2_mainnet_oracle(?:::|;)/.test(statement)) return false;
         // static_assertions is a no_std-compatible dev macro crate.
         // Anvil's scaffold doesn't ship it. Body usages (e.g. compile-time
         // size assertions) are stripped at carry-source level by the
