@@ -4562,6 +4562,20 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
   const ai = target === "pin" ? "AccountInfo" : "AccountInfo<'info>";
   const aiRef = target === "pin" ? "&AccountInfo" : "&AccountInfo<'info>";
   let out = body;
+  // G59 — preserve source-supplied lifetime arg when stripping Anchor
+  // wrappers on Native. `AccountLoader<'a, T>` → `AccountInfo<'a>` (not
+  // `<'info>`). The replacement-fn variants below capture the lifetime
+  // and emit `AccountInfo<'X>`. On Pinocchio, AccountInfo has no
+  // lifetime param so we drop entirely (same as before).
+  const aiWithLt = (lt: string | undefined): string => {
+    if (target === "pin") return "AccountInfo";
+    return lt ? `AccountInfo<${lt}>` : "AccountInfo<'info>";
+  };
+  const aiRefWithLt = (lt: string | undefined): string => {
+    if (target === "pin") return "&AccountInfo";
+    return lt ? `&AccountInfo<${lt}>` : "&AccountInfo<'info>";
+  };
+  void ai; void aiRef; void aiWithLt; void aiRefWithLt;
   // Box<Account<'info, T>> → AccountInfo (Box dropped)
   out = out.replace(/Box\s*<\s*Account\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>\s*>/g, ai);
   out = out.replace(/Box\s*<\s*InterfaceAccount\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>\s*>/g, ai);
@@ -4588,8 +4602,10 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
   out = out.replace(/\bUncheckedAccount\s*<\s*'?\w+\s*>/g, ai);
   out = out.replace(/&\s*Program\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, aiRef);
   out = out.replace(/\bProgram\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
-  out = out.replace(/&\s*AccountLoader\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, aiRef);
-  out = out.replace(/\bAccountLoader\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
+  // G59 — capture lifetime arg so source `AccountLoader<'a, T>` becomes
+  // `AccountInfo<'a>` on Native (preserving source-supplied lifetime).
+  out = out.replace(/&\s*AccountLoader\s*<\s*(?:('?\w+)\s*,\s*)?[\w:]+\s*>/g, (_full, lt) => aiRefWithLt(lt));
+  out = out.replace(/\bAccountLoader\s*<\s*(?:('?\w+)\s*,\s*)?[\w:]+\s*>/g, (_full, lt) => aiWithLt(lt));
   // COption<T> → Option<T> — anchor_lang's C-compatible Option wrapper.
   // Rust's std Option is structurally equivalent for emit purposes.
   out = out.replace(/\bCOption\s*</g, "Option<");
