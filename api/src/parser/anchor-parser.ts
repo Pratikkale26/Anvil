@@ -249,6 +249,12 @@ export async function parseAnchor(
   // ("cannot find macro `pubkey`"). Both targets accept the expanded
   // `Pubkey::new_from_array([...])` form.
   source = expandPubkeyMacro(source);
+  // G77 attempted to collapse 4-lifetime `Context<'_, '_, 'info, 'info,
+  // T<'info>>` to `Context<T<'info>>` so tree-sitter could parse it.
+  // The naïve regex truncated the inner generic at the first `>` and
+  // didn't change cohort counts — the grammar gap is deeper than just
+  // the lifetime count. Reverted; deferred behind the G32 rescue path
+  // that already handles the surrounding ERROR node.
   // Vendor well-known external program ID constants (mpl_core::ID etc.).
   // The `use mpl_core::{...}` source line is dropped by filteredSourceImports
   // at emit, so any `MPL_CORE_PROGRAM_ID` alias would otherwise leave the
