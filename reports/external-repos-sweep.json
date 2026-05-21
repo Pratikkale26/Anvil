@@ -3,427 +3,425 @@
     "name": "arjun-nft-metaplex",
     "category": "arjun-mpl",
     "parse": {
-      "ok": true,
-      "latencyMs": 27,
-      "size": 6371
+      "ok": false,
+      "latencyMs": 13,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-nft-metaplex/programs/anchor-nft-metaplex\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 29
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 40
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 640
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 2745
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-cpi",
     "category": "arjun-cpi",
     "parse": {
-      "ok": true,
-      "latencyMs": 12,
-      "size": 3541
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-cpi/programs/cpi\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 26
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 32
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 591
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 1023
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-vault-blueshift",
     "category": "arjun-defi",
     "parse": {
-      "ok": true,
-      "latencyMs": 5,
-      "size": 3137
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-vault-blueshift/programs/vault\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 11
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 13
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 452
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 857
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-merkle-tree-incremental",
     "category": "arjun-merkle",
     "parse": {
-      "ok": true,
-      "latencyMs": 11,
-      "size": 651
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-merkle-tree-incremental/programs/anchor\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 36
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 47
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 807
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 1243
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-escrow-blueshift",
     "category": "arjun-defi",
     "parse": {
-      "ok": true,
-      "latencyMs": 17,
-      "size": 687
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-escrow-blueshift/programs/blueshift_anchor_escrow\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 73
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 56
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 681
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 3561
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-p-nft",
     "category": "arjun-mpl",
     "parse": {
-      "ok": true,
-      "latencyMs": 4,
-      "size": 331
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-p-nft/programs/anchor-p-nft\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 3
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 4
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 397
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 739
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-merkle-tree",
     "category": "arjun-merkle",
     "parse": {
-      "ok": true,
-      "latencyMs": 23,
-      "size": 1569
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-merkle-tree/programs/anchor-merkle-tree\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 86
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 81
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 746
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 1287
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-tic-tac-toe",
     "category": "arjun-game",
     "parse": {
-      "ok": true,
-      "latencyMs": 10,
-      "size": 3798
+      "ok": false,
+      "latencyMs": 3,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-tic-tac-toe/programs/anchor-tic-tac-toe\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 14
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 15
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 488
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 942
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-pda-crud",
     "category": "arjun-pda",
     "parse": {
-      "ok": true,
-      "latencyMs": 8,
-      "size": 2670
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-pda-crud/programs/anchor-pda-crud\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 21
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 21
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 607
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 1069
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-arcium-hello-world",
     "category": "arjun-arcium",
     "parse": {
-      "ok": true,
-      "latencyMs": 10,
-      "size": 5195
+      "ok": false,
+      "latencyMs": 1,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-arcium-hello-world/programs/hello_world\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 33
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 29
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 236,
-      "error": "failed to resolve: use of unresolved module or unlinked crate `arcium_client`"
+      "latencyMs": 0
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 569,
-      "error": "failed to resolve: use of unresolved module or unlinked crate `arcium_client`"
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-pda",
     "category": "arjun-pda",
     "parse": {
-      "ok": true,
-      "latencyMs": 6,
-      "size": 939
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-pda/programs/anchor-pda\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 9
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 9
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 496
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 882
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-spl-token",
     "category": "arjun-spl",
     "parse": {
-      "ok": true,
-      "latencyMs": 19,
-      "size": 4770
+      "ok": false,
+      "latencyMs": 3,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-spl-token/programs/spl-token\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 67
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 76
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 645
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 1759
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-collateral-stablecoin",
     "category": "arjun-defi",
     "parse": {
-      "ok": true,
-      "latencyMs": 52,
-      "size": 2191
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-collateral-stablecoin/programs/stablecoin\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 300
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 253
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 677
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 1748
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-sol-vault",
     "category": "arjun-defi",
     "parse": {
-      "ok": true,
-      "latencyMs": 10,
-      "size": 4156
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-sol-vault/programs/anchor-sol-vault\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 23
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 24
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 578
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 1048
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-escrow",
     "category": "arjun-defi",
     "parse": {
-      "ok": true,
-      "latencyMs": 18,
-      "size": 862
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-escrow/programs/escrow\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 63
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 55
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 583
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 1648
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-counterapp",
     "category": "arjun-basic",
     "parse": {
-      "ok": true,
-      "latencyMs": 5,
-      "size": 1493
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-counterapp/programs/anchor-counterapp\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 12
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 16
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 539
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 894
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
     "name": "arjun-vault-manager",
     "category": "arjun-defi",
     "parse": {
-      "ok": true,
-      "latencyMs": 9,
-      "size": 4881
+      "ok": false,
+      "latencyMs": 2,
+      "error": "{\"error\":\"Path does not exist: /tmp/anvil-external-repos/solana-programs-list/anchor-vault-manager/programs/vault-manager\",\"code\":1000}"
     },
     "emitPin": {
-      "ok": true,
-      "latencyMs": 31
+      "ok": false,
+      "latencyMs": 0
     },
     "emitNative": {
-      "ok": true,
-      "latencyMs": 31
+      "ok": false,
+      "latencyMs": 0
     },
     "buildPin": {
-      "ok": true,
-      "latencyMs": 541
+      "ok": false,
+      "latencyMs": 0
     },
     "buildNative": {
-      "ok": true,
-      "latencyMs": 291
+      "ok": false,
+      "latencyMs": 0
     }
   },
   {
@@ -431,26 +429,26 @@
     "category": "drift",
     "parse": {
       "ok": true,
-      "latencyMs": 37871,
+      "latencyMs": 11847,
       "size": 78938
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 6685
+      "latencyMs": 7424
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 5379
+      "latencyMs": 12812
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 2044,
+      "latencyMs": 5901,
       "error": "unresolved import `perp_lp_pool_settlement`"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 3015,
-      "error": "the name `ExtensionType` is defined multiple times"
+      "latencyMs": 2109,
+      "error": "unresolved import `perp_lp_pool_settlement`"
     }
   },
   {
@@ -458,26 +456,26 @@
     "category": "kamino",
     "parse": {
       "ok": true,
-      "latencyMs": 859,
+      "latencyMs": 749,
       "size": 38448
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 4886
+      "latencyMs": 4726
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 4401
+      "latencyMs": 5314
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 7911,
+      "latencyMs": 4614,
       "error": "expected `;`, found keyword `if`"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 7550,
-      "error": "the name `SysInstructions` is defined multiple times"
+      "latencyMs": 5245,
+      "error": "unresolved import `for_named_field`"
     }
   },
   {
@@ -485,26 +483,26 @@
     "category": "raydium",
     "parse": {
       "ok": true,
-      "latencyMs": 604,
+      "latencyMs": 562,
       "size": 28247
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 1188
+      "latencyMs": 1164
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 1122
+      "latencyMs": 1077
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 2454,
+      "latencyMs": 1992,
       "error": "failed to resolve: use of unresolved module or unlinked crate `solana_program`"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 3922,
-      "error": "the name `ExtensionType` is defined multiple times"
+      "latencyMs": 2896,
+      "error": "use of undeclared lifetime name `'info`"
     }
   },
   {
@@ -512,51 +510,53 @@
     "category": "dex",
     "parse": {
       "ok": true,
-      "latencyMs": 140,
+      "latencyMs": 147,
       "size": 27030
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 392
+      "latencyMs": 407
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 352
+      "latencyMs": 367
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 567,
-      "error": "unresolved import `default_env`"
+      "latencyMs": 434,
+      "error": "unresolved import `market_seeds`"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 820,
-      "error": "unresolved import `default_env`"
+      "latencyMs": 655,
+      "error": "unresolved import `market_seeds`"
     }
   },
   {
     "name": "marginfi-v2",
     "category": "lending",
     "parse": {
-      "ok": false,
-      "latencyMs": 19475,
-      "error": "{\"error\":\"No Anchor #[program] module found\",\"code\":1001,\"details\":\"This parser currently supports Anchor entry files. Native multi-file Solana programs like many SPL crates are not transpiled yet.\",\"sourcePath\":\"/tmp/anvil-external-repos/marginfi-v2/programs/marginfi/src/lib.rs\",\"candidates\":[\"/tmp/anvil-external-repos/marginfi-v2/programs/marginfi/src/lib.rs\",\"/tmp/anvil-external-repos/marginfi-"
+      "ok": true,
+      "latencyMs": 19016,
+      "size": 40308
     },
     "emitPin": {
-      "ok": false,
-      "latencyMs": 0
+      "ok": true,
+      "latencyMs": 4924
     },
     "emitNative": {
-      "ok": false,
-      "latencyMs": 0
+      "ok": true,
+      "latencyMs": 4429
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 0
+      "latencyMs": 3049,
+      "error": "expected identifier, found keyword `fn`"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 0
+      "latencyMs": 3167,
+      "error": "expected identifier, found keyword `fn`"
     }
   },
   {
@@ -564,25 +564,25 @@
     "category": "staking",
     "parse": {
       "ok": true,
-      "latencyMs": 206,
+      "latencyMs": 216,
       "size": 8315
     },
     "emitPin": {
       "ok": true,
-      "latencyMs": 1411
+      "latencyMs": 1544
     },
     "emitNative": {
       "ok": true,
-      "latencyMs": 1317
+      "latencyMs": 1406
     },
     "buildPin": {
       "ok": false,
-      "latencyMs": 530,
+      "latencyMs": 488,
       "error": "unresolved import `borsh::BorshSchema`"
     },
     "buildNative": {
       "ok": false,
-      "latencyMs": 868,
+      "latencyMs": 696,
       "error": "cannot find macro `source` in this scope"
     }
   }
