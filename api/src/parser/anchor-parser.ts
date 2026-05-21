@@ -575,6 +575,11 @@ interface TopLevelItems {
 }
 
 function classifyTopLevel(root: SyntaxNode): TopLevelItems {
+  // G32 — detect tree-sitter parse failure (root wrapped in ERROR). Used
+  // to enable a special-case impl_item body recursion below so that
+  // marginfi-v2 / mango-v4 / squads-v4 (which hit a tree-sitter grammar
+  // gap on 4-lifetime Context types) still surface their #[program] mod.
+  const rootIsError = root.type === "ERROR";
   const items: TopLevelItems = {
     programModule: null,
     accountsStructs: [],
@@ -759,11 +764,57 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
           }
           break;
         }
+        case "ERROR": {
+          // G32 — recurse into tree-sitter ERROR nodes. Real-world Anchor
+          // sources (marginfi-v2, mango-v4, squads-v4) trigger tree-sitter
+          // grammar errors on patterns like `Context<'_, '_, 'info, 'info,
+          // T<'info>>` — the rust grammar parses surrounding constructs as
+          // a giant ERROR with #[program] mod buried inside. Without this
+          // traversal classifyTopLevel never visits the mod and reports
+          // "no #[program] found" despite the source containing one.
+          walk(child, modulePath, inProgramModule);
+          break;
+        }
       }
     }
   }
 
   walk(root);
+
+  // G32 — fallback when tree-sitter misparsed and the #[program] mod got
+  // buried inside an ERROR-wrapped impl_item. Marginfi-v2 / mango-v4 /
+  // squads-v4 hit a tree-sitter rust grammar gap (probably 4-lifetime
+  // Context types) that makes the whole root an ERROR node and the
+  // program mod ends up at path ERROR > impl_item > declaration_list >
+  // mod_item. Only fires when (a) root is ERROR and (b) the normal walk
+  // didn't find a program mod — so no risk of double-processing for
+  // already-working fixtures like drift.
+  if (rootIsError && !items.programModule) {
+    function rescue(node: SyntaxNode, modulePath: string[] = []): void {
+      let currentAttrs: SyntaxNode[] = [];
+      for (let i = 0; i < node.namedChildCount; i++) {
+        const child = node.namedChild(i);
+        if (!child) continue;
+        if (child.type === "attribute_item") { currentAttrs.push(child); continue; }
+        if (child.type === "line_comment" || child.type === "block_comment") continue;
+        const attrs = [...currentAttrs];
+        currentAttrs = [];
+        if (child.type === "mod_item" && hasAttribute(attrs, "program")) {
+          items.programModule = { node: child, attrs };
+          const body = child.childForFieldName("body");
+          if (body) walk(body, [...modulePath, extractModuleName(child)], true);
+          return;
+        }
+        // Recurse into impl/declaration containers that might wrap the mod.
+        if (child.type === "impl_item" || child.type === "declaration_list" || child.type === "ERROR") {
+          const innerBody = child.childForFieldName?.("body") ?? findDescendant(child, "declaration_list") ?? child;
+          rescue(innerBody, modulePath);
+          if (items.programModule) return;
+        }
+      }
+    }
+    rescue(root);
+  }
 
   return items;
 }
