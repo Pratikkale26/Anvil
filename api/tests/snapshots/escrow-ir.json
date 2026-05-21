@@ -1095,6 +1095,7 @@
     "use anchor_lang::prelude::*",
     "use super::*"
   ],
+  "typeAliases": [],
   "userTraitImpls": [],
   "warnings": [],
   "metadata": {

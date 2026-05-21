@@ -886,6 +886,17 @@ export abstract class BaseEmitter {
         // import for the same type triggers E0252 (defined multiple times).
         if (/^use\s+solana_program::(?:sysvar::)?clock::Clock\s*;?$/.test(rewritten.trim())) return "";
         if (/^use\s+solana_program::(?:sysvar::)?rent::Rent\s*;?$/.test(rewritten.trim())) return "";
+        // G22c — drop user-carried imports that duplicate prelude items.
+        // Pinocchio's prelude has `use borsh::{BorshDeserialize,
+        // BorshSerialize};` and `use core::convert::TryInto;`. Native has
+        // its own equivalents. User source often re-imports these from
+        // `std::convert::TryInto` or `borsh::BorshSerialize` — cargo
+        // errors with E0252 "defined multiple times". Strip them.
+        const t = rewritten.trim();
+        if (/^use\s+borsh::Borsh(?:Serialize|Deserialize)\s*;?$/.test(t)) return "";
+        if (/^use\s+(?:std|core)::convert::TryInto\s*;?$/.test(t)) return "";
+        if (/^use\s+(?:std|core)::convert::TryFrom\s*;?$/.test(t)) return "";
+        if (/^use\s+(?:std|core)::convert::From\s*;?$/.test(t)) return "";
         return rewritten;
       })
       .filter((stmt) => stmt.length > 0)
@@ -1201,6 +1212,12 @@ export abstract class BaseEmitter {
     const hoistedHelpers = this.helpersReferencedByConsts(ir, constants);
     if (hoistedHelpers.length > 0) {
       sections.push(hoistedHelpers.map((h) => h.rawCode).join("\n\n"));
+    }
+    // G22c — emit `pub type X = Y;` aliases at lib.rs scope. They're
+    // visible to all submodules via `use super::*;` / `use crate::*;`.
+    const typeAliases = ir.typeAliases ?? [];
+    if (typeAliases.length > 0) {
+      sections.push(`// User type aliases preserved verbatim from source\n${typeAliases.join("\n")}`);
     }
     if (constants.length > 0) sections.push(constants.join("\n\n"));
     if (types.length > 0) sections.push(this.emitCustomTypes({ ...ir, types }));

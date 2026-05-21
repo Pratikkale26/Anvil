@@ -219,6 +219,17 @@ export async function parseAnchor(
   source = source.replace(/#\[\s*queue_computation_accounts\s*\([^)]*\)\s*\]/g, "");
   source = source.replace(/#\[\s*callback_accounts\s*\([^)]*\)\s*\]/g, "");
   source = source.replace(/#\[\s*init_computation_definition_accounts\s*\([^)]*\)\s*\]/g, "");
+  // G22c — convert `pub use X::Y as Z;` to `pub type Z = X::Y;` so the
+  // alias survives parse + emit. Without this, the alias is lost
+  // because Anvil's parser drops `pub use` statements. Kamino's
+  // `pub use fixed::types::U68F60 as Fraction;` (referenced 401 times)
+  // and similar patterns benefit. Conservative regex: only matches
+  // single-segment alias names with explicit path-prefix-style imports.
+  // Doesn't match block-form `pub use X::{Y as Z, W as V};` (rare).
+  source = source.replace(
+    /\bpub\s+use\s+((?:[A-Za-z_]\w*::)+[A-Za-z_]\w*(?:<[^;{}]*>)?)\s+as\s+([A-Za-z_]\w*)\s*;/g,
+    "pub type $2 = $1;",
+  );
   // G18 — strip `#[access_control(...)]` attributes paren-balanced.
   // Drift's source has:
   //   #[access_control(
@@ -471,6 +482,7 @@ export async function parseAnchor(
       helperFns,
       events,
       imports,
+      typeAliases: topLevel.typeAliases,
       userTraitImpls,
       warnings: warningCollector.drain(),
       metadata: {
@@ -537,6 +549,11 @@ interface TopLevelItems {
   customTypes: { node: SyntaxNode; attrs: SyntaxNode[]; kind: "struct" | "enum" }[];
   functionIndex: { node: SyntaxNode; attrs: SyntaxNode[]; modulePath: string[] }[];
   constants: SyntaxNode[];
+  /** G22c — `pub type X = Y;` type aliases. Raw source text preserved
+   * verbatim. Emitted at lib.rs scope so all downstream code resolves
+   * them. Kamino's `pub type Fraction = U68F60;` and openbook's
+   * `pub type NodeHandle = u32;` patterns. */
+  typeAliases: string[];
 }
 
 function classifyTopLevel(root: SyntaxNode): TopLevelItems {
@@ -554,6 +571,7 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
     customTypes: [],
     functionIndex: [],
     constants: [],
+    typeAliases: [],
   };
 
   function walk(node: SyntaxNode, modulePath: string[] = [], inProgramModule = false): void {
@@ -700,6 +718,18 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
         case "const_item":
           items.constants.push(child);
           break;
+
+        case "type_item": {
+          // G22c — capture `pub type Y = X;` aliases. Only collect at
+          // top level (not in submodules), and only those starting with
+          // `pub` (private aliases stay scoped to their origin file —
+          // they'd be hidden by `mod` boundaries anyway).
+          const raw = child.text;
+          if (/^pub\s+type\b/.test(raw)) {
+            items.typeAliases.push(raw);
+          }
+          break;
+        }
       }
     }
   }

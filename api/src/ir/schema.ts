@@ -1993,6 +1993,14 @@ export const SolanaIRSchema = z.object({
   /** use statements from the source (helps emitters determine imports) */
   imports: z.array(z.string()).default([]),
   /**
+   * G22c — top-level `pub type X = Y;` aliases harvested from source.
+   * Anvil's parser used to drop these entirely; carried code referencing
+   * them broke (kamino-klend's `Fraction` = 401 errors, openbook-v2's
+   * `NodeHandle` = 37 errors). Emitted verbatim into lib.rs after the
+   * use statements so all downstream code resolves them.
+   */
+  typeAliases: z.array(z.string()).default([]),
+  /**
    * User-defined trait impls between user types (e.g. `impl From<&Transaction>
    * for Instruction { … }`) preserved verbatim from the source. Only impls
    * whose body is "Anchor-clean" (no Anchor wrapper types, CpiContext, etc.)
