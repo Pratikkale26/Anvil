@@ -26,6 +26,43 @@
  * mechanical rewrite — comment the line with a TODO so the surrounding
  * code compiles for review.
  */
+/**
+ * G31 — collapse multi-level module paths to bare identifiers when the
+ * trailing name matches a known top-level IR symbol.
+ *
+ * Anvil flattens all submodules into the crate root, so source-side
+ * paths like `lending_operations::utils::is_allowed_signer(...)` survive
+ * verbatim and fail E0433 "unresolved module" at cargo. The existing
+ * single-level collapse handled `mod::fn(` but missed multi-level paths
+ * and non-call references (constants, types).
+ *
+ * `knownNames` should include every flatten-emitted top-level identifier:
+ * helperFns names, types, accounts, constants, errors.
+ *
+ * Rewrites: `(\w+::)+name` -> `name` when `name in knownNames`. Leaves
+ * `foo::bar` alone when bar is not known (avoid breaking
+ * `pinocchio::sysvars::clock` or `Pubkey::default`).
+ *
+ * Exported for unit testing.
+ */
+export function collapseModulePaths(source: string, knownNames: Set<string>): string {
+  if (knownNames.size === 0) return source;
+  return source.replace(/\b(?:\w+::)+\w+\b/g, (full: string) => {
+    const segs = full.split("::");
+    // Walk segments left-to-right; emit everything from the FIRST known
+    // segment onward. `lending_operations::utils::is_allowed_signer` ->
+    // `is_allowed_signer` (last seg known). `m1::ErrorCode::Variant` ->
+    // `ErrorCode::Variant` (middle known). `pinocchio::sysvars::clock`
+    // -> unchanged (none known).
+    for (let i = 0; i < segs.length; i++) {
+      if (knownNames.has(segs[i] ?? "")) {
+        return segs.slice(i).join("::");
+      }
+    }
+    return full;
+  });
+}
+
 export function rewriteSelfReferences(body: string, accountNames: Set<string>): string {
   if (accountNames.size === 0) return body;
   const sortedAccounts = [...accountNames].sort((a, b) => b.length - a.length);

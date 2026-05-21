@@ -92,7 +92,7 @@ import {
   type BodyEmitterCallbacks,
   type Token2022Opts,
 } from "./body-emitter/index.js";
-import { transformHelperCode as transformHelperCodeImpl, rewriteMsgCalls as rewriteMsgCallsImpl, rewriteSelfReferences } from "./anchor-transforms.js";
+import { transformHelperCode as transformHelperCodeImpl, rewriteMsgCalls as rewriteMsgCallsImpl, rewriteSelfReferences, collapseModulePaths } from "./anchor-transforms.js";
 import { hasResidualAnchorPatterns, hasUnsalvageableHelperSignature, recognizeCpiWrapperHelper, rewriteCpiWrapperCallSites } from "./emitter-helpers.js";
 import {
   commentOutHelperBlock,
@@ -1412,11 +1412,15 @@ export abstract class BaseEmitter {
     // rewritten code (the patterns no longer match after first pass).
     const rawBody = this.emitInstructionFunction(instr, ir);
     const accountNames = new Set(instr.accounts.map((a) => snakeCase(a.name)));
-    const body = rewriteSelfReferences(
-      rewriteRequireVariantsInCode(
-        rewriteMsgCallsImpl(rawBody, (m: string) => this.emitMsg(m)),
+    const knownNames = this.collectKnownTopLevelNames(ir);
+    const body = collapseModulePaths(
+      rewriteSelfReferences(
+        rewriteRequireVariantsInCode(
+          rewriteMsgCallsImpl(rawBody, (m: string) => this.emitMsg(m)),
+        ),
+        accountNames,
       ),
-      accountNames,
+      knownNames,
     );
     // Per-instruction body-level imports for symbols that lib.rs-only
     // `use` statements don't reach. `use super::*;` resolves to
@@ -3493,22 +3497,32 @@ ${fields}
    * to live in the same Anchor file are plain-correct and get only a light
    * comment — no false-positive warning.
    */
+  /** G31 — set of every top-level identifier emitted at crate root, used
+   *  by collapseModulePaths to rewrite `mod1::mod2::ident` -> `ident` when
+   *  the trailing ident matches a flattened symbol. */
+  protected collectKnownTopLevelNames(ir: SolanaIR): Set<string> {
+    const out = new Set<string>();
+    for (const h of ir.helperFns ?? []) out.add(h.name);
+    for (const t of ir.types ?? []) out.add(t.name);
+    for (const a of ir.accounts ?? []) out.add(a.name);
+    for (const e of ir.errors ?? []) out.add(e.name);
+    // Constants are raw string declarations; parse out the names.
+    for (const c of ir.constants ?? []) {
+      const m = c.match(/(?:^|\s)(?:pub\s+)?const\s+(\w+)\s*:/);
+      if (m && m[1]) out.add(m[1]);
+    }
+    return out;
+  }
+
   protected carriedFunctionBlock(rawCode: string, ir?: SolanaIR): string {
     let transformed = promoteFreeFnVisibility(this.transformHelperCode(rawCode, ir));
-    // Same module-collapse rewrite as walker.ts.transformNestedAnchorCode —
-    // helpers.rs carries source-side `<modname>::<helper>(...)` calls, but
-    // Anvil flattens helpers into a single module, so collapse those calls
-    // to the bare `<helper>(...)` form. Without this, multi-module fixtures
-    // like carnival hit E0433 unresolved-module on every cross-mod call.
+    // G31 — collapse multi-level module paths to bare names for every IR
+    // top-level identifier (helpers, types, accounts, constants, errors).
+    // Single-level form (`mod::helper(`) was insufficient for kamino, which
+    // organizes helpers via `lending_operations::utils::is_allowed_signer(`.
     if (ir) {
-      const helperNames = new Set((ir.helperFns ?? []).map((h) => h.name));
-      if (helperNames.size > 0) {
-        transformed = transformed.replace(
-          /\b(\w+)::(\w+)\s*\(/g,
-          (full, _modName: string, fnName: string) =>
-            helperNames.has(fnName) ? `${fnName}(` : full,
-        );
-      }
+      const knownNames = this.collectKnownTopLevelNames(ir);
+      transformed = collapseModulePaths(transformed, knownNames);
     }
     // Check the *transformed* code for residual Anchor patterns — the transform
     // may have cleaned up everything that was originally Anchor-specific.
