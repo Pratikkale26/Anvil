@@ -31,10 +31,25 @@ export function parseErrorEnum(enumNode: SyntaxNode, _attrs: SyntaxNode[]): Sola
       continue;
     }
 
+    // G22d — skip line comments / block comments. Without this filter,
+    // marinade-finance's `WrongReserveOwner, // 6000 0x1770` produces a
+    // bogus variant named `// 6000 0x1770`, plus the trailing-comment
+    // pattern repeats for 178+ variants. Cargo then emits the bogus
+    // names as enum variants and downstream code fails to find the
+    // real names by lookup.
+    if (child.type === "line_comment" || child.type === "block_comment") {
+      continue;
+    }
+
     // enum variants can be identifier or enum_variant
     const variantName = child.childForFieldName("name")?.text ?? child.text.replace(/,\s*$/, "").trim();
     if (!variantName || variantName === "pub" || variantName === "enum") {
       currentAttrs = [];
+      continue;
+    }
+    // Belt-and-suspenders — also reject anything that starts with `//` or `/*`
+    // in case the comment slipped through with a different node type.
+    if (variantName.startsWith("//") || variantName.startsWith("/*")) {
       continue;
     }
 
