@@ -1083,6 +1083,14 @@ export abstract class BaseEmitter {
         if (/\bpyth_sdk_solana::/.test(statement) || /^use\s+pyth_sdk_solana(?:::|;)/.test(statement)) return false;
         if (/\bswitchboard_v1_devnet_oracle::/.test(statement) || /^use\s+switchboard_v1_devnet_oracle(?:::|;)/.test(statement)) return false;
         if (/\bswitchboard_v2_mainnet_oracle::/.test(statement) || /^use\s+switchboard_v2_mainnet_oracle(?:::|;)/.test(statement)) return false;
+        // G30 — drift long-tail. serum_dex is a DEX integration crate
+        // drift no longer ships; num_integer is an extra math crate.
+        // Filter only these two — NOT local sub-modules like prelude /
+        // perp_lp_pool_settlement, which are wildcard-imported and
+        // their re-exports become unresolved everywhere if the use line
+        // is stripped (drift exploded 19 -> 1242 in trial).
+        if (/\bserum_dex::/.test(statement) || /^use\s+serum_dex(?:::|;)/.test(statement)) return false;
+        if (/^use\s+num_integer(?:::|;)/.test(statement)) return false;
         // static_assertions is a no_std-compatible dev macro crate.
         // Anvil's scaffold doesn't ship it. Body usages (e.g. compile-time
         // size assertions) are stripped at carry-source level by the
@@ -2540,6 +2548,8 @@ ${arms}
       const implBlock = this.emitTypeInherentImpl(typeDef);
       // Preserve `<'info>` / generic params on the struct decl so fields
       // that reference them (e.g. `MarketAccounts<'info>`) compile.
+      // Preserve `<'info>` / generic params on the struct decl so fields
+      // that reference them (e.g. `MarketAccounts<'info>`) compile.
       const generics = typeDef.generics ?? "";
 
       // #27 — standalone `#[zero_copy]` struct: emit Pod-shape so the
@@ -3820,6 +3830,44 @@ export function rewriteAnchorResultAlias(body: string): string {
  * separately — `stubAnchorOnlyImplItem` already comments out the whole
  * item when the body is anchor-only.
  */
+/**
+ * G30 — drop lifetime parameters that aren't referenced in the body.
+ * After `stripAnchorWrapperTypes` removes Pinocchio's wrappers like
+ * `Account<'a, T>` → `AccountInfo`, struct decls like
+ * `pub struct PerpMarketMap<'a> { markets: BTreeMap<…, AccountLoader<'a, …>> }`
+ * → `pub struct PerpMarketMap<'a> { markets: … }` leave `'a` unused → E0392.
+ *
+ * Walk the generics list, drop each `'lifetime` param that has no
+ * occurrence in the body. Type parameters (T, U) and bounded
+ * lifetimes (`'a: 'b`) are kept verbatim — only bare lifetime drops.
+ * Empty generics → `""`.
+ *
+ * Exported for unit testing.
+ */
+export function dropUnusedLifetimes(generics: string, body: string): string {
+  if (!generics) return "";
+  const m = generics.match(/^\s*<\s*(.*?)\s*>\s*$/);
+  if (!m) return generics;
+  const inner = m[1];
+  if (!inner) return generics;
+  const params = inner.split(",").map((p) => p.trim()).filter(Boolean);
+  const kept: string[] = [];
+  for (const p of params) {
+    const lifetimeMatch = p.match(/^'([a-zA-Z_]\w*)\s*$/);
+    if (lifetimeMatch) {
+      const lt = "'" + lifetimeMatch[1];
+      // Look for any non-trivial occurrence of the lifetime in body. The
+      // pattern `'\w+` is unique enough that a regex test is reliable.
+      const ltUseRe = new RegExp(`${lt}\\b`);
+      if (ltUseRe.test(body)) kept.push(p);
+      continue;
+    }
+    kept.push(p);
+  }
+  if (kept.length === 0) return "";
+  return `<${kept.join(", ")}>`;
+}
+
 export function stripAnchorLangPrefixes(body: string): string {
   // Order matters: handle the more-specific `anchor_lang::prelude::` first
   // so we don't half-strip and leave `prelude::` orphaned.

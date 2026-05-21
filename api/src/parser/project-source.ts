@@ -735,6 +735,32 @@ function walkMacroChainEnd(out: string, startIdx: number): number {
  *
  * Exported for unit testing.
  */
+/**
+ * G30 — strip identifiers from `#[derive(...)]` attribute lists.
+ *
+ * Anvil's import filter drops use lines for crates that don't exist in
+ * the Pinocchio/Native scaffolds (enumflags2, derivative, etc.). The
+ * filtered crates re-export derive macros that survive in the carried
+ * source as `#[derive(BitFlags, Clone, …)]`. Without the import, cargo
+ * errors with "cannot find derive macro `BitFlags` in this scope".
+ *
+ * Pass over every `#[derive(…)]` attribute and remove identifiers
+ * matching the filter list. Empty derive list → strip whole attribute.
+ *
+ * Exported for unit testing.
+ */
+export function stripFilteredDeriveIdentifiers(source: string, identifiers: string[]): string {
+  if (identifiers.length === 0) return source;
+  const idSet = new Set(identifiers);
+  return source.replace(/#\[derive\(([^)]*)\)\]/g, (match, list: string) => {
+    const parts = list.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+    const kept = parts.filter((p) => !idSet.has(p));
+    if (kept.length === 0) return "";
+    if (kept.length === parts.length) return match;
+    return `#[derive(${kept.join(", ")})]`;
+  });
+}
+
 export function neutralizeUnsupportedMacros(source: string): string {
   let out = source;
   const macroNames = new Set<string>();
@@ -2041,6 +2067,13 @@ function buildFlattenedSource(
   // construct_uint!{ pub struct UN(K); } → stub UN type so downstream
   // type references resolve.
   source = neutralizeUnsupportedMacros(source);
+  // G30 — strip filtered-crate derive macros. `enumflags2::BitFlags`,
+  // `derivative::Derivative`, etc. surface as `#[derive(BitFlags, ...)]`
+  // attributes; the import gets filtered upstream but the derive
+  // attribute remains and cargo errors with "cannot find derive macro".
+  // Strip these identifiers from the derive list, leaving other derives
+  // (Clone, Copy, Debug, etc.) untouched.
+  source = stripFilteredDeriveIdentifiers(source, ["BitFlags", "Derivative"]);
   // G1 — rewrite Solana hash helper calls to vendored anvil_* shapes
   // that work in no_std/Pinocchio via sha2/sha3 crates. The emitter
   // injects the helpers when needed.
