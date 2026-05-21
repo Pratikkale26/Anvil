@@ -1753,7 +1753,14 @@ export abstract class BaseEmitter {
     }
 
     if (sections.length === 1) return "";
-    return `//! Helper functions for ${toPascalCase(ir.name)}\n\n` + sections.join("\n\n");
+    let joined = sections.join("\n\n");
+    // G80 — add `<'info>` generic to helper fns whose signatures reference
+    // 'info but don't declare it (Native target only — Pinocchio's
+    // AccountInfo is lifetime-free).
+    if (this.frameworkName === "Native") {
+      joined = addInfoLifetimeIfReferenced(joined);
+    }
+    return `//! Helper functions for ${toPascalCase(ir.name)}\n\n` + joined;
   }
 
   /**
@@ -4780,6 +4787,72 @@ function rewriteBareResultAlias(src: string): string {
  * `target`: "pin" produces `AccountInfo` (no lifetime), "native"
  * produces `AccountInfo<'info>` (matches solana_program shape).
  */
+/** G80 — add `<'info>` generic to fn declarations that reference 'info
+ * in their signature/body but don't declare it. Anchor source's helpers
+ * (drift's `liquidation_liquidate_perp_with_fill(... &AccountInfo<'info> ...)`)
+ * inherit the surrounding impl's `<'info>` generic; after Anvil flattens
+ * to a free fn, the lifetime is unbound. Native target hits this hard
+ * because AccountInfo carries an explicit lifetime; Pinocchio's
+ * AccountInfo is lifetime-free so this is a no-op there.
+ */
+export function addInfoLifetimeIfReferenced(text: string): string {
+  if (!text.includes("'info")) return text;
+  // Match `pub(...) fn NAME(...)` or `pub fn NAME(...)` or `fn NAME(...)`.
+  // Walk every match; for each, find the matching close-paren of args, then
+  // check if the fn's sig/body uses 'info and the generic isn't declared.
+  let out = "";
+  let i = 0;
+  const re = /\b(pub(?:\s*\([^)]*\))?\s+|pub\s+|\b)(fn\s+)(\w+)(<[^>]*>)?\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const start = m.index;
+    const beforeFn = m[1] ?? "";
+    const fnKw = m[2] ?? "";
+    const fnName = m[3] ?? "";
+    const generics = m[4] ?? "";
+    const openParenIdx = m.index + m[0].length - 1;
+    // Brace-walk to matching close paren of args.
+    let depth = 1;
+    let endParen = -1;
+    for (let j = openParenIdx + 1; j < text.length; j++) {
+      const ch = text[j];
+      if (ch === "(") depth++;
+      else if (ch === ")") { depth--; if (depth === 0) { endParen = j; break; } }
+    }
+    if (endParen < 0) continue;
+    // Walk forward to the fn body or `;`.
+    let bodyEnd = endParen + 1;
+    let braceDepth = 0;
+    let foundOpen = false;
+    for (let j = endParen + 1; j < text.length; j++) {
+      const ch = text[j];
+      if (ch === "{") { foundOpen = true; braceDepth++; }
+      else if (ch === "}") { braceDepth--; if (foundOpen && braceDepth === 0) { bodyEnd = j + 1; break; } }
+      else if (ch === ";" && !foundOpen && braceDepth === 0) { bodyEnd = j + 1; break; }
+    }
+    const fullFn = text.slice(start, bodyEnd);
+    if (!/'info\b/.test(fullFn)) {
+      out += text.slice(i, bodyEnd);
+      i = bodyEnd;
+      continue;
+    }
+    if (generics && /'info\b/.test(generics)) {
+      out += text.slice(i, bodyEnd);
+      i = bodyEnd;
+      continue;
+    }
+    // Replace the fn declaration to include <'info>.
+    const newGenerics = generics
+      ? generics.replace(/^</, "<'info, ")
+      : "<'info>";
+    const newDecl = `${beforeFn}${fnKw}${fnName}${newGenerics}(`;
+    out += text.slice(i, start) + newDecl + text.slice(openParenIdx + 1, bodyEnd);
+    i = bodyEnd;
+  }
+  out += text.slice(i);
+  return out;
+}
+
 export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"): string {
   const ai = target === "pin" ? "AccountInfo" : "AccountInfo<'info>";
   const aiRef = target === "pin" ? "&AccountInfo" : "&AccountInfo<'info>";
