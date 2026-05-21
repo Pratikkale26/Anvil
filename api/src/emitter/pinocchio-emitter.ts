@@ -2795,6 +2795,12 @@ ${writeLines}
     // strategy as the unsalvageable-helper commentout — keeps the file
     // compile-clean while flagging the manual-port site.
     out = commentOutSolanaProgramInvoke(out);
+    // G64 attempted ctx.accounts/bumps/remaining_accounts commentout
+    // (statement-aware then line-level). Both versions broke brace
+    // balance on multi-line destructuring `let X { ... } = &ctx.accounts;`
+    // patterns. Reverted. Manual port required for surviving ctx.*
+    // references; the body walker handles ctx.accounts.X field-access
+    // shapes but not bare ctx.* value uses.
     // Comment out call sites of Token-2022 extension types that pinocchio
     // can't satisfy. Pinocchio's Cargo.toml does not include `spl_token_2022`
     // (and the crate isn't no_std-compatible), so any source that walks the
