@@ -3506,6 +3506,11 @@ ${fields}
     for (const t of ir.types ?? []) out.add(t.name);
     for (const a of ir.accounts ?? []) out.add(a.name);
     for (const e of ir.errors ?? []) out.add(e.name);
+    // G31b — instruction names are also at crate root post-flatten. Kamino
+    // calls `lending_operations::refresh_reserve(...)` where refresh_reserve
+    // shares a name with the instruction handler. Without this, the path
+    // doesn't collapse and E0433 fires.
+    for (const i of ir.instructions ?? []) out.add(i.name);
     // Constants are raw string declarations; parse out the names.
     for (const c of ir.constants ?? []) {
       const m = c.match(/(?:^|\s)(?:pub\s+)?const\s+(\w+)\s*:/);
