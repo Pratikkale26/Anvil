@@ -1346,6 +1346,20 @@ export abstract class BaseEmitter {
     if (this.referencesTokenInterfaceAccessor(ir)) {
       sections.push(this.emitTokenInterfaceAccessorStub());
     }
+    // G48 — stub `pub enum ErrorCode` with anchor_lang's built-in error
+    // variants when carried code references them. anchor_lang::error::
+    // ErrorCode is a fixed-shape enum with discriminants 1000-3xxx;
+    // common variants used by Anchor-runtime checks are referenced from
+    // user impl/helper bodies (openbook-v2's KeyedAccountReader trait
+    // hits 3 sites). All variants → ProgramError::Custom(code).
+    // GATE: skip when the user's error enum is named ErrorCode (coral-
+    // multisig pattern) — emitting both produces E0659 "ambiguous"
+    // AND the body refs to user variants like `ErrorCode::AlreadyExecuted`
+    // would now resolve to our stub which doesn't have those variants
+    // (E0599). Detect by checking sourceErrorEnumName.
+    if (this.referencesAnchorErrorCode(ir) && this.sourceErrorEnumName(ir) !== "ErrorCode") {
+      sections.push(this.emitAnchorErrorCodeStub());
+    }
     // G27f: stub spl_token_2022::extension::ExtensionType enum with all known
     // variants. Kamino-klend uses ExtensionType variants in a const slice
     // for supported-extension validation. Each program may use a subset;
@@ -1773,6 +1787,99 @@ pub trait ZeroCopy: Discriminator + Owner {}`;
   /**
    * G27a — detect references to anchor_lang's SysInstructions sysvar.
    */
+  /** G48 — detect references to anchor_lang's built-in ErrorCode enum. */
+  protected referencesAnchorErrorCode(ir: SolanaIR): boolean {
+    const RE = /\bErrorCode\s*::/;
+    for (const h of ir.helperFns ?? []) {
+      if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+    }
+    for (const acc of ir.accounts) {
+      for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const t of ir.types ?? []) {
+      for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const ut of ir.userTraits ?? []) if (RE.test(ut)) return true;
+    for (const uti of ir.userTraitImpls ?? []) if (RE.test(uti)) return true;
+    for (const instr of ir.instructions ?? []) {
+      for (const stmt of instr.body ?? []) {
+        if ("code" in stmt && stmt.code && RE.test(stmt.code)) return true;
+        if ("rawCode" in stmt && stmt.rawCode && RE.test(stmt.rawCode)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** G48 — emit a stub `pub enum ErrorCode` mirroring anchor_lang::error::
+   *  ErrorCode's variant list. All variants map to `ProgramError::Custom`
+   *  with anchor_lang's canonical numeric codes. */
+  protected emitAnchorErrorCodeStub(): string {
+    return `// G48 — anchor_lang::error::ErrorCode stub. Carried code uses
+// these variants for runtime checks (account ownership/discriminator
+// validation in particular). Map each to a unique custom code so
+// callers can match by discriminant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ErrorCode {
+    InstructionMissing = 100,
+    InstructionFallbackNotFound = 101,
+    InstructionDidNotDeserialize = 102,
+    InstructionDidNotSerialize = 103,
+    IdlInstructionStub = 1000,
+    IdlInstructionInvalidProgram = 1001,
+    ConstraintMut = 2000,
+    ConstraintHasOne = 2001,
+    ConstraintSigner = 2002,
+    ConstraintRaw = 2003,
+    ConstraintOwner = 2004,
+    ConstraintRentExempt = 2005,
+    ConstraintSeeds = 2006,
+    ConstraintExecutable = 2007,
+    ConstraintState = 2008,
+    ConstraintAssociated = 2009,
+    ConstraintAssociatedInit = 2010,
+    ConstraintClose = 2011,
+    ConstraintAddress = 2012,
+    ConstraintZero = 2013,
+    ConstraintTokenMint = 2014,
+    ConstraintTokenOwner = 2015,
+    ConstraintMintMintAuthority = 2016,
+    ConstraintMintFreezeAuthority = 2017,
+    ConstraintMintDecimals = 2018,
+    ConstraintSpace = 2019,
+    RequireViolated = 2500,
+    RequireEqViolated = 2501,
+    RequireKeysEqViolated = 2502,
+    RequireNeqViolated = 2503,
+    RequireKeysNeqViolated = 2504,
+    RequireGtViolated = 2505,
+    RequireGteViolated = 2506,
+    AccountDiscriminatorAlreadySet = 3000,
+    AccountDiscriminatorNotFound = 3001,
+    AccountDiscriminatorMismatch = 3002,
+    AccountDidNotDeserialize = 3003,
+    AccountDidNotSerialize = 3004,
+    AccountNotEnoughKeys = 3005,
+    AccountNotMutable = 3006,
+    AccountOwnedByWrongProgram = 3007,
+    InvalidProgramId = 3008,
+    InvalidProgramExecutable = 3009,
+    AccountNotSigner = 3010,
+    AccountNotSystemOwned = 3011,
+    AccountNotInitialized = 3012,
+    AccountNotProgramData = 3013,
+    AccountNotAssociatedTokenAccount = 3014,
+    AccountSysvarMismatch = 3015,
+    AccountReallocExceedsLimit = 3016,
+    AccountDuplicateReallocs = 3017,
+    StateInvalidAddress = 4000,
+    Deprecated = 5000,
+}
+impl From<ErrorCode> for ProgramError {
+    fn from(e: ErrorCode) -> Self { ProgramError::Custom(e as u32) }
+}`;
+  }
+
   /** G44 — detect `token_interface::accessor::amount(...)` references. */
   protected referencesTokenInterfaceAccessor(ir: SolanaIR): boolean {
     const RE = /\btoken_interface\s*::\s*accessor\s*::\s*amount\s*\(/;
