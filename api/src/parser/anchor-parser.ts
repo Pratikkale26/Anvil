@@ -432,7 +432,21 @@ export async function parseAnchor(
     }
 
     // ── Parse errors ──
-    const errors = topLevel.errorEnums.flatMap((e) => parseErrorEnum(e.node, e.attrs));
+    // G27c — when source has MULTIPLE `#[error_code] pub enum X { ... }`
+    // declarations, parseErrorEnum independently restarts the code at 6000
+    // for each, producing duplicate codes that cargo rejects with E0081.
+    // Drift has 362 errors across 2+ enums; the first ~12 codes collide.
+    // Dedupe by name (keep first occurrence) and re-number sequentially
+    // from 6000 so the emitted error enum is collision-free.
+    const rawErrors = topLevel.errorEnums.flatMap((e) => parseErrorEnum(e.node, e.attrs));
+    const seenNames = new Set<string>();
+    const dedupedErrors: typeof rawErrors = [];
+    for (const e of rawErrors) {
+      if (seenNames.has(e.name)) continue;
+      seenNames.add(e.name);
+      dedupedErrors.push(e);
+    }
+    const errors = dedupedErrors.map((e, i) => ({ ...e, code: 6000 + i }));
 
     // ── Parse #[event] structs ──
     // Reuse parseAccountDataStruct's field walker since #[event] structs are
