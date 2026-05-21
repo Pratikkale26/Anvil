@@ -1365,9 +1365,18 @@ export abstract class BaseEmitter {
     }
     // G27g — emit user-defined traits at lib.rs scope. Openbook's
     // KeyedAccountReader / AccountReader patterns.
+    // G43 — also push through stripAnchorLangPrefixes + stripAnchorWrappersInCode
+    // so `Result<T>` aliases, AnchorSerialize/Deserialize trait refs, and
+    // anchor_lang::* prefixes get the same rewrites applied to body-level
+    // helpers. Openbook's `pub trait LoadZeroCopy { fn load() -> Result<&T>; }`
+    // hits this — without it the trait declarations cargo-fail at E0107.
     const userTraits = (ir as any).userTraits ?? [];
     if (userTraits.length > 0) {
-      sections.push(`// User-defined traits preserved verbatim from source\n${userTraits.join("\n\n")}`);
+      const target = this.frameworkName === "Pinocchio" ? "pin" : "native";
+      const processed = userTraits.map((ut: string) =>
+        stripAnchorWrappersInCode(stripAnchorLangPrefixes(ut), target),
+      );
+      sections.push(`// User-defined traits preserved verbatim from source\n${processed.join("\n\n")}`);
     }
     if (constants.length > 0) sections.push(constants.join("\n\n"));
     if (types.length > 0) sections.push(this.emitCustomTypes({ ...ir, types }));
@@ -4149,6 +4158,81 @@ export function stripAnchorLangPrefixes(body: string): string {
   // the underlying Borsh traits which are imported by the file prelude.
   out = out.replace(/\bAnchorSerialize\b/g, "BorshSerialize");
   out = out.replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+  // G43 — bare `Result<T>` (1 generic arg) is Anchor's `Result<T> =
+  // std::Result<T, anchor_lang::Error>` alias. After we strip anchor_lang
+  // imports, the alias is gone and `Result<T>` resolves to std::Result
+  // (2 args required) — E0107. Rewrite to `Result<T, ProgramError>` when
+  // the inner depth-0 content has no comma (so we don't break already-
+  // 2-arg uses) and the receiver isn't qualified by `::` or substring
+  // of another identifier. Also skips known user-defined aliases like
+  // MarginfiResult/DriftResult which match `<crate>Result<T>` (no
+  // bare-Result confusion).
+  out = rewriteBareResultAlias(out);
+  return out;
+}
+
+function rewriteBareResultAlias(src: string): string {
+  let out = "";
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    // Find next occurrence of `Result` that isn't part of a longer ident
+    // and isn't qualified by `::`.
+    const idx = src.indexOf("Result", i);
+    if (idx < 0) { out += src.slice(i); break; }
+    out += src.slice(i, idx);
+    const prevChar = idx > 0 ? src[idx - 1] ?? "" : "";
+    const isQualified = src.slice(Math.max(0, idx - 2), idx) === "::";
+    const isPartOfIdent = /[\w]/.test(prevChar);
+    if (isQualified || isPartOfIdent) {
+      out += "Result";
+      i = idx + 6;
+      continue;
+    }
+    // Look for `<...>` immediately after (optional whitespace).
+    let j = idx + 6;
+    while (j < n && /\s/.test(src[j] ?? "")) j++;
+    if (src[j] !== "<") {
+      out += "Result";
+      i = idx + 6;
+      continue;
+    }
+    // Find matching `>` at depth 0, tracking nested `<>` / `()` / `[]`.
+    let depth = 1;
+    let k = j + 1;
+    let topLevelComma = false;
+    while (k < n && depth > 0) {
+      const ch = src[k] ?? "";
+      if (ch === "<") depth++;
+      else if (ch === ">") depth--;
+      else if (ch === "," && depth === 1) topLevelComma = true;
+      else if (ch === "(") {
+        let parenDepth = 1;
+        k++;
+        while (k < n && parenDepth > 0) {
+          if (src[k] === "(") parenDepth++;
+          else if (src[k] === ")") parenDepth--;
+          k++;
+        }
+        continue;
+      }
+      k++;
+    }
+    if (depth !== 0) {
+      out += "Result";
+      i = idx + 6;
+      continue;
+    }
+    if (topLevelComma) {
+      // 2-arg Result — leave alone.
+      out += src.slice(idx, k);
+      i = k;
+      continue;
+    }
+    // Bare Result<T> → Result<T, ProgramError>.
+    out += src.slice(idx, k - 1) + ", ProgramError>";
+    i = k;
+  }
   return out;
 }
 
