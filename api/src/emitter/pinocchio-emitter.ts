@@ -686,10 +686,10 @@ ${arms}
    * The companion call-site commentout pass (postProcessPinocchioRewrites)
    * already excises every consumer of those impls, so emitting the impls
    * themselves only adds compile errors. Skip entirely on pinocchio.
-   * G57 attempts (narrowed by user-type filter) regressed coral
-   * (CLEAN → 3) because the impl From<&AccountMeta> for TransactionAccount
-   * exposes G56's `<x>.is_signer()` rewrite firing on AccountMeta (which
-   * has fields, not methods). Reverted; revisit when G56 is scope-aware.
+   * G60 attempted to narrow by user-type + no-AccountMeta filter — net
+   * cohort regression: kamino +8, marinade +8, raydium +31. The G56
+   * field-to-method rewrite cascades on any impl body with bindings
+   * that share method names with AccountInfo. Reverted.
    */
   override emitUserTraitImpls(_ir: SolanaIR): string {
     return "";
