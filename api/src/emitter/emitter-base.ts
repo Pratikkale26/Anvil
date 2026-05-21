@@ -4654,6 +4654,17 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
     out = out.replace(/(?<=[\w\]])\.is_writable(?!\s*[(\w])/g, ".is_writable()");
     out = out.replace(/(?<=[\w\]])\.is_signer(?!\s*[(\w])/g, ".is_signer()");
     out = out.replace(/(?<=[\w\]])\.executable(?!\s*[(\w])/g, ".executable()");
+    // G58b — Pinocchio Pubkey is `[u8; 32]` type alias (no methods).
+    // Source-level `Pubkey::find_program_address(...)` and
+    // `Pubkey::create_program_address(...)` need to route to standalone
+    // fns at `pinocchio::pubkey::*`. Match bare `Pubkey::` and
+    // `solana_program::pubkey::Pubkey::` qualified shapes. Same rewrite
+    // as in postProcessPinocchioRewrites (instruction-body scope) but
+    // applied here too so carried impl items + helpers get it.
+    out = out.replace(
+      /(?:solana_program\s*::\s*pubkey\s*::\s*)?Pubkey\s*::\s*(find_program_address|create_program_address)\b/g,
+      "pinocchio::pubkey::$1",
+    );
   }
   return out;
 }
