@@ -1227,6 +1227,13 @@ export abstract class BaseEmitter {
     if (this.shouldEmitSlotAlias(ir)) {
       sections.push("// G27e — solana_program::clock::Slot is a u64 alias\npub type Slot = u64;");
     }
+    // G27f: stub spl_token_2022::extension::ExtensionType enum with all known
+    // variants. Kamino-klend uses ExtensionType variants in a const slice
+    // for supported-extension validation. Each program may use a subset;
+    // emit the union of known variants and let cargo type-check.
+    if (this.shouldEmitExtensionTypeStub(ir)) {
+      sections.push(this.emitExtensionTypeStub());
+    }
     // G19b: stub anchor_lang::Error type when carried code references it.
     // Anchor's Error is a struct with chainable builder methods
     // (.with_pubkeys, .with_source, .with_account_name, .with_values, etc).
@@ -1618,6 +1625,62 @@ pub trait ZeroCopy: Discriminator + Owner {}`;
   /**
    * G27a — detect references to anchor_lang's SysInstructions sysvar.
    */
+  /** G27f — detect references to spl_token_2022::extension::ExtensionType. */
+  protected shouldEmitExtensionTypeStub(ir: SolanaIR): boolean {
+    const RE = /\bExtensionType\b/;
+    for (const h of ir.helperFns ?? []) {
+      if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+    }
+    for (const acc of ir.accounts) {
+      for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const t of ir.types ?? []) {
+      for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const c of ir.constants ?? []) if (RE.test(c)) return true;
+    return false;
+  }
+
+  /** Emit ExtensionType stub enum with all known Token-2022 extension variants. */
+  protected emitExtensionTypeStub(): string {
+    return `// G27f — spl_token_2022::extension::ExtensionType stub. Stripped at
+// import time (no anchor_spl on target); carried code uses variants
+// directly. Emit the union of known SPL Token-2022 extension types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum ExtensionType {
+    Uninitialized = 0,
+    TransferFeeConfig = 1,
+    TransferFeeAmount = 2,
+    MintCloseAuthority = 3,
+    ConfidentialTransferMint = 4,
+    ConfidentialTransferAccount = 5,
+    DefaultAccountState = 6,
+    ImmutableOwner = 7,
+    MemoTransfer = 8,
+    NonTransferable = 9,
+    InterestBearingConfig = 10,
+    CpiGuard = 11,
+    PermanentDelegate = 12,
+    NonTransferableAccount = 13,
+    TransferHook = 14,
+    TransferHookAccount = 15,
+    ConfidentialTransferFeeConfig = 16,
+    ConfidentialTransferFeeAmount = 17,
+    MetadataPointer = 18,
+    TokenMetadata = 19,
+    GroupPointer = 20,
+    TokenGroup = 21,
+    GroupMemberPointer = 22,
+    TokenGroupMember = 23,
+    ScaledUiAmount = 24,
+    Pausable = 25,
+    PausableAccount = 26,
+    ScaledUiAmountConfig = 27,
+    PausableConfig = 28,
+}`;
+  }
+
   /** G27e — detect references to solana_program::clock::Slot (a u64 alias). */
   protected shouldEmitSlotAlias(ir: SolanaIR): boolean {
     // Match `Slot` as a TYPE position (parameter, field, return). Skip
