@@ -2727,6 +2727,14 @@ ${writeLines}
       /(?:anchor_lang\s*::\s*)?solana_program\s*::\s*program\s*::\s*(set_return_data|get_return_data)\b/g,
       "pinocchio::program::$1",
     );
+    // G52 — solana_program::log::sol_log_data → pinocchio::log::sol_log_data.
+    // Openbook-v2's emit_stack helper logs serialized event payloads via
+    // sol_log_data; the source uses `anchor_lang::solana_program::log::...`
+    // which after anchor_lang strip becomes `solana_program::log::...`.
+    out = out.replace(
+      /(?:anchor_lang\s*::\s*)?solana_program\s*::\s*log\s*::\s*(sol_log|sol_log_data|sol_log_64|sol_log_compute_units|sol_log_slice)\b/g,
+      "pinocchio::log::$1",
+    );
     // Comment out `solana_program::program::invoke{,_signed}` direct calls
     // and the typed `let X: Instruction` setup that feeds them. pinocchio
     // exposes neither solana_program::Instruction nor solana_program's CPI

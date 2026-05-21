@@ -1360,6 +1360,9 @@ export abstract class BaseEmitter {
     if (this.referencesAnchorErrorCode(ir) && this.sourceErrorEnumName(ir) !== "ErrorCode") {
       sections.push(this.emitAnchorErrorCodeStub());
     }
+    // G52 attempted Event trait stub + per-struct impl. Significantly
+    // helped raydium (-300) but cascaded openbook (+170) and others.
+    // Reverted; needs targeted scoping to avoid making fixtures worse.
     // G27f: stub spl_token_2022::extension::ExtensionType enum with all known
     // variants. Kamino-klend uses ExtensionType variants in a const slice
     // for supported-extension validation. Each program may use a subset;
@@ -1796,6 +1799,34 @@ pub trait ZeroCopy: Discriminator + Owner {}`;
   /**
    * G27a — detect references to anchor_lang's SysInstructions sysvar.
    */
+  /** G52 — detect references to anchor_lang's Event trait. */
+  protected referencesAnchorEventTrait(ir: SolanaIR): boolean {
+    // Match `T: Event` trait bound or `dyn Event` or `impl Event` shapes.
+    const RE = /:\s*Event\b|<\s*Event\b|\bdyn\s+Event\b|\bimpl\s+Event\b/;
+    for (const h of ir.helperFns ?? []) {
+      if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+    }
+    for (const acc of ir.accounts) {
+      for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const t of ir.types ?? []) {
+      for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const ut of ir.userTraits ?? []) if (RE.test(ut)) return true;
+    for (const uti of ir.userTraitImpls ?? []) if (RE.test(uti)) return true;
+    return false;
+  }
+
+  /** G52 — emit a stub `pub trait Event` mirroring anchor_lang's. */
+  protected emitAnchorEventTraitStub(): string {
+    return `// G52 — anchor_lang::Event trait stub. Carried helpers use the
+// trait bound to gate functions on Borsh-serializable types with an
+// 8-byte discriminator. Matches anchor_lang's public shape.
+pub trait Event: BorshSerialize + BorshDeserialize {
+    const DISCRIMINATOR: [u8; 8];
+}`;
+  }
+
   /** G48 — detect references to anchor_lang's built-in ErrorCode enum. */
   protected referencesAnchorErrorCode(ir: SolanaIR): boolean {
     const RE = /\bErrorCode\s*::/;
