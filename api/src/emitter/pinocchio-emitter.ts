@@ -2089,7 +2089,8 @@ ${invokeCall}
    *  knows how to walk to statement boundaries. */
   protected override carriedFunctionBlock(rawCode: string, ir?: SolanaIR): string {
     const baseOutput = super.carriedFunctionBlock(rawCode, ir);
-    return commentOutT22ExtensionCallSites(baseOutput);
+    const stripped = stripAnchorWrappersInCode(baseOutput, "pin");
+    return commentOutT22ExtensionCallSites(stripped);
   }
 
   override emitDiscriminatorWrite(accountName: string, typeName: string): string {

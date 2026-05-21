@@ -8,6 +8,69 @@
  */
 
 /**
+ * G28 — rewrite `self.<chain>` references in flattened instruction bodies.
+ *
+ * Anchor source has `impl<'info> Initialize<'info> { fn process(&mut self,…)
+ * { …self.state.x = …; self.liq_pool.lp_mint.key()… } }`. Anvil flattens the
+ * impl method body into a top-level instruction handler — `self` no longer
+ * exists, but `self.<field>` references survive.
+ *
+ * Strategy: progressively shorter chain prefixes joined by `_` are tested
+ * against the instruction's known account names. Marinade's composed sub-
+ * Accounts struct `LiqPool { lp_mint, sol_leg_pda,… }` is flattened to
+ * top-level `liq_pool_lp_mint`, `liq_pool_sol_leg_pda`, etc. — so
+ * `self.liq_pool.lp_mint` becomes `liq_pool_lp_mint`, `self.state` becomes
+ * `state`, and `self.state.x` becomes `state.x`.
+ *
+ * Bare `self` as a positional argument (`Foo::process(self, …)`) has no
+ * mechanical rewrite — comment the line with a TODO so the surrounding
+ * code compiles for review.
+ */
+export function rewriteSelfReferences(body: string, accountNames: Set<string>): string {
+  if (accountNames.size === 0) return body;
+  const sortedAccounts = [...accountNames].sort((a, b) => b.length - a.length);
+  let out = body.replace(/\bself((?:\.\w+)+)\b/g, (match, chain: string) => {
+    const parts = chain.slice(1).split(".");
+    // Direct: progressive chain-prefix joined with `_`. Handles plain
+    // `self.state` → `state` and composed `self.liq_pool.lp_mint` →
+    // `liq_pool_lp_mint` (the parser's sub-Accounts flatten naming).
+    for (let n = parts.length; n >= 1; n--) {
+      const candidate = parts.slice(0, n).join("_");
+      if (accountNames.has(candidate)) {
+        const remaining = parts.slice(n);
+        return remaining.length === 0 ? candidate : `${candidate}.${remaining.join(".")}`;
+      }
+    }
+    // Deref fallback: marinade's `impl Deref for UpdateDeactivated { target =
+    // UpdateCommon; fn deref = &self.common }` makes `self.state` resolve to
+    // `self.common.state`. Parser flattens `common.state` to `common_state`,
+    // so look for any account whose name ends with `_<suffix>` for the
+    // longest chain prefix that matches that pattern. Longest-first sort
+    // prevents `_state` from matching `msol_mint_state` over `common_state`
+    // when both are present.
+    for (let n = parts.length; n >= 1; n--) {
+      const suffix = "_" + parts.slice(0, n).join("_");
+      const found = sortedAccounts.find((a) => a.endsWith(suffix) && a.length > suffix.length);
+      if (found) {
+        const remaining = parts.slice(n);
+        return remaining.length === 0 ? found : `${found}.${remaining.join(".")}`;
+      }
+    }
+    return match;
+  });
+  // Bare `self` as positional argument (`Foo::process(self,…)`). Statement
+  // may span multiple lines so commenting one line breaks delimiters.
+  // Substitute the `self` token with an undefined placeholder symbol —
+  // syntactic structure of the call is preserved, cargo surfaces E0425
+  // on the placeholder, user sees the TODO and fixes the call.
+  out = out.replace(/([(,])(\s*)self(\s*)([,)])/g,
+    (_m, before: string, sp1: string, sp2: string, after: string) =>
+      `${before}${sp1}/* TODO: bare 'self' arg — manual port */ __anvil_unported_self__${sp2}${after}`,
+  );
+  return out;
+}
+
+/**
  * Paren-balanced + string-aware msg!() arg extraction. Walks `source`,
  * finds each `msg!(` call site, balances `(...)` accounting for
  * `"..."` literals (with `\\"` escapes), and feeds the contents to

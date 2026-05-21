@@ -92,7 +92,7 @@ import {
   type BodyEmitterCallbacks,
   type Token2022Opts,
 } from "./body-emitter/index.js";
-import { transformHelperCode as transformHelperCodeImpl, rewriteMsgCalls as rewriteMsgCallsImpl } from "./anchor-transforms.js";
+import { transformHelperCode as transformHelperCodeImpl, rewriteMsgCalls as rewriteMsgCallsImpl, rewriteSelfReferences } from "./anchor-transforms.js";
 import { hasResidualAnchorPatterns, hasUnsalvageableHelperSignature, recognizeCpiWrapperHelper, rewriteCpiWrapperCallSites } from "./emitter-helpers.js";
 import {
   commentOutHelperBlock,
@@ -1393,8 +1393,12 @@ export abstract class BaseEmitter {
     // classifier only handles top-level statements). Idempotent on already-
     // rewritten code (the patterns no longer match after first pass).
     const rawBody = this.emitInstructionFunction(instr, ir);
-    const body = rewriteRequireVariantsInCode(
-      rewriteMsgCallsImpl(rawBody, (m: string) => this.emitMsg(m)),
+    const accountNames = new Set(instr.accounts.map((a) => snakeCase(a.name)));
+    const body = rewriteSelfReferences(
+      rewriteRequireVariantsInCode(
+        rewriteMsgCallsImpl(rawBody, (m: string) => this.emitMsg(m)),
+      ),
+      accountNames,
     );
     // Per-instruction body-level imports for symbols that lib.rs-only
     // `use` statements don't reach. `use super::*;` resolves to

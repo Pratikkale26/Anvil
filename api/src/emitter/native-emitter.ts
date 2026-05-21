@@ -496,7 +496,8 @@ use solana_program::{
    *  arjun-merkle-tree (Native). */
   protected override carriedFunctionBlock(rawCode: string, ir?: SolanaIR): string {
     const baseOutput = super.carriedFunctionBlock(rawCode, ir);
-    return applyT22ExtensionCommentout(baseOutput, {
+    const stripped = stripAnchorWrappersInCode(baseOutput, "native");
+    return applyT22ExtensionCommentout(stripped, {
       typeBlacklist: NATIVE_T22_TYPE_BLACKLIST,
       fnBlacklist: NATIVE_T22_FN_BLACKLIST,
       matchDataBorrow: false,
