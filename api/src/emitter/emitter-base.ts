@@ -4640,6 +4640,20 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
       const re = new RegExp(`(?<![*&.])\\b${ident}\\s*\\.\\s*pubkey\\b(?!\\s*[(=])`, "g");
       out = out.replace(re, `*${ident}.pubkey`);
     }
+    // G56 — Pinocchio AccountInfo exposes key/owner/lamports/is_signer/
+    // is_writable/executable as METHODS, not fields. Anchor source treats
+    // them as fields. Rewrite `<x>.key` → `<x>.key()`, etc. Same pattern
+    // the postProcessPinocchioRewrites pass applies to instruction bodies,
+    // but extended here so carried impl items + helper fn bodies +
+    // userTraits/userTraitImpls also get the rewrite (was missing —
+    // marginfi/kamino/openbook hit this on dozens of sites).
+    // Skip when next char is `(` (already a call) or `\w` (longer ident).
+    out = out.replace(/\b(\w+)\.key(?!\s*[(\w])/g, "$1.key()");
+    out = out.replace(/\b(\w+)\.owner(?!\s*[(\w])/g, "$1.owner()");
+    out = out.replace(/\b(\w+)\.lamports(?!\s*[(\w])/g, "$1.lamports()");
+    out = out.replace(/\b(\w+)\.is_writable(?!\s*[(\w])/g, "$1.is_writable()");
+    out = out.replace(/\b(\w+)\.is_signer(?!\s*[(\w])/g, "$1.is_signer()");
+    out = out.replace(/\b(\w+)\.executable(?!\s*[(\w])/g, "$1.executable()");
   }
   return out;
 }

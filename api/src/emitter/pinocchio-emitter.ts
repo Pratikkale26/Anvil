@@ -2798,6 +2798,9 @@ ${writeLines}
       /\b(\w+)\.executable(?!\s*[(\w])/g,
       "$1.executable()",
     );
+    // G56 — key/owner/lamports field-to-method rewrites moved to
+    // stripAnchorWrappersInCode (emitter-base) so they fire on carried
+    // impl items + helpers + userTraits, not just instruction bodies.
     // task #41 — Pinocchio's Pubkey is [u8; 32] (a type alias). The
     // parser-level `expandPubkeyMacro` rewrites `pubkey!("base58")` to
     // `Pubkey::new_from_array([N, N, ...])` which works on solana-program
