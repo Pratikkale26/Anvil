@@ -3516,6 +3516,24 @@ export function emitNativeFull(ir: SolanaIR) {
  * conflict source). Other crates pass through unchanged.
  */
 function dedupImports(joined: string): string {
+  // G38 — generic line-level dedup pass first. Catches duplicate full-line
+  // `use ... as Alias;` imports (e.g. `solana_program::sysvar::instructions::
+  // Instructions as SysInstructions` emitted twice by source-filter +
+  // auto-import) and any other identical `use` line. The structural pass
+  // below handles per-leaf collapsing within `solana_program::{ ... }`.
+  {
+    const seenLines = new Set<string>();
+    const out: string[] = [];
+    for (const rawLine of joined.split("\n")) {
+      const trimmed = rawLine.trim();
+      if (/^use\s+/.test(trimmed)) {
+        if (seenLines.has(trimmed)) continue;
+        seenLines.add(trimmed);
+      }
+      out.push(rawLine);
+    }
+    joined = out.join("\n");
+  }
   // Fast path: if there's only one `use solana_program::` import (the
   // most common case), no dedup is possible — pass through unchanged so
   // existing single-import-block snapshots stay byte-identical.

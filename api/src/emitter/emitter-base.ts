@@ -1091,6 +1091,52 @@ export abstract class BaseEmitter {
         // is stripped (drift exploded 19 -> 1242 in trial).
         if (/\bserum_dex::/.test(statement) || /^use\s+serum_dex(?:::|;)/.test(statement)) return false;
         if (/^use\s+num_integer(?:::|;)/.test(statement)) return false;
+        // G39 — openbook-v2 long-tail external crates not in either scaffold.
+        // default_env (CI build-time env helper), itertools (iterator
+        // extensions), switchboard_program / switchboard_solana (Switchboard
+        // SDK variants), market_seeds (openbook-internal macro_rules! re-
+        // export). All surface as E0432 in openbook-v2's flattened lib.rs.
+        if (/\bdefault_env::/.test(statement) || /^use\s+default_env(?:::|;)/.test(statement)) return false;
+        if (/\bitertools::/.test(statement) || /^use\s+itertools(?:::|;)/.test(statement)) return false;
+        if (/\bswitchboard_program::/.test(statement) || /^use\s+switchboard_program(?:::|;)/.test(statement)) return false;
+        if (/\bswitchboard_solana::/.test(statement) || /^use\s+switchboard_solana(?:::|;)/.test(statement)) return false;
+        // market_seeds is openbook-v2's `macro_rules! market_seeds!` exposed
+        // via `pub(crate) use market_seeds;` at the crate root. After the
+        // macro_rules! pass comments out the definition body, the
+        // `pub(crate) use` re-export points at nothing — drop it explicitly.
+        if (/^pub(?:\(\s*\w+(?:::\w+)*\s*\))?\s+use\s+market_seeds\s*;?$/.test(statement.trim())) return false;
+        if (/^use\s+market_seeds(?:::|;)/.test(statement)) return false;
+        // Same shape for openbook's `for_named_field` / `ctx_event_emitter`
+        // helper-macro re-exports. They're brought in via macro_rules! in
+        // the source tree; macro_rules! pass removes the definition, the
+        // `pub(crate) use` lines remain orphaned.
+        if (/^pub(?:\(\s*\w+(?:::\w+)*\s*\))?\s+use\s+for_named_field\s*;?$/.test(statement.trim())) return false;
+        if (/^pub(?:\(\s*\w+(?:::\w+)*\s*\))?\s+use\s+ctx_event_emitter\s*;?$/.test(statement.trim())) return false;
+        // num_enum is in NATIVE_OPTIONAL_DEPS but NOT PINOCCHIO_OPTIONAL_DEPS.
+        // On Native, keep the import — scaffold's extractUsedCrates picks
+        // num_enum from the textual `num_enum::` reference and adds the
+        // matching Cargo.toml entry. On Pinocchio the crate isn't available;
+        // the import would be dropped here anyway as E0432. We leave it in
+        // both targets to surface the gap explicitly — derives like
+        // TryFromPrimitive remain unresolved on Pinocchio (separate fix).
+        // kamino-klend long-tail: strum (string-enum derives) and the bare
+        // bitflags re-export. Neither is in scaffold. Body usages already
+        // commented by the unsalvageable-helper passthrough pass.
+        if (/^use\s+strum(?:::|;)/.test(statement)) return false;
+        if (/^use\s+bitflags(?:::|;)/.test(statement)) return false;
+        // G40 — `borsh::BorshSchema` is borsh's schema-derive trait, used
+        // for IDL generation (Anchor's `#[derive(BorshSchema)]`). The
+        // borsh crate ships it only with the `schema` feature, which we
+        // don't enable — drop the import. Body usages have already been
+        // stripped via stripFilteredDeriveIdentifiers if present.
+        if (/^use\s+borsh::BorshSchema\s*;?$/.test(statement.trim())) return false;
+        // G40 — `solana_program::native_token::LAMPORTS_PER_SOL` is a u64
+        // constant (1_000_000_000). Pinocchio doesn't ship native_token,
+        // so when carried code references the bare constant, rewrite at
+        // emit time. The reference rewrite happens inline in
+        // body-emit; here we just keep the source `use` line live where
+        // applicable (Native: scaffold has solana-program; Pinocchio: drop).
+        if (!isNative && /^use\s+solana_program::native_token(?:::|;)/.test(statement)) return false;
         // G34 — marginfi-v2 / mango-v4 external sibling-crate mocks
         // (kamino_mocks/drift_mocks/juplend_mocks: test-only mock CPIs)
         // and pyth_solana_receiver_sdk. Body refs get the unsalvageable-
@@ -1249,21 +1295,36 @@ export abstract class BaseEmitter {
     // when carried code references it. Common in lending / margin programs that
     // verify the instruction-sysvar account against SysInstructions::id().
     // Returns the well-known sysvar pubkey verbatim.
-    if (this.shouldEmitSysInstructionsStub(ir)) {
+    // G38 — skip on Native since the native emitter auto-imports
+    // `solana_program::sysvar::instructions::Instructions as SysInstructions`.
+    if (this.shouldEmitSysInstructionsStub(ir) && this.frameworkName !== "Native") {
       sections.push(this.emitSysInstructionsStub());
     }
     // G27e: stub solana_program::clock::Slot when referenced. Slot is a
     // u64 type alias in solana_program. Carried code uses it as parameter
     // / field type — kamino's `pub fn new(slot: Slot)`. Drop a
     // `pub type Slot = u64;` so references resolve.
-    if (this.shouldEmitSlotAlias(ir)) {
+    // G38 — skip on Native since the native emitter auto-imports
+    // `solana_program::clock::Slot`.
+    if (this.shouldEmitSlotAlias(ir) && this.frameworkName !== "Native") {
       sections.push("// G27e — solana_program::clock::Slot is a u64 alias\npub type Slot = u64;");
+    }
+    // G40 — stub `LAMPORTS_PER_SOL` constant on Pinocchio. The constant
+    // lives in `solana_program::native_token::LAMPORTS_PER_SOL = 10^9`;
+    // pinocchio doesn't ship `solana_program`, but the value is universal.
+    // Carried bodies reference it bare (e.g. marinade's `5 * LAMPORTS_PER_SOL`).
+    if (this.frameworkName !== "Native" && this.referencesLamportsPerSol(ir)) {
+      sections.push("// G40 — solana_program::native_token::LAMPORTS_PER_SOL\npub const LAMPORTS_PER_SOL: u64 = 1_000_000_000;");
     }
     // G27f: stub spl_token_2022::extension::ExtensionType enum with all known
     // variants. Kamino-klend uses ExtensionType variants in a const slice
     // for supported-extension validation. Each program may use a subset;
     // emit the union of known variants and let cargo type-check.
-    if (this.shouldEmitExtensionTypeStub(ir)) {
+    // G38 — skip on Native target since the upstream Cargo.toml ships
+    // spl_token_2022 and the native emitter auto-imports
+    // `spl_token_2022::extension::ExtensionType`. Emitting both an `use`
+    // line and a local stub triggers E0255 (drift / kamino / raydium).
+    if (this.shouldEmitExtensionTypeStub(ir) && this.frameworkName !== "Native") {
       sections.push(this.emitExtensionTypeStub());
     }
     // G19b: stub anchor_lang::Error type when carried code references it.
@@ -1671,6 +1732,28 @@ pub trait ZeroCopy: Discriminator + Owner {}`;
   /**
    * G27a — detect references to anchor_lang's SysInstructions sysvar.
    */
+  /** G40 — detect references to LAMPORTS_PER_SOL (sun, sol, lamport math). */
+  protected referencesLamportsPerSol(ir: SolanaIR): boolean {
+    const RE = /\bLAMPORTS_PER_SOL\b/;
+    for (const h of ir.helperFns ?? []) {
+      if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+    }
+    for (const acc of ir.accounts) {
+      for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const t of ir.types ?? []) {
+      for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const c of ir.constants ?? []) if (RE.test(c)) return true;
+    for (const instr of ir.instructions ?? []) {
+      for (const stmt of instr.body ?? []) {
+        if ("code" in stmt && stmt.code && RE.test(stmt.code)) return true;
+        if ("rawCode" in stmt && stmt.rawCode && RE.test(stmt.rawCode)) return true;
+      }
+    }
+    return false;
+  }
+
   /** G27f — detect references to spl_token_2022::extension::ExtensionType. */
   protected shouldEmitExtensionTypeStub(ir: SolanaIR): boolean {
     const RE = /\bExtensionType\b/;
@@ -3572,6 +3655,12 @@ ${fields}
       const knownNames = this.collectKnownTopLevelNames(ir);
       transformed = collapseModulePaths(transformed, knownNames);
     }
+    // G40 — strip anchor_lang prefixes + rewrite `source!()` → `()` +
+    // rewrite AnchorSerialize/AnchorDeserialize → Borsh equivalents in
+    // carried helper bodies. Previously only impl-items got this treatment;
+    // helpers.rs (which holds the marinade `check_*` helpers chain) needs
+    // it too.
+    transformed = stripAnchorLangPrefixes(transformed);
     // Check the *transformed* code for residual Anchor patterns — the transform
     // may have cleaned up everything that was originally Anchor-specific.
     if (!hasResidualAnchorPatterns(transformed)) {
@@ -3997,9 +4086,22 @@ function firstStrayCloseBrace(src: string): number {
 export function stripAnchorLangPrefixes(body: string): string {
   // Order matters: handle the more-specific `anchor_lang::prelude::` first
   // so we don't half-strip and leave `prelude::` orphaned.
-  return body
+  let out = body
     .replace(/\banchor_lang\s*::\s*prelude\s*::\s*/g, "")
     .replace(/\banchor_lang\s*::\s*/g, "");
+  // G40 — Anchor's `source!()` macro captures file/line/column for error
+  // attribution. Marinade chains it via `.with_source(source!())?`. The
+  // G19b Error stub's `with_source<T>(_arg: T)` accepts any value, so just
+  // substitute `()` for the macro call. Cargo type-checks; runtime is
+  // identical (no error attribution surfaces in the emitted target).
+  out = out.replace(/\bsource\s*!\s*\(\s*\)/g, "()");
+  // G40 — `AnchorSerialize` / `AnchorDeserialize` are anchor_lang re-
+  // exports of Borsh's `BorshSerialize` / `BorshDeserialize`. The trait-
+  // position references survive the anchor_lang strip; rewrite them to
+  // the underlying Borsh traits which are imported by the file prelude.
+  out = out.replace(/\bAnchorSerialize\b/g, "BorshSerialize");
+  out = out.replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+  return out;
 }
 
 /**
@@ -4072,6 +4174,31 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
     out = out.replace(/\bAccountInfo\s*<\s*'[a-zA-Z_]\w*\s*>/g, "AccountInfo");
   } else {
     out = out.replace(/\bAccountInfo\s*<\s*'[a-zA-Z_]\w*\s*>/g, "AccountInfo<'info>");
+  }
+  // G37 — Pinocchio's `pinocchio::instruction::AccountMeta<'a>` carries
+  // `pub pubkey: &'a Pubkey` (a reference), whereas solana_program's
+  // `AccountMeta` has `pub pubkey: Pubkey` directly. User code carried
+  // through unchanged (e.g. `impl From<&AccountMeta> for TransactionAccount`)
+  // reads `account_meta.pubkey` expecting a value; the field assignment
+  // `pubkey: account_meta.pubkey` then fails E0308 mismatched types
+  // (`&[u8; 32]` vs `[u8; 32]`). Scan parameter signatures for bindings
+  // typed `&AccountMeta` and prepend a deref to their `.pubkey` reads.
+  // Coral-multisig hit this; same shape will appear anywhere user code
+  // converts between AccountMeta and a custom struct.
+  if (target === "pin") {
+    const accountMetaParamRe = /\b(\w+)\s*:\s*&\s*(?:'\w+\s+)?AccountMeta\b/g;
+    const idents = new Set<string>();
+    let m: RegExpExecArray | null;
+    while ((m = accountMetaParamRe.exec(out)) !== null) {
+      if (m[1]) idents.add(m[1]);
+    }
+    for (const ident of idents) {
+      // Rewrite `<ident>.pubkey` → `*<ident>.pubkey` only when the access
+      // is a plain field read (not already deref'd, not the LHS of an `=`,
+      // not the receiver of a `.method()` chain).
+      const re = new RegExp(`(?<![*&.])\\b${ident}\\s*\\.\\s*pubkey\\b(?!\\s*[(=])`, "g");
+      out = out.replace(re, `*${ident}.pubkey`);
+    }
   }
   return out;
 }

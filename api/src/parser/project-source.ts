@@ -2113,7 +2113,10 @@ function buildFlattenedSource(
   // attribute remains and cargo errors with "cannot find derive macro".
   // Strip these identifiers from the derive list, leaving other derives
   // (Clone, Copy, Debug, etc.) untouched.
-  source = stripFilteredDeriveIdentifiers(source, ["BitFlags", "Derivative"]);
+  // BorshSchema requires borsh's `schema` feature (off by default).
+  // Marinade's `#[derive(BorshSchema, ...)]` triggers E0405 / E0432
+  // without it; the schema impl is IDL-generation-only, runtime-irrelevant.
+  source = stripFilteredDeriveIdentifiers(source, ["BitFlags", "Derivative", "BorshSchema"]);
   // G1 — rewrite Solana hash helper calls to vendored anvil_* shapes
   // that work in no_std/Pinocchio via sha2/sha3 crates. The emitter
   // injects the helpers when needed.
