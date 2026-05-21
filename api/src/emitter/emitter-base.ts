@@ -1097,6 +1097,11 @@ export abstract class BaseEmitter {
         if (/\bpyth_sdk_solana::/.test(statement) || /^use\s+pyth_sdk_solana(?:::|;)/.test(statement)) return false;
         if (/\bswitchboard_v1_devnet_oracle::/.test(statement) || /^use\s+switchboard_v1_devnet_oracle(?:::|;)/.test(statement)) return false;
         if (/\bswitchboard_v2_mainnet_oracle::/.test(statement) || /^use\s+switchboard_v2_mainnet_oracle(?:::|;)/.test(statement)) return false;
+        // G81 attempt: filter bare `use switchboard::*`, `use prelude::*`,
+        // `use perp_lp_pool_settlement::*` reverted. The wildcard re-
+        // exports become unresolved everywhere they're referenced. Same
+        // explosion G30's commentary predicted. 4 imports vs ~1156 errors —
+        // accept the 4-import surface.
         // G30 — drift long-tail. serum_dex is a DEX integration crate
         // drift no longer ships; num_integer is an extra math crate.
         // Filter only these two — NOT local sub-modules like prelude /
