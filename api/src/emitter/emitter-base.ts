@@ -1316,6 +1316,15 @@ export abstract class BaseEmitter {
     if (this.frameworkName !== "Native" && this.referencesLamportsPerSol(ir)) {
       sections.push("// G40 — solana_program::native_token::LAMPORTS_PER_SOL\npub const LAMPORTS_PER_SOL: u64 = 1_000_000_000;");
     }
+    // G43 — Anchor's Result<T> alias (= std::Result<T, anchor_lang::Error>)
+    // SHOULD be stubbed when carried code references `Result<T>` (1 arg)
+    // after we strip anchor_lang prelude. Tried emitting
+    // `pub type Result<T> = core::result::Result<T, ProgramError>;` but it
+    // conflicts with user code that already passes 2 args (`Result<T, E>`)
+    // since the alias takes exactly 1. Per-callsite text rewrite of
+    // `Result<T>` (no comma at depth 0) is feasible but risks user-defined
+    // type aliases (MarginfiResult, DriftResult, …) that already alias
+    // single-arg Result correctly. Left as TODO for future scope-aware fix.
     // G27f: stub spl_token_2022::extension::ExtensionType enum with all known
     // variants. Kamino-klend uses ExtensionType variants in a const slice
     // for supported-extension validation. Each program may use a subset;
@@ -1732,6 +1741,28 @@ pub trait ZeroCopy: Discriminator + Owner {}`;
   /**
    * G27a — detect references to anchor_lang's SysInstructions sysvar.
    */
+  /** G43 — detect bare `Result<T>` references in carried code that would
+   *  resolve to std::Result (2-arg) instead of Anchor's 1-arg alias. */
+  protected referencesBareResultAlias(ir: SolanaIR): boolean {
+    // Match `Result<T>` where T is a single type parameter (no `,` at
+    // depth 0). Skip `::Result<...>` (already-qualified) and `Result<,>`.
+    const RE = /(?<![:\w])\bResult\s*<\s*[^,<>]+\s*>/;
+    // Also match Result<&T> / Result<RefMut<T>> via inner-balanced check —
+    // the simple "no comma at top" version above already covers these.
+    for (const ut of ir.userTraits ?? []) if (RE.test(ut)) return true;
+    for (const uti of ir.userTraitImpls ?? []) if (RE.test(uti)) return true;
+    for (const h of ir.helperFns ?? []) {
+      if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+    }
+    for (const acc of ir.accounts) {
+      for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const t of ir.types ?? []) {
+      for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+    }
+    return false;
+  }
+
   /** G40 — detect references to LAMPORTS_PER_SOL (sun, sol, lamport math). */
   protected referencesLamportsPerSol(ir: SolanaIR): boolean {
     const RE = /\bLAMPORTS_PER_SOL\b/;

@@ -493,7 +493,23 @@ export class PinocchioEmitter extends BaseEmitter {
         s.kind === 'cpi_pyth_read_price_modern' ||
         (s.kind === 'cpi_switchboard_read_feed' && s.maxStalenessSlots != null)
       )
-    ) || bodyTextHasPattern(/\bClock::get\(\)/);
+    ) || bodyTextHasPattern(/\bClock::get\(\)/) || (() => {
+      // G43 — Clock referenced as a TYPE in carried impl items + helper
+      // signatures (marinade's `pub fn new(... clock: &Clock, ...)`).
+      // Match bare `Clock` followed by space/comma/close-paren/`>` so we
+      // don't false-fire on identifiers containing "Clock" as substring.
+      const RE = /\b(?:&\s*)?Clock\b(?!\s*::\s*\w)/;
+      for (const h of _ir.helperFns ?? []) {
+        if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+      }
+      for (const acc of _ir.accounts) {
+        for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+      }
+      for (const t of _ir.types ?? []) {
+        for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+      }
+      return false;
+    })();
     const needsRent = _ir.instructions.some(i =>
       i.body.some(s => s.kind === 'sysvar_rent') ||
       // Realloc prelude (emitReallocPrelude in emitter-base) calls
