@@ -853,10 +853,38 @@ export function neutralizeUnsupportedMacros(source: string): string {
     if (stubMatch?.[1] && stubMatch[2]) {
       const name = stubMatch[1];
       const n = parseInt(stubMatch[2], 10);
+      // G69 — extend stub with From<u128>/From<u64> conversions, basic
+      // arithmetic impls, and as_u128/as_u64 accessors. Lets carried
+      // bodies that use `U128::from(value)` and `<u128>` arithmetic
+      // resolve at type level. Real math semantics still need a proper
+      // bigint impl; raydium/openbook bodies that compute with these
+      // types will run with wrapping low-64-bit arithmetic — not
+      // correct but compile-clean.
+      const wordsExpr = (val: string) => {
+        if (n === 2) return `[${val} as u64, (${val} >> 64) as u64]`;
+        // 4/8/etc — initialize first word, zero the rest.
+        const zeros = Array(n - 1).fill("0").join(", ");
+        return `{ let v = ${val}; let mut arr = [0u64; ${n}]; arr[0] = v as u64; arr[1] = (v >> 64) as u64; arr }`;
+      };
       constructUintStubs.push(
-        `// Anvil-stubbed: construct_uint!{ ${name}(${n}) } — type-only stub; method calls require manual port\n` +
-        `#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, BorshSerialize, BorshDeserialize)]\n` +
-        `pub struct ${name}(pub [u64; ${n}]);`,
+        `// Anvil-stubbed: construct_uint!{ ${name}(${n}) } — type stub + From/arith\n` +
+        `// approximation. Use raydium-style as_u128()/as_u64() and From<u128>.\n` +
+        `#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, BorshSerialize, BorshDeserialize)]\n` +
+        `pub struct ${name}(pub [u64; ${n}]);\n` +
+        `impl ${name} {\n` +
+        `    pub const MAX: ${name} = ${name}([u64::MAX; ${n}]);\n` +
+        `    pub const ZERO: ${name} = ${name}([0; ${n}]);\n` +
+        `    pub fn is_zero(&self) -> bool { self.0.iter().all(|x| *x == 0) }\n` +
+        `    pub fn as_u128(&self) -> u128 { (self.0[0] as u128) | ((self.0[1] as u128) << 64) }\n` +
+        `    pub fn as_u64(&self) -> u64 { self.0[0] }\n` +
+        `}\n` +
+        `impl From<u128> for ${name} { fn from(v: u128) -> Self { ${name}(${wordsExpr("v")}) } }\n` +
+        `impl From<u64> for ${name} { fn from(v: u64) -> Self { Self::from(v as u128) } }\n` +
+        `impl From<u32> for ${name} { fn from(v: u32) -> Self { Self::from(v as u128) } }\n` +
+        `impl core::ops::Mul for ${name} { type Output = Self; fn mul(self, rhs: Self) -> Self { Self::from(self.as_u128().wrapping_mul(rhs.as_u128())) } }\n` +
+        `impl core::ops::Add for ${name} { type Output = Self; fn add(self, rhs: Self) -> Self { Self::from(self.as_u128().wrapping_add(rhs.as_u128())) } }\n` +
+        `impl core::ops::Sub for ${name} { type Output = Self; fn sub(self, rhs: Self) -> Self { Self::from(self.as_u128().wrapping_sub(rhs.as_u128())) } }\n` +
+        `impl core::ops::Div for ${name} { type Output = Self; fn div(self, rhs: Self) -> Self { Self::from(self.as_u128().checked_div(rhs.as_u128()).unwrap_or(0)) } }`,
       );
     }
   }
