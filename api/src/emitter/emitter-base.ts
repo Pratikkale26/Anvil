@@ -1192,6 +1192,13 @@ export abstract class BaseEmitter {
     if (programIdConst) {
       sections.push(programIdConst);
     }
+    // G27a: stub anchor_lang::solana_program::sysvar::instructions::SysInstructions
+    // when carried code references it. Common in lending / margin programs that
+    // verify the instruction-sysvar account against SysInstructions::id().
+    // Returns the well-known sysvar pubkey verbatim.
+    if (this.shouldEmitSysInstructionsStub(ir)) {
+      sections.push(this.emitSysInstructionsStub());
+    }
     // G19b: stub anchor_lang::Error type when carried code references it.
     // Anchor's Error is a struct with chainable builder methods
     // (.with_pubkeys, .with_source, .with_account_name, .with_values, etc).
@@ -1580,6 +1587,51 @@ pub trait ZeroCopy: Discriminator + Owner {}`;
    * Depth-aware split on `,` (parens/brackets/angles tracked), then per-
    * param trim everything after the first `:` at depth 0.
    */
+  /**
+   * G27a — detect references to anchor_lang's SysInstructions sysvar.
+   */
+  protected shouldEmitSysInstructionsStub(ir: SolanaIR): boolean {
+    const RE = /\bSysInstructions\b/;
+    for (const h of ir.helperFns ?? []) {
+      if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+    }
+    for (const acc of ir.accounts) {
+      for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const t of ir.types ?? []) {
+      for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const ix of ir.instructions ?? []) {
+      for (const stmt of ix.body ?? []) {
+        const code = (stmt as any).code;
+        if (typeof code === "string" && RE.test(code)) return true;
+      }
+      // Instruction account constraints — e.g. `address = SysInstructions::id()`
+      for (const a of (ix as any).accounts ?? []) {
+        for (const c of a.constraints ?? []) {
+          if (typeof c.value === "string" && RE.test(c.value)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * G27a — emit a SysInstructions stub.
+   * Sysvar pubkey: Sysvar1nstructions1111111111111111111111111
+   * Bytes: [6, 167, 213, 23, 25, 47, 10, 175, 198, 242, 101, 227, 251, 119, 204,
+   *         122, 218, 130, 197, 41, 208, 190, 59, 19, 110, 45, 0, 85, 32, 0, 0, 0]
+   */
+  protected emitSysInstructionsStub(): string {
+    return `// G27a — anchor_lang sysvar stub. Carried code uses SysInstructions::id()
+// for instruction-sysvar account verification (kamino's deposit_reserve_liquidity,
+// socialize_loss patterns). Returns the well-known sysvar pubkey verbatim.
+pub struct SysInstructions;
+impl SysInstructions {
+    pub fn id() -> Pubkey { ${this.programIdConstExpr("6, 167, 213, 23, 25, 47, 10, 175, 198, 242, 101, 227, 251, 119, 204, 122, 218, 130, 197, 41, 208, 190, 59, 19, 110, 45, 0, 85, 32, 0, 0, 0")} }
+}`;
+  }
+
   /**
    * G19b — detect whether carried helper code references the anchor_lang
    * `Error` type. Scan helper-fn body text AND impl items (raw code) for
