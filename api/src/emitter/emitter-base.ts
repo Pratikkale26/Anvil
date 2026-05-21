@@ -3497,10 +3497,27 @@ ${fields}
    * to live in the same Anchor file are plain-correct and get only a light
    * comment — no false-positive warning.
    */
+  /** G31 — per-emit cache of collectKnownTopLevelNames. Without this,
+   *  emitInstructionFile builds the set per-instruction, and the set
+   *  includes sourceErrorEnumName() output which is O(variants × text)
+   *  itself. Drift's 500+ variants × 30 instructions = multi-minute hang. */
+  private _knownTopLevelNamesCache: Set<string> | null = null;
+  private _knownTopLevelNamesCacheKey: SolanaIR | null = null;
+
   /** G31 — set of every top-level identifier emitted at crate root, used
    *  by collapseModulePaths to rewrite `mod1::mod2::ident` -> `ident` when
    *  the trailing ident matches a flattened symbol. */
   protected collectKnownTopLevelNames(ir: SolanaIR): Set<string> {
+    if (this._knownTopLevelNamesCacheKey === ir && this._knownTopLevelNamesCache) {
+      return this._knownTopLevelNamesCache;
+    }
+    const result = this.computeKnownTopLevelNames(ir);
+    this._knownTopLevelNamesCacheKey = ir;
+    this._knownTopLevelNamesCache = result;
+    return result;
+  }
+
+  private computeKnownTopLevelNames(ir: SolanaIR): Set<string> {
     const out = new Set<string>();
     for (const h of ir.helperFns ?? []) out.add(h.name);
     for (const t of ir.types ?? []) out.add(t.name);
@@ -3511,6 +3528,11 @@ ${fields}
     // shares a name with the instruction handler. Without this, the path
     // doesn't collapse and E0433 fires.
     for (const i of ir.instructions ?? []) out.add(i.name);
+    // G31c — source error enum name. ir.errors holds variant names only;
+    // the enum name itself is detected dynamically (sourceErrorEnumName).
+    // Kamino: `Err(ErrorCode::AccountDiscriminatorNotFound.into())` needs
+    // ErrorCode in the known set to survive `mod::ErrorCode::X` collapse.
+    out.add(this.sourceErrorEnumName(ir));
     // Constants are raw string declarations; parse out the names.
     for (const c of ir.constants ?? []) {
       const m = c.match(/(?:^|\s)(?:pub\s+)?const\s+(\w+)\s*:/);
@@ -3951,6 +3973,10 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
   // COption<T> → Option<T> — anchor_lang's C-compatible Option wrapper.
   // Rust's std Option is structurally equivalent for emit purposes.
   out = out.replace(/\bCOption\s*</g, "Option<");
+  // G31c — bare `COption::None` / `COption::Some(...)` value references.
+  // Kamino: `... .delegate() == COption::None`. Strip the wrapper, emit
+  // the std variant directly.
+  out = out.replace(/\bCOption::(None|Some)\b/g, "$1");
   // G27h — strip / normalize AccountInfo<'X> lifetime arg. Pinocchio's
   // AccountInfo struct has no lifetime param (Pubkey is a [u8;32]
   // alias); user code with `AccountInfo<'a>` in nested generics like
