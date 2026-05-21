@@ -1325,6 +1325,15 @@ export abstract class BaseEmitter {
     // `Result<T>` (no comma at depth 0) is feasible but risks user-defined
     // type aliases (MarginfiResult, DriftResult, …) that already alias
     // single-arg Result correctly. Left as TODO for future scope-aware fix.
+    // G44 — emit `token_interface::accessor::amount(&ai)` stub when
+    // referenced. anchor_spl's `token_interface::accessor` namespace
+    // exposes `amount(&AccountInfo) -> Result<u64>` for reading
+    // SPL TokenAccount.amount without unpacking. We strip anchor_spl,
+    // so the call site is unresolved. Stub the module to read the
+    // u64 at byte offset 64 (Token / Token-2022's TokenAccount layout).
+    if (this.referencesTokenInterfaceAccessor(ir)) {
+      sections.push(this.emitTokenInterfaceAccessorStub());
+    }
     // G27f: stub spl_token_2022::extension::ExtensionType enum with all known
     // variants. Kamino-klend uses ExtensionType variants in a const slice
     // for supported-extension validation. Each program may use a subset;
@@ -1750,6 +1759,51 @@ pub trait ZeroCopy: Discriminator + Owner {}`;
   /**
    * G27a — detect references to anchor_lang's SysInstructions sysvar.
    */
+  /** G44 — detect `token_interface::accessor::amount(...)` references. */
+  protected referencesTokenInterfaceAccessor(ir: SolanaIR): boolean {
+    const RE = /\btoken_interface\s*::\s*accessor\s*::\s*amount\s*\(/;
+    for (const h of ir.helperFns ?? []) {
+      if (RE.test(h.rawCode ?? "") || RE.test(h.body ?? "")) return true;
+    }
+    for (const acc of ir.accounts) {
+      for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const t of ir.types ?? []) {
+      for (const item of t.implItems ?? []) if (RE.test(item)) return true;
+    }
+    for (const instr of ir.instructions ?? []) {
+      for (const stmt of instr.body ?? []) {
+        if ("code" in stmt && stmt.code && RE.test(stmt.code)) return true;
+        if ("rawCode" in stmt && stmt.rawCode && RE.test(stmt.rawCode)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** G44 — emit a stub `token_interface::accessor::amount` reading bytes
+   *  at offset 64 of an SPL TokenAccount. Common on both Token and Token-2022.
+   */
+  protected emitTokenInterfaceAccessorStub(): string {
+    return `// G44 — anchor_spl::token_interface::accessor stub. Reads
+// TokenAccount.amount (u64 at offset 64) from the raw account data.
+// Works for both spl-token and spl-token-2022 token accounts since
+// the canonical 165-byte base layout is identical.
+pub mod token_interface {
+    pub mod accessor {
+        use super::super::*;
+        pub fn amount(ai: &AccountInfo) -> Result<u64, ProgramError> {
+            let data = ai.try_borrow_data().map_err(|_| ProgramError::AccountBorrowFailed)?;
+            if data.len() < 72 {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            let mut bytes = [0u8; 8];
+            bytes.copy_from_slice(&data[64..72]);
+            Ok(u64::from_le_bytes(bytes))
+        }
+    }
+}`;
+  }
+
   /** G43 — detect bare `Result<T>` references in carried code that would
    *  resolve to std::Result (2-arg) instead of Anchor's 1-arg alias. */
   protected referencesBareResultAlias(ir: SolanaIR): boolean {
