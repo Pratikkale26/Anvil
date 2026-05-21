@@ -2783,6 +2783,22 @@ ${originalLines}
         }
         const typeDef = this.customTypeDef(arg.type);
         if (typeDef) {
+          // G73 — after the BorshDeserialize binding, also destructure the
+          // type's named fields into bare locals. Real-world Anchor
+          // instructions (marinade `pub fn process(InitializeData {
+          // admin_authority, rewards_fee, .. })`) inline a struct-pattern
+          // argument and the carried body then references those bindings
+          // bare. Without this destructure, those references fail E0425.
+          const namedFields = (typeDef.fields ?? [])
+            .map((f) => snakeCase(f.name))
+            .filter((n) => /^[a-z_]\w*$/.test(n));
+          if (namedFields.length > 0) {
+            const fieldList = namedFields.join(", ");
+            return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+    #[allow(unused_variables)]
+    let ${arg.type} { ${fieldList}, .. } = ${name}.clone();`;
+          }
           return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
         .map_err(|_| ProgramError::InvalidInstructionData)?;`;
         }
