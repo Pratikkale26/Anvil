@@ -443,6 +443,12 @@ use solana_program::{
       ...(_ir.helperFns ?? []).map((h) => h.rawCode),
       ..._ir.types.flatMap((t) => [t.rawCode ?? "", ...(t.implItems ?? [])]),
       ..._ir.accounts.flatMap((a) => a.implItems ?? []),
+      // G50 — include userTraits + userTraitImpls in carried-text scan
+      // so auto-import detection sees AccountMeta references in
+      // `impl From<&AccountMeta> for X { ... }` blocks (which G50
+      // moved out of type.implItems and into userTraitImpls).
+      ...(_ir.userTraits ?? []),
+      ...(_ir.userTraitImpls ?? []),
     ].join("\n");
     const sourceImportsText = (_ir.imports ?? []).join("\n");
     const alreadyImportsInstruction = /\binstruction::Instruction\b/.test(sourceImportsText);

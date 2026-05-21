@@ -717,6 +717,14 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
           if (traitField && isAnchorCleanTraitImpl(child.text)) {
             items.userTraitImpls.push(child.text);
           }
+          // G50 — skip adding trait-impl methods to type.implItems. Methods
+          // like `fn next(&mut self) -> Option<Self::Item>` only make sense
+          // inside `impl Iterator for X { type Item = ...; ... }`. If we
+          // also add them as inherent items, the inherent emit drops the
+          // trait wrapper → `impl X { fn next(&mut self) -> Option<Self::Item> { ... } }`
+          // → E0223 ambiguous Self::Item (X has no associated type).
+          // Openbook-v2 EventHeapIterator/BookSideIter pattern.
+          if (traitField) break;
           const implName = extractImplTargetName(child);
           const implBody = child.childForFieldName("body") ?? findDescendant(child, "declaration_list");
           if (!implName || !implBody) break;

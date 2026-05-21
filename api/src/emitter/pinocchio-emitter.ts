@@ -549,6 +549,10 @@ export class PinocchioEmitter extends BaseEmitter {
       for (const acc of _ir.accounts) for (const item of acc.implItems ?? []) if (RE.test(item)) return true;
       for (const t of _ir.types ?? []) for (const item of t.implItems ?? []) if (RE.test(item)) return true;
       for (const h of _ir.helperFns ?? []) if (RE.test(h.rawCode ?? "")) return true;
+      // G50 — also scan userTraits + userTraitImpls (which moved trait-
+      // impl method bodies out of type.implItems).
+      for (const ut of _ir.userTraits ?? []) if (RE.test(ut)) return true;
+      for (const uti of _ir.userTraitImpls ?? []) if (RE.test(uti)) return true;
       return false;
     })();
     if (refsAccountMeta) {
