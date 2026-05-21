@@ -2590,7 +2590,13 @@ ${originalLines}
   protected emitUserTraitImpls(ir: SolanaIR): string {
     const impls = ir.userTraitImpls ?? [];
     if (impls.length === 0) return "";
-    return impls.map((raw) => commentOutSiblingTraitImpl(raw)).join("\n\n");
+    const target = this.frameworkName === "Pinocchio" ? "pin" : "native";
+    return impls
+      .map((raw) => commentOutSiblingTraitImpl(raw))
+      .map((processed) =>
+        stripAnchorWrappersInCode(stripAnchorLangPrefixes(processed), target),
+      )
+      .join("\n\n");
   }
 
   protected emitCustomTypes(ir: SolanaIR): string {
