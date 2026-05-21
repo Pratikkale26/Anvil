@@ -8,7 +8,7 @@
 
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
-import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorLangPrefixes, stripAnchorWrappersInCode } from "./emitter-base.js";
+import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorLangPrefixes, stripAnchorWrappersInCode, commentOutSiblingTraitImpl } from "./emitter-base.js";
 import { rewriteMsgCalls, collapseModulePaths } from "./anchor-transforms.js";
 import { rewriteRequireVariantsInCode } from "../parser/project-source.js";
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
@@ -686,6 +686,10 @@ ${arms}
    * The companion call-site commentout pass (postProcessPinocchioRewrites)
    * already excises every consumer of those impls, so emitting the impls
    * themselves only adds compile errors. Skip entirely on pinocchio.
+   * G57 attempts (narrowed by user-type filter) regressed coral
+   * (CLEAN → 3) because the impl From<&AccountMeta> for TransactionAccount
+   * exposes G56's `<x>.is_signer()` rewrite firing on AccountMeta (which
+   * has fields, not methods). Reverted; revisit when G56 is scope-aware.
    */
   override emitUserTraitImpls(_ir: SolanaIR): string {
     return "";
