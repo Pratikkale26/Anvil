@@ -3076,8 +3076,14 @@ ${arms}
       // [Event; 25000]` inside EventQ; without this emit, EventQ's
       // derive(Copy) fails because Event isn't Copy.
       if (typeDef.isZeroCopy) {
+        // G72 — preserve `Default`/`Debug` from the source derive line. Real-world
+        // zero-copy structs (raydium's `Observation`, `TickState`) call `T::default()`
+        // in carried bodies — without preserving Default the call fails E0599.
+        const userDerivesZC = extractUserDerives(typeDef.rawCode ?? "");
+        const extraZC = userDerivesZC.filter((d) => d === "Default" || d === "Debug").join(", ");
+        const extraSuffixZC = extraZC ? `, ${extraZC}` : "";
         return `#[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone${extraSuffixZC})]
 pub struct ${typeDef.name}${generics} {
 ${fields}
 }
@@ -3105,7 +3111,12 @@ unsafe impl bytemuck::Pod for ${typeDef.name} {}${implBlock}`;
       // 'a is "used" via that declaration. Field-only is the right scope.
       const phantomFields = synthesizePhantomLifetimeFields(generics, fields);
       const allFields = phantomFields ? `${fields}\n${phantomFields}` : fields;
-      return `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize)]
+      // G72 — preserve `Default` from the source derive line. Carried bodies
+      // calling `T::default()` need it (raydium `LimitOrderMatchResult::default()`,
+      // `SwapComputationResult::default()`).
+      const userDerivesStruct = extractUserDerives(typeDef.rawCode ?? "");
+      const extraDefault = userDerivesStruct.includes("Default") ? ", Default" : "";
+      return `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize${extraDefault})]
 pub struct ${typeDef.name}${generics} {
 ${allFields}
 }${implBlock}`;

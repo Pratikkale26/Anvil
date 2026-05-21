@@ -815,6 +815,10 @@ export function neutralizeUnsupportedMacros(source: string): string {
   // First pass: find every `macro_rules! NAME { ... }` block.
   const defRegex = /\bmacro_rules!\s*(\w+)\s*\{/g;
   const definitionRanges: Array<{ start: number; end: number; name: string }> = [];
+  // G71 — macro_rules wrappers around construct_uint! (e.g. raydium's
+  // `construct_bignum!`). Capture their names so we can also stub
+  // U1024-style types declared via these wrappers.
+  const constructUintWrappers = new Set<string>();
   for (const match of out.matchAll(defRegex)) {
     const name = match[1];
     if (!name) continue;
@@ -830,6 +834,17 @@ export function neutralizeUnsupportedMacros(source: string): string {
       const startOfDecl = match.index ?? 0;
       definitionRanges.push({ start: startOfDecl, end: close + 1, name });
       macroNames.add(name);
+      // Wrapper around construct_uint! either by direct invocation OR by
+      // matching the same `struct $N:ident ( $W:tt );` parameter shape.
+      // raydium's `construct_bignum!` re-implements (not calls) construct_uint
+      // but accepts the same invocation form `pub struct U1024(16);`.
+      const body = out.slice(openBrace + 1, close);
+      if (
+        body.includes("construct_uint!") ||
+        /struct\s+\$\w+\s*:\s*ident\s*\(\s*\$\w+\s*:\s*tt\s*\)/.test(body)
+      ) {
+        constructUintWrappers.add(name);
+      }
     }
   }
 
@@ -837,7 +852,12 @@ export function neutralizeUnsupportedMacros(source: string): string {
   // every macro INVOCATION (not definition) of `construct_uint`. The
   // body has the form `pub struct UN(K);` or `pub struct UN(K)` with
   // optional attrs.
-  const constructUintInvoke = /\bconstruct_uint!\s*\{/g;
+  // G71 — also include invocations of any macro_rules wrapper that
+  // contains `construct_uint!` in its body, so types declared via
+  // wrappers (e.g. raydium `construct_bignum! { pub struct U1024(16); }`)
+  // get the same stub.
+  const constructUintAlternation = ["construct_uint", ...constructUintWrappers].join("|");
+  const constructUintInvoke = new RegExp(`\\b(?:${constructUintAlternation})!\\s*\\{`, "g");
   for (const m of out.matchAll(constructUintInvoke)) {
     const openBrace = (m.index ?? 0) + m[0].length - 1;
     let depth = 1;
@@ -874,6 +894,9 @@ export function neutralizeUnsupportedMacros(source: string): string {
         `impl ${name} {\n` +
         `    pub const MAX: ${name} = ${name}([u64::MAX; ${n}]);\n` +
         `    pub const ZERO: ${name} = ${name}([0; ${n}]);\n` +
+        `    pub fn one() -> Self { let mut a = [0u64; ${n}]; a[0] = 1; ${name}(a) }\n` +
+        `    pub fn zero() -> Self { ${name}([0; ${n}]) }\n` +
+        `    pub fn bit(&self, n: usize) -> bool { let w = n / 64; let b = n % 64; w < ${n} && (self.0[w] >> b) & 1 != 0 }\n` +
         `    pub fn is_zero(&self) -> bool { self.0.iter().all(|x| *x == 0) }\n` +
         `    pub fn as_u128(&self) -> u128 { (self.0[0] as u128) | ((self.0[1] as u128) << 64) }\n` +
         `    pub fn as_u64(&self) -> u64 { self.0[0] }\n` +
@@ -884,7 +907,26 @@ export function neutralizeUnsupportedMacros(source: string): string {
         `impl core::ops::Mul for ${name} { type Output = Self; fn mul(self, rhs: Self) -> Self { Self::from(self.as_u128().wrapping_mul(rhs.as_u128())) } }\n` +
         `impl core::ops::Add for ${name} { type Output = Self; fn add(self, rhs: Self) -> Self { Self::from(self.as_u128().wrapping_add(rhs.as_u128())) } }\n` +
         `impl core::ops::Sub for ${name} { type Output = Self; fn sub(self, rhs: Self) -> Self { Self::from(self.as_u128().wrapping_sub(rhs.as_u128())) } }\n` +
-        `impl core::ops::Div for ${name} { type Output = Self; fn div(self, rhs: Self) -> Self { Self::from(self.as_u128().checked_div(rhs.as_u128()).unwrap_or(0)) } }`,
+        `impl core::ops::Div for ${name} { type Output = Self; fn div(self, rhs: Self) -> Self { Self::from(self.as_u128().checked_div(rhs.as_u128()).unwrap_or(0)) } }\n` +
+        `impl core::ops::Rem for ${name} { type Output = Self; fn rem(self, rhs: Self) -> Self { Self::from(self.as_u128().checked_rem(rhs.as_u128()).unwrap_or(0)) } }\n` +
+        `impl core::ops::Shl<Self> for ${name} { type Output = Self; fn shl(self, rhs: Self) -> Self { Self::from(self.as_u128().wrapping_shl(rhs.as_u64() as u32)) } }\n` +
+        `impl core::ops::Shr<Self> for ${name} { type Output = Self; fn shr(self, rhs: Self) -> Self { Self::from(self.as_u128().wrapping_shr(rhs.as_u64() as u32)) } }\n` +
+        `impl core::ops::Shl<u32> for ${name} { type Output = Self; fn shl(self, rhs: u32) -> Self { Self::from(self.as_u128().wrapping_shl(rhs)) } }\n` +
+        `impl core::ops::Shr<u32> for ${name} { type Output = Self; fn shr(self, rhs: u32) -> Self { Self::from(self.as_u128().wrapping_shr(rhs)) } }\n` +
+        `impl core::ops::Shl<usize> for ${name} { type Output = Self; fn shl(self, rhs: usize) -> Self { Self::from(self.as_u128().wrapping_shl(rhs as u32)) } }\n` +
+        `impl core::ops::Shr<usize> for ${name} { type Output = Self; fn shr(self, rhs: usize) -> Self { Self::from(self.as_u128().wrapping_shr(rhs as u32)) } }\n` +
+        `impl core::ops::BitAnd for ${name} { type Output = Self; fn bitand(self, rhs: Self) -> Self { Self::from(self.as_u128() & rhs.as_u128()) } }\n` +
+        `impl core::ops::BitOr for ${name} { type Output = Self; fn bitor(self, rhs: Self) -> Self { Self::from(self.as_u128() | rhs.as_u128()) } }\n` +
+        `impl core::ops::BitXor for ${name} { type Output = Self; fn bitxor(self, rhs: Self) -> Self { Self::from(self.as_u128() ^ rhs.as_u128()) } }\n` +
+        `impl core::ops::Not for ${name} { type Output = Self; fn not(self) -> Self { Self::from(!self.as_u128()) } }\n` +
+        `impl core::ops::AddAssign for ${name} { fn add_assign(&mut self, rhs: Self) { *self = *self + rhs; } }\n` +
+        `impl core::ops::SubAssign for ${name} { fn sub_assign(&mut self, rhs: Self) { *self = *self - rhs; } }\n` +
+        `impl core::ops::MulAssign for ${name} { fn mul_assign(&mut self, rhs: Self) { *self = *self * rhs; } }\n` +
+        `impl core::ops::DivAssign for ${name} { fn div_assign(&mut self, rhs: Self) { *self = *self / rhs; } }\n` +
+        `impl core::ops::ShlAssign<u32> for ${name} { fn shl_assign(&mut self, rhs: u32) { *self = *self << rhs; } }\n` +
+        `impl core::ops::ShrAssign<u32> for ${name} { fn shr_assign(&mut self, rhs: u32) { *self = *self >> rhs; } }\n` +
+        `impl core::ops::BitOrAssign for ${name} { fn bitor_assign(&mut self, rhs: Self) { *self = *self | rhs; } }\n` +
+        `impl core::ops::BitAndAssign for ${name} { fn bitand_assign(&mut self, rhs: Self) { *self = *self & rhs; } }`,
       );
     }
   }
