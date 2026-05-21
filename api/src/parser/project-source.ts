@@ -425,6 +425,42 @@ const WELL_KNOWN_PROGRAM_IDS: Record<string, string> = {
  *
  * Exported for unit testing.
  */
+/**
+ * G25 — variant-only `require_*!` rewrite (no #[program] guard). Used by
+ * emit-time impl-item processing where the body classifier doesn't run
+ * (impl methods stay as raw text). Same semantics as the variants in
+ * rewriteAnchorRequireMacros — preserves `require!()` for the typed
+ * IR path elsewhere.
+ *
+ * Exported so per-target emitters can apply it to acc/typeDef.implItems
+ * before emitting.
+ */
+export function rewriteRequireVariantsInCode(source: string): string {
+  const variants: Record<string, string> = {
+    "require_eq!": "==",
+    "require_neq!": "!=",
+    "require_gt!": ">",
+    "require_gte!": ">=",
+    "require_lt!": "<",
+    "require_lte!": "<=",
+    "require_keys_eq!": "==",
+    "require_keys_neq!": "!=",
+  };
+  let out = source;
+  for (const [name, op] of Object.entries(variants)) {
+    out = rewriteMacroInvocations(out, name, (argsText) => {
+      const parts = splitTopLevelArgs(argsText);
+      if (parts.length < 2) return null;
+      const lhs = parts[0]!.trim();
+      const rhs = parts[1]!.trim();
+      const cond = `(${lhs}) ${op} (${rhs})`;
+      const err = parts.length >= 3 ? parts.slice(2).join(",").trim() : "ProgramError::Custom(0)";
+      return `if !(${cond}) { return Err((${err}).into()); }`;
+    });
+  }
+  return out;
+}
+
 export function rewriteAnchorRequireMacros(source: string): string {
   const macroOps: Record<string, string | null> = {
     "require!": null,            // unary: cond
@@ -432,6 +468,8 @@ export function rewriteAnchorRequireMacros(source: string): string {
     "require_neq!": "!=",
     "require_gt!": ">",
     "require_gte!": ">=",
+    "require_lt!": "<",
+    "require_lte!": "<=",
     "require_keys_eq!": "==",
     "require_keys_neq!": "!=",
   };

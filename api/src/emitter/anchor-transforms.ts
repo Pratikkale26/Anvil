@@ -15,12 +15,24 @@
  * literals (kamino-klend pattern) work correctly here where the prior
  * `\\s\\S]*?` lazy regex truncated.
  */
-function rewriteMsgCalls(source: string, emitMsg: (message: string) => string): string {
+export function rewriteMsgCalls(source: string, emitMsg: (message: string) => string): string {
   let out = "";
   let i = 0;
   while (i < source.length) {
     const idx = source.indexOf("msg!", i);
     if (idx === -1) { out += source.slice(i); break; }
+    // G25 — skip `msg!` inside line/block comments. The post-process pass
+    // on instruction bodies + impl items can otherwise match `msg!()`
+    // strings inside Anvil-injected marker comments (the binary-parity
+    // snapshot test's `// ⚠️ Anvil: formatted msg!() collapsed…` marker
+    // hits this).
+    const lineStart = source.lastIndexOf("\n", idx) + 1;
+    const lineUpToIdx = source.slice(lineStart, idx);
+    if (lineUpToIdx.includes("//")) {
+      out += source.slice(i, idx + 4);
+      i = idx + 4;
+      continue;
+    }
     // Reject `myname_msg!` etc. — only standalone macro invocations.
     const prevCh = idx > 0 ? source[idx - 1]! : "";
     const isWordBoundary = prevCh === "" || !/[A-Za-z0-9_]/.test(prevCh);

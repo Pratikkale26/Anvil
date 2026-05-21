@@ -24,7 +24,7 @@ import type {
   TypeDef,
   HelperFn,
 } from "../ir/schema.js";
-import { decodeBase58 } from "../parser/project-source.js";
+import { decodeBase58, rewriteRequireVariantsInCode } from "../parser/project-source.js";
 
 // ─── Re-export utilities for backward compatibility ──────────────────────────
 
@@ -92,7 +92,7 @@ import {
   type BodyEmitterCallbacks,
   type Token2022Opts,
 } from "./body-emitter/index.js";
-import { transformHelperCode as transformHelperCodeImpl } from "./anchor-transforms.js";
+import { transformHelperCode as transformHelperCodeImpl, rewriteMsgCalls as rewriteMsgCallsImpl } from "./anchor-transforms.js";
 import { hasResidualAnchorPatterns, hasUnsalvageableHelperSignature, recognizeCpiWrapperHelper, rewriteCpiWrapperCallSites } from "./emitter-helpers.js";
 import {
   commentOutHelperBlock,
@@ -1340,7 +1340,14 @@ export abstract class BaseEmitter {
     // resolve to "cannot find value" on cargo build. Only emit when the
     // IR has errors to import — keeps single-error-free programs clean.
     const errorImport = ir.errors.length > 0 ? `use crate::errors::*;\n` : "";
-    const body = this.emitInstructionFunction(instr, ir);
+    // G25 — apply Anchor-macro rewrites to pass-through bodies (require_*!
+    // / msg! that survived into for-loop / if-block bodies because the body
+    // classifier only handles top-level statements). Idempotent on already-
+    // rewritten code (the patterns no longer match after first pass).
+    const rawBody = this.emitInstructionFunction(instr, ir);
+    const body = rewriteRequireVariantsInCode(
+      rewriteMsgCallsImpl(rawBody, (m: string) => this.emitMsg(m)),
+    );
     // Per-instruction body-level imports for symbols that lib.rs-only
     // `use` statements don't reach. `use super::*;` resolves to
     // instructions/mod.rs's scope (which has `use crate::*;`), and
@@ -2416,11 +2423,16 @@ ${fields}
     // returns a generic error. Same fallback shape as the unsalvageable-helper
     // commentout pass but applied at the impl-item level.
     for (const raw of (typeDef.implItems ?? [])) {
-      const stubbed = stripAnchorWrappersInCode(
-        stripAnchorLangPrefixes(
-          rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))),
+      const stubbed = rewriteRequireVariantsInCode(
+        rewriteMsgCallsImpl(
+          stripAnchorWrappersInCode(
+            stripAnchorLangPrefixes(
+              rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))),
+            ),
+            this.frameworkName === "Pinocchio" ? "pin" : "native",
+          ),
+          (m: string) => this.emitMsg(m),
         ),
-        this.frameworkName === "Pinocchio" ? "pin" : "native",
       );
       items.push(`    ${stubbed}`);
     }
