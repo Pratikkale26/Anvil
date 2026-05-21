@@ -4681,6 +4681,17 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
       /(?:solana_program\s*::\s*pubkey\s*::\s*)?Pubkey\s*::\s*(find_program_address|create_program_address)\b/g,
       "pinocchio::pubkey::$1",
     );
+    // G62 — extend solana_program::{log,program}::* → pinocchio::* rewrite
+    // to carried code (was already in postProcessPinocchioRewrites for
+    // instruction body, but helpers + impl items missed it).
+    out = out.replace(
+      /(?:anchor_lang\s*::\s*)?solana_program\s*::\s*log\s*::\s*(sol_log|sol_log_data|sol_log_64|sol_log_compute_units|sol_log_slice)\b/g,
+      "pinocchio::log::$1",
+    );
+    out = out.replace(
+      /(?:anchor_lang\s*::\s*)?solana_program\s*::\s*program\s*::\s*(set_return_data|get_return_data)\b/g,
+      "pinocchio::program::$1",
+    );
   }
   return out;
 }
