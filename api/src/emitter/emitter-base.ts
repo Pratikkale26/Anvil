@@ -4173,7 +4173,15 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
   if (target === "pin") {
     out = out.replace(/\bAccountInfo\s*<\s*'[a-zA-Z_]\w*\s*>/g, "AccountInfo");
   } else {
-    out = out.replace(/\bAccountInfo\s*<\s*'[a-zA-Z_]\w*\s*>/g, "AccountInfo<'info>");
+    // G41 — only normalize to `'info` when the surrounding scope ALSO
+    // uses `'info`. If the struct/impl generic is `<'a>` (drift's
+    // OracleMap), forcing `'info` into the field type triggers E0261
+    // "use of undeclared lifetime name". Preserve whatever lifetime the
+    // source carries; the surrounding generic param will match.
+    // Only normalize bare/unscoped lifetimes (e.g. `AccountInfo<'_>`) to
+    // a plain `'info` so anvil-internal emit (which uses 'info by
+    // convention) still resolves.
+    out = out.replace(/\bAccountInfo\s*<\s*'_\s*>/g, "AccountInfo<'info>");
   }
   // G37 — Pinocchio's `pinocchio::instruction::AccountMeta<'a>` carries
   // `pub pubkey: &'a Pubkey` (a reference), whereas solana_program's
@@ -4273,12 +4281,16 @@ function stripAnchorWrapperTypes(typeName: string, target: "pin" | "native"): st
   t = t.replace(/AccountLoader\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
   // G27h — strip / normalize AccountInfo<'X> lifetime arg. Pinocchio's
   // AccountInfo has no lifetime; user fields like `AccountInfo<'a>` in
-  // nested generics (drift's OracleMap.oracles) fail E0107. Native uses
-  // 'info convention.
+  // nested generics (drift's OracleMap.oracles) fail E0107.
+  // G41 — Native: preserve the source-supplied lifetime instead of
+  // forcing `'info`. The struct's outer generic uses whatever the source
+  // declared (drift's `OracleMap<'a>`); rewriting only the field type to
+  // `'info` triggers E0261 because the impl block also uses `'a`. Only
+  // normalize `'_` (anonymous) to `'info`.
   if (target === "pin") {
     t = t.replace(/\bAccountInfo\s*<\s*'[a-zA-Z_]\w*\s*>/g, "AccountInfo");
   } else {
-    t = t.replace(/\bAccountInfo\s*<\s*'[a-zA-Z_]\w*\s*>/g, "AccountInfo<'info>");
+    t = t.replace(/\bAccountInfo\s*<\s*'_\s*>/g, "AccountInfo<'info>");
   }
   return t;
 }
