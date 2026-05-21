@@ -4642,18 +4642,18 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
     }
     // G56 — Pinocchio AccountInfo exposes key/owner/lamports/is_signer/
     // is_writable/executable as METHODS, not fields. Anchor source treats
-    // them as fields. Rewrite `<x>.key` → `<x>.key()`, etc. Same pattern
-    // the postProcessPinocchioRewrites pass applies to instruction bodies,
-    // but extended here so carried impl items + helper fn bodies +
-    // userTraits/userTraitImpls also get the rewrite (was missing —
-    // marginfi/kamino/openbook hit this on dozens of sites).
-    // Skip when next char is `(` (already a call) or `\w` (longer ident).
-    out = out.replace(/\b(\w+)\.key(?!\s*[(\w])/g, "$1.key()");
-    out = out.replace(/\b(\w+)\.owner(?!\s*[(\w])/g, "$1.owner()");
-    out = out.replace(/\b(\w+)\.lamports(?!\s*[(\w])/g, "$1.lamports()");
-    out = out.replace(/\b(\w+)\.is_writable(?!\s*[(\w])/g, "$1.is_writable()");
-    out = out.replace(/\b(\w+)\.is_signer(?!\s*[(\w])/g, "$1.is_signer()");
-    out = out.replace(/\b(\w+)\.executable(?!\s*[(\w])/g, "$1.executable()");
+    // them as fields. Rewrite `<x>.key` → `<x>.key()`, etc.
+    // Match `.method` not followed by `(` (already a call) or word char
+    // (longer ident like `key_word`). No capture group on receiver since
+    // indexed receivers like `ais[1].key` have non-word chars before `.`
+    // and \b doesn't anchor cleanly. The lookbehind `(?<=\w|\])` allows
+    // receivers ending in word char OR `]` (index slice access).
+    out = out.replace(/(?<=[\w\]])\.key(?!\s*[(\w])/g, ".key()");
+    out = out.replace(/(?<=[\w\]])\.owner(?!\s*[(\w])/g, ".owner()");
+    out = out.replace(/(?<=[\w\]])\.lamports(?!\s*[(\w])/g, ".lamports()");
+    out = out.replace(/(?<=[\w\]])\.is_writable(?!\s*[(\w])/g, ".is_writable()");
+    out = out.replace(/(?<=[\w\]])\.is_signer(?!\s*[(\w])/g, ".is_signer()");
+    out = out.replace(/(?<=[\w\]])\.executable(?!\s*[(\w])/g, ".executable()");
   }
   return out;
 }
