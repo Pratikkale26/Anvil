@@ -592,7 +592,11 @@ export function hasResidualAnchorPatterns(value: string): boolean {
     /\bswitchboard_v1_devnet_oracle::/.test(value) ||
     /\bswitchboard_v2_mainnet_oracle::/.test(value) ||
     /\bfixed::types::/.test(value) ||
-    /\bderivative::/.test(value);
+    /\bderivative::/.test(value) ||
+    /\bkamino_mocks::/.test(value) ||
+    /\bdrift_mocks::/.test(value) ||
+    /\bjuplend_mocks::/.test(value) ||
+    /\bpyth_solana_receiver_sdk::/.test(value);
 }
 
 /**

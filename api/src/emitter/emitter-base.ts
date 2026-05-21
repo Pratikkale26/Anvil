@@ -1091,6 +1091,14 @@ export abstract class BaseEmitter {
         // is stripped (drift exploded 19 -> 1242 in trial).
         if (/\bserum_dex::/.test(statement) || /^use\s+serum_dex(?:::|;)/.test(statement)) return false;
         if (/^use\s+num_integer(?:::|;)/.test(statement)) return false;
+        // G34 — marginfi-v2 / mango-v4 external sibling-crate mocks
+        // (kamino_mocks/drift_mocks/juplend_mocks: test-only mock CPIs)
+        // and pyth_solana_receiver_sdk. Body refs get the unsalvageable-
+        // helper commentout downstream. NOT filtering marginfi_type_crate
+        // because it wildcard-imports type definitions used cohort-wide;
+        // filter cascade pushed marginfi 406 -> 640.
+        if (/^use\s+(?:crate::)?(?:kamino_mocks|drift_mocks|juplend_mocks)(?:::|;)/.test(statement)) return false;
+        if (/\bpyth_solana_receiver_sdk::/.test(statement) || /^use\s+pyth_solana_receiver_sdk(?:::|;)/.test(statement)) return false;
         // static_assertions is a no_std-compatible dev macro crate.
         // Anvil's scaffold doesn't ship it. Body usages (e.g. compile-time
         // size assertions) are stripped at carry-source level by the
