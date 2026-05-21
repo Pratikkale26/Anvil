@@ -708,19 +708,38 @@ ${arms}
   }
 
   /**
-   * pinocchio doesn't expose `Instruction`, `AccountMeta`, or other
-   * solana_program::instruction types that user-defined trait impls often
-   * target (coral-multisig: `impl From<&Transaction> for Instruction`).
-   * The companion call-site commentout pass (postProcessPinocchioRewrites)
-   * already excises every consumer of those impls, so emitting the impls
-   * themselves only adds compile errors. Skip entirely on pinocchio.
-   * G60 attempted to narrow by user-type + no-AccountMeta filter — net
-   * cohort regression: kamino +8, marinade +8, raydium +31. The G56
-   * field-to-method rewrite cascades on any impl body with bindings
-   * that share method names with AccountInfo. Reverted.
+   * G70 — emit userTraitImpls on Pinocchio with TWO filters:
+   * (1) target type must be a user-defined type (in ir.types/ir.accounts),
+   * (2) impl body must not contain `AccountMeta` or `&AccountInfo` typed
+   * bindings (G56's field-to-method rewrite cascades on those).
+   * Filter (3): skip impls referencing `ctx.accounts` (Anchor context
+   * unavailable post-port).
+   * Raydium's G69-injected `impl From<u128>/Mul/Add/Sub/Div for U128`
+   * etc. pass all filters and unlock arithmetic on pin.
    */
-  override emitUserTraitImpls(_ir: SolanaIR): string {
-    return "";
+  override emitUserTraitImpls(ir: SolanaIR): string {
+    const impls = ir.userTraitImpls ?? [];
+    if (impls.length === 0) return "";
+    const userTypeNames = new Set<string>([
+      ...(ir.types ?? []).map((t) => t.name),
+      ...(ir.accounts ?? []).map((a) => a.name),
+    ]);
+    const survivors = impls.filter((raw: string) => {
+      const m = raw.match(/^\s*impl(?:<[^>]+>)?\s+[^{}]+?\s+for\s+([A-Za-z_]\w*)/);
+      if (!m || !m[1]) return false;
+      if (!userTypeNames.has(m[1])) return false;
+      if (/&\s*(?:'\w+\s+)?AccountMeta\b/.test(raw)) return false;
+      if (/:\s*&\s*(?:'\w+\s+)?AccountInfo\b/.test(raw)) return false;
+      if (/\bctx\s*\.\s*(?:accounts|bumps|remaining_accounts)\b/.test(raw)) return false;
+      return true;
+    });
+    if (survivors.length === 0) return "";
+    return survivors
+      .map((raw) => commentOutSiblingTraitImpl(raw))
+      .map((processed) =>
+        stripAnchorWrappersInCode(stripAnchorLangPrefixes(processed), "pin"),
+      )
+      .join("\n\n");
   }
 
   override emitAccountKeyAsRefExpr(accountName: string): string {
