@@ -3870,6 +3870,17 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
   // COption<T> → Option<T> — anchor_lang's C-compatible Option wrapper.
   // Rust's std Option is structurally equivalent for emit purposes.
   out = out.replace(/\bCOption\s*</g, "Option<");
+  // G27h — strip / normalize AccountInfo<'X> lifetime arg. Pinocchio's
+  // AccountInfo struct has no lifetime param (Pubkey is a [u8;32]
+  // alias); user code with `AccountInfo<'a>` in nested generics like
+  // `BTreeMap<Pubkey, AccountInfo<'a>>` (drift's OracleMap) fails E0107
+  // "struct takes 0 lifetime arguments but 1 supplied". Native carries
+  // a lifetime convention 'info, so normalize user's choice to 'info.
+  if (target === "pin") {
+    out = out.replace(/\bAccountInfo\s*<\s*'[a-zA-Z_]\w*\s*>/g, "AccountInfo");
+  } else {
+    out = out.replace(/\bAccountInfo\s*<\s*'[a-zA-Z_]\w*\s*>/g, "AccountInfo<'info>");
+  }
   return out;
 }
 
@@ -3941,6 +3952,15 @@ function stripAnchorWrapperTypes(typeName: string, target: "pin" | "native"): st
   t = t.replace(/UncheckedAccount\s*<\s*'?\w+\s*>/g, ai);
   t = t.replace(/Program\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
   t = t.replace(/AccountLoader\s*<\s*(?:'?\w+\s*,\s*)?[\w:]+\s*>/g, ai);
+  // G27h — strip / normalize AccountInfo<'X> lifetime arg. Pinocchio's
+  // AccountInfo has no lifetime; user fields like `AccountInfo<'a>` in
+  // nested generics (drift's OracleMap.oracles) fail E0107. Native uses
+  // 'info convention.
+  if (target === "pin") {
+    t = t.replace(/\bAccountInfo\s*<\s*'[a-zA-Z_]\w*\s*>/g, "AccountInfo");
+  } else {
+    t = t.replace(/\bAccountInfo\s*<\s*'[a-zA-Z_]\w*\s*>/g, "AccountInfo<'info>");
+  }
   return t;
 }
 
