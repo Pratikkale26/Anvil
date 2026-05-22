@@ -184,6 +184,62 @@ export const TOOLCHAIN_REASON = !SBF_AVAILABLE
       : "ok";
 
 /**
+ * Validate a hand-crafted test PROGRAM_ID at module import time.
+ *
+ * Base58 alphabet excludes `0`, `O`, `I`, `l` — and decoded bytes must be
+ * exactly 32. Fixtures that ship hand-crafted IDs (instead of upstream
+ * declare_id! values) repeatedly bit on these constraints during the
+ * 2026-05-22 / 2026-05-23 byte-equal authoring arcs — silent at fixture
+ * load, only surfacing when `new PublicKey()` rejected the string at
+ * `defineDifferential` time, deep into a test run.
+ *
+ * Use:
+ *   export const PROGRAM_ID = mkTestProgramId("MyPgmExmps111111111111111111111111111111111");
+ *
+ * On failure throws with the input string + the specific reason
+ * (invalid char OR wrong byte length) so the fixture author can fix it
+ * before any test runs. Returns the validated string on success so the
+ * fixture's PROGRAM_ID export keeps its plain-string type.
+ *
+ * NOT enforced retroactively — existing fixtures stay on raw string
+ * literals + ad-hoc `new PublicKey(...).toBytes().length` checks. This
+ * is for NEW fixtures going forward.
+ */
+export function mkTestProgramId(s: string): string {
+  // 32 bytes base58-encodes to between 43 and 44 chars (typically 44 for
+  // the all-1-padded test IDs we use). Catch obvious wrong lengths early.
+  if (s.length < 32 || s.length > 44) {
+    throw new Error(
+      `mkTestProgramId: '${s}' length ${s.length} — base58-encoded 32 bytes is 43-44 chars`,
+    );
+  }
+  // Base58 alphabet (Bitcoin): excludes 0, O, I, l. Quick filter so the
+  // PublicKey decode error message is replaced with something actionable.
+  const bad = /[0OIl]/.exec(s);
+  if (bad) {
+    throw new Error(
+      `mkTestProgramId: '${s}' contains invalid base58 char '${bad[0]}' at position ${bad.index} — alphabet excludes 0, O, I, l`,
+    );
+  }
+  // Final authority — the actual PublicKey decoder. Catches non-base58
+  // chars outside the explicit blocklist + any decode-length mismatch.
+  let pk: PublicKey;
+  try {
+    pk = new PublicKey(s);
+  } catch (e) {
+    throw new Error(
+      `mkTestProgramId: '${s}' failed PublicKey decode: ${(e as Error).message}`,
+    );
+  }
+  if (pk.toBytes().length !== 32) {
+    throw new Error(
+      `mkTestProgramId: '${s}' decoded to ${pk.toBytes().length} bytes; need exactly 32`,
+    );
+  }
+  return s;
+}
+
+/**
  * Caller-controlled state shared between Anchor and Anvil scenarios.
  * Whatever the setup function returns is passed to callScript and
  * accountsToCompare so the same keypairs/PDAs are used in both runs.
