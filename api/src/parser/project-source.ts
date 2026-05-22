@@ -858,6 +858,9 @@ export function neutralizeUnsupportedMacros(source: string): string {
   // get the same stub.
   const constructUintAlternation = ["construct_uint", ...constructUintWrappers].join("|");
   const constructUintInvoke = new RegExp(`\\b(?:${constructUintAlternation})!\\s*\\{`, "g");
+  // G88 — track ALL stub names+sizes so we can emit cross-impls
+  // (impl From<U128> for U256, etc.) after the loop.
+  const constructUintTypes: Array<{ name: string; n: number }> = [];
   for (const m of out.matchAll(constructUintInvoke)) {
     const openBrace = (m.index ?? 0) + m[0].length - 1;
     let depth = 1;
@@ -873,6 +876,7 @@ export function neutralizeUnsupportedMacros(source: string): string {
     if (stubMatch?.[1] && stubMatch[2]) {
       const name = stubMatch[1];
       const n = parseInt(stubMatch[2], 10);
+      constructUintTypes.push({ name, n });
       // G69 — extend stub with From<u128>/From<u64> conversions, basic
       // arithmetic impls, and as_u128/as_u64 accessors. Lets carried
       // bodies that use `U128::from(value)` and `<u128>` arithmetic
@@ -927,6 +931,29 @@ export function neutralizeUnsupportedMacros(source: string): string {
         `impl core::ops::ShrAssign<u32> for ${name} { fn shr_assign(&mut self, rhs: u32) { *self = *self >> rhs; } }\n` +
         `impl core::ops::BitOrAssign for ${name} { fn bitor_assign(&mut self, rhs: Self) { *self = *self | rhs; } }\n` +
         `impl core::ops::BitAndAssign for ${name} { fn bitand_assign(&mut self, rhs: Self) { *self = *self & rhs; } }`,
+      );
+    }
+  }
+  // G88 — cross-impls: impl From<U_smaller> for U_larger.
+  // Real-world bodies (raydium-clmm) cast e.g. `U256::from(some_u128_val)`
+  // and expect From<U128>.
+  if (constructUintTypes.length > 1) {
+    const sorted = [...constructUintTypes].sort((a, b) => a.n - b.n);
+    const crossImpls: string[] = [];
+    for (let i = 0; i < sorted.length; i++) {
+      for (let j = i + 1; j < sorted.length; j++) {
+        const src = sorted[i]!;
+        const dst = sorted[j]!;
+        // Copy src's words into dst's first src.n positions; zero the rest.
+        crossImpls.push(
+          `impl From<${src.name}> for ${dst.name} { fn from(v: ${src.name}) -> Self { let mut a = [0u64; ${dst.n}]; for i in 0..${src.n} { a[i] = v.0[i]; } ${dst.name}(a) } }`,
+        );
+      }
+    }
+    if (crossImpls.length > 0) {
+      constructUintStubs.push(
+        `// G88 — cross-impls between construct_uint! stubs (e.g. U128 → U256).\n` +
+        crossImpls.join("\n"),
       );
     }
   }
