@@ -1984,6 +1984,26 @@ impl<'info, T> AccountLoader<'info, T> {
     pub fn try_from(ai: &'info AccountInfo) -> Result<Self, ProgramError> {
         Ok(Self { ai, _phantom: core::marker::PhantomData })
     }
+    pub fn try_from_unchecked(_program_id: &Pubkey, ai: &'info AccountInfo) -> Result<Self, ProgramError> {
+        Ok(Self { ai, _phantom: core::marker::PhantomData })
+    }
+}
+// G89 — load/load_mut/load_init stubs on AccountLoader. Real-world Anchor
+// programs (raydium, kamino) call \`reserve.load()?\` / \`reserve.load_mut()?\`
+// on AccountLoader-wrapped zero-copy state. Stubs return unimplemented!()
+// so the load() call resolves to a never-type — type inference at the
+// call site accepts any expected Ref<T>/RefMut<T>. Real semantics need
+// type-aware bytemuck casts behind a RefCell-shaped wrapper; deferred.
+impl<'info, T> AccountLoader<'info, T> {
+    pub fn load(&self) -> Result<core::cell::Ref<'_, T>, ProgramError> {
+        unimplemented!("anvil: AccountLoader::load stub — real impl needs RefCell + bytemuck::from_bytes")
+    }
+    pub fn load_mut(&self) -> Result<core::cell::RefMut<'_, T>, ProgramError> {
+        unimplemented!("anvil: AccountLoader::load_mut stub")
+    }
+    pub fn load_init(&self) -> Result<core::cell::RefMut<'_, T>, ProgramError> {
+        unimplemented!("anvil: AccountLoader::load_init stub")
+    }
 }`;
   }
 
