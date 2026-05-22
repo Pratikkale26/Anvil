@@ -255,7 +255,12 @@ function parseInstructionFn(
     expandAccountsMethodCalls(parser, bodyFnNode, contextType, accounts, implMethods)
     ?? expandAccountsMethodWrapper(parser, bodyFnNode, contextType, accounts, implMethods)
     ?? expandTypeAssociatedCalls(parser, bodyFnNode, implMethods)
-    ?? expandTypeAssociatedHandler(parser, bodyFnNode, implMethods);
+    ?? expandTypeAssociatedHandler(parser, bodyFnNode, implMethods)
+    // Finding #51 — instance-method calls on state-account bindings. Only
+    // fires when none of the above wrapper-style expanders match AND the
+    // body has at least one `let X = ctx.accounts.Y;` + `X.method();`
+    // pair against a known impl method.
+    ?? expandInstanceMethodCalls(parser, bodyFnNode, accounts, implMethods);
 
   // ── Classify the function body using AST ──
   // If the handler used a non-`ctx` Context parameter name (e.g. `context`),
@@ -1462,6 +1467,141 @@ function expandAccountsMethodWrapper(
     bodyNode: syntheticBody,
     rawBody: syntheticBody.text,
   };
+}
+
+/**
+ * Finding #51 — inline instance-method calls on state-account bindings.
+ *
+ * Source pattern (from program-examples program-derived-addresses):
+ *
+ *   let page_visits = &mut ctx.accounts.page_visits;
+ *   page_visits.increment();
+ *
+ * `page_visits` is a local bound to `&mut ctx.accounts.page_visits`.
+ * `increment()` is an impl method on the PageVisits #[account] struct
+ * defined in a sibling file:
+ *
+ *   impl PageVisits {
+ *     pub fn increment(&mut self) {
+ *       self.page_visits = self.page_visits.checked_add(1).unwrap();
+ *     }
+ *   }
+ *
+ * Pre-fix, Anvil's emit didn't recognize the instance-method call —
+ * the local was state-bound but the mutation never propagated to
+ * account data, so byte-equal compare showed `page_visits=0` (initial)
+ * vs Anchor's `page_visits=1`. Bug class: any program that factors
+ * mutations into impl methods on its #[account] structs.
+ *
+ * This expander walks let-bindings of `let <X> = &mut? ctx.accounts.<acc>;`
+ * to build a local→account map, then rewrites each `<X>.<method>(args);`
+ * call by inlining the impl body with `self.<field>` substituted to
+ * `ctx.accounts.<acc>.<field>` (the canonical form the body classifier
+ * already recognizes for state mutations).
+ *
+ * Defensive: only fires when at least one (local, method) pair matches
+ * a known impl. If no match, returns null and the body falls through to
+ * pass_through classification unchanged.
+ */
+function expandInstanceMethodCalls(
+  parser: Parser,
+  fnNode: SyntaxNode,
+  accounts: AccountRef[],
+  implMethods: { implName: string; name: string; node: SyntaxNode; modulePath: string[] }[],
+): { bodyNode: SyntaxNode; rawBody: string } | null {
+  const bodyNode = fnNode.childForFieldName("body");
+  if (!bodyNode) return null;
+  if (implMethods.length === 0) return null;
+
+  // Pre-flight: skip the walk if no `let X = (&mut )?ctx.accounts.Y;` shape.
+  if (!/let\s+\w+\s*=\s*&?\s*(?:mut\s+)?ctx\s*\.\s*accounts\s*\.\s*\w+/.test(bodyNode.text)) return null;
+
+  // accountType lookup by source field name.
+  const accountTypeByName = new Map<string, string>();
+  for (const acc of accounts) {
+    accountTypeByName.set(acc.name, acc.accountType);
+  }
+
+  // Scan the body for let-bindings → state account aliases. Pattern:
+  //   let <local> = &mut ctx.accounts.<acc>;
+  //   let <local> = ctx.accounts.<acc>;
+  // Captures: local, acc (the account name in the Accounts struct).
+  const localToAccount = new Map<string, string>();
+  const letBindRe =
+    /let\s+(\w+)\s*=\s*&?\s*(?:mut\s+)?ctx\s*\.\s*accounts\s*\.\s*(\w+)\s*;/g;
+  let m: RegExpExecArray | null;
+  while ((m = letBindRe.exec(bodyNode.text)) !== null) {
+    const local = m[1]!;
+    const acc = m[2]!;
+    localToAccount.set(local, acc);
+  }
+  if (localToAccount.size === 0) return null;
+
+  // Walk top-level statements. For each `<local>.<method>(args)(\?)?(;)?`,
+  // look up the impl method on the binding's account type.
+  const stmtCallRe =
+    /^\s*(\w+)\s*\.\s*(\w+)\s*\(([\s\S]*)\)\s*(\??)\s*(;)?\s*$/s;
+
+  const rewrittenParts: string[] = [];
+  let didExpand = false;
+
+  for (let i = 0; i < bodyNode.namedChildCount; i++) {
+    const child = bodyNode.namedChild(i);
+    if (!child) continue;
+    const text = child.text;
+    const match = text.match(stmtCallRe);
+    if (match) {
+      const local = match[1]!;
+      const methodName = match[2]!;
+      const argsRaw = match[3] ?? "";
+      const hasQuestion = !!match[4];
+      const acc = localToAccount.get(local);
+      if (acc) {
+        const accType = accountTypeByName.get(acc);
+        if (accType) {
+          const target = implMethods.find(
+            (entry) => entry.implName === accType && entry.name === methodName,
+          );
+          if (target) {
+            const argExprs = splitTopLevelArgs(argsRaw);
+            let inner = inlineImplMethodBody(target, argExprs);
+            // Substitute `self.<field>` / `&self.<field>` / `&mut self.<field>`
+            // → `ctx.accounts.<acc>.<field>`. Mirror the same form
+            // expandImplMethod's account-substitution loop uses so the body
+            // classifier's state-field-assign + state-read paths recognize
+            // the mutations.
+            inner = inner.replace(
+              /(&\s*mut\s+|&\s*)?\bself\s*\.\s*(\w+)/g,
+              (_full, prefix: string | undefined, field: string) =>
+                `${prefix ?? ""}ctx.accounts.${acc}.${field}`,
+            );
+            // Bare `self` (e.g. `Self::space_for(self)`) — replace with
+            // `&mut ctx.accounts.<acc>` to preserve mutability.
+            inner = inner.replace(
+              /\bself\b(?!\s*\.\s*\w)/g,
+              `ctx.accounts.${acc}`,
+            );
+            rewrittenParts.push(`{\n${inner}\n}${hasQuestion ? "?" : ""};`);
+            didExpand = true;
+            continue;
+          }
+        }
+      }
+    }
+    // Default: keep statement verbatim.
+    rewrittenParts.push(text);
+  }
+
+  if (!didExpand) return null;
+
+  const expandedBody = `{\n${rewrittenParts.join("\n")}\n}`;
+  const synthetic = parseGuarded(parser, `fn __anvil_instance_method__() ${expandedBody}`);
+  if (!synthetic) return null;
+  const syntheticFn = findDescendant(synthetic.rootNode, "function_item");
+  const syntheticBody = syntheticFn?.childForFieldName("body");
+  if (!syntheticBody) return null;
+
+  return { bodyNode: syntheticBody, rawBody: syntheticBody.text };
 }
 
 /**

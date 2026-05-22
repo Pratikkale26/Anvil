@@ -141,13 +141,33 @@ export async function callPageVisitsFlow(
     data: Buffer.from(anchorIxDiscriminator("create_page_visits")),
   });
 
-  const tx = new Transaction().add(createIx);
-  tx.recentBlockhash = svm.latestBlockhash();
-  tx.feePayer = ctx.payer.publicKey;
-  tx.sign(ctx.payer);
-  const r = svm.sendTransaction(tx);
-  if (isTxFailure(r)) {
-    throw new Error(`create_page_visits failed: ${txFailureMessage(r)}`);
+  // increment_page_visits — exercises the impl-method inlining fix
+  // (Finding #51). IncrementPageVisits accounts: user + page_visits PDA.
+  // Source: `let page_visits = &mut ctx.accounts.page_visits;
+  // page_visits.increment();` — the impl method `increment(&mut self)`
+  // lives in src/state/page_visits.rs and mutates self.page_visits via
+  // checked_add(1). Pre-fix the mutation was dropped; post-fix it
+  // round-trips back to account data via the existing state-field-assign
+  // classifier. Byte-equal post-scenario:
+  //   page_visits: 1, bump: <derived>
+  const incrementIx = new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: ctx.payer.publicKey, isSigner: false, isWritable: false },
+      { pubkey: ctx.pageVisitsPda, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.from(anchorIxDiscriminator("increment_page_visits")),
+  });
+
+  for (const ix of [createIx, incrementIx]) {
+    const tx = new Transaction().add(ix);
+    tx.recentBlockhash = svm.latestBlockhash();
+    tx.feePayer = ctx.payer.publicKey;
+    tx.sign(ctx.payer);
+    const r = svm.sendTransaction(tx);
+    if (isTxFailure(r)) {
+      throw new Error(`page_visits flow tx failed: ${txFailureMessage(r)}`);
+    }
   }
 }
 
