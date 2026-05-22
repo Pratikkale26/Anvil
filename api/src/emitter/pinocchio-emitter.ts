@@ -724,10 +724,20 @@ ${arms}
       ...(ir.types ?? []).map((t) => t.name),
       ...(ir.accounts ?? []).map((a) => a.name),
     ]);
+    // G87 — also accept primitive numeric receivers (`impl MulDiv for u64`,
+    // raydium's full_math.rs). Real-world Anchor programs implement custom
+    // arithmetic traits for u64/u128/i64 etc. The trait def is also in
+    // userTraitImpls (or as a userTrait); restricting to user-type
+    // receivers drops these impls and the methods become undefined.
+    const primitiveTypes = new Set([
+      "u8", "u16", "u32", "u64", "u128", "usize",
+      "i8", "i16", "i32", "i64", "i128", "isize",
+      "bool", "f32", "f64",
+    ]);
     const survivors = impls.filter((raw: string) => {
       const m = raw.match(/^\s*impl(?:<[^>]+>)?\s+[^{}]+?\s+for\s+([A-Za-z_]\w*)/);
       if (!m || !m[1]) return false;
-      if (!userTypeNames.has(m[1])) return false;
+      if (!userTypeNames.has(m[1]) && !primitiveTypes.has(m[1])) return false;
       if (/&\s*(?:'\w+\s+)?AccountMeta\b/.test(raw)) return false;
       if (/:\s*&\s*(?:'\w+\s+)?AccountInfo\b/.test(raw)) return false;
       if (/\bctx\s*\.\s*(?:accounts|bumps|remaining_accounts)\b/.test(raw)) return false;
