@@ -3058,8 +3058,14 @@ ${originalLines}
   protected emitUserTraitImpls(ir: SolanaIR): string {
     const impls = ir.userTraitImpls ?? [];
     if (impls.length === 0) return "";
+    // G94 attempt dropping user `impl From<X> for ProgramError` caused
+    // marinade/pin +78 regression — marinade's user impl supplied a
+    // From<MarinadeError> -> ProgramError mapping our auto-emit doesn't
+    // replicate. Net negative; defer until per-fixture analysis.
+    const filtered = impls;
+    if (filtered.length === 0) return "";
     const target = this.frameworkName === "Pinocchio" ? "pin" : "native";
-    return impls
+    return filtered
       .map((raw) => commentOutSiblingTraitImpl(raw))
       .map((processed) =>
         stripAnchorWrappersInCode(stripAnchorLangPrefixes(processed), target),
