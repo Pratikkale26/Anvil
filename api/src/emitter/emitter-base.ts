@@ -1765,6 +1765,13 @@ export abstract class BaseEmitter {
     if (this.frameworkName === "Native") {
       joined = addInfoLifetimeIfReferenced(joined);
     }
+    // G90 attempt: apply commentOutUnsalvageableCallSites to helpers.rs.
+    // Reverted because the brace-balance walker doesn't account for
+    // commented-out helper bodies (which are pure text), and the call-site
+    // range expansion swallowed `}` of unrelated sibling helpers. Caused
+    // global "unexpected closing delimiter `}`" — all 6 large fixtures
+    // collapsed to a single brace-balance error. Defer until the walker
+    // can skip already-commented spans.
     return `//! Helper functions for ${toPascalCase(ir.name)}\n\n` + joined;
   }
 
