@@ -1658,6 +1658,11 @@ export abstract class BaseEmitter {
         `$1\n    #[allow(unreachable_code, unused_variables)]\n    let __anvil_unported_self__ = unimplemented!("Anvil: lost-self placeholder — manual port required");`,
       );
     }
+    // G106 reverted — orphan `self.X(...)` rewrite broke emit for every
+    // fixture (helper method undefined + regex appends `; let _ = (` which
+    // leaks broken syntax everywhere). Lost-impl-receiver self.X is the
+    // marinade self.X arc that needs ctx-aware AST rewriting, not a
+    // textual regex pass. Defer until typed IR or AST visitor.
     // Per-instruction body-level imports for symbols that lib.rs-only
     // `use` statements don't reach. `use super::*;` resolves to
     // instructions/mod.rs's scope (which has `use crate::*;`), and
