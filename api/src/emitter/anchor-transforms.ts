@@ -59,6 +59,19 @@ export function collapseModulePaths(source: string, knownNames: Set<string>): st
         return segs.slice(i).join("::");
       }
     }
+    // G83 — flattened-submodule path. If `mod1::mod2::name` corresponds to
+    // a known fn `mod1_mod2_name` (Anvil's parser renames helper fns that
+    // lived inside a sub-module to `<modulePath>_<name>`), collapse the
+    // path to the flat name. Kamino's `handler_refresh_obligation::
+    // process_impl` resolves to top-level
+    // `handler_refresh_obligation_process_impl`. Walk prefixes from
+    // longest to shortest so `a::b::c::name` matches `a_b_c_name` first.
+    for (let n = segs.length; n >= 2; n--) {
+      const candidate = segs.slice(0, n).join("_");
+      if (knownNames.has(candidate)) {
+        return [candidate, ...segs.slice(n)].join("::");
+      }
+    }
     return full;
   });
 }
