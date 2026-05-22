@@ -45,16 +45,27 @@ import {
 import { existsSync } from "node:fs";
 
 // Regression gate for finding #62 (asymmetric unsalvageable-call comment-out)
-// + the set_inner(Offer { ..., bump: ctx.bumps.X }) helper port. Confirmed
-// 2026-05-22: Anvil's emit commented out send_wanted_tokens_to_maker(&context)?
-// in take_offer.rs but left the sibling withdraw_and_close_vault(context)?
-// uncommented — the leftover call references stale `context` binding and
-// fails compile (cannot find value 'context'). make_offer also fails on
-// the set_inner(Offer { ..., bump: ctx.bumps.offer }) helper port. Both
-// surfaces block byte-equal even though only make_offer is invoked (the
-// whole crate must compile for the deployed .so).
+// + the set_inner(Offer { ..., bump: ctx.bumps.X }) helper port.
 //
-// Gated behind RUN_PENDING_DIFFERENTIALS=1. Flip on once #62 lands.
+// Half FIXED 2026-05-22: take_offer.rs portion landed via anchor-parser.ts
+// fix — the `looksLikeAnchorHandler` heuristic was misclassifying free
+// helpers whose first param is `ctx: Context<X>` (e.g.
+// `withdraw_and_close_vault(ctx: Context<TakeOffer>)`) as already-absorbed
+// handlers, silently dropping them from helperFns. They never reached
+// unsalvageableHelpers → call sites stayed uncommented + referenced stale
+// `context` binding → cargo E0425. Fix: pre-scan the `#[program]` module
+// and only treat ctx-shaped fns as absorbed handlers when their NAME
+// matches the program-instruction registry.
+//
+// REMAINING (still gated): make_offer.rs panics at runtime because the
+// `save_offer` helper is unsalvageable (its body uses Anchor's set_inner +
+// ctx.bumps.X), and its RHS is currently replaced with `unimplemented!()`.
+// Whole-crate compiles cleanly now, but invoking make_offer hits the
+// unimplemented panic. Byte-equal requires porting save_offer's set_inner
+// to a target-typed write helper that preserves the Offer.bump derivation.
+//
+// Gated behind RUN_PENDING_DIFFERENTIALS=1. Flip on once the save_offer /
+// set_inner-with-bump helper port lands.
 const RUN_PENDING = process.env.RUN_PENDING_DIFFERENTIALS === "1";
 
 if (!existsSync(LIB_RS)) {
