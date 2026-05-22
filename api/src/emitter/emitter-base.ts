@@ -1983,6 +1983,21 @@ impl<'a, 'b, 'c, 'info, T> CpiContext<'a, 'b, 'c, 'info, T> {
     if (/\bOwner\b(?!\s*\()/.test(all) && !/\bcollection_authority\.Owner\b/.test(all) && !userDefinesTrait("Owner")) {
       stubs.push(`pub trait Owner {\n    fn owner() -> Pubkey;\n}`);
     }
+    // G95 — Key trait (anchor_lang::Key) used as a bound on T. Real-world
+    // Anchor programs (openbook NonZeroKey, marinade ToAccountInfo) carry
+    // `where T: Key` impls that need the trait def.
+    if (/:\s*Key\b|<\s*Key\b|\bT:\s*Key\b|where\s+\w+:\s*Key\b/.test(all) && !userDefinesTrait("Key")) {
+      stubs.push(`pub trait Key {\n    fn key(&self) -> Pubkey;\n}`);
+    }
+    // G95 — AnchorError struct stub. Openbook's Contextable impl wraps
+    // ProgramError into a user Error enum with Box<AnchorError> variant;
+    // the AnchorError struct itself comes from anchor_lang. Minimal shape
+    // gives the wrap call sites a constructable type.
+    const userDefinesStruct = (name: string) =>
+      new RegExp(`\\bpub\\s+struct\\s+${name}\\b`).test(all);
+    if (/\bAnchorError\b/.test(all) && !userDefinesStruct("AnchorError")) {
+      stubs.push(`pub struct AnchorError {\n    pub error_msg: String,\n    pub error_code_number: u32,\n}`);
+    }
     if (stubs.length === 0) return "";
     return `// G79 — anchor_lang trait stubs. Carried impl blocks ($Anchor's\n// #[account]/#[zero_copy] macros expand to impl Owner/Discriminator/\n// Account[De]Serialize) reference these traits; we strip the anchor_lang\n// import but the impl blocks survive. Minimal compile-clean shape; real\n// semantics need the wire-format/owner data Anvil already emits separately.\n${stubs.join("\n\n")}`;
   }
