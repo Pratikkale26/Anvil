@@ -1434,6 +1434,15 @@ export abstract class BaseEmitter {
     if (this.referencesAnchorAccountLoader(ir)) {
       sections.push(this.emitAnchorAccountLoaderStub());
     }
+    // Finding #26 (REVERTED — same cascade as G75/G93/G98) — attempted
+    // to emit the Event trait stub + per-event `impl Event for E` impls
+    // together. Reverted because openbook cascaded +443 errors (1 → 215
+    // pin, 1 → 230 native). The trait+impl pair was supposed to avoid
+    // the orphan-trait issue but something in carried-text symbol
+    // resolution still depends on anchor_lang's real Event trait shape
+    // that our minimal stub doesn't reproduce. Multi-day arc — needs
+    // typed event IR refactor with full trait surface (set_inner-style
+    // expansion of emit!() macro at parse time, not at emit time).
     // G79 — stub other anchor_lang trait references (Discriminator,
     // AccountDeserialize, AccountSerialize, Owner). Real-world Anchor
     // programs (marinade) implement these via macros on every state
@@ -2167,6 +2176,24 @@ impl<'info, T> AccountLoader<'info, T> {
 pub trait Event: BorshSerialize + BorshDeserialize {
     const DISCRIMINATOR: [u8; 8];
 }`;
+  }
+
+  /**
+   * Finding #26 — emit the Event trait stub TOGETHER with `impl Event for E`
+   * per event struct. The bundling is what closes the G75/G93/G98 cascade:
+   * the trait def alone is orphan (T: Event bound unresolves on inherent
+   * impl blocks); paired with impls, the trait + impls form a closed loop
+   * the rest of the carried code resolves against.
+   */
+  protected emitAnchorEventTraitWithImpls(ir: SolanaIR): string {
+    const parts: string[] = [this.emitAnchorEventTraitStub()];
+    for (const ev of (ir.events ?? [])) {
+      const disc = eventDiscriminator(ev.name);
+      parts.push(
+        `impl Event for ${ev.name} {\n    const DISCRIMINATOR: [u8; 8] = ${disc};\n}`,
+      );
+    }
+    return parts.join("\n\n");
   }
 
   /** G48 — detect references to anchor_lang's built-in ErrorCode enum. */
