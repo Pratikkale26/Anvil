@@ -98,7 +98,10 @@ pub mod t22_token_metadata {
                     new_authority: ctx.accounts.update_authority.to_account_info(),
                 },
             ),
-            OptionalNonZeroPubkey::try_from(None)?,
+            // try_from(None) is infallible — use unwrap() instead of `?`
+            // so the Native target (spl_pod TryFromError → ProgramError
+            // gap) compiles cleanly. None case never errors.
+            OptionalNonZeroPubkey::try_from(None).unwrap(),
         )?;
         Ok(())
     }

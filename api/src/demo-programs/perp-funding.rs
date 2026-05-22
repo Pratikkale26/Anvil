@@ -968,7 +968,7 @@ fn get_fee_tier(current_oi: u64) -> (u64, u64) {
 
 // ─── Signed Amount Helper ────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, AnchorSerialize, AnchorDeserialize)]
+#[derive(Clone, Copy, AnchorSerialize, AnchorDeserialize, Debug)]
 pub enum SignedAmount {
     Positive(u64),
     Negative(u64),
