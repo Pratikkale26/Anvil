@@ -1902,12 +1902,27 @@ function computeHandlerRenames(root: FileNode): Map<string, Map<string, string>>
           // otherwise it's a substring like `effn`.
           const prev = i > 0 ? src[i - 1] : "\n";
           if (prev === undefined || /\s/.test(prev)) {
-            fnDefs.push({
-              filePath: node.filePath,
-              fnName: fnMatch[1],
-              moduleName: node.moduleName,
-              modulePath: node.modulePath,
-            });
+            // G111 — skip cfg-gated fns from the duplicate-rename pool.
+            // raydium's util/system.rs has two `pub fn get_recent_epoch`
+            // gated by mutually-exclusive cfg predicates; stripInactiveCfgItems
+            // removes one downstream, but rename runs FIRST and saw both as
+            // duplicates → renamed both to `system_get_recent_epoch`.
+            // Callers reference the bare name `get_recent_epoch`, so the
+            // rename orphaned them. Walk back from the `fn` token: skip
+            // optional `pub` / `pub(crate)` modifiers + whitespace, then
+            // check if the previous non-whitespace is `]` closing a `#[cfg(...)]`.
+            const lookbackStart = Math.max(0, i - 800);
+            const before = src.slice(lookbackStart, i);
+            // Match: ` `*?, then maybe `pub (...)?`, then ws, then `#[cfg(...)]`, then ws end.
+            const isCfgGated = /#\[cfg\b[\s\S]*?\]\s*(?:pub(?:\s*\([^)]*\))?\s+)?\s*$/.test(before);
+            if (!isCfgGated) {
+              fnDefs.push({
+                filePath: node.filePath,
+                fnName: fnMatch[1],
+                moduleName: node.moduleName,
+                modulePath: node.modulePath,
+              });
+            }
             i += fnMatch[0].length - 1;
           }
         }
