@@ -1880,6 +1880,21 @@ function extractSplSetAuthority(callNode: SyntaxNode, collector?: WarningCollect
     ? extractSignerSeedsExpr(firstArg.text)
     : undefined;
 
+  // Finding #54 — extract the token_program AccountInfo binding from the
+  // CpiContext::new[_with_signer]'s first arg. Sister to the T22 init
+  // dispatch fix (commit 9a6c565). When source uses
+  // `token_interface::set_authority(CpiContext::new(ctx.accounts.token_program
+  // .to_account_info(), ...))`, the program ID should be read from the
+  // runtime AccountInfo at call time — not hardcoded to a const T22 / SPL
+  // Token ID. Match `ctx.accounts.<NAME>(.to_account_info()|.key())?` as
+  // the first arg of CpiContext::new[_with_signer] and capture <NAME>.
+  // Falls back to undefined when match fails — emit keeps the legacy
+  // const-ID path.
+  const tokenProgramArgMatch = firstArg.text.match(
+    /CpiContext\s*::\s*new(?:_with_signer)?\s*\(\s*ctx\s*\.\s*accounts\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)/,
+  );
+  const tokenProgramArg = tokenProgramArgMatch?.[1];
+
   // The remaining args are: AuthorityType variant + new_authority option.
   // Both are raw text — emitter maps the AuthorityType variant to the
   // target's enum path. We strip `ctx.accounts.` from new_authority since
@@ -1895,6 +1910,7 @@ function extractSplSetAuthority(callNode: SyntaxNode, collector?: WarningCollect
     authorityType,
     newAuthority,
     signerSeeds,
+    ...(tokenProgramArg ? { tokenProgramArg } : {}),
   };
 }
 
