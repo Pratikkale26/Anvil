@@ -187,8 +187,37 @@ export function commentOutUnsalvageableCallSites(text: string, helpers: Set<stri
   for (const r of ranges) {
     for (let i = r.startLine; i <= r.endLine; i++) commentOut.add(i);
   }
+  // G82 — when a range starts with a `let X = …` pattern, replace the
+  // RHS with `unimplemented!()` instead of commenting the whole range.
+  // This preserves the binding name so downstream references compile.
+  // Cascades from G74 (openbook's `let oracle_a = oracle_state_unchecked
+  // (...)?;` commented out, then `oracle_a` references E0425).
+  const rangeStarts = new Map<number, number>();  // startLine → endLine
+  for (const r of ranges) {
+    rangeStarts.set(r.startLine, r.endLine);
+  }
   let prevCommented = false;
   for (let i = 0; i < lines.length; i++) {
+    if (rangeStarts.has(i)) {
+      const endLine = rangeStarts.get(i)!;
+      // Collect the full range's source.
+      const rangeLines = lines.slice(i, endLine + 1).join("\n");
+      // Match `let MUT? IDENT (: TYPE)? =` at the start.
+      const letMatch = rangeLines.match(/^([ \t]*)let\s+(mut\s+)?(\w+)(\s*:\s*[^=]+?)?\s*=/);
+      if (letMatch) {
+        const indent = letMatch[1] ?? "";
+        const mutKw = letMatch[2] ?? "";
+        const ident = letMatch[3] ?? "";
+        const typeAnn = letMatch[4] ?? "";
+        out += `${indent}// ${MARKER_ANVIL_TODO_PREFIX} let-binding RHS calls unsalvageable helper — replaced with unimplemented!()\n`;
+        out += `${indent}let ${mutKw}${ident}${typeAnn} = unimplemented!("anvil: unsalvageable helper RHS replaced");`;
+        out += (endLine < lines.length - 1 ? "\n" : "");
+        i = endLine;
+        prevCommented = false;
+        continue;
+      }
+      // Otherwise comment out as before.
+    }
     if (commentOut.has(i)) {
       if (!prevCommented) {
         out += `// ${MARKER_ANVIL_TODO_PREFIX} call site of unsalvageable helper commented out — manual port required\n`;
