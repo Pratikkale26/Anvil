@@ -4085,15 +4085,19 @@ ${indented}
       predeserialize = lines.join("\n") + "\n";
     }
 
-    // Detect realloc::zero — Anchor's flag for whether to zero-fill the
-    // newly-grown region. Defaults to false (matches Anchor's default).
-    const reallocZero = accountRef.constraints.some(
-      (c) => c.kind === "realloc" && false, // realloc::zero is parsed as a separate flag; check the IR carrier
+    // Finding #56 — Anchor's `realloc::zero = <bool>` flag controls
+    // whether the newly-grown region is zero-filled. Pre-fix Anvil
+    // hardcoded `false` regardless of source. Now we read the constraint
+    // value; default to `false` matches Anchor's default when omitted.
+    const reallocZeroConstraint = accountRef.constraints.find(
+      (c) => c.kind === "realloc::zero",
     );
-    void reallocZero; // not yet wired to a constraint kind; default to false matches Anchor
+    const reallocZero =
+      reallocZeroConstraint?.value?.trim().toLowerCase() === "true";
+    const zeroFlag = reallocZero ? "true" : "false";
 
     if (this.frameworkName === "Native") {
-      return `    // realloc — resize ${accountName} to ${sizeExpr}
+      return `    // realloc — resize ${accountName} to ${sizeExpr} (zero=${zeroFlag})
     {
 ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
         let __rent = solana_program::sysvar::rent::Rent::get()?;
@@ -4110,7 +4114,7 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
                 &[${payer}.clone(), ${accountName}.clone()],
             )?;
         }
-        ${accountName}.realloc(__new_size, false)?;
+        ${accountName}.realloc(__new_size, ${zeroFlag})?;
     }`;
     }
 
@@ -4124,7 +4128,7 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
       // Rent top-up is via pinocchio_system::Transfer{from, to, lamports}.
       // Both signers (payer + account) are from the instruction's account
       // slice — Pinocchio's Transfer takes &AccountInfo refs directly.
-      return `    // realloc — resize ${accountName} to ${sizeExpr}
+      return `    // realloc — resize ${accountName} to ${sizeExpr} (zero=${zeroFlag})
     {
 ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
         let __rent = pinocchio::sysvars::rent::Rent::get()?;
@@ -4137,7 +4141,7 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
                 lamports: __delta,
             }.invoke()?;
         }
-        ${accountName}.realloc(__new_size, false)?;
+        ${accountName}.realloc(__new_size, ${zeroFlag})?;
     }`;
     }
 

@@ -95,6 +95,11 @@ export const ConstraintKindSchema = z.enum([
   // rent-delta payer when reallocating. emitReallocPrelude consumes it
   // to drive the system_program::transfer's from-account.
   "realloc::payer",
+  // Finding #56 — Anchor's `realloc::zero = true|false` constraint controls
+  // whether the newly-allocated tail bytes get zero-filled. Pre-fix Anvil
+  // hardcoded `realloc(_, false)`; that diverges from Anchor when source
+  // sets the flag to true. emitReallocPrelude now reads this constraint.
+  "realloc::zero",
   // Anchor 1.0 — `dup = <other_account>` declares this account is a
   // duplicate of another in the struct (same pubkey is allowed where
   // Anchor would otherwise reject). Anvil preserves the constraint as

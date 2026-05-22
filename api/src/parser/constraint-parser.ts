@@ -29,6 +29,7 @@ const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
   "mint::freeze_authority": "mint::freeze_authority",
   realloc:                        "realloc",
   "realloc::payer":               "realloc::payer",
+  "realloc::zero":                "realloc::zero",
   // Anchor 1.0 (task #78): `dup = <other>` — preserve in IR so the
   // validator + AI refine see the intent. Target emit ignores it
   // (Pinocchio + Native don't enforce anti-duplicate by default).
@@ -64,10 +65,9 @@ const INTENTIONAL_SKIP_KEYS = new Set([
   "space",
   "rent_exempt",
   "discriminator",
-  // G91 — realloc::payer is now consumed by emitReallocPrelude to drive
-  // the rent-delta system_transfer's from-account selection. Surface as
-  // a constraint instead of skipping.
-  "realloc::zero",
+  // G91 — realloc::payer + Finding #56 — realloc::zero are both now
+  // consumed as real constraints by emitReallocPrelude (rent-delta
+  // payer + tail-zero-fill flag respectively). Surface them, not skip.
 ]);
 
 /**
