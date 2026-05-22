@@ -330,6 +330,13 @@ function parseAccountField(
 export function parseAccountDataStruct(
   structNode: SyntaxNode,
   attrs: SyntaxNode[],
+  opts?: {
+    collector?: WarningCollector;
+    /** Which attribute the discriminator-override warning should mention.
+     *  Defaults to "account"; pass "event" when invoked from the #[event]
+     *  reuse path so messages don't lie about which annotation was seen. */
+    discriminatorKind?: "account" | "event";
+  },
 ): AccountDef {
   const name = extractStructName(structNode) ?? "Unknown";
   const fields = parseStructFields(structNode);
@@ -344,9 +351,78 @@ export function parseAccountDataStruct(
   // separate IR flag; deferred until a fixture demands it.
   const isZeroCopy = attrs.some((a) => /\bzero_copy\b/.test(a.text.replace(/\s+/g, "")));
 
+  // #60 — `#[account(discriminator = N)]` / `#[event(discriminator = N)]`
+  // override is not yet honored. Every emit site hardcodes `[u8; 8]` /
+  // `[..8]` against sha256("account:<Name>") / sha256("event:<Name>"). A
+  // real fix is multi-day work across schema + ~15 emit sites; surfacing
+  // the loss loudly so users don't ship silent on-disk byte-mismatches.
+  if (opts?.collector) {
+    const kind = opts.discriminatorKind ?? "account";
+    const override = detectStructDiscriminatorOverride(attrs, kind);
+    if (override) {
+      const code = kind === "event"
+        ? "event_discriminator_override_unsupported"
+        : "account_discriminator_override_unsupported";
+      const defaultDisc = kind === "event"
+        ? `sha256("event:${name}")[..8]`
+        : `sha256("account:${name}")[..8]`;
+      opts.collector.add({
+        code,
+        message:
+          `${kind} \`${name}\`: #[${kind}(discriminator = ${override})] override is ` +
+          `not yet supported — every emit site hardcodes the default 8-byte ` +
+          `${defaultDisc} discriminator. Byte-equal differential against an ` +
+          `Anchor 1.x build with this override WILL FAIL. Hand-port the ` +
+          `affected load/init/zero paths, or rewrite the source to use the ` +
+          `default discriminator until the variable-length rework lands.`,
+        snippet: override,
+        loc: locFromNode(structNode),
+      });
+    }
+  }
+
   const def: AccountDef = { name, fields, space };
   if (isZeroCopy) def.isZeroCopy = true;
   return def;
+}
+
+/**
+ * #60 — Detect `#[account(discriminator = <expr>)]` or
+ * `#[event(discriminator = <expr>)]` on a data struct. Returns the raw
+ * RHS source (`1`, `[1u8, 2u8]`, `b"hi"`, `MY_DISC`, …) when the
+ * annotation is present, otherwise undefined. Used by the parser to fire
+ * a loud warning since the emitter doesn't yet honor the override.
+ *
+ * Brackets/parens are balanced so byte-arrays + const-fn calls capture
+ * cleanly. Whitespace is normalised inside the lookup so multi-line
+ * annotations match.
+ */
+function detectStructDiscriminatorOverride(
+  attrs: SyntaxNode[],
+  kind: "account" | "event",
+): string | undefined {
+  const head = `#[${kind}(`;
+  for (const attr of attrs) {
+    const raw = attr.text;
+    if (!raw.startsWith(head)) continue;
+    const startMatch = raw.match(/\bdiscriminator\s*=\s*/);
+    if (!startMatch) continue;
+    const rhsStart = startMatch.index! + startMatch[0].length;
+    let depth = 0;
+    let i = rhsStart;
+    while (i < raw.length) {
+      const ch = raw[i]!;
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") {
+        if (depth === 0) break;
+        depth--;
+      } else if (ch === "," && depth === 0) break;
+      i++;
+    }
+    const rhs = raw.slice(rhsStart, i).trim();
+    if (rhs) return rhs;
+  }
+  return undefined;
 }
 
 // ─── Struct fields parsing ──────────────────────────────────────────────────

@@ -358,6 +358,30 @@ function parseInstructionFn(
   // used the auto-computed sha256("global:<name>") discriminator, which
   // would silently misroute calls.
   const discriminator = extractInstructionDiscriminator(fnAttrs);
+  // #60 — warn loudly when a discriminator override is present but in a
+  // form the parser doesn't yet handle (scalar, short array, byte
+  // string, const, const-fn). Router emit + the `split_at(8)` dispatch
+  // shape both assume 8 bytes; widening parser without rewiring
+  // dispatch would silently misroute. Surfaced so users see the gap.
+  if (!discriminator) {
+    const unsupported = detectUnsupportedInstructionDiscriminator(fnAttrs);
+    if (unsupported && collector) {
+      collector.add({
+        code: "instruction_discriminator_override_unsupported",
+        message:
+          `instruction \`${fnName}\`: #[instruction(discriminator = ${unsupported})] ` +
+          `override form not supported — only 8-byte literal arrays (e.g. ` +
+          `[1, 2, 3, 4, 5, 6, 7, 8]) are surfaced today. Anvil's router falls ` +
+          `back to the default sha256("global:${fnName}")[..8] discriminator, ` +
+          `which silently misroutes calls from clients that build instruction ` +
+          `data with the override bytes. Hand-port the dispatch arm or rewrite ` +
+          `the source to use the 8-byte literal form until the variable-length ` +
+          `discriminator rework lands.`,
+        instruction: fnName,
+        snippet: unsupported,
+      });
+    }
+  }
 
   return {
     name: fnName,
@@ -388,6 +412,56 @@ function extractInstructionDiscriminator(fnAttrs: SyntaxNode[]): string | undefi
       .filter((n) => Number.isInteger(n) && n >= 0 && n <= 255);
     if (bytes.length !== 8) continue;
     return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  return undefined;
+}
+
+/**
+ * #60 — Detect `#[instruction(discriminator = <expr>)]` annotations that
+ * extractInstructionDiscriminator rejected so a parser warning can fire.
+ * Returns the raw RHS source (`0`, `[1, 2, 3, 4]`, `b"hi"`, `MY_DISC`,
+ * `get_disc("wow")`, …) when an override is present in a non-8-byte
+ * form, or undefined otherwise.
+ *
+ * Implementation note: we deliberately re-scan the same attribute text
+ * rather than threading state out of extractInstructionDiscriminator —
+ * the unrecognised RHS form is small and the call site only matters when
+ * the supported-path returned undefined.
+ */
+function detectUnsupportedInstructionDiscriminator(
+  fnAttrs: SyntaxNode[],
+): string | undefined {
+  for (const attr of fnAttrs) {
+    const text = attr.text;
+    // Match any RHS form, then balance brackets/parens so we capture the
+    // full expression including `get_disc("wow")` (parens) and
+    // `[N, N, ...]` (brackets).
+    const startMatch = text.match(/#\[instruction\([^)]*\bdiscriminator\s*=\s*/);
+    if (!startMatch) continue;
+    const rhsStart = startMatch.index! + startMatch[0].length;
+    let depth = 0;
+    let i = rhsStart;
+    while (i < text.length) {
+      const ch = text[i]!;
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") {
+        if (depth === 0) break;
+        depth--;
+      } else if (ch === "," && depth === 0) break;
+      i++;
+    }
+    const rhs = text.slice(rhsStart, i).trim();
+    if (!rhs) continue;
+    // Defer to the supported 8-byte array form — extractInstructionDiscriminator
+    // already accepted it, so no warning needed.
+    const arr = rhs.match(/^\[\s*([0-9, ]+)\s*\]$/);
+    if (arr) {
+      const bytes = arr[1]!.split(",").map((s) => s.trim()).filter(Boolean);
+      if (bytes.length === 8 && bytes.every((b) => /^\d+$/.test(b))) {
+        return undefined;
+      }
+    }
+    return rhs;
   }
   return undefined;
 }

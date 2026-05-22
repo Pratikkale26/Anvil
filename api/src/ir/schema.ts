@@ -2000,6 +2000,36 @@ export const ParserWarningCodeSchema = z.enum([
   // contain unresolved references. Re-run /parse with projectPath or
   // files+entryPath so buildProjectSourceGraph can walk the module tree.
   "multi_file_shim_detected",
+  /**
+   * #60 — Anchor 1.x `#[instruction(discriminator = ...)]` override saw a
+   * form the parser doesn't yet support. The 8-byte literal array variant
+   * (`= [N, N, N, N, N, N, N, N]`) IS surfaced onto IR.discriminator;
+   * everything else (scalar `= 1`, short array `= [1, 2, 3, 4]`,
+   * byte string `= b"hi"`, const reference `= MY_DISC`, const fn
+   * `= get_disc("wow")`) currently silently falls back to the default
+   * sha256("global:<name>") discriminator. Router emit + the dispatcher's
+   * `split_at(8)` shape both assume 8 bytes; widening parser regex
+   * without rewiring dispatch would emit invalid Rust. Surfaced so users
+   * see the silent-misroute risk before deploy.
+   */
+  "instruction_discriminator_override_unsupported",
+  /**
+   * #60 — Anchor 1.x `#[account(discriminator = ...)]` override on the
+   * account data struct. Anchor replaces the default 8-byte
+   * sha256("account:<Name>") discriminator with the user-specified bytes
+   * (which can be 1 byte, an N-byte array, byte string, or const
+   * reference). Anvil currently emits `pub const DISCRIMINATOR: [u8; 8] =
+   * sha256("account:<Name>")[..8]` unconditionally; every load/init/zero
+   * path uses `[..8]` slices. Surfacing the loss loudly until the
+   * variable-length discriminator rework lands.
+   */
+  "account_discriminator_override_unsupported",
+  /**
+   * #60 — Anchor 1.x `#[event(discriminator = ...)]` override. Same
+   * silent-fallback class as the account variant: emit hardcodes the
+   * sha256("event:<Name>")[..8] bytes.
+   */
+  "event_discriminator_override_unsupported",
 ]);
 
 export type ParserWarningCode = z.infer<typeof ParserWarningCodeSchema>;

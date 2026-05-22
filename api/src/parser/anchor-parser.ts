@@ -305,9 +305,18 @@ export async function parseAnchor(
     // ── Extract imports ──
     const imports = extractImports(root);
 
+    // ── Per-parse warning collector (loud parser-degradation signal) ──
+    // Created early (before account/event parsing) so #60's discriminator-
+    // override warnings can be raised inline. Drained into `irRaw.warnings`
+    // after instruction classification.
+    const warningCollector = createWarningCollector();
+
     // ── Parse account data structs (#[account] structs) ──
     const accounts = topLevel.accountDataStructs.map((s) => {
-      const def = parseAccountDataStruct(s.node, s.attrs);
+      const def = parseAccountDataStruct(s.node, s.attrs, {
+        collector: warningCollector,
+        discriminatorKind: "account",
+      });
       // Attach raw `impl <ThisAccount> { fn / const }` items so emitters can
       // preserve inherent helpers like `Foo::SEED_PREFIX` and
       // `Foo::required_space()` that the Anchor source uses inside seeds /
@@ -318,12 +327,6 @@ export async function parseAnchor(
       if (matchingItems.length > 0) def.implItems = matchingItems;
       return def;
     });
-
-    // ── Per-parse warning collector (loud parser-degradation signal) ──
-    // Drained into `irRaw.warnings` after instruction classification so the
-    // validator (and downstream consumers) see what the parser couldn't fully
-    // classify. See ParserWarning in ir/schema.ts.
-    const warningCollector = createWarningCollector();
 
     // B9 — surface cfg(feature=...) drops collected during project-source
     // flattening. The parser does the source-shaping internally for single-
@@ -460,7 +463,10 @@ export async function parseAnchor(
     // (which we synthesize at emit time from sha256("event:Name")). The
     // resulting AccountDef's `space` and `implItems` are unused for events.
     const events = topLevel.eventStructs.map((s) => {
-      const def = parseAccountDataStruct(s.node, s.attrs);
+      const def = parseAccountDataStruct(s.node, s.attrs, {
+        collector: warningCollector,
+        discriminatorKind: "event",
+      });
       return { name: def.name, fields: def.fields };
     });
 
@@ -604,6 +610,33 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
     userTraits: [],
   };
 
+  // Pre-scan: collect the names of every fn declared inside the `#[program]`
+  // module. Used by the `function_item` case below to distinguish a free
+  // helper that happens to take `ctx: Context<X>` (legitimate, must reach
+  // helperFns) from a flattened handler whose name + ctx-shape pair matches
+  // the registry (already absorbed into program.instructions). Finding #62.
+  const programInstructionNames = new Set<string>();
+  function collectProgramFnNames(node: SyntaxNode, insideProgramMod: boolean): void {
+    let pendingAttrs: SyntaxNode[] = [];
+    for (let k = 0; k < node.namedChildCount; k++) {
+      const c = node.namedChild(k);
+      if (!c) continue;
+      if (c.type === "attribute_item") { pendingAttrs.push(c); continue; }
+      if (c.type === "line_comment" || c.type === "block_comment") continue;
+      const ats = [...pendingAttrs];
+      pendingAttrs = [];
+      if (c.type === "mod_item") {
+        const isProg = hasAttribute(ats, "program");
+        const body = c.childForFieldName("body");
+        if (body) collectProgramFnNames(body, insideProgramMod || isProg);
+      } else if (c.type === "function_item" && insideProgramMod) {
+        const nm = c.childForFieldName("name")?.text;
+        if (nm) programInstructionNames.add(nm);
+      }
+    }
+  }
+  collectProgramFnNames(root, false);
+
   function walk(node: SyntaxNode, modulePath: string[] = [], inProgramModule = false): void {
     let currentAttrs: SyntaxNode[] = [];
 
@@ -694,9 +727,24 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
           // a submodule is the Anchor convention; project-source.ts rewrites
           // those to `fn <module>_handler` to avoid name collisions when
           // flattening, after which they sit at modulePath=[]. We catch both:
-          // (a) literal `handler` in a submodule, (b) any function whose first
-          // parameter is `ctx: Context<X>` — that's Anchor handler shape and
+          // (a) literal `handler` in a submodule, (b) a TOP-LEVEL function
+          // (modulePath=[]) whose name matches an Anchor instruction handler
+          // registered in the `#[program]` module AND whose first parameter
+          // is `ctx: Context<X>` — that's the flattened-handler shape and
           // its body is already absorbed into the program's instruction list.
+          //
+          // The name-matching gate on (b) is load-bearing. Pre-fix the regex
+          // fired on ANY `fn _?ctx: Context<X>` regardless of name, silently
+          // dropping legitimate free helpers like
+          // `instructions/take_offer.rs::withdraw_and_close_vault(ctx: Context<TakeOffer>)`
+          // — those never reach helperFns → never end up in
+          // unsalvageableHelpers → their call sites in the absorbed handler
+          // body stay uncommented + reference a stale `context` binding that
+          // was itself commented out. Surfaced by finding #62 on
+          // program-examples-escrow. After flattening every fn sits at
+          // modulePath=[], so the path-length heuristic isn't usable —
+          // restrict to handlers whose NAME appears in the program-module
+          // registry collected in pass 1.
           const lastModule = modulePath[modulePath.length - 1];
           const isInstructionHandler =
             modulePath.length > 0 &&
@@ -705,7 +753,9 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
           // Match `ctx: Context<…>` AND `_ctx: Context<…>` (Anchor's "unused
           // arg" convention). `\bctx` alone fails on `_ctx` because `\b` is
           // not a boundary between two word chars (`_` and `c`).
-          const looksLikeAnchorHandler = /(?:^|[\s(,])_?ctx\s*:\s*(?:&\s*mut\s+)?Context\s*</.test(params);
+          const ctxShape = /(?:^|[\s(,])_?ctx\s*:\s*(?:&\s*mut\s+)?Context\s*</.test(params);
+          const looksLikeAnchorHandler =
+            ctxShape && programInstructionNames.has(functionName);
           if (!inProgramModule && !isInstructionHandler && !looksLikeAnchorHandler) {
             items.helperFns.push({ node: child, attrs, modulePath });
           }
