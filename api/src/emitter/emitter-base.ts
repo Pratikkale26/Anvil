@@ -1379,6 +1379,10 @@ export abstract class BaseEmitter {
     // DISCRIMINATOR` where T isn't bound by Event in the strip-mode
     // emit). Reverted; the helper-bound errors are net-better than the
     // cascade.
+    // G93 attempt re-emit Event trait + per-event impl reverted: openbook
+    // /pin regressed +158. The trait + per-struct impl is correct in
+    // isolation, but downstream errors that were previously SUPPRESSED
+    // by the unresolved trait now cascade. Net negative.
     // G65 — stub anchor_lang::accounts::account_loader::AccountLoader<T>
     // when referenced. Carried helpers (openbook's process_out_event)
     // and impl items use `AccountLoader::try_from(acc)?` to wrap an
