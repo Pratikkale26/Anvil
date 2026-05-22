@@ -153,7 +153,14 @@ const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
   // / `spl_token::instruction::burn(...)` directly. With no-entrypoint these
   // are library-only — no runtime conflict with pinocchio-token's CPI layer.
   spl_token:                 `spl-token = { version = "7", default-features = false, features = ["no-entrypoint"] }`,
-  spl_token_2022:            `spl-token-2022 = { version = "6", default-features = false, features = ["no-entrypoint"] }`,
+  // Finding #57 — spl-token-2022's confidential_mint_burn/processor.rs
+  // calls verify_burn_proof / process_rotate_supply_elgamal_pubkey /
+  // etc. that are ONLY defined when the `zk-ops` feature is enabled.
+  // default-features includes "zk-ops" but our default-features = false
+  // strips it, so we add it back explicitly. Affects v6.0.0 through
+  // v8.0.1 confirmed. Pinned to v6 (matches existing Anvil corpus
+  // baseline) + zk-ops.
+  spl_token_2022:            `spl-token-2022 = { version = "6", default-features = false, features = ["no-entrypoint", "zk-ops"] }`,
   spl_associated_token_account: `spl-associated-token-account = { version = "6", default-features = false, features = ["no-entrypoint"] }`,
   // G104 — spl-memo (no-entrypoint) for programs that emit Memo CPIs via
   // carried bodies. Same library-only safety as G101.
@@ -290,7 +297,7 @@ borsh = { version = "1.5", features = ["derive"] }
 # — bump after verifying your program still builds.
 solana-program = "2.2"
 spl-token = { version = "7", features = ["no-entrypoint"] }
-spl-token-2022 = { version = "6", features = ["no-entrypoint"] }
+spl-token-2022 = { version = "6", features = ["no-entrypoint", "zk-ops"] }
 spl-associated-token-account = { version = "6", features = ["no-entrypoint"] }
 spl-memo = { version = "6", features = ["no-entrypoint"] }
 thiserror = "2.0"

@@ -161,7 +161,7 @@ fixed = { version = "=1.28", default-features = false }
 # spl_token::instruction::burn(), spl_associated_token_account::ID, etc.
 # directly. With no-entrypoint these are just types/instruction-builders.
 spl-token = { version = "7", default-features = false, features = ["no-entrypoint"] }
-spl-token-2022 = { version = "6", default-features = false, features = ["no-entrypoint"] }
+spl-token-2022 = { version = "6", default-features = false, features = ["no-entrypoint", "zk-ops"] }
 spl-associated-token-account = { version = "6", default-features = false, features = ["no-entrypoint"] }
 # G104 — spl-memo for carried Memo CPI calls.
 spl-memo = { version = "6", default-features = false, features = ["no-entrypoint"] }
@@ -190,7 +190,7 @@ crate-type = ["cdylib", "lib"]
 borsh = { version = "1.5", features = ["derive"] }
 solana-program = "2.2"
 spl-token = { version = "7", features = ["no-entrypoint"] }
-spl-token-2022 = { version = "6", features = ["no-entrypoint"] }
+spl-token-2022 = { version = "6", features = ["no-entrypoint", "zk-ops"] }
 spl-associated-token-account = { version = "6", features = ["no-entrypoint"] }
 # Common scaffold-injected crates that the Anvil project scaffold pulls
 # in when the IR references them. Mirroring the
