@@ -3899,11 +3899,21 @@ ${indented}
     const accountName = snakeCase(accountRef.name);
     const sizeExpr = reallocConstraint.value;
 
-    // Native path — real realloc + rent top-up. Pick the first mut Signer
-    // in the instruction as the rent-delta payer; matches Anchor's default
-    // when `realloc::payer` isn't explicitly different.
-    const payerAcc = instr.accounts.find((a) => a.isSigner && a.isMut);
-    const payer = payerAcc ? snakeCase(payerAcc.name) : "payer";
+    // Native path — real realloc + rent top-up. Respect the explicit
+    // `realloc::payer = <account>` constraint first; fall back to the
+    // first mut Signer (Anchor's default).
+    // G91 — openbook's CloseOpenOrdersAccount has `realloc::payer =
+    // sol_destination` (UncheckedAccount, not Signer); without honoring
+    // the explicit constraint we emitted a bare `payer` identifier that
+    // failed E0425 at every realloc call site.
+    const reallocPayerConstraint = accountRef.constraints.find((c) => c.kind === "realloc::payer");
+    let payer: string;
+    if (reallocPayerConstraint?.value) {
+      payer = snakeCase(reallocPayerConstraint.value.trim());
+    } else {
+      const payerAcc = instr.accounts.find((a) => a.isSigner && a.isMut);
+      payer = payerAcc ? snakeCase(payerAcc.name) : "payer";
+    }
 
     // State-field-in-realloc-expr support. Anchor's macro deserializes the
     // existing account before evaluating `realloc = <expr>`, so expressions

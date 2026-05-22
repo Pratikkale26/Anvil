@@ -91,6 +91,10 @@ export const ConstraintKindSchema = z.enum([
   "mint::authority",
   "mint::freeze_authority",
   "realloc",
+  // G91 — Anchor's `realloc::payer = <account>` constraint pins the
+  // rent-delta payer when reallocating. emitReallocPrelude consumes it
+  // to drive the system_program::transfer's from-account.
+  "realloc::payer",
   // Anchor 1.0 — `dup = <other_account>` declares this account is a
   // duplicate of another in the struct (same pubkey is allowed where
   // Anchor would otherwise reject). Anvil preserves the constraint as
