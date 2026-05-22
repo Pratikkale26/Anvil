@@ -3142,6 +3142,28 @@ ${originalLines}
   }
 
   /**
+   * Finding #55 — minimum on-disk size for an account struct. Used by the
+   * emitted read()/write() guards when the struct has any String or Vec
+   * fields whose actual serialized size depends on content length. The
+   * legacy `TOTAL_LEN` constant assumes fixed-size — incorrect for
+   * Anchor sources that allocate `required_space(input.len())` at init.
+   *
+   * MIN_LEN = 8 (discriminator) + sum-over-fields of:
+   *   - String / Vec — 4 bytes (just the length prefix; content can be 0)
+   *   - everything else — full resolveTypeSize value
+   *
+   * For all-fixed structs MIN_LEN equals TOTAL_LEN. For variable structs
+   * it's the lowest data-size that a syntactically valid account can have.
+   */
+  protected computeMinLen(acc: AccountDef): number {
+    const body = acc.fields.reduce((s, f) => {
+      if (f.type === "String" || /^Vec</.test(f.type)) return s + 4;
+      return s + this.resolveTypeSize(f.type, f.maxLen);
+    }, 0);
+    return 8 + body;
+  }
+
+  /**
    * Emit user-defined trait impls collected by the parser. Default impl is
    * a verbatim concatenation; targets that need to filter or rewrite can
    * override. Returns "" when there are none so callers can guard with a

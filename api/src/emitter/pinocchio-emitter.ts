@@ -2797,6 +2797,14 @@ ${this.emitZeroCopyTraitImpls(acc.name)}`;
     const writeLines = this.buildWriteLines(acc);
     const ctorFields = acc.fields.map((f) => snakeCase(f.name)).join(", ");
 
+    // Finding #55 — variable-length detection. See native-emitter for the
+    // full rationale. When any field is String or Vec, the actual buffer
+    // can be smaller than TOTAL_LEN — use MIN_LEN guard instead.
+    const isVariableLength = acc.fields.some(
+      (f) => f.type === "String" || /^Vec</.test(f.type),
+    );
+    const guardConst = isVariableLength ? "MIN_LEN" : "TOTAL_LEN";
+
     return `#[repr(C)]
 pub struct ${acc.name} {
 ${fields}
@@ -2808,10 +2816,16 @@ impl ${acc.name} {
     pub const LEN: usize = ${bodyLen};
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
-    pub const SIZE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;${isVariableLength ? `
+    /// Minimum data length for variable-length structs — discriminator +
+    /// each variable field's 4-byte length prefix + each fixed field's
+    /// full size. read/write guards check against this instead of
+    /// TOTAL_LEN so Anchor sources using \`required_space(input.len())\`
+    /// allocations don't trip InvalidAccountData on init.
+    pub const MIN_LEN: usize = ${this.computeMinLen(acc)};` : ""}
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::${guardConst} {
             return Err(ProgramError::InvalidAccountData);
         }
         if data[..8] != Self::DISCRIMINATOR {
@@ -2826,7 +2840,7 @@ ${readLines}
     }
 
     pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::${guardConst} {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);

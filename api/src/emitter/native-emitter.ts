@@ -1810,6 +1810,20 @@ ${maybeRead}    let seeds = &[
     const writeLines = this.buildWriteLines(acc);
     const ctorFields = acc.fields.map((f) => snakeCase(f.name)).join(", ");
 
+    // Finding #55 — variable-length detection. When the struct has any String
+    // or Vec field (with OR without max_len), the actual serialized buffer
+    // may be SMALLER than INIT_SPACE — Anchor sources commonly compute
+    // `required_space(input.len())` at init time, producing a buffer sized
+    // to the actual content. Pre-fix, read/write guards required
+    // `data.len() >= TOTAL_LEN`, rejecting variable-length buffers entirely.
+    // Now we emit a lenient guard for variable-length structs: just enough
+    // bytes for the discriminator + each fixed-size field + each variable-
+    // length field's 4-byte length prefix (content can be 0).
+    const isVariableLength = acc.fields.some(
+      (f) => f.type === "String" || /^Vec</.test(f.type),
+    );
+    const guardConst = isVariableLength ? "MIN_LEN" : "TOTAL_LEN";
+
     // We emit a #[repr(C)] struct with a complete manual read()/write() implementation.
     // We do NOT emit #[derive(BorshSerialize, BorshDeserialize)] because:
     //  - The struct already has a correct byte-layout via read()/write().
@@ -1826,10 +1840,14 @@ impl ${acc.name} {
     pub const LEN: usize = ${bodyLen};
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
-    pub const SIZE: usize = Self::TOTAL_LEN;
+    pub const SIZE: usize = Self::TOTAL_LEN;${isVariableLength ? `
+    /// Minimum data length the read/write guard checks against for variable-
+    /// length structs (String / Vec fields). Discriminator + every variable
+    /// field's 4-byte length prefix + every fixed field's full size.
+    pub const MIN_LEN: usize = ${this.computeMinLen(acc)};` : ""}
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::${guardConst} {
             return Err(ProgramError::InvalidAccountData);
         }
         if data[..8] != Self::DISCRIMINATOR {
@@ -1844,7 +1862,7 @@ ${readLines}
     }
 
     pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::${guardConst} {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
