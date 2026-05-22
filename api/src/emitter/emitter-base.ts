@@ -2021,6 +2021,10 @@ impl<'a, 'b, 'c, 'info, T> CpiContext<'a, 'b, 'c, 'info, T> {
     // symbol resolution downstream even with no impl blocks attached.
     // Three independent angles attempted, all cascade — Event is a
     // proven multi-day arc, defer until typed event IR is in.
+    // G100 reverted — `pub trait ToAccountInfo<'info>` with explicit
+    // lifetime cascaded marinade +175 (carried impls without matching
+    // <'info> generic become invalid). Lifetime-free shape would
+    // conflict differently; defer until we can map carried impl arity.
     // G95 — AnchorError struct stub. Openbook's Contextable impl wraps
     // ProgramError into a user Error enum with Box<AnchorError> variant;
     // the AnchorError struct itself comes from anchor_lang. Minimal shape
