@@ -1675,6 +1675,19 @@ export abstract class BaseEmitter {
     // in the body and add the corresponding use here.
     const bodyImports: string[] = [];
     if (this.frameworkName === "Native") {
+      // G109 — T22 TokenMetadata typed IR emits `Field::Name` / `Field::Key(...)`
+      // and `OptionalNonZeroPubkey::try_from(...)`. The crate-level use
+      // statements live in lib.rs only; the per-instruction file doesn't see
+      // them. Add a body-level use when the rendered body references either.
+      if (/\bField::(?:Name|Symbol|Uri|Key\b)/.test(body)) {
+        bodyImports.push("use spl_token_metadata_interface::state::Field;");
+      }
+      if (/\bOptionalNonZeroPubkey\b/.test(body)) {
+        // spl_pod is a transitive dep of spl-token-metadata-interface (which
+        // we already inject when t22 metadata CPIs are present). Direct path
+        // avoids requiring anchor_spl, which Native scaffold doesn't pull.
+        bodyImports.push("use spl_pod::optional_keys::OptionalNonZeroPubkey;");
+      }
       const refsInvoke = /\binvoke\s*\(/.test(body);
       const refsInvokeSigned = /\binvoke_signed\s*\(/.test(body);
       if (refsInvoke && refsInvokeSigned) {

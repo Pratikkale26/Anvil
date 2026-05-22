@@ -102,6 +102,11 @@ const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
   // token_2022 feature, exposed for direct CPI use when emit produces
   // typed cpi_t22_token_metadata_initialize.
   spl_token_metadata_interface: `spl-token-metadata-interface = "0.7"`,
+  // G110 — spl-pod (optional_keys::OptionalNonZeroPubkey) for T22
+  // metadata update_authority and Pointer extension types. Transitively
+  // pulled by spl_token_metadata_interface but cargo needs it declared
+  // for `use spl_pod::optional_keys::OptionalNonZeroPubkey` to resolve.
+  spl_pod:                   `spl-pod = "0.5"`,
   spl_concurrent_merkle_tree: `spl-concurrent-merkle-tree = "0.4"`,
   spl_noop:                  `spl-noop = "0.2"`,
   // Solana hash helpers used in custom logic

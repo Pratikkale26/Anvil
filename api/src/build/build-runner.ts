@@ -165,6 +165,8 @@ spl-token-2022 = { version = "6", default-features = false, features = ["no-entr
 spl-associated-token-account = { version = "6", default-features = false, features = ["no-entrypoint"] }
 # G104 — spl-memo for carried Memo CPI calls.
 spl-memo = { version = "6", default-features = false, features = ["no-entrypoint"] }
+# G110 — spl-pod for OptionalNonZeroPubkey (T22 metadata update_authority).
+spl-pod = "0.5"
 # Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
 # emit on hand-rolled bytes (no crate dep needed). The source's
 # get_feed_id_from_hex("0x...") is parsed at emit time into a byte
@@ -202,6 +204,8 @@ bytemuck = { version = "1", features = ["derive"] }
 spl-memo = { version = "6", features = ["no-entrypoint"] }
 spl-token-metadata-interface = "0.4"
 mpl-token-metadata = "5.1"
+# G110 — spl-pod for OptionalNonZeroPubkey (T22 metadata update_authority).
+spl-pod = "0.5"
 # Carried-source hash helpers + numeric-derive crates frequently used in
 # real-world Anchor programs (merkle trees, tic-tac-toe, etc.). All are
 # either solana-program-aligned (keccak/sha256 hashers) or proc-macro
