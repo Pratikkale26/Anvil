@@ -1271,7 +1271,18 @@ export abstract class BaseEmitter {
 
     // ── errors.rs ──
     if (ir.errors.length > 0) {
-      const errorsContent = this.emitErrorsFile(ir);
+      let errorsContent = this.emitErrorsFile(ir);
+      // G99 — dedupe `impl From<ErrName> for ProgramError`. Real-world
+      // programs (openbook) carry a user-defined `impl From<OpenBookError>
+      // for ProgramError` in their lib.rs that converts via the user's
+      // Error wrapper. The scaffold also emits an unconditional From impl
+      // (ProgramError::Custom). E0119 conflicting impl results. The carried
+      // version is semantically richer (preserves user Error chain), so
+      // strip the scaffold's when lib.rs already has one for the same enum.
+      const carriedFromEnums = collectCarriedFromImpls(libContent);
+      if (carriedFromEnums.size > 0) {
+        errorsContent = stripScaffoldFromImpls(errorsContent, carriedFromEnums);
+      }
       files.push({ path: "errors.rs", content: errorsContent });
     }
 
@@ -2005,6 +2016,11 @@ impl<'a, 'b, 'c, 'info, T> CpiContext<'a, 'b, 'c, 'info, T> {
     if (/:\s*Key\b|<\s*Key\b|\bT:\s*Key\b|where\s+\w+:\s*Key\b/.test(all) && !userDefinesTrait("Key")) {
       stubs.push(`pub trait Key {\n    fn key(&self) -> Pubkey;\n}`);
     }
+    // G98 reverted — empty Event marker trait alone cascades openbook
+    // +306 errors (same shape as G75/G93). The stub somehow alters
+    // symbol resolution downstream even with no impl blocks attached.
+    // Three independent angles attempted, all cascade — Event is a
+    // proven multi-day arc, defer until typed event IR is in.
     // G95 — AnchorError struct stub. Openbook's Contextable impl wraps
     // ProgramError into a user Error enum with Box<AnchorError> variant;
     // the AnchorError struct itself comes from anchor_lang. Minimal shape
@@ -4958,6 +4974,47 @@ export function addInfoLifetimeIfReferenced(text: string): string {
     i = bodyEnd;
   }
   out += text.slice(i);
+  return out;
+}
+
+/** G99 — find each `impl From<X> for ProgramError` in carried lib.rs and
+ * return the set of X names. Used to suppress the scaffold-injected version
+ * in errors.rs so we don't get E0119 conflict. */
+export function collectCarriedFromImpls(libContent: string): Set<string> {
+  const out = new Set<string>();
+  const re = /\bimpl\s+From\s*<\s*([A-Za-z_][A-Za-z0-9_]*)\s*>\s+for\s+ProgramError\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(libContent)) !== null) {
+    if (m[1]) out.add(m[1]);
+  }
+  return out;
+}
+
+/** G99 — strip `impl From<X> for ProgramError { ... }` blocks from errors.rs
+ * for every X in `carriedFromEnums`. Brace-balanced removal. */
+export function stripScaffoldFromImpls(errorsContent: string, carriedFromEnums: Set<string>): string {
+  let out = errorsContent;
+  for (const name of carriedFromEnums) {
+    const re = new RegExp(`impl\\s+From\\s*<\\s*${name}\\s*>\\s+for\\s+ProgramError\\b`);
+    const m = re.exec(out);
+    if (!m) continue;
+    // Walk to opening `{`
+    let i = m.index + m[0].length;
+    while (i < out.length && out[i] !== "{") i++;
+    if (i >= out.length) continue;
+    let depth = 1;
+    let j = i + 1;
+    while (j < out.length && depth > 0) {
+      if (out[j] === "{") depth++;
+      else if (out[j] === "}") depth--;
+      j++;
+    }
+    // Strip from m.index to j (inclusive of closing brace).
+    // Also trim trailing newline.
+    let end = j;
+    if (out[end] === "\n") end++;
+    out = out.slice(0, m.index) + out.slice(end);
+  }
   return out;
 }
 
