@@ -215,6 +215,18 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // (single-`*` doesn't match the `\*{2,}` pattern). Closes the 20
   // remaining pass_through rawExpr nodes from the EM1 metric.
   transformedRawCode = collapseMultiDerefStructural(transformedRawCode);
+  // Coral-multisig native bug-class: source uses
+  // `(*ctx.accounts.X).deref().into()` against `Box<Account<'info, T>>`.
+  // Anchor's wrapper double-deref'd to `&T` for the `From<&T> for U` impl.
+  // After Anvil rewrites `ctx.accounts.X` → `X` (where X is a bare T value
+  // loaded via T::read(...)), `(*X)` tries to deref a plain struct value
+  // and fails E0614. The semantically-equivalent shape on a bare value is
+  // `(&X).into()`. Both targets share the same surface so this is in the
+  // generic post-transform pass.
+  transformedRawCode = transformedRawCode.replace(
+    /\(\*\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\.deref\(\)\s*\.into\(\)/g,
+    "(&$1).into()",
+  );
   // Fallback: still run the regex versions in case tree-sitter parse
   // returned the code unchanged (parse error → no-op). The regex is
   // idempotent on already-structurally-rewritten text since the tree-
