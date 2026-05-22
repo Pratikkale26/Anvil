@@ -314,6 +314,23 @@ export class NativeEmitter extends BaseEmitter {
       )
     );
 
+    // G108 — detect bare `set_return_data` / `get_return_data` calls in
+    // any instruction body (carried code uses these unqualified after
+    // `use anchor_lang::solana_program::program::set_return_data` is
+    // stripped). Same detection shape as needsInvoke. return-data demo
+    // failed compile pre-G108 because the function wasn't imported.
+    const needsSetReturnData = _ir.instructions.some((instr) =>
+      instr.body.some((stmt) =>
+        (stmt.kind === "pass_through" && /\bset_return_data\s*\(/.test(stmt.code))
+        || (stmt.kind === "return_data_set")
+      )
+    );
+    const needsGetReturnData = _ir.instructions.some((instr) =>
+      instr.body.some((stmt) =>
+        (stmt.kind === "pass_through" && /\bget_return_data\s*\(/.test(stmt.code))
+        || (stmt.kind === "return_data_get")
+      )
+    );
     const solanaItems = [
       `account_info::AccountInfo`,
       `entrypoint`,
@@ -321,6 +338,8 @@ export class NativeEmitter extends BaseEmitter {
       needsMsg ? `msg` : null,
       needsInvoke ? `program::invoke` : null,
       needsInvokeSigned ? `program::invoke_signed` : null,
+      needsSetReturnData ? `program::set_return_data` : null,
+      needsGetReturnData ? `program::get_return_data` : null,
       `program_error::ProgramError`,
       `pubkey::Pubkey`,
       needsSystemInstruction ? `system_instruction` : null,
@@ -910,12 +929,16 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
       : `&${crate}::id()`;
     // Map Anchor's `AuthorityType::X` variant to the target's enum path.
     // Anchor exposes the same variant names as spl_token, so we just rewrite
-    // the path. `.into()` covers cases where the user wrote a fully-qualified
-    // SPL variant already.
-    const remapped = authorityType.replace(
-      /\bAuthorityType\b/g,
-      `${crate}::instruction::AuthorityType`,
-    );
+    // the path. Skip when the source already wrote a fully-qualified
+    // `spl_token::instruction::AuthorityType::X` path (set-authority demo).
+    // Without this guard we get a double prefix:
+    //   `spl_token::instruction::spl_token::instruction::AuthorityType::X`.
+    const remapped = /::instruction::AuthorityType\b/.test(authorityType)
+      ? authorityType
+      : authorityType.replace(
+          /\bAuthorityType\b/g,
+          `${crate}::instruction::AuthorityType`,
+        );
     return `    // ${crate === "spl_token_2022" ? "Token-2022" : "SPL Token"} set authority — ${account}
     let set_authority_ix = ${crate}::instruction::set_authority(
         ${programIdArg},

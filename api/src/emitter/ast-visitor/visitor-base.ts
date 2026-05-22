@@ -2383,10 +2383,16 @@ export class AstVisitorBase {
       : snakeCase(stmt.currentAuthority);
     const signerSeedsExpr = resolveSignerSeedsExpr(w, stmt.signerSeeds);
     const crate = stmt.tokenProgram === "token_2022" ? "spl_token_2022" : "spl_token";
-    const remappedAuthorityType = stmt.authorityType.replace(
-      /\bAuthorityType\b/g,
-      `${crate}::instruction::AuthorityType`,
-    );
+    // G107 — guard against double-prefix. If the source already qualified
+    // `spl_token::instruction::AuthorityType::X` (set-authority demo),
+    // skip the path-rewrite. Without this we get a syntactically broken
+    // `spl_token::instruction::spl_token::instruction::AuthorityType::X`.
+    const remappedAuthorityType = /::instruction::AuthorityType\b/.test(stmt.authorityType)
+      ? stmt.authorityType
+      : stmt.authorityType.replace(
+          /\bAuthorityType\b/g,
+          `${crate}::instruction::AuthorityType`,
+        );
     // Path 2 v1 runtime dispatch — when tokenProgramArg is set, the
     // first arg of set_authority becomes `<arg>.key` (runtime) instead
     // of `&crate::id()` (compile-time const). Matches Pinocchio dispatch.
