@@ -636,7 +636,40 @@ export class PinocchioEmitter extends BaseEmitter {
 
     imports.push(...this.filteredSourceImports(_ir));
 
+    // G102 — Pinocchio type-alias stubs. After filteredSourceImports strips
+    // `use solana_program::clock::Epoch;` (no solana-program dep on pinocchio),
+    // bare `Epoch::MAX` / `last_stake_delta_epoch: Epoch` refs fail E0412.
+    // Provide a u64 alias since Solana's Epoch IS u64.
+    const aliases: string[] = [];
+    const allText = this.allCarriedTextForLifetime(_ir);
+    if (/\bEpoch\b/.test(allText) && !/\bpub\s+type\s+Epoch\b|\bstruct\s+Epoch\b/.test(allText)) {
+      aliases.push(`pub type Epoch = u64;`);
+    }
+    if (aliases.length > 0) {
+      imports.push(
+        `// G102 — Anchor/solana_program type aliases used by carried code.\n` +
+        aliases.join("\n"),
+      );
+    }
+
     return imports.join("\n");
+  }
+
+  /** G102 helper — collect all carried text for type-alias detection. */
+  private allCarriedTextForLifetime(ir: SolanaIR): string {
+    const parts: string[] = [];
+    for (const imp of ir.imports ?? []) parts.push(imp);
+    for (const helper of ir.helperFns ?? []) parts.push(helper.rawCode ?? "");
+    for (const typeDef of ir.types ?? []) parts.push(typeDef.rawCode ?? "");
+    for (const acc of ir.accounts ?? []) for (const item of acc.implItems ?? []) parts.push(item);
+    for (const t of ir.types ?? []) for (const item of t.implItems ?? []) parts.push(item);
+    for (const instr of ir.instructions ?? []) {
+      for (const stmt of instr.body ?? []) {
+        if ("code" in stmt && typeof stmt.code === "string") parts.push(stmt.code);
+        if ("rawCode" in stmt && typeof stmt.rawCode === "string") parts.push(stmt.rawCode);
+      }
+    }
+    return parts.join("\n");
   }
 
   override emitEntrypoint(_ir: SolanaIR): string {
