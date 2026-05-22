@@ -1981,6 +1981,12 @@ impl<'a, 'b, 'c, 'info, T> CpiContext<'a, 'b, 'c, 'info, T> {
   /** G65 — stub AccountLoader<T> as an opaque wrapper. Minimal compile-
    *  clean shape; real zero-copy semantics need type-aware mapping. */
   protected emitAnchorAccountLoaderStub(): string {
+    // G92 — AccountInfo carries an explicit lifetime on Native
+    // (solana_program::account_info::AccountInfo<'a>) but is unparameterized
+    // on Pinocchio. Reference the right shape so the field-type compiles.
+    const aiRef = this.frameworkName === "Native"
+      ? "&'info AccountInfo<'info>"
+      : "&'info AccountInfo";
     return `// G65 — anchor_lang::accounts::account_loader::AccountLoader<T> stub.
 // Wraps an AccountInfo; \`try_from\` is a placeholder that returns
 // the AccountInfo's pubkey context as the stored value. Real
@@ -1989,14 +1995,14 @@ impl<'a, 'b, 'c, 'info, T> CpiContext<'a, 'b, 'c, 'info, T> {
 // errors at call sites, but the TYPE resolves so downstream
 // code compiles.
 pub struct AccountLoader<'info, T> {
-    pub ai: &'info AccountInfo,
+    pub ai: ${aiRef},
     _phantom: core::marker::PhantomData<T>,
 }
 impl<'info, T> AccountLoader<'info, T> {
-    pub fn try_from(ai: &'info AccountInfo) -> Result<Self, ProgramError> {
+    pub fn try_from(ai: ${aiRef}) -> Result<Self, ProgramError> {
         Ok(Self { ai, _phantom: core::marker::PhantomData })
     }
-    pub fn try_from_unchecked(_program_id: &Pubkey, ai: &'info AccountInfo) -> Result<Self, ProgramError> {
+    pub fn try_from_unchecked(_program_id: &Pubkey, ai: ${aiRef}) -> Result<Self, ProgramError> {
         Ok(Self { ai, _phantom: core::marker::PhantomData })
     }
 }
