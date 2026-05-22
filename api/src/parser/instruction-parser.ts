@@ -1776,15 +1776,45 @@ export function parseParameters(paramsNode: SyntaxNode): {
     // Skip lifetime params
     if (paramText.startsWith("'")) continue;
 
-    // Match `<name>: Context<T>` — name is whatever the source calls it. We
-    // used to hardcode `ctx` here, but solana-developers/program-examples
-    // (favorites etc.) use `context: Context<T>` and the rest of the
-    // pipeline silently dropped accounts because contextType stayed empty.
-    const ctxMatch = paramText.match(/(\w+)\s*:\s*Context\s*<\s*'?\s*(\w+)\s*>/);
-    if (ctxMatch?.[1] && ctxMatch?.[2]) {
-      contextName = ctxMatch[1];
-      contextType = ctxMatch[2];
-      continue;
+    // Match `<name>: Context<...>` — name is whatever the source calls it.
+    // Two shapes to handle (Finding #24):
+    //   (a) `Context<T>` or `Context<'info, T>` — 2-generic form (basic).
+    //   (b) `Context<'a, 'b, 'c, 'info, T<'info>>` — 5-generic form used
+    //       by openbook + marginfi for handlers that accept
+    //       remaining_accounts with named lifetimes. Pre-fix the regex
+    //       only handled (a), so the WHOLE 5-generic handler classified
+    //       as having no Context<T> param at all — every cohort fixture
+    //       with this shape lost its accounts struct entirely.
+    //
+    // Strategy: find `name: Context<...>` with a brace-balanced extraction
+    // of the inner generic args, then pick the LAST non-lifetime
+    // comma-separated token as the accountType. Lifetimes (`'_`, `'a`,
+    // `'info`) are skipped — they're the first 1-4 generics on Anchor's
+    // `Context<'a, 'b, 'c, 'info, T>` declaration.
+    const ctxStart = paramText.match(/(\w+)\s*:\s*Context\s*</);
+    if (ctxStart?.[1] && ctxStart.index !== undefined) {
+      const inner = extractBalancedGenericInner(paramText, ctxStart.index + ctxStart[0].length);
+      if (inner !== null) {
+        // Split inner by depth-0 commas — Anchor's Context<T> generics
+        // sometimes carry their own `<'info>` on T (e.g. PlaceOrder<'info>),
+        // so depth tracking matters.
+        const tokens = splitDepth0Commas(inner);
+        // Last non-lifetime token is the accountType. Strip its own
+        // generics (T<'info> → T) since IR's accountType is the BARE
+        // struct name; downstream lookups match on that.
+        for (let t = tokens.length - 1; t >= 0; t--) {
+          const tok = tokens[t]!.trim();
+          if (!tok) continue;
+          if (tok.startsWith("'") || tok === "_") continue;
+          const nameOnly = tok.replace(/\s*<[\s\S]*>\s*$/, "").trim();
+          if (/^[A-Za-z_]\w*$/.test(nameOnly)) {
+            contextName = ctxStart[1];
+            contextType = nameOnly;
+            break;
+          }
+        }
+        if (contextType) continue;
+      }
     }
 
     // Note: do NOT skip on `_` prefix here. The Context<T> case is already
@@ -1809,6 +1839,50 @@ export function parseParameters(paramsNode: SyntaxNode): {
   }
 
   return { contextType, contextName, args };
+}
+
+/**
+ * Extract the brace-balanced inner text between the `<` at `openIdx` and its
+ * matching `>`. Returns null if no matching `>` found at depth 0.
+ * Finding #24 — used to peel `Context<'_, '_, 'c, 'info, T<'info>>`.
+ */
+function extractBalancedGenericInner(text: string, openIdx: number): string | null {
+  // openIdx points at the char AFTER `<`. Walk forward tracking nested
+  // `<` / `>` depth. Returns the inner content, exclusive of the closing `>`.
+  let depth = 1;
+  let i = openIdx;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === "<") depth++;
+    else if (ch === ">") {
+      depth--;
+      if (depth === 0) return text.slice(openIdx, i);
+    }
+    i++;
+  }
+  return null;
+}
+
+/**
+ * Split a comma-separated string at depth-0 commas only — nested `<>` /
+ * `()` / `[]` are skipped. Finding #24 — used to peel Context<>'s
+ * generic-arg list while keeping `T<'info>` intact as one token.
+ */
+function splitDepth0Commas(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (ch === "<" || ch === "(" || ch === "[") depth++;
+    else if (ch === ">" || ch === ")" || ch === "]") depth--;
+    else if (ch === "," && depth === 0) {
+      out.push(s.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(s.slice(start));
+  return out;
 }
 
 // ─── Access control extraction ──────────────────────────────────────────────
