@@ -2980,6 +2980,8 @@ ${writeLines}
 
     const enumName = this.sourceErrorEnumName(ir);
 
+    // G94b reverted — see native-emitter.ts.
+
     // Re-export variants at the module level so instruction files can
     // reference them by bare name (Anchor's convention: `Err(Unauthorized
     // .into())` works because `#[error_code]` macro auto-imports). Without

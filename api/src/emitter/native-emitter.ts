@@ -1932,6 +1932,11 @@ ${this.emitZeroCopyTraitImpls(acc.name)}`;
 
     const enumName = this.sourceErrorEnumName(ir);
 
+    // G94b attempt to skip auto-emit when user has its own From impl
+    // cascaded marginfi /pin +8 (qualified `errors::MarginfiError` body
+    // refs lost the From impl). Reverted; accept openbook 1x E0119
+    // duplicate impl warning.
+
     // Re-export variants at the module level — Anchor source uses bare
     // variant names (`Err(Unauthorized.into())`); without the `pub use`,
     // every `use crate::errors::*;` brings the enum but not the variants.
