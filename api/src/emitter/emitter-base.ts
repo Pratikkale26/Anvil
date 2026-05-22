@@ -1229,7 +1229,15 @@ export abstract class BaseEmitter {
     // after the impl was stripped by source rewrites). Drop the first
     // depth-negative `}` outside strings/chars/comments — preserves
     // every legitimate brace, only removes the stray.
-    const libContent = balanceLibBraces(libContentRaw);
+    let libContent = balanceLibBraces(libContentRaw);
+    // G97 — same 'info-lifetime patch (G96) applied to lib.rs. drift's
+    // PerpMarketMap::load / SpotMarketMap::load contain `let X: AccountInfo<'info> = ...`
+    // bindings while the enclosing method's generics omit 'info. The
+    // helper is guarded via enclosingImplDeclaresInfo, so methods inside
+    // already-'info-declaring impls are not patched (would E0496 shadow).
+    if (this.frameworkName === "Native") {
+      libContent = addInfoLifetimeIfReferenced(libContent);
+    }
     files.push({ path: "lib.rs", content: libContent });
 
     const hasHelperModule = this.hasHelperModule(ir);
@@ -1532,6 +1540,14 @@ export abstract class BaseEmitter {
     // `oracle_price_from_a*` impl methods survived and failed E0425.
     if (this.unsalvageableHelpers.size > 0) {
       combined = commentOutUnsalvageableCallSites(combined, this.unsalvageableHelpers);
+    }
+    // G96 — extend G80's 'info-lifetime patch to state.rs impl methods.
+    // drift's `impl Foo { pub fn validate_fuel_overflow(&self, x: &Option<AccountInfo<'info>>) }`
+    // needs `<'info>` on the method itself when the surrounding impl is
+    // bare `impl Foo`. The patch internally guards via enclosingImplDeclaresInfo
+    // so `impl<'info> X { pub fn foo(&self, ...) }` is left alone (E0496 shadow).
+    if (this.frameworkName === "Native") {
+      combined = addInfoLifetimeIfReferenced(combined);
     }
     return combined;
   }
@@ -4924,6 +4940,15 @@ export function addInfoLifetimeIfReferenced(text: string): string {
       i = bodyEnd;
       continue;
     }
+    // G96 guard — if the enclosing impl block already declares 'info, the
+    // method inherits it; adding a method-level 'info would shadow with
+    // E0496. Look back to the most recent `impl ...` line at lesser indent
+    // than this fn; if it declares 'info in its generics, skip.
+    if (enclosingImplDeclaresInfo(text, start)) {
+      out += text.slice(i, bodyEnd);
+      i = bodyEnd;
+      continue;
+    }
     // Replace the fn declaration to include <'info>.
     const newGenerics = generics
       ? generics.replace(/^</, "<'info, ")
@@ -4934,6 +4959,36 @@ export function addInfoLifetimeIfReferenced(text: string): string {
   }
   out += text.slice(i);
   return out;
+}
+
+/** G96 helper — walk backward from `fnStart` line by line, return true when
+ * the nearest enclosing `impl ...` line (at lesser indent than the fn's line)
+ * declares `'info` in its generics. */
+function enclosingImplDeclaresInfo(text: string, fnStart: number): boolean {
+  let lineStart = fnStart;
+  while (lineStart > 0 && text[lineStart - 1] !== "\n") lineStart--;
+  const fnLine = text.slice(lineStart, text.indexOf("\n", lineStart) === -1 ? text.length : text.indexOf("\n", lineStart));
+  const fnIndent = (fnLine.match(/^\s*/)?.[0].length) ?? 0;
+  // Free fns at column 0 are never inside an impl block (post-Anvil emit
+  // always flushes flattened helpers to top-level).
+  if (fnIndent === 0) return false;
+  let pos = lineStart - 1;
+  while (pos > 0) {
+    let ls = pos;
+    while (ls > 0 && text[ls - 1] !== "\n") ls--;
+    const le = text.indexOf("\n", ls);
+    const line = text.slice(ls, le === -1 ? text.length : le);
+    const indent = (line.match(/^\s*/)?.[0].length) ?? 0;
+    const trimmed = line.trim();
+    if (trimmed.startsWith("impl") && indent < fnIndent) {
+      // E.g., `impl<'info> Foo {`, `impl<'a, 'info, T> Foo<'info> {`,
+      // `impl Foo {`. We only need to know if generics include 'info.
+      const g = trimmed.match(/^impl(\s*<[^>]*>)?/);
+      return !!(g && g[1] && /'info\b/.test(g[1]));
+    }
+    pos = ls - 1;
+  }
+  return false;
 }
 
 export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"): string {
