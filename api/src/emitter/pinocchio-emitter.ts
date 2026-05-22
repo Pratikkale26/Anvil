@@ -2547,9 +2547,21 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
     to: string,
     lamports: string,
     space: string,
-    _owner: string,
+    owner: string,
   ): string {
-    return `// System Program: create_account\n    pinocchio_system::instructions::CreateAccount {\n        from: ${from},\n        to: ${to},\n        lamports: ${lamports},\n        space: ${space} as u64,\n        owner: program_id,\n    }.invoke()?;`;
+    // `owner` here is the post-transform expression the source passed as the
+    // 4th arg to system_program::create_account — typically either
+    // `&*system_program.key` (when source explicitly passes &system_program
+    // .key()) or `program_id` (Anchor's #[account(init)] auto-expansion).
+    // Pinocchio's CreateAccount.owner field expects `&Pubkey`.
+    //
+    // Pre-fix: hardcoded `program_id`. Surfaced via the rent fixture (a
+    // raw system_program::create_account CPI that hands ownership to the
+    // system program — Anvil's emit substituted program_id and the byte-
+    // equal compare caught it). Falls back to `program_id` if the caller
+    // didn't extract anything (empty or whitespace).
+    const ownerExpr = owner.trim().length > 0 ? owner.trim() : "program_id";
+    return `// System Program: create_account\n    pinocchio_system::instructions::CreateAccount {\n        from: ${from},\n        to: ${to},\n        lamports: ${lamports},\n        space: ${space} as u64,\n        owner: ${ownerExpr},\n    }.invoke()?;`;
   }
 
   override emitMsg(message: string): string {
