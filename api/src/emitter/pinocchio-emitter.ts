@@ -2239,6 +2239,70 @@ ${invokeCall}
     }`;
   }
 
+  override emitT22InitializeMint2(
+    mint: string,
+    tokenProgram: string,
+    decimals: string,
+    mintAuthority: string,
+    freezeAuthority: string,
+    signerSeeds?: string,
+  ): string {
+    // Token-2022 InitializeMint2: discriminator 20, payload =
+    //   1 byte decimals + 32 bytes mint_authority + 1 byte COption tag +
+    //   optional 32 bytes freeze_authority. accounts = [writable mint].
+    //
+    // STANDALONE form (not the constraint-style init's create_account+
+    // initialize pair) — only the InitializeMint2 instruction. Caller
+    // is expected to have created+allocated the mint account in a sibling
+    // CPI (system_program::create_account with the token program as owner).
+    //
+    // Strip a leading `&` from the mint_authority expression — Anchor
+    // sources pass `&ctx.accounts.X.key()` (= &Pubkey) but our buffer
+    // builder needs the underlying [u8; 32]. mintAuthority comes through
+    // transformCtxAccountsReferences so it's already `&X.key()` shape.
+    const mintAuthorityExpr = mintAuthority.replace(/^&\s*/, "");
+    // freeze_authority is `Some(&pk)` / `None` — branch on the runtime
+    // expression rather than parsing at emit time.
+    const invokeCall = signerSeeds
+      ? `        let __im2_seed_refs = ${signerSeeds}[0];
+        let mut __im2_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__im2_i, __im2_s) in __im2_seed_refs.iter().enumerate() {
+            if __im2_i >= __im2_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __im2_pda_seeds[__im2_i] = pinocchio::instruction::Seed::from(*__im2_s);
+        }
+        let __im2_signer = pinocchio::instruction::Signer::from(&__im2_pda_seeds[..__im2_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__im2_ix, &[${mint}], &[__im2_signer])?;`
+      : `        pinocchio::cpi::invoke(&__im2_ix, &[${mint}])?;`;
+    return `    // Token-2022 InitializeMint2 (standalone) — ${mint}
+    {
+        let mut __im2_data = [0u8; 67];
+        let mut __im2_len: usize = 35;
+        __im2_data[0] = 20;
+        __im2_data[1] = (${decimals}) as u8;
+        __im2_data[2..34].copy_from_slice((${mintAuthorityExpr}).as_ref());
+        match &${freezeAuthority} {
+            Some(__im2_fz) => {
+                __im2_data[34] = 1;
+                __im2_data[35..67].copy_from_slice((**__im2_fz).as_ref());
+                __im2_len = 67;
+            }
+            None => {
+                __im2_data[34] = 0;
+            }
+        }
+        let __im2_metas = [
+            pinocchio::instruction::AccountMeta::writable(${mint}.key()),
+        ];
+        let __im2_ix = pinocchio::instruction::Instruction {
+            program_id: ${tokenProgram}.key(),
+            accounts: &__im2_metas,
+            data: &__im2_data[..__im2_len],
+        };
+${invokeCall}
+    }`;
+  }
+
   override emitProgramAccountClose(account: string, destination: string): string {
     return `    close_program_account(${account}, ${destination})?;`;
   }

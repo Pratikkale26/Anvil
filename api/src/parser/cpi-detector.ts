@@ -140,6 +140,14 @@ export function detectCpi(
   if (isExtCall(funcText, "non_transferable_mint_initialize")) {
     return extractT22NonTransferableMintInitialize(callNode, collector);
   }
+  // Finding #44 — direct anchor_spl::token_2022::initialize_mint2 CPI.
+  // Distinct from the constraint-style init (routed via emitInitAccountPrelude).
+  // Manual T22 mint flows compose create_account + extension_init +
+  // initialize_mint2 explicitly. Must dispatch before the SPL `mint_to`
+  // / `burn` shorthand so `initialize_mint2` doesn't fall through.
+  if (isExtCall(funcText, "initialize_mint2")) {
+    return extractT22InitializeMint2(callNode, collector);
+  }
   if (isExtCall(funcText, "transfer_fee_initialize")) {
     return extractT22TransferFeeInitialize(callNode, collector);
   }
@@ -1999,6 +2007,74 @@ function extractT22NonTransferableMintInitialize(
     kind: "cpi_t22_non_transferable_mint_initialize",
     mint: cleanAccountRef(mint),
     tokenProgram: cleanAccountRef(tokenProgram),
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 InitializeMint2 direct CPI (Finding #44) ────────────────────
+//
+// Anchor source shape:
+//   initialize_mint2(
+//       CpiContext::new(
+//           ctx.accounts.token_program.key(),
+//           InitializeMint2 {
+//               mint: ctx.accounts.mint_account.to_account_info(),
+//           },
+//       ),
+//       2,                                  // decimals
+//       &ctx.accounts.payer.key(),          // mint_authority
+//       Some(&ctx.accounts.payer.key()),    // freeze_authority (or None)
+//   )?;
+//
+// Falls back to pass_through (and the existing TODO(manual) marker) when
+// the CpiContext is variable-bound — same caveat as non_transferable_mint_initialize.
+function extractT22InitializeMint2(
+  callNode: SyntaxNode,
+  collector?: WarningCollector,
+): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "T22 initialize_mint2", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      "T22 initialize_mint2 (variable-bound CpiContext)",
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let mint = "mint";
+  if (accountsStruct) {
+    mint = extractStructField(accountsStruct, "mint") ?? mint;
+  }
+  // Extract token_program binding name from CpiContext::new's first arg.
+  // Same shape as the set_authority dispatch fix (#54).
+  const tokenProgramArgMatch = firstArg.text.match(
+    /CpiContext\s*::\s*new(?:_with_signer)?\s*\(\s*ctx\s*\.\s*accounts\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)/,
+  );
+  const tokenProgram = tokenProgramArgMatch?.[1] ?? "token_program";
+
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+
+  // The remaining args are: decimals, mint_authority, freeze_authority.
+  const decimals = args[1]?.text.trim() ?? "0";
+  const mintAuthority = args[2]?.text.trim() ?? "&Pubkey::default()";
+  const freezeAuthority = args[3]?.text.trim() ?? "None";
+
+  return {
+    kind: "cpi_t22_initialize_mint2",
+    mint: cleanAccountRef(mint),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    decimals,
+    mintAuthority,
+    freezeAuthority,
     signerSeeds,
   };
 }

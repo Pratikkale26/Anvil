@@ -214,6 +214,21 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // Finding #44 — direct initialize_mint2 CPI. STANDALONE form (not the
+  // constraint-style init which routes via emitInitAccountPrelude →
+  // emitCreateMint). Used by T22 programs that manually compose
+  // create_account + extension_init + initialize_mint2 because Anchor
+  // 0.32 lacks constraint syntax for some extensions (NonTransferable).
+  // tokenProgram is the AccountInfo binding for runtime-dispatch.
+  abstract emitT22InitializeMint2(
+    mint: string,
+    tokenProgram: string,
+    decimals: string,
+    mintAuthority: string,
+    freezeAuthority: string,
+    signerSeeds?: string,
+  ): string;
+
   // Initialize the TransferFee mint extension. Sets the fee config
   // authority, withdraw authority, basis points, and per-transfer cap.
   // Must precede initialize_mint (extension data lives ahead of the

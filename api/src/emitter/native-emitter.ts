@@ -972,6 +972,39 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     )?;`;
   }
 
+  override emitT22InitializeMint2(
+    mint: string,
+    tokenProgram: string,
+    decimals: string,
+    mintAuthority: string,
+    freezeAuthority: string,
+    signerSeeds?: string,
+  ): string {
+    // Standalone InitializeMint2 — caller handled create_account.
+    // spl_token_2022::instruction::initialize_mint2 takes program_id as
+    // 1st arg, so we feed the runtime tokenProgram binding's key for
+    // Interface<TokenInterface> dispatch (same pattern as the constraint-
+    // style emitCreateMint fix). Mint authority is &Pubkey; freeze is
+    // Option<&Pubkey>.
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    // Match spl_token_2022::instruction::initialize_mint2 signature:
+    //   pub fn initialize_mint2(token_program_id, mint_pubkey,
+    //     mint_authority, freeze_authority: Option<&Pubkey>, decimals)
+    return `    // Token-2022 InitializeMint2 (standalone) — ${mint}
+    let __im2_ix = spl_token_2022::instruction::initialize_mint2(
+        ${tokenProgram}.key,
+        ${mint}.key,
+        ${mintAuthority},
+        ${freezeAuthority},
+        (${decimals}) as u8,
+    )?;
+    ${invokeType}(
+        &__im2_ix,
+        &[${mint}.clone()],${signerArg}
+    )?;`;
+  }
+
   override emitT22TransferFeeInitialize(
     mint: string,
     tokenProgram: string,

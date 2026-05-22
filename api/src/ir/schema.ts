@@ -477,6 +477,28 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
   // pass_through. See `docs/token-2022-extensions.md` for status table
   // and `posts/plan-em2-t22-expansion.md` for the per-family plan.
 
+  // anchor_spl::token_2022::initialize_mint2. Direct CPI form (NOT the
+  // constraint-style #[account(init, mint::*)] expansion — that path
+  // routes through emitInitAccountPrelude). Used by T22 programs that
+  // manually compose create_account + extension_init + initialize_mint2
+  // because Anchor 0.32 doesn't have constraint syntax for every
+  // extension (e.g. NonTransferable, which non-transferable demos
+  // invoke explicitly). Finding #44 (2026-05-23 retry).
+  z.object({
+    kind: z.literal("cpi_t22_initialize_mint2"),
+    /** AccountInfo binding for the mint account being initialized. */
+    mint: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    /** Decimals — typically a numeric literal but could be an expression. */
+    decimals: z.string(),
+    /** Raw expression for the mint authority `&Pubkey`. */
+    mintAuthority: z.string(),
+    /** Raw expression for the optional freeze authority — `Some(...)` or `None`. */
+    freezeAuthority: z.string(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // anchor_spl::token_interface::non_transferable_mint_initialize.
   // Single-instruction extension — flips the mint into non-transferable
   // mode. No manage instructions; transfer attempts revert at the

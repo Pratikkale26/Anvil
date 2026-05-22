@@ -87,6 +87,7 @@ export interface BodyEmitterCallbacks {
   emitSplCloseAccount(account: string, destination: string, authority: string, signerSeeds?: string, opts?: Token2022Opts): string;
   emitSplSetAuthority(account: string, currentAuthority: string, authorityType: string, newAuthority: string, signerSeeds?: string, opts?: Token2022Opts): string;
   emitT22NonTransferableMintInitialize(mint: string, tokenProgram: string, signerSeeds?: string): string;
+  emitT22InitializeMint2(mint: string, tokenProgram: string, decimals: string, mintAuthority: string, freezeAuthority: string, signerSeeds?: string): string;
   emitT22TransferFeeInitialize(mint: string, tokenProgram: string, transferFeeConfigAuthority: string, withdrawWithheldAuthority: string, basisPoints: string, maximumFee: string, signerSeeds?: string): string;
   emitT22TransferFeeSetFee(mint: string, tokenProgram: string, authority: string, basisPoints: string, maximumFee: string, signerSeeds?: string): string;
   emitT22ImmutableOwnerInitialize(tokenAccount: string, tokenProgram: string, signerSeeds?: string): string;

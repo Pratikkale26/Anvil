@@ -697,6 +697,7 @@ type CpiSplMintTo = Extract<BodyStatement, { kind: "cpi_spl_mint_to" }>;
 type CpiSplBurn = Extract<BodyStatement, { kind: "cpi_spl_burn" }>;
 type CpiSplCloseAccount = Extract<BodyStatement, { kind: "cpi_spl_close_account" }>;
 type CpiSplSetAuthority = Extract<BodyStatement, { kind: "cpi_spl_set_authority" }>;
+type CpiT22InitializeMint2 = Extract<BodyStatement, { kind: "cpi_t22_initialize_mint2" }>;
 type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non_transferable_mint_initialize" }>;
 type CpiT22TransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_initialize" }>;
 type CpiT22TransferFeeSetFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_set_fee" }>;
@@ -796,6 +797,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_spl_burn",
   "cpi_spl_close_account",
   "cpi_spl_set_authority",
+  "cpi_t22_initialize_mint2",
   "cpi_t22_non_transferable_mint_initialize",
   "cpi_t22_transfer_fee_initialize",
   "cpi_t22_transfer_fee_set_fee",
@@ -884,6 +886,8 @@ export class AstVisitorBase {
       case "cpi_spl_burn":         return this.visitCpiSplBurn(stmt);
       case "cpi_spl_close_account":return this.visitCpiSplCloseAccount(stmt);
       case "cpi_spl_set_authority":return this.visitCpiSplSetAuthority(stmt);
+      case "cpi_t22_initialize_mint2":
+        return this.visitCpiT22InitializeMint2(stmt);
       case "cpi_t22_non_transferable_mint_initialize":
         return this.visitCpiT22NonTransferableMintInit(stmt);
       case "cpi_t22_transfer_fee_initialize":
@@ -2466,6 +2470,36 @@ export class AstVisitorBase {
     const w = this.walker;
     if (!shouldEmitSignerSeedsPrelude(w, signerSeeds)) return [];
     return w.ensureSignerSeedsForAccount(anchorAccount);
+  }
+
+  visitCpiT22InitializeMint2(stmt: CpiT22InitializeMint2): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: initialize_mint2(${stmt.mint})`);
+    // Reuse existing emitT22InitializeMint2 helper. Routes program-ID
+    // through the runtime token_program AccountInfo (Interface<TokenInterface>
+    // dispatch) per the parser-side extraction. The CpiContext shape
+    // here is a STANDALONE init (not the constraint-style #[account(init,
+    // mint::*)] which uses emitInitAccountPrelude → emitCreateMint) —
+    // it's only invoked when source manually composes create_account +
+    // extension_init + initialize_mint2 (e.g. NonTransferable demo).
+    // No standalone create_account is generated; assumes the caller has
+    // already allocated the mint account in a sibling CPI.
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
+    // Authority + freeze expressions reference ctx.accounts.X.key();
+    // route through transformCtxAccountsReferences so they resolve to
+    // local AccountInfo bindings.
+    const mintAuthority = w.transformCtxAccountsReferences(stmt.mintAuthority);
+    const freezeAuthority = w.transformCtxAccountsReferences(stmt.freezeAuthority);
+    lines.push(w.emitter.emitT22InitializeMint2(
+      snakeCase(stmt.mint),
+      snakeCase(stmt.tokenProgram),
+      stmt.decimals,
+      mintAuthority,
+      freezeAuthority,
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
   }
 
   visitCpiT22NonTransferableMintInit(stmt: CpiT22NonTransferableMintInit): RustStmt[] {
