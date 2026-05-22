@@ -357,6 +357,13 @@ interface CpiContextInfo {
   to: string;
   authority?: string;
   signerSeeds?: string;
+  // Finding #45 — T22 transfer_checked / mint_to_checked carry a `mint` field
+  // on their CPI struct (legacy SPL transfer doesn't). When the source uses
+  // a variable-bound CpiContext (`let cpi_ctx = CpiContext::new(prog, TransferChecked{...});`),
+  // the mint resolved here is what flows into the typed IR's mint field via
+  // CpiContextLookup. Pre-fix the mint was dropped, producing TODO(manual)
+  // markers in the emit.
+  mint?: string;
 }
 
 interface CpiAccountsBinding {
@@ -421,7 +428,7 @@ const SPL_CPI_STRUCT_NAMES = new Set([
 function classifyStatement(
   node: SyntaxNode,
   pendingSeeds: { seeds: string[]; bumpField?: string; rawCode: string } | null,
-  cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
+  cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string; mint?: string }>,
   cpiAccountsByVar: Map<string, CpiAccountsBinding>,
   hasUserSeedsManagement = false,
   collector?: WarningCollector,
@@ -795,8 +802,13 @@ function classifyLetDeclaration(
         // so the IR carries the bare account name like inline-extract does.
         return fm[1].trim()
           .replace(/^ctx\s*\.\s*accounts\s*\.\s*/, "")
-          .replace(/\.\s*to_account_info\s*\(\s*\)\s*$/, "")
+          // Finding #45 — strip .clone() FIRST so the trailing
+          // .to_account_info() (which sits before .clone() in the source
+          // shape `ctx.accounts.X.to_account_info().clone()`) becomes the
+          // new tail and matches the next replace. Pre-fix the strip
+          // order left the IR carrying 'X.to_account_info()'.
           .replace(/\.\s*clone\s*\(\s*\)\s*$/, "")
+          .replace(/\.\s*to_account_info\s*\(\s*\)\s*$/, "")
           .trim();
       };
       const binding: CpiAccountsBinding = {
@@ -1009,7 +1021,7 @@ function classifyLetDeclaration(
 
 function classifyExpressionStatement(
   node: SyntaxNode,
-  cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
+  cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string; mint?: string }>,
   collector?: WarningCollector,
   helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
 ): ClassifyResult {
@@ -1792,6 +1804,8 @@ function extractCpiContextInfo(
   const fromMatch = fullText.match(/from:\s*ctx\.accounts\.(\w+)/);
   const toMatch = fullText.match(/to:\s*ctx\.accounts\.(\w+)/);
   const authorityMatch = fullText.match(/authority:\s*ctx\.accounts\.(\w+)/);
+  // Finding #45 — also extract mint for T22 transfer_checked / mint_to_checked.
+  const mintMatch = fullText.match(/mint:\s*ctx\.accounts\.(\w+)/);
 
   // H2-followup (#35): inline-struct match failed. Try the chain rescue:
   // CpiContext::new(prog, X) where X was bound earlier as
@@ -1822,6 +1836,8 @@ function extractCpiContextInfo(
           to: tracked.to,
           authority: tracked.authority,
           signerSeeds: hasSigner ? "signer_seeds" : undefined,
+          // Finding #45 — propagate mint from the chain-rescue branch.
+          mint: tracked.mint,
         };
       }
     }
@@ -1842,6 +1858,7 @@ function extractCpiContextInfo(
     to: toMatch[1],
     authority: authorityMatch?.[1],
     signerSeeds,
+    mint: mintMatch?.[1],
   };
 }
 
@@ -1852,7 +1869,7 @@ function extractCpiContextInfo(
  */
 function resolveCpiFields(
   stmt: BodyStatement,
-  cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string }>,
+  cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string; mint?: string }>,
 ): BodyStatement {
   // Only resolve system and SPL transfer CPI kinds
   if (stmt.kind === "cpi_system_transfer" || stmt.kind === "cpi_spl_transfer") {

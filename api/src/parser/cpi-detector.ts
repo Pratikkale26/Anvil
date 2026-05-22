@@ -38,6 +38,10 @@ export interface CpiContextLookup {
     to?: string;
     authority?: string;
     signerSeeds?: string;
+    // Finding #45 — mint propagated from extractCpiContextInfo for
+    // T22 transfer_checked / mint_to_checked which need it in the
+    // emitted CPI args.
+    mint?: string;
   } | undefined;
 }
 
@@ -1711,6 +1715,9 @@ function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector, 
       if (ctx.from) from = ctx.from;
       if (ctx.to) to = ctx.to;
       if (ctx.authority) authority = ctx.authority;
+      // Finding #45 — recover mint binding from the variable-bound
+      // CpiContext for T22 transfer_checked.
+      if (ctx.mint) mint = ctx.mint;
     } else {
       signerSeeds = undefined;
       collector?.add({

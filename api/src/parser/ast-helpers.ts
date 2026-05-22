@@ -493,8 +493,13 @@ export function getArguments(argsNode: SyntaxNode): SyntaxNode[] {
 export function cleanAccountRef(text: string): string {
   // Strip ctx.accounts. prefix
   let cleaned = text.replace(/ctx\.accounts\./g, "");
-  // Strip .to_account_info()
+  // Strip .to_account_info() and .clone() — both appear on T22 CPI struct
+  // fields (`from: ctx.accounts.from.to_account_info().clone()`). Without
+  // stripping .clone() the regex below would still match correctly via
+  // the leading-identifier capture, but other consumers expect the bare
+  // name (finding #45 — IR was carrying 'from.to_account_info()' verbatim).
   cleaned = cleaned.replace(/\.to_account_info\(\)/g, "");
+  cleaned = cleaned.replace(/\.clone\(\)/g, "");
   // Get just the first identifier
   const match = cleaned.match(/^(\w+)/);
   return match?.[1] ?? cleaned.trim();
