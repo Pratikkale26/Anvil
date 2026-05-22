@@ -2114,6 +2114,7 @@ function rewriteProgramModuleBody(
 function buildFlattenedSource(
   entryPath: string,
   fileMap: Map<string, ProjectFile>,
+  opts: BuildProjectSourceOpts = {},
 ): ProjectSourceBuild {
   const includedFiles: string[] = [];
   const missingModules: string[] = [];
@@ -2264,12 +2265,20 @@ function buildFlattenedSource(
   // shape, but err!() also appears inside nested if-blocks (multisig.rs,
   // various others) which classify as opaque pass-through. Rewriting at
   // the source-flattening level catches every form before the AST walk.
-  source = rewriteErrMacroToExplicit(source);
-  // Same idea for Anchor's `require!()` / `require_eq!()` / etc. macros
-  // that appear in sibling-file helper bodies. Desugars to explicit
-  // `if !(cond) { return Err(...into()); }` so callers without
-  // anchor_lang in scope still compile.
-  source = rewriteAnchorRequireMacros(source);
+  //
+  // Finding #49 — opts.skipMacroRewrites bypasses both this and the
+  // require!() rewrite for callers that feed the output back to a stock
+  // Anchor build (byte-equal fixture's reference .so). The error!() →
+  // ProgramError::from() transformation breaks when the user's Anchor
+  // crate doesn't declare a From<ErrorCode> for ProgramError impl.
+  if (!opts.skipMacroRewrites) {
+    source = rewriteErrMacroToExplicit(source);
+    // Same idea for Anchor's `require!()` / `require_eq!()` / etc. macros
+    // that appear in sibling-file helper bodies. Desugars to explicit
+    // `if !(cond) { return Err(...into()); }` so callers without
+    // anchor_lang in scope still compile.
+    source = rewriteAnchorRequireMacros(source);
+  }
 
   // Consolidate multi-statement SPL CPI patterns into the inline form the
   // CPI detector understands. Anchor codebases commonly write:
@@ -2733,7 +2742,31 @@ function consolidateMultiStatementCpi(source: string): string {
 }
 
 
-export function buildProjectSourceGraph(entryPath: string, files: ProjectFile[]): ProjectSourceBuild {
+/**
+ * Options for buildProjectSource[Graph]. Finding #49 — opt-in flags let
+ * external consumers (byte-equal fixture loaders feeding the Anchor
+ * reference build) skip Anvil's parser-prep rewrites that break stock
+ * Anchor compilation.
+ */
+export interface BuildProjectSourceOpts {
+  /**
+   * When true, skip rewriteErrMacroToExplicit + rewriteAnchorRequireMacros
+   * in both single-file and multi-file paths. Use this for fixtures that
+   * pass the flattened source to `cargo build-sbf` against upstream
+   * anchor-lang (where `error!(X) → ProgramError::from(X)` requires a
+   * `From<ErrorCode> for ProgramError` impl that published anchor-lang
+   * 0.32 doesn't provide).
+   *
+   * Default: false (preserves Anvil's parser-pipeline behavior).
+   */
+  skipMacroRewrites?: boolean;
+}
+
+export function buildProjectSourceGraph(
+  entryPath: string,
+  files: ProjectFile[],
+  opts: BuildProjectSourceOpts = {},
+): ProjectSourceBuild {
   const normalizedEntry = normalizeProjectPath(entryPath);
   const fileMap = new Map(
     files.map((file) => [normalizeProjectPath(file.path), { ...file, path: normalizeProjectPath(file.path) }]),
@@ -2749,7 +2782,7 @@ export function buildProjectSourceGraph(entryPath: string, files: ProjectFile[])
   const hasMultipleFiles = moduleDecls.length > 0 && files.length > 1;
 
   if (hasMultipleFiles) {
-    return buildFlattenedSource(normalizedEntry, fileMap);
+    return buildFlattenedSource(normalizedEntry, fileMap, opts);
   }
 
   // Single file — apply CPI consolidation + err! rewrite. The err! rewrite
@@ -2759,9 +2792,11 @@ export function buildProjectSourceGraph(entryPath: string, files: ProjectFile[])
   // pubkey!() expansion run last so we never strip a feature-gated decl_id!
   // BEFORE the err! rewrite would have touched it (no overlap today, but
   // safe ordering).
-  const cfgRes = stripInactiveCfgItemsWithDrops(
-    rewriteAnchorRequireMacros(rewriteErrMacroToExplicit(consolidateMultiStatementCpi(entryFile.content))),
-  );
+  const consolidated = consolidateMultiStatementCpi(entryFile.content);
+  const macroRewritten = opts.skipMacroRewrites
+    ? consolidated
+    : rewriteAnchorRequireMacros(rewriteErrMacroToExplicit(consolidated));
+  const cfgRes = stripInactiveCfgItemsWithDrops(macroRewritten);
   return {
     source: expandPubkeyMacro(cfgRes.source),
     includedFiles: [normalizedEntry],
@@ -2777,6 +2812,10 @@ export function buildProjectSourceGraph(entryPath: string, files: ProjectFile[])
  * parser can classify nested Anchor items without requiring a full Rust module
  * resolver.
  */
-export function buildProjectSource(entryPath: string, files: ProjectFile[]): string {
-  return buildProjectSourceGraph(entryPath, files).source;
+export function buildProjectSource(
+  entryPath: string,
+  files: ProjectFile[],
+  opts: BuildProjectSourceOpts = {},
+): string {
+  return buildProjectSourceGraph(entryPath, files, opts).source;
 }
