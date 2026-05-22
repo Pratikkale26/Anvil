@@ -1959,8 +1959,13 @@ impl<'a, 'b, 'c, 'info, T> CpiContext<'a, 'b, 'c, 'info, T> {
     // G79b — skip stub when user code already defines the trait with the
     // same name. Openbook-v2 has `pub trait Owner` in its source; our stub
     // would E0428 "the name `Owner` is defined multiple times".
+    // G79c — also skip Discriminator + Owner when the ZeroCopy stub will
+    // emit them (gated on hasZcAcc/hasZcType — see emitZeroCopyTraitStubs).
+    const hasZeroCopyStub = ir.accounts.some((a) => a.isZeroCopy) ||
+      (ir.types ?? []).some((t) => t.isZeroCopy);
     const userDefinesTrait = (name: string) =>
-      new RegExp(`\\bpub\\s+trait\\s+${name}\\b`).test(all);
+      new RegExp(`\\bpub\\s+trait\\s+${name}\\b`).test(all) ||
+      (hasZeroCopyStub && (name === "Discriminator" || name === "Owner"));
     const stubs: string[] = [];
     if (/\bDiscriminator\b/.test(all) && !userDefinesTrait("Discriminator")) {
       stubs.push(`pub trait Discriminator { const DISCRIMINATOR: [u8; 8]; }`);
