@@ -155,6 +155,14 @@ sha3 = { version = "0.10", default-features = false }
 # missing it. Carried imports of fixed::traits::FromFixed (kamino,
 # openbook) need this dep.
 fixed = { version = "=1.28", default-features = false }
+# G101 — SPL libraries with no-entrypoint feature so they're library-
+# only (no runtime conflict with pinocchio-token's CPI layer). Real
+# Anchor programs (marinade) carry bodies calling spl_token::state::Mint::unpack(),
+# spl_token::instruction::burn(), spl_associated_token_account::ID, etc.
+# directly. With no-entrypoint these are just types/instruction-builders.
+spl-token = { version = "7", default-features = false, features = ["no-entrypoint"] }
+spl-token-2022 = { version = "6", default-features = false, features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "6", default-features = false, features = ["no-entrypoint"] }
 # Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
 # emit on hand-rolled bytes (no crate dep needed). The source's
 # get_feed_id_from_hex("0x...") is parsed at emit time into a byte

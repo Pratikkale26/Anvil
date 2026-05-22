@@ -143,6 +143,13 @@ const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
   // so they tend to compile on pinocchio with `default-features = false`)
   // Same rationale as NATIVE_OPTIONAL_DEPS — mpl_core dropped post task #48 S1.
   mpl_token_metadata:        `mpl-token-metadata = { version = "5.1", default-features = false }`,
+  // G101 — Pinocchio scaffolds use pinocchio-token by default, but real-world
+  // Anchor programs (marinade) carry bodies that call `spl_token::state::Mint::unpack(...)`
+  // / `spl_token::instruction::burn(...)` directly. With no-entrypoint these
+  // are library-only — no runtime conflict with pinocchio-token's CPI layer.
+  spl_token:                 `spl-token = { version = "7", default-features = false, features = ["no-entrypoint"] }`,
+  spl_token_2022:            `spl-token-2022 = { version = "6", default-features = false, features = ["no-entrypoint"] }`,
+  spl_associated_token_account: `spl-associated-token-account = { version = "6", default-features = false, features = ["no-entrypoint"] }`,
   // Common third-party crates
   bytemuck:                  `bytemuck = { version = "1", features = ["derive"] }`,
   arrayref:                  `arrayref = "0.3"`,
