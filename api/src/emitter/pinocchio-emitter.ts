@@ -636,18 +636,45 @@ export class PinocchioEmitter extends BaseEmitter {
 
     imports.push(...this.filteredSourceImports(_ir));
 
-    // G102 — Pinocchio type-alias stubs. After filteredSourceImports strips
-    // `use solana_program::clock::Epoch;` (no solana-program dep on pinocchio),
-    // bare `Epoch::MAX` / `last_stake_delta_epoch: Epoch` refs fail E0412.
-    // Provide a u64 alias since Solana's Epoch IS u64.
+    // G102/G103 — Pinocchio type-alias stubs. After filteredSourceImports strips
+    // `use solana_program::clock::*;` (no solana-program dep on pinocchio),
+    // bare `Epoch::MAX` / `current_slot: Slot` / `current_ts: UnixTimestamp` refs
+    // fail E0412. Provide the same aliases solana_program::clock defines.
     const aliases: string[] = [];
     const allText = this.allCarriedTextForLifetime(_ir);
-    if (/\bEpoch\b/.test(allText) && !/\bpub\s+type\s+Epoch\b|\bstruct\s+Epoch\b/.test(allText)) {
-      aliases.push(`pub type Epoch = u64;`);
+    const declares = (n: string) => new RegExp(`\\bpub\\s+type\\s+${n}\\b|\\bstruct\\s+${n}\\b|\\benum\\s+${n}\\b`).test(allText);
+    // Each (name, alias, type) — only inject when carried code uses it but
+    // doesn't redefine it. Word-boundary on the type name to avoid false
+    // positives (e.g. don't match `MySlot`).
+    const CLOCK_ALIASES: Array<{ name: string; rhs: string }> = [
+      { name: "Epoch",         rhs: "u64" },
+      { name: "Slot",          rhs: "u64" },
+      { name: "UnixTimestamp", rhs: "i64" },
+      { name: "BlockHeight",   rhs: "u64" },
+    ];
+    for (const a of CLOCK_ALIASES) {
+      const wordRe = new RegExp(`\\b${a.name}\\b`);
+      if (wordRe.test(allText) && !declares(a.name)) {
+        aliases.push(`pub type ${a.name} = ${a.rhs};`);
+      }
+    }
+    // G103 — also alias `clock::Foo` paths. Kamino's helpers.rs has bare
+    // `current_ts: clock::UnixTimestamp` after `use solana_program::clock`
+    // was stripped. Emit a minimal `pub mod clock` that re-exports the
+    // aliases under the same path.
+    if (/\bclock\s*::\s*(Slot|UnixTimestamp|Epoch|BlockHeight)\b/.test(allText)) {
+      aliases.push(
+        `pub mod clock {\n` +
+        `    pub type Slot          = u64;\n` +
+        `    pub type UnixTimestamp = i64;\n` +
+        `    pub type Epoch         = u64;\n` +
+        `    pub type BlockHeight   = u64;\n` +
+        `}`,
+      );
     }
     if (aliases.length > 0) {
       imports.push(
-        `// G102 — Anchor/solana_program type aliases used by carried code.\n` +
+        `// G102/G103 — Anchor/solana_program clock type aliases for carried code.\n` +
         aliases.join("\n"),
       );
     }
