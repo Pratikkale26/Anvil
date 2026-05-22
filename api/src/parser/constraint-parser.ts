@@ -30,6 +30,40 @@ const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
   realloc:                        "realloc",
   "realloc::payer":               "realloc::payer",
   "realloc::zero":                "realloc::zero",
+  // Finding #50 — Anchor T22 extension constraints on init mint.
+  // Pre-recognition these silently dropped via the unknown-key warning,
+  // and emit allocated a basic 82-byte Mint with no extension data +
+  // no Initialize*Authority CPI. Now carried in IR; emit fans out to
+  // the right per-extension CPI before InitializeMint2. Sub-keys:
+  //   close_authority::authority   = Pubkey | None
+  //   permanent_delegate::delegate = Pubkey
+  //   transfer_fee::*              (multiple — see below)
+  //   transfer_hook::*             (multiple)
+  //   metadata_pointer::*          (multiple)
+  //   group_pointer::*             (multiple)
+  //   non_transferable             (flag, no value)
+  //   default_account_state::state = AccountState
+  //   interest_bearing::rate       = i16
+  //
+  // Currently emitted end-to-end (close_authority + permanent_delegate
+  // + non_transferable). Others recognized in parser but emit pending
+  // per-extension CPI work — surfaces as constraint-recognized but
+  // ignored (validator can warn separately).
+  "extensions::close_authority::authority":   "extensions::close_authority::authority",
+  "extensions::permanent_delegate::delegate": "extensions::permanent_delegate::delegate",
+  "extensions::non_transferable":             "extensions::non_transferable",
+  "extensions::default_account_state::state": "extensions::default_account_state::state",
+  "extensions::interest_bearing::rate":       "extensions::interest_bearing::rate",
+  "extensions::transfer_fee::transfer_fee_config_authority": "extensions::transfer_fee::transfer_fee_config_authority",
+  "extensions::transfer_fee::withdraw_withheld_authority":   "extensions::transfer_fee::withdraw_withheld_authority",
+  "extensions::transfer_fee::transfer_fee_basis_points":     "extensions::transfer_fee::transfer_fee_basis_points",
+  "extensions::transfer_fee::maximum_fee":                   "extensions::transfer_fee::maximum_fee",
+  "extensions::transfer_hook::authority":     "extensions::transfer_hook::authority",
+  "extensions::transfer_hook::program_id":    "extensions::transfer_hook::program_id",
+  "extensions::metadata_pointer::authority":  "extensions::metadata_pointer::authority",
+  "extensions::metadata_pointer::metadata_address": "extensions::metadata_pointer::metadata_address",
+  "extensions::group_pointer::authority":     "extensions::group_pointer::authority",
+  "extensions::group_pointer::group_address": "extensions::group_pointer::group_address",
   // Anchor 1.0 (task #78): `dup = <other>` — preserve in IR so the
   // validator + AI refine see the intent. Target emit ignores it
   // (Pinocchio + Native don't enforce anti-duplicate by default).

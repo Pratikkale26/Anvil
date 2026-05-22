@@ -100,6 +100,25 @@ export const ConstraintKindSchema = z.enum([
   // hardcoded `realloc(_, false)`; that diverges from Anchor when source
   // sets the flag to true. emitReallocPrelude now reads this constraint.
   "realloc::zero",
+  // Finding #50 — T22 extension constraints on init mint. Carried in IR
+  // so the emit can: (a) compute the extended account size via
+  // ExtensionType::try_calculate_account_len, (b) emit the right
+  // Initialize<Extension> CPI BEFORE InitializeMint2.
+  "extensions::close_authority::authority",
+  "extensions::permanent_delegate::delegate",
+  "extensions::non_transferable",
+  "extensions::default_account_state::state",
+  "extensions::interest_bearing::rate",
+  "extensions::transfer_fee::transfer_fee_config_authority",
+  "extensions::transfer_fee::withdraw_withheld_authority",
+  "extensions::transfer_fee::transfer_fee_basis_points",
+  "extensions::transfer_fee::maximum_fee",
+  "extensions::transfer_hook::authority",
+  "extensions::transfer_hook::program_id",
+  "extensions::metadata_pointer::authority",
+  "extensions::metadata_pointer::metadata_address",
+  "extensions::group_pointer::authority",
+  "extensions::group_pointer::group_address",
   // Anchor 1.0 — `dup = <other_account>` declares this account is a
   // duplicate of another in the struct (same pubkey is allowed where
   // Anchor would otherwise reject). Anvil preserves the constraint as
