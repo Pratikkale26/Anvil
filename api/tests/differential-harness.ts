@@ -174,6 +174,27 @@ const SBF_TOOLCHAIN_OK = (() => {
   return true;
 })();
 
+/**
+ * Per-process scratch-dir suffix. Finding #46 — when multiple `bun test`
+ * invocations target the same fixture concurrently (e.g. a hung test +
+ * a manual retry, or parallel agent rebuilds), they all reach
+ * `_build_<fixtureName>_anchor` / `_anvil` / `_anvil_custom` and race on
+ * the rmSync + writeFileSync + cargo target dir. Symptoms: "No such file
+ * or directory" mid-compile, half-written Cargo.toml, intermittent
+ * status=null exits.
+ *
+ * Suffixing each scratch dir with `process.pid` isolates each bun-test
+ * run completely. The .so is still cached at the SHARED `cacheDir`
+ * (which keys off source hash + code version), so subsequent calls
+ * across processes reuse the cached .so without rebuilding. Only the
+ * cold-build path costs extra disk for orphan scratch dirs — the
+ * existing CACHE_TTL_DAYS eviction sweeps those clean.
+ *
+ * Exported for the rare in-process helper that wants its own scratch
+ * dir following the same convention.
+ */
+export const SCRATCH_PID_SUFFIX = `_p${process.pid}`;
+
 export const TOOLCHAIN_OK = SBF_AVAILABLE && ANCHOR_AVAILABLE && SBF_TOOLCHAIN_OK;
 export const TOOLCHAIN_REASON = !SBF_AVAILABLE
   ? "cargo-build-sbf missing"
@@ -705,7 +726,7 @@ async function buildAnchorSo<S extends DifferentialSetup>(
     return;
   }
 
-  const scratch = join(CACHE_ROOT, `_build_${fixture.fixtureName}_anchor`);
+  const scratch = join(CACHE_ROOT, `_build_${fixture.fixtureName}_anchor${SCRATCH_PID_SUFFIX}`);
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(join(scratch, "src"), { recursive: true });
   const cargoToml = `[package]
@@ -755,7 +776,7 @@ async function buildAnvilSo<S extends DifferentialSetup>(
   const target = fixture.anvilTarget ?? "pinocchio";
   const out = target === "native" ? emitNativeFull(parsed.ir) : emitPinocchioFull(parsed.ir);
   const scaffoldMeta = buildProjectScaffold(parsed.ir, target);
-  const scratch = join(CACHE_ROOT, `_build_${fixture.fixtureName}_anvil`);
+  const scratch = join(CACHE_ROOT, `_build_${fixture.fixtureName}_anvil${SCRATCH_PID_SUFFIX}`);
   rmSync(scratch, { recursive: true, force: true });
   for (const f of scaffoldMeta) {
     const p = join(scratch, f.path);
@@ -937,7 +958,7 @@ export async function buildAnvilSoFromFiles(
   emittedSrc: Array<{ path: string; content: string }>,
   outPath: string,
 ): Promise<void> {
-  const scratch = join(CACHE_ROOT, `_build_${fixture.fixtureName}_anvil_custom`);
+  const scratch = join(CACHE_ROOT, `_build_${fixture.fixtureName}_anvil_custom${SCRATCH_PID_SUFFIX}`);
   rmSync(scratch, { recursive: true, force: true });
   for (const f of emittedScaffold) {
     const p = join(scratch, f.path);
