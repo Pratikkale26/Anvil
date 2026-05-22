@@ -30,7 +30,7 @@
 
 import type { Arg, Instruction } from "../ir/schema.js";
 
-export type FormatArgKind = "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "pubkey";
+export type FormatArgKind = "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "pubkey" | "str";
 
 export type FormatSegment =
   | { kind: "literal"; bytes: string } // raw text (without surrounding quotes); embedded as &b"..." in emit
@@ -232,7 +232,7 @@ function inferValueType(value: string, instr: Instruction, knownLets: Map<string
 }
 
 function isFormatArgKind(s: string): s is FormatArgKind {
-  return ["u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "pubkey"].includes(s);
+  return ["u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize", "pubkey", "str"].includes(s);
 }
 
 function mapTypeToArgKind(t: string): FormatArgKind | null {
@@ -242,6 +242,8 @@ function mapTypeToArgKind(t: string): FormatArgKind | null {
       return t;
     case "Pubkey": case "[u8; 32]":
       return "pubkey";
+    case "String": case "&String": case "&str": case "str":
+      return "str";
     default:
       return null;
   }
@@ -308,6 +310,15 @@ export function emitFormattedMsgPinocchio(segments: FormatSegment[]): string {
       lines.push(`        let __seg${segIdx} = b"${escaped}";`);
       lines.push(`        __log_buf[__log_len..__log_len + __seg${segIdx}.len()].copy_from_slice(__seg${segIdx});`);
       lines.push(`        __log_len += __seg${segIdx}.len();`);
+    } else if (seg.argKind === "str") {
+      // String / &str / &String — variable-length. Bypass the (buf,
+      // offset) fixed-array helper shape; copy bytes directly via
+      // .as_bytes(). Anchor's runtime format!() for String/&str
+      // substitutes verbatim, so byte-equal at the log boundary requires
+      // the same byte-for-byte copy without any conversion.
+      lines.push(`        let __sb${segIdx} = ${seg.expr}.as_bytes();`);
+      lines.push(`        __log_buf[__log_len..__log_len + __sb${segIdx}.len()].copy_from_slice(__sb${segIdx});`);
+      lines.push(`        __log_len += __sb${segIdx}.len();`);
     } else {
       const { expr: helper, warning } = helperCallResult(seg.argKind, seg.expr);
       if (warning) {
@@ -376,6 +387,10 @@ function helperCallResult(kind: FormatArgKind, expr: string): HelperResult {
       };
     case "pubkey":
       return { expr: `pubkey_to_base58(&${expr})` };
+    case "str":
+      // Should never reach here — emitFormattedMsgPinocchio special-cases
+      // "str" before calling helperCallResult. Kept for switch exhaustiveness.
+      throw new Error("internal: helperCallResult called with 'str' — should be handled inline in emitFormattedMsgPinocchio");
   }
 }
 
