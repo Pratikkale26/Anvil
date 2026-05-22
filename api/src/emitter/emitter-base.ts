@@ -535,6 +535,15 @@ export abstract class BaseEmitter {
     mintAuthority: string,
     freezeAuthority: string | null,
     signerSeeds?: string,
+    /**
+     * Optional snake_case binding name of the runtime token_program sibling
+     * in the Accounts struct. When set, the emit reads the program ID from
+     * that AccountInfo at runtime instead of hardcoding the legacy SPL
+     * Token ID — necessary for `Interface<'info, TokenInterface>` shapes
+     * that runtime-dispatch between Token and Token-2022. When unset,
+     * falls back to the legacy hardcoded ID.
+     */
+    tokenProgram?: string,
   ): string;
 
   // ── Memo CPI ──
@@ -3673,6 +3682,24 @@ ${allFields}
       const freezeAuthority = mintFreezeConstraint?.value ? stripKey(mintFreezeConstraint.value) : null;
       const payer = payerName ?? "payer";
 
+      // Find the runtime token_program sibling in the Accounts struct. When
+      // present, the mint init reads the program ID from this AccountInfo
+      // instead of hardcoding legacy SPL Token — necessary for source shapes
+      // like `Interface<'info, TokenInterface>` where the CALLER chooses
+      // Token vs Token-2022 at runtime. Detection: name is `token_program`
+      // OR accountType references TokenInterface / Token2022 / Token.
+      // Surfaced by program-examples/tokens/token-2022/basics — the source
+      // declares `token_program: Interface<'info, TokenInterface>`, and a
+      // T22 fixture was failing with "An account required by the
+      // instruction is missing" because Anvil hardcoded the legacy ID.
+      const tokenProgramSibling = instr.accounts.find((a) => {
+        const n = snakeCase(a.name);
+        if (n === "token_program") return true;
+        const t = a.accountType ?? "";
+        return /\b(?:TokenInterface|Token2022|TokenAccount|Token)\b/.test(t) && /^(Interface|Program)\b/.test(t.trim());
+      });
+      const tokenProgram = tokenProgramSibling ? snakeCase(tokenProgramSibling.name) : undefined;
+
       if (accountRef.isPda && accountRef.pdaSeeds?.length) {
         const pdaSeeds = accountRef.pdaSeeds.map((seed) => this.normalizeInitSeedExpr(seed));
         const bumpPrelude = this.emitBumpSeed("program_id", pdaSeeds, accountName)
@@ -3683,11 +3710,11 @@ ${allFields}
         ];
     let init_${accountName}_signer_seeds = &[&init_${accountName}_seeds[..]];`;
         const signerSeedsExpr = `init_${accountName}_signer_seeds`;
-        const mintCreate = this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, signerSeedsExpr);
+        const mintCreate = this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, signerSeedsExpr, tokenProgram);
         return `${bumpPrelude}\n${seedsPrelude}\n${mintCreate}`;
       }
 
-      return this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority);
+      return this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, undefined, tokenProgram);
     }
 
     // ── `init token::*` (non-ATA token account): account is a fresh keypair

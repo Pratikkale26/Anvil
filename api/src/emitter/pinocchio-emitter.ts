@@ -2387,12 +2387,20 @@ ${invokeCall}
   }
 
   override emitCreateMint(
-    account: string, payer: string, decimals: string, mintAuthority: string, freezeAuthority: string | null, signerSeeds?: string,
+    account: string, payer: string, decimals: string, mintAuthority: string, freezeAuthority: string | null, signerSeeds?: string, tokenProgram?: string,
   ): string {
     // SPL Token InitializeMint2 (discriminator 20):
     //   1 byte disc + 1 byte decimals + 32 bytes mint_authority +
     //   1 byte COption tag + (32 bytes freeze_authority if Some)
     // Total length: 35 bytes (None) or 67 bytes (Some).
+    //
+    // tokenProgram: when set, source uses Interface<TokenInterface> or
+    // similar — read program ID from the runtime AccountInfo binding
+    // (.key()). When unset, fall back to the legacy SPL Token hardcoded ID
+    // (which is correct for Program<Token> sources or when no token-
+    // program sibling exists in the Accounts struct).
+    const ownerExpr = tokenProgram ? `${tokenProgram}.key()` : `&TOKEN_PROGRAM_ID`;
+    const initProgramIdExpr = tokenProgram ? `${tokenProgram}.key()` : `&TOKEN_PROGRAM_ID`;
     const createInvoke = signerSeeds
       ? `let __mint_seed_group = ${signerSeeds}.first().ok_or(pinocchio::program_error::ProgramError::InvalidSeeds)?;
         let mut __mint_seeds: [pinocchio::instruction::Seed<'_>; 8] = core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
@@ -2406,14 +2414,14 @@ ${invokeCall}
             to: ${account},
             lamports: __mint_rent,
             space: 82u64,
-            owner: &TOKEN_PROGRAM_ID,
+            owner: ${ownerExpr},
         }.invoke_signed(&[__mint_signer])?;`
       : `pinocchio_system::instructions::CreateAccount {
             from: ${payer},
             to: ${account},
             lamports: __mint_rent,
             space: 82u64,
-            owner: &TOKEN_PROGRAM_ID,
+            owner: ${ownerExpr},
         }.invoke()?;`;
     const freezeBlock = freezeAuthority
       ? `__mint_init_data[34] = 1;
@@ -2421,10 +2429,14 @@ ${invokeCall}
         let __mint_init_data_len: usize = 67;`
       : `__mint_init_data[34] = 0;
         let __mint_init_data_len: usize = 35;`;
+    // Only emit the legacy const when needed — avoids unused-const warnings
+    // (and confusion in code review) when the runtime sibling is used.
+    const constLine = tokenProgram
+      ? ""
+      : `        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];\n`;
     return `    // Init mint: ${account}
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
-        // 1. Allocate + assign to token program (rent-exempt for 82 bytes).
+${constLine}        // 1. Allocate + assign to token program (rent-exempt for 82 bytes).
         let __mint_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(82);
         ${createInvoke}
         // 2. InitializeMint2 — discriminator 20, decimals + authority + COption<freeze>.
@@ -2437,7 +2449,7 @@ ${invokeCall}
             pinocchio::instruction::AccountMeta::new(${account}.key(), true, false),
         ];
         let __mint_init_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_PROGRAM_ID,
+            program_id: ${initProgramIdExpr},
             accounts: &__mint_init_metas,
             data: &__mint_init_data[..__mint_init_data_len],
         };

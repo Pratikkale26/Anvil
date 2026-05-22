@@ -1606,11 +1606,20 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
   }
 
   override emitCreateMint(
-    account: string, payer: string, decimals: string, mintAuthority: string, freezeAuthority: string | null, signerSeeds?: string,
+    account: string, payer: string, decimals: string, mintAuthority: string, freezeAuthority: string | null, signerSeeds?: string, tokenProgram?: string,
   ): string {
     // Two-step: rent-exempt allocate (82 bytes for SPL Mint) + initialize_mint2
     // (binds decimals + mint_authority + COption<freeze_authority>). Mint2
     // doesn't need the Rent sysvar in the accounts list.
+    //
+    // tokenProgram: when set, source uses Interface<TokenInterface> or
+    // similar — read program ID from the runtime AccountInfo binding
+    // (.key). Both spl_token::instruction::initialize_mint2 and
+    // system_instruction::create_account take program_id as their first
+    // arg and tolerate the Token-2022 program ID (T22 is backward-compat
+    // for the basic mint operations / wire format). When unset, fall back
+    // to the legacy hardcoded ID via spl_token::id().
+    const tokenProgramExpr = tokenProgram ? `${tokenProgram}.key` : `&spl_token::id()`;
     const createInvoke = signerSeeds
       ? `invoke_signed(&__mint_create, &[${payer}.clone(), ${account}.clone()], ${signerSeeds})?;`
       : `invoke(&__mint_create, &[${payer}.clone(), ${account}.clone()])?;`;
@@ -1622,11 +1631,11 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
         ${account}.key,
         __mint_lamports,
         82,
-        &spl_token::id(),
+        ${tokenProgramExpr},
     );
     ${createInvoke}
     let __mint_init = spl_token::instruction::initialize_mint2(
-        &spl_token::id(),
+        ${tokenProgramExpr},
         ${account}.key,
         ${mintAuthority}.key,
         ${freezeArg},
