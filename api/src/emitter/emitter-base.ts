@@ -1956,17 +1956,22 @@ impl<'a, 'b, 'c, 'info, T> CpiContext<'a, 'b, 'c, 'info, T> {
     for (const ut of ir.userTraits ?? []) allCarried.push(ut);
     for (const uti of ir.userTraitImpls ?? []) allCarried.push(uti);
     const all = allCarried.join("\n");
+    // G79b — skip stub when user code already defines the trait with the
+    // same name. Openbook-v2 has `pub trait Owner` in its source; our stub
+    // would E0428 "the name `Owner` is defined multiple times".
+    const userDefinesTrait = (name: string) =>
+      new RegExp(`\\bpub\\s+trait\\s+${name}\\b`).test(all);
     const stubs: string[] = [];
-    if (/\bDiscriminator\b/.test(all)) {
+    if (/\bDiscriminator\b/.test(all) && !userDefinesTrait("Discriminator")) {
       stubs.push(`pub trait Discriminator { const DISCRIMINATOR: [u8; 8]; }`);
     }
-    if (/\bAccountDeserialize\b/.test(all)) {
+    if (/\bAccountDeserialize\b/.test(all) && !userDefinesTrait("AccountDeserialize")) {
       stubs.push(`pub trait AccountDeserialize: Sized {\n    fn try_deserialize(buf: &mut &[u8]) -> Result<Self, ProgramError>;\n    fn try_deserialize_unchecked(buf: &mut &[u8]) -> Result<Self, ProgramError>;\n}`);
     }
-    if (/\bAccountSerialize\b/.test(all)) {
+    if (/\bAccountSerialize\b/.test(all) && !userDefinesTrait("AccountSerialize")) {
       stubs.push(`pub trait AccountSerialize {\n    fn try_serialize<W: borsh::io::Write>(&self, writer: &mut W) -> Result<(), ProgramError>;\n}`);
     }
-    if (/\bOwner\b(?!\s*\()/.test(all) && !/\bcollection_authority\.Owner\b/.test(all)) {
+    if (/\bOwner\b(?!\s*\()/.test(all) && !/\bcollection_authority\.Owner\b/.test(all) && !userDefinesTrait("Owner")) {
       stubs.push(`pub trait Owner {\n    fn owner() -> Pubkey;\n}`);
     }
     if (stubs.length === 0) return "";
