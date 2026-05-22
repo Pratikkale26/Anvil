@@ -202,8 +202,11 @@ export function commentOutUnsalvageableCallSites(text: string, helpers: Set<stri
       const endLine = rangeStarts.get(i)!;
       // Collect the full range's source.
       const rangeLines = lines.slice(i, endLine + 1).join("\n");
-      // Match `let MUT? IDENT (: TYPE)? =` at the start.
-      const letMatch = rangeLines.match(/^([ \t]*)let\s+(mut\s+)?(\w+)(\s*:\s*[^=]+?)?\s*=/);
+      // G82b — match `let MUT? IDENT (: TYPE)? =` anywhere in the range
+      // (not just at the START). The walk-back to previous `;` can land
+      // before a blank line that precedes the let, making rangeLines
+      // start with the blank line. Openbook's state.rs oracle_a hit this.
+      const letMatch = rangeLines.match(/(?:^|\n)([ \t]*)let\s+(mut\s+)?(\w+)(\s*:\s*[^=]+?)?\s*=/);
       if (letMatch) {
         const indent = letMatch[1] ?? "";
         const mutKw = letMatch[2] ?? "";
