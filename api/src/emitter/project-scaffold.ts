@@ -150,6 +150,9 @@ const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
   spl_token:                 `spl-token = { version = "7", default-features = false, features = ["no-entrypoint"] }`,
   spl_token_2022:            `spl-token-2022 = { version = "6", default-features = false, features = ["no-entrypoint"] }`,
   spl_associated_token_account: `spl-associated-token-account = { version = "6", default-features = false, features = ["no-entrypoint"] }`,
+  // G104 — spl-memo (no-entrypoint) for programs that emit Memo CPIs via
+  // carried bodies. Same library-only safety as G101.
+  spl_memo:                  `spl-memo = { version = "6", default-features = false, features = ["no-entrypoint"] }`,
   // Common third-party crates
   bytemuck:                  `bytemuck = { version = "1", features = ["derive"] }`,
   arrayref:                  `arrayref = "0.3"`,

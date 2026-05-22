@@ -1632,7 +1632,7 @@ export abstract class BaseEmitter {
     const rawBody = this.emitInstructionFunction(instr, ir);
     const accountNames = new Set(instr.accounts.map((a) => snakeCase(a.name)));
     const knownNames = this.collectKnownTopLevelNames(ir);
-    const body = collapseModulePaths(
+    let body = collapseModulePaths(
       rewriteSelfReferences(
         rewriteCtxAccountsDestructure(
           rewriteRequireVariantsInCode(
@@ -1644,6 +1644,20 @@ export abstract class BaseEmitter {
       ),
       knownNames,
     );
+    // G105 — when rewriteSelfReferences leaves `__anvil_unported_self__`
+    // markers in the body, inject a placeholder binding at the top of the
+    // fn body so cargo gets E0599/E0308 (which usually live behind some
+    // other failure anyway) instead of E0425 "cannot find value". The
+    // binding panics at runtime so any path that hits it surfaces clearly.
+    // unimplemented!() returns `!` which coerces to any expected type, so
+    // the call-site arg type works regardless of what the lost-self
+    // method's first parameter expects.
+    if (/\b__anvil_unported_self__\b/.test(body)) {
+      body = body.replace(
+        /(pub\s+fn\s+\w+\s*\([^)]*\)\s*->\s*ProgramResult\s*\{)/,
+        `$1\n    #[allow(unreachable_code, unused_variables)]\n    let __anvil_unported_self__ = unimplemented!("Anvil: lost-self placeholder — manual port required");`,
+      );
+    }
     // Per-instruction body-level imports for symbols that lib.rs-only
     // `use` statements don't reach. `use super::*;` resolves to
     // instructions/mod.rs's scope (which has `use crate::*;`), and

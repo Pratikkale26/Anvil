@@ -163,6 +163,8 @@ fixed = { version = "=1.28", default-features = false }
 spl-token = { version = "7", default-features = false, features = ["no-entrypoint"] }
 spl-token-2022 = { version = "6", default-features = false, features = ["no-entrypoint"] }
 spl-associated-token-account = { version = "6", default-features = false, features = ["no-entrypoint"] }
+# G104 — spl-memo for carried Memo CPI calls.
+spl-memo = { version = "6", default-features = false, features = ["no-entrypoint"] }
 # Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
 # emit on hand-rolled bytes (no crate dep needed). The source's
 # get_feed_id_from_hex("0x...") is parsed at emit time into a byte
