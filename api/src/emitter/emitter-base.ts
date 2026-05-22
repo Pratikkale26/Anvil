@@ -2805,13 +2805,79 @@ impl ZeroCopy for ${accName} {}`;
     // review the generated block. Pinocchio doesn't expose realloc
     // directly — we emit a warning block so at least the requirement is
     // visible in the generated code.
+    //
+    // Finding #61 — when the body deserializes the same account (via
+    // state_read), the realloc must run AFTER the deserialize. On the
+    // shrink path the realloc truncates the buffer, and a subsequent
+    // T::read against the now-too-small buffer bails with InvalidAccountData.
+    // Anchor's lifecycle is: deserialize → realloc → handler-mutates the
+    // in-memory struct → re-serialize. We mirror it: prelude-emit only for
+    // realloc'd accounts that the body does NOT state_read (e.g. openbook
+    // CloseOpenOrdersAccount with realloc::payer = sol_destination but no
+    // body read). For the rest, the realloc block is injected AFTER the
+    // read line, using the `${name}_account` AccountInfo alias the walker
+    // emits at state_read time (the bare `${name}` is shadowed by the
+    // deserialized struct at that point).
+    // The walker materializes the state_read lazily — sometimes from an
+    // explicit `state_read` IR statement, sometimes triggered by
+    // `state_field_assign` (Anchor `ctx.accounts.X.field = …` shapes) or by
+    // pass_through code that touches `<acc>.<field>`. Detect all three so
+    // the deferred-realloc fix covers every shape that ends up emitting the
+    // `let mut X = T::read(...)?;` line.
+    const stateReadAccountNames = new Set<string>();
+    for (const s of instr.body) {
+      if (s.kind === "state_read" && s.account) {
+        stateReadAccountNames.add(snakeCase(s.account));
+      } else if (s.kind === "state_field_assign" && s.account) {
+        stateReadAccountNames.add(snakeCase(s.account));
+      }
+    }
+    const reallocAccountsDeferred = new Set<string>();
     const reallocPreludes = instr.accounts
-      .map((a) => this.emitReallocPrelude(a, instr))
+      .map((a) => {
+        const hasRealloc = a.constraints.some((c) => c.kind === "realloc");
+        if (hasRealloc && stateReadAccountNames.has(snakeCase(a.name))) {
+          reallocAccountsDeferred.add(snakeCase(a.name));
+          return "";
+        }
+        return this.emitReallocPrelude(a, instr);
+      })
       .filter(Boolean)
       .join("\n");
 
     // Body emission — the main event
-    const rawBodyCode = this.emitBodyStatements(instr.body, instr, ir, preEmittedBumps);
+    let rawBodyCode = this.emitBodyStatements(instr.body, instr, ir, preEmittedBumps);
+    // Inject deferred realloc blocks AFTER the `T::read(...)` line for each
+    // affected account, targeting the `${name}_account` AccountInfo alias.
+    if (reallocAccountsDeferred.size > 0) {
+      for (const accName of reallocAccountsDeferred) {
+        const accountRef = instr.accounts.find((a) => snakeCase(a.name) === accName);
+        if (!accountRef) continue;
+        const reallocBlock = this.emitReallocPrelude(accountRef, instr, `${accName}_account`);
+        if (!reallocBlock) continue;
+        // The walker emits the read line as e.g.:
+        //   `    let mut message_account = Message::read(&message_account_account.data.borrow())?;`
+        // Inject the realloc block immediately after that line. Match any
+        // T::read(...)?; suffix and the var name (snake_case) we expect.
+        const readLineRe = new RegExp(
+          `(^[ \\t]*let (?:mut )?${accName} = [A-Za-z_][A-Za-z0-9_]*::read\\(&${accName}_account\\.data\\.borrow\\(\\)\\)\\?;)`,
+          "m",
+        );
+        if (readLineRe.test(rawBodyCode)) {
+          rawBodyCode = rawBodyCode.replace(readLineRe, `$1\n${reallocBlock}`);
+        } else {
+          // Fallback — read line shape didn't match (e.g. emitStateReadOrInit
+          // for init_if_needed). Keep the pre-body emit so behavior is at
+          // least no-worse than before the fix.
+          this.warnings.push(
+            `Instruction '${instr.name}': could not locate the deserialize line for ` +
+              `account '${accName}' to inject the realloc block after; falling back to ` +
+              `pre-body emit. The shrink path may corrupt deserialization (finding #61).`,
+          );
+          rawBodyCode = `${this.emitReallocPrelude(accountRef, instr)}\n${rawBodyCode}`;
+        }
+      }
+    }
     // Hook: lets target emitters post-process the assembled body. Preludes
     // (init create_program_account, realloc CPI) are concatenated INTO the
     // string we hand to the post-process so target-specific commentout
@@ -4093,10 +4159,25 @@ ${indented}
   protected emitReallocPrelude(
     accountRef: Instruction["accounts"][number],
     instr: Instruction,
+    /**
+     * Override the identifier used to refer to the AccountInfo. The default
+     * is `snakeCase(accountRef.name)` — correct when this emits as a pre-body
+     * prelude. For the deferred-injection case (finding #61), the bare
+     * `${name}` is shadowed by the deserialized struct after state_read; the
+     * walker exposes the AccountInfo via `${name}_account`, so callers pass
+     * that here.
+     */
+    accountInfoNameOverride?: string,
   ): string {
     const reallocConstraint = accountRef.constraints.find((c) => c.kind === "realloc");
     if (!reallocConstraint?.value) return "";
-    const accountName = snakeCase(accountRef.name);
+    const accountName = accountInfoNameOverride ?? snakeCase(accountRef.name);
+    // In the deferred-injection case the body has already deserialized any
+    // state account, so `<name>.<field>` expressions resolve directly to the
+    // shadowed struct — no need (and incorrect) to predeserialize again. The
+    // override flag also signals that the field-pattern check should run
+    // against the original account name, not the `${name}_account` alias.
+    const isDeferredInjection = accountInfoNameOverride !== undefined;
     const sizeExpr = reallocConstraint.value;
 
     // Native path — real realloc + rent top-up. Respect the explicit
@@ -4138,7 +4219,7 @@ ${indented}
     }
     let resolvedSizeExpr = sizeExpr;
     let predeserialize = "";
-    if (referencedStateAccounts.length > 0) {
+    if (!isDeferredInjection && referencedStateAccounts.length > 0) {
       const lines: string[] = [];
       for (const { name, type } of referencedStateAccounts) {
         const localVar = `__${name}_for_realloc`;
@@ -4161,13 +4242,23 @@ ${indented}
     const zeroFlag = reallocZero ? "true" : "false";
 
     if (this.frameworkName === "Native") {
+      // Anchor's realloc constraint covers BOTH directions:
+      //   grow:   system_program::transfer(payer → account, delta)
+      //   shrink: direct lamport mutation (account → payer, delta)
+      // The system_program transfer path can't service the shrink direction —
+      // system_program won't sign for transfers out of a program-owned
+      // account. The post-init account is owned by `program_id`, so direct
+      // lamport mutation is the allowed path (idiomatic raw-Solana). Without
+      // the shrink branch the account retained the pre-shrink rent balance,
+      // breaking byte-equal on lamports (delta = old_rent - new_rent).
       return `    // realloc — resize ${accountName} to ${sizeExpr} (zero=${zeroFlag})
     {
 ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
         let __rent = solana_program::sysvar::rent::Rent::get()?;
         let __new_lamports = __rent.minimum_balance(__new_size);
-        let __delta = __new_lamports.saturating_sub(${accountName}.lamports());
-        if __delta > 0 {
+        let __cur_lamports = ${accountName}.lamports();
+        if __new_lamports > __cur_lamports {
+            let __delta = __new_lamports - __cur_lamports;
             let __ix = solana_program::system_instruction::transfer(
                 ${payer}.key,
                 ${accountName}.key,
@@ -4177,6 +4268,10 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
                 &__ix,
                 &[${payer}.clone(), ${accountName}.clone()],
             )?;
+        } else if __new_lamports < __cur_lamports {
+            let __refund = __cur_lamports - __new_lamports;
+            **${accountName}.lamports.borrow_mut() = __cur_lamports - __refund;
+            **${payer}.lamports.borrow_mut() = ${payer}.lamports() + __refund;
         }
         ${accountName}.realloc(__new_size, ${zeroFlag})?;
     }`;
@@ -4192,18 +4287,27 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
       // Rent top-up is via pinocchio_system::Transfer{from, to, lamports}.
       // Both signers (payer + account) are from the instruction's account
       // slice — Pinocchio's Transfer takes &AccountInfo refs directly.
+      //
+      // Shrink branch mirrors Native: direct lamport mutation (account →
+      // payer, delta). Pinocchio's `try_borrow_mut_lamports()` returns a
+      // RefMut<u64>; deref-assign performs the lamport delta.
       return `    // realloc — resize ${accountName} to ${sizeExpr} (zero=${zeroFlag})
     {
 ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
         let __rent = pinocchio::sysvars::rent::Rent::get()?;
         let __new_lamports = __rent.minimum_balance(__new_size);
-        let __delta = __new_lamports.saturating_sub(${accountName}.lamports());
-        if __delta > 0 {
+        let __cur_lamports = ${accountName}.lamports();
+        if __new_lamports > __cur_lamports {
+            let __delta = __new_lamports - __cur_lamports;
             pinocchio_system::instructions::Transfer {
                 from: ${payer},
                 to: ${accountName},
                 lamports: __delta,
             }.invoke()?;
+        } else if __new_lamports < __cur_lamports {
+            let __refund = __cur_lamports - __new_lamports;
+            *${accountName}.try_borrow_mut_lamports()? = __cur_lamports - __refund;
+            *${payer}.try_borrow_mut_lamports()? = ${payer}.lamports() + __refund;
         }
         ${accountName}.realloc(__new_size, ${zeroFlag})?;
     }`;

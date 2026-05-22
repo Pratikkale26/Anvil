@@ -39,28 +39,24 @@ import { existsSync } from "node:fs";
 
 ensureRepoCloned();
 
-// Regression gate for finding #61 (realloc-shrink ordering bug). Confirmed
-// 2026-05-22: Anvil's emit for the update handler orders
+// Regression gate for finding #61 (realloc-shrink ordering bug). FIXED in
+// emit-time reorder + shrink-refund branch on 2026-05-22. The bug had two
+// halves: (1) Anvil's emit for the update handler ordered
 // `message_account.realloc(__new_size, true)` BEFORE the Borsh deserialize
-// of the old buffer. On shrink (e.g. "hello" 17B → "x" 13B), the realloc
-// truncates bytes before the deserialize can read the old String — the
-// handler then fails with InvalidAccountData. The reference Anchor build
-// deserializes BEFORE the realloc constraint runs, so it sees the intact
-// buffer. The fix is to reorder body emission: deserialize old state →
-// rewrite args → realloc → re-serialize.
-//
-// Gated behind RUN_PENDING_DIFFERENTIALS=1 so the suite stays green
-// until the emit reorder lands. Flip the env var on to re-validate.
-const RUN_PENDING = process.env.RUN_PENDING_DIFFERENTIALS === "1";
-
+// of the old buffer, so on shrink (e.g. "hello" 17B → "x" 13B) the realloc
+// truncated bytes before the deserialize could read the old String —
+// InvalidAccountData; (2) the realloc rent emit only handled the grow
+// direction (system_program transfer payer → account), leaving the lamport
+// balance at the pre-shrink value while Anchor refunds the excess rent to
+// the payer. The fix mirrors Anchor's lifecycle: deserialize old state →
+// inject the realloc block AFTER the read line (using the `_account`
+// AccountInfo alias the walker emits at state_read time) → handler body
+// mutates the deserialized struct → re-serialize. Shrink branch added via
+// direct lamport mutation since system_program won't sign for transfers
+// out of a program-owned account.
 if (!existsSync(LIB_RS)) {
   console.warn(
     `[differential-program-examples-realloc] SKIPPED — ${LIB_RS} missing.`,
-  );
-} else if (!RUN_PENDING) {
-  console.warn(
-    `[differential-program-examples-realloc] SKIPPED — pending finding #61 ` +
-      `(realloc-shrink order bug). Set RUN_PENDING_DIFFERENTIALS=1 to run.`,
   );
 } else {
   defineDifferential({
