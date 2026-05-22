@@ -293,6 +293,21 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    * Common case: `["init-if-needed"]` for fixtures using the init_if_needed
    * constraint, which requires this feature opt-in by Anchor convention
    * (re-init attack mitigation acknowledgement).
+   *
+   * Finding #47 — SIBLING-STRUCT FEATURE BLEED. The reference Anchor
+   * crate must compile end-to-end even when the test only invokes ONE
+   * instruction. If a SIBLING #[derive(Accounts)] struct in the same
+   * lib.rs uses `init_if_needed` (or any other feature-gated constraint)
+   * — even on an instruction your test never calls — the whole crate
+   * needs `anchorLangFeatures: ["init-if-needed"]` for the macro
+   * expansion of THAT sibling to produce a valid Bumps impl. Without it
+   * you get `error[E0277]: SiblingStruct: Bumps is not satisfied` from
+   * the sibling, miles away from the instruction you care about.
+   *
+   * Bit during this session: pda-mint-authority + transfer-tokens +
+   * spl-token-minter all needed init-if-needed flagged even though the
+   * targeted ix didn't use it. Check siblings before assuming the
+   * primary ix's constraints are enough.
    */
   anchorLangFeatures?: string[];
   /**
