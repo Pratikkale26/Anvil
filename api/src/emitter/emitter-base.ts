@@ -3978,21 +3978,57 @@ ${allFields}
     const parts: string[] = [];
     const constraints = accountRef.constraints;
     const findVal = (kind: string) => constraints.find((c) => c.kind === kind)?.value;
+    const tp = tokenProgram ?? "token_program";
+    const resolve = (v: string) => v.includes("::") ? v.trim() : snakeCase(v);
 
     const closeAuth = findVal("extensions::close_authority::authority");
     if (closeAuth !== undefined) {
-      parts.push(this.emitT22MintCloseAuthorityInitialize(
-        accountName, tokenProgram ?? "token_program", snakeCase(closeAuth)));
+      parts.push(this.emitT22MintCloseAuthorityInitialize(accountName, tp, resolve(closeAuth)));
     }
     const permDelegate = findVal("extensions::permanent_delegate::delegate");
     if (permDelegate !== undefined) {
-      parts.push(this.emitT22PermanentDelegateInitialize(
-        accountName, tokenProgram ?? "token_program", snakeCase(permDelegate)));
+      parts.push(this.emitT22PermanentDelegateInitialize(accountName, tp, resolve(permDelegate)));
     }
     const nonTransferable = constraints.some((c) => c.kind === "extensions::non_transferable");
     if (nonTransferable) {
       parts.push(this.emitT22NonTransferableMintInitialize(
-        accountName, tokenProgram ?? "token_program"));
+        accountName, tp));
+    }
+    const defaultState = findVal("extensions::default_account_state::state");
+    if (defaultState !== undefined) {
+      parts.push(this.emitT22DefaultAccountStateInitialize(
+        accountName, tp, defaultState.trim()));
+    }
+    const interestRate = findVal("extensions::interest_bearing::rate");
+    if (interestRate !== undefined) {
+      parts.push(this.emitT22InterestBearingMintInitialize(
+        accountName, tp, resolve(findVal("extensions::interest_bearing::rate_authority") ?? "payer"), interestRate.trim()));
+    }
+    const tfcAuth = findVal("extensions::transfer_fee::transfer_fee_config_authority");
+    const wwhAuth = findVal("extensions::transfer_fee::withdraw_withheld_authority");
+    if (tfcAuth !== undefined && wwhAuth !== undefined) {
+      const basisPoints = findVal("extensions::transfer_fee::transfer_fee_basis_points") ?? "0";
+      const maxFee = findVal("extensions::transfer_fee::maximum_fee") ?? "0";
+      parts.push(this.emitT22TransferFeeInitialize(
+        accountName, tp, resolve(tfcAuth), resolve(wwhAuth), basisPoints.trim(), maxFee.trim()));
+    }
+    const thAuth = findVal("extensions::transfer_hook::authority");
+    const thPid = findVal("extensions::transfer_hook::program_id");
+    if (thAuth !== undefined) {
+      parts.push(this.emitT22TransferHookInitialize(
+        accountName, tp, resolve(thAuth), thPid ? resolve(thPid) : accountName));
+    }
+    const mpAuth = findVal("extensions::metadata_pointer::authority");
+    const mpAddr = findVal("extensions::metadata_pointer::metadata_address");
+    if (mpAuth !== undefined) {
+      parts.push(this.emitT22MetadataPointerInitialize(
+        accountName, tp, resolve(mpAuth), mpAddr ? resolve(mpAddr) : accountName));
+    }
+    const gpAuth = findVal("extensions::group_pointer::authority");
+    const gpAddr = findVal("extensions::group_pointer::group_address");
+    if (gpAuth !== undefined) {
+      parts.push(this.emitT22GroupPointerInitialize(
+        accountName, tp, resolve(gpAuth), gpAddr ? resolve(gpAddr) : accountName));
     }
     return parts.length > 0 ? "\n" + parts.join("\n") : "";
   }
@@ -4072,13 +4108,10 @@ ${allFields}
     let init_${accountName}_signer_seeds = &[&init_${accountName}_seeds[..]];`;
         const signerSeedsExpr = `init_${accountName}_signer_seeds`;
         const mintCreate = this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, signerSeedsExpr, tokenProgram, totalSpace);
-        const extInits = this.emitT22ExtensionInits(accountRef, accountName, tokenProgram);
-        return `${bumpPrelude}\n${seedsPrelude}\n${mintCreate}${extInits}`;
+        return `${bumpPrelude}\n${seedsPrelude}\n${mintCreate}`;
       }
 
-      const mintCreate = this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, undefined, tokenProgram, totalSpace);
-      const extInits = this.emitT22ExtensionInits(accountRef, accountName, tokenProgram);
-      return `${mintCreate}${extInits}`;
+      return this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, undefined, tokenProgram, totalSpace);
     }
 
     // ── `init token::*` (non-ATA token account): account is a fresh keypair
