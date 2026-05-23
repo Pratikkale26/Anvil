@@ -202,7 +202,7 @@ spl-associated-token-account = { version = "6", features = ["no-entrypoint"] }
 #   - mpl-token-metadata: real-CPI MPL catalog (12 instructions)
 bytemuck = { version = "1", features = ["derive"] }
 spl-memo = { version = "6", features = ["no-entrypoint"] }
-spl-token-metadata-interface = "0.4"
+spl-token-metadata-interface = "0.7"
 mpl-token-metadata = "5.1"
 # G110 — spl-pod for OptionalNonZeroPubkey (T22 metadata update_authority).
 spl-pod = "0.5"
