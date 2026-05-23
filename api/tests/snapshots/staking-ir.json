@@ -430,7 +430,7 @@
           "endColumn": 14
         }
       ],
-      "rawBody": "{\n        require!(reward_rate > 0, StakingError::InvalidRewardRate);\n        require!(lock_duration > 0, StakingError::InvalidLockDuration);\n        require!(max_stake > 0, StakingError::InvalidMaxStake);\n\n        // The reward_mint mint_authority must be the pool PDA off-chain\n        // before initialize_pool is called (admin sets this via SPL\n        // set_authority before deploying the pool). The on-chain check\n        // for mint_authority is omitted from the demo — it would require\n        // unpacking the Mint struct, which depends on the target's SPL\n        // helper surface. Subsequent claim/unstake instructions enforce\n        // `address = pool.reward_mint` so a substituted mint can't slip\n        // through after init.\n\n        let pool = &mut ctx.accounts.pool;\n        pool.admin = ctx.accounts.admin.key();\n        pool.stake_mint = ctx.accounts.stake_mint.key();\n        pool.reward_mint = ctx.accounts.reward_mint.key();\n        pool.reward_rate = reward_rate;\n        pool.lock_duration = lock_duration;\n        pool.max_stake = max_stake;\n        pool.total_staked = 0;\n        pool.bump = ctx.bumps.pool;\n        pool.stake_vault_bump = ctx.bumps.stake_vault;\n        pool.reward_vault_bump = ctx.bumps.reward_vault;\n        pool.is_paused = false;\n\n        Ok(())\n    }",
+      "rawBody": "{\n        require!(reward_rate > 0, StakingError::InvalidRewardRate);\n        require!(lock_duration > 0, StakingError::InvalidLockDuration);\n        require!(max_stake > 0, StakingError::InvalidMaxStake);\n\n        // The reward_mint mint_authority must be the pool PDA off-chain\n        // before initialize_pool is called (admin sets this via SPL\n        // set_authority before deploying the pool). The on-chain check\n        // for mint_authority is omitted from the demo \u2014 it would require\n        // unpacking the Mint struct, which depends on the target's SPL\n        // helper surface. Subsequent claim/unstake instructions enforce\n        // `address = pool.reward_mint` so a substituted mint can't slip\n        // through after init.\n\n        let pool = &mut ctx.accounts.pool;\n        pool.admin = ctx.accounts.admin.key();\n        pool.stake_mint = ctx.accounts.stake_mint.key();\n        pool.reward_mint = ctx.accounts.reward_mint.key();\n        pool.reward_rate = reward_rate;\n        pool.lock_duration = lock_duration;\n        pool.max_stake = max_stake;\n        pool.total_staked = 0;\n        pool.bump = ctx.bumps.pool;\n        pool.stake_vault_bump = ctx.bumps.stake_vault;\n        pool.reward_vault_bump = ctx.bumps.reward_vault;\n        pool.is_paused = false;\n\n        Ok(())\n    }",
       "returnType": "Result<()>"
     },
     {
@@ -2027,6 +2027,7 @@
   "typeAliases": [],
   "userTraits": [],
   "userTraitImpls": [],
+  "userModules": [],
   "warnings": [],
   "metadata": {
     "sourceFramework": "anchor",

@@ -511,6 +511,7 @@ export async function parseAnchor(
       typeAliases: topLevel.typeAliases,
       userTraits: topLevel.userTraits,
       userTraitImpls,
+      userModules: topLevel.userModules,
       warnings: warningCollector.drain(),
       metadata: {
         sourceFramework: "anchor",
@@ -584,6 +585,13 @@ interface TopLevelItems {
   /** G27g — `pub trait X { ... }` user-defined trait declarations.
    * Openbook's KeyedAccountReader / AccountReader patterns. */
   userTraits: string[];
+  /** Finding #67 — top-level free `mod X { ... }` blocks (non-program,
+   * non-cfg(test)) preserved verbatim. The walker previously recursed INTO
+   * these mods, hoisting their items + stripping the mod wrapper, which
+   * silently broke namespace resolution for shapes like
+   * `InterfaceAccount<'info, interface::ExpectedAccount>`. We now capture
+   * the entire `mod X { ... }` text and skip recursion into its body. */
+  userModules: string[];
 }
 
 function classifyTopLevel(root: SyntaxNode): TopLevelItems {
@@ -608,6 +616,7 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
     constants: [],
     typeAliases: [],
     userTraits: [],
+    userModules: [],
   };
 
   // Pre-scan: collect the names of every fn declared inside the `#[program]`
@@ -684,6 +693,26 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
             items.programModule = { node: child, attrs };
           }
           const body = child.childForFieldName("body");
+          // Finding #67 — when a top-level mod is NOT #[program] and NOT
+          // already inside a program module, capture it verbatim instead
+          // of recursing. Pre-fix the walker recursed INTO every mod body,
+          // hoisting items to top-level and stripping the mod wrapper —
+          // which silently broke namespace resolution for shapes like
+          // `InterfaceAccount<'info, interface::ExpectedAccount>` (the
+          // mod's `pub struct ExpectedAccount` got hoisted to lib.rs scope
+          // without its `interface::` prefix, the trait impls + nested
+          // cfg-gated `mod idl_impls` were dropped entirely). The emit
+          // path splats userModules verbatim at lib.rs scope so the
+          // namespace + everything inside it round-trips.
+          if (!isProgramModule && !inProgramModule) {
+            // Include attribute prefix so #[derive(...)] / #[cfg(...)] on
+            // the mod itself round-trips. tree-sitter's mod_item.text omits
+            // the leading attributes; reconstruct by prepending attrs.
+            const prefix = attrs.map((a) => a.text).join("\n");
+            const verbatim = prefix ? `${prefix}\n${child.text}` : child.text;
+            items.userModules.push(verbatim);
+            break;
+          }
           if (body && modName) {
             walk(body, [...modulePath, modName], inProgramModule || isProgramModule);
           }

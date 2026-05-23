@@ -2097,6 +2097,18 @@ export const SolanaIRSchema = z.object({
    */
   userTraitImpls: z.array(z.string()).default([]),
   /**
+   * Finding #67 — top-level free `mod X { ... }` blocks (NOT `#[program]`,
+   * NOT `#[cfg(test)]`) preserved verbatim from source. Used when an Accounts
+   * struct references a mod-namespaced type (e.g.
+   * `InterfaceAccount<'info, interface::ExpectedAccount>`); without carrying
+   * the mod definitions through, the emit fails E0433 "cannot find type X
+   * in mod interface". Pre-fix the parser walked INTO these mods, hoisting
+   * their items to top-level and stripping the mod wrapper — silently
+   * breaking namespace resolution. Emitted verbatim at lib.rs scope after
+   * userTraitImpls.
+   */
+  userModules: z.array(z.string()).default([]),
+  /**
    * Parser-emitted warnings (loud degradation signal). Populated when the
    * parser falls back to pass_through / cpi_custom on patterns it couldn't
    * fully classify, or drops information (e.g. variable-bound CpiContext

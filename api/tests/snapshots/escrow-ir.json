@@ -1098,6 +1098,7 @@
   "typeAliases": [],
   "userTraits": [],
   "userTraitImpls": [],
+  "userModules": [],
   "warnings": [],
   "metadata": {
     "sourceFramework": "anchor",

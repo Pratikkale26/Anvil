@@ -1552,6 +1552,22 @@ export abstract class BaseEmitter {
     if (userTraitImpls) {
       sections.push(userTraitImpls);
     }
+    // Finding #67 — splat top-level free `mod X { ... }` blocks verbatim at
+    // lib.rs scope. The parser captures these (non-`#[program]`, non-cfg(test))
+    // because they may host types referenced by Accounts structs (e.g.
+    // `InterfaceAccount<'info, interface::ExpectedAccount>` requires the
+    // `mod interface { pub struct ExpectedAccount }` to land here). Push
+    // through stripAnchorLangPrefixes + stripAnchorWrappersInCode so any
+    // `anchor_lang::*` trait references inside the mod (AccountDeserialize,
+    // Owners, etc.) get the same wrapper-strip treatment as userTraits.
+    const userModules = (ir as any).userModules ?? [];
+    if (userModules.length > 0) {
+      const target = this.frameworkName === "Pinocchio" ? "pin" : "native";
+      const processed = userModules.map((um: string) =>
+        stripAnchorWrappersInCode(stripAnchorLangPrefixes(um), target),
+      );
+      sections.push(`// User-defined modules preserved verbatim from source\n${processed.join("\n\n")}`);
+    }
 
     sections.push(this.emitEntrypoint(ir));
     sections.push(this.emitRouter(ir));
@@ -2610,6 +2626,17 @@ impl ZeroCopy for ${accName} {}`;
     if (types.length > 0) sections.push(this.emitCustomTypes({ ...ir, types }));
     const userTraitImplsSingle = this.emitUserTraitImpls(ir);
     if (userTraitImplsSingle) sections.push(userTraitImplsSingle);
+    // Finding #67 — same userModules splat as emitLibFile, applied here so
+    // singleFile builds also preserve top-level free `mod X { ... }` blocks
+    // (e.g. interface-account's `mod interface { pub struct ExpectedAccount }`).
+    const userModulesSingle = (ir as any).userModules ?? [];
+    if (userModulesSingle.length > 0) {
+      const target = this.frameworkName === "Pinocchio" ? "pin" : "native";
+      const processed = userModulesSingle.map((um: string) =>
+        stripAnchorWrappersInCode(stripAnchorLangPrefixes(um), target),
+      );
+      sections.push(`// User-defined modules preserved verbatim from source\n${processed.join("\n\n")}`);
+    }
     // Inline event struct definitions when the source has #[event] structs.
     // Multi-file emit puts these in events.rs; for single-file builds they
     // need to live alongside the rest. emit!() lowering references the
@@ -3029,6 +3056,7 @@ ${originalLines}
     let ${name}: u8 = arg_bytes[0];`;
       case "u16": case "u32": case "u64": case "u128":
       case "i16": case "i32": case "i64": case "i128":
+      case "f32": case "f64":
         return `    if remaining.len() < ${size} {
         return Err(ProgramError::InvalidInstructionData);
     }

@@ -77,6 +77,7 @@ export function typeSize(typeName: string, maxLen?: number[]): number {
   const sizes: Record<string, number> = {
     u8: 1, u16: 2, u32: 4, u64: 8, u128: 16,
     i8: 1, i16: 2, i32: 4, i64: 8, i128: 16,
+    f32: 4, f64: 8,
     bool: 1, Pubkey: 32,
     // Legacy back-compat defaults for variable-length fields without a
     // `#[max_len]` annotation. These yield the LENGTH-PREFIX bytes only
