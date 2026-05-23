@@ -242,6 +242,9 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // (`next_account_info(iter)?`, `&accounts[N..][i]`, etc.) that defeat naive
   // `[^)]*` matching.
   transformedRawCode = rewriteAccountTryFrom(transformedRawCode, w);
+  if (w.emitter.frameworkName === "Pinocchio") {
+    transformedRawCode = rewritePinocchioTokenAccountFields(transformedRawCode);
+  }
   transformedRawCode = rewriteNextAccountInfo(transformedRawCode, w);
   // Fallback: still run the regex versions in case tree-sitter parse
   // returned the code unchanged (parse error → no-op). The regex is
@@ -614,6 +617,35 @@ export function rewriteAccountTryFrom(code: string, w: BodyWalker): string {
   }
   result.push(code.slice(i));
   return result.join("");
+}
+
+function rewritePinocchioTokenAccountFields(code: string): string {
+  if (!code.includes("pinocchio_token::state::TokenAccount")) return code;
+  const locals = new Set<string>();
+  let m: RegExpExecArray | null;
+  const letRe = /\blet\s+(?:mut\s+)?(\w+)\s*=\s*pinocchio_token::state::TokenAccount::from_account_info/g;
+  while ((m = letRe.exec(code)) !== null) if (m[1]) locals.add(m[1]);
+  const closureRe = /\|\s*(\w+)\s*\|/g;
+  while ((m = closureRe.exec(code)) !== null) if (m[1] && m[1] !== "_") locals.add(m[1]);
+  if (locals.size === 0) return code;
+  const pubkeyFields = ["mint", "owner", "delegate", "close_authority"];
+  const valueFields = ["amount"];
+  let out = code;
+  for (const local of locals) {
+    for (const f of pubkeyFields) {
+      out = out.replace(
+        new RegExp(`\\b${local}\\.${f}\\b(?!\\s*\\()`, "g"),
+        `*${local}.${f}()`,
+      );
+    }
+    for (const f of valueFields) {
+      out = out.replace(
+        new RegExp(`\\b${local}\\.${f}\\b(?!\\s*\\()`, "g"),
+        `${local}.${f}()`,
+      );
+    }
+  }
+  return out;
 }
 
 /**
