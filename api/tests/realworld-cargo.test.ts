@@ -417,6 +417,35 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
   // coral-anchor-cli-account + coral-misc: cargo build fails (various gaps)
   // { id: "coral-anchor-cli-account", ... },
   // { id: "coral-misc", ... },
+
+  // ── 2026-05-23 extended sweep ──
+  { id: "coral-chat", target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/chat/programs/chat/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  { id: "coral-chat", target: "native",
+    path: "/tmp/coral-anchor/tests/chat/programs/chat/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  { id: "coral-cpi-returns", target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/cpi-returns/programs/callee/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  { id: "coral-cpi-returns", target: "native",
+    path: "/tmp/coral-anchor/tests/cpi-returns/programs/callee/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  { id: "coral-bpf-upgradeable", target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/bpf-upgradeable-state/programs/bpf-upgradeable-state/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  { id: "coral-bpf-upgradeable", target: "native",
+    path: "/tmp/coral-anchor/tests/bpf-upgradeable-state/programs/bpf-upgradeable-state/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  // coral-ido-pool + coral-swap: cargo build fails (SPL unpack needs `use Pack` scope)
+  // { id: "coral-ido-pool", ... },
+  // { id: "coral-swap", ... },
 ];
 
 // All 36 program-examples cases now pass deterministically. The pinocchio
