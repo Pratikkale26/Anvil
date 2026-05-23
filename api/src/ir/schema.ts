@@ -1720,6 +1720,22 @@ export const InstructionSchema = z.object({
   name: z.string(),
   /** 8-byte Anchor discriminator (hex string), if known */
   discriminator: z.string().optional(),
+  /**
+   * #60 — Anchor 1.x `#[instruction(discriminator = ...)]` override resolved
+   * to a literal byte sequence. Populated by the parser for integer (single-
+   * byte shortcut), byte-array, byte-string, and resolvable top-level
+   * `const X: &[u8] = &[...]` references. Absent when the override is the
+   * default sha256("global:<name>") OR when the form is unresolvable (const
+   * fn calls, opaque const references) — in the unresolvable case a parser
+   * warning is also emitted.
+   *
+   * For 8-byte literals, the legacy `discriminator` hex field above is also
+   * populated (back-compat with `routerDiscriminator`). For non-8-byte
+   * forms the dispatcher rewrite is deferred — emit still uses the default
+   * sha256 disc and a warning is shipped so users see the silent-misroute
+   * risk.
+   */
+  customDiscriminator: z.object({ bytes: z.array(z.number()) }).optional(),
   accounts: z.array(AccountRefSchema),
   args: z.array(ArgSchema),
   /** Classified body statements for generic emission */
@@ -1801,6 +1817,14 @@ export const AccountDefSchema = z.object({
   space: z.number().optional(), // bytes needed
   docs: z.string().optional(),
   /**
+   * #60 — `#[account(discriminator = ...)]` override resolved to a literal
+   * byte sequence. When present, emit produces `pub const DISCRIMINATOR:
+   * [u8; N]` with these bytes and adjusts every `[..8]` / `[u8; 8]` site
+   * inside the account's read/write/init paths to use the variable length.
+   * Absent when the source uses the default sha256("account:<Name>") disc.
+   */
+  customDiscriminator: z.object({ bytes: z.array(z.number()) }).optional(),
+  /**
    * Raw user-written items inside `impl <ThisAccount> { ... }` blocks
    * (associated functions and consts). Anchor programs commonly carry helpers
    * like `pub const SEED_PREFIX: &[u8] = b"...";` or `pub fn required_space()`
@@ -1831,6 +1855,13 @@ export const EventDefSchema = z.object({
   name: z.string(),
   fields: z.array(AccountFieldSchema),
   docs: z.string().optional(),
+  /**
+   * #60 — `#[event(discriminator = ...)]` override resolved to a literal
+   * byte sequence. When present, emit produces `pub const DISCRIMINATOR:
+   * [u8; N]` and `sol_log_data` payloads include these bytes verbatim.
+   * Absent when the source uses the default sha256("event:<Name>") disc.
+   */
+  customDiscriminator: z.object({ bytes: z.array(z.number()) }).optional(),
 });
 
 export type EventDef = z.infer<typeof EventDefSchema>;

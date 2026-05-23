@@ -35,7 +35,7 @@ import {
   findDescendant,
 } from "./ast-helpers.js";
 import { parseInstructions, extractImplTargetName, parseFromImplDeclaration, type FromImplCatalogEntry } from "./instruction-parser.js";
-import { parseAccountDataStruct } from "./account-parser.js";
+import { parseAccountDataStruct, extractByteArrayConsts } from "./account-parser.js";
 import { parseErrorEnum, parseHelperFn, parseCustomType, extractImports, extractProgramId } from "./type-parser.js";
 import { createWarningCollector } from "./warning-collector.js";
 import { buildHelperCpiCatalog } from "./helper-cpi-catalog.js";
@@ -311,11 +311,17 @@ export async function parseAnchor(
     // after instruction classification.
     const warningCollector = createWarningCollector();
 
+    // #60 — Top-level `const X: ... = [N, N, ...];` byte-array table.
+    // Shared between account/event/instruction discriminator-override
+    // resolution so `discriminator = MY_DISC` can resolve through.
+    const byteArrayConsts = extractByteArrayConsts(source);
+
     // ── Parse account data structs (#[account] structs) ──
     const accounts = topLevel.accountDataStructs.map((s) => {
       const def = parseAccountDataStruct(s.node, s.attrs, {
         collector: warningCollector,
         discriminatorKind: "account",
+        byteArrayConsts,
       });
       // Attach raw `impl <ThisAccount> { fn / const }` items so emitters can
       // preserve inherent helpers like `Foo::SEED_PREFIX` and
@@ -416,6 +422,7 @@ export async function parseAnchor(
         source,
         warningCollector,
         helperCpiCatalog,
+        byteArrayConsts,
       );
     } catch (err) {
       if (err instanceof ParseTimeoutError) {
@@ -466,8 +473,13 @@ export async function parseAnchor(
       const def = parseAccountDataStruct(s.node, s.attrs, {
         collector: warningCollector,
         discriminatorKind: "event",
+        byteArrayConsts,
       });
-      return { name: def.name, fields: def.fields };
+      return {
+        name: def.name,
+        fields: def.fields,
+        ...(def.customDiscriminator ? { customDiscriminator: def.customDiscriminator } : {}),
+      };
     });
 
     // ── Parse helper functions ──

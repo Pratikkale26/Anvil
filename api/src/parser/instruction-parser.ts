@@ -18,7 +18,7 @@ import { findDescendant, findTopLevelComma, rewriteCompositeChainsInBodyText, re
 import { normalizeSolanaType } from "./utils.js";
 import { classifyBody } from "./body-classifier.js";
 import type { WarningCollector } from "./warning-collector.js";
-import { parseAccountsStructFields, type AccountsStructRegistry } from "./account-parser.js";
+import { parseAccountsStructFields, resolveDiscriminatorRhs, type AccountsStructRegistry } from "./account-parser.js";
 import type { HelperCpiCatalogEntry } from "./helper-cpi-catalog.js";
 
 // ─── Instruction parsing ────────────────────────────────────────────────────
@@ -33,6 +33,7 @@ export function parseInstructions(
   source: string,
   collector?: WarningCollector,
   helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
+  byteArrayConsts?: ReadonlyMap<string, number[]>,
 ): SolanaIR["instructions"] {
   const body = programModNode.childForFieldName("body");
   if (!body) return [];
@@ -69,7 +70,7 @@ export function parseInstructions(
   // immediately precede a function_item still attach to it; attributes
   // on `mod_item` (e.g. `#[cfg(feature = ...)]`) are not threaded —
   // they're already handled by stripInactiveCfgItems upstream.
-  walkProgramBody(body, instructions, parser, accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog, constStringMap);
+  walkProgramBody(body, instructions, parser, accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog, constStringMap, byteArrayConsts);
 
   return instructions;
 }
@@ -86,6 +87,7 @@ function walkProgramBody(
   collector?: WarningCollector,
   helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
   constStringMap?: Map<string, string>,
+  byteArrayConsts?: ReadonlyMap<string, number[]>,
 ): void {
   let currentAttrs: SyntaxNode[] = [];
   for (let i = 0; i < body.namedChildCount; i++) {
@@ -104,7 +106,7 @@ function walkProgramBody(
     }
 
     if (child.type === "function_item") {
-      const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog, constStringMap);
+      const instr = parseInstructionFn(parser, child, [...currentAttrs], accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog, constStringMap, byteArrayConsts);
       if (instr) out.push(instr);
     } else if (child.type === "mod_item") {
       // Recurse into nested module bodies. The module's attrs are not
@@ -112,7 +114,7 @@ function walkProgramBody(
       // per-function attributes (`#[access_control(…)]` etc.).
       const subBody = child.childForFieldName("body");
       if (subBody) {
-        walkProgramBody(subBody, out, parser, accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog, constStringMap);
+        walkProgramBody(subBody, out, parser, accountsStructs, implMethods, functionIndex, fromImpls, source, collector, helperCpiCatalog, constStringMap, byteArrayConsts);
       }
     }
 
@@ -151,6 +153,7 @@ function parseInstructionFn(
   collector?: WarningCollector,
   helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
   constStringMap?: Map<string, string>,
+  byteArrayConsts?: ReadonlyMap<string, number[]>,
 ): SolanaIR["instructions"][0] | null {
   const fnName = fnNode.childForFieldName("name")?.text;
   if (!fnName) return null;
@@ -376,32 +379,56 @@ function parseInstructionFn(
   const returnType = returnTypeNode?.text?.trim() || undefined;
 
   // Anchor 1.0 literal discriminator override —
-  // `#[instruction(discriminator = [1,2,3,4,5,6,7,8])]` on the handler fn.
-  // Pre-this-extract the parser ignored the bytes and the router emit
-  // used the auto-computed sha256("global:<name>") discriminator, which
-  // would silently misroute calls.
-  const discriminator = extractInstructionDiscriminator(fnAttrs);
-  // #60 — warn loudly when a discriminator override is present but in a
-  // form the parser doesn't yet handle (scalar, short array, byte
-  // string, const, const-fn). Router emit + the `split_at(8)` dispatch
-  // shape both assume 8 bytes; widening parser without rewiring
-  // dispatch would silently misroute. Surfaced so users see the gap.
-  if (!discriminator) {
-    const unsupported = detectUnsupportedInstructionDiscriminator(fnAttrs);
-    if (unsupported && collector) {
+  // `#[instruction(discriminator = ...)]` on the handler fn. The parser
+  // resolves integer (single-byte shortcut), byte-array, byte-string,
+  // and resolvable const byte-array references; everything else (const
+  // fn, opaque const) keeps the legacy warning.
+  //
+  // Back-compat split: for 8-byte resolved overrides we also populate
+  // the legacy `discriminator` hex-string field so `routerDiscriminator`
+  // emits the bytes via the existing match-arm path. For non-8-byte
+  // overrides the dispatcher rewrite is deferred — emit still uses the
+  // sha256 default and we keep the loud warning so users see the
+  // silent-misroute risk.
+  const rawOverride = detectInstructionDiscriminatorRhs(fnAttrs);
+  let discriminator: string | undefined;
+  let customDiscriminator: { bytes: number[] } | undefined;
+  if (rawOverride) {
+    const bytes = resolveDiscriminatorRhs(rawOverride, byteArrayConsts);
+    if (bytes && bytes.length === 8) {
+      discriminator = bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+      customDiscriminator = { bytes };
+    } else if (bytes) {
+      customDiscriminator = { bytes };
+      if (collector) {
+        collector.add({
+          code: "instruction_discriminator_override_unsupported",
+          message:
+            `instruction \`${fnName}\`: #[instruction(discriminator = ${rawOverride})] ` +
+            `resolves to ${bytes.length} bytes — Anvil's router emit assumes ` +
+            `8-byte discriminators (\`split_at(8)\` dispatch shape). The IR ` +
+            `carries the bytes for future variable-length dispatch but emit ` +
+            `currently falls back to sha256("global:${fnName}")[..8], which ` +
+            `will silently misroute calls from clients building instruction ` +
+            `data with the override bytes. Hand-port the dispatch arm or ` +
+            `rewrite the source to the 8-byte form until the variable-length ` +
+            `discriminator rework lands.`,
+          instruction: fnName,
+          snippet: rawOverride,
+        });
+      }
+    } else if (collector) {
       collector.add({
         code: "instruction_discriminator_override_unsupported",
         message:
-          `instruction \`${fnName}\`: #[instruction(discriminator = ${unsupported})] ` +
-          `override form not supported — only 8-byte literal arrays (e.g. ` +
-          `[1, 2, 3, 4, 5, 6, 7, 8]) are surfaced today. Anvil's router falls ` +
-          `back to the default sha256("global:${fnName}")[..8] discriminator, ` +
-          `which silently misroutes calls from clients that build instruction ` +
-          `data with the override bytes. Hand-port the dispatch arm or rewrite ` +
-          `the source to use the 8-byte literal form until the variable-length ` +
-          `discriminator rework lands.`,
+          `instruction \`${fnName}\`: #[instruction(discriminator = ${rawOverride})] ` +
+          `value is not statically resolvable — only integer / byte-array / ` +
+          `byte-string / resolvable const-byte-array forms are honored. Anvil's ` +
+          `router falls back to the default sha256("global:${fnName}")[..8] ` +
+          `discriminator, which silently misroutes calls. Hand-port the ` +
+          `dispatch arm or rewrite the source to a resolvable form.`,
         instruction: fnName,
-        snippet: unsupported,
+        snippet: rawOverride,
       });
     }
   }
@@ -416,49 +443,20 @@ function parseInstructionFn(
     ...(returnType ? { returnType } : {}),
     ...(accessControl ? { accessControl } : {}),
     ...(discriminator ? { discriminator } : {}),
+    ...(customDiscriminator ? { customDiscriminator } : {}),
   };
 }
 
 /**
- * Anchor 1.0 supports an explicit discriminator override on the
- * handler fn: `#[instruction(discriminator = [N, N, N, N, N, N, N, N])]`.
- * The discriminator is 8 bytes, decimal-formatted in the source.
- * Returns the bytes as a 16-char lowercase hex string, or undefined.
+ * #60 — Extract the RHS source of `#[instruction(discriminator = <expr>)]`,
+ * balancing brackets/parens so it captures `get_disc("wow")`, `[N, ...]`,
+ * `b"hi"`, etc. verbatim. Returns the trimmed RHS or undefined when no
+ * such attribute is present. The caller passes the RHS to
+ * resolveDiscriminatorRhs to either honor or warn.
  */
-function extractInstructionDiscriminator(fnAttrs: SyntaxNode[]): string | undefined {
+function detectInstructionDiscriminatorRhs(fnAttrs: SyntaxNode[]): string | undefined {
   for (const attr of fnAttrs) {
     const text = attr.text;
-    const m = text.match(/#\[instruction\([^)]*\bdiscriminator\s*=\s*\[\s*([0-9, ]+)\s*\]/);
-    if (!m) continue;
-    const bytes = m[1]!.split(",")
-      .map((s) => parseInt(s.trim(), 10))
-      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 255);
-    if (bytes.length !== 8) continue;
-    return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
-  }
-  return undefined;
-}
-
-/**
- * #60 — Detect `#[instruction(discriminator = <expr>)]` annotations that
- * extractInstructionDiscriminator rejected so a parser warning can fire.
- * Returns the raw RHS source (`0`, `[1, 2, 3, 4]`, `b"hi"`, `MY_DISC`,
- * `get_disc("wow")`, …) when an override is present in a non-8-byte
- * form, or undefined otherwise.
- *
- * Implementation note: we deliberately re-scan the same attribute text
- * rather than threading state out of extractInstructionDiscriminator —
- * the unrecognised RHS form is small and the call site only matters when
- * the supported-path returned undefined.
- */
-function detectUnsupportedInstructionDiscriminator(
-  fnAttrs: SyntaxNode[],
-): string | undefined {
-  for (const attr of fnAttrs) {
-    const text = attr.text;
-    // Match any RHS form, then balance brackets/parens so we capture the
-    // full expression including `get_disc("wow")` (parens) and
-    // `[N, N, ...]` (brackets).
     const startMatch = text.match(/#\[instruction\([^)]*\bdiscriminator\s*=\s*/);
     if (!startMatch) continue;
     const rhsStart = startMatch.index! + startMatch[0].length;
@@ -474,17 +472,7 @@ function detectUnsupportedInstructionDiscriminator(
       i++;
     }
     const rhs = text.slice(rhsStart, i).trim();
-    if (!rhs) continue;
-    // Defer to the supported 8-byte array form — extractInstructionDiscriminator
-    // already accepted it, so no warning needed.
-    const arr = rhs.match(/^\[\s*([0-9, ]+)\s*\]$/);
-    if (arr) {
-      const bytes = arr[1]!.split(",").map((s) => s.trim()).filter(Boolean);
-      if (bytes.length === 8 && bytes.every((b) => /^\d+$/.test(b))) {
-        return undefined;
-      }
-    }
-    return rhs;
+    if (rhs) return rhs;
   }
   return undefined;
 }

@@ -509,7 +509,7 @@ export abstract class BaseEmitter {
    *   Pinocchio: `unsafe { account.borrow_mut_data_unchecked() }`
    *   Native:    `account.data.borrow_mut()` (RefMut from RefCell)
    */
-  abstract emitDiscriminatorWrite(accountName: string, typeName: string): string;
+  abstract emitDiscriminatorWrite(accountName: string, typeName: string, discLen?: number): string;
 
   // ── ATA creation ──
   abstract emitCreateAta(
@@ -1657,9 +1657,9 @@ export abstract class BaseEmitter {
       const fieldDecls = ev.fields
         .map((f) => `    pub ${snakeCase(f.name)}: ${this.rustTypeForCustomType(f.type)},`)
         .join("\n");
-      const disc = eventDiscriminator(ev.name);
+      const { len: discLen, expr: discExpr } = this.eventDiscInfo(ev);
       sections.push(
-        `#[derive(BorshSerialize, BorshDeserialize, Debug)]\npub struct ${ev.name} {\n${fieldDecls}\n}\n\nimpl ${ev.name} {\n    pub const DISCRIMINATOR: [u8; 8] = ${disc};\n}`,
+        `#[derive(BorshSerialize, BorshDeserialize, Debug)]\npub struct ${ev.name} {\n${fieldDecls}\n}\n\nimpl ${ev.name} {\n    pub const DISCRIMINATOR: [u8; ${discLen}] = ${discExpr};\n}`,
       );
     }
     return sections.join("\n\n");
@@ -2220,9 +2220,9 @@ pub trait Event: BorshSerialize + BorshDeserialize {
   protected emitAnchorEventTraitWithImpls(ir: SolanaIR): string {
     const parts: string[] = [this.emitAnchorEventTraitStub()];
     for (const ev of (ir.events ?? [])) {
-      const disc = eventDiscriminator(ev.name);
+      const { len: discLen, expr: discExpr } = this.eventDiscInfo(ev);
       parts.push(
-        `impl Event for ${ev.name} {\n    const DISCRIMINATOR: [u8; 8] = ${disc};\n}`,
+        `impl Event for ${ev.name} {\n    const DISCRIMINATOR: [u8; ${discLen}] = ${discExpr};\n}`,
       );
     }
     return parts.join("\n\n");
@@ -2623,7 +2623,16 @@ pub fn id() -> Pubkey { ID }`;
    * already emitted on the account struct. Owner returns a target-typed
    * zero-Pubkey stub.
    */
-  protected emitZeroCopyTraitImpls(accName: string): string {
+  protected emitZeroCopyTraitImpls(accName: string, discLen: number = 8): string {
+    // #60 — The user-facing `Discriminator` trait stub declares `[u8; 8]`;
+    // a zero-copy account with `#[account(discriminator = ...)]` overriding
+    // to a different length would fail this impl. The combination is rare
+    // (zero-copy + custom-disc) and the override path doesn't surface here
+    // unless the caller forwards a non-8 discLen — in which case we skip
+    // the trait impls, since the trait shape itself isn't variable.
+    if (discLen !== 8) {
+      return `impl Owner for ${accName} { fn owner() -> Pubkey { ${this.defaultPubkeyValue()} } }`;
+    }
     return `impl Discriminator for ${accName} { const DISCRIMINATOR: [u8; 8] = Self::DISCRIMINATOR; }
 impl Owner for ${accName} { fn owner() -> Pubkey { ${this.defaultPubkeyValue()} } }
 impl ZeroCopy for ${accName} {}`;
@@ -3407,7 +3416,10 @@ ${originalLines}
       if (f.type === "String" || /^Vec</.test(f.type)) return s + 4;
       return s + this.resolveTypeSize(f.type, f.maxLen);
     }, 0);
-    return 8 + body;
+    // #60 — disc length is variable when source carries
+    // `#[account(discriminator = ...)]`. Default 8 bytes (sha256[..8]).
+    const discLen = acc.customDiscriminator?.bytes.length ?? 8;
+    return discLen + body;
   }
 
   /**
@@ -3752,6 +3764,31 @@ ${allFields}
 
   protected accountDiscriminatorExpr(name: string): string {
     return accountDiscriminator(name);
+  }
+
+  /**
+   * #60 — Per-account discriminator emit info. When the source carried
+   * `#[account(discriminator = ...)]` with a resolvable RHS, the parser
+   * populates `acc.customDiscriminator.bytes`; here we surface (len, expr)
+   * so the read/write/init paths emit `[u8; N] = [N, ...]` and `[..N]`
+   * slicing instead of the default sha256 8-byte shape. Absent →
+   * legacy 8-byte path unchanged (so existing snapshots stay byte-equal).
+   */
+  protected accountDiscInfo(acc: { name: string; customDiscriminator?: { bytes: number[] } }): { len: number; expr: string } {
+    if (acc.customDiscriminator) {
+      const bytes = acc.customDiscriminator.bytes;
+      return { len: bytes.length, expr: `[${bytes.join(", ")}]` };
+    }
+    return { len: 8, expr: this.accountDiscriminatorExpr(acc.name) };
+  }
+
+  /** #60 — Per-event discriminator emit info. Same shape as account. */
+  protected eventDiscInfo(ev: { name: string; customDiscriminator?: { bytes: number[] } }): { len: number; expr: string } {
+    if (ev.customDiscriminator) {
+      const bytes = ev.customDiscriminator.bytes;
+      return { len: bytes.length, expr: `[${bytes.join(", ")}]` };
+    }
+    return { len: 8, expr: eventDiscriminator(ev.name) };
   }
 
   protected buildReadLines(acc: AccountDef): string {
@@ -4242,7 +4279,8 @@ ${allFields}
     let discriminatorWrite = "";
     const stateType = ir.accounts.find((a) => a.name === accountRef.accountType);
     if (stateType) {
-      discriminatorWrite = this.emitDiscriminatorWrite(accountName, stateType.name);
+      const discLen = stateType.customDiscriminator?.bytes.length ?? 8;
+      discriminatorWrite = this.emitDiscriminatorWrite(accountName, stateType.name, discLen);
     }
 
     // `init_if_needed` means: only allocate if the account doesn't already
@@ -4298,7 +4336,8 @@ ${indented}
     const accountName = snakeCase(accountRef.name);
     const stateType = ir.accounts.find((a) => a.name === accountRef.accountType);
     if (!stateType) return "";
-    return this.emitZeroAccountDiscriminatorWrite(accountName, stateType.name);
+    const discLen = stateType.customDiscriminator?.bytes.length ?? 8;
+    return this.emitZeroAccountDiscriminatorWrite(accountName, stateType.name, discLen);
   }
 
   /**
@@ -4307,7 +4346,7 @@ ${indented}
    * Native uses account.data.borrow_mut(). Re-uses the existing
    * emitDiscriminatorWrite implementation with a wrapping if-zero guard.
    */
-  abstract emitZeroAccountDiscriminatorWrite(accountName: string, typeName: string): string;
+  abstract emitZeroAccountDiscriminatorWrite(accountName: string, typeName: string, discLen?: number): string;
 
   /**
    * Emit realloc prelude — resize the account buffer to the expression

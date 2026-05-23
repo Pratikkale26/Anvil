@@ -1931,14 +1931,16 @@ export class BodyWalker {
                   ? `    let ${dataVar} = unsafe { ${accountInfo}.borrow_data_unchecked() };`
                   : `    let ${dataVar} = ${accountInfo}.try_borrow_data()?;`,
               );
+              const discLen = this.ir.accounts.find((a) => a.name === typeName)
+                ?.customDiscriminator?.bytes.length ?? 8;
               this.lines.push(`    if ${dataVar}.len() < ${typeName}::TOTAL_LEN {`);
               this.lines.push(`        return Err(ProgramError::AccountDataTooSmall);`);
               this.lines.push(`    }`);
-              this.lines.push(`    if ${dataVar}[..8] != ${typeName}::DISCRIMINATOR {`);
+              this.lines.push(`    if ${dataVar}[..${discLen}] != ${typeName}::DISCRIMINATOR {`);
               this.lines.push(`        return Err(ProgramError::InvalidAccountData);`);
               this.lines.push(`    }`);
               this.lines.push(
-                `    let ${viewVar}: &${typeName} = bytemuck::from_bytes(&${dataVar}[8..8 + ${typeName}::LEN]);`,
+                `    let ${viewVar}: &${typeName} = bytemuck::from_bytes(&${dataVar}[${discLen}..${discLen} + ${typeName}::LEN]);`,
               );
               zeroCopyViewsEmitted.set(accName, viewVar);
             }

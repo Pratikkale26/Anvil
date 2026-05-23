@@ -2341,22 +2341,22 @@ ${invokeCall}
     return commentOutT22ExtensionCallSites(stripped);
   }
 
-  override emitDiscriminatorWrite(accountName: string, typeName: string): string {
+  override emitDiscriminatorWrite(accountName: string, typeName: string, discLen: number = 8): string {
     return `    {
         let mut __init_data = unsafe { ${accountName}.borrow_mut_data_unchecked() };
-        __init_data[..8].copy_from_slice(&${typeName}::DISCRIMINATOR);
+        __init_data[..${discLen}].copy_from_slice(&${typeName}::DISCRIMINATOR);
     }`;
   }
 
-  override emitZeroAccountDiscriminatorWrite(accountName: string, typeName: string): string {
+  override emitZeroAccountDiscriminatorWrite(accountName: string, typeName: string, discLen: number = 8): string {
     // task #43 — write disc only when buffer is zero-init (matches Anchor's
     // #[account(zero)] precondition; non-zero leading bytes mean the account
     // was previously initialised and the disc check downstream is trusted).
     return `    // #[account(zero)]: write ${typeName}::DISCRIMINATOR on first access
     {
         let mut __zero_data = unsafe { ${accountName}.borrow_mut_data_unchecked() };
-        if __zero_data.len() >= 8 && __zero_data[..8].iter().all(|&b| b == 0) {
-            __zero_data[..8].copy_from_slice(&${typeName}::DISCRIMINATOR);
+        if __zero_data.len() >= ${discLen} && __zero_data[..${discLen}].iter().all(|&b| b == 0) {
+            __zero_data[..${discLen}].copy_from_slice(&${typeName}::DISCRIMINATOR);
         }
     }`;
   }
@@ -2836,6 +2836,7 @@ ${maybeRead}${prelude.length > 0 ? `${prelude.join("\n")}\n` : ""}    let seeds 
         })
         .join("\n");
       const accessorBlock = accessorMethods ? `\n${accessorMethods}` : "";
+      const { len: zcDiscLen, expr: zcDiscExpr } = this.accountDiscInfo(acc);
       return `#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ${acc.name} {
@@ -2846,10 +2847,10 @@ unsafe impl bytemuck::Zeroable for ${acc.name} {}
 unsafe impl bytemuck::Pod for ${acc.name} {}
 
 impl ${acc.name} {
-    pub const DISCRIMINATOR: [u8; 8] = ${accountDiscriminator(acc.name)};
+    pub const DISCRIMINATOR: [u8; ${zcDiscLen}] = ${zcDiscExpr};
     pub const LEN: usize = ${bodyLen};
     pub const INIT_SPACE: usize = ${bodyLen};
-    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const TOTAL_LEN: usize = ${zcDiscLen} + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;${accessorBlock}
 }${this.emitInherentImplItems(acc, this._irForAccountEmit)}
@@ -2869,6 +2870,7 @@ ${this.emitZeroCopyTraitImpls(acc.name)}`;
       (f) => f.type === "String" || /^Vec</.test(f.type),
     );
     const guardConst = isVariableLength ? "MIN_LEN" : "TOTAL_LEN";
+    const { len: discLen, expr: discExpr } = this.accountDiscInfo(acc);
 
     return `#[repr(C)]
 pub struct ${acc.name} {
@@ -2876,10 +2878,10 @@ ${fields}
 }
 
 impl ${acc.name} {
-    pub const DISCRIMINATOR: [u8; 8] = ${accountDiscriminator(acc.name)};
+    pub const DISCRIMINATOR: [u8; ${discLen}] = ${discExpr};
     pub const INIT_SPACE: usize = ${bodyLen};
     pub const LEN: usize = ${bodyLen};
-    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const TOTAL_LEN: usize = ${discLen} + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;${isVariableLength ? `
     /// Minimum data length for variable-length structs — discriminator +
@@ -2893,13 +2895,13 @@ impl ${acc.name} {
         if data.len() < Self::${guardConst} {
             return Err(ProgramError::InvalidAccountData);
         }
-        if data[..8] != Self::DISCRIMINATOR {
+        if data[..${discLen}] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
         // Alias to dodge field-name shadowing — a field named \`data\` would
         // shadow the parameter and break subsequent field reads.
         let __data_buf: &[u8] = data;
-        let mut offset = 8usize;
+        let mut offset = ${discLen}usize;
 ${readLines}
         Ok(Self { ${ctorFields} })
     }
@@ -2908,9 +2910,9 @@ ${readLines}
         if data.len() < Self::${guardConst} {
             return Err(ProgramError::InvalidAccountData);
         }
-        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        data[..${discLen}].copy_from_slice(&Self::DISCRIMINATOR);
         let __data_buf: &mut [u8] = data;
-        let mut offset = 8usize;
+        let mut offset = ${discLen}usize;
 ${writeLines}
         Ok(())
     }

@@ -1576,21 +1576,21 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     return `    create_program_account(${account}, ${payer}, (${spaceExpr}) as u64, program_id, ${signerSeeds ?? "&[]"})?;`;
   }
 
-  override emitDiscriminatorWrite(accountName: string, typeName: string): string {
+  override emitDiscriminatorWrite(accountName: string, typeName: string, discLen: number = 8): string {
     return `    {
         let mut __init_data = ${accountName}.data.borrow_mut();
-        __init_data[..8].copy_from_slice(&${typeName}::DISCRIMINATOR);
+        __init_data[..${discLen}].copy_from_slice(&${typeName}::DISCRIMINATOR);
     }`;
   }
 
-  override emitZeroAccountDiscriminatorWrite(accountName: string, typeName: string): string {
+  override emitZeroAccountDiscriminatorWrite(accountName: string, typeName: string, discLen: number = 8): string {
     // task #43 — write disc only when buffer is zero-init (Anchor #[account(zero)]
     // precondition). Mirror of Pinocchio's emit, using AccountInfo::data.borrow_mut().
     return `    // #[account(zero)]: write ${typeName}::DISCRIMINATOR on first access
     {
         let mut __zero_data = ${accountName}.data.borrow_mut();
-        if __zero_data.len() >= 8 && __zero_data[..8].iter().all(|&b| b == 0) {
-            __zero_data[..8].copy_from_slice(&${typeName}::DISCRIMINATOR);
+        if __zero_data.len() >= ${discLen} && __zero_data[..${discLen}].iter().all(|&b| b == 0) {
+            __zero_data[..${discLen}].copy_from_slice(&${typeName}::DISCRIMINATOR);
         }
     }`;
   }
@@ -1863,16 +1863,17 @@ ${maybeRead}    let seeds = &[
     //  - The struct already has a correct byte-layout via read()/write().
     //  - Structs containing custom enum fields (e.g. #[repr(u8)] enums) would
     //    fail Borsh compilation since those enums don't implement BorshSerialize.
+    const { len: discLen, expr: discExpr } = this.accountDiscInfo(acc);
     return `#[repr(C)]
 pub struct ${acc.name} {
 ${fields}
 }
 
 impl ${acc.name} {
-    pub const DISCRIMINATOR: [u8; 8] = ${this.accountDiscriminatorExpr(acc.name)};
+    pub const DISCRIMINATOR: [u8; ${discLen}] = ${discExpr};
     pub const INIT_SPACE: usize = ${bodyLen};
     pub const LEN: usize = ${bodyLen};
-    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const TOTAL_LEN: usize = ${discLen} + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;${isVariableLength ? `
     /// Minimum data length the read/write guard checks against for variable-
@@ -1884,13 +1885,13 @@ impl ${acc.name} {
         if data.len() < Self::${guardConst} {
             return Err(ProgramError::InvalidAccountData);
         }
-        if data[..8] != Self::DISCRIMINATOR {
+        if data[..${discLen}] != Self::DISCRIMINATOR {
             return Err(ProgramError::InvalidAccountData);
         }
         // Alias to dodge field-name shadowing — a field named \`data\` would
         // shadow the parameter and break subsequent field reads.
         let __data_buf: &[u8] = data;
-        let mut offset = 8usize;
+        let mut offset = ${discLen}usize;
 ${readLines}
         Ok(Self { ${ctorFields} })
     }
@@ -1899,9 +1900,9 @@ ${readLines}
         if data.len() < Self::${guardConst} {
             return Err(ProgramError::InvalidAccountData);
         }
-        data[..8].copy_from_slice(&Self::DISCRIMINATOR);
+        data[..${discLen}].copy_from_slice(&Self::DISCRIMINATOR);
         let __data_buf: &mut [u8] = data;
-        let mut offset = 8usize;
+        let mut offset = ${discLen}usize;
 ${writeLines}
         Ok(())
     }
@@ -1945,6 +1946,7 @@ ${writeLines}
    */
   private emitZeroCopyAccountStruct(acc: AccountDef, fields: string): string {
     const bodyLen = acc.fields.reduce((s, f) => s + this.resolveTypeSize(f.type, f.maxLen), 0);
+    const { len: discLen, expr: discExpr } = this.accountDiscInfo(acc);
     return `#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ${acc.name} {
@@ -1955,10 +1957,10 @@ unsafe impl bytemuck::Zeroable for ${acc.name} {}
 unsafe impl bytemuck::Pod for ${acc.name} {}
 
 impl ${acc.name} {
-    pub const DISCRIMINATOR: [u8; 8] = ${this.accountDiscriminatorExpr(acc.name)};
+    pub const DISCRIMINATOR: [u8; ${discLen}] = ${discExpr};
     pub const LEN: usize = ${bodyLen};
     pub const INIT_SPACE: usize = ${bodyLen};
-    pub const TOTAL_LEN: usize = 8 + Self::LEN;
+    pub const TOTAL_LEN: usize = ${discLen} + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
 }${this.emitInherentImplItems(acc, this._irForAccountEmit)}
 

@@ -4048,12 +4048,14 @@ export class AstVisitorBase {
       return [comment(`[zero-copy] unresolved account type for ${stmt.account}; load_init skipped`)];
     }
     const dataVar = `__${accountName}_data`;
+    const discLen = w.ir.accounts.find((a) => a.name === accountType)
+      ?.customDiscriminator?.bytes.length ?? 8;
     const lines: string[] = [
       emitBorrowMutData(w, accountInfoVar, dataVar),
       `    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {\n        return Err(ProgramError::AccountDataTooSmall);\n    }`,
       `    if ${dataVar}.iter().any(|b| *b != 0) {\n        return Err(ProgramError::AccountAlreadyInitialized);\n    }`,
-      `    ${dataVar}[..8].copy_from_slice(&${accountType}::DISCRIMINATOR);`,
-      `    let ${localVar}: &mut ${accountType} = bytemuck::from_bytes_mut(&mut ${dataVar}[8..8 + ${accountType}::LEN]);`,
+      `    ${dataVar}[..${discLen}].copy_from_slice(&${accountType}::DISCRIMINATOR);`,
+      `    let ${localVar}: &mut ${accountType} = bytemuck::from_bytes_mut(&mut ${dataVar}[${discLen}..${discLen} + ${accountType}::LEN]);`,
     ];
     registerZeroCopyHandle(w, accountName, localVar, accountInfoVar);
     return this.applyStructuralize(lines);
@@ -4077,11 +4079,13 @@ export class AstVisitorBase {
       return [comment(`[zero-copy] unresolved account type for ${stmt.account}; load_mut skipped`)];
     }
     const dataVar = `__${accountName}_data`;
+    const discLen = w.ir.accounts.find((a) => a.name === accountType)
+      ?.customDiscriminator?.bytes.length ?? 8;
     const lines: string[] = [
       emitBorrowMutData(w, accountInfoVar, dataVar),
       `    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {\n        return Err(ProgramError::AccountDataTooSmall);\n    }`,
-      `    if ${dataVar}[..8] != ${accountType}::DISCRIMINATOR {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
-      `    let ${localVar}: &mut ${accountType} = bytemuck::from_bytes_mut(&mut ${dataVar}[8..8 + ${accountType}::LEN]);`,
+      `    if ${dataVar}[..${discLen}] != ${accountType}::DISCRIMINATOR {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
+      `    let ${localVar}: &mut ${accountType} = bytemuck::from_bytes_mut(&mut ${dataVar}[${discLen}..${discLen} + ${accountType}::LEN]);`,
     ];
     emitZeroCopyHasOneChecks(w, accountName, localVar, lines);
     registerZeroCopyHandle(w, accountName, localVar, accountInfoVar);
@@ -4106,11 +4110,13 @@ export class AstVisitorBase {
       return [comment(`[zero-copy] unresolved account type for ${stmt.account}; load skipped`)];
     }
     const dataVar = `__${accountName}_data`;
+    const discLen = w.ir.accounts.find((a) => a.name === accountType)
+      ?.customDiscriminator?.bytes.length ?? 8;
     const lines: string[] = [
       emitBorrowData(w, accountInfoVar, dataVar),
       `    if ${dataVar}.len() < ${accountType}::TOTAL_LEN {\n        return Err(ProgramError::AccountDataTooSmall);\n    }`,
-      `    if ${dataVar}[..8] != ${accountType}::DISCRIMINATOR {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
-      `    let ${localVar}: &${accountType} = bytemuck::from_bytes(&${dataVar}[8..8 + ${accountType}::LEN]);`,
+      `    if ${dataVar}[..${discLen}] != ${accountType}::DISCRIMINATOR {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
+      `    let ${localVar}: &${accountType} = bytemuck::from_bytes(&${dataVar}[${discLen}..${discLen} + ${accountType}::LEN]);`,
     ];
     emitZeroCopyHasOneChecks(w, accountName, localVar, lines);
     registerZeroCopyHandle(w, accountName, localVar, accountInfoVar);

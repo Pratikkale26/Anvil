@@ -336,6 +336,9 @@ export function parseAccountDataStruct(
      *  Defaults to "account"; pass "event" when invoked from the #[event]
      *  reuse path so messages don't lie about which annotation was seen. */
     discriminatorKind?: "account" | "event";
+    /** Top-level `const X: ... = [N, N, ...]` byte-array resolution table.
+     *  #60 — `#[account(discriminator = MY_DISC)]` resolves through this. */
+    byteArrayConsts?: ReadonlyMap<string, number[]>;
   },
 ): AccountDef {
   const name = extractStructName(structNode) ?? "Unknown";
@@ -351,15 +354,20 @@ export function parseAccountDataStruct(
   // separate IR flag; deferred until a fixture demands it.
   const isZeroCopy = attrs.some((a) => /\bzero_copy\b/.test(a.text.replace(/\s+/g, "")));
 
-  // #60 — `#[account(discriminator = N)]` / `#[event(discriminator = N)]`
-  // override is not yet honored. Every emit site hardcodes `[u8; 8]` /
-  // `[..8]` against sha256("account:<Name>") / sha256("event:<Name>"). A
-  // real fix is multi-day work across schema + ~15 emit sites; surfacing
-  // the loss loudly so users don't ship silent on-disk byte-mismatches.
-  if (opts?.collector) {
-    const kind = opts.discriminatorKind ?? "account";
-    const override = detectStructDiscriminatorOverride(attrs, kind);
-    if (override) {
+  // #60 — `#[account(discriminator = ...)]` / `#[event(discriminator = ...)]`
+  // override. The parser resolves integer (single-byte shortcut per Anchor's
+  // macro doc), byte-array, byte-string, and top-level const byte-array
+  // references; everything else (const fn call, opaque const) keeps the
+  // legacy warning. Emit honors `customDiscriminator` when present and
+  // falls back to the default sha256 hash otherwise.
+  const kind = opts?.discriminatorKind ?? "account";
+  const override = detectStructDiscriminatorOverride(attrs, kind);
+  let customDiscriminator: { bytes: number[] } | undefined;
+  if (override) {
+    const resolved = resolveDiscriminatorRhs(override, opts?.byteArrayConsts);
+    if (resolved) {
+      customDiscriminator = { bytes: resolved };
+    } else if (opts?.collector) {
       const code = kind === "event"
         ? "event_discriminator_override_unsupported"
         : "account_discriminator_override_unsupported";
@@ -369,12 +377,13 @@ export function parseAccountDataStruct(
       opts.collector.add({
         code,
         message:
-          `${kind} \`${name}\`: #[${kind}(discriminator = ${override})] override is ` +
-          `not yet supported — every emit site hardcodes the default 8-byte ` +
-          `${defaultDisc} discriminator. Byte-equal differential against an ` +
-          `Anchor 1.x build with this override WILL FAIL. Hand-port the ` +
-          `affected load/init/zero paths, or rewrite the source to use the ` +
-          `default discriminator until the variable-length rework lands.`,
+          `${kind} \`${name}\`: #[${kind}(discriminator = ${override})] override ` +
+          `value is not statically resolvable — only integer / byte-array / ` +
+          `byte-string / resolvable const-byte-array forms are honored. Emit ` +
+          `falls back to the default ${defaultDisc} discriminator. Byte-equal ` +
+          `differential against an Anchor 1.x build with this override WILL ` +
+          `FAIL. Hand-port the affected paths or rewrite the source to a ` +
+          `resolvable form.`,
         snippet: override,
         loc: locFromNode(structNode),
       });
@@ -383,7 +392,103 @@ export function parseAccountDataStruct(
 
   const def: AccountDef = { name, fields, space };
   if (isZeroCopy) def.isZeroCopy = true;
+  if (customDiscriminator) def.customDiscriminator = customDiscriminator;
   return def;
+}
+
+/**
+ * #60 — Pre-scan source for `const X: ... = [N, N, ...];` items where the
+ * RHS is a byte-array literal (`[1, 2, 3, 4]`, `&[1, 2, 3, 4]`, or a
+ * byte-string `b"hi"`). Captures by name → bytes so
+ * `#[account(discriminator = MY_DISC)]` / `#[instruction(discriminator =
+ * MY_DISC)]` can resolve through. Mirrors `extractStrConsts` in the
+ * instruction parser; lightweight regex over the source rather than a
+ * second tree-sitter walk.
+ */
+export function extractByteArrayConsts(source: string): Map<string, number[]> {
+  const map = new Map<string, number[]>();
+  // Byte-array literal form: `[1, 2, 3, 4]` or `&[1, 2, 3, 4]`. Optional
+  // `u8` type suffix on each elem (`1u8`). Anchor's example uses the
+  // `&'static [u8]` shape but the simple `[u8; N]` form is also common.
+  const arrRe =
+    /(?:pub(?:\([^)]+\))?\s+)?const\s+([A-Z_][A-Z0-9_]*)\s*:\s*[^=]+=\s*&?\s*\[\s*([^\]]+)\s*\]\s*;/g;
+  for (const m of source.matchAll(arrRe)) {
+    if (!m[1] || !m[2]) continue;
+    const bytes = parseByteList(m[2]);
+    if (bytes) map.set(m[1], bytes);
+  }
+  // Byte-string form: `pub const X: &[u8] = b"hi";`
+  const bstrRe =
+    /(?:pub(?:\([^)]+\))?\s+)?const\s+([A-Z_][A-Z0-9_]*)\s*:\s*[^=]+=\s*b"([^"]*)"\s*;/g;
+  for (const m of source.matchAll(bstrRe)) {
+    if (!m[1] || m[2] === undefined) continue;
+    map.set(m[1], [...Buffer.from(m[2], "utf8")]);
+  }
+  return map;
+}
+
+/** Parse a comma-separated list of u8 byte literals (`1, 2, 3` or `1u8, 2u8`).
+ *  Returns the bytes when every element is a valid 0..=255 integer, otherwise
+ *  undefined (drops on overflow / non-integer / hex `0x` not currently
+ *  supported by anchor's macro example). */
+function parseByteList(inner: string): number[] | undefined {
+  const parts = inner.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  const bytes: number[] = [];
+  for (const p of parts) {
+    // Strip optional `u8` suffix.
+    const m = p.match(/^(\d+)(?:u8)?$/);
+    if (!m || !m[1]) return undefined;
+    const n = parseInt(m[1], 10);
+    if (!Number.isInteger(n) || n < 0 || n > 255) return undefined;
+    bytes.push(n);
+  }
+  return bytes;
+}
+
+/**
+ * #60 — Resolve a `discriminator = <expr>` RHS to a literal byte sequence.
+ * Returns the bytes when the form is supported (integer shortcut,
+ * byte-array literal, byte-string, or resolvable const reference),
+ * otherwise undefined so the caller can emit a warning.
+ *
+ * Per Anchor's `#[program]` macro docs: `discriminator = 1` is a SHORTCUT
+ * for `[1]` (single-byte). Confirmed by the upstream test's JS assertion
+ * `assert(ix.discriminator.length < 8)` on the integer arm.
+ */
+export function resolveDiscriminatorRhs(
+  rhs: string,
+  byteArrayConsts?: ReadonlyMap<string, number[]>,
+): number[] | undefined {
+  const trimmed = rhs.trim();
+
+  // Integer shortcut: `1` → `[1]`.
+  const intMatch = trimmed.match(/^(\d+)(?:u8)?$/);
+  if (intMatch && intMatch[1]) {
+    const n = parseInt(intMatch[1], 10);
+    if (Number.isInteger(n) && n >= 0 && n <= 255) return [n];
+    return undefined;
+  }
+
+  // Byte array: `[1, 2, 3, 4]` or `&[1, 2, 3, 4]`.
+  const arrMatch = trimmed.match(/^&?\s*\[\s*([^\]]+)\s*\]$/);
+  if (arrMatch && arrMatch[1]) {
+    return parseByteList(arrMatch[1]);
+  }
+
+  // Byte string: `b"hi"`.
+  const bstrMatch = trimmed.match(/^b"([^"]*)"$/);
+  if (bstrMatch && bstrMatch[1] !== undefined) {
+    return [...Buffer.from(bstrMatch[1], "utf8")];
+  }
+
+  // Const reference: `MY_DISC` (uppercase identifier).
+  if (/^[A-Z_][A-Z0-9_]*$/.test(trimmed) && byteArrayConsts) {
+    const bytes = byteArrayConsts.get(trimmed);
+    if (bytes) return [...bytes];
+  }
+
+  return undefined;
 }
 
 /**
