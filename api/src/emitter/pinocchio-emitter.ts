@@ -312,11 +312,11 @@ type NewAuthorityEncoding =
 function mapNewAuthorityLiteralToEncoding(expr: string): NewAuthorityEncoding | null {
   const stripped = expr.trim();
   // OptionalNonZeroPubkey::try_from(None)? with optional ? operator.
-  if (/^OptionalNonZeroPubkey::try_from\(\s*None\s*\)\??$/.test(stripped)) {
+  if (/^OptionalNonZeroPubkey::try_from\(\s*None\s*\)(?:\?|\.unwrap\(\))?$/.test(stripped)) {
     return { kind: "none" };
   }
   const someMatch = stripped.match(
-    /^OptionalNonZeroPubkey::try_from\(\s*Some\(([\s\S]+)\)\s*\)\??$/,
+    /^OptionalNonZeroPubkey::try_from\(\s*Some\(([\s\S]+)\)\s*\)(?:\?|\.unwrap\(\))?$/,
   );
   if (someMatch && someMatch[1]) return { kind: "some", pubkeyExpr: someMatch[1].trim() };
   return null;
