@@ -388,6 +388,35 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     maintainer: "anvil-core",
     lastPassedDate: "2026-05-09",
   },
+
+  // ── 2026-05-23 Phase 4 corpus expansion — coral-anchor probe sweep ──
+  { id: "coral-cashiers-check", target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/cashiers-check/programs/cashiers-check/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  // coral-cashiers-check/native: E0599 unpack — needs `use Pack` scope for spl_token::state::Account
+  // { id: "coral-cashiers-check", target: "native", ... },
+  // coral-tictactoe: cargo build fails on both targets (enum variant + match pattern gaps)
+  // { id: "coral-tictactoe", ... },
+  { id: "coral-declare-id", target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/declare-id/programs/declare-id/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  { id: "coral-declare-id", target: "native",
+    path: "/tmp/coral-anchor/tests/declare-id/programs/declare-id/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  { id: "coral-custom-discriminator", target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/custom-discriminator/programs/ambiguous-discriminator/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  { id: "coral-custom-discriminator", target: "native",
+    path: "/tmp/coral-anchor/tests/custom-discriminator/programs/ambiguous-discriminator/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  // coral-anchor-cli-account + coral-misc: cargo build fails (various gaps)
+  // { id: "coral-anchor-cli-account", ... },
+  // { id: "coral-misc", ... },
 ];
 
 // All 36 program-examples cases now pass deterministically. The pinocchio
