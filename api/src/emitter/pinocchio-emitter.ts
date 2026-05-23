@@ -2452,7 +2452,7 @@ ${invokeCall}
   }
 
   override emitCreateMint(
-    account: string, payer: string, decimals: string, mintAuthority: string, freezeAuthority: string | null, signerSeeds?: string, tokenProgram?: string,
+    account: string, payer: string, decimals: string, mintAuthority: string, freezeAuthority: string | null, signerSeeds?: string, tokenProgram?: string, mintSpace?: number,
   ): string {
     // SPL Token InitializeMint2 (discriminator 20):
     //   1 byte disc + 1 byte decimals + 32 bytes mint_authority +
@@ -2466,6 +2466,7 @@ ${invokeCall}
     // program sibling exists in the Accounts struct).
     const ownerExpr = tokenProgram ? `${tokenProgram}.key()` : `&TOKEN_PROGRAM_ID`;
     const initProgramIdExpr = tokenProgram ? `${tokenProgram}.key()` : `&TOKEN_PROGRAM_ID`;
+    const spaceExpr = `${mintSpace ?? 82}u64`;
     const createInvoke = signerSeeds
       ? `let __mint_seed_group = ${signerSeeds}.first().ok_or(pinocchio::program_error::ProgramError::InvalidSeeds)?;
         let mut __mint_seeds: [pinocchio::instruction::Seed<'_>; 8] = core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
@@ -2478,14 +2479,14 @@ ${invokeCall}
             from: ${payer},
             to: ${account},
             lamports: __mint_rent,
-            space: 82u64,
+            space: ${spaceExpr},
             owner: ${ownerExpr},
         }.invoke_signed(&[__mint_signer])?;`
       : `pinocchio_system::instructions::CreateAccount {
             from: ${payer},
             to: ${account},
             lamports: __mint_rent,
-            space: 82u64,
+            space: ${spaceExpr},
             owner: ${ownerExpr},
         }.invoke()?;`;
     const freezeBlock = freezeAuthority

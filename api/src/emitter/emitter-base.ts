@@ -559,6 +559,7 @@ export abstract class BaseEmitter {
      * falls back to the legacy hardcoded ID.
      */
     tokenProgram?: string,
+    mintSpace?: number,
   ): string;
 
   // ── Memo CPI ──
@@ -3969,6 +3970,33 @@ ${allFields}
     return "";
   }
 
+  protected emitT22ExtensionInits(
+    accountRef: { constraints: Array<{ kind: string; value?: string }> },
+    accountName: string,
+    tokenProgram?: string,
+  ): string {
+    const parts: string[] = [];
+    const constraints = accountRef.constraints;
+    const findVal = (kind: string) => constraints.find((c) => c.kind === kind)?.value;
+
+    const closeAuth = findVal("extensions::close_authority::authority");
+    if (closeAuth !== undefined) {
+      parts.push(this.emitT22MintCloseAuthorityInitialize(
+        accountName, tokenProgram ?? "token_program", snakeCase(closeAuth)));
+    }
+    const permDelegate = findVal("extensions::permanent_delegate::delegate");
+    if (permDelegate !== undefined) {
+      parts.push(this.emitT22PermanentDelegateInitialize(
+        accountName, tokenProgram ?? "token_program", snakeCase(permDelegate)));
+    }
+    const nonTransferable = constraints.some((c) => c.kind === "extensions::non_transferable");
+    if (nonTransferable) {
+      parts.push(this.emitT22NonTransferableMintInitialize(
+        accountName, tokenProgram ?? "token_program"));
+    }
+    return parts.length > 0 ? "\n" + parts.join("\n") : "";
+  }
+
   protected emitInitAccountPrelude(
     accountRef: Instruction["accounts"][number],
     instr: Instruction,
@@ -4030,6 +4058,9 @@ ${allFields}
       });
       const tokenProgram = tokenProgramSibling ? snakeCase(tokenProgramSibling.name) : undefined;
 
+      const extSpace = computeT22ExtensionSpace(accountRef.constraints);
+      const totalSpace = extSpace > 0 ? 82 + 83 + extSpace : undefined;
+
       if (accountRef.isPda && accountRef.pdaSeeds?.length) {
         const pdaSeeds = accountRef.pdaSeeds.map((seed) => this.normalizeInitSeedExpr(seed));
         const bumpPrelude = this.emitBumpSeed("program_id", pdaSeeds, accountName)
@@ -4040,11 +4071,14 @@ ${allFields}
         ];
     let init_${accountName}_signer_seeds = &[&init_${accountName}_seeds[..]];`;
         const signerSeedsExpr = `init_${accountName}_signer_seeds`;
-        const mintCreate = this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, signerSeedsExpr, tokenProgram);
-        return `${bumpPrelude}\n${seedsPrelude}\n${mintCreate}`;
+        const mintCreate = this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, signerSeedsExpr, tokenProgram, totalSpace);
+        const extInits = this.emitT22ExtensionInits(accountRef, accountName, tokenProgram);
+        return `${bumpPrelude}\n${seedsPrelude}\n${mintCreate}${extInits}`;
       }
 
-      return this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, undefined, tokenProgram);
+      const mintCreate = this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, undefined, tokenProgram, totalSpace);
+      const extInits = this.emitT22ExtensionInits(accountRef, accountName, tokenProgram);
+      return `${mintCreate}${extInits}`;
     }
 
     // ── `init token::*` (non-ATA token account): account is a fresh keypair
@@ -5857,6 +5891,32 @@ function enclosingStatement(n: SyntaxNode): SyntaxNode | null {
     cur = cur.parent;
   }
   return null;
+}
+
+const T22_EXTENSION_SIZES: Record<string, number> = {
+  "extensions::close_authority::authority": 36,
+  "extensions::permanent_delegate::delegate": 36,
+  "extensions::non_transferable": 4,
+  "extensions::default_account_state::state": 5,
+  "extensions::interest_bearing::rate": 56,
+  "extensions::transfer_fee::transfer_fee_config_authority": 112,
+  "extensions::transfer_hook::authority": 68,
+  "extensions::metadata_pointer::authority": 68,
+  "extensions::group_pointer::authority": 68,
+  "extensions::group_pointer::group_address": 0,
+};
+
+function computeT22ExtensionSpace(constraints: Array<{ kind: string; value?: string }>): number {
+  const seen = new Set<string>();
+  let total = 0;
+  for (const c of constraints) {
+    const prefix = c.kind.split("::").slice(0, 2).join("::");
+    if (!c.kind.startsWith("extensions::") || seen.has(prefix)) continue;
+    seen.add(prefix);
+    const size = T22_EXTENSION_SIZES[c.kind] ?? T22_EXTENSION_SIZES[prefix + "::authority"] ?? 0;
+    total += size;
+  }
+  return total;
 }
 
 function collectSiblingCpiStatements(root: SyntaxNode, ranges: Array<{ start: number; end: number }>): void {

@@ -1640,7 +1640,7 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
   }
 
   override emitCreateMint(
-    account: string, payer: string, decimals: string, mintAuthority: string, freezeAuthority: string | null, signerSeeds?: string, tokenProgram?: string,
+    account: string, payer: string, decimals: string, mintAuthority: string, freezeAuthority: string | null, signerSeeds?: string, tokenProgram?: string, mintSpace?: number,
   ): string {
     // Two-step: rent-exempt allocate (82 bytes for SPL Mint) + initialize_mint2
     // (binds decimals + mint_authority + COption<freeze_authority>). Mint2
@@ -1658,13 +1658,14 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
       ? `invoke_signed(&__mint_create, &[${payer}.clone(), ${account}.clone()], ${signerSeeds})?;`
       : `invoke(&__mint_create, &[${payer}.clone(), ${account}.clone()])?;`;
     const freezeArg = freezeAuthority ? `Some(${freezeAuthority}.key)` : `None`;
+    const space = mintSpace ?? 82;
     return `    // Init mint: ${account}
-    let __mint_lamports = Rent::get()?.minimum_balance(82);
+    let __mint_lamports = Rent::get()?.minimum_balance(${space});
     let __mint_create = system_instruction::create_account(
         ${payer}.key,
         ${account}.key,
         __mint_lamports,
-        82,
+        ${space},
         ${tokenProgramExpr},
     );
     ${createInvoke}
