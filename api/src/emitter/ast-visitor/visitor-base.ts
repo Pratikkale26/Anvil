@@ -85,6 +85,15 @@ import {
 import { parseSimpleExpr, parseSimpleExprStrict } from "./parse-simple-expr.js";
 import { tryStructuralizeMultiLine, tryStructuralizeExpr, ensureRustParserReady } from "./rust-stmt-from-text.js";
 import { resolveAccountExprAstPipeline } from "./expr-transform.js";
+import { printExpr } from "./printer.js";
+
+let _astPipelineCompareLog: Array<{ input: string; regex: string; ast: string }> | null = null;
+export function startAstPipelineCompare(): void { _astPipelineCompareLog = []; }
+export function stopAstPipelineCompare(): Array<{ input: string; regex: string; ast: string }> {
+  const log = _astPipelineCompareLog ?? [];
+  _astPipelineCompareLog = null;
+  return log;
+}
 
 /**
  * Parse the fields-text of an `emit!(Event { fields })` IR statement
@@ -860,13 +869,20 @@ export class AstVisitorBase {
   constructor(readonly walker: BodyWalker) {}
 
   resolveToAst(text: string): RustExpr {
-    const resolved = this.walker.resolveAccountExpr(text);
-    return tryStructuralizeExpr(resolved) ?? parseSimpleExpr(resolved);
-  }
-
-  resolveToAstStructural(text: string): RustExpr {
     const parsed = tryStructuralizeExpr(text) ?? parseSimpleExpr(text);
-    return resolveAccountExprAstPipeline(parsed, this.walker.buildTransformContext());
+    const astResult = resolveAccountExprAstPipeline(parsed, this.walker.buildTransformContext());
+    if (_astPipelineCompareLog !== null) {
+      try {
+        const resolved = this.walker.resolveAccountExpr(text);
+        const regexResult = tryStructuralizeExpr(resolved) ?? parseSimpleExpr(resolved);
+        const regexText = printExpr(regexResult);
+        const astText = printExpr(astResult);
+        if (regexText !== astText) {
+          _astPipelineCompareLog.push({ input: text, regex: regexText, ast: astText });
+        }
+      } catch {}
+    }
+    return astResult;
   }
 
   visit(stmt: BodyStatement): RustStmt[] {

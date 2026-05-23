@@ -23,7 +23,10 @@ import {
 import { tryStructuralizeExpr } from "../src/emitter/ast-visitor/rust-stmt-from-text.ts";
 import { parseSimpleExpr } from "../src/emitter/ast-visitor/parse-simple-expr.ts";
 import { printExpr } from "../src/emitter/ast-visitor/printer.ts";
-import { resolveAccountExprAstPipeline, type TransformContext } from "../src/emitter/ast-visitor/expr-transform.ts";
+import {
+  startAstPipelineCompare,
+  stopAstPipelineCompare,
+} from "../src/emitter/ast-visitor/visitor-base.ts";
 
 const DEMO_DIR = join(import.meta.dir, "../src/demo-programs");
 
@@ -63,7 +66,7 @@ describe("resolveAccountExpr parity gate", () => {
     expect(pairs.size).toBeGreaterThan(20);
   });
 
-  test("every captured pair round-trips through AST byte-identical", () => {
+  test("regex → AST round-trip produces byte-identical text", () => {
     const failures: string[] = [];
     for (const [input, regexOutput] of pairs) {
       const astExpr = tryStructuralizeExpr(regexOutput) ?? parseSimpleExpr(regexOutput);
@@ -82,5 +85,27 @@ describe("resolveAccountExpr parity gate", () => {
         (failures.length > 10 ? `\n... and ${failures.length - 10} more` : ""),
       );
     }
+  });
+
+  test("structural AST pipeline matches regex pipeline", async () => {
+    const files = readdirSync(DEMO_DIR).filter((f) => f.endsWith(".rs"));
+    startAstPipelineCompare();
+    for (const file of files) {
+      const source = readFileSync(join(DEMO_DIR, file), "utf-8");
+      try {
+        const result = await parseAnchor(source, file);
+        if (!result.ok) continue;
+        emitPinocchioFull(result.ir);
+        emitNativeFull(result.ir);
+      } catch {}
+    }
+    const divergences = stopAstPipelineCompare();
+    if (divergences.length > 0) {
+      const sample = divergences.slice(0, 10).map((d) =>
+        `INPUT: ${JSON.stringify(d.input)}\nREGEX: ${JSON.stringify(d.regex)}\nAST:   ${JSON.stringify(d.ast)}`
+      ).join("\n\n");
+      console.log(`[parity] ${divergences.length} AST vs regex divergences:\n\n${sample}`);
+    }
+    expect(divergences.length).toBe(0);
   });
 });
