@@ -741,7 +741,14 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
         }
 
         case "enum_item": {
-          if (hasAttribute(attrs, "error_code")) {
+          // Anchor pre-0.25 used `#[error]`; 0.25+ renamed it to `#[error_code]`.
+          // Treat both as error enums so the older form routes through
+          // parseErrorEnum + emitErrorEnum (clean target-side codegen) instead
+          // of falling into customTypes and carrying `#[error]` + `#[msg(...)]`
+          // attrs through to the emitted file verbatim (E0658 / unknown attrs
+          // on Pinocchio + Native — neither target ships anchor_lang).
+          // Surfaced by coral-anchor/tests/tictactoe (finding #69).
+          if (hasAttribute(attrs, "error_code") || hasAttribute(attrs, "error")) {
             items.errorEnums.push({ node: child, attrs });
           } else {
             items.customTypes.push({ node: child, attrs, kind: "enum" });
