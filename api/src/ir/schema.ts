@@ -2030,6 +2030,22 @@ export const ParserWarningCodeSchema = z.enum([
    * sha256("event:<Name>")[..8] bytes.
    */
   "event_discriminator_override_unsupported",
+  /**
+   * #66 — `#[derive(Accounts)]` struct contains one or more
+   * `Option<Signer<'info>>` / `Option<Account<'info, T>>` /
+   * `Option<UncheckedAccount<'info>>` / `Option<AccountInfo<'info>>` /
+   * `Option<Program<'info, T>>` fields. Anchor lowers these to optional
+   * slots in the IDL — clients pass null to skip and the handler body
+   * uses `if let Some(...)` blocks. Anvil's emit does NOT yet propagate
+   * Option-wrapping through the access surface (CPI helpers, seeds
+   * expressions, .key()/.lamports()/.data_len() call sites, init
+   * preludes, has_one checks). Without the propagation the emit yields
+   * ~20+ cargo errors per instruction. Emit stubs the entire
+   * instruction body as `unimplemented!()` so the scaffold compiles
+   * and the gap is visible; users must hand-port until the full
+   * propagation arc lands.
+   */
+  "optional_accounts_unsupported",
 ]);
 
 export type ParserWarningCode = z.infer<typeof ParserWarningCodeSchema>;

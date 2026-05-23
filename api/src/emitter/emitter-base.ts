@@ -2719,6 +2719,14 @@ impl ZeroCopy for ${accName} {}`;
     if (cpiCustomStatements.length > 0) {
       return this.emitCpiCustomStubFunction(instr, ir, cpiCustomStatements as Array<{ kind: "cpi_custom"; rawCode: string; programAccount: string }>);
     }
+    // #66 — Option<T>-wrapped accounts aren't propagated through the
+    // emit surface yet. Stubbing the entire body keeps the scaffold
+    // compiling vs. the ~20+ cargo errors a partial emit would yield.
+    // The /parse warning (optional_accounts_unsupported) tells the user.
+    const optionalAccounts = instr.accounts.filter((a) => a.isOptional);
+    if (optionalAccounts.length > 0) {
+      return this.emitOptionalAccountsStubFunction(instr, optionalAccounts);
+    }
     const requiredAccountCount = instr.accounts.filter((a) => !a.isOptional).length;
 
     // Account bindings
@@ -2988,6 +2996,41 @@ ${needsOkReturn ? "\n    Ok(())" : ""}
 ${originalLines}
     let _ = (program_id, accounts, data);
     unimplemented!("Anvil: cpi_custom to '${programs}' in '${instr.name}' — manual port required for ${this.frameworkName}");
+}`;
+  }
+
+  /**
+   * #66 — stub body for instructions with Option<T>-wrapped account
+   * fields. The full propagation through CPI helpers, seeds emit, init
+   * preludes, .key()/.lamports()/.data_len() call sites, and has_one
+   * checks is a multi-day arc; meanwhile the scaffold must still
+   * compile. Mirrors emitCpiCustomStubFunction's shape.
+   */
+  private emitOptionalAccountsStubFunction(
+    instr: Instruction,
+    optionalAccounts: Instruction["accounts"],
+  ): string {
+    const fieldList = optionalAccounts.map((a) => a.name).join(", ");
+    this.warnings.push(
+      `Instruction '${instr.name}' has Option<T>-wrapped account field(s) [${fieldList}] — stubbed as unimplemented!(). Manual port required for ${this.frameworkName}.`,
+    );
+    const originalLines = (instr.rawBody ?? "")
+      .split("\n")
+      .map((l) => `    // ${l}`)
+      .join("\n");
+    return `pub fn ${snakeCase(instr.name)}(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    // ${MARKER_ANVIL_PREFIX}: Option<T> optional account field(s) [${fieldList}] — manual port required.
+    // Anvil does not yet propagate Option-wrapping through the emit surface
+    // (CPI helpers, seeds, init preludes, .key()/.lamports()/.data_len(),
+    // has_one). Surfaced as ParserWarning \`optional_accounts_unsupported\`.
+    // Original (raw) source preserved below for manual reference:
+${originalLines}
+    let _ = (program_id, accounts, data);
+    unimplemented!("Anvil: Option<T> account field(s) [${fieldList}] in '${instr.name}' — manual port required for ${this.frameworkName}");
 }`;
   }
 

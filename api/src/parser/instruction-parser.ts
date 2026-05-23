@@ -316,6 +316,29 @@ function parseInstructionFn(
       }
     }
   }
+  // #66 — Option<T>-wrapped accounts (Signer/Account/UncheckedAccount/
+  // AccountInfo/Program) aren't supported through the emit surface yet.
+  // Surface a loud warning; emitter stubs the body with unimplemented!()
+  // so the scaffold compiles instead of yielding ~20+ cargo errors.
+  const optionalAccounts = accounts.filter((a) => a.isOptional);
+  if (optionalAccounts.length > 0 && collector) {
+    const fieldList = optionalAccounts.map((a) => a.name).join(", ");
+    collector.add({
+      code: "optional_accounts_unsupported",
+      message:
+        `instruction \`${fnName}\`: contains Option<T>-wrapped account field(s) ` +
+        `[${fieldList}]. Anvil does not yet propagate Option-wrapping through the ` +
+        `emit surface (CPI helpers, seeds expressions, .key()/.lamports()/.data_len() ` +
+        `call sites, init preludes, has_one checks). To keep the scaffold ` +
+        `compiling, the emitted body is stubbed with unimplemented!() — manual ` +
+        `port required until the full propagation arc lands. ` +
+        `Workaround: split into two instructions (one for each Some/None ` +
+        `combination) and drop the Option<T> wrapper.`,
+      instruction: fnName,
+      snippet: fieldList,
+    });
+  }
+
   // Tag every classification warning with this instruction name so users
   // see "instruction `foo`: SPL transfer carried as pass_through" rather
   // than a context-free message.
