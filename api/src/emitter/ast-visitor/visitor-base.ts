@@ -3421,21 +3421,18 @@ export class AstVisitorBase {
   visitCpiMplFreezeDelegated(stmt: CpiMplFreezeDelegated): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const lines: string[] = [
-      `    mpl_freeze_delegated(`,
-      `        ${resolve(stmt.delegate)},`,
-      `        ${resolve(stmt.tokenAccount)},`,
-      `        ${resolve(stmt.edition)},`,
-      `        ${resolve(stmt.mint)},`,
-      `        token_program,`,
-      `        token_metadata_program,`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_freeze_delegated"), [
+      this.resolveToAst(stmt.delegate),
+      this.resolveToAst(stmt.tokenAccount),
+      this.resolveToAst(stmt.edition),
+      this.resolveToAst(stmt.mint),
+      ident("token_program"),
+      ident("token_metadata_program"),
+      seedsArg,
+    ])))];
   }
 
   /**
@@ -3445,21 +3442,18 @@ export class AstVisitorBase {
   visitCpiMplThawDelegated(stmt: CpiMplThawDelegated): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const lines: string[] = [
-      `    mpl_thaw_delegated(`,
-      `        ${resolve(stmt.delegate)},`,
-      `        ${resolve(stmt.tokenAccount)},`,
-      `        ${resolve(stmt.edition)},`,
-      `        ${resolve(stmt.mint)},`,
-      `        token_program,`,
-      `        token_metadata_program,`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_thaw_delegated"), [
+      this.resolveToAst(stmt.delegate),
+      this.resolveToAst(stmt.tokenAccount),
+      this.resolveToAst(stmt.edition),
+      this.resolveToAst(stmt.mint),
+      ident("token_program"),
+      ident("token_metadata_program"),
+      seedsArg,
+    ])))];
   }
 
   /**
@@ -3471,18 +3465,15 @@ export class AstVisitorBase {
   visitCpiMplSignMetadata(stmt: CpiMplSignMetadata): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const lines: string[] = [
-      `    mpl_sign_metadata(`,
-      `        ${resolve(stmt.metadata)},`,
-      `        ${resolve(stmt.creator)},`,
-      `        token_metadata_program,`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_sign_metadata"), [
+      this.resolveToAst(stmt.metadata),
+      this.resolveToAst(stmt.creator),
+      ident("token_metadata_program"),
+      seedsArg,
+    ])))];
   }
 
   /**
