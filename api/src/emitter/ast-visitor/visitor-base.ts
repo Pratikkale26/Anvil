@@ -3951,19 +3951,16 @@ export class AstVisitorBase {
   visitCpiT22ConfidentialMintBurnInitMint(stmt: CpiT22ConfidentialMintBurnInitMint): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const lines: string[] = [
-      `    t22_confidential_mint_burn_initialize_mint(`,
-      `        ${resolve(stmt.mint)},`,
-      `        ${resolve(stmt.tokenProgram)},`,
-      `        ${stmt.supplyElgamalPubkey},`,
-      `        ${stmt.decryptableSupply},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("t22_confidential_mint_burn_initialize_mint"), [
+      this.resolveToAst(stmt.mint),
+      this.resolveToAst(stmt.tokenProgram),
+      parseSimpleExpr(stmt.supplyElgamalPubkey),
+      parseSimpleExpr(stmt.decryptableSupply),
+      seedsArg,
+    ])))];
   }
 
   /**
