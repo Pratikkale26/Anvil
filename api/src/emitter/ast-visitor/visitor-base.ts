@@ -3550,43 +3550,22 @@ export class AstVisitorBase {
   visitCpiMplCoreUpdateV2(stmt: CpiMplCoreUpdateV2): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const resolveOpt = (e: string): string => {
-      const trimmed = e.trim();
-      if (trimmed === "None" || trimmed === "") return "None";
-      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
-      if (inner !== undefined) return `Some(${resolve(inner)})`;
-      return `Some(${resolve(trimmed)})`;
-    };
-    // Option<String> stays as raw text — `Some("foo".to_string())` /
-    // `Some(my_string)` / `None` all pass through; the helper takes
-    // Option<&str> at the call site so the user-provided String/&str/&String
-    // expression gets auto-deref'd by Rust.
-    const optString = (e: string): string => {
-      const trimmed = e.trim();
-      if (trimmed === "None" || trimmed === "") return "None";
-      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
-      if (inner !== undefined) return `Some(&${inner})`;
-      return `Some(&${trimmed})`;
-    };
-    const lines: string[] = [
-      `    mpl_core_update_v2(`,
-      `        ${resolve(stmt.programAccount)},`,
-      `        ${resolve(stmt.asset)},`,
-      `        ${resolveOpt(stmt.collection)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolveOpt(stmt.authority)},`,
-      `        ${resolveOpt(stmt.newCollection)},`,
-      `        ${resolve(stmt.systemProgram)},`,
-      `        ${resolveOpt(stmt.logWrapper)},`,
-      `        ${optString(stmt.newName)},`,
-      `        ${optString(stmt.newUri)},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_core_update_v2"), [
+      this.resolveToAst(stmt.programAccount),
+      this.resolveToAst(stmt.asset),
+      this.resolveOptAst(stmt.collection),
+      this.resolveToAst(stmt.payer),
+      this.resolveOptAst(stmt.authority),
+      this.resolveOptAst(stmt.newCollection),
+      this.resolveToAst(stmt.systemProgram),
+      this.resolveOptAst(stmt.logWrapper),
+      this.optStringAst(stmt.newName),
+      this.optStringAst(stmt.newUri),
+      seedsArg,
+    ])))];
   }
 
   /**
