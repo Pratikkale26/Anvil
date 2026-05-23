@@ -871,6 +871,17 @@ export abstract class BaseEmitter {
     // stripped. Pinocchio still drops external-Solana crates because its
     // Cargo.toml doesn't ship those deps.
     const isNative = this.frameworkName === "Native";
+    // G55b — user-defined type names. Used by the `fixed::types::*` shadow
+    // filter below to only strip imports that would collide with a
+    // carried struct/account of the same name (openbook-v2's
+    // `pub struct I80F48`). Without this gate the filter over-fires and
+    // drops legitimate imports like `use fixed::types::I64F64;` from
+    // program-examples/token-swap, cascading 24x E0433 unresolved-crate
+    // errors on every body reference.
+    const userTypeNamesForFixed = new Set<string>([
+      ...(ir.types ?? []).map((t) => t.name),
+      ...(ir.accounts ?? []).map((a) => a.name),
+    ]);
     // First pass: extract `solana_program::X` segments from block-imports
     // so they survive the `anchor_lang::*` blanket filter. squads-mpl/roles'
     // `use anchor_lang::{prelude::*, solana_program::borsh::get_instance_packed_len};`
@@ -1116,7 +1127,12 @@ export abstract class BaseEmitter {
         // flattened lib.rs. Filter ONLY the bare types::TYPE-named
         // imports to prevent name shadowing — keep traits and the full
         // `use fixed::types::*;` wildcards.
-        if (/^use\s+fixed::types::(I\d+F\d+|U\d+F\d+)\s*;?$/.test(statement.trim())) return false;
+        // G55b — collision-aware: only drop when the imported name
+        // would shadow a user-defined struct/account. Otherwise keep
+        // the import (e.g. program-examples/token-swap legitimately
+        // uses `use fixed::types::I64F64;` with no shadow risk).
+        const fixedTypeMatch = statement.trim().match(/^use\s+fixed::types::(I\d+F\d+|U\d+F\d+)\s*;?$/);
+        if (fixedTypeMatch?.[1] && userTypeNamesForFixed.has(fixedTypeMatch[1])) return false;
         if (/\bderivative::/.test(statement) || /^use\s+derivative(?:::|;)/.test(statement)) return false;
         if (/\bpyth_sdk_solana::/.test(statement) || /^use\s+pyth_sdk_solana(?:::|;)/.test(statement)) return false;
         if (/\bswitchboard_v1_devnet_oracle::/.test(statement) || /^use\s+switchboard_v1_devnet_oracle(?:::|;)/.test(statement)) return false;
