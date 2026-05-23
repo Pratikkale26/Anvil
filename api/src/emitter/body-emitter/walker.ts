@@ -1225,9 +1225,13 @@ export class BodyWalker {
   }
 
   resolveAccountExpr(text: string): string {
-    return this.normalizeKeyValueUsages(
+    const result = this.normalizeKeyValueUsages(
       this.transformAccountReferences(this.transformCtxAccountsReferences(text)),
     );
+    if (_resolveCapture !== null) {
+      _resolveCapture.set(text, result);
+    }
+    return result;
   }
 
   transformCtxAccountsReferences(code: string): string {
@@ -2182,3 +2186,7 @@ function resolveCreateAccountOwner(captured: string): string {
   if (captured === "program_id") return "program_id";
   return `&${snakeCase(captured)}.key`;
 }
+
+let _resolveCapture: Map<string, string> | null = null;
+export function startResolveCapture(): void { _resolveCapture = new Map(); }
+export function stopResolveCapture(): Map<string, string> { const m = _resolveCapture ?? new Map(); _resolveCapture = null; return m; }
