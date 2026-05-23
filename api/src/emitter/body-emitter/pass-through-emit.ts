@@ -227,6 +227,21 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     /\(\*\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\.deref\(\)\s*\.into\(\)/g,
     "(&$1).into()",
   );
+  // Finding #72 — Anchor source iterating `ctx.remaining_accounts` (or any
+  // bare AccountInfo) commonly deserializes via
+  // `Account::<T>::try_from(account_info)?` / `InterfaceAccount::<T>::try_from(...)?`.
+  // Anvil rewrites `ctx.remaining_accounts` upstream but leaves the
+  // `Account::<T>::try_from` call verbatim — neither the typed wrapper nor
+  // the trait method exists on either stripped target. Bridge it to the
+  // canonical per-target deserialize:
+  //   - User #[account] type: `T::from_account_info(<expr>)?` (both targets;
+  //     mirror Pinocchio + Native synth at native-emitter.ts:1917-1924).
+  //   - SPL TokenAccount: pinocchio_token::state::TokenAccount::from_account_info / spl_token::state::Account::unpack.
+  //   - SPL Mint: pinocchio_token::state::Mint::from_account_info / spl_token::state::Mint::unpack.
+  // Paren-balanced — the `<expr>` typically contains nested calls
+  // (`next_account_info(iter)?`, `&accounts[N..][i]`, etc.) that defeat naive
+  // `[^)]*` matching.
+  transformedRawCode = rewriteAccountTryFrom(transformedRawCode, w);
   // Fallback: still run the regex versions in case tree-sitter parse
   // returned the code unchanged (parse error → no-op). The regex is
   // idempotent on already-structurally-rewritten text since the tree-
@@ -550,6 +565,78 @@ export function transformBranchedSplCpis(code: string): string {
     i = tailEnd;
   }
   return result.join("");
+}
+
+/**
+ * Finding #72 — rewrite `Account::<T>::try_from(<expr>)?` /
+ * `InterfaceAccount::<T>::try_from(<expr>)?` to the per-target deserialize
+ * shape. Paren-balanced inner-expr scan so nested calls survive intact.
+ *
+ * `T` = `TokenAccount` / `Mint` routes to the SPL state unpackers; any
+ * user `#[account]` type routes to `T::from_account_info(...)?` (a method
+ * synthesized on both targets — see native-emitter.ts:1917-1924 for the
+ * Native mirror). Unknown types fall through unchanged.
+ */
+export function rewriteAccountTryFrom(code: string, w: BodyWalker): string {
+  const result: string[] = [];
+  let i = 0;
+  // Match `Account::<T>::try_from(` or `InterfaceAccount::<T>::try_from(`.
+  // Capture: wrapper name + inner type identifier.
+  const HEAD = /\b(?:Account|InterfaceAccount)\s*::\s*<\s*([A-Za-z_][A-Za-z0-9_]*)\s*>\s*::\s*try_from\s*\(/g;
+  HEAD.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = HEAD.exec(code)) !== null) {
+    const typeName = m[1]!;
+    const openParen = m.index + m[0].length - 1;
+    const closeParen = matchParen(code, openParen);
+    if (closeParen === -1) continue;
+    const innerExpr = code.slice(openParen + 1, closeParen).trim();
+    // Preserve the source's question-mark semantics: `try_from(X)?` propagates,
+    // but `try_from(X)` (no `?`) returns a Result that the caller consumes via
+    // `.ok()` / pattern-match — found in the wild at
+    // /tmp/program-examples/tokens/token-2022/transfer-fee/.../harvest.rs:22
+    // inside a `.filter_map(|account| try_from(account).ok()...)` chain.
+    // Injecting an unconditional `?` there propagates errors out of the
+    // closure and breaks the iterator semantics.
+    let tailEnd = closeParen + 1;
+    const hadQuestion = code[tailEnd] === "?";
+    if (hadQuestion) tailEnd++;
+    const replacement = renderAccountTryFrom(typeName, innerExpr, w, hadQuestion);
+    if (replacement === null) {
+      // Type not recognized — leave verbatim.
+      continue;
+    }
+    result.push(code.slice(i, m.index));
+    result.push(replacement);
+    i = tailEnd;
+    HEAD.lastIndex = tailEnd;
+  }
+  result.push(code.slice(i));
+  return result.join("");
+}
+
+function renderAccountTryFrom(
+  typeName: string,
+  innerExpr: string,
+  w: BodyWalker,
+  hadQuestion: boolean,
+): string | null {
+  const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+  const q = hadQuestion ? "?" : "";
+  if (typeName === "TokenAccount") {
+    return isPinocchio
+      ? `pinocchio_token::state::TokenAccount::from_account_info(${innerExpr})${q}`
+      : `{ use solana_program::program_pack::Pack; spl_token::state::Account::unpack(&(${innerExpr}).data.borrow()) }${q}`;
+  }
+  if (typeName === "Mint") {
+    return isPinocchio
+      ? `pinocchio_token::state::Mint::from_account_info(${innerExpr})${q}`
+      : `{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&(${innerExpr}).data.borrow()) }${q}`;
+  }
+  if (w.isGeneratedStateType(typeName)) {
+    return `${typeName}::from_account_info(${innerExpr})${q}`;
+  }
+  return null;
 }
 
 /** Return the index of the matching `)` for an opening `(` at `openIdx`,

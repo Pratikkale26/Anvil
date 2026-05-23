@@ -20,6 +20,7 @@
 import { describe, test, expect } from "bun:test";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
+import { emitNativeFull } from "../src/emitter/native-emitter.ts";
 
 const PROGRAM = (body: string) => `
 use anchor_lang::prelude::*;
@@ -40,10 +41,46 @@ pub struct C<'info> {
 }
 `;
 
+const PROGRAM_WITH_STATE = (body: string) => `
+use anchor_lang::prelude::*;
+declare_id!("11111111111111111111111111111111");
+
+#[account]
+pub struct Data { pub someone: Pubkey }
+
+#[program]
+mod p {
+    use super::*;
+    pub fn ix(ctx: Context<C>) -> Result<()> {
+        ${body}
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct C<'info> {
+    pub signer: Signer<'info>,
+}
+`;
+
 async function emitFor(body: string): Promise<string> {
   const parsed = await parseAnchor(PROGRAM(body));
   if (!parsed.ok) throw new Error("parse: " + parsed.error);
   const emit = emitPinocchioFull(parsed.ir);
+  return (emit.files ?? []).map((f) => f.content).join("\n") || emit.code || "";
+}
+
+async function emitForStatePin(body: string): Promise<string> {
+  const parsed = await parseAnchor(PROGRAM_WITH_STATE(body));
+  if (!parsed.ok) throw new Error("parse: " + parsed.error);
+  const emit = emitPinocchioFull(parsed.ir);
+  return (emit.files ?? []).map((f) => f.content).join("\n") || emit.code || "";
+}
+
+async function emitForStateNative(body: string): Promise<string> {
+  const parsed = await parseAnchor(PROGRAM_WITH_STATE(body));
+  if (!parsed.ok) throw new Error("parse: " + parsed.error);
+  const emit = emitNativeFull(parsed.ir);
   return (emit.files ?? []).map((f) => f.content).join("\n") || emit.code || "";
 }
 
@@ -69,5 +106,98 @@ describe("task #42 — ctx.remaining_accounts chain rewriting", () => {
   test("bare slice reference (no chain): leading & preserved", async () => {
     const code = await emitFor(`fn aux(_: &[AccountInfo]) {} aux(ctx.remaining_accounts);`);
     expect(code).toContain("&accounts[1..]");
+  });
+});
+
+/**
+ * Finding #72 — `Account::<T>::try_from(account_info)?` /
+ * `InterfaceAccount::<T>::try_from(...)?` left verbatim.
+ *
+ * Pre-fix: Anchor source iterating remaining_accounts calls
+ * `Account::<TokenAccount>::try_from(info)?` to deserialize. Neither the
+ * `Account` wrapper nor the `try_from` method exists on the stripped
+ * Pinocchio / Native targets — the call site survived verbatim through
+ * pass_through and cargo refused with E0433 unresolved Account / E0599
+ * no method try_from.
+ *
+ * Post-fix: pass_through emit rewrites all three patterns to the
+ * canonical per-target deserialize:
+ *   - SPL TokenAccount: pinocchio_token::state::TokenAccount::from_account_info / spl_token::state::Account::unpack
+ *   - SPL Mint:         pinocchio_token::state::Mint::from_account_info       / spl_token::state::Mint::unpack
+ *   - User #[account]:  T::from_account_info (both targets, mirror synth)
+ */
+describe("finding #72 — Account::<T>::try_from rewrite", () => {
+  test("Account::<TokenAccount> — Pinocchio", async () => {
+    const code = await emitFor(
+      `for info in ctx.remaining_accounts.iter() { let _ta = Account::<TokenAccount>::try_from(info)?; }`,
+    );
+    expect(code).toContain("pinocchio_token::state::TokenAccount::from_account_info(info)?");
+    expect(code).not.toContain("Account::<TokenAccount>::try_from");
+  });
+
+  test("Account::<Mint> — Pinocchio", async () => {
+    const code = await emitFor(
+      `for info in ctx.remaining_accounts.iter() { let _m = Account::<Mint>::try_from(info)?; }`,
+    );
+    expect(code).toContain("pinocchio_token::state::Mint::from_account_info(info)?");
+    expect(code).not.toContain("Account::<Mint>::try_from");
+  });
+
+  test("InterfaceAccount::<TokenAccount> — Pinocchio", async () => {
+    const code = await emitFor(
+      `for info in ctx.remaining_accounts.iter() { let _ta = InterfaceAccount::<TokenAccount>::try_from(info)?; }`,
+    );
+    expect(code).toContain("pinocchio_token::state::TokenAccount::from_account_info(info)?");
+    expect(code).not.toContain("InterfaceAccount::<TokenAccount>::try_from");
+  });
+
+  test("user #[account] type → T::from_account_info — Pinocchio", async () => {
+    const code = await emitForStatePin(
+      `for info in ctx.remaining_accounts.iter() { let _d = Account::<Data>::try_from(info)?; }`,
+    );
+    expect(code).toContain("Data::from_account_info(info)?");
+    expect(code).not.toContain("Account::<Data>::try_from");
+  });
+
+  test("user #[account] type → T::from_account_info — Native", async () => {
+    const code = await emitForStateNative(
+      `for info in ctx.remaining_accounts.iter() { let _d = Account::<Data>::try_from(info)?; }`,
+    );
+    expect(code).toContain("Data::from_account_info(info)?");
+    expect(code).not.toContain("Account::<Data>::try_from");
+  });
+
+  test("SPL TokenAccount — Native (spl_token unpack)", async () => {
+    const code = await emitForStateNative(
+      `for info in ctx.remaining_accounts.iter() { let _ta = Account::<TokenAccount>::try_from(info)?; }`,
+    );
+    expect(code).toContain("spl_token::state::Account::unpack(&(info).data.borrow())");
+    expect(code).not.toContain("Account::<TokenAccount>::try_from");
+  });
+
+  test("nested expression in arg — paren-balanced", async () => {
+    const code = await emitFor(
+      `let iter = &mut ctx.remaining_accounts.iter(); let _ta = Account::<TokenAccount>::try_from(next_account_info(iter)?)?;`,
+    );
+    expect(code).toContain(
+      "pinocchio_token::state::TokenAccount::from_account_info(next_account_info(iter)?)?",
+    );
+    expect(code).not.toContain("::try_from");
+  });
+
+  test("source has NO `?` (closure / .ok() chain) — must NOT inject `?`", async () => {
+    // harvest.rs:22 pattern: `try_from(account)` inside .filter_map closure
+    // consumed by `.ok()`. An injected `?` would propagate errors out of the
+    // closure and break the iterator semantics.
+    const code = await emitFor(
+      `let _sources = ctx.remaining_accounts.iter().filter_map(|account| InterfaceAccount::<TokenAccount>::try_from(account).ok()).count();`,
+    );
+    expect(code).toContain(
+      "pinocchio_token::state::TokenAccount::from_account_info(account).ok()",
+    );
+    // No `?` should appear directly after the rewritten call — guard against
+    // accidentally injecting one before `.ok()`.
+    expect(code).not.toContain("from_account_info(account)?.ok()");
+    expect(code).not.toContain("::try_from");
   });
 });
