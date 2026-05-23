@@ -893,6 +893,22 @@ export class AstVisitorBase {
     return printExpr(this.resolveToAst(text));
   }
 
+  resolveOptAst(text: string): RustExpr {
+    const t = text.trim();
+    if (t === "None" || t === "") return ident("None");
+    const inner = t.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+    const raw = (inner ?? t).replace(/^&/, "");
+    return call(ident("Some"), [this.resolveToAst(raw)]);
+  }
+
+  optStringAst(text: string): RustExpr {
+    const t = text.trim();
+    if (t === "None" || t === "") return ident("None");
+    const inner = t.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+    if (inner !== undefined) return call(ident("Some"), [ref(parseSimpleExpr(inner))]);
+    return call(ident("Some"), [ref(parseSimpleExpr(t))]);
+  }
+
   resolveCtxToText(text: string): string {
     return this.walker.transformCtxAccountsReferences(text);
   }
@@ -3582,30 +3598,20 @@ export class AstVisitorBase {
   visitCpiMplCoreTransferV1(stmt: CpiMplCoreTransferV1): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const resolveOpt = (e: string): string => {
-      const trimmed = e.trim();
-      if (trimmed === "None" || trimmed === "") return "None";
-      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
-      if (inner !== undefined) return `Some(${resolve(inner)})`;
-      return `Some(${resolve(trimmed)})`;
-    };
-    const lines: string[] = [
-      `    mpl_core_transfer_v1(`,
-      `        ${resolve(stmt.programAccount)},`,
-      `        ${resolve(stmt.asset)},`,
-      `        ${resolveOpt(stmt.collection)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolveOpt(stmt.authority)},`,
-      `        ${resolve(stmt.newOwner)},`,
-      `        ${resolve(stmt.systemProgram)},`,
-      `        ${resolveOpt(stmt.logWrapper)},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_core_transfer_v1"), [
+      this.resolveToAst(stmt.programAccount),
+      this.resolveToAst(stmt.asset),
+      this.resolveOptAst(stmt.collection),
+      this.resolveToAst(stmt.payer),
+      this.resolveOptAst(stmt.authority),
+      this.resolveToAst(stmt.newOwner),
+      this.resolveToAst(stmt.systemProgram),
+      this.resolveOptAst(stmt.logWrapper),
+      seedsArg,
+    ])))];
   }
 
   /**
