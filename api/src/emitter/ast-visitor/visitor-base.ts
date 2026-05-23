@@ -858,11 +858,11 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
 export class AstVisitorBase {
   constructor(readonly walker: BodyWalker) {}
 
-  /**
-   * Dispatch entry point. Returns an array of RustStmts for byte-identical
-   * comparison against what the existing handler pushed into `walker.lines`.
-   * Every IR kind is covered after the Phase-2 increment.
-   */
+  resolveToAst(text: string): RustExpr {
+    const resolved = this.walker.resolveAccountExpr(text);
+    return tryStructuralizeExpr(resolved) ?? parseSimpleExpr(resolved);
+  }
+
   visit(stmt: BodyStatement): RustStmt[] {
     switch (stmt.kind) {
       // Structural Phase-1 ports.
