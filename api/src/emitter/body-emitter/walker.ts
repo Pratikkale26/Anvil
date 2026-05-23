@@ -976,6 +976,20 @@ export class BodyWalker {
 
   transformAccountReferences(code: string): string {
     let transformed = code;
+    // H7 Phase 5e — Account<'info, T> lamport-method family rule table.
+    // Hoisted out of the per-account loop because the rules don't depend
+    // on per-account state; the build() closure takes accountInfoVar as
+    // an arg. See the call site below for the full intent.
+    const lamportMethodRules: Array<{
+      suffix: string;
+      build: (ai: string, args: string) => string;
+    }> = [
+      { suffix: `\\.lamports\\(\\)`, build: (ai) => this.emitter.emitAccountLamportsExpr(ai) },
+      { suffix: `\\.get_lamports\\(\\)`, build: (ai) => `anvil_get_lamports(${ai})` },
+      { suffix: `\\.add_lamports\\(([^)]*)\\)`, build: (ai, args) => `anvil_add_lamports(${ai}, ${args.trim()})` },
+      { suffix: `\\.sub_lamports\\(([^)]*)\\)`, build: (ai, args) => `anvil_sub_lamports(${ai}, ${args.trim()})` },
+      { suffix: `\\.reload\\(\\)\\?;`, build: () => `// reload() no-op: AccountInfo data is always live` },
+    ];
     // First, resolve local-var aliases (e.g. `let pool = &mut ctx.accounts.
     // stake_pool;` in the Anchor source → `pool.field` must become the
     // canonical state-var name `stake_pool.field` here, since we never
@@ -1012,43 +1026,34 @@ export class BodyWalker {
       // (#44-followup — without the lookahead, `*X.key().as_ref()`
       // emits and token-fundraiser refund seeds break).
       transformed = this.rewriteAccountKeyValueRefs(transformed, accountName);
-      transformed = transformed.replace(
-        new RegExp(`\\b${accountName}\\.lamports\\(\\)`, "g"),
-        () => `${this.emitter.emitAccountLamportsExpr(accountInfoVar)}`,
-      );
-      // Finding #71 — Anchor's Account<'info, T> exposes direct lamport-cell
-      // accessors via the AccountInfo wrapper:
-      //   .get_lamports() → u64
-      //   .add_lamports(n) → Result<(), ProgramError>
-      //   .sub_lamports(n) → Result<(), ProgramError>
-      // Neither pinocchio nor solana-program's AccountInfo has those methods.
-      // Rewrite the call site to the anvil_* helper which takes the AccountInfo
-      // binding directly. Necessary at the same call-site phase as `.lamports()`
-      // because state-rebinding (`let pda = LamportsPda::from_account_info(pda_account)?`)
-      // changes `pda` from an AccountInfo into the deserialized struct, so the
-      // method call no longer resolves on the receiver. resolveAccountInfoVar()
-      // returns the original AccountInfo binding (`pda_account`) when rebound,
-      // and the account name itself when not — both forms emit correctly.
-      transformed = transformed.replace(
-        new RegExp(`\\b${accountName}\\.get_lamports\\(\\)`, "g"),
-        () => `anvil_get_lamports(${accountInfoVar})`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`\\b${accountName}\\.add_lamports\\(([^)]*)\\)`, "g"),
-        (_full, args: string) => `anvil_add_lamports(${accountInfoVar}, ${args.trim()})`,
-      );
-      transformed = transformed.replace(
-        new RegExp(`\\b${accountName}\\.sub_lamports\\(([^)]*)\\)`, "g"),
-        (_full, args: string) => `anvil_sub_lamports(${accountInfoVar}, ${args.trim()})`,
-      );
-      // #64 — Anchor's Account<'info, T>::reload() re-reads bytes from
-      // on-chain state. Both Anvil targets emit raw AccountInfo (Pinocchio
-      // or solana-program), whose data is borrowed from the runtime and
-      // always live — there is no cache to refresh. Strip the call.
-      transformed = transformed.replace(
-        new RegExp(`\\b${accountName}\\.reload\\(\\)\\?;`, "g"),
-        () => `// reload() no-op: AccountInfo data is always live`,
-      );
+      // H7 Phase 5e — Account<'info, T> lamport-method family. Five rules
+      // sharing the `\b${accountName}.<method>(args)` receiver shape but
+      // diverging on arg-arity (0 / 1 paren-capture / 0+`?;`) and output
+      // (helper call / inline expression / comment). Table declared above
+      // the for-loop; loop applies it once per account.
+      //
+      // Rule semantics — Anchor's Account<'info, T> exposes these via the
+      // AccountInfo wrapper; neither pinocchio's nor solana-program's
+      // AccountInfo has them, so rewrite each call site to the
+      // target-appropriate anvil_* helper or inline expression.
+      //   .lamports()     → emitAccountLamportsExpr(...) — pre-existing
+      //   .get_lamports() → anvil_get_lamports(...) — finding #71
+      //   .add_lamports(n)→ anvil_add_lamports(..., n) — finding #71
+      //   .sub_lamports(n)→ anvil_sub_lamports(..., n) — finding #71
+      //   .reload()?;     → // reload() no-op — finding #64
+      //
+      // Necessary at this call-site phase because state-rebinding (e.g.
+      // `let pda = LamportsPda::from_account_info(pda_account)?`) changes
+      // `pda` from an AccountInfo into the deserialized struct;
+      // resolveAccountInfoVar() returns the original AccountInfo binding
+      // when rebound, and the account name itself otherwise — both
+      // emit correctly.
+      for (const { suffix, build } of lamportMethodRules) {
+        transformed = transformed.replace(
+          new RegExp(`\\b${accountName}${suffix}`, "g"),
+          (_full, args?: string) => build(accountInfoVar, args ?? ""),
+        );
+      }
       const tokenLike =
         account.accountType.includes("TokenAccount") ||
         account.constraints.some(
