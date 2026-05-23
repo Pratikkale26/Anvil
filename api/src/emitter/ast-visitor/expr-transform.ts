@@ -11,8 +11,9 @@
  */
 
 import type { RustExpr } from "./nodes.js";
-import { deref, field, ident, methodCall, rawExpr } from "./nodes.js";
+import { deref, field, ident, methodCall, rawExpr, ref, call, tryPostfix, indexExpr } from "./nodes.js";
 import { parseSimpleExpr } from "./parse-simple-expr.js";
+import { snakeCase } from "../emitter-utils.js";
 
 // ─── Transform context ────────────────────────────────────────────────
 
@@ -300,6 +301,273 @@ export function rewriteAccountKeyComparisonsAst(
     }
     return e;
   });
+}
+
+// ─── 3a: transformCtxAccountsRefsAst ───────────────────────────────────
+//
+// Structural equivalent of walker.ts transformCtxAccountsReferences.
+// Handles: context→ctx aliasing, .to_account_info() strip, id() rewrite,
+// ctx.accounts.X.key* chains, ctx.accounts.X borrow forms,
+// ctx.program_id, ctx.bumps.X, ctx.remaining_accounts.
+
+function isCtxAccounts(e: RustExpr): e is Extract<RustExpr, { kind: "field" }> {
+  return e.kind === "field" && e.field === "accounts"
+    && (isIdent(e.obj, "ctx") || isIdent(e.obj, "context"));
+}
+
+function isCtxAccountsField(e: RustExpr, accountName: string): boolean {
+  return e.kind === "field" && e.field === accountName && isCtxAccounts(e.obj);
+}
+
+export function transformCtxAccountsRefsAst(
+  expr: RustExpr,
+  ctx: TransformContext,
+): RustExpr {
+  return walkExpr(expr, (e) => {
+    // .to_account_info() strip
+    if (e.kind === "method_call" && e.method === "to_account_info" && e.args.length === 0) {
+      return e.receiver;
+    }
+
+    // id() → (*program_id), &id() → program_id
+    if (e.kind === "ref" && !e.mut && e.expr.kind === "call"
+        && e.expr.callee.kind === "ident" && e.expr.callee.name === "id"
+        && e.expr.args.length === 0) {
+      return ident("program_id");
+    }
+    if (e.kind === "call" && e.callee.kind === "ident" && e.callee.name === "id"
+        && e.args.length === 0) {
+      return rawExpr("(*program_id)");
+    }
+
+    // ctx.program_id → program_id
+    if (e.kind === "field" && e.field === "program_id"
+        && (isIdent(e.obj, "ctx") || isIdent(e.obj, "context"))) {
+      return ident("program_id");
+    }
+
+    // ctx.bumps.X → bump_X
+    if (e.kind === "field" && e.obj.kind === "field" && e.obj.field === "bumps"
+        && (isIdent(e.obj.obj, "ctx") || isIdent(e.obj.obj, "context"))) {
+      return ident(`bump_${snakeCase(e.field)}`);
+    }
+
+    // ctx.remaining_accounts → &accounts[N..]
+    if (e.kind === "field" && e.field === "remaining_accounts"
+        && (isIdent(e.obj, "ctx") || isIdent(e.obj, "context"))) {
+      const namedCount = ctx.accounts.filter((a) => !(a as any).isOptional).length;
+      return parseSimpleExpr(`&accounts[${namedCount}..]`);
+    }
+
+    // ctx.accounts.X.key().as_ref() → emitAccountKeyAsRefExpr
+    if (e.kind === "method_call" && e.method === "as_ref" && e.args.length === 0) {
+      const inner = e.receiver;
+      if ((isKeyMethod(inner) || isKeyField(inner))) {
+        const keyRecv = inner.kind === "method_call" ? inner.receiver : (inner as any).obj;
+        if (keyRecv.kind === "field" && isCtxAccounts(keyRecv.obj)) {
+          return keyAsRefExprForAccount(snakeCase(keyRecv.field), ctx);
+        }
+      }
+    }
+
+    // ctx.accounts.X.key().to_bytes() → emitAccountKeyExpr
+    if (e.kind === "method_call" && e.method === "to_bytes" && e.args.length === 0) {
+      const inner = e.receiver;
+      if (isKeyMethod(inner) || isKeyField(inner)) {
+        const keyRecv = inner.kind === "method_call" ? inner.receiver : (inner as any).obj;
+        if (keyRecv.kind === "field" && isCtxAccounts(keyRecv.obj)) {
+          return keyExprForAccount(snakeCase(keyRecv.field), ctx);
+        }
+      }
+    }
+
+    // ctx.accounts.X.key() / ctx.accounts.X.key → emitAccountKeyExpr
+    if ((isKeyMethod(e) || isKeyField(e))) {
+      const keyRecv = e.kind === "method_call" ? e.receiver : (e as any).obj;
+      if (keyRecv.kind === "field" && isCtxAccounts(keyRecv.obj)) {
+        return keyExprForAccount(snakeCase(keyRecv.field), ctx);
+      }
+    }
+
+    // ctx.accounts.X.lamports() → emitAccountLamportsExpr
+    if (e.kind === "method_call" && e.method === "lamports" && e.args.length === 0
+        && e.receiver.kind === "field" && isCtxAccounts(e.receiver.obj)) {
+      const ai = ctx.resolveAccountInfoVar(snakeCase(e.receiver.field));
+      return parseSimpleExpr(ctx.emitAccountKeyExpr(ai).replace(/\.key\b.*/, ".lamports()"));
+    }
+
+    // ctx.accounts.X.amount → token_account_amount(ai)?
+    if (e.kind === "field" && e.field === "amount"
+        && e.obj.kind === "field" && isCtxAccounts(e.obj.obj)) {
+      const ai = ctx.resolveAccountInfoVar(snakeCase(e.obj.field));
+      return parseSimpleExpr(`token_account_amount(${ai})?`);
+    }
+
+    // &*ctx.accounts.X → &snakeCase(X)
+    if (e.kind === "ref" && !e.mut && e.expr.kind === "deref"
+        && e.expr.expr.kind === "field" && isCtxAccounts(e.expr.expr.obj)) {
+      return ref(ident(snakeCase(e.expr.expr.field)));
+    }
+
+    // &mut ctx.accounts.X → &mut snakeCase(X)
+    if (e.kind === "ref" && e.mut
+        && e.expr.kind === "field" && isCtxAccounts(e.expr.obj)) {
+      return ref(ident(snakeCase(e.expr.field)), true);
+    }
+
+    // &ctx.accounts.X → &snakeCase(X)
+    if (e.kind === "ref" && !e.mut
+        && e.expr.kind === "field" && isCtxAccounts(e.expr.obj)) {
+      return ref(ident(snakeCase(e.expr.field)));
+    }
+
+    // ctx.accounts.X.field (state type) → ensureStateRead + localVar.field
+    if (e.kind === "field" && e.obj.kind === "field" && isCtxAccounts(e.obj.obj)) {
+      const name = snakeCase(e.obj.field);
+      const fieldName = e.field;
+      if (fieldName === "key" || fieldName === "lamports") return e;
+      const accRef = ctx.accounts.find((a) => snakeCase(a.name) === name);
+      if (accRef && ctx.isGeneratedStateType(accRef.accountType)) {
+        const localVar = ctx.ensureStateRead(name);
+        return field(ident(localVar), snakeCase(fieldName));
+      }
+      // Non-state: bare ctx.accounts.X.field → snakeCase(X).field
+      return field(ident(snakeCase(name)), snakeCase(fieldName));
+    }
+
+    // ctx.accounts.X (bare) → snakeCase(X)
+    if (e.kind === "field" && isCtxAccounts(e.obj)) {
+      return ident(snakeCase(e.field));
+    }
+
+    // context.X → ctx.X (alias)
+    if (e.kind === "field" && isIdent(e.obj, "context")
+        && ["accounts", "bumps", "program_id", "remaining_accounts"].includes(e.field)) {
+      return field(ident("ctx"), e.field);
+    }
+
+    return e;
+  });
+}
+
+// ─── 3b: transformAccountRefsAst ──────────────────────────────────────
+//
+// Structural equivalent of walker.ts transformAccountReferences.
+// Handles: alias resolution (ident substitution), lamport methods,
+// mint/token field access, state field refs, key value refs, key chains,
+// pubkey field strip, stacked deref collapse.
+
+export function transformAccountRefsAst(
+  expr: RustExpr,
+  ctx: TransformContext,
+): RustExpr {
+  let result = expr;
+
+  // Alias resolution: replace ident(alias) → ident(canonical)
+  for (const [alias, canonical] of Array.from(ctx.localAliases.entries())) {
+    result = walkExpr(result, (e) => {
+      if (isIdent(e, alias)) return ident(canonical);
+      return e;
+    });
+  }
+
+  // Per-account transforms
+  const accountNames = new Set(ctx.accounts.map((a) => a.name));
+
+  result = walkExpr(result, (e) => {
+    // Lamport methods: <account>.lamports() / .get_lamports() / etc.
+    if (e.kind === "method_call" && e.args.length <= 1) {
+      const recv = receiverIdent(e.receiver);
+      if (recv && accountNames.has(recv)) {
+        const ai = ctx.resolveAccountInfoVar(recv);
+        if (e.method === "lamports" && e.args.length === 0)
+          return parseSimpleExpr(ctx.emitAccountKeyExpr(ai).replace(/\.key\b.*/, ".lamports()"));
+        if (e.method === "get_lamports" && e.args.length === 0)
+          return parseSimpleExpr(`anvil_get_lamports(${ai})`);
+        if (e.method === "add_lamports" && e.args.length === 1)
+          return parseSimpleExpr(`anvil_add_lamports(${ai}, ${printExprCompact(e.args[0])})`);
+        if (e.method === "sub_lamports" && e.args.length === 1)
+          return parseSimpleExpr(`anvil_sub_lamports(${ai}, ${printExprCompact(e.args[0])})`);
+      }
+    }
+
+    // Token account fields: <account>.amount / .owner / .mint / etc.
+    if (e.kind === "field" && receiverIdent(e.obj) !== null) {
+      const recv = receiverIdent(e.obj)!;
+      if (!accountNames.has(recv)) return e;
+      const acc = ctx.accounts.find((a) => a.name === recv);
+      if (!acc) return e;
+
+      const tokenLike = acc.accountType.includes("TokenAccount")
+        || acc.constraints.some((c) => c.kind.startsWith("token::") || c.kind.startsWith("associated_token::"));
+      const mintLike = acc.accountType.includes("Mint")
+        || acc.constraints.some((c) => c.kind.startsWith("mint::"));
+
+      if (mintLike && (e.field === "supply" || e.field === "decimals")) {
+        const ai = ctx.resolveAccountInfoVar(recv);
+        if (ctx.isPinocchio) {
+          return parseSimpleExpr(`pinocchio_token::state::Mint::from_account_info(${ai})?.${e.field}()`);
+        }
+        return parseSimpleExpr(`{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&${ai}.data.borrow())?.${e.field} }`);
+      }
+
+      if (tokenLike) {
+        if (e.field === "amount") {
+          const ai = ctx.resolveAccountInfoVar(recv);
+          return parseSimpleExpr(`token_account_amount(${ai})?`);
+        }
+        const splPubkeyFields = ["owner", "mint", "delegate", "close_authority"];
+        if (splPubkeyFields.includes(e.field)) {
+          const ai = ctx.resolveAccountInfoVar(recv);
+          if (ctx.isPinocchio) {
+            return parseSimpleExpr(`*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.${e.field}()`);
+          }
+          return parseSimpleExpr(`spl_token::state::Account::unpack(&${ai}.data.borrow())?.${e.field}`);
+        }
+      }
+    }
+
+    return e;
+  });
+
+  // Key chains (must be checked before key value refs — longer match first)
+  result = rewriteAccountKeyChainsAst(result, ctx);
+  result = rewriteAccountKeyValueRefsAst(result, ctx);
+  result = stripStatePubkeyFieldMethodsAst(result, ctx);
+  result = rewriteStateFieldRefsAst(result, ctx);
+  result = collapseStackedKeyDerefsAst(result);
+
+  return result;
+}
+
+// ─── 3c: normalizeKeyValueUsagesAst ───────────────────────────────────
+
+export function normalizeKeyValueUsagesAst(
+  expr: RustExpr,
+  ctx: TransformContext,
+): RustExpr {
+  return rewriteAccountKeyComparisonsAst(expr, ctx);
+}
+
+// ─── Composed pipeline ────────────────────────────────────────────────
+
+export function resolveAccountExprAstPipeline(
+  expr: RustExpr,
+  ctx: TransformContext,
+): RustExpr {
+  let result = transformCtxAccountsRefsAst(expr, ctx);
+  result = transformAccountRefsAst(result, ctx);
+  result = normalizeKeyValueUsagesAst(result, ctx);
+  return result;
+}
+
+// ─── Compact printer for embedding in template strings ────────────────
+
+function printExprCompact(e: RustExpr): string {
+  if (e.kind === "ident") return e.name;
+  if (e.kind === "lit") return e.value;
+  if (e.kind === "raw") return e.text;
+  return e.kind;
 }
 
 // ─── Generic walker ────────────────────────────────────────────────────

@@ -1234,6 +1234,30 @@ export class BodyWalker {
     return result;
   }
 
+  buildTransformContext(): import("../ast-visitor/expr-transform.js").TransformContext {
+    return {
+      accounts: this.instr.accounts.map((a) => ({
+        name: snakeCase(a.name),
+        accountType: a.accountType,
+        constraints: a.constraints,
+        isOptional: a.isOptional,
+      })) as any,
+      accountTypes: this.ir.accounts.map((a) => ({
+        name: a.name,
+        fields: a.fields.map((f) => ({ name: snakeCase(f.name), type: f.type })),
+      })),
+      resolveAccountInfoVar: (name: string) => this.resolveAccountInfoVar(name),
+      resolveStateVar: (name: string) => this.resolveStateVar(name),
+      emitAccountKeyExpr: (ai: string) => this.emitter.emitAccountKeyExpr(ai),
+      emitAccountKeyAsRefExpr: (ai: string) => this.emitter.emitAccountKeyAsRefExpr(ai),
+      stateVars: this.stateVars,
+      localAliases: this.localAliases,
+      isGeneratedStateType: (type: string) => this.isGeneratedStateType(type),
+      ensureStateRead: (account: string) => this.ensureStateRead(account),
+      isPinocchio: this.emitter.frameworkName === "Pinocchio",
+    };
+  }
+
   transformCtxAccountsReferences(code: string): string {
     let transformed = code;
     // Normalize alternative context-parameter names so the rest of this

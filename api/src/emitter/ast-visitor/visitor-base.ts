@@ -84,6 +84,7 @@ import {
 // can import them without creating a cycle through visitor-base.
 import { parseSimpleExpr, parseSimpleExprStrict } from "./parse-simple-expr.js";
 import { tryStructuralizeMultiLine, tryStructuralizeExpr, ensureRustParserReady } from "./rust-stmt-from-text.js";
+import { resolveAccountExprAstPipeline } from "./expr-transform.js";
 
 /**
  * Parse the fields-text of an `emit!(Event { fields })` IR statement
@@ -861,6 +862,11 @@ export class AstVisitorBase {
   resolveToAst(text: string): RustExpr {
     const resolved = this.walker.resolveAccountExpr(text);
     return tryStructuralizeExpr(resolved) ?? parseSimpleExpr(resolved);
+  }
+
+  resolveToAstStructural(text: string): RustExpr {
+    const parsed = tryStructuralizeExpr(text) ?? parseSimpleExpr(text);
+    return resolveAccountExprAstPipeline(parsed, this.walker.buildTransformContext());
   }
 
   visit(stmt: BodyStatement): RustStmt[] {

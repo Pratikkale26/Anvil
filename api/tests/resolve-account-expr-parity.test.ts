@@ -23,6 +23,7 @@ import {
 import { tryStructuralizeExpr } from "../src/emitter/ast-visitor/rust-stmt-from-text.ts";
 import { parseSimpleExpr } from "../src/emitter/ast-visitor/parse-simple-expr.ts";
 import { printExpr } from "../src/emitter/ast-visitor/printer.ts";
+import { resolveAccountExprAstPipeline, type TransformContext } from "../src/emitter/ast-visitor/expr-transform.ts";
 
 const DEMO_DIR = join(import.meta.dir, "../src/demo-programs");
 
