@@ -94,19 +94,24 @@ pub fn append(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 1
+    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 1 (zero=false)
     {
         let __state_for_realloc = LogState::from_account_info(state)?;
         let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 1) as usize;
         let __rent = pinocchio::sysvars::rent::Rent::get()?;
         let __new_lamports = Rent::get()?.minimum_balance(__new_size);
-        let __delta = __new_lamports.saturating_sub(state.lamports());
-        if __delta > 0 {
+        let __cur_lamports = state.lamports();
+        if __new_lamports > __cur_lamports {
+            let __delta = __new_lamports - __cur_lamports;
             pinocchio_system::instructions::Transfer {
                 from: owner,
                 to: state,
                 lamports: __delta,
             }.invoke()?;
+        } else if __new_lamports < __cur_lamports {
+            let __refund = __cur_lamports - __new_lamports;
+            *state.try_borrow_mut_lamports()? = __cur_lamports - __refund;
+            *owner.try_borrow_mut_lamports()? = owner.lamports() + __refund;
         }
         state.realloc(__new_size, false)?;
     }
@@ -210,6 +215,8 @@ use pinocchio::sysvars::Sysvar;
 pub const ID: Pubkey = [12, 183, 240, 99, 57, 226, 33, 157, 155, 38, 212, 27, 57, 148, 107, 73, 119, 175, 253, 163, 75, 72, 40, 204, 196, 96, 106, 240, 0, 0, 0, 0];
 pub fn id() -> Pubkey { ID }
 
+
+
 mod state;
 
 mod instructions;
@@ -271,9 +278,15 @@ impl LogState {
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;
+    /// Minimum data length for variable-length structs — discriminator +
+    /// each variable field's 4-byte length prefix + each fixed field's
+    /// full size. read/write guards check against this instead of
+    /// TOTAL_LEN so Anchor sources using `required_space(input.len())`
+    /// allocations don't trip InvalidAccountData on init.
+    pub const MIN_LEN: usize = 13;
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::MIN_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         if data[..8] != Self::DISCRIMINATOR {
@@ -294,7 +307,7 @@ impl LogState {
     }
 
     pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::MIN_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);

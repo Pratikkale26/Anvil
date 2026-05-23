@@ -245,6 +245,8 @@ use solana_program::{
 pub const ID: Pubkey = Pubkey::new_from_array([9, 182, 210, 58, 59, 82, 123, 107, 80, 46, 41, 198, 193, 123, 39, 188, 134, 128, 153, 214, 76, 194, 9, 220, 132, 175, 151, 64, 0, 0, 0, 0]);
 pub fn id() -> Pubkey { ID }
 
+
+
 mod state;
 
 mod events;
@@ -256,6 +258,8 @@ mod errors;
 mod helpers;
 
 use instructions::*;
+
+pub use events::*;
 
 pub use errors::*;
 

@@ -71,6 +71,8 @@ use solana_program::{
     sysvar::Sysvar,
 };
 
+
+
 mod state;
 
 mod instructions;
@@ -127,9 +129,13 @@ impl Proposal {
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;
+    /// Minimum data length the read/write guard checks against for variable-
+    /// length structs (String / Vec fields). Discriminator + every variable
+    /// field's 4-byte length prefix + every fixed field's full size.
+    pub const MIN_LEN: usize = 16;
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::MIN_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         if data[..8] != Self::DISCRIMINATOR {
@@ -152,7 +158,7 @@ impl Proposal {
     }
 
     pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::MIN_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);

@@ -394,6 +394,8 @@ use pinocchio_system::create_account_with_minimum_balance_signed;
 pub const ID: Pubkey = [5, 90, 204, 241, 70, 167, 83, 233, 181, 63, 179, 100, 53, 92, 30, 120, 176, 1, 87, 129, 151, 141, 47, 238, 74, 205, 147, 168, 0, 0, 0, 0];
 pub fn id() -> Pubkey { ID }
 
+
+
 mod state;
 
 mod instructions;
@@ -465,9 +467,15 @@ impl MultisigAccount {
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;
+    /// Minimum data length for variable-length structs — discriminator +
+    /// each variable field's 4-byte length prefix + each fixed field's
+    /// full size. read/write guards check against this instead of
+    /// TOTAL_LEN so Anchor sources using `required_space(input.len())`
+    /// allocations don't trip InvalidAccountData on init.
+    pub const MIN_LEN: usize = 22;
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::MIN_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         if data[..8] != Self::DISCRIMINATOR {
@@ -493,7 +501,7 @@ impl MultisigAccount {
     }
 
     pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::MIN_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);
@@ -538,9 +546,15 @@ impl ProposalAccount {
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;
+    /// Minimum data length for variable-length structs — discriminator +
+    /// each variable field's 4-byte length prefix + each fixed field's
+    /// full size. read/write guards check against this instead of
+    /// TOTAL_LEN so Anchor sources using `required_space(input.len())`
+    /// allocations don't trip InvalidAccountData on init.
+    pub const MIN_LEN: usize = 54;
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::MIN_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         if data[..8] != Self::DISCRIMINATOR {
@@ -572,7 +586,7 @@ impl ProposalAccount {
     }
 
     pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::MIN_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);

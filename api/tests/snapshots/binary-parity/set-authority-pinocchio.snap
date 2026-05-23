@@ -37,7 +37,7 @@ pub fn change_owner(
 
     let token_account = &accounts[0];
     let current_owner = &accounts[1];
-    let _token_program = &accounts[2];
+    let token_program = &accounts[2];
 
     if !current_owner.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -60,7 +60,7 @@ pub fn change_owner(
 
     // SPL Token set authority — token_account
     {
-        const SPL_TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
+
         let __sa_auth_byte: u8 = 2u8;
         let mut __sa_data = [0u8; 35];
         let mut __sa_len = 3usize;
@@ -81,7 +81,7 @@ pub fn change_owner(
             pinocchio::instruction::AccountMeta::readonly_signer(current_owner.key()),
         ];
         let __sa_ix = pinocchio::instruction::Instruction {
-            program_id: &SPL_TOKEN_PROGRAM_ID,
+            program_id: token_program.key(),
             accounts: &__sa_metas,
             data: &__sa_data[..__sa_len],
         };
@@ -125,6 +125,8 @@ use pinocchio::{
 // checks and PDA derivations — stub them so emit stays compilable.
 pub const ID: Pubkey = [20, 196, 101, 96, 68, 103, 30, 234, 199, 11, 32, 95, 224, 87, 147, 137, 75, 45, 103, 136, 7, 224, 255, 87, 35, 34, 76, 28, 129, 172, 220, 111];
 pub fn id() -> Pubkey { ID }
+
+
 
 mod instructions;
 

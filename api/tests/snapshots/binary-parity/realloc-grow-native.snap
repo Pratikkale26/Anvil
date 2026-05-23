@@ -85,14 +85,15 @@ pub fn append_four(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 4
+    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 4 (zero=true)
     {
         let __state_for_realloc = GrowState::from_account_info(state)?;
         let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 4) as usize;
         let __rent = solana_program::sysvar::rent::Rent::get()?;
         let __new_lamports = Rent::get()?.minimum_balance(__new_size);
-        let __delta = __new_lamports.saturating_sub(state.lamports());
-        if __delta > 0 {
+        let __cur_lamports = state.lamports();
+        if __new_lamports > __cur_lamports {
+            let __delta = __new_lamports - __cur_lamports;
             let __ix = solana_program::system_instruction::transfer(
                 owner.key,
                 state.key,
@@ -102,8 +103,12 @@ pub fn append_four(
                 &__ix,
                 &[owner.clone(), state.clone()],
             )?;
+        } else if __new_lamports < __cur_lamports {
+            let __refund = __cur_lamports - __new_lamports;
+            **state.lamports.borrow_mut() = __cur_lamports - __refund;
+            **owner.lamports.borrow_mut() = owner.lamports() + __refund;
         }
-        state.realloc(__new_size, false)?;
+        state.realloc(__new_size, true)?;
     }
     let (expected_key, _bump_state) = Pubkey::find_program_address(&[b"realloc-grow", owner.key.as_ref()], program_id);
     if expected_key != *state.key {
@@ -158,14 +163,15 @@ pub fn append_one(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 1
+    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 1 (zero=true)
     {
         let __state_for_realloc = GrowState::from_account_info(state)?;
         let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 1) as usize;
         let __rent = solana_program::sysvar::rent::Rent::get()?;
         let __new_lamports = Rent::get()?.minimum_balance(__new_size);
-        let __delta = __new_lamports.saturating_sub(state.lamports());
-        if __delta > 0 {
+        let __cur_lamports = state.lamports();
+        if __new_lamports > __cur_lamports {
+            let __delta = __new_lamports - __cur_lamports;
             let __ix = solana_program::system_instruction::transfer(
                 owner.key,
                 state.key,
@@ -175,8 +181,12 @@ pub fn append_one(
                 &__ix,
                 &[owner.clone(), state.clone()],
             )?;
+        } else if __new_lamports < __cur_lamports {
+            let __refund = __cur_lamports - __new_lamports;
+            **state.lamports.borrow_mut() = __cur_lamports - __refund;
+            **owner.lamports.borrow_mut() = owner.lamports() + __refund;
         }
-        state.realloc(__new_size, false)?;
+        state.realloc(__new_size, true)?;
     }
     let (expected_key, _bump_state) = Pubkey::find_program_address(&[b"realloc-grow", owner.key.as_ref()], program_id);
     if expected_key != *state.key {
@@ -234,14 +244,15 @@ pub fn append_two(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 2
+    // realloc — resize state to 8 + 1 + 4 + state.log.len() + 2 (zero=true)
     {
         let __state_for_realloc = GrowState::from_account_info(state)?;
         let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 2) as usize;
         let __rent = solana_program::sysvar::rent::Rent::get()?;
         let __new_lamports = Rent::get()?.minimum_balance(__new_size);
-        let __delta = __new_lamports.saturating_sub(state.lamports());
-        if __delta > 0 {
+        let __cur_lamports = state.lamports();
+        if __new_lamports > __cur_lamports {
+            let __delta = __new_lamports - __cur_lamports;
             let __ix = solana_program::system_instruction::transfer(
                 owner.key,
                 state.key,
@@ -251,8 +262,12 @@ pub fn append_two(
                 &__ix,
                 &[owner.clone(), state.clone()],
             )?;
+        } else if __new_lamports < __cur_lamports {
+            let __refund = __cur_lamports - __new_lamports;
+            **state.lamports.borrow_mut() = __cur_lamports - __refund;
+            **owner.lamports.borrow_mut() = owner.lamports() + __refund;
         }
-        state.realloc(__new_size, false)?;
+        state.realloc(__new_size, true)?;
     }
     let (expected_key, _bump_state) = Pubkey::find_program_address(&[b"realloc-grow", owner.key.as_ref()], program_id);
     if expected_key != *state.key {
@@ -364,6 +379,8 @@ use solana_program::sysvar::rent::Rent;
 pub const ID: Pubkey = Pubkey::new_from_array([12, 183, 240, 99, 57, 231, 55, 75, 253, 89, 245, 134, 124, 167, 219, 140, 149, 205, 101, 14, 178, 17, 32, 140, 145, 53, 0, 142, 0, 0, 0, 0]);
 pub fn id() -> Pubkey { ID }
 
+
+
 mod state;
 
 mod instructions;
@@ -427,9 +444,13 @@ impl GrowState {
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;
+    /// Minimum data length the read/write guard checks against for variable-
+    /// length structs (String / Vec fields). Discriminator + every variable
+    /// field's 4-byte length prefix + every fixed field's full size.
+    pub const MIN_LEN: usize = 13;
 
     pub fn read(data: &[u8]) -> Result<Self, ProgramError> {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::MIN_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         if data[..8] != Self::DISCRIMINATOR {
@@ -450,7 +471,7 @@ impl GrowState {
     }
 
     pub fn write(data: &mut [u8], value: &Self) -> ProgramResult {
-        if data.len() < Self::TOTAL_LEN {
+        if data.len() < Self::MIN_LEN {
             return Err(ProgramError::InvalidAccountData);
         }
         data[..8].copy_from_slice(&Self::DISCRIMINATOR);

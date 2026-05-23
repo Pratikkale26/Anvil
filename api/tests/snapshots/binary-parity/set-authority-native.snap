@@ -13,7 +13,7 @@ pub fn change_owner(
 
     let token_account = &accounts[0];
     let current_owner = &accounts[1];
-    let _token_program = &accounts[2];
+    let token_program = &accounts[2];
 
     if !current_owner.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -36,10 +36,10 @@ pub fn change_owner(
 
     // SPL Token set authority — token_account
     let set_authority_ix = spl_token::instruction::set_authority(
-        &spl_token::id(),
+        token_program.key,
         token_account.key,
         match &Some(new_owner) { Some(pk) => Some(pk), None => None },
-        spl_token::instruction::spl_token::instruction::AuthorityType::AccountOwner,
+        spl_token::instruction::AuthorityType::AccountOwner,
         current_owner.key,
         &[],
     )?;
@@ -84,6 +84,8 @@ use solana_program::{
 // checks and PDA derivations — stub them so emit stays compilable.
 pub const ID: Pubkey = Pubkey::new_from_array([20, 196, 101, 96, 68, 103, 30, 234, 199, 11, 32, 95, 224, 87, 147, 137, 75, 45, 103, 136, 7, 224, 255, 87, 35, 34, 76, 28, 129, 172, 220, 111]);
 pub fn id() -> Pubkey { ID }
+
+
 
 mod instructions;
 

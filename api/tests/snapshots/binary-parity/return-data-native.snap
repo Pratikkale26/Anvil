@@ -45,6 +45,7 @@ use solana_program::{
     account_info::AccountInfo,
     entrypoint,
     entrypoint::ProgramResult,
+    program::set_return_data,
     program_error::ProgramError,
     pubkey::Pubkey,
     sysvar::Sysvar,
@@ -55,6 +56,8 @@ use solana_program::{
 // checks and PDA derivations — stub them so emit stays compilable.
 pub const ID: Pubkey = Pubkey::new_from_array([6, 80, 200, 48, 80, 136, 95, 120, 217, 146, 73, 186, 5, 1, 83, 27, 93, 156, 215, 251, 13, 136, 230, 16, 254, 110, 243, 48, 0, 0, 0, 0]);
 pub fn id() -> Pubkey { ID }
+
+
 
 mod instructions;
 
