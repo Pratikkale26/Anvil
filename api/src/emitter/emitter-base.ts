@@ -2727,6 +2727,22 @@ impl ZeroCopy for ${accName} {}`;
     if (optionalAccounts.length > 0) {
       return this.emitOptionalAccountsStubFunction(instr, optionalAccounts);
     }
+    // #70 — Non-unit Result<T> return types can't change Anvil's uniform
+    // router dispatch signature. Stubbing the body avoids E0282 / E0308 at
+    // cargo (pass_through carries `Ok(value)` verbatim against our
+    // hardcoded -> ProgramResult). User gets unimplemented!() marker with
+    // raw source preserved to port manually (e.g. set_return_data per
+    // Anchor's macro-expanded pattern).
+    const returnType = (instr as any).returnType as string | undefined;
+    // Accept "()", "Result<()>", and "anchor_lang::Result<()>" as unit-typed.
+    // Anything else (Result<u64>, Result<StructReturn>, Result<Vec<u8>>) is
+    // non-unit and can't fit Anvil's uniform router dispatch signature.
+    const isUnitResult = !returnType
+      || /^\s*\(\s*\)\s*$/.test(returnType)
+      || /^\s*(?:anchor_lang::)?Result\s*<\s*\(\s*\)\s*>\s*$/.test(returnType);
+    if (!isUnitResult) {
+      return this.emitTypedResultStubFunction(instr, returnType!);
+    }
     const requiredAccountCount = instr.accounts.filter((a) => !a.isOptional).length;
 
     // Account bindings
@@ -3031,6 +3047,42 @@ ${originalLines}
 ${originalLines}
     let _ = (program_id, accounts, data);
     unimplemented!("Anvil: Option<T> account field(s) [${fieldList}] in '${instr.name}' — manual port required for ${this.frameworkName}");
+}`;
+  }
+
+  /**
+   * #70 — Emit an unimplemented!() stub for handlers whose source signature
+   * is non-unit `Result<T>` (e.g. `Result<u64>`, `Result<StructReturn>`).
+   * Anvil's router dispatch uses a uniform `-> ProgramResult` signature so
+   * we can't change the handler return type per-instruction. The pass_through
+   * body would carry `Ok(value)` verbatim and fail cargo (E0282 type
+   * annotations needed / E0308 mismatched types). Stub it instead.
+   */
+  private emitTypedResultStubFunction(
+    instr: Instruction,
+    returnType: string,
+  ): string {
+    this.warnings.push(
+      `Instruction '${instr.name}' has non-unit return type 'Result<${returnType}>' — stubbed as unimplemented!(). Anchor expands this to set_return_data + Ok(()); manual port required for ${this.frameworkName}.`,
+    );
+    const originalLines = (instr.rawBody ?? "")
+      .split("\n")
+      .map((l) => `    // ${l}`)
+      .join("\n");
+    return `pub fn ${snakeCase(instr.name)}(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    // ${MARKER_ANVIL_PREFIX}: non-unit Result<${returnType}> — manual port required.
+    // Anvil's router uses a uniform -> ProgramResult signature; we can't
+    // change the return type per-instruction. Anchor's macro expands
+    // \`Ok(value)\` to \`set_return_data(&borsh::to_vec(&value)?); Ok(())\`
+    // — port that pattern by hand if you need the return data.
+    // Original (raw) source preserved below:
+${originalLines}
+    let _ = (program_id, accounts, data);
+    unimplemented!("Anvil: non-unit Result<${returnType}> in '${instr.name}' — port set_return_data pattern manually for ${this.frameworkName}");
 }`;
   }
 
