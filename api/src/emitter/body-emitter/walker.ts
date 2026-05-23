@@ -1224,6 +1224,12 @@ export class BodyWalker {
     return out;
   }
 
+  resolveAccountExpr(text: string): string {
+    return this.normalizeKeyValueUsages(
+      this.transformAccountReferences(this.transformCtxAccountsReferences(text)),
+    );
+  }
+
   transformCtxAccountsReferences(code: string): string {
     let transformed = code;
     // Normalize alternative context-parameter names so the rest of this

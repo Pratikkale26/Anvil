@@ -1251,8 +1251,7 @@ export class AstVisitorBase {
     const compoundMatch = stmt.value.match(/^__compound_([+\-*\/])=__(.+)$/);
     if (compoundMatch?.[1] && compoundMatch[2] && fieldDef) {
       const op = compoundMatch[1];
-      let rhs = w.transformCtxAccountsReferences(compoundMatch[2]);
-      rhs = w.normalizeKeyValueUsages(w.transformAccountReferences(rhs));
+      let rhs = w.resolveAccountExpr(compoundMatch[2]);
       rhs = w.transformHelperCalls(rhs);
       rhs = applyClockRentRewrites(rhs, w);
       if (isCheckedArithmeticType(fieldDef.type)) {
@@ -1289,8 +1288,7 @@ export class AstVisitorBase {
     }
 
     // Plain assign — value-side transforms mirror handler exactly.
-    let value = w.transformCtxAccountsReferences(stmt.value);
-    value = w.normalizeKeyValueUsages(w.transformAccountReferences(value));
+    let value = w.resolveAccountExpr(stmt.value);
     if (fieldDef && (fieldDef.type === "Pubkey" || fieldDef.type === "[u8; 32]")) {
       const directCtxKeySource = stmt.value.match(/^ctx\.accounts\.(\w+)\.key\(\)$/)?.[1];
       const trimmedValue = cleanInlineExpr(value);
@@ -1604,9 +1602,7 @@ export class AstVisitorBase {
   visitMsg(stmt: MsgStmt): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const msgText = w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(stmt.message)),
-    );
+    const msgText = w.resolveAccountExpr(stmt.message);
 
     if (w.emitter.frameworkName === "Pinocchio") {
       const literalMatch = msgText.match(/^"([^"\\]|\\.)*"/);
@@ -1696,9 +1692,7 @@ export class AstVisitorBase {
     const w = this.walker;
     w.ctx.transformedCount++;
     // Mirror handleRequire's pre-emit transforms on the condition.
-    const transformed = w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(stmt.condition)),
-    );
+    const transformed = w.resolveAccountExpr(stmt.condition);
 
     // Mirror emitRequireGuard's negation-stripping loop.
     let condText = trimOuterParens(stripAnchorConstraintError(cleanInlineExpr(transformed)));
@@ -3120,9 +3114,7 @@ export class AstVisitorBase {
   visitCpiMplCreateMetadataV3(stmt: CpiMplCreateMetadataV3): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     // DataV2.creators: pass through user's `Some(vec![Creator { ... }])`
     // expression (task #84 phase 2). Normalize ctx.accounts.X.key() →
     // target-appropriate form. None / undefined → literal None.
@@ -3173,9 +3165,7 @@ export class AstVisitorBase {
   visitCpiMplUpdateMetadataAccountsV2(stmt: CpiMplUpdateMetadataAccountsV2): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     // DataV2 is included when newName is set. Most real-world callers
     // pass Some(DataV2{...}) on this path; a sparse update that touches
     // only new_update_authority / primary_sale_happened / is_mutable
@@ -3223,9 +3213,7 @@ export class AstVisitorBase {
   visitCpiMplVerifyCollection(stmt: CpiMplVerifyCollection): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     // collection_authority_record is text Option<Pubkey> in source. The
     // helper signature takes Option<&AccountInfo>, so the caller wires
     // the source's `Some(record_pubkey_or_account)` into a binding the
@@ -3258,9 +3246,7 @@ export class AstVisitorBase {
   visitCpiMplUnverifyCollection(stmt: CpiMplUnverifyCollection): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const lines: string[] = [
       `    mpl_unverify_collection(`,
       `        ${resolve(stmt.metadata)},`,
@@ -3287,9 +3273,7 @@ export class AstVisitorBase {
   visitCpiMplSetAndVerifyCollection(stmt: CpiMplSetAndVerifyCollection): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const lines: string[] = [
       `    mpl_set_and_verify_collection(`,
       `        ${resolve(stmt.metadata)},`,
@@ -3317,9 +3301,7 @@ export class AstVisitorBase {
   visitCpiMplApproveCollectionAuthority(stmt: CpiMplApproveCollectionAuthority): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const lines: string[] = [
       `    mpl_approve_collection_authority(`,
       `        ${resolve(stmt.collectionAuthorityRecord)},`,
@@ -3347,9 +3329,7 @@ export class AstVisitorBase {
   visitCpiMplRevokeCollectionAuthority(stmt: CpiMplRevokeCollectionAuthority): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const lines: string[] = [
       `    mpl_revoke_collection_authority(`,
       `        ${resolve(stmt.collectionAuthorityRecord)},`,
@@ -3373,9 +3353,7 @@ export class AstVisitorBase {
   visitCpiMplMintNewEditionFromMaster(stmt: CpiMplMintNewEditionFromMaster): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const lines: string[] = [
       `    mpl_mint_new_edition_from_master(`,
       `        ${resolve(stmt.newMetadata)},`,
@@ -3409,9 +3387,7 @@ export class AstVisitorBase {
   visitCpiMplFreezeDelegated(stmt: CpiMplFreezeDelegated): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const lines: string[] = [
       `    mpl_freeze_delegated(`,
       `        ${resolve(stmt.delegate)},`,
@@ -3435,9 +3411,7 @@ export class AstVisitorBase {
   visitCpiMplThawDelegated(stmt: CpiMplThawDelegated): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const lines: string[] = [
       `    mpl_thaw_delegated(`,
       `        ${resolve(stmt.delegate)},`,
@@ -3463,9 +3437,7 @@ export class AstVisitorBase {
   visitCpiMplSignMetadata(stmt: CpiMplSignMetadata): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const lines: string[] = [
       `    mpl_sign_metadata(`,
       `        ${resolve(stmt.metadata)},`,
@@ -3487,9 +3459,7 @@ export class AstVisitorBase {
   visitCpiMplCreateMasterEditionV3(stmt: CpiMplCreateMasterEditionV3): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const lines: string[] = [
       `    mpl_create_master_edition_v3(`,
       `        ${resolve(stmt.edition)},`,
@@ -3521,9 +3491,7 @@ export class AstVisitorBase {
   visitCpiMplCoreCreateV2(stmt: CpiMplCoreCreateV2): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const resolveOpt = (e: string): string => {
       const trimmed = e.trim();
       if (trimmed === "None" || trimmed === "") return "None";
@@ -3569,9 +3537,7 @@ export class AstVisitorBase {
   visitCpiMplCoreUpdateV2(stmt: CpiMplCoreUpdateV2): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const resolveOpt = (e: string): string => {
       const trimmed = e.trim();
       if (trimmed === "None" || trimmed === "") return "None";
@@ -3619,9 +3585,7 @@ export class AstVisitorBase {
   visitCpiMplCoreTransferV1(stmt: CpiMplCoreTransferV1): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const resolveOpt = (e: string): string => {
       const trimmed = e.trim();
       if (trimmed === "None" || trimmed === "") return "None";
@@ -3655,9 +3619,7 @@ export class AstVisitorBase {
   visitCpiMplCoreBurnV1(stmt: CpiMplCoreBurnV1): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const resolveOpt = (e: string): string => {
       const trimmed = e.trim();
       if (trimmed === "None" || trimmed === "") return "None";
@@ -3690,9 +3652,7 @@ export class AstVisitorBase {
   visitCpiMplCoreCreateCollectionV2(stmt: CpiMplCoreCreateCollectionV2): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const resolveOpt = (e: string): string => {
       const trimmed = e.trim();
       if (trimmed === "None" || trimmed === "") return "None";
@@ -3781,9 +3741,7 @@ export class AstVisitorBase {
   visitCpiMplCoreAddPluginV1(stmt: CpiMplCoreAddPluginV1): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const resolveOpt = (e: string): string => {
       const trimmed = e.trim();
       if (trimmed === "None" || trimmed === "") return "None";
@@ -3813,9 +3771,7 @@ export class AstVisitorBase {
   visitCpiMplCoreRemovePluginV1(stmt: CpiMplCoreRemovePluginV1): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const resolveOpt = (e: string): string => {
       const trimmed = e.trim();
       if (trimmed === "None" || trimmed === "") return "None";
@@ -3845,9 +3801,7 @@ export class AstVisitorBase {
   visitCpiMplCoreUpdatePluginV1(stmt: CpiMplCoreUpdatePluginV1): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const resolveOpt = (e: string): string => {
       const trimmed = e.trim();
       if (trimmed === "None" || trimmed === "") return "None";
@@ -3877,9 +3831,7 @@ export class AstVisitorBase {
   visitCpiMplCoreApprovePluginAuthorityV1(stmt: CpiMplCoreApprovePluginAuthorityV1): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const resolveOpt = (e: string): string => {
       const trimmed = e.trim();
       if (trimmed === "None" || trimmed === "") return "None";
@@ -3911,9 +3863,7 @@ export class AstVisitorBase {
   visitCpiMplCoreRevokePluginAuthorityV1(stmt: CpiMplCoreRevokePluginAuthorityV1): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const resolveOpt = (e: string): string => {
       const trimmed = e.trim();
       if (trimmed === "None" || trimmed === "") return "None";
@@ -3950,9 +3900,7 @@ export class AstVisitorBase {
   visitCpiT22ConfidentialTransferInitMint(stmt: CpiT22ConfidentialTransferInitMint): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const unwrapSome = (expr: string): string => {
       const m = expr.trim().match(/^Some\(\s*([\s\S]+)\s*\)$/);
       return (m?.[1] ?? expr).trim().replace(/^&/, "");
@@ -3981,9 +3929,7 @@ export class AstVisitorBase {
   visitCpiT22ConfidentialTransferFeeInit(stmt: CpiT22ConfidentialTransferFeeInit): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const unwrapSome = (expr: string): string => {
       const m = expr.trim().match(/^Some\(\s*([\s\S]+)\s*\)$/);
       return (m?.[1] ?? expr).trim().replace(/^&/, "");
@@ -4008,9 +3954,7 @@ export class AstVisitorBase {
   visitCpiT22ConfidentialMintBurnInitMint(stmt: CpiT22ConfidentialMintBurnInitMint): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.normalizeKeyValueUsages(
-      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
-    );
+    const resolve = (e: string) => w.resolveAccountExpr(e);
     const lines: string[] = [
       `    t22_confidential_mint_burn_initialize_mint(`,
       `        ${resolve(stmt.mint)},`,

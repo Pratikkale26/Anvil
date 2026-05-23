@@ -2647,6 +2647,8 @@ impl ZeroCopy for ${accName} {}`;
 
     sections.push(this.fileHeader(ir.name));
     sections.push(this.emitUseStatements(ir));
+    const zeroCopyTraits = this.emitZeroCopyTraits(ir);
+    if (zeroCopyTraits) sections.push(zeroCopyTraits);
     if (constants.length > 0) sections.push(constants.join("\n\n"));
     if (types.length > 0) sections.push(this.emitCustomTypes({ ...ir, types }));
     const userTraitImplsSingle = this.emitUserTraitImpls(ir);
