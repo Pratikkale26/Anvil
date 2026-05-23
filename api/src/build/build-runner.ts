@@ -167,6 +167,8 @@ spl-associated-token-account = { version = "6", default-features = false, featur
 spl-memo = { version = "6", default-features = false, features = ["no-entrypoint"] }
 # G110 — spl-pod for OptionalNonZeroPubkey (T22 metadata update_authority).
 spl-pod = "0.5"
+# Cohort: fixed-macro for const fixed-point literals (marginfi, kamino).
+fixed-macro = "1"
 # Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
 # emit on hand-rolled bytes (no crate dep needed). The source's
 # get_feed_id_from_hex("0x...") is parsed at emit time into a byte
