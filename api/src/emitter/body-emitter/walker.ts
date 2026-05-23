@@ -1028,6 +1028,14 @@ export class BodyWalker {
         new RegExp(`\\b${accountName}\\.sub_lamports\\(([^)]*)\\)`, "g"),
         (_full, args: string) => `anvil_sub_lamports(${accountInfoVar}, ${args.trim()})`,
       );
+      // #64 — Anchor's Account<'info, T>::reload() re-reads bytes from
+      // on-chain state. Both Anvil targets emit raw AccountInfo (Pinocchio
+      // or solana-program), whose data is borrowed from the runtime and
+      // always live — there is no cache to refresh. Strip the call.
+      transformed = transformed.replace(
+        new RegExp(`\\b${accountName}\\.reload\\(\\)\\?;`, "g"),
+        () => `// reload() no-op: AccountInfo data is always live`,
+      );
       const tokenLike =
         account.accountType.includes("TokenAccount") ||
         account.constraints.some(

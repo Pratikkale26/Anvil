@@ -3474,6 +3474,28 @@ ${originalLines}
           decl = rawCode
             .replace(/\bAnchorSerialize\b/g, "BorshSerialize")
             .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+          // Augment user-source derive with `Clone, Debug, PartialEq` when
+          // any are missing. Anchor implicitly grants these via its own
+          // attribute-macro expansion, so user code can `assert_eq!` / `{:?}`
+          // a custom enum without listing them. Anvil strips the Anchor
+          // macro and keeps only the literal derive list — so missing traits
+          // surface as E0277 / E0369 cargo errors. Dedup against existing
+          // traits to avoid E0119 double-derives (kamino's
+          // `#[repr(u8)]\n#[derive(PartialEq, ...)]` pattern from G51).
+          const requiredTraits = ["Clone", "Debug", "PartialEq"];
+          const deriveMatch = decl.match(/#\[derive\(([^)]*)\)\]/);
+          if (deriveMatch) {
+            const present = new Set(
+              (deriveMatch[1] ?? "").split(/\s*,\s*/).map((t) => t.trim()).filter(Boolean),
+            );
+            const missing = requiredTraits.filter((t) => !present.has(t));
+            if (missing.length) {
+              decl = decl.replace(
+                /#\[derive\(([^)]*)\)\]/,
+                (_match, inner) => `#[derive(${inner}, ${missing.join(", ")})]`,
+              );
+            }
+          }
           // G47 — strip `Copy` from derive when any variant contains a
           // mutable reference (`&mut T` or `&'a mut T`). Mutable refs aren't
           // Copy in Rust, so `#[derive(Copy)]` on an enum like `NodeRefMut<'a>
