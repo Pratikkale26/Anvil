@@ -1030,7 +1030,25 @@ export class AstVisitorBase {
       stmt.accountType === "Unknown" ||
       !w.isGeneratedStateType(stmt.accountType)
     ) {
-      return [];
+      // Finding #64 sub-bug — preserve `let X = &ctx.accounts.Y` /
+      // `let X = ctx.accounts.Y` aliases whose RHS account isn't a
+      // user-defined #[account] struct (e.g. TokenAccount, Mint,
+      // AccountInfo, Sysvar). Previously dropped entirely, leaving every
+      // downstream reference to X unbound (E0425). The account-slice
+      // binding emitted by emitInstructionFunction (`let Y =
+      // &accounts[N];`) is already in scope, so the alias binds the
+      // same &AccountInfo. Downstream `X.field` references against
+      // TokenAccount internals still won't compile, but that's a
+      // separate emit gap (deserialize-into-typed-account) — the
+      // E0425s are gone.
+      const accountName = snakeCase(stmt.account);
+      const localVar = snakeCase(stmt.localVar);
+      if (localVar === accountName) return [];
+      const accRef = w.instr.accounts.find((acc) => snakeCase(acc.name) === accountName);
+      if (!accRef) return [];
+      // `let X = Y;` or `let X = &Y;` mirrored from source `mutable` flag.
+      const rhs = stmt.mutable ? ref(ident(accountName), true) : ident(accountName);
+      return [letStmt(localVar, rhs)];
     }
     const accountName = snakeCase(stmt.account);
     const localVar = snakeCase(stmt.localVar);
