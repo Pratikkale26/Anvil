@@ -242,6 +242,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // (`next_account_info(iter)?`, `&accounts[N..][i]`, etc.) that defeat naive
   // `[^)]*` matching.
   transformedRawCode = rewriteAccountTryFrom(transformedRawCode, w);
+  transformedRawCode = rewriteNextAccountInfo(transformedRawCode, w);
   // Fallback: still run the regex versions in case tree-sitter parse
   // returned the code unchanged (parse error → no-op). The regex is
   // idempotent on already-structurally-rewritten text since the tree-
@@ -608,6 +609,48 @@ export function rewriteAccountTryFrom(code: string, w: BodyWalker): string {
     }
     result.push(code.slice(i, m.index));
     result.push(replacement);
+    i = tailEnd;
+    HEAD.lastIndex = tailEnd;
+  }
+  result.push(code.slice(i));
+  return result.join("");
+}
+
+/**
+ * Finding #73 — rewrite `next_account_info(<iter_expr>)?` /
+ * `next_account_info(<iter_expr>)` to a target-fully-qualified
+ * `.next().ok_or(ProgramError::NotEnoughAccountKeys)` form.
+ *
+ * Anchor source uses `solana_program::account_info::next_account_info`
+ * to pull `&AccountInfo` out of a `Iter<'_, &AccountInfo>` (typically
+ * `ctx.remaining_accounts.iter()`). Pinocchio does not depend on
+ * solana_program. On Native the function exists upstream but the
+ * Anchor import path is stripped by Anvil's import sweep, so the
+ * symbol can fail to resolve. Rewriting unconditionally to the iterator
+ * shape removes the import dependency on both targets and produces the
+ * same `&AccountInfo` result.
+ */
+export function rewriteNextAccountInfo(code: string, w: BodyWalker): string {
+  const result: string[] = [];
+  let i = 0;
+  const HEAD = /(?<![:\w])next_account_info\s*\(/g;
+  HEAD.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = HEAD.exec(code)) !== null) {
+    const openParen = m.index + m[0].length - 1;
+    const closeParen = matchParen(code, openParen);
+    if (closeParen === -1) continue;
+    const innerExpr = code.slice(openParen + 1, closeParen).trim();
+    let tailEnd = closeParen + 1;
+    const hadQuestion = code[tailEnd] === "?";
+    if (hadQuestion) tailEnd++;
+    const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+    const errPath = isPinocchio
+      ? "pinocchio::program_error::ProgramError::NotEnoughAccountKeys"
+      : "solana_program::program_error::ProgramError::NotEnoughAccountKeys";
+    const q = hadQuestion ? "?" : "";
+    result.push(code.slice(i, m.index));
+    result.push(`(${innerExpr}).next().ok_or(${errPath})${q}`);
     i = tailEnd;
     HEAD.lastIndex = tailEnd;
   }

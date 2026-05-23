@@ -176,13 +176,56 @@ describe("finding #72 — Account::<T>::try_from rewrite", () => {
   });
 
   test("nested expression in arg — paren-balanced", async () => {
+    // After finding #73, next_account_info is also rewritten — composes with
+    // the try_from rewrite via paren-balanced inner-expr extraction.
     const code = await emitFor(
       `let iter = &mut ctx.remaining_accounts.iter(); let _ta = Account::<TokenAccount>::try_from(next_account_info(iter)?)?;`,
     );
     expect(code).toContain(
-      "pinocchio_token::state::TokenAccount::from_account_info(next_account_info(iter)?)?",
+      "pinocchio_token::state::TokenAccount::from_account_info((iter).next().ok_or(pinocchio::program_error::ProgramError::NotEnoughAccountKeys)?)?",
     );
     expect(code).not.toContain("::try_from");
+    expect(code).not.toContain("next_account_info(");
+  });
+
+  test("finding #73 — bare next_account_info(iter)? rewritten on Pinocchio", async () => {
+    const code = await emitFor(
+      `let iter = &mut ctx.remaining_accounts.iter(); let _info = next_account_info(iter)?;`,
+    );
+    expect(code).toContain(
+      "(iter).next().ok_or(pinocchio::program_error::ProgramError::NotEnoughAccountKeys)?",
+    );
+    expect(code).not.toContain("next_account_info(");
+  });
+
+  test("finding #73 — next_account_info on Native uses solana_program path", async () => {
+    const code = await emitForStateNative(
+      `let iter = &mut ctx.remaining_accounts.iter(); let _info = next_account_info(iter)?;`,
+    );
+    expect(code).toContain(
+      "(iter).next().ok_or(solana_program::program_error::ProgramError::NotEnoughAccountKeys)?",
+    );
+    expect(code).not.toContain("next_account_info(");
+  });
+
+  test("finding #73 — no `?` form is preserved (no `?` injected)", async () => {
+    const code = await emitFor(
+      `let iter = &mut ctx.remaining_accounts.iter(); let _maybe = next_account_info(iter);`,
+    );
+    expect(code).toContain(
+      "(iter).next().ok_or(pinocchio::program_error::ProgramError::NotEnoughAccountKeys)",
+    );
+    // Must NOT have a trailing `?` when source had none.
+    expect(code).not.toContain("NotEnoughAccountKeys)?");
+  });
+
+  test("finding #73 — qualified call site (::next_account_info) not rewritten", async () => {
+    // `::next_account_info(...)` (qualified path) is rare but must not be
+    // captured by the bare-identifier head. The lookbehind guards it.
+    const code = await emitFor(
+      `let iter = &mut ctx.remaining_accounts.iter(); let _info = solana_program::account_info::next_account_info(iter)?;`,
+    );
+    expect(code).toContain("solana_program::account_info::next_account_info(iter)?");
   });
 
   test("source has NO `?` (closure / .ok() chain) — must NOT inject `?`", async () => {
