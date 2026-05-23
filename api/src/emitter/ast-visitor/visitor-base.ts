@@ -3164,44 +3164,31 @@ export class AstVisitorBase {
   visitCpiMplCreateMetadataV3(stmt: CpiMplCreateMetadataV3): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    // DataV2.creators: pass through user's `Some(vec![Creator { ... }])`
-    // expression (task #84 phase 2). Normalize ctx.accounts.X.key() →
-    // target-appropriate form. None / undefined → literal None.
-    const creatorsArg = stmt.creators && stmt.creators !== "None"
-      ? resolve(stmt.creators)
-      : "None";
-    const collectionArg = stmt.collection && stmt.collection !== "None"
-      ? resolve(stmt.collection)
-      : "None";
-    const usesArg = stmt.uses && stmt.uses !== "None"
-      ? resolve(stmt.uses)
-      : "None";
-    const lines: string[] = [
-      `    mpl_create_metadata_accounts_v3(`,
-      `        ${resolve(stmt.metadata)},`,
-      `        ${resolve(stmt.mint)},`,
-      `        ${resolve(stmt.mintAuthority)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolve(stmt.updateAuthority)},`,
-      `        system_program,`,
-      `        rent,`,
-      `        token_metadata_program,`,
-      `        &${stmt.name},`,
-      `        &${stmt.symbol},`,
-      `        &${stmt.uri},`,
-      `        ${stmt.sellerFeeBasisPoints},`,
-      `        ${creatorsArg},`,
-      `        ${collectionArg},`,
-      `        ${usesArg},`,
-      `        ${stmt.isMutable},`,
-      `        ${stmt.updateAuthorityIsSigner},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const resolveOrNone = (val: string | undefined) =>
+      val && val !== "None" ? this.resolveToAst(val) : ident("None");
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_create_metadata_accounts_v3"), [
+      this.resolveToAst(stmt.metadata),
+      this.resolveToAst(stmt.mint),
+      this.resolveToAst(stmt.mintAuthority),
+      this.resolveToAst(stmt.payer),
+      this.resolveToAst(stmt.updateAuthority),
+      ident("system_program"),
+      ident("rent"),
+      ident("token_metadata_program"),
+      ref(parseSimpleExpr(stmt.name)),
+      ref(parseSimpleExpr(stmt.symbol)),
+      ref(parseSimpleExpr(stmt.uri)),
+      parseSimpleExpr(stmt.sellerFeeBasisPoints),
+      resolveOrNone(stmt.creators),
+      resolveOrNone(stmt.collection),
+      resolveOrNone(stmt.uses),
+      parseSimpleExpr(stmt.isMutable),
+      parseSimpleExpr(stmt.updateAuthorityIsSigner),
+      seedsArg,
+    ])))];
   }
 
   /**
@@ -3215,43 +3202,29 @@ export class AstVisitorBase {
   visitCpiMplUpdateMetadataAccountsV2(stmt: CpiMplUpdateMetadataAccountsV2): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    // DataV2 is included when newName is set. Most real-world callers
-    // pass Some(DataV2{...}) on this path; a sparse update that touches
-    // only new_update_authority / primary_sale_happened / is_mutable
-    // leaves newName undefined and the helper sees None for new_data.
+    const resolveOrNone = (val: string | undefined) =>
+      val && val !== "None" ? this.resolveToAst(val) : ident("None");
     const hasDataUpdate = !!stmt.newName;
-    const creatorsArg = stmt.creators && stmt.creators !== "None"
-      ? resolve(stmt.creators)
-      : "None";
-    const collectionArg = stmt.collection && stmt.collection !== "None"
-      ? resolve(stmt.collection)
-      : "None";
-    const usesArg = stmt.uses && stmt.uses !== "None"
-      ? resolve(stmt.uses)
-      : "None";
-    const lines: string[] = [
-      `    mpl_update_metadata_accounts_v2(`,
-      `        ${resolve(stmt.metadata)},`,
-      `        ${resolve(stmt.updateAuthority)},`,
-      `        token_metadata_program,`,
-      `        ${stmt.newUpdateAuthority},`,
-      hasDataUpdate ? `        true,` : `        false,`,
-      hasDataUpdate ? `        &${stmt.newName ?? `""`},` : `        "",`,
-      hasDataUpdate ? `        &${stmt.newSymbol ?? `""`},` : `        "",`,
-      hasDataUpdate ? `        &${stmt.newUri ?? `""`},` : `        "",`,
-      `        ${stmt.newSellerFeeBasisPoints ?? "0"},`,
-      `        ${creatorsArg},`,
-      `        ${collectionArg},`,
-      `        ${usesArg},`,
-      `        ${stmt.primarySaleHappened},`,
-      `        ${stmt.isMutable},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_update_metadata_accounts_v2"), [
+      this.resolveToAst(stmt.metadata),
+      this.resolveToAst(stmt.updateAuthority),
+      ident("token_metadata_program"),
+      parseSimpleExpr(stmt.newUpdateAuthority),
+      lit(hasDataUpdate ? "true" : "false"),
+      hasDataUpdate ? ref(parseSimpleExpr(stmt.newName ?? `""`)) : lit(`""`),
+      hasDataUpdate ? ref(parseSimpleExpr(stmt.newSymbol ?? `""`)) : lit(`""`),
+      hasDataUpdate ? ref(parseSimpleExpr(stmt.newUri ?? `""`)) : lit(`""`),
+      parseSimpleExpr(stmt.newSellerFeeBasisPoints ?? "0"),
+      resolveOrNone(stmt.creators),
+      resolveOrNone(stmt.collection),
+      resolveOrNone(stmt.uses),
+      parseSimpleExpr(stmt.primarySaleHappened),
+      parseSimpleExpr(stmt.isMutable),
+      seedsArg,
+    ])))];
   }
 
   /**
@@ -3504,41 +3477,29 @@ export class AstVisitorBase {
   visitCpiMplCoreCreateV2(stmt: CpiMplCoreCreateV2): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const resolveOpt = (e: string): string => {
-      const trimmed = e.trim();
-      if (trimmed === "None" || trimmed === "") return "None";
-      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
-      if (inner !== undefined) return `Some(${resolve(inner)})`;
-      return `Some(${resolve(trimmed)})`;
-    };
-    // DataState enum → discriminant byte. Unknown variants pass through and
-    // surface a compile error in user code rather than silently mismapping.
     const dataStateExpr = /::AccountState\b/.test(stmt.dataState)
       ? "0u8"
       : /::LedgerState\b/.test(stmt.dataState)
       ? "1u8"
       : stmt.dataState;
-    const lines: string[] = [
-      `    mpl_core_create_v2(`,
-      `        ${resolve(stmt.programAccount)},`,
-      `        ${resolve(stmt.asset)},`,
-      `        ${resolveOpt(stmt.collection)},`,
-      `        ${resolveOpt(stmt.authority)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolveOpt(stmt.owner)},`,
-      `        ${resolveOpt(stmt.updateAuthority)},`,
-      `        ${resolve(stmt.systemProgram)},`,
-      `        ${resolveOpt(stmt.logWrapper)},`,
-      `        &${stmt.name},`,
-      `        &${stmt.uri},`,
-      `        ${dataStateExpr},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_core_create_v2"), [
+      this.resolveToAst(stmt.programAccount),
+      this.resolveToAst(stmt.asset),
+      this.resolveOptAst(stmt.collection),
+      this.resolveOptAst(stmt.authority),
+      this.resolveToAst(stmt.payer),
+      this.resolveOptAst(stmt.owner),
+      this.resolveOptAst(stmt.updateAuthority),
+      this.resolveToAst(stmt.systemProgram),
+      this.resolveOptAst(stmt.logWrapper),
+      ref(parseSimpleExpr(stmt.name)),
+      ref(parseSimpleExpr(stmt.uri)),
+      parseSimpleExpr(dataStateExpr),
+      seedsArg,
+    ])))];
   }
 
   /**
