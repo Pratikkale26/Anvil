@@ -869,20 +869,32 @@ export class AstVisitorBase {
   constructor(readonly walker: BodyWalker) {}
 
   resolveToAst(text: string): RustExpr {
-    const parsed = tryStructuralizeExpr(text) ?? parseSimpleExpr(text);
-    const astResult = resolveAccountExprAstPipeline(parsed, this.walker.buildTransformContext());
-    if (_astPipelineCompareLog !== null) {
-      try {
-        const resolved = this.walker.resolveAccountExpr(text);
-        const regexResult = tryStructuralizeExpr(resolved) ?? parseSimpleExpr(resolved);
-        const regexText = printExpr(regexResult);
-        const astText = printExpr(astResult);
-        if (regexText !== astText) {
-          _astPipelineCompareLog.push({ input: text, regex: regexText, ast: astText });
-        }
-      } catch {}
+    const parsed = tryStructuralizeExpr(text);
+    if (parsed !== null) {
+      const astResult = resolveAccountExprAstPipeline(parsed, this.walker.buildTransformContext());
+      if (_astPipelineCompareLog !== null) {
+        try {
+          const resolved = this.walker.resolveAccountExpr(text);
+          const regexResult = tryStructuralizeExpr(resolved) ?? parseSimpleExpr(resolved);
+          const regexText = printExpr(regexResult);
+          const astText = printExpr(astResult);
+          if (regexText !== astText) {
+            _astPipelineCompareLog.push({ input: text, regex: regexText, ast: astText });
+          }
+        } catch {}
+      }
+      return astResult;
     }
-    return astResult;
+    const resolved = this.walker.resolveAccountExpr(text);
+    return tryStructuralizeExpr(resolved) ?? parseSimpleExpr(resolved);
+  }
+
+  resolveToText(text: string): string {
+    return printExpr(this.resolveToAst(text));
+  }
+
+  resolveCtxToText(text: string): string {
+    return this.walker.transformCtxAccountsReferences(text);
   }
 
   visit(stmt: BodyStatement): RustStmt[] {
@@ -2523,8 +2535,8 @@ export class AstVisitorBase {
     // Authority + freeze expressions reference ctx.accounts.X.key();
     // route through transformCtxAccountsReferences so they resolve to
     // local AccountInfo bindings.
-    const mintAuthority = w.transformCtxAccountsReferences(stmt.mintAuthority);
-    const freezeAuthority = w.transformCtxAccountsReferences(stmt.freezeAuthority);
+    const mintAuthority = this.resolveCtxToText(stmt.mintAuthority);
+    const freezeAuthority = this.resolveCtxToText(stmt.freezeAuthority);
     lines.push(w.emitter.emitT22InitializeMint2(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2557,8 +2569,8 @@ export class AstVisitorBase {
     // Authority expressions reference Anchor-side ctx.accounts.X.key();
     // route them through the same passes the body emitter uses for typed
     // CPI value args so they resolve to local AccountInfo bindings.
-    const tfca = w.transformCtxAccountsReferences(stmt.transferFeeConfigAuthority);
-    const wwa = w.transformCtxAccountsReferences(stmt.withdrawWithheldAuthority);
+    const tfca = this.resolveCtxToText(stmt.transferFeeConfigAuthority);
+    const wwa = this.resolveCtxToText(stmt.withdrawWithheldAuthority);
     lines.push(w.emitter.emitT22TransferFeeInitialize(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2608,7 +2620,7 @@ export class AstVisitorBase {
     // closeAuthority IR field is the verbatim Option<&Pubkey> source
     // expression. Resolve ctx.accounts.X references like other typed-
     // CPI value args so they bind to the local AccountInfo names.
-    const closeAuthorityResolved = w.transformCtxAccountsReferences(stmt.closeAuthority);
+    const closeAuthorityResolved = this.resolveCtxToText(stmt.closeAuthority);
     lines.push(w.emitter.emitT22MintCloseAuthorityInitialize(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2623,7 +2635,7 @@ export class AstVisitorBase {
     w.ctx.transformedCount++;
     w.ctx.details.push(`Transformed: permanent_delegate_initialize(${stmt.mint})`);
     const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
-    const delegateResolved = w.transformCtxAccountsReferences(stmt.delegate);
+    const delegateResolved = this.resolveCtxToText(stmt.delegate);
     lines.push(w.emitter.emitT22PermanentDelegateInitialize(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2638,8 +2650,8 @@ export class AstVisitorBase {
     w.ctx.transformedCount++;
     w.ctx.details.push(`Transformed: transfer_hook_initialize(${stmt.mint})`);
     const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
-    const authorityResolved = w.transformCtxAccountsReferences(stmt.authority);
-    const hookIdResolved = w.transformCtxAccountsReferences(stmt.transferHookProgramId);
+    const authorityResolved = this.resolveCtxToText(stmt.authority);
+    const hookIdResolved = this.resolveCtxToText(stmt.transferHookProgramId);
     lines.push(w.emitter.emitT22TransferHookInitialize(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2655,7 +2667,7 @@ export class AstVisitorBase {
     w.ctx.transformedCount++;
     w.ctx.details.push(`Transformed: transfer_hook_update(${stmt.mint})`);
     const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
-    const hookIdResolved = w.transformCtxAccountsReferences(stmt.transferHookProgramId);
+    const hookIdResolved = this.resolveCtxToText(stmt.transferHookProgramId);
     lines.push(w.emitter.emitT22TransferHookUpdate(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2671,8 +2683,8 @@ export class AstVisitorBase {
     w.ctx.transformedCount++;
     w.ctx.details.push(`Transformed: metadata_pointer_initialize(${stmt.mint})`);
     const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
-    const authorityResolved = w.transformCtxAccountsReferences(stmt.authority);
-    const metadataResolved = w.transformCtxAccountsReferences(stmt.metadataAddress);
+    const authorityResolved = this.resolveCtxToText(stmt.authority);
+    const metadataResolved = this.resolveCtxToText(stmt.metadataAddress);
     lines.push(w.emitter.emitT22MetadataPointerInitialize(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2688,7 +2700,7 @@ export class AstVisitorBase {
     w.ctx.transformedCount++;
     w.ctx.details.push(`Transformed: metadata_pointer_update(${stmt.mint})`);
     const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
-    const metadataResolved = w.transformCtxAccountsReferences(stmt.metadataAddress);
+    const metadataResolved = this.resolveCtxToText(stmt.metadataAddress);
     lines.push(w.emitter.emitT22MetadataPointerUpdate(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2704,8 +2716,8 @@ export class AstVisitorBase {
     w.ctx.transformedCount++;
     w.ctx.details.push(`Transformed: group_pointer_initialize(${stmt.mint})`);
     const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
-    const authorityResolved = w.transformCtxAccountsReferences(stmt.authority);
-    const groupResolved = w.transformCtxAccountsReferences(stmt.groupAddress);
+    const authorityResolved = this.resolveCtxToText(stmt.authority);
+    const groupResolved = this.resolveCtxToText(stmt.groupAddress);
     lines.push(w.emitter.emitT22GroupPointerInitialize(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2721,7 +2733,7 @@ export class AstVisitorBase {
     w.ctx.transformedCount++;
     w.ctx.details.push(`Transformed: group_pointer_update(${stmt.mint})`);
     const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
-    const groupResolved = w.transformCtxAccountsReferences(stmt.groupAddress);
+    const groupResolved = this.resolveCtxToText(stmt.groupAddress);
     lines.push(w.emitter.emitT22GroupPointerUpdate(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2737,8 +2749,8 @@ export class AstVisitorBase {
     w.ctx.transformedCount++;
     w.ctx.details.push(`Transformed: group_member_pointer_initialize(${stmt.mint})`);
     const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
-    const authorityResolved = w.transformCtxAccountsReferences(stmt.authority);
-    const memberResolved = w.transformCtxAccountsReferences(stmt.memberAddress);
+    const authorityResolved = this.resolveCtxToText(stmt.authority);
+    const memberResolved = this.resolveCtxToText(stmt.memberAddress);
     lines.push(w.emitter.emitT22GroupMemberPointerInitialize(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2754,7 +2766,7 @@ export class AstVisitorBase {
     w.ctx.transformedCount++;
     w.ctx.details.push(`Transformed: group_member_pointer_update(${stmt.mint})`);
     const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
-    const memberResolved = w.transformCtxAccountsReferences(stmt.memberAddress);
+    const memberResolved = this.resolveCtxToText(stmt.memberAddress);
     lines.push(w.emitter.emitT22GroupMemberPointerUpdate(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2805,7 +2817,7 @@ export class AstVisitorBase {
     w.ctx.details.push(`Transformed: harvest_withheld_tokens_to_mint(${stmt.mint})`);
     const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
     // sources expression may reference ctx.accounts.X / ctx.remaining_accounts.
-    const sourcesResolved = w.transformCtxAccountsReferences(stmt.sources);
+    const sourcesResolved = this.resolveCtxToText(stmt.sources);
     lines.push(w.emitter.emitT22HarvestWithheldToMint(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),
@@ -2850,7 +2862,7 @@ export class AstVisitorBase {
     w.ctx.details.push(`Transformed: interest_bearing_mint_initialize(${stmt.mint})`);
     const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.mint);
     // Rate-authority arg may reference ctx.accounts.X.key().
-    const rateAuth = w.transformCtxAccountsReferences(stmt.rateAuthority);
+    const rateAuth = this.resolveCtxToText(stmt.rateAuthority);
     lines.push(w.emitter.emitT22InterestBearingMintInitialize(
       snakeCase(stmt.mint),
       snakeCase(stmt.tokenProgram),

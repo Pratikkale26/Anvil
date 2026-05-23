@@ -57,16 +57,39 @@ function isKeyMethod(e: RustExpr): boolean {
   return e.kind === "method_call" && e.method === "key" && e.args.length === 0;
 }
 
+function isKeyCall(e: RustExpr): boolean {
+  return e.kind === "call" && e.args.length === 0
+    && e.callee.kind === "field" && e.callee.field === "key";
+}
+
 function isKeyField(e: RustExpr): boolean {
   return e.kind === "field" && e.field === "key";
 }
 
 function isKeyAccess(e: RustExpr): boolean {
-  return isKeyMethod(e) || isKeyField(e);
+  return isKeyMethod(e) || isKeyCall(e) || isKeyField(e);
+}
+
+function isAlreadyKeyExpr(e: RustExpr): boolean {
+  return e.kind === "deref" && isKeyAccess(e.expr);
 }
 
 function receiverIdent(e: RustExpr): string | null {
   if (e.kind === "ident") return e.name;
+  return null;
+}
+
+function keyAccessReceiver(e: RustExpr): string | null {
+  if (isKeyMethod(e)) return receiverIdent((e as any).receiver);
+  if (isKeyCall(e)) return receiverIdent((e as any).callee?.obj);
+  if (isKeyField(e)) return receiverIdent((e as any).obj);
+  return null;
+}
+
+function keyAccessReceiverExpr(e: RustExpr): RustExpr | null {
+  if (isKeyMethod(e)) return (e as any).receiver;
+  if (isKeyCall(e)) return (e as any).callee?.obj ?? null;
+  if (isKeyField(e)) return (e as any).obj;
   return null;
 }
 
@@ -127,21 +150,10 @@ export function rewriteAccountKeyValueRefsAst(
   }
 
   return walkExpr(expr, (e) => {
-    // <recv>.key() — but NOT when parent wraps with .as_ref() or .to_bytes()
-    // walkExpr visits top-down so we check the CURRENT node first.
-    // If this is .key().as_ref() or .key().to_bytes(), skip (handled by 2c).
-    if (isKeyMethod(e)) {
-      const recv = receiverIdent(e.kind === "method_call" ? e.receiver : e);
-      if (recv && receiverSet.has(recv)) {
-        return keyExprForAccount(recv, ctx);
-      }
-    }
-    // <recv>.key (field form) — same exclusion for .as_ref chains
-    if (isKeyField(e)) {
-      const recv = receiverIdent(e.kind === "field" ? e.obj : e);
-      if (recv && receiverSet.has(recv)) {
-        return keyExprForAccount(recv, ctx);
-      }
+    if (isAlreadyKeyExpr(e)) return e;
+    if (isKeyAccess(e)) {
+      const recv = keyAccessReceiver(e);
+      if (recv && receiverSet.has(recv)) return terminal(keyExprForAccount(recv, ctx));
     }
     return e;
   });
@@ -174,19 +186,14 @@ export function rewriteAccountKeyChainsAst(
     if (args.length !== 0) return e;
     if (method !== "as_ref" && method !== "to_bytes") return e;
 
-    // receiver should be .key() or .key
     if (!isKeyAccess(receiver)) return e;
 
-    const innerRecv = receiver.kind === "method_call"
-      ? receiverIdent(receiver.receiver)
-      : receiver.kind === "field"
-        ? receiverIdent(receiver.obj)
-        : null;
+    const innerRecv = keyAccessReceiver(receiver);
 
     if (!innerRecv || !receiverSet.has(innerRecv)) return e;
 
-    if (method === "as_ref") return keyAsRefExprForAccount(innerRecv, ctx);
-    return keyExprForAccount(innerRecv, ctx);
+    if (method === "as_ref") return terminal(keyAsRefExprForAccount(innerRecv, ctx));
+    return terminal(keyExprForAccount(innerRecv, ctx));
   });
 }
 
@@ -287,17 +294,10 @@ export function rewriteAccountKeyComparisonsAst(
   }
 
   return walkExpr(expr, (e) => {
-    if (isKeyMethod(e)) {
-      const recv = receiverIdent((e as any).receiver);
-      if (recv && receiverSet.has(recv)) {
-        return keyExprForAccount(recv, ctx);
-      }
-    }
-    if (isKeyField(e)) {
-      const recv = receiverIdent((e as any).obj);
-      if (recv && receiverSet.has(recv)) {
-        return keyExprForAccount(recv, ctx);
-      }
+    if (isAlreadyKeyExpr(e)) return e;
+    if (isKeyAccess(e)) {
+      const recv = keyAccessReceiver(e);
+      if (recv && receiverSet.has(recv)) return terminal(keyExprForAccount(recv, ctx));
     }
     return e;
   });
@@ -362,10 +362,10 @@ export function transformCtxAccountsRefsAst(
     // ctx.accounts.X.key().as_ref() → emitAccountKeyAsRefExpr
     if (e.kind === "method_call" && e.method === "as_ref" && e.args.length === 0) {
       const inner = e.receiver;
-      if ((isKeyMethod(inner) || isKeyField(inner))) {
-        const keyRecv = inner.kind === "method_call" ? inner.receiver : (inner as any).obj;
-        if (keyRecv.kind === "field" && isCtxAccounts(keyRecv.obj)) {
-          return keyAsRefExprForAccount(snakeCase(keyRecv.field), ctx);
+      if (isKeyAccess(inner)) {
+        const keyRecv = keyAccessReceiverExpr(inner);
+        if (keyRecv?.kind === "field" && isCtxAccounts(keyRecv.obj)) {
+          return terminal(keyAsRefExprForAccount(snakeCase(keyRecv.field), ctx));
         }
       }
     }
@@ -373,19 +373,19 @@ export function transformCtxAccountsRefsAst(
     // ctx.accounts.X.key().to_bytes() → emitAccountKeyExpr
     if (e.kind === "method_call" && e.method === "to_bytes" && e.args.length === 0) {
       const inner = e.receiver;
-      if (isKeyMethod(inner) || isKeyField(inner)) {
-        const keyRecv = inner.kind === "method_call" ? inner.receiver : (inner as any).obj;
-        if (keyRecv.kind === "field" && isCtxAccounts(keyRecv.obj)) {
-          return keyExprForAccount(snakeCase(keyRecv.field), ctx);
+      if (isKeyAccess(inner)) {
+        const keyRecv = keyAccessReceiverExpr(inner);
+        if (keyRecv?.kind === "field" && isCtxAccounts(keyRecv.obj)) {
+          return terminal(keyExprForAccount(snakeCase(keyRecv.field), ctx));
         }
       }
     }
 
     // ctx.accounts.X.key() / ctx.accounts.X.key → emitAccountKeyExpr
-    if ((isKeyMethod(e) || isKeyField(e))) {
-      const keyRecv = e.kind === "method_call" ? e.receiver : (e as any).obj;
-      if (keyRecv.kind === "field" && isCtxAccounts(keyRecv.obj)) {
-        return keyExprForAccount(snakeCase(keyRecv.field), ctx);
+    if (isKeyAccess(e)) {
+      const keyRecv = keyAccessReceiverExpr(e);
+      if (keyRecv?.kind === "field" && isCtxAccounts(keyRecv.obj)) {
+        return terminal(keyExprForAccount(snakeCase(keyRecv.field), ctx));
       }
     }
 
@@ -393,14 +393,14 @@ export function transformCtxAccountsRefsAst(
     if (e.kind === "method_call" && e.method === "lamports" && e.args.length === 0
         && e.receiver.kind === "field" && isCtxAccounts(e.receiver.obj)) {
       const ai = ctx.resolveAccountInfoVar(snakeCase(e.receiver.field));
-      return parseSimpleExpr(ctx.emitAccountKeyExpr(ai).replace(/\.key\b.*/, ".lamports()"));
+      return terminal(parseSimpleExpr(ctx.emitAccountKeyExpr(ai).replace(/\.key\b.*/, ".lamports()")));
     }
 
     // ctx.accounts.X.amount → token_account_amount(ai)?
     if (e.kind === "field" && e.field === "amount"
         && e.obj.kind === "field" && isCtxAccounts(e.obj.obj)) {
       const ai = ctx.resolveAccountInfoVar(snakeCase(e.obj.field));
-      return parseSimpleExpr(`token_account_amount(${ai})?`);
+      return terminal(parseSimpleExpr(`token_account_amount(${ai})?`));
     }
 
     // &*ctx.accounts.X → &snakeCase(X)
@@ -481,13 +481,13 @@ export function transformAccountRefsAst(
       if (recv && accountNames.has(recv)) {
         const ai = ctx.resolveAccountInfoVar(recv);
         if (e.method === "lamports" && e.args.length === 0)
-          return parseSimpleExpr(ctx.emitAccountKeyExpr(ai).replace(/\.key\b.*/, ".lamports()"));
+          return terminal(parseSimpleExpr(ctx.emitAccountKeyExpr(ai).replace(/\.key\b.*/, ".lamports()")));
         if (e.method === "get_lamports" && e.args.length === 0)
-          return parseSimpleExpr(`anvil_get_lamports(${ai})`);
+          return terminal(parseSimpleExpr(`anvil_get_lamports(${ai})`));
         if (e.method === "add_lamports" && e.args.length === 1)
-          return parseSimpleExpr(`anvil_add_lamports(${ai}, ${printExprCompact(e.args[0])})`);
+          return terminal(parseSimpleExpr(`anvil_add_lamports(${ai}, ${printExprCompact(e.args[0])})`));
         if (e.method === "sub_lamports" && e.args.length === 1)
-          return parseSimpleExpr(`anvil_sub_lamports(${ai}, ${printExprCompact(e.args[0])})`);
+          return terminal(parseSimpleExpr(`anvil_sub_lamports(${ai}, ${printExprCompact(e.args[0])})`));
       }
     }
 
@@ -506,23 +506,23 @@ export function transformAccountRefsAst(
       if (mintLike && (e.field === "supply" || e.field === "decimals")) {
         const ai = ctx.resolveAccountInfoVar(recv);
         if (ctx.isPinocchio) {
-          return parseSimpleExpr(`pinocchio_token::state::Mint::from_account_info(${ai})?.${e.field}()`);
+          return terminal(parseSimpleExpr(`pinocchio_token::state::Mint::from_account_info(${ai})?.${e.field}()`));
         }
-        return parseSimpleExpr(`{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&${ai}.data.borrow())?.${e.field} }`);
+        return terminal(parseSimpleExpr(`{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&${ai}.data.borrow())?.${e.field} }`));
       }
 
       if (tokenLike) {
         if (e.field === "amount") {
           const ai = ctx.resolveAccountInfoVar(recv);
-          return parseSimpleExpr(`token_account_amount(${ai})?`);
+          return terminal(parseSimpleExpr(`token_account_amount(${ai})?`));
         }
         const splPubkeyFields = ["owner", "mint", "delegate", "close_authority"];
         if (splPubkeyFields.includes(e.field)) {
           const ai = ctx.resolveAccountInfoVar(recv);
           if (ctx.isPinocchio) {
-            return parseSimpleExpr(`*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.${e.field}()`);
+            return terminal(parseSimpleExpr(`*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.${e.field}()`));
           }
-          return parseSimpleExpr(`spl_token::state::Account::unpack(&${ai}.data.borrow())?.${e.field}`);
+          return terminal(parseSimpleExpr(`spl_token::state::Account::unpack(&${ai}.data.borrow())?.${e.field}`));
         }
       }
     }
@@ -557,7 +557,6 @@ export function resolveAccountExprAstPipeline(
 ): RustExpr {
   let result = transformCtxAccountsRefsAst(expr, ctx);
   result = transformAccountRefsAst(result, ctx);
-  result = normalizeKeyValueUsagesAst(result, ctx);
   return result;
 }
 
@@ -572,10 +571,19 @@ function printExprCompact(e: RustExpr): string {
 
 // ─── Generic walker ────────────────────────────────────────────────────
 
-type ExprVisitor = (e: RustExpr) => RustExpr;
+type ExprVisitorResult = RustExpr | { replaced: RustExpr };
+type ExprVisitor = (e: RustExpr) => ExprVisitorResult;
+
+function terminal(e: RustExpr): ExprVisitorResult { return { replaced: e }; }
+
+function unwrapResult(r: ExprVisitorResult): { expr: RustExpr; stop: boolean } {
+  if (r !== null && typeof r === "object" && "replaced" in r) return { expr: r.replaced, stop: true };
+  return { expr: r as RustExpr, stop: false };
+}
 
 export function walkExpr(expr: RustExpr, visit: ExprVisitor): RustExpr {
-  const e = visit(expr);
+  const { expr: e, stop } = unwrapResult(visit(expr));
+  if (stop) return e;
   switch (e.kind) {
     case "ident":
     case "lit":
