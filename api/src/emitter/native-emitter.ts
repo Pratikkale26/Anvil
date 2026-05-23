@@ -23,6 +23,7 @@ import {
 } from "./emitter-utils.js";
 import {
   irNeedsHelper,
+  irNeedsAccountLamportMethodHelpers,
   irNeedsUnsignedLamportsHelper,
   irNeedsSignedLamportsHelper,
   irNeedsUnsignedSplMintToHelper,
@@ -2103,6 +2104,32 @@ impl std::error::Error for ${enumName} {}`;
         &[from.clone(), to.clone()],
         signer_seeds,
     )?;
+    Ok(())
+}`);
+    }
+
+    // Finding #71 — Anchor's Account<'info, T> exposes direct lamport-cell
+    // accessors. solana-program's AccountInfo has `lamports()` (read) but no
+    // `get/add/sub_lamports`. Mirror Anchor's semantics: get is infallible
+    // u64; add/sub return Result with ArithmeticOverflow on under/overflow.
+    if (irNeedsAccountLamportMethodHelpers(_ir)) {
+      helpers.push(`pub fn anvil_get_lamports(account: &AccountInfo) -> u64 {
+    account.lamports()
+}
+
+pub fn anvil_add_lamports<'a>(account: &AccountInfo<'a>, amount: u64) -> ProgramResult {
+    let mut cell = account.try_borrow_mut_lamports()?;
+    **cell = (**cell)
+        .checked_add(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    Ok(())
+}
+
+pub fn anvil_sub_lamports<'a>(account: &AccountInfo<'a>, amount: u64) -> ProgramResult {
+    let mut cell = account.try_borrow_mut_lamports()?;
+    **cell = (**cell)
+        .checked_sub(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
     Ok(())
 }`);
     }

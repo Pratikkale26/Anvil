@@ -1003,6 +1003,31 @@ export class BodyWalker {
         new RegExp(`\\b${accountName}\\.lamports\\(\\)`, "g"),
         () => `${this.emitter.emitAccountLamportsExpr(accountInfoVar)}`,
       );
+      // Finding #71 — Anchor's Account<'info, T> exposes direct lamport-cell
+      // accessors via the AccountInfo wrapper:
+      //   .get_lamports() → u64
+      //   .add_lamports(n) → Result<(), ProgramError>
+      //   .sub_lamports(n) → Result<(), ProgramError>
+      // Neither pinocchio nor solana-program's AccountInfo has those methods.
+      // Rewrite the call site to the anvil_* helper which takes the AccountInfo
+      // binding directly. Necessary at the same call-site phase as `.lamports()`
+      // because state-rebinding (`let pda = LamportsPda::from_account_info(pda_account)?`)
+      // changes `pda` from an AccountInfo into the deserialized struct, so the
+      // method call no longer resolves on the receiver. resolveAccountInfoVar()
+      // returns the original AccountInfo binding (`pda_account`) when rebound,
+      // and the account name itself when not — both forms emit correctly.
+      transformed = transformed.replace(
+        new RegExp(`\\b${accountName}\\.get_lamports\\(\\)`, "g"),
+        () => `anvil_get_lamports(${accountInfoVar})`,
+      );
+      transformed = transformed.replace(
+        new RegExp(`\\b${accountName}\\.add_lamports\\(([^)]*)\\)`, "g"),
+        (_full, args: string) => `anvil_add_lamports(${accountInfoVar}, ${args.trim()})`,
+      );
+      transformed = transformed.replace(
+        new RegExp(`\\b${accountName}\\.sub_lamports\\(([^)]*)\\)`, "g"),
+        (_full, args: string) => `anvil_sub_lamports(${accountInfoVar}, ${args.trim()})`,
+      );
       const tokenLike =
         account.accountType.includes("TokenAccount") ||
         account.constraints.some(

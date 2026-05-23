@@ -22,6 +22,7 @@ import {
   emitRequireGuard,
 } from "./emitter-utils.js";
 import {
+  irNeedsAccountLamportMethodHelpers,
   irNeedsHelper,
   irNeedsSignedLamportsHelper,
   irNeedsSignedSplBurnHelper,
@@ -3237,6 +3238,33 @@ impl From<${enumName}> for ProgramError {
         lamports: amount,
     }
     .invoke_signed(&[signer])
+}`);
+    }
+
+    // Finding #71 — Anchor's Account<'info, T> exposes direct lamport-cell
+    // accessors via the AccountInfo wrapper. Pinocchio's AccountInfo has
+    // `lamports()` (read) but no `get/add/sub_lamports`. Mirror Anchor's
+    // semantics: get is infallible u64; add/sub return Result with
+    // ArithmeticOverflow on under/overflow.
+    if (irNeedsAccountLamportMethodHelpers(ir)) {
+      helpers.push(`pub fn anvil_get_lamports(account: &AccountInfo) -> u64 {
+    account.lamports()
+}
+
+pub fn anvil_add_lamports(account: &AccountInfo, amount: u64) -> ProgramResult {
+    let cell = unsafe { account.borrow_mut_lamports_unchecked() };
+    *cell = (*cell)
+        .checked_add(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    Ok(())
+}
+
+pub fn anvil_sub_lamports(account: &AccountInfo, amount: u64) -> ProgramResult {
+    let cell = unsafe { account.borrow_mut_lamports_unchecked() };
+    *cell = (*cell)
+        .checked_sub(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+    Ok(())
 }`);
     }
 

@@ -355,6 +355,29 @@ export function irNeedsSignedLamportsHelper(ir: SolanaIR): boolean {
   );
 }
 
+/**
+ * Finding #71 — Anchor's `Account<'info, T>` (and the underlying
+ * `AccountInfo` wrapper) exposes `.get_lamports()`, `.add_lamports(n)`,
+ * and `.sub_lamports(n)` as direct lamport-cell accessors. Neither
+ * pinocchio's nor solana-program's AccountInfo has those methods, so
+ * call sites emit E0599 errors. We rewrite them at call sites in
+ * walker.transformAccountReferences to `anvil_{get,add,sub}_lamports(
+ * <accountInfoVar>, …)`, and inject the helpers when an IR needs them.
+ *
+ * Trigger: any pass_through statement that references one of the three
+ * method calls against an identifier (we don't try to constrain to known
+ * account names — the call-site rewrite handles that side; if the helper
+ * is injected but no rewrite fires, it's harmless dead code that lints).
+ */
+export function irNeedsAccountLamportMethodHelpers(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) =>
+      stmt.kind === "pass_through" &&
+      /\b\w+\.(?:get|add|sub)_lamports\s*\(/.test(stmt.code)
+    )
+  );
+}
+
 export function irNeedsTokenAmountHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) => {
     // Constraint-check emit invokes `transformCtxAccountsReferences` on the
