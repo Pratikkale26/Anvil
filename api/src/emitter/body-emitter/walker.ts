@@ -50,6 +50,59 @@ import type { BodyEmitterCallbacks, BodyEmitterContext } from "./types.js";
 import { applyPostEmitCleanup } from "./post-emit-cleanup.js";
 import { MARKER_ANVIL_PREFIX } from "../markers.js";
 
+const mintFieldRules: Array<{
+  field: string;
+  build: (ai: string, isPinocchio: boolean) => string;
+}> = [
+  { field: "supply", build: (ai, pin) => pin
+    ? `pinocchio_token::state::Mint::from_account_info(${ai})?.supply()`
+    : `{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&${ai}.data.borrow())?.supply }` },
+  { field: "decimals", build: (ai, pin) => pin
+    ? `pinocchio_token::state::Mint::from_account_info(${ai})?.decimals()`
+    : `{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&${ai}.data.borrow())?.decimals }` },
+];
+
+const tokenAccountFieldRules: Array<{
+  field: string;
+  regex: (recv: string) => string;
+  build: (ai: string, isPinocchio: boolean) => string;
+}> = [
+  { field: "amount",
+    regex: (r) => `(^|[^\\w.])${r}\\.amount\\b`,
+    build: (ai) => `token_account_amount(${ai})?` },
+  { field: "owner",
+    regex: (r) => `(^|[^\\w.])&?${r}\\.owner\\b(?!\\s*\\()`,
+    build: (ai, pin) => pin
+      ? `*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.owner()`
+      : `spl_token::state::Account::unpack(&${ai}.data.borrow())?.owner` },
+  { field: "mint",
+    regex: (r) => `(^|[^\\w.])&?${r}\\.mint\\b(?!\\s*\\()`,
+    build: (ai, pin) => pin
+      ? `*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.mint()`
+      : `spl_token::state::Account::unpack(&${ai}.data.borrow())?.mint` },
+  { field: "delegate",
+    regex: (r) => `(^|[^\\w.])&?${r}\\.delegate\\b(?!\\s*\\()`,
+    build: (ai, pin) => pin
+      ? `*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.delegate()`
+      : `spl_token::state::Account::unpack(&${ai}.data.borrow())?.delegate` },
+  { field: "close_authority",
+    regex: (r) => `(^|[^\\w.])&?${r}\\.close_authority\\b(?!\\s*\\()`,
+    build: (ai, pin) => pin
+      ? `*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.close_authority()`
+      : `spl_token::state::Account::unpack(&${ai}.data.borrow())?.close_authority` },
+];
+
+const tokenLocalVarFieldRules: Array<{
+  field: string;
+  build: (localVar: string) => string;
+}> = [
+  { field: "amount", build: (lv) => `${lv}.amount()` },
+  { field: "owner", build: (lv) => `*${lv}.owner()` },
+  { field: "mint", build: (lv) => `*${lv}.mint()` },
+  { field: "delegate", build: (lv) => `*${lv}.delegate()` },
+  { field: "close_authority", build: (lv) => `*${lv}.close_authority()` },
+];
+
 export class BodyWalker {
   readonly lines: string[] = [];
   readonly stateVars = new Map<string, string>();
@@ -1061,82 +1114,32 @@ export class BodyWalker {
             constraint.kind.startsWith("token::") ||
             constraint.kind.startsWith("associated_token::"),
         );
-      // Mint-shaped: similar treatment for .supply / .decimals fields.
-      // Anchor's Account<'info, Mint> auto-deserializes; Anvil's emit
-      // needs to bridge AccountInfo → pinocchio_token::state::Mint.
       const mintLike =
         account.accountType.includes("Mint") ||
         account.constraints.some((c) => c.kind.startsWith("mint::"));
+      const isPinocchio = this.emitter.frameworkName === "Pinocchio";
       if (mintLike) {
-        // .supply / .decimals on a Mint account. pinocchio_token's Mint
-        // exposes supply() -> u64 and decimals() -> u8.
-        const mintU64Fields = ["supply"];
-        const mintU8Fields = ["decimals"];
-        for (const field of mintU64Fields) {
+        for (const { field, build } of mintFieldRules) {
           transformed = transformed.replace(
             new RegExp(`(^|[^\\w.])${accountName}\\.${field}\\b(?!\\s*\\()`, "g"),
-            (_full, prefix: string) =>
-              this.emitter.frameworkName === "Pinocchio"
-                ? `${prefix}pinocchio_token::state::Mint::from_account_info(${accountInfoVar})?.${field}()`
-                : `${prefix}{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&${accountInfoVar}.data.borrow())?.${field} }`,
-          );
-        }
-        for (const field of mintU8Fields) {
-          transformed = transformed.replace(
-            new RegExp(`(^|[^\\w.])${accountName}\\.${field}\\b(?!\\s*\\()`, "g"),
-            (_full, prefix: string) =>
-              this.emitter.frameworkName === "Pinocchio"
-                ? `${prefix}pinocchio_token::state::Mint::from_account_info(${accountInfoVar})?.${field}()`
-                : `${prefix}{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&${accountInfoVar}.data.borrow())?.${field} }`,
+            (_full, prefix: string) => `${prefix}${build(accountInfoVar, isPinocchio)}`,
           );
         }
       }
       if (tokenLike) {
-        transformed = transformed.replace(
-          new RegExp(`(^|[^\\w.])${accountName}\\.amount\\b`, "g"),
-          (_full, prefix: string) => `${prefix}token_account_amount(${accountInfoVar})?`,
-        );
-        // #32 — Pubkey-shaped fields on SPL TokenAccount (owner, mint,
-        // delegate, close_authority). Constraint expressions like
-        // `vault.owner == check_signer.key` carry these field accesses
-        // through verbatim. AccountInfo doesn't have those fields, and
-        // pinocchio_token's TokenAccount exposes them as methods returning
-        // &Pubkey. Rewrite to a from_account_info+method-call form for
-        // Pinocchio; Native gets bare-field access since spl_token::state
-        // has them as fields.
-        const splPubkeyFields = ["owner", "mint", "delegate", "close_authority"];
-        for (const field of splPubkeyFields) {
+        for (const { regex, build } of tokenAccountFieldRules) {
           transformed = transformed.replace(
-            new RegExp(`(^|[^\\w.])&?${accountName}\\.${field}\\b(?!\\s*\\()`, "g"),
-            (_full, prefix: string) => {
-              if (this.emitter.frameworkName === "Pinocchio") {
-                return `${prefix}*pinocchio_token::state::TokenAccount::from_account_info(${accountInfoVar})?.${field}()`;
-              }
-              return `${prefix}spl_token::state::Account::unpack(&${accountInfoVar}.data.borrow())?.${field}`;
-            },
+            new RegExp(regex(accountName), "g"),
+            (_full, prefix: string) => `${prefix}${build(accountInfoVar, isPinocchio)}`,
           );
         }
-        // #37 — local-binding form. When the body did
-        // `let pool_a = ctx.accounts.pool_a_account.to_account_info()`
-        // (or handleStateRead synthesized the binding), pass-through code
-        // references `pool_a.amount` / `pool_a.owner` etc. against the
-        // localVar, not the accountName. pinocchio_token's TokenAccount
-        // exposes ALL fields as methods. Rewrite the local-var form
-        // independently of the accountName form above.
-        if (this.emitter.frameworkName === "Pinocchio") {
+        if (isPinocchio) {
           const localVar = this.stateVars.get(accountName);
           if (localVar && localVar !== accountName) {
-            // .amount → .amount() (returns u64 value)
-            transformed = transformed.replace(
-              new RegExp(`(^|[^\\w.])${localVar}\\.amount\\b(?!\\s*\\()`, "g"),
-              (_full, prefix: string) => `${prefix}${localVar}.amount()`,
-            );
-            // Pubkey-shaped fields. Pinocchio returns &Pubkey; deref so
-            // call sites comparing against another Pubkey work.
-            for (const field of splPubkeyFields) {
+            for (const { field, build } of tokenLocalVarFieldRules) {
               transformed = transformed.replace(
                 new RegExp(`(^|[^\\w.])&?${localVar}\\.${field}\\b(?!\\s*\\()`, "g"),
-                (_full, prefix: string) => `${prefix}*${localVar}.${field}()`,
+                (_full, prefix: string) => `${prefix}${build(localVar)}`,
               );
             }
           }
