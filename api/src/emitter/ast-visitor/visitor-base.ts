@@ -3754,31 +3754,20 @@ export class AstVisitorBase {
   visitCpiMplCoreRemovePluginV1(stmt: CpiMplCoreRemovePluginV1): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const resolveOpt = (e: string): string => {
-      const trimmed = e.trim();
-      if (trimmed === "None" || trimmed === "") return "None";
-      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
-      if (inner !== undefined) return `Some(${resolve(inner)})`;
-      return `Some(${resolve(trimmed)})`;
-    };
-    const pluginTypeDisc = this.mplCorePluginDisc(stmt.pluginType);
-    const lines: string[] = [
-      `    mpl_core_remove_plugin_v1(`,
-      `        ${resolve(stmt.programAccount)},`,
-      `        ${resolve(stmt.asset)},`,
-      `        ${resolveOpt(stmt.collection)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolveOpt(stmt.authority)},`,
-      `        ${resolve(stmt.systemProgram)},`,
-      `        ${resolveOpt(stmt.logWrapper)},`,
-      `        ${pluginTypeDisc}u8,`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_core_remove_plugin_v1"), [
+      this.resolveToAst(stmt.programAccount),
+      this.resolveToAst(stmt.asset),
+      this.resolveOptAst(stmt.collection),
+      this.resolveToAst(stmt.payer),
+      this.resolveOptAst(stmt.authority),
+      this.resolveToAst(stmt.systemProgram),
+      this.resolveOptAst(stmt.logWrapper),
+      lit(`${this.mplCorePluginDisc(stmt.pluginType)}u8`),
+      seedsArg,
+    ])))];
   }
 
   visitCpiMplCoreUpdatePluginV1(stmt: CpiMplCoreUpdatePluginV1): RustStmt[] {
@@ -3846,31 +3835,20 @@ export class AstVisitorBase {
   visitCpiMplCoreRevokePluginAuthorityV1(stmt: CpiMplCoreRevokePluginAuthorityV1): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const resolveOpt = (e: string): string => {
-      const trimmed = e.trim();
-      if (trimmed === "None" || trimmed === "") return "None";
-      const inner = trimmed.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
-      if (inner !== undefined) return `Some(${resolve(inner)})`;
-      return `Some(${resolve(trimmed)})`;
-    };
-    const pluginTypeDisc = this.mplCorePluginDisc(stmt.pluginType);
-    const lines: string[] = [
-      `    mpl_core_revoke_plugin_authority_v1(`,
-      `        ${resolve(stmt.programAccount)},`,
-      `        ${resolve(stmt.asset)},`,
-      `        ${resolveOpt(stmt.collection)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolveOpt(stmt.authority)},`,
-      `        ${resolve(stmt.systemProgram)},`,
-      `        ${resolveOpt(stmt.logWrapper)},`,
-      `        ${pluginTypeDisc}u8,`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_core_revoke_plugin_authority_v1"), [
+      this.resolveToAst(stmt.programAccount),
+      this.resolveToAst(stmt.asset),
+      this.resolveOptAst(stmt.collection),
+      this.resolveToAst(stmt.payer),
+      this.resolveOptAst(stmt.authority),
+      this.resolveToAst(stmt.systemProgram),
+      this.resolveOptAst(stmt.logWrapper),
+      lit(`${this.mplCorePluginDisc(stmt.pluginType)}u8`),
+      seedsArg,
+    ])))];
   }
 
   /**
