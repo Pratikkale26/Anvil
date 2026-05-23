@@ -3247,30 +3247,20 @@ export class AstVisitorBase {
   visitCpiMplVerifyCollection(stmt: CpiMplVerifyCollection): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    // collection_authority_record is text Option<Pubkey> in source. The
-    // helper signature takes Option<&AccountInfo>, so the caller wires
-    // the source's `Some(record_pubkey_or_account)` into a binding the
-    // helper accepts. For the common shape — None or a literal account
-    // reference — pass through verbatim. Non-literal expressions land
-    // through as-text and rely on the user's code already producing the
-    // right type at the call site.
-    const lines: string[] = [
-      `    mpl_verify_collection(`,
-      `        ${resolve(stmt.metadata)},`,
-      `        ${resolve(stmt.collectionAuthority)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolve(stmt.collectionMint)},`,
-      `        ${resolve(stmt.collection)},`,
-      `        ${resolve(stmt.collectionMasterEdition)},`,
-      `        token_metadata_program,`,
-      `        ${stmt.collectionAuthorityRecord},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_verify_collection"), [
+      this.resolveToAst(stmt.metadata),
+      this.resolveToAst(stmt.collectionAuthority),
+      this.resolveToAst(stmt.payer),
+      this.resolveToAst(stmt.collectionMint),
+      this.resolveToAst(stmt.collection),
+      this.resolveToAst(stmt.collectionMasterEdition),
+      ident("token_metadata_program"),
+      parseSimpleExpr(stmt.collectionAuthorityRecord),
+      seedsArg,
+    ])))];
   }
 
   /**
@@ -3280,23 +3270,20 @@ export class AstVisitorBase {
   visitCpiMplUnverifyCollection(stmt: CpiMplUnverifyCollection): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const lines: string[] = [
-      `    mpl_unverify_collection(`,
-      `        ${resolve(stmt.metadata)},`,
-      `        ${resolve(stmt.collectionAuthority)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolve(stmt.collectionMint)},`,
-      `        ${resolve(stmt.collection)},`,
-      `        ${resolve(stmt.collectionMasterEdition)},`,
-      `        token_metadata_program,`,
-      `        ${stmt.collectionAuthorityRecord},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_unverify_collection"), [
+      this.resolveToAst(stmt.metadata),
+      this.resolveToAst(stmt.collectionAuthority),
+      this.resolveToAst(stmt.payer),
+      this.resolveToAst(stmt.collectionMint),
+      this.resolveToAst(stmt.collection),
+      this.resolveToAst(stmt.collectionMasterEdition),
+      ident("token_metadata_program"),
+      parseSimpleExpr(stmt.collectionAuthorityRecord),
+      seedsArg,
+    ])))];
   }
 
   /**
@@ -3307,24 +3294,21 @@ export class AstVisitorBase {
   visitCpiMplSetAndVerifyCollection(stmt: CpiMplSetAndVerifyCollection): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const lines: string[] = [
-      `    mpl_set_and_verify_collection(`,
-      `        ${resolve(stmt.metadata)},`,
-      `        ${resolve(stmt.collectionAuthority)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolve(stmt.updateAuthority)},`,
-      `        ${resolve(stmt.collectionMint)},`,
-      `        ${resolve(stmt.collection)},`,
-      `        ${resolve(stmt.collectionMasterEdition)},`,
-      `        token_metadata_program,`,
-      `        ${stmt.collectionAuthorityRecord},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_set_and_verify_collection"), [
+      this.resolveToAst(stmt.metadata),
+      this.resolveToAst(stmt.collectionAuthority),
+      this.resolveToAst(stmt.payer),
+      this.resolveToAst(stmt.updateAuthority),
+      this.resolveToAst(stmt.collectionMint),
+      this.resolveToAst(stmt.collection),
+      this.resolveToAst(stmt.collectionMasterEdition),
+      ident("token_metadata_program"),
+      parseSimpleExpr(stmt.collectionAuthorityRecord),
+      seedsArg,
+    ])))];
   }
 
   /**
@@ -3335,24 +3319,21 @@ export class AstVisitorBase {
   visitCpiMplApproveCollectionAuthority(stmt: CpiMplApproveCollectionAuthority): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const lines: string[] = [
-      `    mpl_approve_collection_authority(`,
-      `        ${resolve(stmt.collectionAuthorityRecord)},`,
-      `        ${resolve(stmt.newCollectionAuthority)},`,
-      `        ${resolve(stmt.updateAuthority)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolve(stmt.metadata)},`,
-      `        ${resolve(stmt.mint)},`,
-      `        system_program,`,
-      `        rent,`,
-      `        token_metadata_program,`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_approve_collection_authority"), [
+      this.resolveToAst(stmt.collectionAuthorityRecord),
+      this.resolveToAst(stmt.newCollectionAuthority),
+      this.resolveToAst(stmt.updateAuthority),
+      this.resolveToAst(stmt.payer),
+      this.resolveToAst(stmt.metadata),
+      this.resolveToAst(stmt.mint),
+      ident("system_program"),
+      ident("rent"),
+      ident("token_metadata_program"),
+      seedsArg,
+    ])))];
   }
 
   /**
@@ -3363,21 +3344,18 @@ export class AstVisitorBase {
   visitCpiMplRevokeCollectionAuthority(stmt: CpiMplRevokeCollectionAuthority): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const lines: string[] = [
-      `    mpl_revoke_collection_authority(`,
-      `        ${resolve(stmt.collectionAuthorityRecord)},`,
-      `        ${resolve(stmt.delegateAuthority)},`,
-      `        ${resolve(stmt.revokeAuthority)},`,
-      `        ${resolve(stmt.metadata)},`,
-      `        ${resolve(stmt.mint)},`,
-      `        token_metadata_program,`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_revoke_collection_authority"), [
+      this.resolveToAst(stmt.collectionAuthorityRecord),
+      this.resolveToAst(stmt.delegateAuthority),
+      this.resolveToAst(stmt.revokeAuthority),
+      this.resolveToAst(stmt.metadata),
+      this.resolveToAst(stmt.mint),
+      ident("token_metadata_program"),
+      seedsArg,
+    ])))];
   }
 
   /**
