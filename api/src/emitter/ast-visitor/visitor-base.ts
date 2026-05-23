@@ -3365,31 +3365,28 @@ export class AstVisitorBase {
   visitCpiMplMintNewEditionFromMaster(stmt: CpiMplMintNewEditionFromMaster): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const lines: string[] = [
-      `    mpl_mint_new_edition_from_master(`,
-      `        ${resolve(stmt.newMetadata)},`,
-      `        ${resolve(stmt.newEdition)},`,
-      `        ${resolve(stmt.masterEdition)},`,
-      `        ${resolve(stmt.newMint)},`,
-      `        ${resolve(stmt.editionMarkPda)},`,
-      `        ${resolve(stmt.newMintAuthority)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolve(stmt.tokenAccountOwner)},`,
-      `        ${resolve(stmt.tokenAccount)},`,
-      `        ${resolve(stmt.newMetadataUpdateAuthority)},`,
-      `        ${resolve(stmt.metadata)},`,
-      `        token_program,`,
-      `        system_program,`,
-      `        rent,`,
-      `        token_metadata_program,`,
-      `        ${stmt.edition},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_mint_new_edition_from_master"), [
+      this.resolveToAst(stmt.newMetadata),
+      this.resolveToAst(stmt.newEdition),
+      this.resolveToAst(stmt.masterEdition),
+      this.resolveToAst(stmt.newMint),
+      this.resolveToAst(stmt.editionMarkPda),
+      this.resolveToAst(stmt.newMintAuthority),
+      this.resolveToAst(stmt.payer),
+      this.resolveToAst(stmt.tokenAccountOwner),
+      this.resolveToAst(stmt.tokenAccount),
+      this.resolveToAst(stmt.newMetadataUpdateAuthority),
+      this.resolveToAst(stmt.metadata),
+      ident("token_program"),
+      ident("system_program"),
+      ident("rent"),
+      ident("token_metadata_program"),
+      parseSimpleExpr(stmt.edition),
+      seedsArg,
+    ])))];
   }
 
   /**
@@ -3462,26 +3459,23 @@ export class AstVisitorBase {
   visitCpiMplCreateMasterEditionV3(stmt: CpiMplCreateMasterEditionV3): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const lines: string[] = [
-      `    mpl_create_master_edition_v3(`,
-      `        ${resolve(stmt.edition)},`,
-      `        ${resolve(stmt.mint)},`,
-      `        ${resolve(stmt.updateAuthority)},`,
-      `        ${resolve(stmt.mintAuthority)},`,
-      `        ${resolve(stmt.payer)},`,
-      `        ${resolve(stmt.metadata)},`,
-      `        token_program,`,
-      `        system_program,`,
-      `        rent,`,
-      `        token_metadata_program,`,
-      `        ${stmt.maxSupply},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("mpl_create_master_edition_v3"), [
+      this.resolveToAst(stmt.edition),
+      this.resolveToAst(stmt.mint),
+      this.resolveToAst(stmt.updateAuthority),
+      this.resolveToAst(stmt.mintAuthority),
+      this.resolveToAst(stmt.payer),
+      this.resolveToAst(stmt.metadata),
+      ident("token_program"),
+      ident("system_program"),
+      ident("rent"),
+      ident("token_metadata_program"),
+      parseSimpleExpr(stmt.maxSupply),
+      seedsArg,
+    ])))];
   }
 
   /**
