@@ -3897,55 +3897,46 @@ export class AstVisitorBase {
   visitCpiT22ConfidentialTransferInitMint(stmt: CpiT22ConfidentialTransferInitMint): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const unwrapSome = (expr: string): string => {
-      const m = expr.trim().match(/^Some\(\s*([\s\S]+)\s*\)$/);
-      return (m?.[1] ?? expr).trim().replace(/^&/, "");
+    const resolveOptSome = (e: string): RustExpr => {
+      const t = e.trim();
+      if (t === "None" || t === "") return ident("None");
+      const inner = t.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+      const raw = (inner ?? t).replace(/^&/, "");
+      return call(ident("Some"), [this.resolveToAst(raw)]);
     };
-    const auth = stmt.authority.trim() === "None"
-      ? "None"
-      : `Some(${resolve(unwrapSome(stmt.authority))})`;
-    const auditor = stmt.auditorElgamalPubkey.trim() === "None"
-      ? "None"
-      : `Some(${resolve(unwrapSome(stmt.auditorElgamalPubkey))})`;
-    const lines: string[] = [
-      `    t22_confidential_transfer_initialize_mint(`,
-      `        ${resolve(stmt.mint)},`,
-      `        ${resolve(stmt.tokenProgram)},`,
-      `        ${auth},`,
-      `        ${stmt.autoApproveNewAccounts},`,
-      `        ${auditor},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("t22_confidential_transfer_initialize_mint"), [
+      this.resolveToAst(stmt.mint),
+      this.resolveToAst(stmt.tokenProgram),
+      resolveOptSome(stmt.authority),
+      parseSimpleExpr(stmt.autoApproveNewAccounts),
+      resolveOptSome(stmt.auditorElgamalPubkey),
+      seedsArg,
+    ])))];
   }
 
   visitCpiT22ConfidentialTransferFeeInit(stmt: CpiT22ConfidentialTransferFeeInit): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    const resolve = (e: string) => w.resolveAccountExpr(e);
-    const unwrapSome = (expr: string): string => {
-      const m = expr.trim().match(/^Some\(\s*([\s\S]+)\s*\)$/);
-      return (m?.[1] ?? expr).trim().replace(/^&/, "");
+    const resolveOptSome = (e: string): RustExpr => {
+      const t = e.trim();
+      if (t === "None" || t === "") return ident("None");
+      const inner = t.match(/^Some\(\s*([\s\S]+?)\s*\)$/)?.[1];
+      const raw = (inner ?? t).replace(/^&/, "");
+      return call(ident("Some"), [this.resolveToAst(raw)]);
     };
-    const auth = stmt.authority.trim() === "None"
-      ? "None"
-      : `Some(${resolve(unwrapSome(stmt.authority))})`;
-    const lines: string[] = [
-      `    t22_confidential_transfer_fee_init(`,
-      `        ${resolve(stmt.mint)},`,
-      `        ${resolve(stmt.tokenProgram)},`,
-      `        ${auth},`,
-      `        ${stmt.withdrawWithheldAuthorityElgamalPubkey},`,
-      stmt.signerSeeds
-        ? `        Some(${w.normalizeSignerSeedsExpr(stmt.signerSeeds)}),`
-        : `        None,`,
-      `    )?;`,
-    ];
-    return this.applyStructuralize(lines);
+    const seedsArg = stmt.signerSeeds
+      ? call(ident("Some"), [parseSimpleExpr(w.normalizeSignerSeedsExpr(stmt.signerSeeds))])
+      : ident("None");
+    return [exprStmt(tryPostfix(mlCall(ident("t22_confidential_transfer_fee_init"), [
+      this.resolveToAst(stmt.mint),
+      this.resolveToAst(stmt.tokenProgram),
+      resolveOptSome(stmt.authority),
+      parseSimpleExpr(stmt.withdrawWithheldAuthorityElgamalPubkey),
+      seedsArg,
+    ])))];
   }
 
   visitCpiT22ConfidentialMintBurnInitMint(stmt: CpiT22ConfidentialMintBurnInitMint): RustStmt[] {
