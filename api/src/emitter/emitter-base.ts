@@ -4526,17 +4526,21 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
    * Return the default/zero value for a given Rust type in generated code.
    * Subclasses can override for framework-specific type representations
    * (e.g. Pinocchio uses [0u8; 32] instead of Pubkey::default()).
+   *
+   * `seen` tracks user-struct names already being inlined to prevent
+   * infinite recursion when a struct (transitively) references itself.
    */
-  defaultValueForType(typeName: string): string {
+  defaultValueForType(typeName: string, seen: Set<string> = new Set()): string {
     const normalized = typeName.trim();
     const typeDef = this.customTypeDef(normalized);
     const fixedArray = parseFixedArrayType(normalized);
 
     if (normalized === "bool") return "false";
     if (/^(u|i)\d+$/.test(normalized)) return "0";
+    if (normalized === "f32" || normalized === "f64") return "0.0";
     if (normalized === "Pubkey") return this.defaultPubkeyValue();
     if (fixedArray) {
-      return `[${this.defaultValueForType(fixedArray.elementType)}; ${fixedArray.lenExpr.trim()}]`;
+      return `[${this.defaultValueForType(fixedArray.elementType, seen)}; ${fixedArray.lenExpr.trim()}]`;
     }
     const arrayMatch = normalized.match(/^\[\s*u8\s*;\s*(\d+)\s*\]$/);
     if (arrayMatch?.[1]) return `[0u8; ${arrayMatch[1]}]`;
@@ -4544,6 +4548,32 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
     if (normalized === "Vec<u8>") return "Vec::new()";
     if (typeDef?.kind === "enum" && typeDef.variants?.[0]) {
       return `${normalized}::${typeDef.variants[0]}`;
+    }
+    // User-defined struct: inline a field-by-field struct literal instead
+    // of `T::default()`. Anchor auto-implements Default via its derive
+    // macros, but Anvil strips those macros + the literal derive list
+    // commonly excludes Default (since user code rarely calls T::default()
+    // explicitly). The inlined literal compiles regardless. Recursion
+    // guarded by `seen` to avoid stack overflow on self-referencing types.
+    // Skip for structs with generics (we'd need to know the type args to
+    // pick correct field defaults) or empty fields. Caught by
+    // coral-anchor-cli-account: `Sub::default()` E0599 because the
+    // user-source `#[derive(Clone, AnchorDeserialize, AnchorSerialize)]`
+    // didn't include Default, and Sub's `state: State` field (an enum
+    // without `#[default]`) blocks auto-derive.
+    if (
+      typeDef?.kind === "struct" &&
+      typeDef.fields &&
+      typeDef.fields.length > 0 &&
+      !typeDef.generics &&
+      !seen.has(normalized)
+    ) {
+      const nextSeen = new Set(seen);
+      nextSeen.add(normalized);
+      const inlineFields = typeDef.fields
+        .map((f) => `${snakeCase(f.name)}: ${this.defaultValueForType(f.type, nextSeen)}`)
+        .join(", ");
+      return `${normalized} { ${inlineFields} }`;
     }
     // Generic types (Vec<T>, Option<T>, HashMap<K,V>, …) require turbofish
     // when calling associated functions: `Vec<String>::default()` is a

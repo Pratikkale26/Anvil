@@ -277,7 +277,20 @@ export class BodyWalker {
   collapseStackedKeyDerefs(code: string): string {
     return code
       .replace(/\*{2,}(\w+)\.key\(\)/g, "*$1.key()")
-      .replace(/\*{2,}(\w+)\.key\b(?!\()/g, "*$1.key");
+      .replace(/\*{2,}(\w+)\.key\b(?!\()/g, "*$1.key")
+      // Strip `.clone()` chained after `<X>.key()` / `<X>.key` — parses as
+      // `*(X.key()[.clone()])` which over-derefs: `.key()` returns `&Pubkey`,
+      // `.clone()` returns `Pubkey` (a value), then leading `*` tries to
+      // deref `[u8; 32]` → E0614. The original Anchor source
+      // `*X.key().clone()` was harmless because Anchor's `.key()` returns
+      // `&Pubkey` and the resulting `*&Pubkey.clone()` cloned a value. On
+      // Pinocchio/Native, the `*X.key()` / `*X.key` form already produces
+      // the value (Pubkey IS [u8; 32] which is Copy), so the clone is
+      // redundant. Caught by coral-anchor-cli-account:
+      // `*user.key().clone()` (Pinocchio) / `*user.key.clone()` (Native)
+      // both E0614.
+      .replace(/(\*\w+\.key\(\))\.clone\(\)/g, "$1")
+      .replace(/(\*\w+\.key)(?!\()\.clone\(\)/g, "$1");
   }
 
   /**
