@@ -214,6 +214,10 @@ interface CliArgs {
   anchorExtraDepsFile: string | null;
   /** `differential --skip-cache` forces both .so to rebuild even if cached. */
   skipCache: boolean;
+  /** `differential --auto-scenario` synthesizes a scenario from the IR
+   *  instead of requiring a --scenario file. Uses the same synthesizer
+   *  as the workbench "Verify Byte-Equal" button. */
+  autoScenario: boolean;
   /**
    * `differential --fuzz <N>` — run the scenario N times with randomized
    * scalar args each iteration (uN, iN, bool). Pubkey
@@ -305,6 +309,7 @@ function parseArgs(argv: string[]): CliArgs {
     fuzzFlags: false,
     anchorExtraDepsFile: null,
     skipCache: false,
+    autoScenario: false,
     ignoreEvents: false,
     compareEvents: false,
     compareReturnData: false,
@@ -431,6 +436,12 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--dry-run") {
       (args as unknown as { dryRun?: boolean })["dryRun"] = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--auto-scenario") {
+      args.autoScenario = true;
       i++;
       continue;
     }
@@ -2176,6 +2187,9 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
 
     --scenario <path>       JSON scenario file describing instructions to run
                             and accounts to compare (see SCENARIO FORMAT below)
+    --auto-scenario         Synthesize a scenario from the IR instead of
+                            requiring a --scenario file. Same synthesizer as
+                            the workbench "Verify Byte-Equal" button.
     --anchor-so <path>      Pre-built Anchor reference .so. If unset, the
                             runner builds one from the same source via
                             cargo-build-sbf.
@@ -2422,6 +2436,21 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     console.log();
   }
 
+  // Auto-scenario: synthesize from IR when --auto-scenario and no --scenario file
+  if (args.autoScenario && !args.scenario) {
+    progress("Synthesizing scenario from IR (--auto-scenario)...");
+    const { synthesizeAutoScenario } = await import("./api-src/cli/auto-scenario.js");
+    const autoResult = synthesizeAutoScenario(ir);
+    if ("blockers" in autoResult) {
+      error(`auto-scenario synthesis blocked:`);
+      for (const b of autoResult.blockers) console.log(`  - ${b.reason}`);
+      process.exit(1);
+    }
+    args.scenario = "__auto__";
+    (args as any).__synthesizedScenario = autoResult.scenario;
+    progress(`Auto-scenario synthesized: ${autoResult.scenario.instructions.length} instruction(s), ${autoResult.scenario.compare.length} account(s) to compare`);
+  }
+
   // Build-only mode — print the next-steps and exit. User opted out of the
   // scenario-driven compare (or hasn't written a scenario yet).
   if (!args.scenario) {
@@ -2443,17 +2472,22 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
   }
 
   // ─── Scenario-driven byte-equal compare ──────────────────────────────────
-  progress(`Loading scenario from ${args.scenario}...`);
-  if (!existsSync(args.scenario)) {
-    error(`scenario file not found: ${args.scenario}`);
-    process.exit(1);
-  }
   let scenario;
-  try {
-    scenario = JSON.parse(readFileSync(args.scenario, "utf-8"));
-  } catch (err) {
-    error(`scenario JSON parse failed: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+  if (args.scenario === "__auto__") {
+    scenario = (args as any).__synthesizedScenario;
+    progress("Using auto-synthesized scenario...");
+  } else {
+    progress(`Loading scenario from ${args.scenario}...`);
+    if (!existsSync(args.scenario)) {
+      error(`scenario file not found: ${args.scenario}`);
+      process.exit(1);
+    }
+    try {
+      scenario = JSON.parse(readFileSync(args.scenario, "utf-8"));
+    } catch (err) {
+      error(`scenario JSON parse failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
   }
   // Minimal shape check — defensive, the runner will surface other issues
   // with an actionable message.
