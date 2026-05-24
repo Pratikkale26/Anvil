@@ -968,6 +968,7 @@ export abstract class BaseEmitter {
         if (statement.startsWith("use error::")) return false;
         if (statement.startsWith("use errors::")) return false;
         if (statement.startsWith("use hash::")) return false;
+        if (statement.startsWith("use prelude::")) return false;
         if (statement.startsWith("pub use ")) return false;
         // anchor_spl always filtered: the CPI transformer rewrites the actual
         // call sites (e.g., `anchor_spl::token::transfer(...)`) into native

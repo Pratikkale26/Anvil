@@ -82,7 +82,8 @@ export function collectProjectFilesFromEntry(entryPath: string): ProjectFile[] {
   // the sibling crate's source as a synthetic module so buildFlattenedSource
   // can resolve `use <crate>::*` against it.
   const entryContent = readFileSync(resolvedEntry, "utf-8");
-  const siblingFiles = collectWorkspaceSiblingFiles(resolvedEntry, entryContent);
+  const allContent = entries.map((e) => e.content).join("\n");
+  const siblingFiles = collectWorkspaceSiblingFiles(resolvedEntry, allContent, entryContent);
   for (const sf of siblingFiles) {
     entries.push(sf);
     const crateName = sf.path.replace(/\.rs$/, "");
@@ -111,15 +112,29 @@ const KNOWN_CRATE_PREFIXES = new Set([
 
 function collectWorkspaceSiblingFiles(
   resolvedEntry: string,
-  entryContent: string,
+  allContent: string,
+  _entryContent?: string,
 ): ProjectFile[] {
+  // Scan all source files for unknown crate references, but only inline
+  // crates that have a `path = "..."` dep in the program's Cargo.toml.
+  // This prevents over-inlining sibling Anchor programs (squads-mpl/roles
+  // referencing squads-mpl would pull in the parent, causing duplicates).
+  const progCargo = join(dirname(resolvedEntry), "..", "Cargo.toml");
+  const progToml = existsSync(progCargo) ? readFileSync(progCargo, "utf-8") : "";
+
   const unknownCrates = new Set<string>();
   const useRe = /^use\s+(\w+)::/gm;
   let m: RegExpExecArray | null;
-  while ((m = useRe.exec(entryContent)) !== null) {
+  while ((m = useRe.exec(allContent)) !== null) {
     const name = m[1]!;
     if (!KNOWN_CRATE_PREFIXES.has(name) && name !== "crate" && name !== "super" && name !== "self") {
-      unknownCrates.add(name);
+      const dashed = name.replace(/_/g, "-");
+      if (progToml.includes(`path = "`) && new RegExp(`${dashed}\\s*=\\s*\\{[^}]*path\\s*=`).test(progToml)) {
+        const depLine = progToml.match(new RegExp(`${dashed}\\s*=\\s*\\{[^}]*\\}`))?.[0] ?? "";
+        if (!depLine.includes('"cpi"')) {
+          unknownCrates.add(name);
+        }
+      }
     }
   }
   if (unknownCrates.size === 0) return [];
@@ -143,15 +158,29 @@ function collectWorkspaceSiblingFiles(
   }
   if (!workspaceToml) return [];
 
+  const programCargoPath = join(dirname(resolvedEntry), "..", "Cargo.toml");
+  const programToml = existsSync(programCargoPath) ? readFileSync(programCargoPath, "utf-8") : "";
+  const programDir = dirname(programCargoPath);
+
   const result: ProjectFile[] = [];
   for (const crate of unknownCrates) {
     const dashed = crate.replace(/_/g, "-");
-    const pathMatch = workspaceToml.match(
+    let crateSrcDir = "";
+    const wsMatch = workspaceToml.match(
       new RegExp(`${dashed}\\s*=\\s*\\{[^}]*path\\s*=\\s*"([^"]+)"`, "m"),
     );
-    if (!pathMatch?.[1]) continue;
-    const crateSrcDir = join(workspaceDir, pathMatch[1], "src");
-    if (!existsSync(crateSrcDir)) continue;
+    if (wsMatch?.[1]) {
+      crateSrcDir = join(workspaceDir, wsMatch[1], "src");
+    }
+    if (!crateSrcDir || !existsSync(crateSrcDir)) {
+      const progMatch = programToml.match(
+        new RegExp(`${dashed}\\s*=\\s*\\{[^}]*path\\s*=\\s*"([^"]+)"`, "m"),
+      );
+      if (progMatch?.[1]) {
+        crateSrcDir = join(programDir, progMatch[1], "src");
+      }
+    }
+    if (!crateSrcDir || !existsSync(crateSrcDir)) continue;
 
     const crateFiles: Array<{ relPath: string; content: string }> = [];
     const walkCrate = (d: string, prefix: string) => {
