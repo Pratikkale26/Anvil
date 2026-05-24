@@ -502,6 +502,14 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     path: "/tmp/squads-mpl/programs/validator/src/lib.rs",
     repo: "https://github.com/Squads-Protocol/squads-mpl", cloneRoot: "/tmp/squads-mpl",
     maintainer: "anvil-core", lastPassedDate: "2026-05-23" },
+  { id: "coral-optional", target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/optional/programs/allow-missing-optionals/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
+  { id: "coral-optional", target: "native",
+    path: "/tmp/coral-anchor/tests/optional/programs/allow-missing-optionals/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
 ];
 
 // All 36 program-examples cases now pass deterministically. The pinocchio
