@@ -6040,15 +6040,24 @@ function expandStatementBounds(text: string, anchor: number): StmtRange {
       break;
     }
   }
+  // If backward walk stopped at `(` and the prefix is `if (`/`if !(`/`while (`,
+  // extend stmtStart back to include the control-flow keyword so the entire
+  // `if (...) { ... }` gets commented out — not just the condition body.
+  const prefix = text.slice(Math.max(0, stmtStart - 30), stmtStart);
+  const cfMatch = prefix.match(/\b(if|while|for)\s*!?\s*\(\s*$/);
+  if (cfMatch) {
+    stmtStart = stmtStart - cfMatch[0].length;
+  }
+
   // Walk forward to terminating `;` or `}` at depth 0.
   let fwdDepth = 0;
   let stmtEnd = text.length;
-  for (let i = anchor; i < text.length; i++) {
+  const fwdStart = cfMatch ? stmtStart : anchor;
+  for (let i = fwdStart; i < text.length; i++) {
     const ch = text[i];
     if (ch === "(" || ch === "{" || ch === "[") fwdDepth++;
     else if (ch === ")" || ch === "}" || ch === "]") {
       fwdDepth--;
-      // A `}` that returns depth to 0 closes a block statement (if/for/match).
       if (ch === "}" && fwdDepth === 0) { stmtEnd = i + 1; break; }
     }
     else if (ch === ";" && fwdDepth === 0) { stmtEnd = i + 1; break; }
