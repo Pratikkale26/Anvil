@@ -485,9 +485,9 @@ export function transformAccountRefsAst(
         if (e.method === "get_lamports" && e.args.length === 0)
           return terminal(parseSimpleExpr(`anvil_get_lamports(${ai})`));
         if (e.method === "add_lamports" && e.args.length === 1)
-          return terminal(parseSimpleExpr(`anvil_add_lamports(${ai}, ${printExprCompact(e.args[0])})`));
+          return terminal(parseSimpleExpr(`anvil_add_lamports(${ai}, ${printExprCompact(e.args[0]!)})`));
         if (e.method === "sub_lamports" && e.args.length === 1)
-          return terminal(parseSimpleExpr(`anvil_sub_lamports(${ai}, ${printExprCompact(e.args[0])})`));
+          return terminal(parseSimpleExpr(`anvil_sub_lamports(${ai}, ${printExprCompact(e.args[0]!)})`));
       }
     }
 

@@ -67,6 +67,7 @@ export {
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
   hasResidualAnchorPatterns,
+  hasResidualUnsupportedBody,
   hasUnsalvageableHelperSignature,
   recognizeCpiWrapperHelper,
 } from "./emitter-helpers.js";
@@ -93,7 +94,7 @@ import {
   type Token2022Opts,
 } from "./body-emitter/index.js";
 import { transformHelperCode as transformHelperCodeImpl, rewriteMsgCalls as rewriteMsgCallsImpl, rewriteSelfReferences, collapseModulePaths, rewriteCtxAccountsDestructure } from "./anchor-transforms.js";
-import { hasResidualAnchorPatterns, hasUnsalvageableHelperSignature, recognizeCpiWrapperHelper, rewriteCpiWrapperCallSites } from "./emitter-helpers.js";
+import { hasResidualAnchorPatterns, hasResidualUnsupportedBody, hasUnsalvageableHelperSignature, recognizeCpiWrapperHelper, rewriteCpiWrapperCallSites } from "./emitter-helpers.js";
 import {
   commentOutHelperBlock,
   commentOutUnsalvageableCallSites,
@@ -104,6 +105,11 @@ import {
 } from "./emitter-base-utils.js";
 import { getParserSync, type SyntaxNode } from "../parser/ts-init.js";
 import { MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
+
+export const FRAMEWORK_SHADOW_TYPES = new Set([
+  "Pubkey", "AccountInfo", "AccountMeta", "Instruction",
+  "ProgramError", "ProgramResult",
+]);
 
 /**
  * G22 — given a generic-params clause like `<'a, 'info: 'a>` or
@@ -1353,7 +1359,7 @@ export abstract class BaseEmitter {
   private emitLibFile(ir: SolanaIR): string {
     const sections: string[] = [];
     const constants = (ir.constants ?? []).map((c) => this.postProcessTopLevelConst(c));
-    const types = ir.types ?? [];
+    const types = (ir.types ?? []).filter((t) => !FRAMEWORK_SHADOW_TYPES.has(t.name));
     const hasHelperModule = this.hasHelperModule(ir);
     sections.push(this.fileHeader(ir.name));
     sections.push(this.emitUseStatements(ir));
@@ -1885,7 +1891,15 @@ export abstract class BaseEmitter {
         sections.push(commentOutHelperBlock(helper.rawCode, helper.name, this.frameworkName));
         continue;
       }
-      sections.push(this.carriedFunctionBlock(helper.rawCode, ir));
+      const carried = this.carriedFunctionBlock(helper.rawCode, ir);
+      if (hasResidualUnsupportedBody(carried)) {
+        const stubbed = carried
+          .replace(/^\/\/ Carried from source \([^)]*\)/, "// Carried from source (body stubbed — unsupported patterns)")
+          .replace(/\{[\s\S]*$/, `{\n    unimplemented!("Anvil: carried helper with unsupported body")\n}`);
+        sections.push(stubbed);
+      } else {
+        sections.push(carried);
+      }
     }
 
     if (sections.length === 1) return "";
@@ -2646,7 +2660,7 @@ impl ZeroCopy for ${accName} {}`;
   protected emitSingleFile(ir: SolanaIR): string {
     const sections: string[] = [];
     const constants = (ir.constants ?? []).map((c) => this.postProcessTopLevelConst(c));
-    const types = ir.types ?? [];
+    const types = (ir.types ?? []).filter((t) => !FRAMEWORK_SHADOW_TYPES.has(t.name));
 
     sections.push(this.fileHeader(ir.name));
     sections.push(this.emitUseStatements(ir));
@@ -3446,7 +3460,10 @@ ${originalLines}
     return filtered
       .map((raw) => commentOutSiblingTraitImpl(raw))
       .map((processed) =>
-        stripAnchorWrappersInCode(stripAnchorLangPrefixes(processed), target),
+        rewriteMsgCallsImpl(
+          stripAnchorWrappersInCode(stripAnchorLangPrefixes(processed), target),
+          (m: string) => this.emitMsg(m),
+        ),
       )
       .join("\n\n");
   }
@@ -5746,6 +5763,13 @@ const SIBLING_KNOWN_EXTERNAL_PREFIXES = ["spl_", "mpl_", "pyth_", "switchboard_"
 function extractUserDerives(rawCode: string): string[] {
   const out: string[] = [];
   for (const m of rawCode.matchAll(/#\[derive\(([^)]+)\)\]/g)) {
+    const args = m[1] ?? "";
+    for (const part of args.split(",")) {
+      const name = part.trim();
+      if (name) out.push(name);
+    }
+  }
+  for (const m of rawCode.matchAll(/#\[cfg_attr\([^,]+,\s*derive\(([^)]+)\)\)\]/g)) {
     const args = m[1] ?? "";
     for (const part of args.split(",")) {
       const name = part.trim();

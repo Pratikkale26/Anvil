@@ -8,7 +8,7 @@
 
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
-import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorLangPrefixes, stripAnchorWrappersInCode, commentOutSiblingTraitImpl } from "./emitter-base.js";
+import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorLangPrefixes, stripAnchorWrappersInCode, commentOutSiblingTraitImpl, FRAMEWORK_SHADOW_TYPES } from "./emitter-base.js";
 import { rewriteMsgCalls, collapseModulePaths } from "./anchor-transforms.js";
 import { rewriteRequireVariantsInCode } from "../parser/project-source.js";
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
@@ -799,6 +799,7 @@ ${arms}
       const m = raw.match(/^\s*impl(?:<[^>]+>)?\s+[^{}]+?\s+for\s+([A-Za-z_]\w*)/);
       if (!m || !m[1]) return false;
       if (!userTypeNames.has(m[1]) && !primitiveTypes.has(m[1])) return false;
+      if (FRAMEWORK_SHADOW_TYPES.has(m[1])) return false;
       if (/&\s*(?:'\w+\s+)?AccountMeta\b/.test(raw)) return false;
       if (/:\s*&\s*(?:'\w+\s+)?AccountInfo\b/.test(raw)) return false;
       if (/\bctx\s*\.\s*(?:accounts|bumps|remaining_accounts)\b/.test(raw)) return false;
@@ -808,7 +809,10 @@ ${arms}
     return survivors
       .map((raw) => commentOutSiblingTraitImpl(raw))
       .map((processed) =>
-        stripAnchorWrappersInCode(stripAnchorLangPrefixes(processed), "pin"),
+        rewriteMsgCalls(
+          stripAnchorWrappersInCode(stripAnchorLangPrefixes(processed), "pin"),
+          (m: string) => this.emitMsg(m),
+        ),
       )
       .join("\n\n");
   }

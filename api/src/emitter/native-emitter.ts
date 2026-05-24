@@ -322,14 +322,12 @@ export class NativeEmitter extends BaseEmitter {
     // failed compile pre-G108 because the function wasn't imported.
     const needsSetReturnData = _ir.instructions.some((instr) =>
       instr.body.some((stmt) =>
-        (stmt.kind === "pass_through" && /\bset_return_data\s*\(/.test(stmt.code))
-        || (stmt.kind === "return_data_set")
+        stmt.kind === "pass_through" && /\bset_return_data\s*\(/.test(stmt.code)
       )
     );
     const needsGetReturnData = _ir.instructions.some((instr) =>
       instr.body.some((stmt) =>
-        (stmt.kind === "pass_through" && /\bget_return_data\s*\(/.test(stmt.code))
-        || (stmt.kind === "return_data_get")
+        stmt.kind === "pass_through" && /\bget_return_data\s*\(/.test(stmt.code)
       )
     );
     const solanaItems = [

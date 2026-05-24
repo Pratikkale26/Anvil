@@ -476,6 +476,7 @@ export function transformHelperCode(
   // ── Strip use statements that reference Anchor crates ──
   next = next.replace(/^\s*use\s+anchor_lang[^;]*;\s*\n?/gm, "");
   next = next.replace(/^\s*use\s+anchor_spl[^;]*;\s*\n?/gm, "");
+  next = next.replace(/^\s*use\s+prelude::[^;]*;\s*\n?/gm, "");
 
   // ── Transform .key() → .key (native/pinocchio field access) ──
   next = next.replace(/\.key\(\)/g, ".key");

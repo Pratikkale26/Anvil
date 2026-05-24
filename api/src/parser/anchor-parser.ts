@@ -821,17 +821,6 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
           if (traitField && isAnchorCleanTraitImpl(child.text)) {
             items.userTraitImpls.push(child.text);
           }
-          // G50 — skip adding trait-impl methods to type.implItems. Methods
-          // like `fn next(&mut self) -> Option<Self::Item>` only make sense
-          // inside `impl Iterator for X { type Item = ...; ... }`. If we
-          // also add them as inherent items, the inherent emit drops the
-          // trait wrapper → `impl X { fn next(&mut self) -> Option<Self::Item> { ... } }`
-          // → E0223 ambiguous Self::Item (X has no associated type).
-          // Openbook-v2 EventHeapIterator/BookSideIter pattern.
-          if (traitField) break;
-          const implName = extractImplTargetName(child);
-          const implBody = child.childForFieldName("body") ?? findDescendant(child, "declaration_list");
-          if (!implName || !implBody) break;
           // G42 — guard against tree-sitter brace-misparse. When the impl is
           // `impl Trait for X` (has a trait field) AND the trait is From or
           // similar single-method, the body should contain exactly one fn.
@@ -843,6 +832,17 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
           // single-method trait impls to their first matching function.
           const traitText = traitField?.text ?? "";
           const singleMethodTrait = traitField && (/^From\s*</.test(traitText) || /^Into\s*</.test(traitText) || /^Deref\s*$/.test(traitText) || /^DerefMut\s*$/.test(traitText));
+          // G50 — skip adding trait-impl methods to type.implItems. Methods
+          // like `fn next(&mut self) -> Option<Self::Item>` only make sense
+          // inside `impl Iterator for X { type Item = ...; ... }`. If we
+          // also add them as inherent items, the inherent emit drops the
+          // trait wrapper → `impl X { fn next(&mut self) -> Option<Self::Item> { ... } }`
+          // → E0223 ambiguous Self::Item (X has no associated type).
+          // Openbook-v2 EventHeapIterator/BookSideIter pattern.
+          if (traitField && !singleMethodTrait) break;
+          const implName = extractImplTargetName(child);
+          const implBody = child.childForFieldName("body") ?? findDescendant(child, "declaration_list");
+          if (!implName || !implBody) break;
           const expectedMethodName = singleMethodTrait
             ? (/^From\b/.test(traitText) ? "from" : /^Into\b/.test(traitText) ? "into" : /^DerefMut\b/.test(traitText) ? "deref_mut" : /^Deref\b/.test(traitText) ? "deref" : null)
             : null;

@@ -667,6 +667,9 @@ export function extractAccountType(rawType: string): string {
   // #[account(zero_copy)].
   const loaderMatch = t.match(/^AccountLoader\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
   if (loaderMatch?.[1]) return loaderMatch[1].split("::").pop() ?? loaderMatch[1];
+  // LazyAccount<'info, T> — Anchor's lazy-deserialization account wrapper.
+  const lazyMatch = t.match(/^LazyAccount\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
+  if (lazyMatch?.[1]) return lazyMatch[1].split("::").pop() ?? lazyMatch[1];
   // Token-2022 / token_interface Account types: InterfaceAccount<'info, token_interface::TokenAccount|Mint>
   // Also matches plain Account<'info, token_interface::TokenAccount>
   const tokenAccountMatch = t.match(/^(?:Interface)?Account\s*<\s*'info\s*,\s*(?:token_interface::)?(?:TokenAccount|Mint)\s*>/);

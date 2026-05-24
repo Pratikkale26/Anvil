@@ -87,10 +87,11 @@ export function collectProjectFilesFromEntry(entryPath: string): ProjectFile[] {
     entries.push(sf);
     const crateName = sf.path.replace(/\.rs$/, "");
     const entryIdx = entries.findIndex((e) => e.path === "lib.rs");
-    if (entryIdx >= 0 && !entries[entryIdx].content.includes(`mod ${crateName};`)) {
+    const entryFile = entryIdx >= 0 ? entries[entryIdx] : undefined;
+    if (entryFile && !entryFile.content.includes(`mod ${crateName};`)) {
       entries[entryIdx] = {
-        ...entries[entryIdx],
-        content: `pub mod ${crateName};\n${entries[entryIdx].content}`,
+        ...entryFile,
+        content: `pub mod ${crateName};\n${entryFile.content}`,
       };
     }
   }
@@ -247,10 +248,10 @@ function evalCfgPredicate(pred: string): boolean {
     return !evalCfgPredicate(s.slice(4, -1));
   }
   if (s.startsWith("all(") && s.endsWith(")")) {
-    return splitTopLevelArgs(s.slice(4, -1)).every(evalCfgPredicate);
+    return splitCfgArgs(s.slice(4, -1)).every(evalCfgPredicate);
   }
   if (s.startsWith("any(") && s.endsWith(")")) {
-    return splitTopLevelArgs(s.slice(4, -1)).some(evalCfgPredicate);
+    return splitCfgArgs(s.slice(4, -1)).some(evalCfgPredicate);
   }
   // key = "value" form
   const eq = s.match(/^([a-z_][a-z0-9_]*)\s*=\s*("[^"]*")\s*$/i);
@@ -263,7 +264,7 @@ function evalCfgPredicate(pred: string): boolean {
   return false;
 }
 
-function splitTopLevelArgs(args: string): string[] {
+function splitCfgArgs(args: string): string[] {
   const out: string[] = [];
   let depth = 0;
   let start = 0;

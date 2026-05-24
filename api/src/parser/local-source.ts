@@ -161,6 +161,7 @@ export interface LocalSourceResolution {
   projectEntryPath?: string;
   /** B9 — cfg(feature=...) items dropped during flattening; surface as parser warnings. */
   cfgDrops?: CfgGatedDrop[];
+  wasFlattened?: boolean;
 }
 
 function isRustFile(path: string): boolean {

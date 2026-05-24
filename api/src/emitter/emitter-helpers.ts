@@ -598,6 +598,13 @@ export function irNeedsTokenAccountInitHelper(ir: SolanaIR): boolean {
   );
 }
 
+export function hasResidualUnsupportedBody(value: string): boolean {
+  return /\bT::DISCRIMINATOR\b/.test(value) ||
+    /\b(?:anchor_lang::)?Event\b/.test(value) && /\bDISCRIMINATOR\b/.test(value) ||
+    /\bAccountLoader\s*(?:::\s*(?:try_from|load)\b|<)/.test(value) ||
+    /\bCursor::new\b/.test(value) && /\bDISCRIMINATOR\b/.test(value);
+}
+
 export function hasResidualAnchorPatterns(value: string): boolean {
   return /ctx\.(accounts|bumps)\./.test(value) ||
     /CpiContext::/.test(value) ||
@@ -648,7 +655,7 @@ export function hasUnsalvageableHelperSignature(signature: string): boolean {
     /\bBox\s*<\s*(?:Interface)?Account\s*</.test(signature) ||
     /\bSigner\s*<\s*'/.test(signature) ||
     /\bSystemAccount\s*<\s*'/.test(signature) ||
-    /\bContext\s*<\s*'?\s*\w+\s*>/.test(signature) ||
+    /\bContext\s*</.test(signature) ||
     /\bUncheckedAccount\s*<\s*'/.test(signature) ||
     /\bAccountLoader\s*<\s*'/.test(signature);
 }
