@@ -4951,6 +4951,15 @@ const ANCHOR_ONLY_PATTERNS = [
   /\brequire_keys_eq!\s*\(/,
   /\brequire_keys_neq!\s*\(/,
   /Context\s*<\s*Self\s*>/,
+  /\bpyth_solana_receiver_sdk\s*::/,
+  /\bswitchboard_on_demand\s*::/,
+  /\bswitchboard_v2\s*::/,
+  /\bdrift_mocks\s*::/,
+  /\bkamino_mocks\s*::/,
+  /\bjuplend_mocks\s*::/,
+  /\bsolend_mocks\s*::/,
+  /\bmarginfi_type_crate\s*::/,
+  /\bid_crate\s*::/,
 ];
 
 /**
@@ -6144,7 +6153,12 @@ const ANCHOR_ONLY_MACRO_NAMES = new Set([
   "require", "require_eq", "require_neq",
   "require_keys_eq", "require_keys_neq",
 ]);
-const ANCHOR_ONLY_PATH_PREFIXES = new Set(["CpiContext", "anchor_lang", "anchor_spl"]);
+const ANCHOR_ONLY_PATH_PREFIXES = new Set([
+  "CpiContext", "anchor_lang", "anchor_spl",
+  "pyth_solana_receiver_sdk", "switchboard_on_demand", "switchboard_v2",
+  "drift_mocks", "kamino_mocks", "juplend_mocks", "solend_mocks",
+  "marginfi_type_crate", "id_crate",
+]);
 
 function nodeHasError(n: SyntaxNode): boolean {
   if (n.type === "ERROR" || n.isMissing) return true;
