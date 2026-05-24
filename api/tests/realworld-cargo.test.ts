@@ -580,11 +580,10 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     path: "/tmp/anchor-crowdfund/programs/smart-contracts/src/lib.rs",
     repo: "https://github.com/Samuellyworld/anchor-crowdfund", cloneRoot: "/tmp/anchor-crowdfund",
     maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
-  // DEMOTED: cargo-fails (validator-clean only)
-  // { id: "metaplex-anchor-nft", target: "native",
-  // path: "/tmp/metaplex-anchor-nft/programs/metaplex-anchor-nft/src/lib.rs",
-  // repo: "https://github.com/anoushk1234/metaplex-anchor-nft", cloneRoot: "/tmp/metaplex-anchor-nft",
-  // maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
+  { id: "metaplex-anchor-nft", target: "native",
+    path: "/tmp/metaplex-anchor-nft/programs/metaplex-anchor-nft/src/lib.rs",
+    repo: "https://github.com/anoushk1234/metaplex-anchor-nft", cloneRoot: "/tmp/metaplex-anchor-nft",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
 
   // ── 2026-05-24 coral-anchor test suite expansion ──
   // Validator-clean (0 errors both targets); cargo-verification pending.

@@ -1045,6 +1045,10 @@ export abstract class BaseEmitter {
           if (/\bspl_token_2022\b/.test(statement)) return false;
           if (/\bsolana_program::program\b/.test(statement)) return false;
         }
+        // mpl_token_metadata::instruction:: dropped on both targets —
+        // Anvil emits its own MPL CPI helpers via invoke/invoke_signed,
+        // and the instruction module was reorganized between versions.
+        if (/\bmpl_token_metadata::instruction\b/.test(statement)) return false;
         // Pyth crates dropped on BOTH targets — N5b unified the emit
         // on hand-rolled bytes, so neither pyth_sdk_solana nor
         // pyth_solana_receiver_sdk is referenced at emit time. Keeping
