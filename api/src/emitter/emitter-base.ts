@@ -3511,16 +3511,19 @@ ${originalLines}
           // when num-derive is in scaffold deps.
           {
             const cfgDerives: string[] = [];
+            const STRIP_DERIVES = new Set(["arbitrary::Arbitrary"]);
             const stripped = rawCode.replace(/^\s*#\[cfg_attr\([^,]+,\s*derive\(([^)]+)\)\)\]\s*\n?/gm, (_m, d: string) => {
               for (const t of d.split(",")) {
                 let name = t.trim().replace(/^AnchorSerialize$/, "BorshSerialize").replace(/^AnchorDeserialize$/, "BorshDeserialize");
-                if (name) cfgDerives.push(name);
+                if (name && !STRIP_DERIVES.has(name)) cfgDerives.push(name);
               }
               return "";
             });
             decl = stripped
               .replace(/\bAnchorSerialize\b/g, "BorshSerialize")
-              .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+              .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize")
+              .replace(/,\s*arbitrary::Arbitrary\b/g, "")
+              .replace(/\barbitrary::Arbitrary\s*,?\s*/g, "");
             if (cfgDerives.length > 0) {
               const deriveRe = /#\[derive\(([^)]*)\)\]/;
               const dm = decl.match(deriveRe);
@@ -5375,7 +5378,9 @@ export function stripAnchorLangPrefixes(body: string): string {
   // so we don't half-strip and leave `prelude::` orphaned.
   let out = body
     .replace(/\banchor_lang\s*::\s*prelude\s*::\s*/g, "")
-    .replace(/\banchor_lang\s*::\s*/g, "");
+    .replace(/\banchor_lang\s*::\s*/g, "")
+    .replace(/,?\s*arbitrary::Arbitrary\b/g, "")
+    .replace(/\barbitrary::Arbitrary\s*,?\s*/g, "");
   // G40 — Anchor's `source!()` macro captures file/line/column for error
   // attribution. Marinade chains it via `.with_source(source!())?`. The
   // G19b Error stub's `with_source<T>(_arg: T)` accepts any value, so just
