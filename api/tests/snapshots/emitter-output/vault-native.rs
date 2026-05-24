@@ -94,12 +94,7 @@ pub fn initialize(
         return Err(ProgramError::InvalidSeeds);
     }
     let vault_state_account = vault_state;
-    let mut vault_state = VaultState {
-        authority: Pubkey::default(),
-        total_deposited: 0,
-        bump: 0,
-        vault_bump: 0,
-    };
+    let mut vault_state = VaultState { authority: Pubkey::default(), total_deposited: 0, bump: 0, vault_bump: 0 };
     vault_state.authority = *authority.key;
     vault_state.total_deposited = 0;
     vault_state.bump = bump_vault_state;

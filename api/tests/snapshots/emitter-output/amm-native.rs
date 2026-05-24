@@ -108,7 +108,7 @@ pub fn initialize_pool(
     let token_mint_a = &accounts[4];
     let token_mint_b = &accounts[5];
     let admin = &accounts[6];
-    let _token_program = &accounts[7];
+    let token_program = &accounts[7];
     let _system_program = &accounts[8];
 
     if !admin.is_signer {
@@ -217,11 +217,11 @@ pub fn initialize_pool(
         lp_mint.key,
         __mint_lamports,
         82,
-        &spl_token::id(),
+        token_program.key,
     );
     invoke(&__mint_create, &[admin.clone(), lp_mint.clone()])?;
     let __mint_init = spl_token::instruction::initialize_mint2(
-        &spl_token::id(),
+        token_program.key,
         lp_mint.key,
         pool.key,
         None,
@@ -235,26 +235,7 @@ pub fn initialize_pool(
         return Err(AmmError::InvalidPrice.into());
     }
     let pool_account = pool;
-    let mut pool = AmmPool {
-        admin: Pubkey::default(),
-        token_mint_a: Pubkey::default(),
-        token_mint_b: Pubkey::default(),
-        lp_mint: Pubkey::default(),
-        fee_rate: 0,
-        initial_price: 0,
-        reserve_a: 0,
-        reserve_b: 0,
-        lp_supply: 0,
-        total_fees_a: 0,
-        total_fees_b: 0,
-        protocol_fees_a: 0,
-        protocol_fees_b: 0,
-        protocol_fee_rate: 0,
-        bump: 0,
-        vault_a_bump: 0,
-        vault_b_bump: 0,
-        is_frozen: false,
-    };
+    let mut pool = AmmPool { admin: Pubkey::default(), token_mint_a: Pubkey::default(), token_mint_b: Pubkey::default(), lp_mint: Pubkey::default(), fee_rate: 0, initial_price: 0, reserve_a: 0, reserve_b: 0, lp_supply: 0, total_fees_a: 0, total_fees_b: 0, protocol_fees_a: 0, protocol_fees_b: 0, protocol_fee_rate: 0, bump: 0, vault_a_bump: 0, vault_b_bump: 0, is_frozen: false };
     pool.admin = *admin.key;
     pool.token_mint_a = *token_mint_a.key;
     pool.token_mint_b = *token_mint_b.key;

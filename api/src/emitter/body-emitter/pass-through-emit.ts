@@ -337,6 +337,22 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // either redundant or unresolvable. Strip universally.
   transformedRawCode = transformedRawCode.replace(/\.to_account_info\(\)/g, "");
 
+  // Native invoke account-slice fix: after .to_account_info() strip, account
+  // variables in &[...] slices passed to invoke/invoke_signed are &AccountInfo
+  // (from `let x = &accounts[N]`) but invoke expects &[AccountInfo]. Add .clone().
+  if (w.emitter.frameworkName !== "Pinocchio" && /\binvoke(?:_signed)?\s*\(/.test(transformedRawCode)) {
+    transformedRawCode = transformedRawCode.replace(
+      /(&\[)([\s\S]*?)(\]\s*(?:,)?\s*\))/g,
+      (_full, open, inner, close) => {
+        const cloned = inner.replace(/\b([a-z_][a-z0-9_]*)\b(?!\s*[.(:])/g, (id) => {
+          if (/^(?:true|false|self|mut|ref|let|return|if|else|for|while|match|_)$/.test(id)) return id;
+          return `${id}.clone()`;
+        });
+        return `${open}${cloned}${close}`;
+      },
+    );
+  }
+
   // ── P-C — branched SPL CPI rewriter (token-swap pattern) ──
   // The cpi_spl_transfer detector runs per-statement at the top level of
   // an instruction body. CPIs nested inside an if-else / match expression

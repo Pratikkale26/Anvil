@@ -156,6 +156,14 @@ export function getFieldChain(node: SyntaxNode): string[] {
       // For `ctx.accounts.vault.to_account_info()`, walk the value part
       const valueNode = n.childForFieldName("value");
       if (valueNode) walk(valueNode);
+    } else if (n.type === "parenthesized_expression") {
+      // Unwrap `(&mut X).field` — the inner expression carries the chain.
+      const inner = n.namedChild(0);
+      if (inner) walk(inner);
+    } else if (n.type === "reference_expression") {
+      // Unwrap `&mut X` — the referenced value carries the chain.
+      const valueNode = n.childForFieldName("value");
+      if (valueNode) walk(valueNode);
     }
   }
 

@@ -223,19 +223,7 @@ pub fn initialize_pool(
         return Err(StakingError::InvalidMaxStake.into());
     }
     let pool_account = pool;
-    let mut pool = StakingPool {
-        admin: Pubkey::default(),
-        stake_mint: Pubkey::default(),
-        reward_mint: Pubkey::default(),
-        reward_rate: 0,
-        lock_duration: 0,
-        max_stake: 0,
-        total_staked: 0,
-        bump: 0,
-        stake_vault_bump: 0,
-        reward_vault_bump: 0,
-        is_paused: false,
-    };
+    let mut pool = StakingPool { admin: Pubkey::default(), stake_mint: Pubkey::default(), reward_mint: Pubkey::default(), reward_rate: 0, lock_duration: 0, max_stake: 0, total_staked: 0, bump: 0, stake_vault_bump: 0, reward_vault_bump: 0, is_paused: false };
     pool.admin = *admin.key;
     pool.stake_mint = *stake_mint.key;
     pool.reward_mint = *reward_mint.key;
@@ -331,15 +319,7 @@ pub fn stake(
     let clock = solana_program::sysvar::clock::Clock::get()?;
     let now = clock.unix_timestamp;
     let user_stake_account = user_stake;
-    let mut user_stake = UserStake {
-        owner: Pubkey::default(),
-        pool: Pubkey::default(),
-        amount: 0,
-        staked_at: 0,
-        last_claim: 0,
-        reward_rate_snapshot: 0,
-        bump: 0,
-    };
+    let mut user_stake = UserStake { owner: Pubkey::default(), pool: Pubkey::default(), amount: 0, staked_at: 0, last_claim: 0, reward_rate_snapshot: 0, bump: 0 };
     user_stake.owner = *user.key;
     user_stake.pool = *pool_account.key;
     user_stake.amount = amount;

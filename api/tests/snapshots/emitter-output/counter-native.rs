@@ -98,11 +98,7 @@ pub fn initialize(
         __init_data[..8].copy_from_slice(&CounterAccount::DISCRIMINATOR);
     }
     let counter_account = counter;
-    let mut counter = CounterAccount {
-        authority: Pubkey::default(),
-        count: 0,
-        bump: 0,
-    };
+    let mut counter = CounterAccount { authority: Pubkey::default(), count: 0, bump: 0 };
     counter.authority = *authority.key;
     counter.count = start_value;
     counter.bump = bump_counter;

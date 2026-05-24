@@ -110,7 +110,7 @@ pub fn initialize_pool(
     let token_mint_a = &accounts[4];
     let token_mint_b = &accounts[5];
     let admin = &accounts[6];
-    let _token_program = &accounts[7];
+    let token_program = &accounts[7];
     let _system_program = &accounts[8];
 
     if !admin.is_signer() {
@@ -241,7 +241,6 @@ pub fn initialize_pool(
     }
     // Init mint: lp_mint
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
         // 1. Allocate + assign to token program (rent-exempt for 82 bytes).
         let __mint_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(82);
         pinocchio_system::instructions::CreateAccount {
@@ -249,7 +248,7 @@ pub fn initialize_pool(
             to: lp_mint,
             lamports: __mint_rent,
             space: 82u64,
-            owner: &TOKEN_PROGRAM_ID,
+            owner: token_program.key(),
         }.invoke()?;
         // 2. InitializeMint2 — discriminator 20, decimals + authority + COption<freeze>.
         let mut __mint_init_data = [0u8; 67];
@@ -262,7 +261,7 @@ pub fn initialize_pool(
             pinocchio::instruction::AccountMeta::new(lp_mint.key(), true, false),
         ];
         let __mint_init_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_PROGRAM_ID,
+            program_id: token_program.key(),
             accounts: &__mint_init_metas,
             data: &__mint_init_data[..__mint_init_data_len],
         };
@@ -275,26 +274,7 @@ pub fn initialize_pool(
         return Err(AmmError::InvalidPrice.into());
     }
     let pool_account = pool;
-    let mut pool = AmmPool {
-        admin: [0u8; 32],
-        token_mint_a: [0u8; 32],
-        token_mint_b: [0u8; 32],
-        lp_mint: [0u8; 32],
-        fee_rate: 0,
-        initial_price: 0,
-        reserve_a: 0,
-        reserve_b: 0,
-        lp_supply: 0,
-        total_fees_a: 0,
-        total_fees_b: 0,
-        protocol_fees_a: 0,
-        protocol_fees_b: 0,
-        protocol_fee_rate: 0,
-        bump: 0,
-        vault_a_bump: 0,
-        vault_b_bump: 0,
-        is_frozen: false,
-    };
+    let mut pool = AmmPool { admin: [0u8; 32], token_mint_a: [0u8; 32], token_mint_b: [0u8; 32], lp_mint: [0u8; 32], fee_rate: 0, initial_price: 0, reserve_a: 0, reserve_b: 0, lp_supply: 0, total_fees_a: 0, total_fees_b: 0, protocol_fees_a: 0, protocol_fees_b: 0, protocol_fee_rate: 0, bump: 0, vault_a_bump: 0, vault_b_bump: 0, is_frozen: false };
     pool.admin = *admin.key();
     pool.token_mint_a = *token_mint_a.key();
     pool.token_mint_b = *token_mint_b.key();

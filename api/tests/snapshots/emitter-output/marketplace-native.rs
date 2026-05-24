@@ -105,13 +105,7 @@ pub fn initialize(
         return Err(MarketplaceError::InvalidFeeBps.into());
     }
     let marketplace_account = marketplace;
-    let mut marketplace = Marketplace {
-        admin: Pubkey::default(),
-        fee_bps: 0,
-        treasury: Pubkey::default(),
-        bump: 0,
-        listing_count: 0,
-    };
+    let mut marketplace = Marketplace { admin: Pubkey::default(), fee_bps: 0, treasury: Pubkey::default(), bump: 0, listing_count: 0 };
     marketplace.admin = *admin.key;
     marketplace.fee_bps = fee_bps;
     marketplace.treasury = *treasury.key;
@@ -215,16 +209,7 @@ pub fn list(
         return Err(MarketplaceError::InvalidPrice.into());
     }
     let listing_account = listing;
-    let mut listing = Listing {
-        seller: Pubkey::default(),
-        mint: Pubkey::default(),
-        price: 0,
-        seed: 0,
-        bump: 0,
-        marketplace: Pubkey::default(),
-        vault: Pubkey::default(),
-        is_active: false,
-    };
+    let mut listing = Listing { seller: Pubkey::default(), mint: Pubkey::default(), price: 0, seed: 0, bump: 0, marketplace: Pubkey::default(), vault: Pubkey::default(), is_active: false };
     listing.seller = *seller.key;
     listing.mint = *nft_mint.key;
     listing.price = price;

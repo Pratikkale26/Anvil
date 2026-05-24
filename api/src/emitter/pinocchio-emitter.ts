@@ -6040,13 +6040,17 @@ function expandStatementBounds(text: string, anchor: number): StmtRange {
       break;
     }
   }
-  // Walk forward to terminating `;` at depth 0.
+  // Walk forward to terminating `;` or `}` at depth 0.
   let fwdDepth = 0;
   let stmtEnd = text.length;
   for (let i = anchor; i < text.length; i++) {
     const ch = text[i];
     if (ch === "(" || ch === "{" || ch === "[") fwdDepth++;
-    else if (ch === ")" || ch === "}" || ch === "]") fwdDepth--;
+    else if (ch === ")" || ch === "}" || ch === "]") {
+      fwdDepth--;
+      // A `}` that returns depth to 0 closes a block statement (if/for/match).
+      if (ch === "}" && fwdDepth === 0) { stmtEnd = i + 1; break; }
+    }
     else if (ch === ";" && fwdDepth === 0) { stmtEnd = i + 1; break; }
   }
   return { stmtStart, stmtEnd };
@@ -6061,6 +6065,10 @@ function collectIdentsFromCommentedRanges(body: string, ranges: StmtRange[]): Se
     const slice = body.slice(r.stmtStart, r.stmtEnd);
     const argMatch = slice.match(/invoke(?:_signed)?\s*\(\s*&\s*(\w+)/);
     if (argMatch?.[1]) idents.add(argMatch[1]);
+    // Also track `let IDENT = ...invoke(...)` return-value bindings so that
+    // downstream uses like `if let Err(e) = result` get commented out too.
+    const letMatch = slice.match(/let\s+(?:mut\s+)?(\w+)\s*=\s*.*invoke/);
+    if (letMatch?.[1]) idents.add(letMatch[1]);
   }
   return idents;
 }
@@ -6085,6 +6093,15 @@ function findIdentDeclAndMutationRanges(body: string, idents: Set<string>): Stmt
       let m: RegExpExecArray | null;
       while ((m = re.exec(body)) !== null) {
         out.push({ stmtStart: m.index, stmtEnd: m.index + m[0].length });
+      }
+    }
+    // Match `if let ... = IDENT` patterns — these reference a return-value
+    // binding (e.g. `if let Err(e) = result { ... }`) that is now dead code.
+    const ifLetRe = new RegExp(`if\\s+let\\s+\\w+\\s*\\([^)]*\\)\\s*=\\s*${ident}\\b`, "g");
+    {
+      let m2: RegExpExecArray | null;
+      while ((m2 = ifLetRe.exec(body)) !== null) {
+        out.push(expandStatementBounds(body, m2.index));
       }
     }
     // Match field-mutation statements `<ident>.X = …;` that operate on the
