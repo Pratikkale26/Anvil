@@ -107,6 +107,8 @@ const MUST_PASS: Case[] = [
   // access. Cargo-clean.
   { id: "t22-transfer-fee", target: "pinocchio", path: "tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs",
     maintainer: "anvil-core", lastPassedDate: "2026-05-09" },
+  { id: "t22-transfer-fee", target: "native", path: "tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
 
   // t22-transfer-hook/pinocchio: promoted 2026-05-02 after extending the
   // import filter to drop spl_tlv_account_resolution / spl_transfer_hook_
