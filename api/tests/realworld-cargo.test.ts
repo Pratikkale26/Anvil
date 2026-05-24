@@ -572,6 +572,14 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     path: "/tmp/metaplex-anchor-nft/programs/metaplex-anchor-nft/src/lib.rs",
     repo: "https://github.com/anoushk1234/metaplex-anchor-nft", cloneRoot: "/tmp/metaplex-anchor-nft",
     maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
+  { id: "anchor-crowdfund", target: "pinocchio",
+    path: "/tmp/anchor-crowdfund/programs/smart-contracts/src/lib.rs",
+    repo: "https://github.com/Samuellyworld/anchor-crowdfund", cloneRoot: "/tmp/anchor-crowdfund",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
+  { id: "anchor-crowdfund", target: "native",
+    path: "/tmp/anchor-crowdfund/programs/smart-contracts/src/lib.rs",
+    repo: "https://github.com/Samuellyworld/anchor-crowdfund", cloneRoot: "/tmp/anchor-crowdfund",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
   // DEMOTED: cargo-fails (validator-clean only)
   // { id: "metaplex-anchor-nft", target: "native",
   // path: "/tmp/metaplex-anchor-nft/programs/metaplex-anchor-nft/src/lib.rs",
@@ -580,16 +588,14 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
 
   // ── 2026-05-24 coral-anchor test suite expansion ──
   // Validator-clean (0 errors both targets); cargo-verification pending.
-  // DEMOTED: cargo-fails (validator-clean only)
-  // { id: "coral-custom-program", target: "pinocchio",
-  // path: "/tmp/coral-anchor/tests/custom-program/programs/custom-program/src/lib.rs",
-  // repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
-  // maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
-  // DEMOTED: cargo-fails (validator-clean only)
-  // { id: "coral-custom-program", target: "native",
-  // path: "/tmp/coral-anchor/tests/custom-program/programs/custom-program/src/lib.rs",
-  // repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
-  // maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
+  { id: "coral-custom-program", target: "pinocchio",
+    path: "/tmp/coral-anchor/tests/custom-program/programs/custom-program/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
+  { id: "coral-custom-program", target: "native",
+    path: "/tmp/coral-anchor/tests/custom-program/programs/custom-program/src/lib.rs",
+    repo: "https://github.com/coral-xyz/anchor", cloneRoot: "/tmp/coral-anchor",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
 
   { id: "coral-composite", target: "pinocchio",
     path: "/tmp/coral-anchor/tests/composite/programs/composite/src/lib.rs",

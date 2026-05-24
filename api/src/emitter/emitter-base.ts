@@ -3454,7 +3454,7 @@ ${originalLines}
     // marinade/pin +78 regression — marinade's user impl supplied a
     // From<MarinadeError> -> ProgramError mapping our auto-emit doesn't
     // replicate. Net negative; defer until per-fixture analysis.
-    const filtered = impls;
+    const filtered = impls.filter((raw) => !/^\s*impl\s+Id\s+for\b/.test(raw));
     if (filtered.length === 0) return "";
     const target = this.frameworkName === "Pinocchio" ? "pin" : "native";
     return filtered

@@ -803,6 +803,7 @@ ${arms}
       if (/&\s*(?:'\w+\s+)?AccountMeta\b/.test(raw)) return false;
       if (/:\s*&\s*(?:'\w+\s+)?AccountInfo\b/.test(raw)) return false;
       if (/\bctx\s*\.\s*(?:accounts|bumps|remaining_accounts)\b/.test(raw)) return false;
+      if (/^\s*impl\s+Id\s+for\b/.test(raw)) return false;
       return true;
     });
     if (survivors.length === 0) return "";
