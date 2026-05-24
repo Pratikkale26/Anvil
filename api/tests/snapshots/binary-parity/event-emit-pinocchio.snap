@@ -205,10 +205,7 @@ pub fn initialize(
         __init_data[..8].copy_from_slice(&EventCounter::DISCRIMINATOR);
     }
     let counter_account = counter;
-    let mut counter = EventCounter {
-        value: 0,
-        bump: 0,
-    };
+    let mut counter = EventCounter { value: 0, bump: 0 };
     counter.value = 0;
     counter.bump = bump_counter;
     EventCounter::save(counter_account, &counter)?;

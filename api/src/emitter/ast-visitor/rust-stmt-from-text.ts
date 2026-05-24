@@ -1016,7 +1016,8 @@ export function tryStructuralizeExpr(text: string): RustExpr | null {
   // Wrap as a let binding so tree-sitter parses the text as an
   // expression in expression-position (top-level Rust doesn't have
   // bare expressions outside fn bodies).
-  const wrapped = `fn _w() { let __anvil_expr = ${text}; }`;
+  const collapsed = text.replace(/\n\s*/g, " ");
+  const wrapped = `fn _w() { let __anvil_expr = ${collapsed}; }`;
   let tree;
   try {
     tree = parseGuarded(parser, wrapped);

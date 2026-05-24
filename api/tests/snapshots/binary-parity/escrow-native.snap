@@ -504,15 +504,7 @@ pub fn create_escrow(
         return Err(EscrowError::InvalidAmount.into());
     }
     let escrow_account = escrow;
-    let mut escrow = Escrow {
-        maker: Pubkey::default(),
-        mint_a: Pubkey::default(),
-        mint_b: Pubkey::default(),
-        deposit_amount: 0,
-        receive_amount: 0,
-        seed: 0,
-        bump: 0,
-    };
+    let mut escrow = Escrow { maker: Pubkey::default(), mint_a: Pubkey::default(), mint_b: Pubkey::default(), deposit_amount: 0, receive_amount: 0, seed: 0, bump: 0 };
     escrow.maker = *maker.key;
     escrow.mint_a = *mint_a.key;
     escrow.mint_b = *mint_b.key;

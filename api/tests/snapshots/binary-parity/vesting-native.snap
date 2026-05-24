@@ -425,22 +425,7 @@ pub fn create_vesting(
         return Err(VestingError::StartInPast.into());
     }
     let vesting_account = vesting;
-    let mut vesting = Vesting {
-        grantor: Pubkey::default(),
-        beneficiary: Pubkey::default(),
-        mint: Pubkey::default(),
-        vault: Pubkey::default(),
-        total_amount: 0,
-        released_amount: 0,
-        start_ts: 0,
-        cliff_ts: 0,
-        end_ts: 0,
-        revocable: false,
-        revoked: false,
-        created_at: 0,
-        bump: 0,
-        vault_bump: 0,
-    };
+    let mut vesting = Vesting { grantor: Pubkey::default(), beneficiary: Pubkey::default(), mint: Pubkey::default(), vault: Pubkey::default(), total_amount: 0, released_amount: 0, start_ts: 0, cliff_ts: 0, end_ts: 0, revocable: false, revoked: false, created_at: 0, bump: 0, vault_bump: 0 };
     vesting.grantor = *grantor.key;
     vesting.beneficiary = beneficiary;
     vesting.mint = *mint.key;

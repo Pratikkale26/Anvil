@@ -97,10 +97,7 @@ pub fn initialize(
     }
     let bump = bump_state;
     let state_account = state;
-    let mut state = StateAccount {
-        authority: [0u8; 32],
-        bump: 0,
-    };
+    let mut state = StateAccount { authority: [0u8; 32], bump: 0 };
     state.authority = *authority.key();
     state.bump = bump;
     StateAccount::save(state_account, &state)?;

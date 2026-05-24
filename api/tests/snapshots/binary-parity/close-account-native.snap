@@ -111,10 +111,7 @@ pub fn open(
         __init_data[..8].copy_from_slice(&Note::DISCRIMINATOR);
     }
     let note_account = note;
-    let mut note = Note {
-        owner: Pubkey::default(),
-        value: 0,
-    };
+    let mut note = Note { owner: Pubkey::default(), value: 0 };
     note.owner = *owner.key;
     note.value = value;
     Note::write(&mut note_account.data.borrow_mut(), &note)?;

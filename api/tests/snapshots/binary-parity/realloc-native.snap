@@ -145,10 +145,7 @@ pub fn init(
         let mut __init_data = state.data.borrow_mut();
         __init_data[..8].copy_from_slice(&LogState::DISCRIMINATOR);
     }
-    let mut s = LogState {
-        bump: 0,
-        log: Vec::new(),
-    };
+    let mut s = LogState { bump: 0, log: Vec::new() };
     s.bump = bump_state;
     s.log = vec![];
     LogState::write(&mut state.data.borrow_mut(), &s)?;

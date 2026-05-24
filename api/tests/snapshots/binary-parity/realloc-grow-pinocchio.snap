@@ -324,10 +324,7 @@ pub fn init(
         let mut __init_data = unsafe { state.borrow_mut_data_unchecked() };
         __init_data[..8].copy_from_slice(&GrowState::DISCRIMINATOR);
     }
-    let mut s = GrowState {
-        bump: 0,
-        log: Vec::new(),
-    };
+    let mut s = GrowState { bump: 0, log: Vec::new() };
     s.bump = bump_state;
     s.log = vec![];
     GrowState::save(state, &s)?;

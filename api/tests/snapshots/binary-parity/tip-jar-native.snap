@@ -178,10 +178,7 @@ pub fn create_jar(
         __init_data[..8].copy_from_slice(&TipJar::DISCRIMINATOR);
     }
     let jar_account = jar;
-    let mut jar = TipJar {
-        owner: Pubkey::default(),
-        bump: 0,
-    };
+    let mut jar = TipJar { owner: Pubkey::default(), bump: 0 };
     jar.owner = *owner.key;
     jar.bump = bump_jar;
     TipJar::write(&mut jar_account.data.borrow_mut(), &jar)?;

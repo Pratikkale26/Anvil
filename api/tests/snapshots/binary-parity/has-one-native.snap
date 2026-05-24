@@ -111,10 +111,7 @@ pub fn initialize(
         __init_data[..8].copy_from_slice(&Safe::DISCRIMINATOR);
     }
     let safe_account = safe;
-    let mut safe = Safe {
-        owner: Pubkey::default(),
-        value: 0,
-    };
+    let mut safe = Safe { owner: Pubkey::default(), value: 0 };
     safe.owner = *owner.key;
     safe.value = 0;
     Safe::write(&mut safe_account.data.borrow_mut(), &safe)?;

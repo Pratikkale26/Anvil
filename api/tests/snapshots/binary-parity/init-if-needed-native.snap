@@ -119,11 +119,7 @@ pub fn visit(
     let profile_account = profile;
     let mut profile = match VisitProfile::from_account_info(profile_account) {
         Ok(__existing) => __existing,
-        Err(_) => VisitProfile {
-            user: Pubkey::default(),
-            visit_count: 0,
-            last_visit_ts: 0,
-        },
+        Err(_) => VisitProfile { user: Pubkey::default(), visit_count: 0, last_visit_ts: 0 },
     };
     profile.user = *user.key;
     profile.visit_count = profile.visit_count.checked_add(1).ok_or(VisitError::Overflow)?;

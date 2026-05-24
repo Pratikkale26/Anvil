@@ -198,9 +198,7 @@ pub fn try_set(
     let state_account = state;
     let mut state = match StateAccount::from_account_info(state_account) {
         Ok(__existing) => __existing,
-        Err(_) => StateAccount {
-            value: 0,
-        },
+        Err(_) => StateAccount { value: 0 },
     };
     state.value = value;
     StateAccount::save(state_account, &state)?;
