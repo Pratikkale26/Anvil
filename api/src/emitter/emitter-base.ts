@@ -1580,9 +1580,11 @@ export abstract class BaseEmitter {
     const userModules = (ir as any).userModules ?? [];
     if (userModules.length > 0) {
       const target = this.frameworkName === "Pinocchio" ? "pin" : "native";
-      const processed = userModules.map((um: string) =>
-        stripAnchorWrappersInCode(stripAnchorLangPrefixes(um), target),
-      );
+      const processed = userModules.map((um: string) => {
+        let code = stripAnchorWrappersInCode(stripAnchorLangPrefixes(um), target);
+        code = code.replace(/declare_id!\s*\(\s*"([^"]+)"\s*\)\s*;?/g, "// declare_id removed (Anvil)");
+        return code;
+      });
       sections.push(`// User-defined modules preserved verbatim from source\n${processed.join("\n\n")}`);
     }
 
