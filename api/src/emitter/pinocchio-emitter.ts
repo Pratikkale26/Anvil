@@ -2987,8 +2987,12 @@ ${writeLines}
       "pinocchio::log::$1",
     );
     out = out.replace(
-      /solana_program\s*::\s*sysvar\s*::\s*(rent|clock)\s*::\s*ID\b/g,
-      "pinocchio::sysvars::$1::ID",
+      /solana_program\s*::\s*sysvar\s*::\s*rent\s*::\s*ID\b/g,
+      "pinocchio::sysvars::rent::RENT_ID",
+    );
+    out = out.replace(
+      /solana_program\s*::\s*sysvar\s*::\s*clock\s*::\s*ID\b/g,
+      "pinocchio::sysvars::clock::CLOCK_ID",
     );
     // Comment out `solana_program::program::invoke{,_signed}` direct calls
     // and the typed `let X: Instruction` setup that feeds them. pinocchio
