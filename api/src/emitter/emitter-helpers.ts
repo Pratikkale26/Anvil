@@ -602,7 +602,8 @@ export function hasResidualUnsupportedBody(value: string): boolean {
   return /\bT::DISCRIMINATOR\b/.test(value) ||
     /\b(?:anchor_lang::)?Event\b/.test(value) && /\bDISCRIMINATOR\b/.test(value) ||
     /\bAccountLoader\s*(?:::\s*(?:try_from|load)\b|<)/.test(value) ||
-    /\bCursor::new\b/.test(value) && /\bDISCRIMINATOR\b/.test(value);
+    /\bCursor::new\b/.test(value) && /\bDISCRIMINATOR\b/.test(value) ||
+    /\bSelf\s*[{(:]/.test(value);
 }
 
 export function hasResidualAnchorPatterns(value: string): boolean {

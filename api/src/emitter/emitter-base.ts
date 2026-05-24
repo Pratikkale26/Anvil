@@ -3505,9 +3505,28 @@ ${originalLines}
           // is just the trait. Keep FromPrimitive / ToPrimitive
           // (num_derive) verbatim since they're target-compatible
           // when num-derive is in scaffold deps.
-          decl = rawCode
-            .replace(/\bAnchorSerialize\b/g, "BorshSerialize")
-            .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+          {
+            const cfgDerives: string[] = [];
+            const stripped = rawCode.replace(/^\s*#\[cfg_attr\([^,]+,\s*derive\(([^)]+)\)\)\]\s*\n?/gm, (_m, d: string) => {
+              for (const t of d.split(",")) {
+                let name = t.trim().replace(/^AnchorSerialize$/, "BorshSerialize").replace(/^AnchorDeserialize$/, "BorshDeserialize");
+                if (name) cfgDerives.push(name);
+              }
+              return "";
+            });
+            decl = stripped
+              .replace(/\bAnchorSerialize\b/g, "BorshSerialize")
+              .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+            if (cfgDerives.length > 0) {
+              const deriveRe = /#\[derive\(([^)]*)\)\]/;
+              const dm = decl.match(deriveRe);
+              if (dm) {
+                const existing = new Set((dm[1] ?? "").split(/\s*,\s*/).map((t: string) => t.trim()).filter(Boolean));
+                for (const d of cfgDerives) existing.add(d);
+                decl = decl.replace(deriveRe, `#[derive(${[...existing].join(", ")})]`);
+              }
+            }
+          }
           // Augment user-source derive with `Clone, Debug, PartialEq` when
           // any are missing. Anchor implicitly grants these via its own
           // attribute-macro expansion, so user code can `assert_eq!` / `{:?}`
