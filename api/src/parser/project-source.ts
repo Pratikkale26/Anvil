@@ -76,8 +76,115 @@ export function collectProjectFilesFromEntry(entryPath: string): ProjectFile[] {
   const sourceRoot = findSourceRoot(resolvedEntry);
   const entries: ProjectFile[] = [];
   walkRustFiles(sourceRoot, entries, sourceRoot);
+
+  // Detect workspace sibling crates referenced by `use <crate>::*` in the
+  // entry file. Read the workspace Cargo.toml to find path deps, then inline
+  // the sibling crate's source as a synthetic module so buildFlattenedSource
+  // can resolve `use <crate>::*` against it.
+  const entryContent = readFileSync(resolvedEntry, "utf-8");
+  const siblingFiles = collectWorkspaceSiblingFiles(resolvedEntry, entryContent);
+  for (const sf of siblingFiles) {
+    entries.push(sf);
+    const crateName = sf.path.replace(/\.rs$/, "");
+    const entryIdx = entries.findIndex((e) => e.path === "lib.rs");
+    if (entryIdx >= 0 && !entries[entryIdx].content.includes(`mod ${crateName};`)) {
+      entries[entryIdx] = {
+        ...entries[entryIdx],
+        content: `pub mod ${crateName};\n${entries[entryIdx].content}`,
+      };
+    }
+  }
+
   entries.sort((a, b) => a.path.localeCompare(b.path));
   return entries;
+}
+
+const KNOWN_CRATE_PREFIXES = new Set([
+  "anchor_lang", "anchor_spl", "solana_program", "borsh", "spl_token",
+  "spl_token_2022", "spl_associated_token_account", "spl_memo", "spl_pod",
+  "pinocchio", "bytemuck", "mpl_token_metadata", "mpl_core", "std", "core",
+  "alloc", "num_derive", "num_traits", "num_enum", "fixed", "fixed_macro",
+  "sha2", "sha3", "arrayref", "pyth_solana_receiver_sdk", "switchboard_on_demand",
+  "spl_transfer_hook_interface", "spl_discriminator", "spl_tlv_account_resolution",
+]);
+
+function collectWorkspaceSiblingFiles(
+  resolvedEntry: string,
+  entryContent: string,
+): ProjectFile[] {
+  const unknownCrates = new Set<string>();
+  const useRe = /^use\s+(\w+)::/gm;
+  let m: RegExpExecArray | null;
+  while ((m = useRe.exec(entryContent)) !== null) {
+    const name = m[1]!;
+    if (!KNOWN_CRATE_PREFIXES.has(name) && name !== "crate" && name !== "super" && name !== "self") {
+      unknownCrates.add(name);
+    }
+  }
+  if (unknownCrates.size === 0) return [];
+
+  let dir = dirname(resolvedEntry);
+  let workspaceDir = "";
+  let workspaceToml = "";
+  for (let i = 0; i < 6; i++) {
+    const candidate = join(dir, "Cargo.toml");
+    if (existsSync(candidate)) {
+      const content = readFileSync(candidate, "utf-8");
+      if (content.includes("[workspace]")) {
+        workspaceDir = dir;
+        workspaceToml = content;
+        break;
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (!workspaceToml) return [];
+
+  const result: ProjectFile[] = [];
+  for (const crate of unknownCrates) {
+    const dashed = crate.replace(/_/g, "-");
+    const pathMatch = workspaceToml.match(
+      new RegExp(`${dashed}\\s*=\\s*\\{[^}]*path\\s*=\\s*"([^"]+)"`, "m"),
+    );
+    if (!pathMatch?.[1]) continue;
+    const crateSrcDir = join(workspaceDir, pathMatch[1], "src");
+    if (!existsSync(crateSrcDir)) continue;
+
+    const crateFiles: Array<{ relPath: string; content: string }> = [];
+    const walkCrate = (d: string, prefix: string) => {
+      for (const entry of readdirSync(d)) {
+        if (entry === "target" || entry.startsWith(".")) continue;
+        const p = join(d, entry);
+        const s = statSync(p);
+        if (s.isDirectory()) { walkCrate(p, `${prefix}${entry}/`); continue; }
+        if (s.isFile() && entry.endsWith(".rs")) {
+          crateFiles.push({
+            relPath: `${prefix}${entry}`,
+            content: readFileSync(p, "utf-8"),
+          });
+        }
+      }
+    };
+    walkCrate(crateSrcDir, "");
+    if (crateFiles.length === 0) continue;
+
+    const combined = crateFiles
+      .map((f) => f.content
+        .replace(/^#!\[.*\]\s*$/gm, "")
+        .replace(/^use\s+crate::/gm, `use self::`)
+        .replace(/^#\[cfg\(test\)\][\s\S]*?(?=\n(?:pub |#\[|use |mod |const |fn |impl |struct |enum |type |$))/gm, "")
+      )
+      .join("\n\n");
+
+    const modContent = `// Inlined from workspace sibling crate: ${dashed}\nuse super::*;\n${combined}`;
+    result.push({
+      path: `${crate}.rs`,
+      content: modContent,
+    });
+  }
+  return result;
 }
 
 export function getProjectEntryPath(entryPath: string): string {
