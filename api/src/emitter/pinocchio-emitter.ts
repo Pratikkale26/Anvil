@@ -2986,6 +2986,10 @@ ${writeLines}
       /(?:anchor_lang\s*::\s*)?solana_program\s*::\s*log\s*::\s*(sol_log|sol_log_data|sol_log_64|sol_log_compute_units|sol_log_slice)\b/g,
       "pinocchio::log::$1",
     );
+    out = out.replace(
+      /solana_program\s*::\s*sysvar\s*::\s*(rent|clock)\s*::\s*ID\b/g,
+      "pinocchio::sysvars::$1::ID",
+    );
     // Comment out `solana_program::program::invoke{,_signed}` direct calls
     // and the typed `let X: Instruction` setup that feeds them. pinocchio
     // exposes neither solana_program::Instruction nor solana_program's CPI
@@ -5996,7 +6000,7 @@ function commentOutT22Ranges(body: string, ranges: StmtRange[]): string {
 }
 
 function commentOutSolanaProgramInvoke(body: string): string {
-  const SOLANA_INVOKE_RE = /solana_program\s*::\s*program\s*::\s*invoke(?:_signed)?\s*\(/g;
+  const SOLANA_INVOKE_RE = /solana_program\s*::\s*(?!log\s*::)[\w:]+\s*\(/g;
   const matches: { stmtStart: number; stmtEnd: number }[] = [];
   let m: RegExpExecArray | null;
   SOLANA_INVOKE_RE.lastIndex = 0;

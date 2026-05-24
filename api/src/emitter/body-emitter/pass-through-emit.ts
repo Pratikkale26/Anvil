@@ -108,10 +108,46 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // Dedup via `emittedBumps` ensures structural-then-regex doesn't
   // double-push if a shape slips past the structural matcher and the
   // regex catches it on the rewritten text.
+  // Lamport manipulation pre-pass: rewrite **X.to_account_info().try_borrow_mut_lamports()?
+  // patterns BEFORE .to_account_info() gets stripped. On Pinocchio, these become
+  // anvil_add/sub_lamports helper calls; on Native they stay as-is (solana-program API).
+  let lamportRewritten = rawCode;
+  if (w.emitter.frameworkName === "Pinocchio") {
+    lamportRewritten = lamportRewritten.replace(
+      /\*\*(\w+)\.to_account_info\(\)\.try_borrow_mut_lamports\(\)\?\s*-=\s*([^;]+);/g,
+      (_m, acct, amount) => {
+        const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
+        return `anvil_sub_lamports(${infoVar}, ${amount.trim()})?;`;
+      },
+    );
+    lamportRewritten = lamportRewritten.replace(
+      /\*\*(\w+)\.to_account_info\(\)\.try_borrow_mut_lamports\(\)\?\s*\+=\s*([^;]+);/g,
+      (_m, acct, amount) => {
+        const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
+        return `anvil_add_lamports(${infoVar}, ${amount.trim()})?;`;
+      },
+    );
+    lamportRewritten = lamportRewritten.replace(
+      /\*\*(\w+)\.to_account_info\(\)\.lamports\.borrow\(\)/g,
+      (_m, acct) => {
+        const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
+        return `${infoVar}.lamports()`;
+      },
+    );
+  } else {
+    lamportRewritten = lamportRewritten.replace(
+      /(\w+)\.to_account_info\(\)\.(try_borrow_mut_lamports|lamports)/g,
+      (_m, acct, method) => {
+        const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
+        return `${infoVar}.${method}`;
+      },
+    );
+  }
+
   // M5d Session 5a — context-name normalization runs FIRST so all
   // subsequent passes (structural + regex) only need to handle the
   // canonical `ctx` receiver. Cheap (no side effects).
-  const ctxNormalizedCode = normalizeContextNameStructural(rawCode);
+  const ctxNormalizedCode = normalizeContextNameStructural(lamportRewritten);
   const preProcessedRawCode = replaceBumpRefsStructural(ctxNormalizedCode, {
     ...structuralCtx,
     onBumpRef: (acc) => { w.recordBumpRef(acc); },

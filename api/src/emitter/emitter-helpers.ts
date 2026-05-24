@@ -373,7 +373,8 @@ export function irNeedsAccountLamportMethodHelpers(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>
       stmt.kind === "pass_through" &&
-      /\b\w+\.(?:get|add|sub)_lamports\s*\(/.test(stmt.code)
+      (/\b\w+\.(?:get|add|sub)_lamports\s*\(/.test(stmt.code) ||
+       /\.try_borrow_mut_lamports\s*\(/.test(stmt.code))
     )
   );
 }
