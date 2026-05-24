@@ -596,6 +596,16 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     repo: "https://github.com/anoushk1234/metaplex-anchor-nft", cloneRoot: "/tmp/metaplex-anchor-nft",
     maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
 
+  // ── 2026-05-24 new external programs ──
+  { id: "anchor-fundraiser", target: "pinocchio",
+    path: "/tmp/anchor-fundraiser/programs/fundraiser/src/lib.rs",
+    repo: "https://github.com/ASCorreia/anchor-fundraiser", cloneRoot: "/tmp/anchor-fundraiser",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
+  { id: "anchor-fundraiser", target: "native",
+    path: "/tmp/anchor-fundraiser/programs/fundraiser/src/lib.rs",
+    repo: "https://github.com/ASCorreia/anchor-fundraiser", cloneRoot: "/tmp/anchor-fundraiser",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
+
   // ── 2026-05-24 coral-anchor test suite expansion ──
   // Validator-clean (0 errors both targets); cargo-verification pending.
   { id: "coral-custom-program", target: "pinocchio",
