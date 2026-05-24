@@ -2788,7 +2788,8 @@ impl ZeroCopy for ${accName} {}`;
     // non-unit and can't fit Anvil's uniform router dispatch signature.
     const isUnitResult = !returnType
       || /^\s*\(\s*\)\s*$/.test(returnType)
-      || /^\s*(?:anchor_lang::)?Result\s*<\s*\(\s*\)\s*>\s*$/.test(returnType);
+      || /^\s*(?:anchor_lang::)?Result\s*<\s*\(\s*\)\s*>\s*$/.test(returnType)
+      || /^\s*(?:anchor_lang::solana_program::entrypoint::)?ProgramResult\s*$/.test(returnType);
     if (!isUnitResult) {
       return this.emitTypedResultStubFunction(instr, returnType!);
     }

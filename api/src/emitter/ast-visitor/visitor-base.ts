@@ -1901,13 +1901,33 @@ export class AstVisitorBase {
    */
   visitSysvarRent(stmt: SysvarRent): RustStmt[] {
     this.walker.ctx.transformedCount++;
-    const segments =
-      this.walker.emitter.frameworkName === "Pinocchio"
+    const isPinocchio = this.walker.emitter.frameworkName === "Pinocchio";
+    const segments = isPinocchio
         ? ["pinocchio", "sysvars", "rent", "Rent", "get"]
         : ["solana_program", "sysvar", "rent", "Rent", "get"];
     const base = tryPostfix(call(path(segments), []));
-    const value = stmt.field ? field(base, stmt.field) : base;
-    return [letStmt(stmt.localVar, value)];
+    if (stmt.field) {
+      return [letStmt(stmt.localVar, field(base, stmt.field))];
+    }
+    // Preserve method chains from the original code (e.g.
+    // Rent::get()?.minimum_balance(X.data_len())). Extract the chain
+    // after Rent::get()? and apply account-info routing + target rewrites.
+    const chainMatch = stmt.code.match(/Rent::get\(\)\?\.(.+);?\s*$/);
+    if (chainMatch?.[1]) {
+      let chain = chainMatch[1].replace(/;$/, "");
+      chain = chain.replace(/(\w+)\.to_account_info\(\)/g, (_m, acct) => {
+        const infoVar = this.walker.accountInfoVars.get(acct) ?? this.walker.resolveAccountInfoVar(acct);
+        return infoVar;
+      });
+      if (isPinocchio) {
+        chain = chain.replace(/\.data_len\(\)/g, ".data_len()");
+      }
+      const rentGet = isPinocchio
+        ? "pinocchio::sysvars::rent::Rent::get()?"
+        : "solana_program::sysvar::rent::Rent::get()?";
+      return [letStmt(stmt.localVar, rawExpr(`${rentGet}.${chain}`))];
+    }
+    return [letStmt(stmt.localVar, base)];
   }
 
   /**
