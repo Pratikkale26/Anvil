@@ -522,7 +522,7 @@ export function transformAccountRefsAst(
           if (ctx.isPinocchio) {
             return terminal(parseSimpleExpr(`*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.${e.field}()`));
           }
-          return terminal(parseSimpleExpr(`spl_token::state::Account::unpack(&${ai}.data.borrow())?.${e.field}`));
+          return terminal(parseSimpleExpr(`{ use solana_program::program_pack::Pack; spl_token::state::Account::unpack(&${ai}.data.borrow())?.${e.field} }`));
         }
       }
     }

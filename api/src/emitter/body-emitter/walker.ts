@@ -74,22 +74,22 @@ const tokenAccountFieldRules: Array<{
     regex: (r) => `(^|[^\\w.])&?${r}\\.owner\\b(?!\\s*\\()`,
     build: (ai, pin) => pin
       ? `*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.owner()`
-      : `spl_token::state::Account::unpack(&${ai}.data.borrow())?.owner` },
+      : `{ use solana_program::program_pack::Pack; spl_token::state::Account::unpack(&${ai}.data.borrow())?.owner }` },
   { field: "mint",
     regex: (r) => `(^|[^\\w.])&?${r}\\.mint\\b(?!\\s*\\()`,
     build: (ai, pin) => pin
       ? `*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.mint()`
-      : `spl_token::state::Account::unpack(&${ai}.data.borrow())?.mint` },
+      : `{ use solana_program::program_pack::Pack; spl_token::state::Account::unpack(&${ai}.data.borrow())?.mint }` },
   { field: "delegate",
     regex: (r) => `(^|[^\\w.])&?${r}\\.delegate\\b(?!\\s*\\()`,
     build: (ai, pin) => pin
       ? `*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.delegate()`
-      : `spl_token::state::Account::unpack(&${ai}.data.borrow())?.delegate` },
+      : `{ use solana_program::program_pack::Pack; spl_token::state::Account::unpack(&${ai}.data.borrow())?.delegate }` },
   { field: "close_authority",
     regex: (r) => `(^|[^\\w.])&?${r}\\.close_authority\\b(?!\\s*\\()`,
     build: (ai, pin) => pin
       ? `*pinocchio_token::state::TokenAccount::from_account_info(${ai})?.close_authority()`
-      : `spl_token::state::Account::unpack(&${ai}.data.borrow())?.close_authority` },
+      : `{ use solana_program::program_pack::Pack; spl_token::state::Account::unpack(&${ai}.data.borrow())?.close_authority }` },
 ];
 
 const tokenLocalVarFieldRules: Array<{
