@@ -692,6 +692,104 @@ export function transformCtxAccountsStructural(code: string, ctx: PassContext): 
         }
       }
 
+      // ── ctx.accounts.X.key() / ctx.accounts.X.key ──
+      // Also handles .key().as_ref(), .key().to_bytes(), .key.as_ref()
+      if (n.type === "call_expression") {
+        const fn = n.namedChild(0);
+        const args = n.namedChild(1);
+        if (fn?.type === "field_expression" && args?.type === "arguments" && args.namedChildCount === 0) {
+          let recv2: SyntaxNode | null = null;
+          let fld2: SyntaxNode | null = null;
+          for (let i = 0; i < fn.namedChildCount; i++) {
+            const c = fn.namedChild(i);
+            if (!c) continue;
+            if (c.type === "field_identifier") fld2 = c;
+            else recv2 = c;
+          }
+          if (recv2 && fld2?.text === "key") {
+            const accountName = asCtxAccountsField(recv2);
+            if (accountName !== null) {
+              const ai = ctx.accountInfoVars?.get(snakeCase(accountName)) ?? snakeCase(accountName);
+              const keyExpr = ctx.accountKeyExprs?.get(snakeCase(accountName)) ??
+                ctx.accountKeyExprs?.get(accountName) ?? `${ai}.key`;
+              // Check for .key().as_ref() / .key().to_bytes() suffix
+              let editEnd = n.endIndex;
+              const keyParent = n.parent;
+              if (keyParent?.type === "field_expression") {
+                let suffix: string | null = null;
+                for (let i = 0; i < keyParent.namedChildCount; i++) {
+                  const c = keyParent.namedChild(i);
+                  if (c?.type === "field_identifier") { suffix = c.text; break; }
+                }
+                if (suffix === "as_ref" || suffix === "to_bytes") {
+                  const suffixGp = keyParent.parent;
+                  if (suffixGp?.type === "call_expression" && suffixGp.namedChild(0)?.id === keyParent.id) {
+                    editEnd = suffixGp.endIndex;
+                  } else {
+                    editEnd = keyParent.endIndex;
+                  }
+                  // For as_ref: emit key as ref form; for to_bytes: emit key value
+                  const asRef = suffix === "as_ref";
+                  const expr = asRef
+                    ? (ctx.accountKeyExprs?.get(snakeCase(accountName) + "__asRef") ?? `${ai}.key().as_ref()`)
+                    : keyExpr;
+                  edits.push({ start: n.startIndex - parsed.bodyOffset, end: editEnd - parsed.bodyOffset, replacement: expr });
+                  return false;
+                }
+              }
+              edits.push({ start: n.startIndex - parsed.bodyOffset, end: editEnd - parsed.bodyOffset, replacement: keyExpr });
+              return false;
+            }
+          }
+        }
+      }
+      // ── ctx.accounts.X.key (bare field, no parens) ──
+      if (n.type === "field_expression") {
+        let recv3: SyntaxNode | null = null;
+        let fld3: SyntaxNode | null = null;
+        for (let i = 0; i < n.namedChildCount; i++) {
+          const c = n.namedChild(i);
+          if (!c) continue;
+          if (c.type === "field_identifier") fld3 = c;
+          else recv3 = c;
+        }
+        if (recv3 && fld3?.text === "key") {
+          const accountName = asCtxAccountsField(recv3);
+          if (accountName !== null) {
+            // Skip if followed by `(` — that's .key() handled by call_expression branch
+            const after = code.slice(n.endIndex - parsed.bodyOffset);
+            if (!after.startsWith("(")) {
+              const ai = ctx.accountInfoVars?.get(snakeCase(accountName)) ?? snakeCase(accountName);
+              const keyExpr = ctx.accountKeyExprs?.get(snakeCase(accountName)) ??
+                ctx.accountKeyExprs?.get(accountName) ?? `${ai}.key`;
+              // Check for .key.as_ref() suffix
+              const keyParent = n.parent;
+              let editEnd = n.endIndex;
+              if (keyParent?.type === "field_expression") {
+                let suffix: string | null = null;
+                for (let i = 0; i < keyParent.namedChildCount; i++) {
+                  const c = keyParent.namedChild(i);
+                  if (c?.type === "field_identifier") { suffix = c.text; break; }
+                }
+                if (suffix === "as_ref") {
+                  const suffixGp = keyParent.parent;
+                  if (suffixGp?.type === "call_expression" && suffixGp.namedChild(0)?.id === keyParent.id) {
+                    editEnd = suffixGp.endIndex;
+                  } else {
+                    editEnd = keyParent.endIndex;
+                  }
+                  const asRefExpr = ctx.accountKeyExprs?.get(snakeCase(accountName) + "__asRef") ?? `${ai}.key().as_ref()`;
+                  edits.push({ start: n.startIndex - parsed.bodyOffset, end: editEnd - parsed.bodyOffset, replacement: asRefExpr });
+                  return false;
+                }
+              }
+              edits.push({ start: n.startIndex - parsed.bodyOffset, end: editEnd - parsed.bodyOffset, replacement: keyExpr });
+              return false;
+            }
+          }
+        }
+      }
+
       // ── ctx.accounts.X.amount (no parens — bare field) ──
       // ── ctx.program_id ──
       // ── ctx.remaining_accounts ──
