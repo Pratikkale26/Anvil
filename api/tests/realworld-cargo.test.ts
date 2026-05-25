@@ -95,6 +95,9 @@ const MUST_PASS: Case[] = [
   { id: "create-token", target: "pinocchio", path: "tokens/create-token/anchor/programs/create-token/src/lib.rs" },
   { id: "create-token", target: "native",    path: "tokens/create-token/anchor/programs/create-token/src/lib.rs" },
 
+  { id: "nft-minter", target: "pinocchio", path: "tokens/nft-minter/anchor/programs/nft-minter/src/lib.rs" },
+  { id: "nft-minter", target: "native",    path: "tokens/nft-minter/anchor/programs/nft-minter/src/lib.rs" },
+
   // token-2022-basics/pinocchio: locked in by #54 + #55 + #56 + #58 stack.
   { id: "token-2022-basics", target: "pinocchio", path: "tokens/token-2022/basics/anchor/programs/basics/src/lib.rs" },
   // token-2022-basics/native: locked in by spl-token-2022 scaffold dep +
