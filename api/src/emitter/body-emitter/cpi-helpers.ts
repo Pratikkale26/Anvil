@@ -48,6 +48,17 @@ export function shouldEmitSignerSeedsPrelude(w: BodyWalker, signerSeeds: string 
 export function resolveSignerSeedsExpr(w: BodyWalker, signerSeeds: string | undefined): string | undefined {
   if (!signerSeeds) return signerSeeds;
   if (signerSeeds === "signer_seeds") return signerSeeds;
+  // If the seeds contain a macro_rules TODO marker or have unbalanced brackets
+  // (from a commented-out macro invocation), drop them — the CPI will emit
+  // unsigned and the user must manually port the PDA seeds.
+  if (/Anvil TODO.*macro_rules|macro_rules.*unsupported/.test(signerSeeds)) return undefined;
+  const stripped = signerSeeds.replace(/\/\/[^\n]*/g, "");
+  let bal = 0;
+  for (const ch of stripped) {
+    if (ch === "(" || ch === "[" || ch === "{") bal++;
+    else if (ch === ")" || ch === "]" || ch === "}") bal--;
+  }
+  if (bal !== 0) return undefined;
   if (w.signerSeedsInScope) return "signer_seeds";
   // Inline literal signer-seeds containing ctx.accounts / ctx.bumps —
   // route through the same transforms typed-CPI value args use so they
