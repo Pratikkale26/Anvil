@@ -50,9 +50,9 @@ pub fn raw_invoke(
     solana_program::program::invoke(
             &ix,
             &[
-                target_account,
-                authority,
-                target_program,
+                target_account.clone(),
+                authority.clone(),
+                target_program.clone(),
             ],
         )?;
     Ok(())

@@ -49,6 +49,9 @@ import type { BodyEmitterCallbacks, BodyEmitterContext } from "./types.js";
 // modules and are imported by the visitor directly.
 import { applyPostEmitCleanup } from "./post-emit-cleanup.js";
 import { MARKER_ANVIL_PREFIX } from "../markers.js";
+import { tryStructuralizeExpr } from "../ast-visitor/rust-stmt-from-text.js";
+import { resolveAccountExprAstPipeline } from "../ast-visitor/expr-transform.js";
+import { printExpr } from "../ast-visitor/printer.js";
 
 const mintFieldRules: Array<{
   field: string;
@@ -1232,6 +1235,15 @@ export class BodyWalker {
       _resolveCapture.set(text, result);
     }
     return result;
+  }
+
+  resolveAccountExprViaAst(text: string): string {
+    const parsed = tryStructuralizeExpr(text);
+    if (parsed !== null) {
+      const result = resolveAccountExprAstPipeline(parsed, this.buildTransformContext());
+      return printExpr(result);
+    }
+    return this.resolveAccountExpr(text);
   }
 
   buildTransformContext(): import("../ast-visitor/expr-transform.js").TransformContext {

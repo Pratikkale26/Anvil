@@ -57,13 +57,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   const requireMatch = rawCode.match(/^require!\(([\s\S]+),\s*([\w:]+(?:::\w+)*)\s*\);?$/);
   if (requireMatch?.[1] && requireMatch[2]) {
     w.ctx.transformedCount++;
-    const passCtx = buildPassContext(w);
-    const condition = w.normalizeKeyValueUsages(
-      normalizeKeyValueStructural(
-        w.transformCtxAccountsReferences(requireMatch[1].trim()),
-        passCtx,
-      ),
-    );
+    const condition = w.resolveAccountExprViaAst(requireMatch[1].trim());
     w.lines.push(w.emitter.emitRequire(condition, requireMatch[2]));
     return;
   }
@@ -83,13 +77,8 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
       keys_eq: "==", keys_neq: "!=",
     };
     const op = cmpOps[requireCmpMatch[1]] ?? "==";
-    const passCtx = buildPassContext(w);
-    const lhs = w.normalizeKeyValueUsages(
-      normalizeKeyValueStructural(w.transformCtxAccountsReferences(requireCmpMatch[2]), passCtx),
-    );
-    const rhs = w.normalizeKeyValueUsages(
-      normalizeKeyValueStructural(w.transformCtxAccountsReferences(requireCmpMatch[3]), passCtx),
-    );
+    const lhs = w.resolveAccountExprViaAst(requireCmpMatch[2]);
+    const rhs = w.resolveAccountExprViaAst(requireCmpMatch[3]);
     w.ctx.transformedCount++;
     w.lines.push(w.emitter.emitRequire(`${lhs} ${op} ${rhs}`, requireCmpMatch[4]));
     return;
