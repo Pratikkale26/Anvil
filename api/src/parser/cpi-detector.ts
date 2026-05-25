@@ -1826,7 +1826,8 @@ function extractSplBurn(callNode: SyntaxNode, collector?: WarningCollector): Bod
   if (firstArg && firstArg.text.includes("CpiContext::")) {
     const burnStruct = findDescendant(firstArg, "struct_expression");
     if (burnStruct) {
-      from = extractStructField(burnStruct, "from") ?? "from";
+      // Some programs use `to` as the burn-from field (older anchor_spl naming)
+      from = extractStructField(burnStruct, "from") ?? extractStructField(burnStruct, "to") ?? "from";
       mint = extractStructField(burnStruct, "mint") ?? "mint";
       authority = extractStructField(burnStruct, "authority") ?? "authority";
     }

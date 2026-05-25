@@ -1906,7 +1906,8 @@ function resolveCpiFields(
     if (stmt.from === "from" || stmt.mint === "mint" || stmt.authority === "authority") {
       for (const [, ctx] of cpiContexts) {
         const resolved = { ...stmt };
-        if (stmt.from === "from" && ctx.from) resolved.from = ctx.from;
+        // Some programs name the burn-account field `to` instead of `from`
+        if (stmt.from === "from") resolved.from = ctx.from || ctx.to;
         if (stmt.mint === "mint" && ctx.mint) resolved.mint = ctx.mint;
         if (stmt.authority === "authority" && ctx.authority) resolved.authority = ctx.authority;
         if (ctx.signerSeeds && !resolved.signerSeeds) resolved.signerSeeds = ctx.signerSeeds;

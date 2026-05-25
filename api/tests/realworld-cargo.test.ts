@@ -596,7 +596,15 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     repo: "https://github.com/anoushk1234/metaplex-anchor-nft", cloneRoot: "/tmp/metaplex-anchor-nft",
     maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
 
-  // ── 2026-05-24 new external programs ──
+  // ── 2026-05-24/25 new external programs ──
+  { id: "anchor-uniswap-v2", target: "pinocchio",
+    path: "/tmp/anchor-uniswap-v2/programs/ammv2/src/lib.rs",
+    repo: "https://github.com/0xNineteen/anchor-uniswap-v2", cloneRoot: "/tmp/anchor-uniswap-v2",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-25" },
+  { id: "anchor-uniswap-v2", target: "native",
+    path: "/tmp/anchor-uniswap-v2/programs/ammv2/src/lib.rs",
+    repo: "https://github.com/0xNineteen/anchor-uniswap-v2", cloneRoot: "/tmp/anchor-uniswap-v2",
+    maintainer: "anvil-core", lastPassedDate: "2026-05-25" },
   { id: "anchor-fundraiser", target: "pinocchio",
     path: "/tmp/anchor-fundraiser/programs/fundraiser/src/lib.rs",
     repo: "https://github.com/ASCorreia/anchor-fundraiser", cloneRoot: "/tmp/anchor-fundraiser",
