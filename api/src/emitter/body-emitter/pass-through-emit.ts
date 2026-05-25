@@ -444,6 +444,21 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   if (stmt.needsReview && hasResidualAnchorPatterns(transformedRawCode)) {
     code = `    // ${MARKER_ANVIL_REVIEW_PREFIX} this section — ${stmt.reviewReason ?? "may need manual verification"}\n${code}`;
   }
+
+  // Safety: detect unbalanced brackets (e.g. from half-commented macro expansions).
+  // Strip comments then count brackets — if unbalanced, comment out the entire
+  // statement to prevent cascading syntax errors.
+  const stripped = code.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  let balance = 0;
+  for (const ch of stripped) {
+    if (ch === "(" || ch === "[" || ch === "{") balance++;
+    else if (ch === ")" || ch === "]" || ch === "}") balance--;
+  }
+  if (balance !== 0) {
+    code = `    // ${MARKER_ANVIL_PREFIX}: statement has unbalanced brackets (macro or partial comment) — manual port required\n` +
+      code.split("\n").map(l => `    // ${l.trimStart()}`).join("\n");
+  }
+
   w.lines.push(code);
 }
 
