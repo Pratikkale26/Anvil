@@ -1946,6 +1946,21 @@ ${writeLines}
   private emitZeroCopyAccountStruct(acc: AccountDef, fields: string): string {
     const bodyLen = acc.fields.reduce((s, f) => s + this.resolveTypeSize(f.type, f.maxLen), 0);
     const { len: discLen, expr: discExpr } = this.accountDiscInfo(acc);
+    const accessorMethods = acc.fields
+      .filter((f) => f.accessorType)
+      .map((f) => {
+        const name = snakeCase(f.name);
+        const t = f.accessorType!;
+        if (t === "Pubkey") {
+          return [
+            `    pub fn get_${name}(&self) -> Pubkey { Pubkey::new_from_array(self.${name}) }`,
+            `    pub fn set_${name}(&mut self, value: Pubkey) { self.${name} = value.to_bytes(); }`,
+          ].join("\n");
+        }
+        return `    // TODO: accessor(${t}) on field ${name} — only Pubkey is supported today`;
+      })
+      .join("\n");
+    const accessorBlock = accessorMethods ? `\n${accessorMethods}` : "";
     return `#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ${acc.name} {
@@ -1960,7 +1975,7 @@ impl ${acc.name} {
     pub const LEN: usize = ${bodyLen};
     pub const INIT_SPACE: usize = ${bodyLen};
     pub const TOTAL_LEN: usize = ${discLen} + Self::LEN;
-    pub const SPACE: usize = Self::TOTAL_LEN;
+    pub const SPACE: usize = Self::TOTAL_LEN;${accessorBlock}
 }${this.emitInherentImplItems(acc, this._irForAccountEmit)}
 
 ${this.emitZeroCopyTraitImpls(acc.name)}`;

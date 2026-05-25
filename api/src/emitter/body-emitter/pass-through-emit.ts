@@ -292,6 +292,11 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     .replace(/(?<!:)\bRent::get\(\)\?/g, w.qualifiedRentGetExpr())
     .replace(/(?<!:)\bClock::get\(\)/g, w.qualifiedClockGetValueExpr())
     .replace(/(?<!:)\bRent::get\(\)/g, w.qualifiedRentGetValueExpr());
+  // Strip Anchor Error::from(X).with_source(source!()) chains → X.into()
+  // Negative lookbehind ensures we don't match ProgramError::from(...)
+  transformedRawCode = transformedRawCode.replace(
+    /(?<![A-Za-z])Error::from\(([^)]+)\)(?:\s*\.with_\w+\([^)]*\))*/g, '$1.into()');
+  transformedRawCode = transformedRawCode.replace(/\bsource!\(\)/g, '()');
   for (const preludeLine of prelude) {
     w.lines.push(preludeLine);
   }

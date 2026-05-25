@@ -1556,7 +1556,17 @@ export class AstVisitorBase {
    */
   visitReturnErr(stmt: ReturnErr): RustStmt[] {
     this.walker.ctx.transformedCount++;
-    return [returnStmt(call(path(["Err"]), [parseSimpleExpr(stmt.error)]))];
+    let err = stmt.error;
+    // Strip Anchor Error::from(X).with_source(source!()) and similar chains.
+    // The .with_*() calls may contain nested parens (e.g. source!()) so we
+    // use a paren-balanced strip: find Error::from(...), then consume any
+    // trailing .with_X(...) chains.
+    const efMatch = err.match(/^Error::from\((.+?)\)((?:\s*\.with_\w+\([\s\S]*?\))*)\s*$/);
+    if (efMatch) {
+      err = efMatch[1].replace(/\.into\(\)$/, '') + '.into()';
+    }
+    err = err.replace(/\bsource!\(\)/g, '()');
+    return [returnStmt(call(path(["Err"]), [parseSimpleExpr(err)]))];
   }
 
   /**

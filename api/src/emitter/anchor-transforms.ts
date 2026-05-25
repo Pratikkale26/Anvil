@@ -508,6 +508,10 @@ export function transformHelperCode(
   // Replace error!(ErrorType::Variant) with ProgramError::from(ErrorType::Variant)
   next = next.replace(/error!\s*\(\s*([^)]+)\s*\)/g, 'ProgramError::from($1)');
   next = next.replace(/error!\s*([A-Z]\w+::\w+)/g, 'ProgramError::from($1)');
+  // Strip Anchor Error::from(X).with_source(source!()) → X.into()
+  next = next.replace(/(?<![A-Za-z])Error::from\(([^)]+)\)(?:\.with_source\([^)]*\)|\s*\.with_\w+\([^)]*\))*/g, '$1.into()');
+  // Strip bare source!() calls that may remain
+  next = next.replace(/\bsource!\(\)/g, '()');
 
   // ── Strip CpiContext patterns in helper functions ──
   // CpiContext::new(...) and CpiContext::new_with_signer(...) are Anchor-only
