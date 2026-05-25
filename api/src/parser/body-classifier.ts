@@ -1843,7 +1843,10 @@ function extractCpiContextInfo(
     }
   }
 
-  if (!fromMatch?.[1] || !toMatch?.[1]) return null;
+  // MintTo/Burn structs don't have `from`/`to` in the same way as Transfer.
+  // MintTo has { mint, to, authority }, Burn has { mint, from, authority }.
+  // Allow extraction when we have at least (mint + to) or (from + to).
+  if (!fromMatch?.[1] && !toMatch?.[1] && !mintMatch?.[1]) return null;
 
   // Check for signer_seeds variable reference
   let signerSeeds: string | undefined;
@@ -1854,8 +1857,8 @@ function extractCpiContextInfo(
 
   return {
     varName,
-    from: fromMatch[1],
-    to: toMatch[1],
+    from: fromMatch?.[1] ?? "",
+    to: toMatch?.[1] ?? "",
     authority: authorityMatch?.[1],
     signerSeeds,
     mint: mintMatch?.[1],
@@ -1871,11 +1874,8 @@ function resolveCpiFields(
   stmt: BodyStatement,
   cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string; mint?: string }>,
 ): BodyStatement {
-  // Only resolve system and SPL transfer CPI kinds
   if (stmt.kind === "cpi_system_transfer" || stmt.kind === "cpi_spl_transfer") {
-    // Check if from/to are generic field names that need resolution
     if (stmt.from === "from" || stmt.to === "to") {
-      // Look for any stored CPI context
       for (const [, ctx] of cpiContexts) {
         const resolved = { ...stmt };
         if (stmt.from === "from") resolved.from = ctx.from;
@@ -1886,6 +1886,30 @@ function resolveCpiFields(
         if (ctx.signerSeeds && !resolved.signerSeeds) {
           resolved.signerSeeds = ctx.signerSeeds;
         }
+        return resolved;
+      }
+    }
+  }
+  if (stmt.kind === "cpi_spl_mint_to") {
+    if (stmt.mint === "mint" || stmt.to === "to" || stmt.authority === "authority") {
+      for (const [, ctx] of cpiContexts) {
+        const resolved = { ...stmt };
+        if (stmt.mint === "mint" && ctx.mint) resolved.mint = ctx.mint;
+        if (stmt.to === "to" && ctx.to) resolved.to = ctx.to;
+        if (stmt.authority === "authority" && ctx.authority) resolved.authority = ctx.authority;
+        if (ctx.signerSeeds && !resolved.signerSeeds) resolved.signerSeeds = ctx.signerSeeds;
+        return resolved;
+      }
+    }
+  }
+  if (stmt.kind === "cpi_spl_burn") {
+    if (stmt.from === "from" || stmt.mint === "mint" || stmt.authority === "authority") {
+      for (const [, ctx] of cpiContexts) {
+        const resolved = { ...stmt };
+        if (stmt.from === "from" && ctx.from) resolved.from = ctx.from;
+        if (stmt.mint === "mint" && ctx.mint) resolved.mint = ctx.mint;
+        if (stmt.authority === "authority" && ctx.authority) resolved.authority = ctx.authority;
+        if (ctx.signerSeeds && !resolved.signerSeeds) resolved.signerSeeds = ctx.signerSeeds;
         return resolved;
       }
     }
