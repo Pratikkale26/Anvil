@@ -227,6 +227,29 @@ export function findCtxBumpsAccess(node: SyntaxNode): string | null {
     }
   }
 
+  // Detect `ctx.bumps.get("name")` (older Anchor pattern) — the call_expression
+  // has a field_expression receiver `ctx.bumps` with method `get` and a string arg.
+  if (node.type === "call_expression") {
+    const fn = node.childForFieldName("function");
+    if (fn?.type === "field_expression") {
+      const method = fn.childForFieldName("field");
+      if (method?.text === "get") {
+        const receiver = fn.childForFieldName("value");
+        if (receiver) {
+          const chain = getFieldChain(receiver);
+          if (chain[0] === "ctx" && chain[1] === "bumps") {
+            const args = node.childForFieldName("arguments");
+            const firstArg = args?.namedChild(0);
+            if (firstArg?.type === "string_literal") {
+              const name = firstArg.text.replace(/^["']|["']$/g, "");
+              if (name) return name;
+            }
+          }
+        }
+      }
+    }
+  }
+
   for (let i = 0; i < node.namedChildCount; i++) {
     const child = node.namedChild(i);
     if (child) {
