@@ -206,6 +206,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // the regex panel would use.
   const stateBoundRewritten = rewriteStateBoundFieldsStructural(macroRewritten, structuralCtx);
   const aliasRewritten = rewriteLocalAliasesStructural(stateBoundRewritten, structuralCtx);
+  const postAliasStateBound = rewriteStateBoundFieldsStructural(aliasRewritten, structuralCtx);
   // M5d Session 6d — collapse multi-`*` derefs `**X.key` → `*X.key`.
   // Pure text transform, runs AFTER walker.transformAccountReferences
   // since the regex panel's per-account `.key()` rewrites can themselves
@@ -218,9 +219,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   let transformedRawCode = simplifyPassThroughCode(
     rewriteHelperCallsStructural(
       normalizeKeyValueStructural(
-        collapseMultiDerefStructural(
-          w.transformAccountReferences(aliasRewritten),
-        ),
+        collapseMultiDerefStructural(postAliasStateBound),
         structuralCtx,
       ),
       structuralCtx,
