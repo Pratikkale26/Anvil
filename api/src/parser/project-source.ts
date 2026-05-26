@@ -129,11 +129,14 @@ function collectWorkspaceSiblingFiles(
     const name = m[1]!;
     if (!KNOWN_CRATE_PREFIXES.has(name) && name !== "crate" && name !== "super" && name !== "self") {
       const dashed = name.replace(/_/g, "-");
-      if (progToml.includes(`path = "`) && new RegExp(`${dashed}\\s*=\\s*\\{[^}]*path\\s*=`).test(progToml)) {
-        const depLine = progToml.match(new RegExp(`${dashed}\\s*=\\s*\\{[^}]*\\}`))?.[0] ?? "";
-        if (!depLine.includes('"cpi"')) {
+      const depRe = new RegExp(`${dashed}\\s*=\\s*\\{[^}]*\\}`);
+      const depLine = progToml.match(depRe)?.[0] ?? "";
+      if (depLine && depLine.includes("path")) {
+        if (!depLine.includes('"cpi"') && !depLine.includes('"no-entrypoint"')) {
           unknownCrates.add(name);
         }
+      } else if (depLine && depLine.includes("workspace")) {
+        unknownCrates.add(name);
       }
     }
   }
