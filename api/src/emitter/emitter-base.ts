@@ -1019,6 +1019,13 @@ export abstract class BaseEmitter {
         // `use solana_program::X;` and gets correctly stripped on those
         // targets while surviving on native.
         if (!isNative && /^use\s+solana_program(?:::|;)/.test(statement)) return false;
+        // Proc-macro / compile-time-only crates: these provide #[derive] or
+        // macro_rules! used by the Anchor source but Anvil doesn't preserve
+        // those attributes in the emit. Strip on both targets.
+        if (/\benum_dispatch\b/.test(statement)) return false;
+        if (/\bfixed_macro\b/.test(statement)) return false;
+        if (/\bstatic_assertions\b/.test(statement)) return false;
+        if (/\bcfg_if\b/.test(statement)) return false;
         // External crates: native carries them through (project-scaffold adds
         // matching deps to Cargo.toml). Pinocchio filters them out
         // because there's no compatible dep in their Cargo.toml.
@@ -1032,6 +1039,7 @@ export abstract class BaseEmitter {
           if (/\bswitchboard_on_demand\b/.test(statement)) return false;
           if (/\bsolana_keccak_hasher\b/.test(statement)) return false;
           if (/\bsolana_sha256_hasher\b/.test(statement)) return false;
+          if (/\bsolana_security_txt\b/.test(statement)) return false;
           // sha2_const_stable kept on Pinocchio (2026-05-20): the crate is
           // no_std-compatible and now in PINOCCHIO_CARGO_TOML. Carried
           // helpers (e.g. merkle-tree-incremental's `const fn

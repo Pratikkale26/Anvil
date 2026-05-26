@@ -108,6 +108,7 @@ const KNOWN_CRATE_PREFIXES = new Set([
   "alloc", "num_derive", "num_traits", "num_enum", "fixed", "fixed_macro",
   "sha2", "sha3", "arrayref", "pyth_solana_receiver_sdk", "switchboard_on_demand",
   "spl_transfer_hook_interface", "spl_discriminator", "spl_tlv_account_resolution",
+  "enum_dispatch", "static_assertions", "cfg_if", "solana_security_txt",
 ]);
 
 function collectWorkspaceSiblingFiles(

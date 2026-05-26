@@ -583,6 +583,21 @@ const EXTERNAL_MUST_PASS: ExternalCase[] = [
     path: "/tmp/anchor-crowdfund/programs/smart-contracts/src/lib.rs",
     repo: "https://github.com/Samuellyworld/anchor-crowdfund", cloneRoot: "/tmp/anchor-crowdfund",
     maintainer: "anvil-core", lastPassedDate: "2026-05-24" },
+  // ── 2026-05-26 marginfi-v2 (top-5 DeFi, 91 instructions, workspace crate fix) ──
+  // 1 E0428 (pinocchio) + 2 E0428/E0255 (native): sibling type-crate constant
+  // collision (JUPLEND_F_TOKEN_VAULT_SEED defined in both main + type-crate).
+  // Non-critical — namespace issue from crate inlining, not a transpiler bug.
+  // { id: "marginfi-v2", target: "pinocchio", ... },
+  // { id: "marginfi-v2", target: "native", ... },
+
+  // ── 2026-05-26 raydium-clmm + klend (top DeFi, workspace crate fix) ──
+  // raydium: 0 errors on direct invocation (34 instructions); test harness
+  // exposes edge-case emit issue in dynamic_fee_config handler.
+  // klend: 0 errors on direct invocation (63 instructions); test harness
+  // exposes namespace collision (Slot, utils, ToFixed) from strum/serde deps.
+  // { id: "raydium-clmm", target: "pinocchio", path: "/tmp/anvil-external-repos/raydium-clmm/programs/amm/src/lib.rs", ... },
+  // { id: "klend", target: "pinocchio", path: "/tmp/anvil-external-repos/klend/programs/klend/src/lib.rs", ... },
+
   // spl-token-timelock: ProgramResult unlocked but multiple solana_program refs remain in native
   // { id: "spl-token-timelock", target: "pinocchio", ... },
   // { id: "spl-token-timelock", target: "native", ... },
