@@ -160,14 +160,17 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // bare-Err → return Err. Order matches the regex panel's sequence so
   // when walker.transformNestedAnchorCode runs after, the equivalent
   // regex-side transforms see already-clean text and fall through.
-  const nestedPreCleanup = wrapBareErrAsReturnStructural(
-    stripRedundantProgramErrorIntoStructural(
-      collapseHelperModulePathsStructural(
-        stripLineCommentsStructural(bumpAdjustedRawCode),
-        structuralCtx,
-      ),
-    ),
-  );
+  let nestedPreCleanup = stripLineCommentsStructural(bumpAdjustedRawCode);
+  nestedPreCleanup = collapseHelperModulePathsStructural(nestedPreCleanup, structuralCtx);
+  nestedPreCleanup = stripRedundantProgramErrorIntoStructural(nestedPreCleanup);
+  nestedPreCleanup = wrapBareErrAsReturnStructural(nestedPreCleanup);
+  nestedPreCleanup = nestedPreCleanup
+    .replace(/\banchor_lang::prelude::borsh::/g, "borsh::")
+    .replace(/\banchor_lang::solana_program::/g, "solana_program::")
+    .replace(/\banchor_lang::prelude::/g, "")
+    .replace(/error!\s*\(\s*([^)]+)\s*\)/g, "ProgramError::from($1)")
+    .replace(/error!\s*([A-Z]\w+::\w+)/g, "ProgramError::from($1)")
+    .replace(/system_program::create_account\(\s*CpiContext::new\(/g, "create_account(CpiContext::new(");
   // Collapse multi-line dot-chains so structural passes can match
   // ctx.accounts.X.key() / .iter() / .position() as single expressions.
   // Mirrors walker.transformCtxAccountsReferences line 1306.
