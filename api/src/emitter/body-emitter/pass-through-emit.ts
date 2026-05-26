@@ -36,6 +36,7 @@ import {
   collapseHelperModulePathsStructural,
   stripRedundantProgramErrorIntoStructural,
   wrapBareErrAsReturnStructural,
+  transformMacroInteriors,
   type PassContext,
 } from "./pass-through-structural.js";
 
@@ -182,7 +183,12 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // the regex panel's specialized `.key` / state-bound `.field` matchers
   // by leaving compound chains untouched. Single AST walk eliminates the
   // sequential regex order-dependence (`&*` → `&` → bare).
-  const ctxRefsRewritten = rewriteCtxAccountsRefsStructural(ctxLeafRewritten);
+  const ctxRefsRewritten = rewriteCtxAccountsRefsStructural(ctxLeafRewritten, structuralCtx);
+  const macroRewritten = transformMacroInteriors(ctxRefsRewritten, structuralCtx, (inner, ctx) => {
+    let result = transformCtxAccountsStructural(inner, ctx);
+    result = rewriteCtxAccountsRefsStructural(result, ctx);
+    return result;
+  });
   // M5d Session 6a — local-alias identifier rewriting runs BEFORE the
   // regex panel's localAliases loop in transformAccountReferences. Both
   // rewrite the same identifiers idempotently — once structural has
@@ -198,9 +204,8 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // becomes a no-op fallback. Side effect: walker.lines gets the
   // state-read prelude line(s) appended at the same call-stack depth
   // the regex panel would use.
-  const stateBoundRewritten = rewriteStateBoundFieldsStructural(ctxRefsRewritten, structuralCtx);
-  const ctxAccountsTextRewritten = w.transformCtxAccountsReferences(stateBoundRewritten);
-  const aliasRewritten = rewriteLocalAliasesStructural(ctxAccountsTextRewritten, structuralCtx);
+  const stateBoundRewritten = rewriteStateBoundFieldsStructural(macroRewritten, structuralCtx);
+  const aliasRewritten = rewriteLocalAliasesStructural(stateBoundRewritten, structuralCtx);
   // M5d Session 6d — collapse multi-`*` derefs `**X.key` → `*X.key`.
   // Pure text transform, runs AFTER walker.transformAccountReferences
   // since the regex panel's per-account `.key()` rewrites can themselves
@@ -211,18 +216,14 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // is a reference_expression (not bare identifier), so the regex's
   // `\b${helperName}\(\s*${stateVar}` pattern doesn't match again.
   let transformedRawCode = simplifyPassThroughCode(
-    w.transformHelperCalls(
-      rewriteHelperCallsStructural(
-        w.normalizeKeyValueUsages(
-          normalizeKeyValueStructural(
-            collapseMultiDerefStructural(
-              w.transformAccountReferences(aliasRewritten),
-            ),
-            structuralCtx,
-          ),
+    rewriteHelperCallsStructural(
+      normalizeKeyValueStructural(
+        collapseMultiDerefStructural(
+          w.transformAccountReferences(aliasRewritten),
         ),
         structuralCtx,
       ),
+      structuralCtx,
     ),
   );
   // M5d Session 1 — structural replacements for two regex transforms.
@@ -490,8 +491,13 @@ function buildAccountKeyExprsMap(w: BodyWalker): Map<string, string> {
     const name = snakeCase(acc.name);
     const infoVar = w.resolveAccountInfoVar(name);
     const expr = w.emitter.emitAccountKeyExpr(infoVar);
+    const asRefExpr = w.emitter.emitAccountKeyAsRefExpr(infoVar);
     out.set(name, expr);
-    if (infoVar !== name) out.set(infoVar, expr);
+    out.set(name + "__asRef", asRefExpr);
+    if (infoVar !== name) {
+      out.set(infoVar, expr);
+      out.set(infoVar + "__asRef", asRefExpr);
+    }
   }
   return out;
 }

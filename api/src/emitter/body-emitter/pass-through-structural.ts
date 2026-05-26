@@ -184,6 +184,52 @@ function walk(node: SyntaxNode, visitor: (n: SyntaxNode) => boolean): void {
   }
 }
 
+/**
+ * Apply structural transforms INSIDE macro invocations (vec![], format![], etc.).
+ * Tree-sitter treats macro contents as opaque token_tree nodes, so the normal
+ * AST walk can't reach expressions inside them. This utility:
+ * 1. Finds all macro_invocation nodes in the parsed AST
+ * 2. Extracts the inner token_tree content (between delimiters)
+ * 3. Re-parses it by wrapping in `fn _w() { let __x = [ ... ]; }`
+ * 4. Applies the given transform function on the re-parsed inner text
+ * 5. Edits the result back into the original code at the macro position
+ */
+export function transformMacroInteriors(
+  code: string,
+  ctx: PassContext,
+  transformFn: (inner: string, ctx: PassContext) => string,
+): string {
+  const parsed = parseAsFnBody(code);
+  if (!parsed) return code;
+  const edits: Edit[] = [];
+  for (const stmt of parsed.stmts) {
+    walk(stmt, (n) => {
+      if (n.type !== "macro_invocation") return true;
+      let tokenTree: SyntaxNode | null = null;
+      for (let i = 0; i < n.namedChildCount; i++) {
+        const c = n.namedChild(i);
+        if (c?.type === "token_tree") { tokenTree = c; break; }
+      }
+      if (!tokenTree) return true;
+      const ttText = tokenTree.text;
+      if (ttText.length < 2) return true;
+      const opener = ttText[0];
+      const closer = ttText[ttText.length - 1];
+      if ((opener !== "[" && opener !== "(" && opener !== "{") ||
+          (closer !== "]" && closer !== ")" && closer !== "}")) return true;
+      const inner = ttText.slice(1, -1);
+      if (!inner.includes("ctx.accounts")) return false;
+      const transformed = transformFn(inner, ctx);
+      if (transformed === inner) return false;
+      const start = tokenTree.startIndex - parsed.bodyOffset + 1;
+      const end = tokenTree.endIndex - parsed.bodyOffset - 1;
+      edits.push({ start, end, replacement: transformed });
+      return false;
+    });
+  }
+  return applyEdits(code, edits);
+}
+
 // ─── Pass 1 — sysvar qualification ──────────────────────────────────────────
 
 /**
@@ -591,6 +637,29 @@ function asCtxAccountsField(n: SyntaxNode): string | null {
   return outerField.text;
 }
 
+function asCtxAccountsFieldThroughToAccountInfo(n: SyntaxNode): string | null {
+  const direct = asCtxAccountsField(n);
+  if (direct !== null) return direct;
+  if (n.type === "call_expression") {
+    const fn = n.namedChild(0);
+    const args = n.namedChild(1);
+    if (fn?.type === "field_expression" && args?.type === "arguments" && args.namedChildCount === 0) {
+      let recv: SyntaxNode | null = null;
+      let fld: SyntaxNode | null = null;
+      for (let i = 0; i < fn.namedChildCount; i++) {
+        const c = fn.namedChild(i);
+        if (!c) continue;
+        if (c.type === "field_identifier") fld = c;
+        else recv = c;
+      }
+      if (fld?.text === "to_account_info" && recv) {
+        return asCtxAccountsField(recv);
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Single-pass rewrite of the leaf-level ctx.* / id() shapes that
  * walker.transformCtxAccountsReferences handles via regex:
@@ -606,8 +675,6 @@ function asCtxAccountsField(n: SyntaxNode): string | null {
  * Does NOT handle (deferred to S5b/S6):
  *   - `ctx.accounts.X` reference forms (`&*`, `&mut`, `&`, bare)
  *   - `ctx.accounts.X.<field>` state-bound rewrites (need ensureStateRead callback)
- *   - `ctx.accounts.X.key()` / `.key` / `.key.as_ref()` / `.key().as_ref()` /
- *      compound `.to_account_info().key()` chains
  *   - `ctx.bumps.<X>` (covered by replaceBumpRefsStructural in S3/S4)
  */
 export function transformCtxAccountsStructural(code: string, ctx: PassContext): string {
@@ -707,7 +774,7 @@ export function transformCtxAccountsStructural(code: string, ctx: PassContext): 
             else recv2 = c;
           }
           if (recv2 && fld2?.text === "key") {
-            const accountName = asCtxAccountsField(recv2);
+            const accountName = asCtxAccountsFieldThroughToAccountInfo(recv2);
             if (accountName !== null) {
               const ai = ctx.accountInfoVars?.get(snakeCase(accountName)) ?? snakeCase(accountName);
               const keyExpr = ctx.accountKeyExprs?.get(snakeCase(accountName)) ??
@@ -754,7 +821,7 @@ export function transformCtxAccountsStructural(code: string, ctx: PassContext): 
           else recv3 = c;
         }
         if (recv3 && fld3?.text === "key") {
-          const accountName = asCtxAccountsField(recv3);
+          const accountName = asCtxAccountsFieldThroughToAccountInfo(recv3);
           if (accountName !== null) {
             // Skip if followed by `(` — that's .key() handled by call_expression branch
             const after = code.slice(n.endIndex - parsed.bodyOffset);
@@ -903,7 +970,7 @@ export function transformCtxAccountsStructural(code: string, ctx: PassContext): 
  * Verified byte-equal via binary-parity-snapshot — the skip rule's
  * conservatism is covered by the regex panel running after.
  */
-export function rewriteCtxAccountsRefsStructural(code: string): string {
+export function rewriteCtxAccountsRefsStructural(code: string, ctx?: PassContext): string {
   const parsed = parseAsFnBody(code);
   if (!parsed) return code;
   const edits: Edit[] = [];
@@ -912,8 +979,22 @@ export function rewriteCtxAccountsRefsStructural(code: string): string {
       const accountName = asCtxAccountsField(n);
       if (accountName === null) return true;
       const parent = n.parent;
-      // Skip when chain continues — regex panel handles those.
-      if (parent?.type === "field_expression") return true;
+      // Skip when chain continues IF the chain field is handled by a
+      // specialized pass (key/lamports/amount via transformCtxAccountsStructural,
+      // or state-bound fields via rewriteStateBoundFieldsStructural).
+      // For all other chains (.try_borrow_mut_lamports(), .clone(), etc.)
+      // rewrite ctx.accounts.X → snake_x and leave the chain intact.
+      if (parent?.type === "field_expression") {
+        let chainField: string | null = null;
+        for (let i = 0; i < parent.namedChildCount; i++) {
+          const c = parent.namedChild(i);
+          if (c?.type === "field_identifier") { chainField = c.text; break; }
+        }
+        const specializedFields = new Set(["key", "lamports", "amount"]);
+        if (chainField && specializedFields.has(chainField)) return true;
+        if (ctx?.stateBoundAccounts?.has(snakeCase(accountName))) return true;
+        // Fall through — rewrite ctx.accounts.X even though chain continues
+      }
       // Skip when n is the function position of a call (defensive — ctx.accounts.X
       // isn't normally callable, but guard anyway).
       if (parent?.type === "call_expression" && parent.namedChild(0)?.id === n.id) return true;

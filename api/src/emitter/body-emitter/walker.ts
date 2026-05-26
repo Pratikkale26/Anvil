@@ -754,15 +754,18 @@ export class BodyWalker {
     let out = code;
     for (const recv of receivers) {
       const escRecv = recv.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      // <recv>.key() form, exclude .as_ref suffix
+      // <recv>.key() form, exclude .as_ref suffix.
+      // Prefix guard `(^|[^\w.])` prevents matching inside longer chains
+      // (e.g. `ctx.accounts.target_account.key` — without the guard,
+      // `\b` matches between `.` and `t` and corrupts the chain).
       out = out.replace(
-        new RegExp(`\\b${escRecv}\\.key\\(\\)(?!\\.as_ref\\b)`, "g"),
-        keyExpr,
+        new RegExp(`(^|[^\\w.])${escRecv}\\.key\\(\\)(?!\\.as_ref\\b)`, "g"),
+        (_full, prefix: string) => `${prefix}${keyExpr}`,
       );
       // <recv>.key (field) form, exclude `(` (already matched above) and .as_ref
       out = out.replace(
-        new RegExp(`\\b${escRecv}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
-        keyExpr,
+        new RegExp(`(^|[^\\w.])${escRecv}\\.key\\b(?!\\s*\\(|\\.as_ref\\b)`, "g"),
+        (_full, prefix: string) => `${prefix}${keyExpr}`,
       );
     }
     return out;
