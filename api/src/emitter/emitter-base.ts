@@ -2135,11 +2135,9 @@ impl<'a, 'b, 'c, 'info, T> CpiContext<'a, 'b, 'c, 'info, T> {
     if (/:\s*Key\b|<\s*Key\b|\bT:\s*Key\b|where\s+\w+:\s*Key\b/.test(all) && !userDefinesTrait("Key")) {
       stubs.push(`pub trait Key {\n    fn key(&self) -> Pubkey;\n}`);
     }
-    // G98 reverted — empty Event marker trait alone cascades openbook
-    // +306 errors (same shape as G75/G93). The stub somehow alters
-    // symbol resolution downstream even with no impl blocks attached.
-    // Three independent angles attempted, all cascade — Event is a
-    // proven multi-day arc, defer until typed event IR is in.
+    if (this.referencesAnchorEventTrait(ir) && !userDefinesTrait("Event")) {
+      stubs.push(this.emitAnchorEventTraitStub());
+    }
     // G100 reverted — `pub trait ToAccountInfo<'info>` with explicit
     // lifetime cascaded marinade +175 (carried impls without matching
     // <'info> generic become invalid). Lifetime-free shape would
