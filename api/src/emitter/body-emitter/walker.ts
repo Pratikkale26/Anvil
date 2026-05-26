@@ -1940,6 +1940,51 @@ export class BodyWalker {
     return simplifyPassThroughCode(transformed);
   }
 
+  rewriteSetInner(code: string): string {
+    return code.replace(
+      /(\w+)\.set_inner\(\s*(\w+)\s*\{([\s\S]*?)\}\s*\);?/g,
+      (_full, localVar: string, typeName: string, fieldsStr: string) => {
+        const accountDef = this.ir.accounts.find((a) => a.name === typeName);
+        const structFieldNames = accountDef?.fields.map((f) => f.name) ?? [];
+        const fieldEntries = fieldsStr
+          .split(",")
+          .map((f) => f.trim())
+          .filter((f) => f.length > 0);
+        const assignments = fieldEntries.map((f, idx) => {
+          const colonIdx = f.indexOf(":");
+          if (colonIdx !== -1) {
+            const fieldName = f.slice(0, colonIdx).trim();
+            const fieldValue = f.slice(colonIdx + 1).trim();
+            return `${localVar}.${fieldName} = ${fieldValue};`;
+          }
+          if (structFieldNames.length > 0 && !structFieldNames.includes(f)) {
+            const fieldName = structFieldNames[idx];
+            if (fieldName) return `${localVar}.${fieldName} = ${f};`;
+            return `// ${MARKER_ANVIL_PREFIX}: could not resolve set_inner field at position ${idx} (${f})`;
+          }
+          return `${localVar}.${f} = ${f};`;
+        });
+        return assignments.join("\n    ");
+      },
+    );
+  }
+
+  rewriteDerefAssignment(code: string): string {
+    return code.replace(
+      /\*(?:ctx\.accounts\.)?(\w+)\s*=\s*(\w+)\s*\{([\s\S]*?)\}\s*;/g,
+      (full, accountVar: string, structType: string, fields: string) => {
+        const accountIdx = this.instr.accounts.findIndex(
+          (a) => snakeCase(a.name) === snakeCase(accountVar),
+        );
+        if (accountIdx < 0) return full;
+        const accountRef = this.instr.accounts[accountIdx]!;
+        const typeName = accountRef.accountType ?? "";
+        if (!this.isGeneratedStateType(typeName)) return full;
+        return `${typeName}::save(&accounts[${accountIdx}], &${structType} {${fields}})?;`;
+      },
+    );
+  }
+
   transformHelperCalls(code: string): string {
     let transformed = code;
     for (const helperName of this.helperMutRefNames) {

@@ -174,7 +174,8 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // Collapse multi-line dot-chains so structural passes can match
   // ctx.accounts.X.key() / .iter() / .position() as single expressions.
   // Mirrors walker.transformCtxAccountsReferences line 1306.
-  let dotChainCollapsed = w.transformNestedAnchorCode(nestedPreCleanup);
+  let stateAssignRewritten = w.rewriteDerefAssignment(w.rewriteSetInner(nestedPreCleanup));
+  let dotChainCollapsed = w.transformNestedAnchorCode(stateAssignRewritten);
   dotChainCollapsed = dotChainCollapsed.replace(/(\w|\))\s*\n\s*\./g, "$1.");
   dotChainCollapsed = dotChainCollapsed.replace(/\*\s*\n\s*ctx\./g, "*ctx.");
   const ctxLeafRewritten = transformCtxAccountsStructural(
