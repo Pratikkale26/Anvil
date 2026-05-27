@@ -1433,7 +1433,13 @@ export class AstVisitorBase {
     const pdaSeeds = (accountRef?.pdaSeeds ?? [`b"${normalized}"`]).map(
       (seed) => w.normalizeSeedExpr(seed),
     );
-    const expectedKey = w.resolveAccountInfoVar(normalized);
+    let expectedKey = w.resolveAccountInfoVar(normalized);
+    if (expectedKey === normalized && accountRef?.accountType &&
+        accountRef.accountType !== "AccountInfo" && accountRef.accountType !== "Signer" &&
+        !accountRef.accountType.startsWith("Program") && !accountRef.accountType.startsWith("Token") &&
+        accountRef.accountType !== "System") {
+      expectedKey = `${normalized}_account`;
+    }
     const bumpVar = `bump_${normalized}`;
     const out: RustStmt[] = [];
 
@@ -4142,11 +4148,26 @@ export class AstVisitorBase {
     const currentAuthority = stmt.signerSeeds
       ? w.resolveAccountInfoVar(snakeCase(stmt.currentAuthority))
       : snakeCase(stmt.currentAuthority);
+    // Resolve account names inside newAuthority expression through
+    // accountInfoVars — e.g. `Some(circuit_breaker.key())` becomes
+    // `Some(circuit_breaker_account.key())` when circuit_breaker is a
+    // state-typed init account.
+    let resolvedNewAuth = stmt.newAuthority;
+    for (const acc of w.instr.accounts) {
+      const accName = snakeCase(acc.name);
+      const aiVar = w.resolveAccountInfoVar(accName);
+      if (aiVar !== accName) {
+        resolvedNewAuth = resolvedNewAuth.replace(
+          new RegExp(`\\b${accName}\\.key\\(\\)`, "g"),
+          `${aiVar}.key()`,
+        );
+      }
+    }
     out.push(rawLine(w.emitter.emitSplSetAuthority(
       snakeCase(stmt.account),
       currentAuthority,
       stmt.authorityType,
-      stmt.newAuthority,
+      resolvedNewAuth,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
       {
         tokenProgram: stmt.tokenProgram,
