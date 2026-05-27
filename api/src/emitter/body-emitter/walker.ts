@@ -255,7 +255,16 @@ export class BodyWalker {
     const visitor = this.emitter.frameworkName === "Pinocchio"
       ? new PinocchioAstVisitor(this)
       : new NativeAstVisitor(this);
-    for (const stmt of this.statements) {
+    for (let i = 0; i < this.statements.length; i++) {
+      const stmt = this.statements[i]!;
+      // Skip non-terminal return_ok — the parser sometimes classifies both
+      // an explicit `Ok(())` and the implicit tail expression, producing a
+      // duplicate block after the first Ok(()). Only emit return_ok for the
+      // last occurrence in the body.
+      if (stmt.kind === "return_ok" && i < this.statements.length - 1 &&
+          this.statements.slice(i + 1).some(s => s.kind === "return_ok")) {
+        continue;
+      }
       const rustStmts = visitor.visit(stmt);
       const text = printStmts(rustStmts, "    ");
       if (text.length > 0) this.lines.push(text);
