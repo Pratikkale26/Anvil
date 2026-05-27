@@ -1951,8 +1951,42 @@ export abstract class BaseEmitter {
     const constantsForHoist = (ir.constants ?? []).map((c) => this.postProcessTopLevelConst(c));
     const hoistedNames = new Set(this.helpersReferencedByConsts(ir, constantsForHoist).map((h) => h.name));
     const instrContextNames = new Set(ir.instructions.map((instr) => toPascalCase(instr.name)));
+
+    // Dead code elimination: build the set of helpers reachable from live
+    // instruction bodies. Unreferenced helpers are skipped entirely — they
+    // would fail cargo build-sbf with missing Anchor types.
+    const allHelperNames = new Set((ir.helperFns ?? []).map((h) => h.name));
+    const helperBodies = new Map((ir.helperFns ?? []).map((h) => [h.name, h.body ?? h.rawCode ?? ""]));
+    // Seed: everything referenced from instruction bodies or constants
+    const liveCode = [
+      ...ir.instructions.flatMap((ix) => ix.body.map((s) => ("code" in s ? (s as any).code : "") as string)),
+      ...constantsForHoist,
+      ...((ir as any).userModules ?? []) as string[],
+    ].join("\n");
+    const reachable = new Set<string>();
+    const queue: string[] = [];
+    for (const name of allHelperNames) {
+      if (hoistedNames.has(name) || new RegExp(`\\b${name}\\s*[(<]`).test(liveCode) || new RegExp(`\\b${name}\\b`).test(liveCode)) {
+        reachable.add(name);
+        queue.push(name);
+      }
+    }
+    // Transitive closure: helpers called by reachable helpers
+    while (queue.length > 0) {
+      const current = queue.pop()!;
+      const body = helperBodies.get(current) ?? "";
+      for (const name of allHelperNames) {
+        if (!reachable.has(name) && new RegExp(`\\b${name}\\b`).test(body)) {
+          reachable.add(name);
+          queue.push(name);
+        }
+      }
+    }
+
     for (const helper of ir.helperFns) {
       if (hoistedNames.has(helper.name)) continue;
+      // Skip unreferenced helpers — dead code elimination
+      if (!reachable.has(helper.name)) continue;
       // Known CPI-wrapper helpers — emit target-typed replacement body
       // instead of the source. Call sites in user code get rewritten
       // (& stripped from AccountInfo args) via applyCpiWrapperCallSiteRewrites.
