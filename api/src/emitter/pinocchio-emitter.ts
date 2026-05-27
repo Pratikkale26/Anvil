@@ -10,7 +10,7 @@ import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorLangPrefixes, stripAnchorWrappersInCode, commentOutSiblingTraitImpl, FRAMEWORK_SHADOW_TYPES } from "./emitter-base.js";
 import { rewriteMsgCalls, collapseModulePaths } from "./anchor-transforms.js";
-import { rewriteRequireVariantsInCode } from "../parser/project-source.js";
+import { rewriteRequireVariantsInCode, decodeBase58 } from "../parser/project-source.js";
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
 import {
   instrDiscriminator,
@@ -3066,6 +3066,15 @@ ${writeLines}
     out = out.replace(
       /\b(?:[\w]+\s*::\s*)*Pubkey\s*::\s*new_from_array\s*\(\s*(\[[^]+?\])\s*\)/g,
       "$1",
+    );
+    // Pubkey::from_str_const("base58") → [byte array]. Decode at emit time.
+    out = out.replace(
+      /\b(?:[\w]+\s*::\s*)*Pubkey\s*::\s*from_str_const\s*\(\s*"([1-9A-HJ-NP-Za-km-z]+)"\s*\)/g,
+      (_full, base58: string) => {
+        const bytes = decodeBase58(base58);
+        if (!bytes || bytes.length !== 32) return _full;
+        return `[${bytes.join(", ")}]`;
+      },
     );
     out = out.replace(
       /borsh::to_vec\(([^)]+)\)\?/g,
