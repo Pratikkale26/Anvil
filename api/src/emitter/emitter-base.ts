@@ -935,6 +935,7 @@ export abstract class BaseEmitter {
         // import for the same type triggers E0252 (defined multiple times).
         if (/^use\s+solana_program::(?:sysvar::)?clock::Clock\s*;?$/.test(rewritten.trim())) return "";
         if (/^use\s+solana_program::(?:sysvar::)?rent::Rent\s*;?$/.test(rewritten.trim())) return "";
+        if (/^use\s+solana_program::clock::(Slot|UnixTimestamp|Epoch|BlockHeight)\s*;?$/.test(rewritten.trim())) return "";
         // G22c — drop user-carried imports that duplicate prelude items.
         // Pinocchio's prelude has `use borsh::{BorshDeserialize,
         // BorshSerialize};` and `use core::convert::TryInto;`. Native has
@@ -1606,7 +1607,24 @@ export abstract class BaseEmitter {
         code = code.replace(/declare_id!\s*\(\s*"([^"]+)"\s*\)\s*;?/g, "// declare_id removed (Anvil)");
         return code;
       });
-      sections.push(`// User-defined modules preserved verbatim from source\n${processed.join("\n\n")}`);
+      // Dedup modules with the same name: merge bodies when two `pub mod X { ... }` collide
+      // (common after workspace crate flattening — both program and sibling define `mod utils`).
+      const deduped: string[] = [];
+      const seenModNames = new Map<string, number>();
+      for (const code of processed) {
+        const modMatch = code.match(/^(?:pub\s+)?mod\s+(\w+)\s*\{/);
+        if (modMatch?.[1] && seenModNames.has(modMatch[1])) {
+          const existingIdx = seenModNames.get(modMatch[1])!;
+          const bodyMatch = code.match(/^(?:pub\s+)?mod\s+\w+\s*\{([\s\S]*)\}\s*$/);
+          if (bodyMatch?.[1]) {
+            deduped[existingIdx] = deduped[existingIdx]!.replace(/\}\s*$/, `\n${bodyMatch[1].trim()}\n}`);
+          }
+        } else {
+          if (modMatch?.[1]) seenModNames.set(modMatch[1], deduped.length);
+          deduped.push(code);
+        }
+      }
+      sections.push(`// User-defined modules preserved verbatim from source\n${deduped.join("\n\n")}`);
     }
 
     sections.push(this.emitEntrypoint(ir));
