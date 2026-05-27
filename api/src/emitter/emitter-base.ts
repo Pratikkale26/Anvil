@@ -98,6 +98,8 @@ import { hasResidualAnchorPatterns, hasResidualUnsupportedBody, hasUnsalvageable
 import {
   commentOutHelperBlock,
   commentOutUnsalvageableCallSites,
+  commentOutResidualAnchorLeaks,
+  generateExternalTypeStubs,
   stripTrailingOffsetBump,
   prefixUnusedProphylacticBindings,
   promoteFreeFnVisibility,
@@ -1639,6 +1641,7 @@ export abstract class BaseEmitter {
     if (this.unsalvageableHelpers.size > 0) {
       combined = commentOutUnsalvageableCallSites(combined, this.unsalvageableHelpers);
     }
+    combined = commentOutResidualAnchorLeaks(combined);
     // G96 — extend G80's 'info-lifetime patch to state.rs impl methods.
     // drift's `impl Foo { pub fn validate_fuel_overflow(&self, x: &Option<AccountInfo<'info>>) }`
     // needs `<'info>` on the method itself when the surrounding impl is
@@ -1790,6 +1793,7 @@ export abstract class BaseEmitter {
     if (this.unsalvageableHelpers.size > 0) {
       raw = commentOutUnsalvageableCallSites(raw, this.unsalvageableHelpers);
     }
+    raw = commentOutResidualAnchorLeaks(raw);
     // Rewrite call sites for recognized CPI-wrapper helpers (strip & from
     // AccountInfo args). Mirrors emit-combined; instruction file is also
     // a place these calls live.
@@ -1930,6 +1934,7 @@ export abstract class BaseEmitter {
     // global "unexpected closing delimiter `}`" — all 6 large fixtures
     // collapsed to a single brace-balance error. Defer until the walker
     // can skip already-commented spans.
+    joined = commentOutResidualAnchorLeaks(joined);
     return `//! Helper functions for ${toPascalCase(ir.name)}\n\n` + joined;
   }
 
@@ -2755,6 +2760,7 @@ impl ZeroCopy for ${accName} {}`;
     if (this.unsalvageableHelpers.size > 0) {
       combined = commentOutUnsalvageableCallSites(combined, this.unsalvageableHelpers);
     }
+    combined = commentOutResidualAnchorLeaks(combined);
     combined = this.applyCpiWrapperCallSiteRewrites(combined);
     return combined;
   }
