@@ -70,6 +70,27 @@ const LARGE_FIXTURES: Fixture[] = [
     // Conservative ceilings — first pass on parser; tighten after baseline.
     ceiling: { pinocchio: 200, native: 200 },
   },
+  {
+    id: "marginfi-v2",
+    repo: "https://github.com/mrgnlabs/marginfi-v2.git",
+    commit: "843aa82df852b9e9a3c555e67ffd12aa53f4805b",
+    libPath: "programs/marginfi/src/lib.rs",
+    ceiling: { pinocchio: 270, native: 270 },
+  },
+  {
+    id: "raydium-clmm",
+    repo: "https://github.com/raydium-io/raydium-clmm.git",
+    commit: "5e13240b3e4682f5f1ab8b1456a835ac87c28ead",
+    libPath: "programs/amm/src/lib.rs",
+    ceiling: { pinocchio: 35, native: 35 },
+  },
+  {
+    id: "klend",
+    repo: "https://github.com/Kamino-Finance/klend.git",
+    commit: "4c7653a12276ded3bcaf95a3474973ca135ca810",
+    libPath: "programs/klend/src/lib.rs",
+    ceiling: { pinocchio: 175, native: 175 },
+  },
   // Phoenix is non-Anchor (native solana_program); listed here as a doc
   // of the gap. Anvil doesn't parse non-Anchor sources today.
   // Solend likewise has its own non-Anchor codebase. Tracking these out
