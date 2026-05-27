@@ -194,18 +194,15 @@ export async function callCircuitBreaker(
   tx3.recentBlockhash = svm.latestBlockhash();
   tx3.feePayer = payer.publicKey;
   tx3.sign(payer, owner);
-  try {
-    const result = svm.sendTransaction(tx3);
-    console.log(`[circuit-breaker] init tx result:`, typeof result, result ? "ok" : "null");
-  } catch (e: any) {
-    console.error(`[circuit-breaker] init tx FAILED:`, e.message?.slice(0, 300));
-  }
-  // Check if PDA was created
-  try {
-    const acct = svm.getAccount(circuitBreakerPda);
-    console.log(`[circuit-breaker] PDA exists: ${!!acct}, lamports: ${acct?.lamports}`);
-  } catch {
-    console.log(`[circuit-breaker] PDA does NOT exist after tx`);
+  const result = svm.sendTransaction(tx3);
+  const ctorName = (result as any)?.constructor?.name ?? "";
+  if (ctorName === "FailedTransactionMetadata") {
+    const meta = (result as any).meta?.();
+    const logs = typeof meta?.logs === "function" ? meta.logs() : [];
+    const err = (result as any).err?.() ?? (result as any).error?.() ?? "unknown";
+    console.error(`[circuit-breaker] init tx FAILED. err=${JSON.stringify(err)} logs=${JSON.stringify(logs)}`);
+  } else {
+    console.log(`[circuit-breaker] init tx OK: ${ctorName}`);
   }
 }
 
