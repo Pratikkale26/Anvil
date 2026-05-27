@@ -1927,7 +1927,7 @@ export abstract class BaseEmitter {
         continue;
       }
       const carried = this.carriedFunctionBlock(helper.rawCode, ir);
-      if (hasResidualUnsupportedBody(carried)) {
+      if (hasResidualUnsupportedBody(carried) || hasResidualAnchorPatterns(carried)) {
         const stubbed = carried
           .replace(/^\/\/ Carried from source \([^)]*\)/, "// Carried from source (body stubbed — unsupported patterns)")
           .replace(/\{[\s\S]*$/, `{\n    unimplemented!("Anvil: carried helper with unsupported body")\n}`);
