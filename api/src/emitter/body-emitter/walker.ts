@@ -2166,9 +2166,15 @@ export class BodyWalker {
               : (typeName === "Mint"
                   ? `{ use solana_program::program_pack::Pack; spl_token::state::Mint::unpack(&${accountInfo}.data.borrow())? }`
                   : `{ use solana_program::program_pack::Pack; spl_token::state::Account::unpack(&${accountInfo}.data.borrow())? }`);
-            this.lines.push(`    let ${localVar} = ${readExpr};`);
-            this.lines.push(`    if ${condition} {`);
-            this.lines.push(`        return Err(ProgramError::InvalidAccountData);`);
+            // Wrap in a block scope so the Ref<TokenAccount/Mint> is dropped
+            // before any subsequent CPI. Without the block, the Ref lives to
+            // end-of-function and pinocchio's invoke checks fail with
+            // "account already borrowed".
+            this.lines.push(`    {`);
+            this.lines.push(`        let ${localVar} = ${readExpr};`);
+            this.lines.push(`        if ${condition} {`);
+            this.lines.push(`            return Err(ProgramError::InvalidAccountData);`);
+            this.lines.push(`        }`);
             this.lines.push(`    }`);
             this.bodyRequireConditions.add(normalizeConditionKey(condition));
             continue;
