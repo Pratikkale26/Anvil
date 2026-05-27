@@ -26,14 +26,14 @@ repo header.
 
 | Signal | Value | As of |
 |---|---|---|
-| Byte-equal differential test files | 141 | 2026-05-27 |
-| Cargo-green MUST_PASS fixtures | 181 | 2026-05-27 |
+| Byte-equal differential test files | 142 | 2026-05-27 |
+| Cargo-green MUST_PASS fixtures | 193 | 2026-05-27 |
+| Demo programs build-sbf GREEN | 64/64 (100%) | 2026-05-27 |
+| Anchor test suite build-sbf GREEN | 51/77 (66%) | 2026-05-27 |
 | IR body statement kinds | 100+ | 2026-05-27 |
-| Demo programs | 64 | 2026-05-27 |
-| Fast test suite (pass/total) | 1699/1704 | 2026-05-27 |
-| Top DeFi: marginfi-v2 (91 ix) | 1 error | 2026-05-27 |
-| Top DeFi: raydium-clmm (34 ix) | 0 errors | 2026-05-27 |
-| Top DeFi: klend (63 ix) | 0 errors | 2026-05-27 |
+| Top DeFi: klend (63 ix) | **build-sbf GREEN** | 2026-05-27 |
+| Top DeFi: circuit-breaker (8 ix) | **build-sbf GREEN** | 2026-05-27 |
+| Total commits | 1,252 | 2026-05-27 |
 
 ## How this gets updated
 
