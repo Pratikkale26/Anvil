@@ -288,8 +288,8 @@ export const CASES: readonly RealworldCase[] = [
       url: "https://github.com/solana-developers/program-examples",
       lib: "tokens/token-swap/anchor/programs/token-swap/src/lib.rs",
     },
-    expected: "cargo-clean",
-    description: "token-swap — 22KB AMM (.reload() now elided by body classifier)",
+    expected: "cargo-refuse",
+    description: "token-swap — 22KB AMM (.reload() elided but .amount on AccountInfo needs token_account_amount helper)",
   },
   {
     id: "t22-non-transferable",
