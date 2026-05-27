@@ -4924,6 +4924,15 @@ ${fields}
     // helpers.rs (which holds the marinade `check_*` helpers chain) needs
     // it too.
     transformed = stripAnchorLangPrefixes(transformed);
+    // Strip Anchor error-attribution chains (.with_source, .with_pubkeys, etc.)
+    // that survive in helper bodies after source!() → () rewrite. These methods
+    // don't exist in pinocchio. Applied only to helpers (not instruction bodies)
+    // to avoid collateral damage on complex CPI patterns.
+    transformed = transformed.replace(/\s*\.with_(?:source|pubkeys|account_name|values)\s*\([^)]*\)/g, '');
+    // Fix unbalanced Err() parens left by the chain strip.
+    for (let pass = 0; pass < 3; pass++) {
+      transformed = transformed.replace(/\bErr\(([^()]*(?:\([^()]*\))*[^()]*)\)\)/g, 'Err($1)');
+    }
     // Check the *transformed* code for residual Anchor patterns — the transform
     // may have cleaned up everything that was originally Anchor-specific.
     if (!hasResidualAnchorPatterns(transformed)) {
