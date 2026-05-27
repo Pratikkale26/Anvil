@@ -1599,7 +1599,13 @@ export abstract class BaseEmitter {
     // through stripAnchorLangPrefixes + stripAnchorWrappersInCode so any
     // `anchor_lang::*` trait references inside the mod (AccountDeserialize,
     // Owners, etc.) get the same wrapper-strip treatment as userTraits.
-    const userModules = (ir as any).userModules ?? [];
+    // Filter out bare `mod X;` declarations — these are leftover from the
+    // source's module structure after buildProjectSource flattened the files.
+    // The content was already inlined; the declaration without a body would
+    // cause E0583 "file not found" under build-sbf.
+    const userModules = ((ir as any).userModules ?? []).filter(
+      (um: string) => !/^(?:pub\s+)?mod\s+\w+\s*;$/.test(um.trim()),
+    );
     if (userModules.length > 0) {
       const target = this.frameworkName === "Pinocchio" ? "pin" : "native";
       const processed = userModules.map((um: string) => {
