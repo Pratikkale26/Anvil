@@ -512,6 +512,18 @@ export function transformHelperCode(
   next = next.replace(/(?<![A-Za-z])Error::from\(([^)]+)\)(?:\.with_source\([^)]*\)|\s*\.with_\w+\([^)]*\))*/g, '$1.into()');
   // Strip bare source!() calls that may remain
   next = next.replace(/\bsource!\(\)/g, '()');
+  // Strip .with_source(...) / .with_pubkeys(...) / .with_account_name(...) chains
+  // on any expression. Anchor's error attribution methods don't exist in pinocchio.
+  // Must run AFTER source!() strip to catch `.with_source(())` residuals.
+  // Multi-line aware: `.with_source(...)` may be on the next line with indentation.
+  next = next.replace(/\s*\.with_(?:source|pubkeys|account_name|values)\s*\([^)]*\)/g, '');
+  // Fix unbalanced trailing parens on Err(...) expressions left by chain strip.
+  // Iteratively reduce `Err(X))))` → `Err(X))` → `Err(X)` until balanced.
+  for (let pass = 0; pass < 3; pass++) {
+    next = next.replace(/\bErr\(([^()]*(?:\([^()]*\))*[^()]*)\)\)/g, 'Err($1)');
+  }
+  // Strip bare `)` or `))` lines that are chain residuals.
+  next = next.replace(/^\s*\){1,3}\s*$/gm, '');
 
   // ── Strip CpiContext patterns in helper functions ──
   // CpiContext::new(...) and CpiContext::new_with_signer(...) are Anchor-only
