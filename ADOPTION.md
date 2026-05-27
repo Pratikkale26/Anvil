@@ -16,13 +16,24 @@ numbers we care about and the date they were last refreshed.
 Run `npm view anvil-sol` for current download numbers. Star count is on the
 repo header.
 
-## Grant targets
+## Targets
 
-Tracking against the SF Developer Tooling grant ($56k):
+- 10 migrated programs (see [MIGRATIONS.md](MIGRATIONS.md))
+- 200 weekly npm downloads
+- 5 third-party integrations (see [INTEGRATIONS.md](INTEGRATIONS.md))
 
-- A1 — 10 migrated programs (see [MIGRATIONS.md](MIGRATIONS.md))
-- A2 — 200 weekly npm downloads
-- A3 — 5 third-party integrations (see [INTEGRATIONS.md](INTEGRATIONS.md))
+## Technical coverage
+
+| Signal | Value | As of |
+|---|---|---|
+| Byte-equal differential test files | 141 | 2026-05-27 |
+| Cargo-green MUST_PASS fixtures | 181 | 2026-05-27 |
+| IR body statement kinds | 100+ | 2026-05-27 |
+| Demo programs | 64 | 2026-05-27 |
+| Fast test suite (pass/total) | 1699/1704 | 2026-05-27 |
+| Top DeFi: marginfi-v2 (91 ix) | 1 error | 2026-05-27 |
+| Top DeFi: raydium-clmm (34 ix) | 0 errors | 2026-05-27 |
+| Top DeFi: klend (63 ix) | 0 errors | 2026-05-27 |
 
 ## How this gets updated
 

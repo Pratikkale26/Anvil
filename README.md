@@ -25,22 +25,30 @@ Cargo green is necessary but not sufficient. This is the actual correctness sign
 
 ## What's verified today
 
-**73 byte-equal differential fixtures** lock these emit shapes against the Anchor reference on every commit. **Data + lamports + owner all byte-compared in a real VM** — not just `cargo build` green, not just IDL match. The MPL Token Metadata + Pyth Receiver `.so` are bundled as test fixtures and loaded into LiteSVM via `svm.addProgram` so CPI shape correctness is also verified end-to-end. **MPL byte-equal coverage 11/12** as of 2026-05-19: `create_metadata_v3` (with full DataV2 support — creators, collection, uses), `create_master_edition_v3`, `update_metadata_accounts_v2`, `set_and_verify_collection`, `freeze_delegated`, `thaw_delegated`, `approve_collection_authority`, `revoke_collection_authority`, `mint_new_edition_from_master_edition`, `sign_metadata`, `verify_collection`. **Composite `#[derive(Accounts)]` flatten** shipped end-to-end with BYTE_EQUAL on real `:8899` validator for Anchor org composite example — Drift v2 / Mango v4 / Squads v4 coverage unblocked.
+**141 byte-equal differential test files** lock these emit shapes against the Anchor reference on every commit. **Data + lamports + owner all byte-compared in a real VM** — not just `cargo build` green, not just IDL match. The MPL Token Metadata + Pyth Receiver `.so` are bundled as test fixtures and loaded into LiteSVM via `svm.addProgram` so CPI shape correctness is also verified end-to-end. **MPL byte-equal coverage 11/12**: `create_metadata_v3` (with full DataV2 support — creators, collection, uses), `create_master_edition_v3`, `update_metadata_accounts_v2`, `set_and_verify_collection`, `freeze_delegated`, `thaw_delegated`, `approve_collection_authority`, `revoke_collection_authority`, `mint_new_edition_from_master_edition`, `sign_metadata`, `verify_collection`. **Full 12/12 MPL Core catalog**: CreateV2, UpdateV2, TransferV1, BurnV1, CreateCollectionV2, AddPluginV1, RemovePluginV1, UpdatePluginV1, ApprovePluginAuthorityV1, RevokePluginAuthorityV1. **Top DeFi cohort**: marginfi-v2 (91 instructions, 1 error), raydium-clmm (34 instructions, 0 errors), klend (63 instructions, 0 errors) — all near cargo-green on Pinocchio. **Composite `#[derive(Accounts)]` flatten** shipped end-to-end with BYTE_EQUAL.
 
-### 6 real-world Anchor programs verified byte-equal
+### 14+ real-world Anchor programs verified byte-equal
 
-These are externally-authored programs cloned verbatim from public repos. Anvil's emit produces post-scenario state byte-identical to the Anchor reference under the same scenario:
+Externally-authored programs cloned verbatim from public repos. Anvil's emit produces post-scenario state byte-identical to the Anchor reference under the same scenario:
 
 | Program | Source | Surface |
 |---|---|---|
 | `anchor-escrow-2025` | mikemaccana/anchor-escrow-2025 | PDA + non-ATA token init + `token::transfer` |
+| `coral-multisig` | coral-xyz/anchor test corpus | m-of-n signer enforcement |
 | `coral-events` | coral-xyz/anchor test corpus | `emit!()` event log + multi-field borsh payload |
+| `coral-composite` | coral-xyz/anchor test corpus | Composite `#[derive(Accounts)]` flatten |
+| `coral-realloc` | coral-xyz/anchor test corpus | Vec resize with rent-delta accounting |
+| `coral-overflow-checks` | coral-xyz/anchor test corpus | Overflow enforcement |
+| `coral-duplicate-mutable` | coral-xyz/anchor test corpus | Mutable alias detection |
+| `coral-pda-derivation` | coral-xyz/anchor test corpus | PDA derivation patterns |
+| `coral-init-if-needed` | coral-xyz/anchor test corpus | `init_if_needed` constraint |
 | `favorites` | solana-developers/program-examples | `init_if_needed` + `String` + `Vec<String>` (max_len) |
 | `account-data` | solana-developers/program-examples | 3× `String` fields under `#[max_len(50)]` |
 | `pda-rent-payer` | solana-developers/program-examples | Signer-seeded `system_program::create_account` |
+| `program-examples counter` | solana-developers/program-examples | Basic PDA init + state mutation |
 | `page-visits` | solana-developers/program-examples | Smallest possible PDA-init (5-byte struct) |
 
-### 37 demo byte-equal fixtures (representative subset)
+### 64 demo programs, representative byte-equal fixtures
 
 | Fixture | Surface |
 |---|---|
@@ -65,7 +73,7 @@ These are externally-authored programs cloned verbatim from public repos. Anvil'
 
 Plus 22 more covering `bumps_access`, `init_if_needed`, `cpi_custom`, `cpi_memo`, sysvars, return data/err, msg logs, T22 extension family (NonTransferable, ImmutableOwner, DefaultAccountState, InterestBearingMint, TokenMetadata, TransferFee), MPL Token Metadata (`create_metadata_v3` + `create_master_edition_v3` + `update_metadata_accounts_v2` byte-equal under a chained scenario via the staged `mpl_token_metadata.so` loaded into LiteSVM), and others. `bun test api/tests/differential-*.test.ts` runs the full set.
 
-Plus 50+ deterministic real-world cargo-build regression gates from `solana-developers/program-examples` and the `coral-xyz/anchor` test corpus.
+Plus 181 deterministic real-world cargo-build regression gates (MUST_PASS) from `solana-developers/program-examples` and the `coral-xyz/anchor` test corpus.
 
 ### Measured CU savings on bundled demos
 
@@ -164,7 +172,7 @@ For the equivalent Pinocchio output and side-by-side comparison, see the workben
 ## Pipeline
 
 ```
-Anchor source → tree-sitter → Solana IR (Zod, 23 body kinds) → {Pinocchio, Native} emit → Validator
+Anchor source → tree-sitter → Solana IR (Zod, 100+ body kinds) → {Pinocchio, Native} emit → Validator
                                                   │
                                                   └──► Differential harness (LiteSVM byte-equal: data + lamports + owner)
 ```
@@ -188,7 +196,7 @@ Full matrix and known gaps: [docs/feature-matrix.md](docs/feature-matrix.md).
 ## CLI
 
 ```
-anvil-sol compile <input> --target <pinocchio|native|quasar> [-o <dir>] [--strict]
+anvil-sol compile <input> --target <pinocchio|native> [-o <dir>] [--strict]
 anvil-sol differential <input> [--scenario s.json] [--anchor-so path.so]
 anvil-sol parse <input> [--json]
 anvil-sol validate <input> --target <target> [--json]
@@ -245,7 +253,7 @@ docs/   Architecture, differential testing, feature matrix, migration guide
 
 ## Status
 
-v0.4.0 — **safe-by-default** (`--strict` is the new CLI default; `--permissive` is the opt-out). See [CHANGELOG.md](CHANGELOG.md) for the BREAKING-change migration notes. Full Metaplex Token Metadata CPI catalog (12/12 slots) + Token-2022 extension space cross-check + ⚠ marker linkage shipped 2026-05-18. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). **1417 passing tests across 123 fast-suite files** (excluding env-gated differential + SBF-toolchain suites): 73 byte-equal differential fixtures (T22 family + MPL Token Metadata 12-IR-kind catalog + Pyth oracle + 14 real-world Anchor programs via diff-arc Phase B/C) + 77 realworld cargo regressions + parser / emitter / validator / sandbox / AI suites + marker-validator linkage + IR roundtrip sweep. Source of truth: `bun scripts/count-tests.ts`.
+v0.4.0 — **safe-by-default** (`--strict` is the new CLI default; `--permissive` is the opt-out). See [CHANGELOG.md](CHANGELOG.md) for the BREAKING-change migration notes. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). **1699 passing tests across 149 fast-suite files** (excluding env-gated differential + SBF-toolchain suites): 141 byte-equal differential test files + 181 realworld cargo-green MUST_PASS entries + 100+ IR body statement kinds + 64 demo programs + parser / emitter / validator / sandbox / AI suites + marker-validator linkage + IR roundtrip sweep. **Top DeFi protocols near cargo-green**: marginfi-v2 (1 error), raydium-clmm (0 errors), klend (0 errors).
 
 Working notes for grant + migration: [docs/migration-guide.md](docs/migration-guide.md).
 
@@ -255,4 +263,4 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 ## Contributing
 
-Issues + PRs welcome. Areas where help is most useful: new differential fixtures (the harness is designed for ~30-line additions — see [docs/differential-testing.md](docs/differential-testing.md)), Switchboard oracle IR kinds (Pyth legacy + modern both supported as of M2/N5b — see api/src/demo-programs/pyth-read-{legacy,modern}.rs), Metaplex differential-against-real-bytecode fixtures, real-world Anchor programs that fail to transpile (file the source + the divergence).
+Issues + PRs welcome. Areas where help is most useful: new differential fixtures (the harness is designed for ~30-line additions — see [docs/differential-testing.md](docs/differential-testing.md)), real-world Anchor programs that fail to transpile (file the source + the divergence), workspace/multi-crate Anchor projects.

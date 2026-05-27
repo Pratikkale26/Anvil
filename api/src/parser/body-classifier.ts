@@ -1048,6 +1048,11 @@ function classifyExpressionStatement(
     return { stmt: classifyReturn(expr) };
   }
 
+  // ── Account.reload() — no-op on Pinocchio/Native (AccountInfo data is always live) ──
+  if (/\.reload\s*\(\s*\)\s*\??;?\s*$/.test(text)) {
+    return { stmt: { kind: "pass_through", code: "// reload() elided — AccountInfo buffer is always current", needsReview: false } };
+  }
+
   // ── Assignment: state.field = value ──
   if (expr.type === "assignment_expression") {
     const assignResult = classifyAssignment(expr);

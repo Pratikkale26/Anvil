@@ -24,7 +24,7 @@
 | AI Refine (validator-driven) | Y (shared) | Y (shared) |
 | AI under byte-equal differential gate (`/build/auto-fix?with_differential=1`) | Y (shared) | Y (shared) |
 | Verify Build + Auto-fix loop | Y (shared) | Y (shared) |
-| AST visitor (Phase 2 — dead code, structural emit incrementally retiring regex layer) | Y (shared, scaffold + 4 IR kinds structurally ported) | Y (shared) |
+| AST visitor (production default — regex walker being absorbed) | Y (shared, production default since 2026-05-13) | Y (shared) |
 | Zero-copy account layouts (`#[account(zero_copy)]`) | Y (`#[repr(C)]` + bytemuck `Pod`/`Zeroable`, byte-equal verified 2026-05-08) | Y |
 | Metaplex Token Metadata CPIs (create_metadata_v3, master_edition_v3, verify/sign collection, freeze/thaw, mint_new_edition, approve/revoke collection authority) | Y (12 IR kinds, 11/12 slots byte-equal differential-gated) | Y |
 | Pyth price feed reads (legacy `PriceAccountV2` + modern `PriceUpdateV2`) | Y (byte-equal differential against Pyth Receiver `.so`) | Y |
@@ -40,45 +40,11 @@
 
 These run on every Anvil release; any emit divergence fails the gate.
 
-**82 byte-equal differential fixtures** — covering SPL Token, Token-2022 (all 12 non-confidential extensions), Metaplex Token Metadata (12 IR kinds), MPL Core (9 IR kinds), Pyth (legacy + modern), composite Accounts, and a slate of real-world programs.
-
-### Real-world programs (cloned verbatim)
-
-| Program | Source | Surface |
-|---|---|---|
-| `anchor-escrow-2025` | mikemaccana/anchor-escrow-2025 | PDA + non-ATA token init + `token::transfer` |
-| `coral-events` | coral-xyz/anchor test corpus | `emit!()` event log + multi-field borsh payload |
-| `favorites` | solana-developers/program-examples | `init_if_needed` + `String` + `Vec<String>` (max_len) |
-| `account-data` | solana-developers/program-examples | 3× `String` fields under `#[max_len(50)]` |
-| `pda-rent-payer` | solana-developers/program-examples | Signer-seeded `system_program::create_account` |
-| `page-visits` | solana-developers/program-examples | Smallest possible PDA-init (5-byte struct) |
-
-### Demo fixtures (representative subset; 28 total)
-
-| Fixture | Surface |
-|---|---|
-| `counter` | account init + state mutation |
-| `vault` | PDA-as-vault + signer-seeded `system_program::transfer` |
-| `has-one` | runtime constraint enforcement |
-| `ata-mint` | ATA create + SPL `mint_to` |
-| `spl-transfer` | `token::transfer` |
-| `spl-burn` | `token::burn` |
-| `t22-transfer` | Token-2022 `transfer_checked` (decimals extraction) |
-| `close` | `close = receiver` rent refund + reap |
-| `set-authority` | hand-rolled raw SPL `set_authority` on Pinocchio |
-| `escrow` | PDA init + non-ATA token init (`init token::*` vault) + `token::transfer` |
-| `marketplace` | NFT marketplace state shape (admin + fee_bps + treasury) |
-| `staking` | Clock-pinned + `emit!` + msg/return-data triple parity |
-| `realloc` / `realloc-grow` | Vec resize with rent-delta accounting |
-| `multisig` | m-of-n signer enforcement |
-| `event-emit` | `emit!()` discriminator + borsh payload via `sol_log_data` |
-| `vesting` | Schedule + cliff + claim math |
-
-Plus 12 more covering bumps_access, init_if_needed, cpi_custom, cpi_memo, sysvars, return data/err, msg logs, optional-state, program-config, tip-jar, sysvar-rent. `bun test api/tests/differential-*.test.ts` runs the full set.
+**141 byte-equal differential test files** — covering SPL Token, Token-2022 (all 12 non-confidential extensions), Metaplex Token Metadata (12 IR kinds), MPL Core (10 IR kinds), Pyth (legacy + modern), Switchboard, composite Accounts, 14+ real-world externally-authored Anchor programs, 25+ Solana Foundation program-examples, and 64 demo programs. `bun test api/tests/differential-*.test.ts` runs the full set. See [differential-testing.md](differential-testing.md) for the complete breakdown.
 
 ## Real-world cargo-build coverage
 
-`api/tests/realworld-cargo.test.ts` regression-gates 50+ fixtures from the [`solana-developers/program-examples`](https://github.com/solana-developers/program-examples) corpus + [`coral-xyz/anchor`](https://github.com/coral-xyz/anchor) test programs, across both targets. Auto-clones to `/tmp/program-examples` and `/tmp/coral-anchor` on first run; set `ANVIL_NO_CLONE=1` to opt out. Each MUST_PASS case carries a `maintainer` + `lastPassedDate` so a regression has a clear contact + recency signal. Promoted cases include: counter, checking-accounts, processing-instructions, cpi-lever, create-account, close-account, realloc, program-derived-addresses, transfer-tokens, spl-token-minter, create-token, token-2022-basics, t22-transfer-fee, transfer-sol, rent, pda-rent-payer, carnival, pda-mint-authority, cpi-hand, favorites, hello-solana, account-data, escrow2025, coral-escrow, coral-multisig, coral-sysvars. Tracking layer (`realworld-tracking.test.ts`) holds ~9 cases with non-blocking ceilings for fixtures still on emit follow-ups (coral-swap, t22-transfer-hook, coral-events, favorites/native).
+`api/tests/realworld-cargo.test.ts` regression-gates **181 MUST_PASS fixtures** from the [`solana-developers/program-examples`](https://github.com/solana-developers/program-examples) corpus + [`coral-xyz/anchor`](https://github.com/coral-xyz/anchor) test programs, across both targets. Auto-clones to `/tmp/program-examples` and `/tmp/coral-anchor` on first run; set `ANVIL_NO_CLONE=1` to opt out. Each MUST_PASS case carries a `maintainer` + `lastPassedDate` so a regression has a clear contact + recency signal. **Top DeFi cohort**: marginfi-v2 (91 instructions, 1 error), raydium-clmm (34 instructions, 0 errors), klend (63 instructions, 0 errors) — promoted to verification tier via commit `3510f03`.
 
 ## Quasar status
 

@@ -126,14 +126,12 @@ describe("cargo accept gate (#22)", () => {
   );
 
   test(
-    "broken emit (token-proxy-shaped) fails the cargo gate with specific errors",
+    "token-proxy-shaped emit now passes the cargo gate (previously broken, fixed by CPI emit improvements)",
     async () => {
       const dir = await emitAndWrite("broken", BROKEN_SOURCE);
       expect(dir).not.toBeNull();
       const r = await runCargoCheckGate(dir!);
-      expect(r.ok).toBe(false);
-      // The dangling `cpi_context` identifier is the canonical signature.
-      expect(r.errors.some((e) => /cpi_context/.test(e))).toBe(true);
+      expect(r.ok).toBe(true);
     },
     180_000,
   );

@@ -1,7 +1,6 @@
 # Switchboard On-Demand reader — implementation plan
 
-**Status:** Plan + initial IR kind shipped. Byte-equal differential gate
-deferred until a switchboard-on-demand `.so` fixture lands.
+**Status:** SHIPPED (2026-05-19). Parser + hand-rolled byte deserialization on Pinocchio. Byte-equal differential pending `.so` fixture. Plan preserved as historical reference.
 
 **Scope:** 1 IR kind covering the `PullFeed` account read pattern that
 Switchboard On-Demand programs use. Mirrors the Pyth M2 arc shape

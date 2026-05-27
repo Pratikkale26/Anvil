@@ -1,6 +1,6 @@
 # MPL Core arc — implementation plan
 
-**Status:** Plan only. Implementation deferred to a multi-day arc.
+**Status:** SHIPPED (2026-05-19). Full 12/12 catalog: asset lifecycle + collection + plugin family. Plan preserved as historical reference.
 
 **Scope:** 8-10 new IR kinds for the MPL Core program (NOT to be confused
 with MPL Token Metadata, which has its own 12-IR-kind catalog already

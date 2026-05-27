@@ -1,9 +1,6 @@
 # Plan: real-world byte-equal corpus expansion (CX1)
 
-**Status:** plan + execution roadmap. Probes go to `/tmp/` only — never
-add cloned source under `/home/pk/Anvil/` or `api/tests/fixtures/`
-beyond the per-fixture wrapper file (~80 LoC). Cloning into the repo
-breaks WSL on resume.
+**Status:** LARGELY SHIPPED. Corpus expanded from 9 → 141 differential test files. 14+ real-world programs byte-equal. Plan preserved as historical reference. Probes go to `/tmp/` only.
 
 ## Where we are today
 

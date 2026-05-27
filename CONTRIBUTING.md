@@ -19,14 +19,15 @@ Three things you'll want to know up-front:
 
 ## Architecture in one paragraph
 
-`Anchor source → tree-sitter AST → SolanaIR (Zod) → emitter (Pinocchio
+`Anchor source → tree-sitter AST → SolanaIR (Zod, 100+ body kinds) → emitter (Pinocchio
 or Native target) → output validator → cargo build (verify) → optional
 LiteSVM differential vs Anchor reference (byte-equal verify)`. The IR
 is the contract between parser and emitter; both sides treat it as
-versioned. Emitter is not pure-AST — it does AST emit + a regex
-post-process layer; this is intentional for iteration speed and is
-documented honestly. See `api/src/emitter/N1-DEDUP-DESIGN-NOTE.md`
-for the per-target vocab pattern.
+versioned. The AST visitor (`api/src/emitter/ast-visitor/`) is the
+production emit path — per-IR-kind visitor dispatching through `visit()`.
+A legacy regex walker (`api/src/emitter/body-emitter/walker.ts`) handles
+CPI shape recognition (~2300 LoC) and is being absorbed into AST passes
+via the Walker Phase A commits.
 
 ---
 
@@ -136,18 +137,16 @@ lives there.
 
 ### Working with the emitter
 
-The emitter has a base class (`api/src/emitter/emitter-base.ts`) that
-walks the IR and dispatches to per-target subclasses
-(`pinocchio-emitter.ts`, `native-emitter.ts`). The body-emitter
-subdirectory has the per-statement-kind handlers.
+The AST visitor (`api/src/emitter/ast-visitor/`) is the production
+emit path. Per-IR-kind `visit()` methods emit `RustStmt[]` nodes.
+The base class (`api/src/emitter/emitter-base.ts`) walks the IR and
+dispatches to per-target subclasses (`pinocchio-emitter.ts`,
+`native-emitter.ts`).
 
-After AST emit, the per-target emitter runs a regex post-process step
-that handles target-specific rewrites (e.g. `Pubkey::find_program_address`
-→ `pinocchio::pubkey::find_program_address`,
-`solana_program::program::set_return_data` → `pinocchio::program::set_return_data`).
-This layer is intentional for iteration speed; the long-term plan is
-to replace it with a pure-AST emitter once we have ~5+ real-world
-fixtures locking in the current behavior.
+The body-emitter's `walker.ts` (~2300 LoC) still handles CPI shape
+recognition via regex methods (`transformNestedAnchorCode`,
+`transformCtxAccountsReferences`, etc.). Walker Phase A commits
+(A.1-A.3) are actively absorbing these into AST passes.
 
 ---
 

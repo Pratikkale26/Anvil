@@ -123,8 +123,8 @@ export const CASES: readonly RealworldCase[] = [
   {
     id: "composite",
     url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/composite/programs/composite/src/lib.rs",
-    expected: "validator-refuse",
-    description: "composite #[derive(Accounts)] — validator refuses per #21",
+    expected: "cargo-clean",
+    description: "composite #[derive(Accounts)] — previously refused, now compiles (composite flatten shipped 2026-05-19)",
   },
   {
     id: "anchor-cpi-test",

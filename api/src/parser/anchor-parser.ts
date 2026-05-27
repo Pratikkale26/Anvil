@@ -723,6 +723,13 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
             const prefix = attrs.map((a) => a.text).join("\n");
             const verbatim = prefix ? `${prefix}\n${child.text}` : child.text;
             items.userModules.push(verbatim);
+            // Still index functions inside the module for handler-wrapper
+            // resolution (inner::handler delegation pattern). The module
+            // content round-trips via userModules; this walk only populates
+            // functionIndex so resolveHandlerWrapper can find the target.
+            if (body && modName) {
+              walk(body, [...modulePath, modName], false);
+            }
             break;
           }
           if (body && modName) {

@@ -1,6 +1,8 @@
 # Plan: pure-AST emitter migration
 
-**Status (2026-05-06, end of long-form session):**
+**Status: SHIPPED (2026-05-13).** AST visitor is production default. handlers/ deleted. Walker regex absorption (Phase A) in progress. Plan preserved as historical reference.
+
+**Original status (2026-05-06, end of long-form session):**
 
 - Phase 0 (binary-parity gate + 5 regex-pattern fixtures): DONE
 - Phase 1 (AST scaffold + 3 IR kind structural ports): DONE

@@ -102,21 +102,9 @@ describe("if-let-Some on ctx.accounts — known gap (#23)", () => {
     const emit = emitPinocchioFull(parsed.ir);
     const usesIdent = /\b\w+\s*\(\s*cpi_context\b|\bcpi_context\s*[,.)]/.test(emit.singleFile);
     const hasBinding = /\blet\s+cpi_context\s*=/.test(emit.singleFile);
-    if (usesIdent && !hasBinding) {
-      // The current broken state: `cpi_context` is referenced but never
-      // bound. cargo would refuse with E0425. The cargo-gate fixture
-      // (fixture-cargo-gate.test.ts) is the actual safety net.
-      expect(usesIdent && !hasBinding).toBe(true);
-      return;
-    }
-    // If we get here, the walker or parser now resolves cpi_context
-    // properly. Flip the assertion so the test fails loudly until
-    // someone deletes this fixture (the gap closed).
-    throw new Error(
-      "Expected the known gap: `cpi_context` referenced without binding in if-let " +
-        "emit. Either the parser now unwraps if-let blocks or the walker's " +
-        "regex post-process learned to expand them — in either case this " +
-        "fixture is stale and should be deleted.",
-    );
+    // Gap closed: if-let ctx.accounts pattern now emits correct bindings.
+    // The cpi_context identifier should either not appear or should have
+    // a matching binding.
+    expect(!usesIdent || hasBinding).toBe(true);
   });
 });

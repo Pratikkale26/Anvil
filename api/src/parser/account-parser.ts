@@ -139,6 +139,7 @@ export function parseAccountsStructFields(
         // Recurse: inner struct's accounts get prefixed with `<rawFieldName>_`
         // and their dotted source paths get prefixed with `<rawFieldName>.`
         // so the path map records every leaf reachable via the outer chain.
+        const innerPrefix = `${prefix}${rawFieldName}_`;
         const innerAccounts = parseAccountsStructFields(
           innerEntry.node,
           innerEntry.attrs,
@@ -147,10 +148,22 @@ export function parseAccountsStructFields(
             // accountsStructNames stays — inner struct may itself contain
             // a composite to recurse into.
             _flattenStack: [...stack, parentStructName],
-            _flattenPrefix: `${prefix}${rawFieldName}_`,
+            _flattenPrefix: innerPrefix,
             _sourcePathPrefix: `${sourcePathPrefix}${rawFieldName}.`,
           },
         );
+        // Rewrite has_one constraint values: when a has_one target (e.g.
+        // "beneficiary") is itself a sibling field in the same inner struct,
+        // the flat list renamed it to "<prefix>beneficiary". Match by checking
+        // if <prefix><value> exists in the flattened set.
+        const innerNames = new Set(innerAccounts.map((a) => a.name));
+        for (const acct of innerAccounts) {
+          for (const c of acct.constraints) {
+            if (c.kind === "has_one" && c.value && innerNames.has(`${innerPrefix}${c.value}`)) {
+              c.value = `${innerPrefix}${c.value}`;
+            }
+          }
+        }
         accounts.push(...innerAccounts);
         currentAttrs = [];
         continue;

@@ -212,23 +212,22 @@ Per-fixture features beyond the JSON shape:
 
 ---
 
-## Fixtures locked under this gate today (April 2026)
+## Fixtures locked under this gate today (May 2026)
 
-`bun test api/tests/differential-*.test.ts` runs 9 active fixtures + the framework smoke for AI-under-differential. All byte-equal.
+`bun test api/tests/differential-*.test.ts` runs **141 differential test files**. Representative categories:
 
-| Fixture | Surface |
-|---|---|
-| `counter` | account init + state mutation |
-| `vault` | PDA-as-vault + signer-seeded `system_program::transfer` |
-| `has-one` | runtime constraint enforcement (`has_one = owner`) |
-| `ata-mint` | ATA create + SPL `mint_to` CPI |
-| `spl-transfer` | `token::transfer` CPI |
-| `spl-burn` | `token::burn` CPI |
-| `t22-transfer` | Token-2022 `transfer_checked` (mint decimals extraction) |
-| `close-account` | `close = receiver` rent refund + account reap |
-| `set-authority` | hand-rolled raw SPL `set_authority` CPI on Pinocchio |
-
-Plus three deferred stubs (escrow / staking / realloc) — file headers document the path to enable each.
+| Category | Count | Examples |
+|---|---|---|
+| Core (init, state, close, realloc) | ~15 | counter, vault, close, realloc, realloc-grow, bumps-access, init-if-needed |
+| SPL Token CPIs | ~10 | spl-transfer, spl-burn, ata-mint, set-authority, t22-transfer |
+| Token-2022 extensions | ~15 | t22-default-account-state, t22-transfer-fee-init, t22-transfer-hook, t22-token-metadata, t22-immutable-owner, t22-non-transferable, t22-interest-bearing, t22-group-pointer, t22-metadata-pointer, t22-permanent-delegate, t22-mint-close-authority |
+| Metaplex Token Metadata | ~10 | mpl-create-metadata, mpl-freeze-thaw, mpl-approve-revoke, mpl-mint-new-edition, mpl-sign-metadata, mpl-verify-collection-direct, mpl-collection-verify |
+| MPL Core | ~6 | mpl-core-create-v2, mpl-core-update-v2, mpl-core-transfer-v1, mpl-core-burn-v1, mpl-core-create-collection-v2, mpl-core-plugin-family |
+| Coral (real-world Anchor test corpus) | ~15 | coral-multisig, coral-events, coral-composite, coral-realloc, coral-escrow, coral-duplicate-mutable, coral-pda-derivation, coral-init-if-needed, coral-overflow-checks |
+| Program-examples (Solana Foundation) | ~25 | counter, escrow, favorites, nft-minter, token-swap, transfer-sol, cpi-lever, pda-mint-authority, t22-basics, t22-group, token-fundraiser |
+| Complex demos | ~10 | amm, marketplace, staking, vesting, escrow, multisig, perp-funding |
+| Oracles | ~2 | oracle-pyth |
+| Other (auto-scenario, misc) | ~30+ | auto-scenario variants, program-config, optional-state, return-data, msg-logs, event-emit |
 
 ---
 

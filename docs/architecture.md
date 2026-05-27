@@ -10,7 +10,7 @@ backends — Pinocchio (production) or Native (reference, raw `solana_program`)
 Anchor-like Rust
   ├─► tree-sitter parse
   ├─► structural classification (instructions, accounts, constraints, body stmts)
-  ├─► SolanaIR (Zod-validated, 60+ body-statement kinds)
+  ├─► SolanaIR (Zod-validated, 100+ body-statement kinds)
   ├─► target emitter (Pinocchio | Native)
   ├─► output validator (structural)
   └─► generated Rust + CU metadata
@@ -33,7 +33,7 @@ Two apps:
 - account contexts with full constraint normalization (16 kinds: `init`, `mut`, `seeds`, `bump`, `has_one`, `close`, `init_if_needed`, `payer`, `space`, `token::*`, `associated_token::*`, freeform `constraint = …`, etc.)
 - custom errors
 - helper / inherent-impl methods (now flow-preserved into emit)
-- body statements classified into 60+ IR kinds (`state_read`, `state_field_assign`, `bumps_access`, `pass_through`, `require`, `msg`, `emit`, `return_ok`, `return_err`, `sysvar_clock`, `sysvar_rent`, `pda_signer_seeds`, `cpi_spl_*` family (transfer / mint_to / burn / close_account / set_authority), `cpi_ata_create`, `cpi_memo`, `cpi_custom`, `cpi_system_transfer`, the 12-slot `cpi_mpl_*` Metaplex Token Metadata catalog, the 25-slot `cpi_t22_*` Token-2022 extension family, `zero_copy_load*`). Full list lives in `BodyStatementSchema` (api/src/ir/schema.ts).
+- body statements classified into 100+ IR kinds (`state_read`, `state_field_assign`, `bumps_access`, `pass_through`, `require`, `msg`, `emit`, `return_ok`, `return_err`, `sysvar_clock`, `sysvar_rent`, `pda_signer_seeds`, `cpi_spl_*` family (transfer / mint_to / burn / close_account / set_authority / freeze / thaw), `cpi_ata_create`, `cpi_memo`, `cpi_custom`, `cpi_system_transfer`, the 12-slot `cpi_mpl_*` Metaplex Token Metadata catalog, the 10-slot `cpi_mpl_core_*` MPL Core catalog, the 25-slot `cpi_t22_*` Token-2022 extension family, `cpi_pyth_*` / `cpi_switchboard_*` oracle families, `zero_copy_load*`). Full list lives in `BodyStatementSchema` (api/src/ir/schema.ts).
 
 Project ingestion supports raw source, single `.rs` file, project directory, or git repo URL with `programs/*/src/lib.rs` auto-detection.
 
@@ -88,12 +88,12 @@ See [`api/src/ai/refine.ts`](api/src/ai/refine.ts).
 
 | Layer | Tests | What it gates |
 |------|-------|---------------|
-| Unit (parser / emitter / validator / API / spend-tracker) | ~150 | Code correctness |
-| Binary-parity snapshot ([api/tests/binary-parity-snapshot.test.ts](../api/tests/binary-parity-snapshot.test.ts)) | 117 fixture×target snapshots | Locks `output.files` against on-disk snapshots; any visitor / post-emit change surfaces as a single-file diff. Replaced the retired `ast-visitor-byte-identical.test.ts` (premise dissolved when H1 Session G deleted handlers) — snapshot diffs are the ongoing structural-emit gate. |
-| Cargo MUST_PASS (program-examples + escrow2025 + coral cohort + t22-transfer-fee) | 50+ fixtures × {pinocchio,native} | Emitted code compiles |
+| Unit (parser / emitter / validator / API / spend-tracker) | ~200+ | Code correctness |
+| Binary-parity snapshot ([api/tests/binary-parity-snapshot.test.ts](../api/tests/binary-parity-snapshot.test.ts)) | 117 fixture×target snapshots | Locks `output.files` against on-disk snapshots; any visitor / post-emit change surfaces as a single-file diff. |
+| Cargo MUST_PASS (program-examples + escrow2025 + coral cohort + t22-transfer-fee) | 181 fixtures × {pinocchio,native} | Emitted code compiles |
 | Cargo tracking ceilings (coral-swap, t22-transfer-hook, …) | ~9 fixtures | Emitted code regression-guard (errors ≤ ceiling) |
-| **Differential — demos** ([api/tests/differential-*.test.ts](../api/tests/)) | ~30+ byte-equal fixtures | **Anchor ↔ Anvil-Pinocchio runtime equality (LiteSVM byte-equal: data + lamports + owner)** |
-| **Differential — real-world** | 6+ externally-authored Anchor programs (anchor-escrow-2025, coral-events, favorites, account-data, pda-rent-payer, page-visits) | Same gate, applied to programs Anvil didn't author |
+| **Differential** ([api/tests/differential-*.test.ts](../api/tests/)) | 141 byte-equal test files | **Anchor ↔ Anvil-Pinocchio runtime equality (LiteSVM byte-equal: data + lamports + owner)** |
+| **Realworld large** | marginfi-v2 (1 err), raydium-clmm (0 err), klend (0 err) | Top DeFi protocol parse+emit ceiling tracking |
 
 The differential layer is the load-bearing correctness signal — cargo-green is necessary but not sufficient. `differential-harness.ts` provides a per-fixture API: caller supplies setup + callScript + accountsToCompare, the harness handles building, running both .so files in LiteSVM with the same keypairs, and byte-comparing post-scenario state + lamports.
 
@@ -120,18 +120,25 @@ Snapshot tests confirm "the emitter still emits the same string." Differential t
 
 ## Known Gaps (current)
 
-- **Quasar emit deleted from production path** on 2026-05-05 (`quasar-lang` hadn't shipped a stable 1.0). The vendored CLI copy at `cli/src/api-src/emitter/quasar-*.ts` is preserved but no longer maintained.
 - **Workspace ingestion** (multi-program Anchor repos) requires explicit `sourcePath` per program.
 - **CU heuristic table** doesn't auto-update; real numbers come from `scripts/measure-cu.ts`.
-- **Token-2022 extension surfaces** (transfer-hook, transfer-fee, confidential-transfer) have ceilings, not green builds, on Pinocchio. Tracked-ceiling layer in `realworld-tracking.test.ts`.
-- **Metaplex Token Metadata CPI** — 12 slots typed + hand-rolled emitted (M3 deliverable closed 2026-05-18). **Pyth + Switchboard CPIs** — imports preserved on Native, body code passes through; pinocchio rejects via the lint-analyzer "blocker" verdict. M2 deliverable (typed IR + byte-parse Pinocchio emit) is the active follow-up.
+- **Confidential Token-2022** (zk-proof operations) — research done, implementation blocked on harness work.
 - **Pinocchio formatted msg!()** can't byte-equal Anchor's `alloc::format!()` runtime substitution (Pinocchio is no_std). Static literal msg!() byte-equals; format-arg msg!() collapses to a static literal with a comment-tagged warning.
+- **Walker regex absorption** — `walker.ts` CPI handler (~2300 LoC) still uses regex methods for CPI shape recognition. Active absorption via Walker AST Phase A commits (A.1-A.3 shipped). Multi-week remaining work.
+
+## Shipped (previously gaps)
+
+- ~~Quasar emit~~ deleted 2026-05-05 (Blueshift never shipped stable 1.0).
+- ~~Metaplex Token Metadata CPI~~ **CLOSED** — full 12/12 catalog typed + hand-rolled on both targets (2026-05-18).
+- ~~MPL Core~~ **CLOSED** — full 12/12 catalog: CreateV2 through plugin family (2026-05-19).
+- ~~Pyth + Switchboard oracle CPIs~~ **CLOSED** — typed IR + hand-rolled byte deserialization on Pinocchio, byte-equal on Pyth (2026-05-19).
+- ~~Visitor as production default~~ **CLOSED** — handlers/ deleted, walker is sole emit path (2026-05-13).
+- ~~Token-2022 extension family~~ **CLOSED** — 12/12 non-confidential extensions supported (2026-05-13).
 
 ## Recommended next milestones
 
-1. **Expand real-world byte-equal corpus** beyond 6 (target: 10-15 externally-authored Anchor programs gated; adoption-tracking deliverable per the SF grant's A1).
-2. **Pyth + Switchboard CPIs** (grant M2 — Pyth detection done via lint, typed IR + Pinocchio byte-parse emit pending): new IR kinds + emit + 2 byte-equal fixtures.
-3. ~~**Metaplex Token Metadata + Core CPIs**~~ **CLOSED 2026-05-18** — full 12-slot Metaplex Token Metadata catalog typed + hand-rolled emitted on both targets; Metaplex Core pending as separate scope.
-4. **EM1 Phase 3-4 — visitor is production + handlers retired** (DONE, 2026-05-13). Session F flipped the default; Session G deleted the entire `handlers/` directory + the legacy switch + the `ANVIL_LEGACY_WALKER` escape hatch. Total LoC delta ~-1500 across the emit stack. **Phase 5 remaining**: convert `walker.ts` helper regex methods (`transformAccountReferences`, `transformCtxAccountsReferences`, `transformNestedAnchorCode`, `normalizeKeyValueUsages`, `replaceBumpRefs`) from text-in/text-out to `RustStmt[]`-passes. Multi-week; details in [`reports/h1-collapse-shipped-2026-05-13.md`](../reports/h1-collapse-shipped-2026-05-13.md).
-5. **Workspace ingestion** (programs/*/Cargo.toml driven).
-6. **CU measurement automation** (replace heuristic table with measured numbers per fixture).
+1. **Promote top DeFi to MUST_PASS** — marginfi-v2 (1 error), raydium-clmm (0), klend (0) are at the doorstep.
+2. **Walker regex absorption** — absorb `transformNestedAnchorCode` and remaining CPI handler regex into AST passes.
+3. **Workspace ingestion** (programs/*/Cargo.toml driven multi-crate).
+4. **Confidential T22** — zk-proof prelude arc.
+5. **Expand stress-test corpus** — novel Anchor programs from the wild.
