@@ -152,18 +152,11 @@ export function parseAccountsStructFields(
             _sourcePathPrefix: `${sourcePathPrefix}${rawFieldName}.`,
           },
         );
-        // Rewrite has_one constraint values: when a has_one target (e.g.
-        // "beneficiary") is itself a sibling field in the same inner struct,
-        // the flat list renamed it to "<prefix>beneficiary". Match by checking
-        // if <prefix><value> exists in the flattened set.
-        const innerNames = new Set(innerAccounts.map((a) => a.name));
-        for (const acct of innerAccounts) {
-          for (const c of acct.constraints) {
-            if (c.kind === "has_one" && c.value && innerNames.has(`${innerPrefix}${c.value}`)) {
-              c.value = `${innerPrefix}${c.value}`;
-            }
-          }
-        }
+        // has_one constraint values reference account names. After composite
+        // flatten, the target account's BINDING is prefixed (e.g. "nested_my_account")
+        // but the STATE FIELD name stays original (e.g. "my_account"). Leave c.value
+        // as the original name — the emit resolves the target account through
+        // the instruction's account list, which already has the prefixed binding.
         // H1b — rewrite PDA seed expressions for composited accounts.
         // Seeds parsed from the inner struct reference original (un-prefixed)
         // sibling field names (e.g. `&state.key().to_bytes()` where `state`
