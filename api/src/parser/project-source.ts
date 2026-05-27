@@ -124,7 +124,7 @@ function collectWorkspaceSiblingFiles(
   const progToml = existsSync(progCargo) ? readFileSync(progCargo, "utf-8") : "";
 
   const unknownCrates = new Set<string>();
-  const useRe = /^use\s+(\w+)::/gm;
+  const useRe = /^(?:pub\s+)?use\s+(\w+)::/gm;
   let m: RegExpExecArray | null;
   while ((m = useRe.exec(allContent)) !== null) {
     const name = m[1]!;
