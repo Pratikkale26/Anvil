@@ -253,7 +253,7 @@ docs/   Architecture, differential testing, feature matrix, migration guide
 
 ## Status
 
-v0.4.0 — **safe-by-default** (`--strict` is the new CLI default; `--permissive` is the opt-out). See [CHANGELOG.md](CHANGELOG.md) for the BREAKING-change migration notes. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). **1699 passing tests across 149 fast-suite files** (excluding env-gated differential + SBF-toolchain suites): 141 byte-equal differential test files + 181 realworld cargo-green MUST_PASS entries + 100+ IR body statement kinds + 64 demo programs + parser / emitter / validator / sandbox / AI suites + marker-validator linkage + IR roundtrip sweep. **Top DeFi protocols near cargo-green**: marginfi-v2 (1 error), raydium-clmm (0 errors), klend (0 errors).
+v0.4.0 — **safe-by-default** (`--strict` is the new CLI default; `--permissive` is the opt-out). See [CHANGELOG.md](CHANGELOG.md) for the BREAKING-change migration notes. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). **64/64 demo programs produce deployable `.so` via `cargo build-sbf`** on Pinocchio. 142 byte-equal differential test files + 193 realworld cargo-green MUST_PASS entries + 100+ IR body statement kinds. **Top DeFi: klend (63 instructions, `cargo build-sbf` GREEN)** — first top Solana lending protocol fully compilable to Pinocchio. 1,250 commits, single developer.
 
 Working notes for grant + migration: [docs/migration-guide.md](docs/migration-guide.md).
 
