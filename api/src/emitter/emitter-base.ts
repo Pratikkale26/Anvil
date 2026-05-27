@@ -1957,9 +1957,14 @@ export abstract class BaseEmitter {
     // would fail cargo build-sbf with missing Anchor types.
     const allHelperNames = new Set((ir.helperFns ?? []).map((h) => h.name));
     const helperBodies = new Map((ir.helperFns ?? []).map((h) => [h.name, h.body ?? h.rawCode ?? ""]));
-    // Seed: everything referenced from instruction bodies or constants
+    // Seed: everything referenced from instruction bodies or constants.
+    // Scan ALL text-carrying fields from body statements — not just `code`.
+    // state_field_assign has `value`, require has `condition`, emit has `fields`, etc.
     const liveCode = [
-      ...ir.instructions.flatMap((ix) => ix.body.map((s) => ("code" in s ? (s as any).code : "") as string)),
+      ...ir.instructions.flatMap((ix) => ix.body.map((s) => {
+        const a = s as any;
+        return [a.code, a.value, a.condition, a.fields, a.from, a.to, a.authority, a.amount, a.event].filter(Boolean).join(" ");
+      })),
       ...constantsForHoist,
       ...((ir as any).userModules ?? []) as string[],
     ].join("\n");
