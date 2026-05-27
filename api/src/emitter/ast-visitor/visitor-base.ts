@@ -138,7 +138,10 @@ function parseEvtStructFields(text: string): { name: string; value: RustExpr; sh
   parts.push(trimmed.slice(start));
   const out: { name: string; value: RustExpr; shorthand?: boolean }[] = [];
   for (const part of parts) {
-    const t = part.trim();
+    // Strip line-comments that survive as standalone parts (e.g. marinade's
+    // `// msol price components` between fields). Without this, the comment
+    // text fails the bare-ident check and bails the whole parser.
+    const t = part.replace(/\/\/[^\n]*$/gm, "").trim();
     if (t.length === 0) continue;
     const colonIdx = findTopLevelColon(t);
     if (colonIdx < 0) {
@@ -1360,19 +1363,26 @@ export class AstVisitorBase {
     value = w.transformHelperCalls(value);
     value = applyClockRentRewrites(value, w);
 
-    // Recognize all 4 ctx.bumps shapes (bare, &-prefixed, parens-
-    // wrapped with/without &) — same panel as walker.replaceBumpRefs.
+    // Recognize all ctx.bumps shapes — same panel as walker.replaceBumpRefs.
     // Parens-wrapped forms surface from impl-method inlining where
     // `bumps: &Bumps` substitutes to `&ctx.bumps` at the call site.
+    // `.get("X").unwrap()` is the HashMap-style access (marinade pattern);
+    // must be tested BEFORE the bare `ctx.bumps.(\w+)` which would
+    // capture `get` as the account name.
     if (value.includes("ctx.bumps")) {
       const bumpAccount =
+        value.match(/\*\s*ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/)?.[1] ??
+        value.match(/ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/)?.[1] ??
         value.match(/\(\s*&\s*ctx\.bumps\s*\)\.(\w+)/)?.[1] ??
         value.match(/\(\s*ctx\.bumps\s*\)\.(\w+)/)?.[1] ??
         value.match(/&\s*ctx\.bumps\.(\w+)/)?.[1] ??
-        value.match(/ctx\.bumps\.(\w+)/)?.[1] ??
+        (value.includes("ctx.bumps.get(") ? undefined :
+          value.match(/ctx\.bumps\.(\w+)/)?.[1]) ??
         stmt.account;
-      out.push(...this.emitBumpDerivationStructural(snakeCase(bumpAccount)));
-      value = `bump_${snakeCase(bumpAccount)}`;
+      if (bumpAccount) {
+        out.push(...this.emitBumpDerivationStructural(snakeCase(bumpAccount)));
+        value = `bump_${snakeCase(bumpAccount)}`;
+      }
     }
 
     // Structured assign — LHS is `stateVarName.fieldName`, RHS the
@@ -1852,7 +1862,7 @@ export class AstVisitorBase {
     const evtFields = parseEvtStructFields(transformedFields);
     const evtValue = evtFields !== null
       ? evtStructLiteral(stmt.event, evtFields)
-      : rawExpr(`${stmt.event} { ${stmt.fields} }`);
+      : rawExpr(`${stmt.event} { ${transformedFields} }`);
     return [
       block([
         letStmt("__evt", evtValue),

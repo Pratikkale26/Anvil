@@ -94,7 +94,7 @@ import {
   type Token2022Opts,
 } from "./body-emitter/index.js";
 import { transformHelperCode as transformHelperCodeImpl, rewriteMsgCalls as rewriteMsgCallsImpl, rewriteSelfReferences, collapseModulePaths, rewriteCtxAccountsDestructure } from "./anchor-transforms.js";
-import { hasResidualAnchorPatterns, hasResidualUnsupportedBody, hasUnsalvageableHelperSignature, recognizeCpiWrapperHelper, rewriteCpiWrapperCallSites } from "./emitter-helpers.js";
+import { hasResidualAnchorPatterns, hasResidualUnsalvageablePatterns, hasResidualUnsupportedBody, hasUnsalvageableHelperSignature, recognizeCpiWrapperHelper, rewriteCpiWrapperCallSites } from "./emitter-helpers.js";
 import {
   commentOutHelperBlock,
   commentOutUnsalvageableCallSites,
@@ -1605,6 +1605,7 @@ export abstract class BaseEmitter {
       const processed = userModules.map((um: string) => {
         let code = stripAnchorWrappersInCode(stripAnchorLangPrefixes(um), target);
         code = code.replace(/declare_id!\s*\(\s*"([^"]+)"\s*\)\s*;?/g, "// declare_id removed (Anvil)");
+        code = rewriteMsgCallsImpl(code, (m: string) => this.emitMsg(m));
         return code;
       });
       // Dedup modules with the same name: merge bodies when two `pub mod X { ... }` collide
@@ -1624,7 +1625,21 @@ export abstract class BaseEmitter {
           deduped.push(code);
         }
       }
-      sections.push(`// User-defined modules preserved verbatim from source\n${deduped.join("\n\n")}`);
+      // Inject scope-prelude into each user inline module so that types from
+      // parent scope + sibling modules (state, errors) resolve inside the mod.
+      // Without this, build-sbf compiles dead-code bodies and hits E0412/E0433
+      // for every cross-module type reference.
+      const prelude: string[] = ["use super::*;"];
+      if (ir.accounts.length > 0) prelude.push("use crate::state::*;");
+      if (ir.errors.length > 0) prelude.push("use crate::errors::*;");
+      const preludeBlock = prelude.map(l => `    ${l}`).join("\n");
+      const withPrelude = deduped.map((code) => {
+        return code.replace(
+          /^((?:pub\s+)?mod\s+\w+\s*\{)\s*\n?/,
+          `$1\n${preludeBlock}\n`,
+        );
+      });
+      sections.push(`// User-defined modules preserved verbatim from source\n${withPrelude.join("\n\n")}`);
     }
 
     sections.push(this.emitEntrypoint(ir));
@@ -1752,6 +1767,16 @@ export abstract class BaseEmitter {
       ),
       knownNames,
     );
+    // G112 — un-prefix prophylactic `_` on account bindings that became
+    // referenced AFTER rewriteSelfReferences ran.
+    body = body.replace(
+      /^(\s*let\s+)_([a-zA-Z]\w*)(\s*=\s*&accounts\[\d+\]\s*;)/gm,
+      (full, prefix: string, name: string, after: string) => {
+        const re = new RegExp(`\\b${name}\\b`, "g");
+        const count = (body.match(re) ?? []).length;
+        return count > 0 ? `${prefix}${name}${after}` : full;
+      },
+    );
     // G105 — when rewriteSelfReferences leaves `__anvil_unported_self__`
     // markers in the body, inject a placeholder binding at the top of the
     // fn body so cargo gets E0599/E0308 (which usually live behind some
@@ -1833,6 +1858,13 @@ export abstract class BaseEmitter {
    */
   private computeUnsalvageableHelpers(ir: SolanaIR): Set<string> {
     const out = new Set<string>();
+    // Instruction context struct names (PascalCase). These Anchor types
+    // don't exist in Pinocchio/native emit; helpers whose signatures
+    // reference them can't compile regardless of body transforms.
+    const instrCtxRe = ir.instructions
+      .map((instr) => toPascalCase(instr.name))
+      .filter((n) => n.length > 2)
+      .map((n) => new RegExp(`\\b${n}(?:Accounts|Args|Base|Bumps)?\\b`));
     for (const helper of ir.helperFns ?? []) {
       // Known CPI-wrapper helpers (escrow2025's transfer_tokens /
       // close_token_account) carry InterfaceAccount in their signature but
@@ -1841,6 +1873,12 @@ export abstract class BaseEmitter {
         continue;
       }
       if (hasUnsalvageableHelperSignature(helper.signature)) {
+        out.add(helper.name);
+        continue;
+      }
+      // Signature references an Anchor instruction context struct — type
+      // doesn't exist in target, so the helper is unsalvageable.
+      if (instrCtxRe.some((re) => re.test(helper.signature))) {
         out.add(helper.name);
         continue;
       }
@@ -1912,6 +1950,7 @@ export abstract class BaseEmitter {
     // skipped here to avoid duplicate definitions.
     const constantsForHoist = (ir.constants ?? []).map((c) => this.postProcessTopLevelConst(c));
     const hoistedNames = new Set(this.helpersReferencedByConsts(ir, constantsForHoist).map((h) => h.name));
+    const instrContextNames = new Set(ir.instructions.map((instr) => toPascalCase(instr.name)));
     for (const helper of ir.helperFns) {
       if (hoistedNames.has(helper.name)) continue;
       // Known CPI-wrapper helpers — emit target-typed replacement body
@@ -1927,7 +1966,8 @@ export abstract class BaseEmitter {
         continue;
       }
       const carried = this.carriedFunctionBlock(helper.rawCode, ir);
-      if (hasResidualUnsupportedBody(carried) || hasResidualAnchorPatterns(carried)) {
+      const refsInstrContext = [...instrContextNames].some((n) => new RegExp(`\\b${n}(?:Accounts|Args|Base|Bumps)?\\b`).test(carried));
+      if (hasResidualUnsupportedBody(carried) || hasResidualUnsalvageablePatterns(carried) || refsInstrContext) {
         const stubbed = carried
           .replace(/^\/\/ Carried from source \([^)]*\)/, "// Carried from source (body stubbed — unsupported patterns)")
           .replace(/\{[\s\S]*$/, `{\n    unimplemented!("Anvil: carried helper with unsupported body")\n}`);
@@ -2155,7 +2195,7 @@ impl<'a, 'b, 'c, 'info, T> CpiContext<'a, 'b, 'c, 'info, T> {
       stubs.push(`pub trait AccountDeserialize: Sized {\n    fn try_deserialize(buf: &mut &[u8]) -> Result<Self, ProgramError>;\n    fn try_deserialize_unchecked(buf: &mut &[u8]) -> Result<Self, ProgramError>;\n}`);
     }
     if (/\bAccountSerialize\b/.test(all) && !userDefinesTrait("AccountSerialize")) {
-      stubs.push(`pub trait AccountSerialize {\n    fn try_serialize<W: borsh::io::Write>(&self, writer: &mut W) -> Result<(), ProgramError>;\n}`);
+      stubs.push(`pub trait AccountSerialize {\n    fn try_serialize<W: borsh::io::Write>(&self, writer: &mut W) -> Result<(), ProgramError> { Ok(()) }\n}`);
     }
     if (/\bOwner\b(?!\s*\()/.test(all) && !/\bcollection_authority\.Owner\b/.test(all) && !userDefinesTrait("Owner")) {
       stubs.push(`pub trait Owner {\n    fn owner() -> Pubkey;\n}`);
@@ -2710,9 +2750,11 @@ impl ZeroCopy for ${accName} {}`;
     const userModulesSingle = (ir as any).userModules ?? [];
     if (userModulesSingle.length > 0) {
       const target = this.frameworkName === "Pinocchio" ? "pin" : "native";
-      const processed = userModulesSingle.map((um: string) =>
-        stripAnchorWrappersInCode(stripAnchorLangPrefixes(um), target),
-      );
+      const processed = userModulesSingle.map((um: string) => {
+        let code = stripAnchorWrappersInCode(stripAnchorLangPrefixes(um), target);
+        code = rewriteMsgCallsImpl(code, (m: string) => this.emitMsg(m));
+        return code;
+      });
       sections.push(`// User-defined modules preserved verbatim from source\n${processed.join("\n\n")}`);
     }
     // Inline event struct definitions when the source has #[event] structs.
@@ -4928,7 +4970,9 @@ ${fields}
     // that survive in helper bodies after source!() → () rewrite. These methods
     // don't exist in pinocchio. Applied only to helpers (not instruction bodies)
     // to avoid collateral damage on complex CPI patterns.
-    transformed = transformed.replace(/\s*\.with_(?:source|pubkeys|account_name|values)\s*\([^)]*\)/g, '');
+    // Handle up to 2 levels of nested parens — `.with_values((a.foo(), b.bar()))`
+    // has nested `(...)` inside the outer call that `[^)]*` can't match.
+    transformed = transformed.replace(/\s*\.with_(?:source|pubkeys|account_name|values)\s*\((?:[^()]*|\((?:[^()]*|\([^()]*\))*\))*\)/g, '');
     // Fix unbalanced Err() parens left by the chain strip.
     for (let pass = 0; pass < 3; pass++) {
       transformed = transformed.replace(/\bErr\(([^()]*(?:\([^()]*\))*[^()]*)\)\)/g, 'Err($1)');

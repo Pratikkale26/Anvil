@@ -1360,6 +1360,17 @@ export class BodyWalker {
         `token_account_amount(${this.resolveAccountInfoVar(snakeCase(name))})?`,
     );
     transformed = transformed.replace(/\bctx\.program_id\b/g, "program_id");
+    // G112c — HashMap-style `.get("X").unwrap()` must fire BEFORE the bare
+    // `ctx.bumps.(\w+)` pattern, which would capture `get` as the name.
+    // Marinade uses `(*ctx.bumps.get("reserve_pda").unwrap())`.
+    transformed = transformed.replace(
+      /\*\s*ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/g,
+      (_full, name: string) => `bump_${snakeCase(name)}`,
+    );
+    transformed = transformed.replace(
+      /ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/g,
+      (_full, name: string) => `bump_${snakeCase(name)}`,
+    );
     transformed = transformed.replace(
       /\bctx\.bumps\.(\w+)\b/g,
       (_full, name: string) => `bump_${snakeCase(name)}`,

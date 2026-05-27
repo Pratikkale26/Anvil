@@ -215,6 +215,20 @@ export function rewriteSelfReferences(body: string, accountNames: Set<string>): 
     }
     return match;
   });
+  // G112b — rewrite remaining `self.X(...)` and `self.X.Y(...)` method calls
+  // to use the `__anvil_unported_self__` placeholder. After the chain-rewrite
+  // above, any remaining `self.` token is a method call on the flattened-away
+  // impl struct (e.g. `self.begin(...)`, `self.common.withdraw_to_reserve(...)`).
+  // Replacing `self` with the placeholder preserves the brace structure
+  // (critical for multi-line destructures like `let X { ... } = self.begin()`),
+  // and the `__anvil_unported_self__` binding at fn top + `unimplemented!()`
+  // ensures cargo gives a clear error at runtime.
+  out = out.replace(/\bself((?:\.\w+)+\s*\()/g, (match, chain: string) => {
+    // Only rewrite if this is truly a remaining self reference (not already
+    // rewritten by the chain pass above — those replaced `self.X` with the
+    // account variable name).
+    return `__anvil_unported_self__${chain}`;
+  });
   // Bare `self` as positional argument (`Foo::process(self,…)`). Statement
   // may span multiple lines so commenting one line breaks delimiters.
   // Substitute the `self` token with an undefined placeholder symbol —
@@ -459,6 +473,27 @@ export function transformHelperCode(
   // Program<'info, T> → &AccountInfo
   next = next.replace(/:\s*Program\s*<\s*'?\w+\s*,\s*[\w:]+\s*>/g, ": &AccountInfo");
   next = next.replace(/&\s*Program\s*<\s*'?\w+\s*,\s*[\w:]+\s*>/g, "&AccountInfo");
+
+  // G112d — Anchor `ToAccountInfo<'info>` generic bounds on helper functions.
+  // Pattern: `fn check_X<'info, A: ToAccountInfo<'info>>(account: &A, ...)`.
+  // Rewrite the generic bound parameter `A: ToAccountInfo<'info>` out entirely
+  // and replace `&A` / `&mut A` in the parameter list with `&AccountInfo`.
+  // Captures the type parameter name so we can replace it in the body too.
+  {
+    const toAiMatch = next.match(/<'?\w+\s*,\s*(\w+)\s*:\s*ToAccountInfo\s*<\s*'?\w+\s*>\s*>/);
+    if (toAiMatch?.[1]) {
+      const typeParam = toAiMatch[1];
+      // Strip the whole generic parameter clause (or simplify it).
+      next = next.replace(
+        /<'?\w+\s*,\s*\w+\s*:\s*ToAccountInfo\s*<\s*'?\w+\s*>\s*>/g,
+        "",
+      );
+      // Replace `&A` and `&mut A` parameter types with `&AccountInfo`.
+      next = next.replace(new RegExp(`&mut\\s+${typeParam}\\b`, "g"), "&mut AccountInfo");
+      next = next.replace(new RegExp(`&\\s*${typeParam}\\b`, "g"), "&AccountInfo");
+      next = next.replace(new RegExp(`:\\s*${typeParam}\\b`, "g"), ": &AccountInfo");
+    }
+  }
 
   // ── Strip Anchor module prefixes ──
 

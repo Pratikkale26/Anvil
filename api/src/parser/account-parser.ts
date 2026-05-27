@@ -164,6 +164,41 @@ export function parseAccountsStructFields(
             }
           }
         }
+        // H1b — rewrite PDA seed expressions for composited accounts.
+        // Seeds parsed from the inner struct reference original (un-prefixed)
+        // sibling field names (e.g. `&state.key().to_bytes()` where `state`
+        // is a sibling in UpdateCommon). After flattening, the binding is
+        // `common_state`, so the seed must reference `common_state` too.
+        // Build an original→flat name map for inner siblings and apply it.
+        if (innerPrefix.length > 0) {
+          const origToFlat = new Map<string, string>();
+          for (const acct of innerAccounts) {
+            // acct.name is already flattened (e.g. `common_state`);
+            // the original un-prefixed name is the suffix after innerPrefix.
+            if (acct.name.startsWith(innerPrefix)) {
+              const origName = acct.name.slice(innerPrefix.length);
+              origToFlat.set(origName, acct.name);
+            }
+          }
+          if (origToFlat.size > 0) {
+            for (const acct of innerAccounts) {
+              if (acct.pdaSeeds && acct.pdaSeeds.length > 0) {
+                acct.pdaSeeds = acct.pdaSeeds.map((seed) => {
+                  let rewritten = seed;
+                  for (const [orig, flat] of origToFlat) {
+                    // Replace `&orig.` with `&flat.` and bare `orig.` with `flat.`
+                    // Use word boundary to avoid partial matches.
+                    rewritten = rewritten.replace(
+                      new RegExp(`\\b${orig}\\.`, "g"),
+                      `${flat}.`,
+                    );
+                  }
+                  return rewritten;
+                });
+              }
+            }
+          }
+        }
         accounts.push(...innerAccounts);
         currentAttrs = [];
         continue;

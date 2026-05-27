@@ -632,6 +632,23 @@ export function hasResidualAnchorPatterns(value: string): boolean {
 }
 
 /**
+ * Extended residual-pattern check for carried helpers in Pinocchio emit.
+ * Adds stripped-crate/module patterns that are legitimate in native target
+ * but unresolvable in Pinocchio scaffold. Kept separate from the base
+ * function because it is also used for pass-through review annotations
+ * where false positives on solana_program:: would break native snapshots.
+ */
+export function hasResidualUnsalvageablePatterns(value: string): boolean {
+  return hasResidualAnchorPatterns(value) ||
+    /\bsolana_program::/.test(value) ||
+    /\bsystem_instruction::/.test(value) ||
+    /\bscope::/.test(value) ||
+    /\bspl_token_2022::extension::/.test(value) ||
+    /\bStateWithExtensions\s*::/.test(value) ||
+    /\bsol_log_compute_units\s*\(/.test(value);
+}
+
+/**
  * Detect helper function signatures that reference Anchor-specific wrapper
  * types (`InterfaceAccount`, `Interface<TokenInterface>`, `Account<'info, X>`,
  * `Box<Account<...>>`, `Signer<'info>`, `SystemAccount<'info>`, `Context<X>`).
