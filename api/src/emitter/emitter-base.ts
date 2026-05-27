@@ -3384,11 +3384,17 @@ ${originalLines}
           // admin_authority, rewards_fee, .. })`) inline a struct-pattern
           // argument and the carried body then references those bindings
           // bare. Without this destructure, those references fail E0425.
+          const accountNames = new Set((this.currentIr?.instructions ?? []).flatMap(ix => ix.accounts.map(a => snakeCase(a.name))));
           const namedFields = (typeDef.fields ?? [])
             .map((f) => snakeCase(f.name))
             .filter((n) => /^[a-z_]\w*$/.test(n));
           if (namedFields.length > 0) {
-            const fieldList = namedFields.join(", ");
+            // Rename fields that shadow account bindings to avoid [u8; 32]
+            // overwriting the AccountInfo variable in scope.
+            const fieldEntries = namedFields.map((n) =>
+              accountNames.has(n) ? `${n}: __arg_${n}` : n
+            );
+            const fieldList = fieldEntries.join(", ");
             return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
         .map_err(|_| ProgramError::InvalidInstructionData)?;
     #[allow(unused_variables)]
