@@ -1192,7 +1192,7 @@ ${programIdConst}
         let mut __sa_len = 3usize;
         __sa_data[0] = 6;
         __sa_data[1] = __sa_auth_byte;
-        match &${newAuthority} {
+        match &${newAuthority === "None" ? "None::<&[u8; 32]>" : newAuthority} {
             Some(__pk) => {
                 __sa_data[2] = 1;
                 __sa_data[3..35].copy_from_slice(__pk.as_ref());

@@ -459,7 +459,15 @@ export class BodyWalker {
       if (this.stateVars.has(accountName)) {
         return `${this.stateVars.get(accountName)}.amount`;
       }
-      return `token_account_amount(${this.resolveAccountInfoVar(accountName)})?`;
+      // Only wrap with token_account_amount if the name is a known account.
+      // `args.amount` is an instruction arg, not a token account.
+      const isKnownAccount = this.instr.accounts.some(
+        (a) => snakeCase(a.name) === accountName,
+      );
+      if (isKnownAccount) {
+        return `token_account_amount(${this.resolveAccountInfoVar(accountName)})?`;
+      }
+      return amount;
     }
     return this.emitter.transformAmountExpr(amount);
   }
