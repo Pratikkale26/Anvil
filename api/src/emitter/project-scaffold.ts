@@ -178,6 +178,11 @@ const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
   // Fixed-point arithmetic for AMM / DEX programs — no_std-compat
   // when default-features disabled. Pinned to 1.28 (rustc 1.89 compat).
   fixed:                     `fixed = { version = "=1.28", default-features = false }`,
+  fixed_macro:               `fixed-macro = "1.2"`,
+  // Derive-macro crates for carried structs/enums (no runtime deps)
+  num_enum:                  `num-enum = "0.7"`,
+  strum:                     `strum = { version = "0.26", default-features = false, features = ["derive"] }`,
+  serde:                     `serde = { version = "1", default-features = false, features = ["derive"] }`,
 };
 
 /** Extract crate prefixes from IR imports AND from carried-over source text
