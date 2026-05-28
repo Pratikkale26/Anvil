@@ -6170,6 +6170,24 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
     out = out.replace(/\.\s*with_source\s*\(\s*[^()]*(?:\([^)]*\))?\s*\)/g, "");
     out = out.replace(/\.\s*with_values\s*\(\s*[^()]*(?:\([^)]*\))?\s*\)/g, "");
     out = out.replace(/\.\s*with_pubkeys\s*\(\s*[^()]*(?:\([^)]*\))?\s*\)/g, "");
+    // #37 — solana_program's `Pubkey::create_with_seed(base, seed, owner)`
+    // lives at `pinocchio::pubkey::create_with_seed` (free function form).
+    // Same shape — just remove the `Pubkey::` prefix.
+    out = out.replace(
+      /(?:solana_program\s*::\s*pubkey\s*::\s*)?Pubkey\s*::\s*create_with_seed\b/g,
+      "pinocchio::pubkey::create_with_seed",
+    );
+    // #37 — borsh 1.x removed the `try_to_vec()` method on the
+    // BorshSerialize trait — `borsh::to_vec(&value)?` is the replacement.
+    // Rewrite call sites; this is safe because we always import borsh.
+    out = out.replace(
+      /\b([A-Z][\w:]*)\s*::\s*default\s*\(\s*\)\s*\.\s*try_to_vec\s*\(\s*\)/g,
+      "borsh::to_vec(&$1::default())",
+    );
+    out = out.replace(
+      /(\w[\w.]*)\.try_to_vec\s*\(\s*\)/g,
+      "borsh::to_vec(&$1)",
+    );
   }
   return out;
 }
