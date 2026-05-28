@@ -567,17 +567,40 @@ export function commentOutResidualAnchorLeaks(text: string): string {
     if (i <= skipUntil) continue;
     const rescue = letRescue.get(i);
     if (rescue && !lines[i]!.trim().startsWith("//")) {
-      result.push(`${rescue.indent}// ${MARKER_ANVIL_TODO_PREFIX} let-binding RHS contained an Anchor-only reference — binding + all uses commented`);
-      result.push(`${rescue.indent}// let ${rescue.mutKw}${rescue.ident}${rescue.typeAnn} = unimplemented!();`);
+      result.push(`${rescue.indent}// ${MARKER_ANVIL_TODO_PREFIX} let-binding RHS contained an Anchor-only reference — replaced with Default::default() so downstream uses compile`);
+      // #37/#99 — emit the binding with a Default::default() value rather
+      // than commenting it out. Downstream references then compile;
+      // semantics are wrong but the surrounding CPI is already stubbed,
+      // so byte-equal is already out of scope for this instruction.
+      // For types we can't resolve to Default, fall back to unimplemented!().
+      const typeAnn = rescue.typeAnn.trim();
+      // Pick a default expr that has a concrete inferred type. When the
+      // source carries a `: T` annotation matching a primitive we know,
+      // emit `T::default()`; otherwise fall back to `0u64` (covers the
+      // ubiquitous `let amount = vault.amount` → u64 shape). If neither
+      // applies we emit `unimplemented!()` and walk-comment uses.
+      const annMatch = typeAnn.match(/^:\s*(u\d+|i\d+|usize|isize|bool|f32|f64|Pubkey)\s*$/);
+      const isKnownDefault = !!annMatch || !typeAnn;
+      let defaultExpr: string;
+      if (annMatch?.[1]) defaultExpr = `<${annMatch[1]}>::default()`;
+      else if (!typeAnn) defaultExpr = `0u64`;
+      else defaultExpr = `unimplemented!("anvil: unported helper RHS")`;
+      result.push(`${rescue.indent}#[allow(unused_variables)]`);
+      result.push(`${rescue.indent}let ${rescue.mutKw}${rescue.ident}${rescue.typeAnn} = ${defaultExpr};`);
       // Also comment out subsequent statements that reference this
       // binding — the type annotation may reference a dropped type, and
       // `unimplemented!()` for the receiver makes method-call type
       // inference fail. Walk forward and tag any line containing the
       // identifier as a word until the enclosing block ends.
+      //
+      // #37/#99 — when we emit a REAL Default::default() binding, subsequent
+      // uses compile fine. Only walk-comment when we emitted unimplemented!()
+      // (the receiver can't sustain method-call type inference).
       const identRe = new RegExp(`(^|[^\\w.])${rescue.ident}(?!\\w)`);
       const baseIndent = rescue.indent.length;
       let extraCommented = new Set<number>();
-      for (let k = rescue.endLine + 1; k < lines.length; k++) {
+      const shouldWalkComment = !isKnownDefault;
+      for (let k = rescue.endLine + 1; shouldWalkComment && k < lines.length; k++) {
         const ln = lines[k]!;
         const indentMatch = ln.match(/^(\s*)/);
         const curIndent = (indentMatch?.[1] ?? "").length;
