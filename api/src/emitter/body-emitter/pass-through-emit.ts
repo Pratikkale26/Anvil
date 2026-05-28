@@ -237,6 +237,9 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   nestedPreCleanup = stripRedundantProgramErrorIntoStructural(nestedPreCleanup);
   nestedPreCleanup = wrapBareErrAsReturnStructural(nestedPreCleanup);
   nestedPreCleanup = nestedPreCleanup
+    // `anchor_spl::token::accessor::amount(X)?` (post-strip: `token::accessor::amount`)
+    // → `token_account_amount(X)?` (Anvil helper). Caught on swap/auction-house.
+    .replace(/\btoken::accessor::amount\(([^)]+)\)/g, "token_account_amount($1)")
     .replace(/\banchor_lang::prelude::borsh::/g, "borsh::")
     .replace(/\banchor_lang::solana_program::/g, "solana_program::")
     .replace(/\banchor_lang::prelude::/g, "")

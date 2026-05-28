@@ -428,6 +428,12 @@ export function irNeedsTokenAmountHelper(ir: SolanaIR): boolean {
           if (/token::(?:transfer|mint_to|burn)\(/.test(stmt.code) && /\.amount\b/.test(stmt.code)) {
             return true;
           }
+          // anchor_spl::token::accessor::amount(X)? — post-strip form
+          // is token::accessor::amount(X) which the pass-through rewrite
+          // converts to token_account_amount(X). Helper must be included.
+          if (/\btoken::accessor::amount\(/.test(stmt.code)) {
+            return true;
+          }
           return refsTokenAmount(stmt.code);
         default:
           return false;

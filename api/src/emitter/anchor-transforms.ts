@@ -508,6 +508,14 @@ export function transformHelperCode(
   next = next.replace(/\banchor_spl::associated_token::/g, "");
   next = next.replace(/\banchor_spl::/g, "");
 
+  // `anchor_spl::token::accessor::amount(X)?` → `token_account_amount(X)?` —
+  // post-strip the form is `token::accessor::amount(X)?`. Same for similar
+  // accessors. Caught on swap/auction-house.
+  next = next.replace(
+    /\btoken::accessor::amount\(([^)]+)\)/g,
+    "token_account_amount($1)",
+  );
+
   // Anchor's solana_program::program_memory shipped a `.trim_ascii_whitespace`
   // trait method on `&[u8]`. SBF rustc 1.80+ has a stable `<[u8]>::trim_ascii`
   // with identical semantics. Both targets see the rewritten name.
