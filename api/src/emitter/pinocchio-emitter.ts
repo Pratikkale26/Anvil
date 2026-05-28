@@ -3089,6 +3089,55 @@ ${writeLines}
       /borsh::to_vec\(([^)]+)\)\?/g,
       "borsh::to_vec($1).map_err(|_| ProgramError::InvalidInstructionData)?",
     );
+    // Field access on a local `let X = pinocchio_token::state::TokenAccount::
+    // from_account_info(...)?` binding must go through the method accessors
+    // (.owner(), .mint(), .amount(), .delegate(), .close_authority()) because
+    // the underlying struct fields are private in pinocchio. Scan the body
+    // for these bindings and rewrite subsequent `X.<field>` references.
+    // Mirrors tokenLocalVarFieldRules in walker.ts for cases the per-account
+    // pass missed (typically locals bound from remaining_accounts iterators).
+    {
+      const tokenBindings = new Set<string>();
+      const bindingRe = /\blet\s+(\w+)\s*=\s*pinocchio_token::state::TokenAccount::from_account_info\b/g;
+      let bm: RegExpExecArray | null;
+      while ((bm = bindingRe.exec(out)) !== null) tokenBindings.add(bm[1]!);
+      if (tokenBindings.size > 0) {
+        const fields: Array<{ name: string; deref: boolean }> = [
+          { name: "owner", deref: true },
+          { name: "mint", deref: true },
+          { name: "delegate", deref: true },
+          { name: "close_authority", deref: true },
+          { name: "amount", deref: false },
+        ];
+        for (const local of tokenBindings) {
+          for (const f of fields) {
+            const re = new RegExp(`(^|[^\\w.])${local}\\.${f.name}\\b(?!\\s*\\()`, "g");
+            out = out.replace(re, (_full, prefix: string) =>
+              `${prefix}${f.deref ? "*" : ""}${local}.${f.name}()`,
+            );
+          }
+        }
+      }
+    }
+    // Anchor's `account.exit(program_id)?` serializes a deserialized state
+    // binding back to its source AccountInfo. Anvil's typed-state bindings
+    // expose `T::save(account_info, &data)` for the same effect. Rewrite
+    // `<local>.exit(...)?` when <local> was bound via
+    // `let mut <local> = <Type>::from_account_info(<src>)?`. Drops the
+    // program_id arg since Pinocchio's save() infers ownership from the
+    // pre-validated AccountInfo.
+    {
+      const stateBindingRe = /\blet\s+(?:mut\s+)?(\w+)\s*=\s*(\w+)::from_account_info\s*\(\s*([^)]+?)\s*\)\s*\?/g;
+      const stateBindings = new Map<string, { type: string; src: string }>();
+      let sm: RegExpExecArray | null;
+      while ((sm = stateBindingRe.exec(out)) !== null) {
+        stateBindings.set(sm[1]!, { type: sm[2]!, src: sm[3]!.trim() });
+      }
+      for (const [local, { type, src }] of stateBindings) {
+        const exitRe = new RegExp(`\\b${local}\\.exit\\s*\\([^)]*\\)\\s*\\?`, "g");
+        out = out.replace(exitRe, `${type}::save(${src}, &${local})?`);
+      }
+    }
     // System instruction create_account → pinocchio_system::instructions::CreateAccount
     // The walker emits a multiline `invoke(&system_instruction::create_account(
     //     &*from.key(), &*to.key(), lamports, space, <owner>), ...)?;`
