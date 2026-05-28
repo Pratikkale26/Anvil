@@ -1477,11 +1477,21 @@ function classifyAssignment(node: SyntaxNode): BodyStatement | null {
         }
       }
 
-      // Transform ctx.bumps.X → bump derivation
+      // Transform ctx.bumps.X → bump derivation. Only collapse to the
+      // bare bump reference when the RHS is itself just a bump access
+      // (`ctx.bumps.X`, `&ctx.bumps.X`, `*ctx.bumps.X`, etc.). When the
+      // RHS is a struct literal (`SomeBumps { x: ctx.bumps.a, y:
+      // ctx.bumps.b }`) we must preserve the full text — the emitter
+      // walks ctx.bumps.X references individually.
       if (value.includes("ctx.bumps.")) {
-        const bumpRef = findCtxBumpsAccess(rightNode);
-        if (bumpRef) {
-          value = `ctx.bumps.${bumpRef}`;
+        const isCompoundExpr =
+          /^[A-Z]\w*\s*\{/.test(value.trim()) ||
+          /\bnew\b/.test(value.slice(0, 80));
+        if (!isCompoundExpr) {
+          const bumpRef = findCtxBumpsAccess(rightNode);
+          if (bumpRef) {
+            value = `ctx.bumps.${bumpRef}`;
+          }
         }
       }
 

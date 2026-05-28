@@ -1370,6 +1370,24 @@ export class AstVisitorBase {
     // must be tested BEFORE the bare `ctx.bumps.(\w+)` which would
     // capture `get` as the account name.
     if (value.includes("ctx.bumps")) {
+      // Struct-literal RHS: `SomeStruct { x: ctx.bumps.a, y: ctx.bumps.b }`.
+      // The bump-reduction below would collapse the whole expression to
+      // `bump_a`, dropping the struct shape. Detect the struct-literal
+      // case by checking for a `{` before the first ctx.bumps reference
+      // and rewrite each ctx.bumps.X individually.
+      const isStructLiteral =
+        /^[A-Z]\w*\s*\{/.test(value.trim()) &&
+        /\bctx\.bumps\.\w+/.test(value);
+      if (isStructLiteral) {
+        const accountsHit = new Set<string>();
+        value = value.replace(/ctx\.bumps\.(\w+)/g, (_full, name: string) => {
+          accountsHit.add(snakeCase(name));
+          return `bump_${snakeCase(name)}`;
+        });
+        for (const acct of accountsHit) {
+          out.push(...this.emitBumpDerivationStructural(acct));
+        }
+      } else {
       const bumpAccount =
         value.match(/\*\s*ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/)?.[1] ??
         value.match(/ctx\.bumps\.get\(\s*"(\w+)"\s*\)\.unwrap\(\)/)?.[1] ??
@@ -1382,6 +1400,7 @@ export class AstVisitorBase {
       if (bumpAccount) {
         out.push(...this.emitBumpDerivationStructural(snakeCase(bumpAccount)));
         value = `bump_${snakeCase(bumpAccount)}`;
+      }
       }
     }
 
