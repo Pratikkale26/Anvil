@@ -4879,7 +4879,7 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
     if (this.pendingSeedDeserializes.size === 0) return "";
     const out: string[] = [];
     for (const [name, typeName] of this.pendingSeedDeserializes) {
-      out.push(`    let __ha_${name} = ${typeName}::from_account_info(${name})?;`);
+      out.push(`    let ha_${name}_seed: ${typeName} = ${typeName}::from_account_info(${name})?;`);
     }
     this.pendingSeedDeserializes.clear();
     return out.join("\n");
@@ -4890,7 +4890,11 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
     // Detect `<state-account>.<field>` patterns where the field isn't .key
     // / .key() / .bumps / .to_account_info(). Inject a deserialize prelude
     // and rewrite the reference to use the deserialized state binding.
-    const stateAccountFieldRe = /\b(\w+)\.(\w+)(?!\s*\()/g;
+    // Match `name.field` where field is a complete word followed by NOT
+    // a word char and NOT a paren. The `(?!\w)` anchors the field token so
+    // we don't backtrack into `key` from `key()` (matching `ke` and leaving
+    // `y()` behind).
+    const stateAccountFieldRe = /\b(\w+)\.(\w+)\b(?!\w|\s*\()/g;
     let rewritten = trimmed;
     if (this.currentIr) {
       const stateAccountTypes = new Set(
@@ -4914,7 +4918,7 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
             if (!typeName) return full;
             if (field === "key" || field === "bumps") return full;
             this.pendingSeedDeserializes.set(name, typeName);
-            return `__ha_${name}.${field}`;
+            return `ha_${name}_seed.${field}`;
           },
         );
       }
