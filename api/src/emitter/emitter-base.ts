@@ -168,6 +168,15 @@ export abstract class BaseEmitter {
    *  Used by per-target emitInherentImplItems to access knownTopLevelNames
    *  for collapseModulePaths. */
   protected _irForAccountEmit: SolanaIR | undefined = undefined;
+  /**
+   * #37 — Per-instruction map of `<field-name>` → `<renamed>` for
+   * destructured arg fields that were renamed because they collide with
+   * an account binding (e.g. `admin_authority: __arg_admin_authority`).
+   * Populated by emitArgDeserialize; consumed at the end of
+   * emitInstructionFunction to rewrite body references. Cleared at the
+   * start of each instruction.
+   */
+  protected _argRenameMap: Map<string, string> = new Map();
 
   /** Warnings accumulated during emission */
   protected warnings: string[] = [];
@@ -2937,6 +2946,9 @@ impl ZeroCopy for ${accName} {}`;
   // ─── Generic instruction function emitter ──────────────────────────────────
 
   protected emitInstructionFunction(instr: Instruction, ir: SolanaIR): string {
+    // #37 — reset the per-instruction arg-rename map. Populated by
+    // emitArgDeserialize for collisions; consumed after body emit below.
+    this._argRenameMap.clear();
     // Defect B fix: instructions containing `cpi_custom` (bare `invoke()`
     // calls in source) can't be auto-ported. They typically have a
     // companion `let ix = system_instruction::transfer(...)` pass_through
@@ -3129,6 +3141,17 @@ impl ZeroCopy for ${accName} {}`;
 
     // Body emission — the main event
     let rawBodyCode = this.emitBodyStatements(instr.body, instr, ir, preEmittedBumps);
+    // #37 — apply destructure-rename mappings from emitArgDeserialize.
+    // Each entry maps a colliding arg-field name to its `__arg_<name>`
+    // form so body references resolve to the arg value (not the same-
+    // named AccountInfo binding). Skip `<X>.method()` calls and `<X>.field`
+    // accesses since those target the AccountInfo, not the Pubkey arg.
+    if (this._argRenameMap.size > 0) {
+      for (const [from, to] of this._argRenameMap) {
+        const re = new RegExp(`(^|[^\\w.])${from}(?![\\w.])`, "g");
+        rawBodyCode = rawBodyCode.replace(re, (_full, prefix: string) => `${prefix}${to}`);
+      }
+    }
     // Inject deferred realloc blocks AFTER the `T::read(...)` line for each
     // affected account, targeting the `${name}_account` AccountInfo alias.
     if (reallocAccountsDeferred.size > 0) {
@@ -3464,9 +3487,13 @@ ${originalLines}
           if (namedFields.length > 0) {
             // Rename fields that shadow account bindings to avoid [u8; 32]
             // overwriting the AccountInfo variable in scope.
-            const fieldEntries = namedFields.map((n) =>
-              accountNames.has(n) ? `${n}: __arg_${n}` : n
-            );
+            const fieldEntries = namedFields.map((n) => {
+              if (accountNames.has(n)) {
+                this._argRenameMap.set(n, `__arg_${n}`);
+                return `${n}: __arg_${n}`;
+              }
+              return n;
+            });
             const fieldList = fieldEntries.join(", ");
             return `    let ${name}: ${arg.type} = BorshDeserialize::deserialize(&mut remaining)
         .map_err(|_| ProgramError::InvalidInstructionData)?;
