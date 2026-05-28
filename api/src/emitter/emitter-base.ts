@@ -3815,7 +3815,14 @@ unsafe impl bytemuck::Pod for ${typeDef.name} {}${implBlock}`;
       // Raydium's construct_uint stubs (U128, U256, U512, U1024) all
       // hit this — 80+ tuple-construction call sites failed E0423.
       if (typeDef.rawCode && /\bpub\s+struct\s+\w+\s*\(/.test(typeDef.rawCode)) {
-        return `${typeDef.rawCode}${implBlock}`;
+        // Rename Anchor-specific derives so the tuple-struct passthrough
+        // doesn't leak unresolved AnchorSerialize/AnchorDeserialize macros
+        // (the use-import scrubber drops anchor_lang::prelude). Same
+        // rename the enum branch above does inside its derive splice.
+        const renamed = typeDef.rawCode
+          .replace(/\bAnchorSerialize\b/g, "BorshSerialize")
+          .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+        return `${renamed}${implBlock}`;
       }
       // G46 — when generics declares a lifetime that fields don't use,
       // inject `_phantom_X: core::marker::PhantomData<&'X ()>` to make the
@@ -3853,7 +3860,8 @@ unsafe impl bytemuck::Pod for ${typeDef.name} {}${implBlock}`;
       // params survive (e.g. `where T: AnchorSerialize + AnchorDeserialize`).
       // Without this, BorshSerialize/Deserialize derives on the struct fail
       // E0277 because T/U have no bound. Rename Anchor traits to Borsh as
-      // we go — same substitution as the enum branch above.
+      // we go — same substitution as the enum branch above. Also applies
+      // to inline generic bounds (`<T: AnchorSerialize + ...>`).
       let whereClause = "";
       if (typeDef.rawCode) {
         const wm = typeDef.rawCode.match(/\b(where\s+[^{]+?)\s*\{/);
@@ -3863,8 +3871,11 @@ unsafe impl bytemuck::Pod for ${typeDef.name} {}${implBlock}`;
             .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
         }
       }
+      const renamedGenerics = generics
+        .replace(/\bAnchorSerialize\b/g, "BorshSerialize")
+        .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
       return `${deriveLine}
-pub struct ${typeDef.name}${generics}${whereClause} {
+pub struct ${typeDef.name}${renamedGenerics}${whereClause} {
 ${allFields}
 }${implBlock}`;
     }).join("\n\n");
