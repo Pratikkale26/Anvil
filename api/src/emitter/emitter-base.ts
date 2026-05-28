@@ -3493,7 +3493,10 @@ ${originalLines}
   }
 
   protected customTypeDef(typeName: string) {
-    return this.currentIr?.types.find((type) => type.name === typeName);
+    // Strip generic arguments — `GenericType<u32, u64, 10>` should match the
+    // type definition `GenericType<T, U, const N: usize>` (#89).
+    const bare = typeName.split("<")[0]?.trim() ?? typeName;
+    return this.currentIr?.types.find((type) => type.name === bare);
   }
 
   protected sourceErrorEnumName(ir: SolanaIR): string {
