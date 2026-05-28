@@ -531,10 +531,48 @@ export function commentOutResidualAnchorLeaks(text: string): string {
     for (let j = start; j <= end; j++) commentedLines.add(j);
   }
 
-  // Third pass: apply comments
+  // Third pass: apply comments. When a commented range starts with a
+  // `let X = …` binding, swap the RHS for `unimplemented!()` so later
+  // references to X still compile (mirrors G82 in commentOutUnsalvageableCallSites).
+  // Build per-range bounds for the let-rescue.
+  const rangeBounds: Array<[number, number]> = [];
+  let curStart = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (commentedLines.has(i)) {
+      if (curStart === -1) curStart = i;
+    } else if (curStart !== -1) {
+      rangeBounds.push([curStart, i - 1]);
+      curStart = -1;
+    }
+  }
+  if (curStart !== -1) rangeBounds.push([curStart, lines.length - 1]);
+  const letRescue = new Map<number, { indent: string; mutKw: string; ident: string; typeAnn: string; endLine: number }>();
+  for (const [start, end] of rangeBounds) {
+    const rangeText = lines.slice(start, end + 1).join("\n");
+    const m = rangeText.match(/(?:^|\n)([ \t]*)let\s+(mut\s+)?(\w+)(\s*:\s*[^=]+?)?\s*=/);
+    if (m) {
+      letRescue.set(start, {
+        indent: m[1] ?? "",
+        mutKw: m[2] ?? "",
+        ident: m[3] ?? "",
+        typeAnn: m[4] ?? "",
+        endLine: end,
+      });
+    }
+  }
   const result: string[] = [];
   let headerAdded = false;
+  let skipUntil = -1;
   for (let i = 0; i < lines.length; i++) {
+    if (i <= skipUntil) continue;
+    const rescue = letRescue.get(i);
+    if (rescue && !lines[i]!.trim().startsWith("//")) {
+      result.push(`${rescue.indent}// ${MARKER_ANVIL_TODO_PREFIX} let-binding RHS contained an Anchor-only reference — replaced with unimplemented!()`);
+      result.push(`${rescue.indent}let ${rescue.mutKw}${rescue.ident}${rescue.typeAnn} = unimplemented!("anvil: anchor-leak RHS replaced");`);
+      skipUntil = rescue.endLine;
+      headerAdded = false;
+      continue;
+    }
     if (commentedLines.has(i) && !lines[i]!.trim().startsWith("//")) {
       const indent = lines[i]!.match(/^(\s*)/)?.[1] ?? "";
       if (!headerAdded || !commentedLines.has(i - 1)) {
