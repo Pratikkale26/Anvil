@@ -133,7 +133,15 @@ function collectWorkspaceSiblingFiles(
       const depRe = new RegExp(`${dashed}\\s*=\\s*\\{[^}]*\\}`);
       const depLine = progToml.match(depRe)?.[0] ?? "";
       if (depLine && depLine.includes("path")) {
-        if (!depLine.includes('"cpi"') && !depLine.includes('"no-entrypoint"')) {
+        // Exclude deps whose `path = "..."` value targets a CPI-only shim
+        // (i.e. the path SEGMENT itself ends in `/cpi` or `/no-entrypoint`,
+        // not just feature flags that happen to be named "cpi"). The
+        // sibling crate at `../zero-copy` with `features = ["cpi"]` is a
+        // legitimate inlining target — the cpi feature just gates the auto-
+        // generated CPI surface inside that crate.
+        const pathMatch = depLine.match(/path\s*=\s*"([^"]+)"/);
+        const pathValue = pathMatch?.[1] ?? "";
+        if (!/\/(?:cpi|no-entrypoint)\b/.test(pathValue)) {
           unknownCrates.add(name);
         }
       } else if (depLine && depLine.includes("workspace")) {
