@@ -5285,6 +5285,27 @@ ${fields}
     for (let pass = 0; pass < 3; pass++) {
       transformed = transformed.replace(/\bErr\(([^()]*(?:\([^()]*\))*[^()]*)\)\)/g, 'Err($1)');
     }
+    // #37 — pinocchio_token's Mint exposes private data behind accessor
+    // methods (`.supply()`, `.mint_authority()`, `.freeze_authority()`).
+    // Carried helpers like marinade's `check_mint_empty(mint: &Mint, ...)`
+    // do bare field reads (`mint.supply == 0`). Detect helper params typed
+    // as `&Mint` and rewrite their field reads to method calls.
+    if (this.frameworkName === "Pinocchio") {
+      const mintParamRe = /\b(\w+)\s*:\s*&\s*Mint\b/g;
+      const mintParams = new Set<string>();
+      let pm: RegExpExecArray | null;
+      while ((pm = mintParamRe.exec(transformed)) !== null) {
+        if (pm[1]) mintParams.add(pm[1]);
+      }
+      for (const param of mintParams) {
+        for (const field of ["supply", "mint_authority", "freeze_authority"]) {
+          transformed = transformed.replace(
+            new RegExp(`\\b${param}\\.${field}\\b(?!\\s*\\()`, "g"),
+            `${param}.${field}()`,
+          );
+        }
+      }
+    }
     // Check the *transformed* code for residual Anchor patterns — the transform
     // may have cleaned up everything that was originally Anchor-specific.
     if (!hasResidualAnchorPatterns(transformed)) {
@@ -6220,6 +6241,14 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
     out = out.replace(
       /(\w[\w.]*)\.try_to_vec\s*\(\s*\)/g,
       "borsh::to_vec(&$1)",
+    );
+    // Marinade-specific: `unsafe { MaybeUninit::<Self>::zeroed().assume_init() }
+    // .try_to_vec().unwrap().len()` is a hand-rolled "compute serialized size"
+    // pattern. Self::INIT_SPACE gives the same value via Anchor's auto-derived
+    // size constant; route the chain to that.
+    out = out.replace(
+      /unsafe\s*\{\s*MaybeUninit\s*::\s*<\s*(?:Self|\w+)\s*>\s*::\s*zeroed\s*\(\s*\)\s*\.\s*assume_init\s*\(\s*\)\s*\}\s*\.\s*try_to_vec\s*\(\s*\)\s*\.\s*unwrap\s*\(\s*\)\s*\.\s*len\s*\(\s*\)/g,
+      "Self::INIT_SPACE",
     );
   }
   return out;
