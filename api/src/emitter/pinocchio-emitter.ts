@@ -347,6 +347,40 @@ export class PinocchioEmitter extends BaseEmitter {
     ir: SolanaIR,
   ): string {
     bodyCode = super.postProcessInstructionBody(bodyCode, instr, ir);
+    // Strip stale user-source `let signer = &[&seeds[..]];` when a synth
+    // signer-seeds block follows (// PDA signer seeds for '…'). The user's
+    // line references a `seeds` binding that Anvil already stripped, and
+    // the subsequent CPI uses the synth's `signer_seeds`, not `signer`.
+    // Guard: `signer` must not appear as a standalone identifier elsewhere
+    // in the body — registry's withdraw passes the user's `signer` to
+    // spl_token_transfer_signed and we must preserve it.
+    if (bodyCode.includes("// PDA signer seeds for")) {
+      const stripRe = /^[ \t]*let\s+signer\s*=\s*&\[\s*&\s*seeds\s*\[\s*\.\.\s*\]\s*\]\s*;\s*$/gm;
+      const m = stripRe.exec(bodyCode);
+      if (m) {
+        // Check if `signer` appears elsewhere as a standalone identifier,
+        // ignoring commented-out lines (Anvil's TODO/manual-port stubs
+        // often leave `signer` references inside `//`-prefixed code).
+        const without = bodyCode.replace(stripRe, "");
+        const uncommented = without
+          .split("\n")
+          .filter((ln) => {
+            const t = ln.trim();
+            if (t.startsWith("//")) return false;
+            // Drop comment-fragment closers like `}, signer))?;` — these
+            // are orphan tail lines left behind by Anvil's commentout pass
+            // when a multi-line struct/call's body was partially commented.
+            if (/^[}),\s?;:]*$/.test(t)) return false;
+            if (/^\},?\s*\w*\s*\)+\??;?\s*$/.test(t)) return false;
+            return true;
+          })
+          .join("\n");
+        const usageRe = /(?<![\w_])signer(?![\w_])/g;
+        if (!usageRe.test(uncommented)) {
+          bodyCode = without;
+        }
+      }
+    }
     const accountNames = instr.accounts.map((a) => snakeCase(a.name));
     const mintsHit: string[] = [];
     for (const name of accountNames) {
