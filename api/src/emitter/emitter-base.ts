@@ -6231,6 +6231,15 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
       /(?:solana_program\s*::\s*pubkey\s*::\s*)?Pubkey\s*::\s*create_with_seed\b/g,
       "pinocchio::pubkey::create_with_seed",
     );
+    // Pinocchio's `create_with_seed` takes `&[u8]` for the seed; solana's
+    // version accepts `&str`. Coerce string constants (anything matching
+    // `Self::SOME_CONST` or a bare upper-snake-case ident, both heuristic
+    // signals for a `&str` seed) via `.as_bytes()`. Skip when already a
+    // byte-slice-looking expression (`b"..."`, `&[...]`, `<expr>.as_bytes()`).
+    out = out.replace(
+      /(pinocchio::pubkey::create_with_seed\s*\(\s*[^,]+,\s*)((?:Self\s*::\s*)?[A-Z][A-Z0-9_]+)(\s*,)/g,
+      "$1$2.as_bytes()$3",
+    );
     // #37 — Anchor's AccountInfo carries `data: Rc<RefCell<&mut [u8]>>`.
     // Pinocchio has methods only: `try_borrow_data()` / `try_borrow_mut_data()`.
     // Source patterns:
