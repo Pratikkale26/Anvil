@@ -508,6 +508,11 @@ export function transformHelperCode(
   next = next.replace(/\banchor_spl::associated_token::/g, "");
   next = next.replace(/\banchor_spl::/g, "");
 
+  // Anchor's solana_program::program_memory shipped a `.trim_ascii_whitespace`
+  // trait method on `&[u8]`. SBF rustc 1.80+ has a stable `<[u8]>::trim_ascii`
+  // with identical semantics. Both targets see the rewritten name.
+  next = next.replace(/\.trim_ascii_whitespace\b/g, ".trim_ascii");
+
   // ── Strip use statements that reference Anchor crates ──
   next = next.replace(/^\s*use\s+anchor_lang[^;]*;\s*\n?/gm, "");
   next = next.replace(/^\s*use\s+anchor_spl[^;]*;\s*\n?/gm, "");

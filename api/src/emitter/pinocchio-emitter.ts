@@ -795,11 +795,40 @@ ${arms}
       "i8", "i16", "i32", "i64", "i128", "isize",
       "bool", "f32", "f64",
     ]);
+    // Build set of user-defined trait names so blanket impls (e.g.
+    // `impl<T: Deref<Target=[u8]>> MyTrait for T`) survive — the receiver
+    // is a generic param, but the trait is something the user wrote and
+    // calls everywhere in the body.
+    const userTraitNames = new Set<string>();
+    for (const raw of (ir.userTraits ?? [])) {
+      const m = raw.match(/\b(?:pub\s+)?trait\s+([A-Za-z_]\w*)/);
+      if (m?.[1]) userTraitNames.add(m[1]);
+    }
     const survivors = impls.filter((raw: string) => {
-      const m = raw.match(/^\s*impl(?:<[^>]+>)?\s+[^{}]+?\s+for\s+([A-Za-z_]\w*)/);
-      if (!m || !m[1]) return false;
-      if (!userTypeNames.has(m[1]) && !primitiveTypes.has(m[1])) return false;
-      if (FRAMEWORK_SHADOW_TYPES.has(m[1])) return false;
+      // Generics in trait position may be nested (e.g. Deref<Target=[u8]>);
+      // walk char-by-char with a depth counter rather than a greedy regex.
+      const afterImpl = raw.replace(/^\s*impl/, "");
+      let i = 0;
+      while (i < afterImpl.length && /\s/.test(afterImpl[i]!)) i++;
+      if (afterImpl[i] === "<") {
+        let depth = 1; i++;
+        while (i < afterImpl.length && depth > 0) {
+          if (afterImpl[i] === "<") depth++;
+          else if (afterImpl[i] === ">") depth--;
+          i++;
+        }
+      }
+      while (i < afterImpl.length && /\s/.test(afterImpl[i]!)) i++;
+      const rest = afterImpl.slice(i);
+      const forMatch = rest.match(/^([A-Za-z_]\w*)(?:<[^>]*(?:<[^>]*>[^>]*)*>)?\s+for\s+([A-Za-z_]\w*)/);
+      const traitName = forMatch?.[1];
+      const receiver = forMatch?.[2];
+      if (!receiver) return false;
+      const isUserBlanket =
+        !!traitName && userTraitNames.has(traitName) &&
+        !userTypeNames.has(receiver) && !primitiveTypes.has(receiver);
+      if (!userTypeNames.has(receiver) && !primitiveTypes.has(receiver) && !isUserBlanket) return false;
+      if (FRAMEWORK_SHADOW_TYPES.has(receiver)) return false;
       if (/&\s*(?:'\w+\s+)?AccountMeta\b/.test(raw)) return false;
       if (/:\s*&\s*(?:'\w+\s+)?AccountInfo\b/.test(raw)) return false;
       if (/\bctx\s*\.\s*(?:accounts|bumps|remaining_accounts)\b/.test(raw)) return false;
