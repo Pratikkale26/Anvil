@@ -450,23 +450,35 @@ function parseInstructionFn(
     }
   }
   if (collidingArgs.size > 0) {
+    const rewriteRefs = (text: string): string => {
+      let out = text;
+      for (const [oldName, newName] of collidingArgs) {
+        // Rewrite bare references to the original arg name. Skip refs that
+        // are part of `<X>.field` chains (preceded by `.`) — those are
+        // field accesses, not arg uses.
+        out = out.replace(
+          new RegExp(`(^|[^.\\w])${oldName}(?![\\w])`, "g"),
+          (_full, prefix) => `${prefix}${newName}`,
+        );
+      }
+      return out;
+    };
     for (const stmt of bodyStatements) {
       if (stmt.kind === "pass_through") {
-        let code = (stmt as { code: string }).code;
-        for (const [oldName, newName] of collidingArgs) {
-          // Rewrite bare references to the original arg name. Skip refs that
-          // are part of `<X>.field` chains (preceded by `.`) — those are
-          // field accesses, not arg uses.
-          code = code.replace(
-            new RegExp(`(^|[^.\\w])${oldName}(?![\\w])`, "g"),
-            (full, prefix) => {
-              // Skip if this is `ctx.accounts.<arg-name>` — that's the
-              // account binding referenced via ctx path.
-              return `${prefix}${newName}`;
-            },
-          );
-        }
-        (stmt as { code: string }).code = code;
+        (stmt as { code: string }).code = rewriteRefs((stmt as { code: string }).code);
+      } else if (stmt.kind === "state_field_assign") {
+        const s = stmt as { value: string };
+        s.value = rewriteRefs(s.value);
+      } else if (stmt.kind === "require") {
+        const s = stmt as { condition: string };
+        s.condition = rewriteRefs(s.condition);
+      } else if (stmt.kind === "msg") {
+        const s = stmt as { message: string; args?: string };
+        s.message = rewriteRefs(s.message);
+        if (s.args) s.args = rewriteRefs(s.args);
+      } else if (stmt.kind === "emit") {
+        const s = stmt as { fields: string };
+        s.fields = rewriteRefs(s.fields);
       }
     }
   }
