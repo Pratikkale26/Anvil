@@ -174,20 +174,26 @@ export function parseAccountsStructFields(
             }
           }
           if (origToFlat.size > 0) {
+            const rewriteRefs = (text: string): string => {
+              let rewritten = text;
+              for (const [orig, flat] of origToFlat) {
+                rewritten = rewritten.replace(
+                  new RegExp(`\\b${orig}\\.`, "g"),
+                  `${flat}.`,
+                );
+              }
+              return rewritten;
+            };
             for (const acct of innerAccounts) {
               if (acct.pdaSeeds && acct.pdaSeeds.length > 0) {
-                acct.pdaSeeds = acct.pdaSeeds.map((seed) => {
-                  let rewritten = seed;
-                  for (const [orig, flat] of origToFlat) {
-                    // Replace `&orig.` with `&flat.` and bare `orig.` with `flat.`
-                    // Use word boundary to avoid partial matches.
-                    rewritten = rewritten.replace(
-                      new RegExp(`\\b${orig}\\.`, "g"),
-                      `${flat}.`,
-                    );
-                  }
-                  return rewritten;
-                });
+                acct.pdaSeeds = acct.pdaSeeds.map(rewriteRefs);
+              }
+              // H1c — composite struct's constraints reference sibling fields
+              // of the SAME inner struct (e.g. `vault.owner == spt.owner`).
+              // After flatten, those siblings have prefixed binding names.
+              // Rewrite the constraint values so emit emits the right names.
+              for (const c of acct.constraints) {
+                if (c.value) c.value = rewriteRefs(c.value);
               }
             }
           }
