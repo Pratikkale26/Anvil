@@ -1466,7 +1466,12 @@ function classifyAssignment(node: SyntaxNode): BodyStatement | null {
     if (chain.length >= 2) {
       const isCtxAccountsField = chain[0] === "ctx" && chain[1] === "accounts" && chain.length >= 4;
       const account = isCtxAccountsField ? (chain[2] ?? "unknown") : (chain[0] ?? "unknown");
-      const field = isCtxAccountsField ? (chain[3] ?? "unknown") : (chain[1] ?? "unknown");
+      // For deep field paths like `account.outer.inner = X`, join the
+      // remaining chain segments so the emitter writes the full path.
+      // Without this, `price_oracle.agg.price = price` would emit
+      // `price_oracle.agg = price` (struct = i64 mismatch).
+      const fieldStart = isCtxAccountsField ? 3 : 1;
+      const field = chain.slice(fieldStart).join(".") || "unknown";
       let value = rightNode.text;
 
       // Preserve ctx.accounts references for the emitter to rewrite per framework.
