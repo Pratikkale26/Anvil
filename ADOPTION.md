@@ -34,7 +34,7 @@ repo header.
 | IR body statement kinds | 100+ | 2026-05-28 |
 | Top DeFi: klend (63 ix) | **build-sbf GREEN** | 2026-05-27 |
 | Top DeFi: circuit-breaker (8 ix) | **build-sbf GREEN + BYTE-EQUAL** | 2026-05-28 |
-| Total commits | 1,260 | 2026-05-28 |
+| Total commits | 1,263 | 2026-05-28 |
 
 ## How this gets updated
 
