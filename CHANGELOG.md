@@ -8,6 +8,25 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ## Unreleased
 
+### Added — First multi-file real-world byte-equal milestone (2026-05-27/28)
+
+**Helium circuit-breaker** (8 instructions, 12 `.rs` files) is now verified byte-equal end-to-end. This is the first externally-authored multi-file Anchor program where the Anvil-emitted Pinocchio produces identical `data + lamports + owner` post-execution state against the Anchor reference inside LiteSVM.
+
+Why it matters: every prior byte-equal fixture was either single-file or a thin coral test program. Circuit-breaker exercises the cross-file emit path — `state.rs` + `errors.rs` + 8 `instructions/*.rs` files, two PDA inits with `has_one` checks, a downstream `set_authority` CPI on the just-initialized token account, all stitched together by the new dead-code-elimination + scaffold-deps pipeline.
+
+Six emit-path fixes landed under this milestone:
+
+- **`has_one` Ref scope** (`2fc4b4f`) — `pinocchio_token::state::TokenAccount::from_account_info()` returns a `Ref` that borrows the account; without an enclosing `{ }` block the Ref lives to end-of-function and blocks subsequent CPI invokes with "account already borrowed". Walker now wraps the comparison in a scope so the Ref drops before any later CPI.
+- **`from_str_const` → byte literal** (`7d6fac0`) — `Pubkey::from_str_const("base58")` was a no-op stub in Pinocchio; now decoded at emit time into a `[u8; 32]` array literal.
+- **Bare `mod X;` strip** (`ace0d72`) — multi-file project sources kept their lib.rs `pub mod foo;` declarations in the flattened userModules list, breaking emit when the flattener inlined the module bodies.
+- **Args destructuring shadow prevention** (mid-session) — when an args field name collided with an account binding name (e.g. `mint_authority`), the destructuring `let MyArgs { mint_authority } = args;` shadowed the account, silently breaking the CPI emit.
+- **`.key()` on state-typed init bindings** (mid-session) — bump derivation referencing `state_account.key()` was failing because the emit treated init'd state accounts as user-types rather than `AccountInfo` proxies.
+- **Dead code elimination via reachability graph** (mid-session) — unreferenced helper fns in carried text were producing compile errors against the SBF target's strict dead-code analysis; emit now walks the call graph from instruction bodies and drops anything unreachable.
+
+**Plus:** klend (63 instructions) now passes `cargo build-sbf` cleanly — first top-cohort Solana lending protocol fully compilable to Pinocchio. Scaffold gained `strum` / `num-enum` / `serde` / `fixed-macro` for carried struct derives.
+
+Total: 143 byte-equal differential tests (was 141), 193/193 MUST_PASS cargo-clean. 27 session commits.
+
 ### Added — DataV2 fully IR-typed + slot 11 + Anchor 1.0 dup + version matrix (2026-05-19 night, 4 commits)
 
 Task #84 fully closed in two follow-on commits:

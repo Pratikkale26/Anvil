@@ -92,7 +92,7 @@ See [`api/src/ai/refine.ts`](api/src/ai/refine.ts).
 | Binary-parity snapshot ([api/tests/binary-parity-snapshot.test.ts](../api/tests/binary-parity-snapshot.test.ts)) | 117 fixture×target snapshots | Locks `output.files` against on-disk snapshots; any visitor / post-emit change surfaces as a single-file diff. |
 | Cargo MUST_PASS (program-examples + escrow2025 + coral cohort + t22-transfer-fee) | 181 fixtures × {pinocchio,native} | Emitted code compiles |
 | Cargo tracking ceilings (coral-swap, t22-transfer-hook, …) | ~9 fixtures | Emitted code regression-guard (errors ≤ ceiling) |
-| **Differential** ([api/tests/differential-*.test.ts](../api/tests/)) | 141 byte-equal test files | **Anchor ↔ Anvil-Pinocchio runtime equality (LiteSVM byte-equal: data + lamports + owner)** |
+| **Differential** ([api/tests/differential-*.test.ts](../api/tests/)) | 143 byte-equal test files | **Anchor ↔ Anvil-Pinocchio runtime equality (LiteSVM byte-equal: data + lamports + owner)** |
 | **Realworld large** | marginfi-v2 (1 err), raydium-clmm (0 err), klend (0 err) | Top DeFi protocol parse+emit ceiling tracking |
 
 The differential layer is the load-bearing correctness signal — cargo-green is necessary but not sufficient. `differential-harness.ts` provides a per-fixture API: caller supplies setup + callScript + accountsToCompare, the harness handles building, running both .so files in LiteSVM with the same keypairs, and byte-comparing post-scenario state + lamports.

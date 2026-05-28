@@ -40,7 +40,7 @@
 
 These run on every Anvil release; any emit divergence fails the gate.
 
-**141 byte-equal differential test files** — covering SPL Token, Token-2022 (all 12 non-confidential extensions), Metaplex Token Metadata (12 IR kinds), MPL Core (10 IR kinds), Pyth (legacy + modern), Switchboard, composite Accounts, 14+ real-world externally-authored Anchor programs, 25+ Solana Foundation program-examples, and 64 demo programs. `bun test api/tests/differential-*.test.ts` runs the full set. See [differential-testing.md](differential-testing.md) for the complete breakdown.
+**143 byte-equal differential test files** — covering SPL Token, Token-2022 (all 12 non-confidential extensions), Metaplex Token Metadata (12 IR kinds), MPL Core (10 IR kinds), Pyth (legacy + modern), Switchboard, composite Accounts, 14+ real-world externally-authored Anchor programs, 25+ Solana Foundation program-examples, and 64 demo programs. `bun test api/tests/differential-*.test.ts` runs the full set. See [differential-testing.md](differential-testing.md) for the complete breakdown.
 
 ## Real-world cargo-build coverage
 
