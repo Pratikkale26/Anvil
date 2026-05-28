@@ -4356,6 +4356,7 @@ ${allFields}
 
       if (accountRef.isPda && accountRef.pdaSeeds?.length) {
         const pdaSeeds = accountRef.pdaSeeds.map((seed) => this.normalizeInitSeedExpr(seed));
+        const seedDeserPrelude = this.drainSeedDeserializes();
         const bumpPrelude = this.emitBumpSeed("program_id", pdaSeeds, accountName)
           .replace(/\blet bump =/g, `let bump_${accountName} =`)
           .replace(/\blet\s+\(expected_key,\s*bump\)\s*=/g, `let (expected_key, bump_${accountName}) =`);
@@ -4365,7 +4366,7 @@ ${allFields}
     let init_${accountName}_signer_seeds = &[&init_${accountName}_seeds[..]];`;
         const signerSeedsExpr = `init_${accountName}_signer_seeds`;
         const mintCreate = this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, signerSeedsExpr, tokenProgram, totalSpace);
-        return `${bumpPrelude}\n${seedsPrelude}\n${mintCreate}`;
+        return `${seedDeserPrelude ? seedDeserPrelude + "\n" : ""}${bumpPrelude}\n${seedsPrelude}\n${mintCreate}`;
       }
 
       return this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, undefined, tokenProgram, totalSpace);
@@ -4393,7 +4394,9 @@ ${allFields}
       // body-code reference resolves identically.
       if (accountRef.isPda && accountRef.pdaSeeds?.length) {
         const pdaSeeds = accountRef.pdaSeeds.map((seed) => this.normalizeInitSeedExpr(seed));
-        const bumpPrelude = this.emitBumpSeed("program_id", pdaSeeds, accountName)
+        const seedDeserPrelude2 = this.drainSeedDeserializes();
+        const bumpPrelude = (seedDeserPrelude2 ? seedDeserPrelude2 + "\n" : "") +
+          this.emitBumpSeed("program_id", pdaSeeds, accountName)
           .replace(/\blet bump =/g, `let bump_${accountName} =`)
           .replace(/\blet\s+\(expected_key,\s*bump\)\s*=/g, `let (expected_key, bump_${accountName}) =`);
 
@@ -4437,7 +4440,9 @@ ${allFields}
         const pdaSeeds = (accountRef.pdaSeeds).map((seed) =>
           this.normalizeInitSeedExpr(seed)
         );
-        const bumpOnly = this.emitBumpSeed("program_id", pdaSeeds, accountName)
+        const seedDeserPrelude3 = this.drainSeedDeserializes();
+        const bumpOnly = (seedDeserPrelude3 ? seedDeserPrelude3 + "\n" : "") +
+          this.emitBumpSeed("program_id", pdaSeeds, accountName)
           .replace(/\blet bump =/g, `let bump_${accountName} =`)
           .replace(/\blet\s+\(expected_key,\s*bump\)\s*=/g, `let (expected_key, bump_${accountName}) =`);
         this.warnings.push(
@@ -4509,8 +4514,12 @@ ${allFields}
         return s;
       });
       const pdaSeeds = rewrittenSeeds.map((seed) => this.normalizeInitSeedExpr(seed));
+      const seedDeserPrelude4 = this.drainSeedDeserializes();
+      if (seedDeserPrelude4) {
+        bumpPrelude = seedDeserPrelude4 + "\n";
+      }
       if (stateFieldPreloads.length > 0) {
-        bumpPrelude = stateFieldPreloads.join("\n") + "\n";
+        bumpPrelude += stateFieldPreloads.join("\n") + "\n";
       }
       bumpPrelude += this.emitBumpSeed(
         "program_id",
@@ -4859,9 +4868,58 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
     return constText;
   }
 
+  /** Side-channel: deserialize preludes accumulated by normalizeInitSeedExpr
+   *  for the current init constraint emit (rewrites `<state-acct>.<field>` →
+   *  `__ha_<state-acct>.<field>` and asks the caller to emit a
+   *  `let __ha_<state-acct> = <Type>::from_account_info(<state-acct>)?;` once
+   *  before the bump_seed prelude). */
+  protected pendingSeedDeserializes = new Map<string, string>();
+
+  protected drainSeedDeserializes(): string {
+    if (this.pendingSeedDeserializes.size === 0) return "";
+    const out: string[] = [];
+    for (const [name, typeName] of this.pendingSeedDeserializes) {
+      out.push(`    let __ha_${name} = ${typeName}::from_account_info(${name})?;`);
+    }
+    this.pendingSeedDeserializes.clear();
+    return out.join("\n");
+  }
+
   protected normalizeInitSeedExpr(seed: string): string {
     const trimmed = cleanInlineExpr(seed);
-    return trimmed
+    // Detect `<state-account>.<field>` patterns where the field isn't .key
+    // / .key() / .bumps / .to_account_info(). Inject a deserialize prelude
+    // and rewrite the reference to use the deserialized state binding.
+    const stateAccountFieldRe = /\b(\w+)\.(\w+)(?!\s*\()/g;
+    let rewritten = trimmed;
+    if (this.currentIr) {
+      const stateAccountTypes = new Set(
+        this.currentIr.accounts.map((acc) => acc.name),
+      );
+      // Find the instruction this seed belongs to via name-overlap heuristic.
+      const ix = this.currentIr.instructions?.find((i) =>
+        i.accounts?.some((a) => trimmed.includes(snakeCase(a.name) + ".")),
+      );
+      if (ix) {
+        const accountBindings = new Map<string, string>();
+        for (const a of ix.accounts) {
+          if (stateAccountTypes.has(a.accountType)) {
+            accountBindings.set(snakeCase(a.name), a.accountType);
+          }
+        }
+        rewritten = rewritten.replace(
+          stateAccountFieldRe,
+          (full, name, field) => {
+            const typeName = accountBindings.get(name);
+            if (!typeName) return full;
+            if (field === "key" || field === "bumps") return full;
+            this.pendingSeedDeserializes.set(name, typeName);
+            return `__ha_${name}.${field}`;
+          },
+        );
+      }
+    }
+    rewritten = rewritten
       .replace(/ctx\.accounts\.(\w+)\.key\(\)\.as_ref\(\)/g, (_full, name: string) =>
         this.emitAccountKeyAsRefExpr(snakeCase(name))
       )
@@ -4875,7 +4933,8 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
       // Catch non-prefixed .key.as_ref() forms (e.g. authority.key.as_ref())
       .replace(/(\w+)\.key\.as_ref\(\)/g, (_full, name: string) =>
         this.emitAccountKeyAsRefExpr(snakeCase(name))
-      )
+      );
+    return rewritten
       // task #41 — Anchor's `System::id()` (and similar program-id helpers
       // from anchor_lang::system_program) carries through as bare type
       // references the target doesn't have. The system program ID is the
