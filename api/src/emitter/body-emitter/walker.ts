@@ -1197,6 +1197,18 @@ export class BodyWalker {
       const accountInfoVar = this.resolveAccountInfoVar(accountName);
       transformed = this.rewriteAccountKeyComparisons(transformed, accountName, accountInfoVar);
     }
+    // After `*X.key() == &Y` shapes (Anchor source `&X.key == &Y` post-rewrite),
+    // the LHS is Pubkey value while RHS still carries the leading `&` —
+    // `[u8;32] == &[u8;32]` is rejected. Strip the RHS `&` so both sides
+    // are Pubkey values.
+    transformed = transformed.replace(
+      /(\*\w+(?:\.\w+|\.key\(\))+)\s*(==|!=)\s*&([\w(])/g,
+      (_m, lhs, op, rhs) => `${lhs} ${op} ${rhs}`,
+    );
+    transformed = transformed.replace(
+      /&([\w(][\w.()]*)\s*(==|!=)\s*(\*\w+(?:\.\w+|\.key\(\))+)/g,
+      (_m, lhs, op, rhs) => `${lhs} ${op} ${rhs}`,
+    );
     return transformed;
   }
 
