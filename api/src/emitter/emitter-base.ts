@@ -3930,6 +3930,10 @@ ${allFields}
     const irForCollapse = this._irForAccountEmit ?? this.currentIr;
     const knownNamesG68 = irForCollapse ? this.collectKnownTopLevelNames(irForCollapse) : new Set<string>();
     for (const raw of (typeDef.implItems ?? [])) {
+      // Drop impl methods whose signature carries `Context<T>` — the
+      // Anchor Context type isn't in the scaffold, and stubbing the body
+      // doesn't help since the signature itself fails type resolution.
+      if (/\bContext\s*<\s*\w+/.test(raw)) continue;
       let stubbed = rewriteRequireVariantsInCode(
         rewriteMsgCallsImpl(
           stripAnchorWrappersInCode(
@@ -5150,6 +5154,11 @@ const ANCHOR_ONLY_PATTERNS = [
   /\brequire_keys_eq!\s*\(/,
   /\brequire_keys_neq!\s*\(/,
   /Context\s*<\s*Self\s*>/,
+  // Any Context<T> generic parameter — Anchor's Context type isn't in
+  // pinocchio/native scaffolds. User impl methods like
+  // `fn new(ctx: Context<Auth>) -> ...` need their bodies stubbed.
+  /\bCtx\s*<\s*[A-Z]\w*\s*>/,
+  /\bContext\s*<\s*[A-Z]\w*\s*>/,
   /\bpyth_solana_receiver_sdk\s*::/,
   /\bswitchboard_on_demand\s*::/,
   /\bswitchboard_v2\s*::/,
