@@ -106,6 +106,41 @@ if (process.env.NODE_ENV === "production") {
 
 const app = express();
 
+// ─── Trust proxy ─────────────────────────────────────────────────────────────
+// Prod sits behind Cloudflare + DigitalOcean App Platform, so the socket peer
+// is the proxy, not the client. Without this, req.ip is the proxy address and
+// every per-IP control (rate limit, AI spend cap, build-sbf concurrency)
+// buckets all callers together and can't isolate or throttle anyone.
+//
+// Use a trusted-hop COUNT, never `true`: trusting all hops lets a client spoof
+// X-Forwarded-For and forge arbitrary IPs, defeating the caps via rotation. A
+// fixed small count means a client-injected XFF entry sits left of the trusted
+// boundary and is ignored. Default 1 (the immediate ingress hop) is
+// safe-from-spoofing and strictly better than the proxy-collapsed state; set
+// TRUST_PROXY=2 if an extra CDN hop also appends to XFF. Verify post-deploy
+// by comparing `curl <url>/whoami` against your real public IP (`curl
+// ifconfig.me`) — they must MATCH. ("Two networks show different IPs" can
+// false-pass when req.ip resolves to CDN egress IPs.)
+const TRUST_PROXY_EXPLICIT = process.env.TRUST_PROXY != null;
+const TRUST_PROXY_RAW = process.env.TRUST_PROXY
+  ?? (process.env.NODE_ENV === "production" ? "1" : "false");
+const trustProxySetting: boolean | number =
+  TRUST_PROXY_RAW === "true" ? true
+  : TRUST_PROXY_RAW === "false" ? false
+  : Number.isFinite(Number(TRUST_PROXY_RAW)) ? Number(TRUST_PROXY_RAW)
+  : 1;
+app.set("trust proxy", trustProxySetting);
+if (process.env.NODE_ENV === "production" && !TRUST_PROXY_EXPLICIT) {
+  // Loud-misconfig nudge, same posture as the sandbox/metrics guards above —
+  // a silent default-guess that's off-by-one re-collapses every per-IP cap.
+  console.warn(
+    `[startup] TRUST_PROXY unset in production — defaulting trust proxy = ${JSON.stringify(trustProxySetting)} (assumes one ingress hop). ` +
+      "If callers still share rate-limit buckets the hop count is wrong: compare `curl <url>/whoami` to your real public IP (`curl ifconfig.me`) — they must MATCH. Set TRUST_PROXY=2 if a CDN hop also appends to X-Forwarded-For.",
+  );
+} else {
+  console.log(`[startup] trust proxy = ${JSON.stringify(trustProxySetting)}${TRUST_PROXY_EXPLICIT ? "" : " (default)"}`);
+}
+
 app.use(cors({
   origin: process.env.CORS_ORIGIN
     ? process.env.CORS_ORIGIN.split(',')

@@ -494,6 +494,22 @@ function checkOwnerChecks(content: string, ir: SolanaIR, path: string): Validati
         `\\b(?:${candidateNames.map(escapeForRegex).join("|")})\\s*\\.\\s*owner\\b`,
       );
       const hasOwnerCheck: boolean = ownerRe.test(fnBody);
+      // A bare `.owner` *read* authorizes nothing — it has to be COMPARED
+      // against the program id. This gate only fires on program-owned state
+      // structs, where `owner == program_id` is the correct check. Accept the
+      // canonical spellings in either operand order plus require_keys_eq!/neq!;
+      // word-boundaried so the program-id token can't match a substring (e.g.
+      // the `id` inside `valid_owner`), which would let a non-authorizing
+      // comparison pass.
+      const ownerTok = `(?:${candidateNames.map(escapeForRegex).join("|")})\\s*\\.\\s*owner\\s*(?:\\(\\s*\\))?`;
+      const progId = `(?:&\\s*)?(?:\\*\\s*)?(?:\\bprogram_id\\b|\\bcrate::ID\\b|\\bcrate::id\\b|\\bPROGRAM_ID\\b|\\bID\\b|\\bid\\b)\\s*(?:\\(\\s*\\))?`;
+      const ownerVsProgram: RegExp[] = [
+        new RegExp(`${ownerTok}\\s*[=!]=\\s*${progId}`),
+        new RegExp(`${progId}\\s*[=!]=\\s*${ownerTok}`),
+        new RegExp(`require_keys_(?:eq|neq)!\\s*\\(\\s*${ownerTok}\\s*,\\s*${progId}`),
+        new RegExp(`require_keys_(?:eq|neq)!\\s*\\(\\s*${progId}\\s*,\\s*${ownerTok}`),
+      ];
+      const hasProgramOwnerComparison: boolean = ownerVsProgram.some((re) => re.test(fnBody));
       if (!hasOwnerCheck) {
         // Promoted warning -> error: a mutable state account whose
         // accountType is in ir.accounts (i.e. a program-owned struct, not
@@ -504,6 +520,16 @@ function checkOwnerChecks(content: string, ir: SolanaIR, path: string): Validati
         issues.push({
           severity: "error",
           message: `'${fnName}': mutable program-owned state account '${accountName}' (${acc.accountType}) has no owner check. Add an explicit '${accountName}.owner == program_id' (or '${accountName}.owner() == program_id') guard before mutation, or attackers can pass accounts owned by other programs and bypass authorization.`,
+          path,
+        });
+      } else if (!hasProgramOwnerComparison) {
+        // `.owner` is referenced but never compared to the program id — the
+        // exact gap that makes the bare-presence check foolable (a `.owner`
+        // read into a log, or a comparison against an attacker-supplied key,
+        // satisfies presence but authorizes nothing).
+        issues.push({
+          severity: "error",
+          message: `'${fnName}': mutable program-owned state account '${accountName}' (${acc.accountType}) reads '.owner' but never compares it against the program id. A bare owner read does not authorize anything — add '${accountName}.owner == program_id' (or '.owner() == program_id') before mutation, or an attacker can pass an account owned by another program and bypass authorization.`,
           path,
         });
       }

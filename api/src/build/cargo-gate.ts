@@ -22,10 +22,16 @@
  * need this are CLI write paths and the planned /emit?gate=cargo
  * option; both already write to a local scratch dir on the same host.
  *
- * Sandboxing note: the CLI runs locally on the user's machine — they're
- * already in their own trust context. The /emit?gate=cargo path uses
- * the same sandbox layer as /build via spawnSandboxed; this module
- * defaults to bare cargo (caller composes sandboxing if needed).
+ * Sandboxing note: this module runs BARE cargo — no FS isolation, no network
+ * namespace. It is for the CLI write path, where the user is on their own
+ * machine in their own trust context. As defense-in-depth it strips known
+ * secret env vars (ANTHROPIC_API_KEY etc.) before handing the env to cargo,
+ * since a user may run `anvil compile` on a third-party program whose emitted
+ * build.rs is hostile — but env-strip is NOT a sandbox. Any caller that runs
+ * cargo on UNTRUSTED input over the network (a public route accepting
+ * arbitrary source) MUST route through spawnSandboxed (api/src/build/
+ * sandbox.ts) — as /build and /emit?gate=cargo do — and MUST NOT call
+ * runCargoCheckGate directly.
  */
 import { spawn, spawnSync } from "node:child_process";
 
@@ -65,10 +71,20 @@ export async function runCargoCheckGate(
   const timeoutMs = opts.timeoutMs ?? 180_000;
   const t0 = Date.now();
 
+  // Strip the secret-shaped env vars this process holds so a hostile build.rs
+  // in transpiled third-party output can't read them. Not a sandbox (see
+  // header) — just defense-in-depth on the bare-cargo path. CARGO_NET_OFFLINE
+  // is deliberately NOT forced here: the CLI runs on the user's machine and
+  // must be able to fetch deps, unlike the /build sandbox's offline scratch.
+  const baseEnv: NodeJS.ProcessEnv = { ...process.env };
+  for (const k of ["ANTHROPIC_API_KEY", "ANVIL_METRICS_TOKEN", "SENTRY_DSN", "REDIS_URL"]) {
+    delete baseEnv[k];
+  }
+
   return await new Promise<CargoGateResult>((resolve) => {
     const child = spawn(cargoBin, ["check", "--message-format=short"], {
       cwd: scratchDir,
-      env: { CARGO_TERM_COLOR: "never", ...process.env, ...opts.env },
+      env: { CARGO_TERM_COLOR: "never", ...baseEnv, ...opts.env },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
