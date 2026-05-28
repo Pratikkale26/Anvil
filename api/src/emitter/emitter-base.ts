@@ -6152,6 +6152,24 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
       /RefMut\s*::\s*map\s*\(\s*([^,()]+\.try_borrow_mut_data\s*\(\s*\)\s*\.\s*unwrap\s*\(\s*\))\s*,\s*\|\s*\w+\s*\|\s*\*\s*\w+\s*\)/g,
       "$1",
     );
+    // #37 — solana_program's `Pubkey::to_bytes()` returns `[u8; 32]`.
+    // Pinocchio's Pubkey is already `[u8; 32]`, so the call doesn't exist.
+    // Strip the method when followed by an immediate slice index — the
+    // most common seed-construction shape `<expr>.to_bytes()[..N]`.
+    out = out.replace(/\.to_bytes\s*\(\s*\)\s*\[/g, "[");
+    // Loose form — bare `&X.to_bytes()` in seed arrays. Pubkey value is
+    // already a `[u8; 32]`; the `&` coerces fine to `&[u8]` without the
+    // method call.
+    out = out.replace(/(\bref|\&\s*\w[\w.]*)\.to_bytes\s*\(\s*\)/g, "$1");
+    // #37 — Anchor's anchor_lang::error::Error chaining methods
+    // `.with_account_name("foo")` / `.with_source(...)` don't exist on
+    // pinocchio's `ProgramError`. Source uses them via `?` operator
+    // already coerces into ProgramError, so we can strip the chained
+    // helper. Same intent — preserve the underlying error.
+    out = out.replace(/\.\s*with_account_name\s*\([^)]*\)/g, "");
+    out = out.replace(/\.\s*with_source\s*\(\s*[^()]*(?:\([^)]*\))?\s*\)/g, "");
+    out = out.replace(/\.\s*with_values\s*\(\s*[^()]*(?:\([^)]*\))?\s*\)/g, "");
+    out = out.replace(/\.\s*with_pubkeys\s*\(\s*[^()]*(?:\([^)]*\))?\s*\)/g, "");
   }
   return out;
 }
