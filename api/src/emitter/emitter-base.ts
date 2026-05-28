@@ -3671,6 +3671,18 @@ ${originalLines}
           // traits to avoid E0119 double-derives (kamino's
           // `#[repr(u8)]\n#[derive(PartialEq, ...)]` pattern from G51).
           const requiredTraits = ["Clone", "Debug", "PartialEq"];
+          // When the enum has no complex (tuple/struct) variants, it can also
+          // impl Borsh — and often must, because a sibling carried struct
+          // (`PriceInfo { status: PriceStatus, corp_act: CorpAction }`) derives
+          // Borsh and requires field types to do the same. Detect "all unit
+          // variants" by checking that the body contains identifiers separated
+          // by commas with no `(` or `{` between them.
+          const enumBodyMatch = rawCode.match(/\benum\s+\w+\s*(?:<[^>]*>)?\s*\{([\s\S]*)\}/);
+          const enumBody = enumBodyMatch?.[1] ?? "";
+          const hasComplexVariants = /\b\w+\s*[({]/.test(enumBody);
+          if (!hasComplexVariants) {
+            requiredTraits.push("BorshSerialize", "BorshDeserialize");
+          }
           const deriveMatch = decl.match(/#\[derive\(([^)]*)\)\]/);
           if (deriveMatch) {
             const present = new Set(
