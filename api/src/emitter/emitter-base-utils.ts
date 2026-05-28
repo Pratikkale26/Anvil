@@ -567,9 +567,31 @@ export function commentOutResidualAnchorLeaks(text: string): string {
     if (i <= skipUntil) continue;
     const rescue = letRescue.get(i);
     if (rescue && !lines[i]!.trim().startsWith("//")) {
-      result.push(`${rescue.indent}// ${MARKER_ANVIL_TODO_PREFIX} let-binding RHS contained an Anchor-only reference — replaced with unimplemented!()`);
-      result.push(`${rescue.indent}let ${rescue.mutKw}${rescue.ident}${rescue.typeAnn} = unimplemented!("anvil: anchor-leak RHS replaced");`);
+      result.push(`${rescue.indent}// ${MARKER_ANVIL_TODO_PREFIX} let-binding RHS contained an Anchor-only reference — binding + all uses commented`);
+      result.push(`${rescue.indent}// let ${rescue.mutKw}${rescue.ident}${rescue.typeAnn} = unimplemented!();`);
+      // Also comment out subsequent statements that reference this
+      // binding — the type annotation may reference a dropped type, and
+      // `unimplemented!()` for the receiver makes method-call type
+      // inference fail. Walk forward and tag any line containing the
+      // identifier as a word until the enclosing block ends.
+      const identRe = new RegExp(`(^|[^\\w.])${rescue.ident}(?!\\w)`);
+      const baseIndent = rescue.indent.length;
+      let extraCommented = new Set<number>();
+      for (let k = rescue.endLine + 1; k < lines.length; k++) {
+        const ln = lines[k]!;
+        const indentMatch = ln.match(/^(\s*)/);
+        const curIndent = (indentMatch?.[1] ?? "").length;
+        // Stop at end of enclosing block (dedent below the binding's indent).
+        if (ln.trim().length > 0 && curIndent < baseIndent) break;
+        if (identRe.test(ln) && !ln.trim().startsWith("//")) {
+          extraCommented.add(k);
+        }
+      }
+      // Apply skipUntil to swallow the original range (the let line).
       skipUntil = rescue.endLine;
+      // Inject the extra comment-outs into commentedLines so the main
+      // loop processes them as commented in subsequent iterations.
+      for (const k of extraCommented) commentedLines.add(k);
       headerAdded = false;
       continue;
     }
@@ -586,5 +608,21 @@ export function commentOutResidualAnchorLeaks(text: string): string {
     }
   }
 
-  return result.join("\n");
+  // Cleanup pass: detect `match EXPR { (whitespace + comments only) }`
+  // shapes left behind when all arms got commented out, and replace with
+  // a `let _ = EXPR;` discard so the match doesn't fail E0004 non-exhaustive.
+  const joined = result.join("\n");
+  const cleaned = joined.replace(
+    /match\s+([^{]+?)\s*\{\s*((?:\/\/[^\n]*\n\s*)+)\}\s*;?/g,
+    (full, expr, comments) => {
+      // Only rewrite if every non-blank line in the arms is a comment.
+      const armText = comments.trim();
+      if (armText.length === 0) return full;
+      const allCommented = armText.split("\n").every((ln: string) => ln.trim().startsWith("//"));
+      if (!allCommented) return full;
+      // Preserve the comments as a block above the discard.
+      return `${comments}let _ = ${expr.trim()};`;
+    },
+  );
+  return cleaned;
 }
