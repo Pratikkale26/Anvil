@@ -124,6 +124,34 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
         return `${infoVar}.lamports()`;
       },
     );
+    // Anchor `Sysvar<'info, Clock>` exposes `.unix_timestamp` / `.slot` /
+    // `.epoch` / `.leader_schedule_epoch` via Deref. After Anvil strips
+    // the wrapper the receiver is `&AccountInfo`; route field reads via
+    // Clock::get() (same for Sysvar<Rent>).
+    const clockSysvarAccounts = new Set<string>();
+    const rentSysvarAccounts = new Set<string>();
+    for (const acc of w.instr.accounts) {
+      const ty = acc.accountType;
+      if (/\bClock\b/.test(ty) && /\bSysvar\b/.test(ty)) {
+        clockSysvarAccounts.add(snakeCase(acc.name));
+      } else if (/\bRent\b/.test(ty) && /\bSysvar\b/.test(ty)) {
+        rentSysvarAccounts.add(snakeCase(acc.name));
+      }
+    }
+    const clockGet = w.qualifiedClockGetExpr();
+    const rentGet = w.qualifiedRentGetExpr();
+    if (clockSysvarAccounts.size > 0) {
+      lamportRewritten = lamportRewritten.replace(
+        /\b(\w+)\.(unix_timestamp|slot|epoch|leader_schedule_epoch|epoch_start_timestamp)\b/g,
+        (full, name, field) => clockSysvarAccounts.has(name) ? `${clockGet}.${field}` : full,
+      );
+    }
+    if (rentSysvarAccounts.size > 0) {
+      lamportRewritten = lamportRewritten.replace(
+        /\b(\w+)\.(lamports_per_byte_year|exemption_threshold|burn_percent|minimum_balance)\b/g,
+        (full, name, field) => rentSysvarAccounts.has(name) ? `${rentGet}.${field}` : full,
+      );
+    }
     // Anchor `Account<'info, Mint>` exposes `.supply` and `.decimals` via
     // Deref. After Anvil strips the wrapper the receiver is `&AccountInfo`,
     // which has no such fields. Route through pinocchio_token Mint helpers.

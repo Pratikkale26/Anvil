@@ -494,7 +494,7 @@ export class PinocchioEmitter extends BaseEmitter {
         s.kind === 'cpi_pyth_read_price_modern' ||
         (s.kind === 'cpi_switchboard_read_feed' && s.maxStalenessSlots != null)
       )
-    ) || bodyTextHasPattern(/\bClock::get\(\)/) || (() => {
+    ) || bodyTextHasPattern(/\bClock::get\(\)|\.(?:unix_timestamp|leader_schedule_epoch|epoch_start_timestamp)\b/) || (() => {
       // G43 — Clock referenced as a TYPE in carried impl items + helper
       // signatures (marinade's `pub fn new(... clock: &Clock, ...)`).
       // G49b — also catch `Clock::get(` (method call) in carried impl

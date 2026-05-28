@@ -4202,9 +4202,34 @@ export class AstVisitorBase {
  * plain RHS expressions.
  */
 function applyClockRentRewrites(value: string, w: BodyWalker): string {
-  return value
+  let result = value
     .replace(/(?<!:)\bClock::get\(\)\?/g, w.qualifiedClockGetExpr())
     .replace(/(?<!:)\bRent::get\(\)\?/g, w.qualifiedRentGetExpr())
     .replace(/(?<!:)\bClock::get\(\)/g, w.qualifiedClockGetValueExpr())
     .replace(/(?<!:)\bRent::get\(\)/g, w.qualifiedRentGetValueExpr());
+  // Sysvar<'info, Clock>/Sysvar<'info, Rent> account bindings expose
+  // .unix_timestamp / .lamports_per_byte_year via Deref. After unwrapping
+  // they're &AccountInfo; route field reads through Clock/Rent::get().
+  const clockNames = new Set<string>();
+  const rentNames = new Set<string>();
+  for (const acc of w.instr.accounts) {
+    const ty = acc.accountType;
+    if (/\bSysvar\b/.test(ty) && /\bClock\b/.test(ty)) clockNames.add(snakeCase(acc.name));
+    else if (/\bSysvar\b/.test(ty) && /\bRent\b/.test(ty)) rentNames.add(snakeCase(acc.name));
+  }
+  if (clockNames.size > 0) {
+    const clockGet = w.qualifiedClockGetExpr();
+    result = result.replace(
+      /\b(\w+)\.(unix_timestamp|slot|epoch|leader_schedule_epoch|epoch_start_timestamp)\b/g,
+      (full, name, field) => clockNames.has(name) ? `${clockGet}.${field}` : full,
+    );
+  }
+  if (rentNames.size > 0) {
+    const rentGet = w.qualifiedRentGetExpr();
+    result = result.replace(
+      /\b(\w+)\.(lamports_per_byte_year|exemption_threshold|burn_percent)\b/g,
+      (full, name, field) => rentNames.has(name) ? `${rentGet}.${field}` : full,
+    );
+  }
+  return result;
 }
