@@ -188,6 +188,11 @@ export function classifyBody(
 
     // Skip comment nodes
     if (child.type === "line_comment" || child.type === "block_comment") continue;
+    // Drop inner attribute_items (e.g. `#[allow(deprecated)]` on a CPI call).
+    // Suppression attributes have no semantic meaning in the transpiled emit,
+    // and emitting them as standalone statements produces `#[...];` which is
+    // a syntax error.
+    if (child.type === "attribute_item") continue;
 
     const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog, pendingPythLoad, constStringMap, pendingSwitchboardLoad);
     const childLoc = locFromNode(child);

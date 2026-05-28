@@ -2326,10 +2326,19 @@ ${invokeCall}
    *  solana_program::pubkey::Pubkey = solana_program::pubkey::Pubkey::
    *  new_from_array([...]);`. */
   protected override postProcessTopLevelConst(constText: string): string {
-    return constText.replace(
+    let out = constText.replace(
       /\b(?:\w+\s*::\s*)*Pubkey\s*::\s*new_from_array\s*\(\s*(\[[\s\S]+?\])\s*\)/g,
       "$1",
     );
+    out = out.replace(
+      /\b(?:[\w]+\s*::\s*)*Pubkey\s*::\s*from_str_const\s*\(\s*"([1-9A-HJ-NP-Za-km-z]+)"\s*\)/g,
+      (_full, base58: string) => {
+        const bytes = decodeBase58(base58);
+        if (!bytes || bytes.length !== 32) return _full;
+        return `[${bytes.join(", ")}]`;
+      },
+    );
+    return out;
   }
 
   /** G9 — apply T22 / spl_token_2022 commentout to carried helper fn
