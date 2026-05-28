@@ -3933,6 +3933,12 @@ unsafe impl bytemuck::Pod for ${typeDef.name} {}${implBlock}`;
       if (userDerivesStruct.includes("Copy")) extras.push("Copy");
       if (userDerivesStruct.includes("Default")) extras.push("Default");
       if (userDerivesStruct.includes("Eq")) extras.push("Eq");
+      // #37 — preserve PartialOrd/Ord/Hash from source. Marinade's `Fee`
+      // and `FeeCents` carry comparison operators (`<=`, `<`) in their
+      // validation impls; without these derives the comparisons fail E0369.
+      if (userDerivesStruct.includes("PartialOrd")) extras.push("PartialOrd");
+      if (userDerivesStruct.includes("Ord")) extras.push("Ord");
+      if (userDerivesStruct.includes("Hash")) extras.push("Hash");
       // A bare Rust struct that holds `AccountInfo` or `UncheckedAccount`
       // fields can't impl Borsh — those types are runtime borrow handles,
       // not serializable data. Anchor's auto-Accounts macro handles this by
