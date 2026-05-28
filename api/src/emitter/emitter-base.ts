@@ -6240,6 +6240,11 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
       /(pinocchio::pubkey::create_with_seed\s*\(\s*[^,]+,\s*)((?:Self\s*::\s*)?[A-Z][A-Z0-9_]+)(\s*,)/g,
       "$1$2.as_bytes()$3",
     );
+    // #37 — `spl_token::state::Account::LEN` is a const (165) for the TokenAccount
+    // wire layout. Pinocchio doesn't ship spl_token, but the value is a fixed
+    // SPL spec number. Inline it.
+    out = out.replace(/\bspl_token\s*::\s*state\s*::\s*Account\s*::\s*LEN\b/g, "165");
+    out = out.replace(/\bspl_token\s*::\s*state\s*::\s*Mint\s*::\s*LEN\b/g, "82");
     // #37 — Anchor's AccountInfo carries `data: Rc<RefCell<&mut [u8]>>`.
     // Pinocchio has methods only: `try_borrow_data()` / `try_borrow_mut_data()`.
     // Source patterns:

@@ -3085,6 +3085,11 @@ ${writeLines}
     // Anchor's `System::id()` returns the system program ID Pubkey.
     // Pinocchio's system program is `[0u8; 32]`. Rewrite call sites.
     out = out.replace(/\bSystem\s*::\s*id\s*\(\s*\)/g, "[0u8; 32]");
+    // #37 — `spl_token::state::Account::LEN` / `Mint::LEN` are fixed SPL
+    // spec sizes; pinocchio doesn't ship spl_token, but the literal value
+    // is stable.
+    out = out.replace(/\bspl_token\s*::\s*state\s*::\s*Account\s*::\s*LEN\b/g, "165");
+    out = out.replace(/\bspl_token\s*::\s*state\s*::\s*Mint\s*::\s*LEN\b/g, "82");
     // #37 — AccountInfo.data.as_ref().borrow_mut() and friends. Mirrors
     // the rewrites in stripAnchorWrappersInCode for body-level code that
     // doesn't route through that helper.
