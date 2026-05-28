@@ -3825,8 +3825,19 @@ unsafe impl bytemuck::Pod for ${typeDef.name} {}${implBlock}`;
       if (userDerivesStruct.includes("Copy")) extras.push("Copy");
       if (userDerivesStruct.includes("Default")) extras.push("Default");
       if (userDerivesStruct.includes("Eq")) extras.push("Eq");
+      // A bare Rust struct that holds `AccountInfo` or `UncheckedAccount`
+      // fields can't impl Borsh — those types are runtime borrow handles,
+      // not serializable data. Anchor's auto-Accounts macro handles this by
+      // *not* deriving Borsh on Accounts structs; carried plain structs that
+      // happen to wrap account refs (`coral-anchor/tests/safety-checks/
+      // ignore-non-accounts`'s `ShouldIgnore1<'info>`) need the same.
+      const fieldsTextForDetect = (typeDef.fields ?? []).map((f) => f.type).join(" ");
+      const holdsAccountInfo = /\bAccountInfo\b|\bUncheckedAccount\b/.test(fieldsTextForDetect);
       const extraSuffix = extras.length ? `, ${extras.join(", ")}` : "";
-      return `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize${extraSuffix})]
+      const deriveLine = holdsAccountInfo
+        ? `#[derive(Clone, Debug${extras.length ? `, ${extras.join(", ")}` : ""})]`
+        : `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize${extraSuffix})]`;
+      return `${deriveLine}
 pub struct ${typeDef.name}${generics} {
 ${allFields}
 }${implBlock}`;
