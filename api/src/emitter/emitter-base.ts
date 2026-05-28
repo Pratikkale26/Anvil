@@ -1548,10 +1548,20 @@ export abstract class BaseEmitter {
     const userTraits = (ir as any).userTraits ?? [];
     if (userTraits.length > 0) {
       const target = this.frameworkName === "Pinocchio" ? "pin" : "native";
-      const processed = userTraits.map((ut: string) =>
-        stripAnchorWrappersInCode(stripAnchorLangPrefixes(ut), target),
-      );
-      sections.push(`// User-defined traits preserved verbatim from source\n${processed.join("\n\n")}`);
+      const processed = userTraits
+        // Drop traits whose declarations reference Anchor's Context<T>
+        // or the Accounts trait bound — the supporting types aren't in
+        // the scaffold and the trait itself would fail type resolution.
+        .filter((ut: string) =>
+          !/\bContext\s*<\s*\w+/.test(ut) &&
+          !/:\s*Accounts\s*<['_a-zA-Z]/.test(ut),
+        )
+        .map((ut: string) =>
+          stripAnchorWrappersInCode(stripAnchorLangPrefixes(ut), target),
+        );
+      if (processed.length > 0) {
+        sections.push(`// User-defined traits preserved verbatim from source\n${processed.join("\n\n")}`);
+      }
     }
     if (constants.length > 0) sections.push(constants.join("\n\n"));
     if (types.length > 0) sections.push(this.emitCustomTypes({ ...ir, types }));
