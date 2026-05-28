@@ -1627,6 +1627,35 @@ export abstract class BaseEmitter {
         let code = stripAnchorWrappersInCode(stripAnchorLangPrefixes(um), target);
         code = code.replace(/declare_id!\s*\(\s*"([^"]+)"\s*\)\s*;?/g, "// declare_id removed (Anvil)");
         code = rewriteMsgCallsImpl(code, (m: string) => this.emitMsg(m));
+        // Strip impl blocks for anchor-only traits inside user modules.
+        // Match `impl <Trait>(<...>)? for <X> { …balanced… }` and remove
+        // when <Trait> is in our anchor-only set.
+        const anchorTraits = [
+          "AccountDeserialize", "AccountSerialize",
+          "Owner", "Owners", "Discriminator", "Bumps",
+          "ZeroCopy", "Lamports", "Key", "Space",
+        ];
+        for (const trait of anchorTraits) {
+          // Greedy match the body with brace counting via a non-greedy
+          // pattern + post-validation. Simpler: use a balanced-brace
+          // walker for each impl encountered.
+          const re = new RegExp(`(^|\\n)([ \\t]*)impl\\s+${trait}(?:<[^>]*>)?\\s+for\\s+\\w+\\s*\\{`, "g");
+          let mResult: RegExpExecArray | null;
+          while ((mResult = re.exec(code)) !== null) {
+            const start = mResult.index + (mResult[1]?.length ?? 0);
+            let depth = 1;
+            let p = mResult.index + mResult[0].length;
+            while (p < code.length && depth > 0) {
+              if (code[p] === "{") depth++;
+              else if (code[p] === "}") depth--;
+              p++;
+            }
+            if (depth === 0) {
+              code = code.slice(0, start) + code.slice(p);
+              re.lastIndex = start;
+            }
+          }
+        }
         return code;
       });
       // Dedup modules with the same name: merge bodies when two `pub mod X { ... }` collide

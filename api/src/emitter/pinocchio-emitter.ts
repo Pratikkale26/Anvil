@@ -838,6 +838,14 @@ ${arms}
       const m = raw.match(/\b(?:pub\s+)?trait\s+([A-Za-z_]\w*)/);
       if (m?.[1]) userTraitNames.add(m[1]);
     }
+    // Known Anchor traits the user can write `impl X for T` against; these
+    // traits don't exist in our scaffold so the impl is dead weight.
+    const anchorOnlyTraitNames = new Set([
+      "AccountDeserialize", "AccountSerialize",
+      "Owner", "Owners", "Discriminator",
+      "Bumps", "AnchorDeserialize", "AnchorSerialize",
+      "ZeroCopy", "Lamports", "Key", "Space",
+    ]);
     const survivors = impls.filter((raw: string) => {
       // Generics in trait position may be nested (e.g. Deref<Target=[u8]>);
       // walk char-by-char with a depth counter rather than a greedy regex.
@@ -858,6 +866,8 @@ ${arms}
       const traitName = forMatch?.[1];
       const receiver = forMatch?.[2];
       if (!receiver) return false;
+      // Drop impls whose trait is anchor-only.
+      if (traitName && anchorOnlyTraitNames.has(traitName)) return false;
       const isUserBlanket =
         !!traitName && userTraitNames.has(traitName) &&
         !userTypeNames.has(receiver) && !primitiveTypes.has(receiver);
