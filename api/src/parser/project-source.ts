@@ -95,6 +95,20 @@ export function collectProjectFilesFromEntry(entryPath: string): ProjectFile[] {
         content: `pub mod ${crateName};\n${entryFile.content}`,
       };
     }
+    // #85 — Strip qualified-path references `<crate>::Type` from ALL source
+    // files (entry + siblings + supporting). Inlined types land at the
+    // top-level scope, so `external::MyStruct` would otherwise fail to
+    // resolve since no `external` module exists post-inline. Don't strip
+    // `<crate>::cpi::...` / `<crate>::accounts::...` (Anchor sibling-program
+    // CPI surfaces — those get commented out by the emit pass instead).
+    const crateRe = new RegExp(`\\b${crateName}\\s*::\\s*(?!(?:cpi|accounts|program|state|errors|error)\\b)([A-Z]\\w*)`, "g");
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]!;
+      if (crateRe.test(e.content)) {
+        crateRe.lastIndex = 0;
+        entries[i] = { ...e, content: e.content.replace(crateRe, "$1") };
+      }
+    }
   }
 
   entries.sort((a, b) => a.path.localeCompare(b.path));
@@ -124,7 +138,11 @@ function collectWorkspaceSiblingFiles(
   const progToml = existsSync(progCargo) ? readFileSync(progCargo, "utf-8") : "";
 
   const unknownCrates = new Set<string>();
-  const useRe = /^(?:pub\s+)?use\s+(\w+)::/gm;
+  // Pick up both `use external::Foo;` (statement form) and inline qualified
+  // path references like `pub gen4: GenericNested<T, external::MyStruct>`
+  // (qualified form). Both shapes refer to a sibling crate that must be
+  // inlined for the type to resolve.
+  const useRe = /(?:^|[\s<>(,])(?:pub\s+)?(?:use\s+)?(\w+)::/gm;
   let m: RegExpExecArray | null;
   while ((m = useRe.exec(allContent)) !== null) {
     const name = m[1]!;
