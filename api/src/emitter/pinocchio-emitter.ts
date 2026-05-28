@@ -3072,6 +3072,9 @@ ${writeLines}
       /(pinocchio::pubkey::(?:find|create)_program_address\b[^;]*?,\s*)\*(\w+\.key\(\))/g,
       "$1$2",
     );
+    // Anchor's `System::id()` returns the system program ID Pubkey.
+    // Pinocchio's system program is `[0u8; 32]`. Rewrite call sites.
+    out = out.replace(/\bSystem\s*::\s*id\s*\(\s*\)/g, "[0u8; 32]");
     // set_return_data: pinocchio exposes pinocchio::program::set_return_data
     // with a compatible signature. Rewrite both bare `set_return_data(`
     // (when the source had `use anchor_lang::solana_program::program::
