@@ -1656,6 +1656,16 @@ export abstract class BaseEmitter {
             }
           }
         }
+        // Drop tuple-struct wrappers around sibling-crate types.
+        const knownExternalMod = new Set([
+          "borsh", "bytemuck", "thiserror", "num_traits", "num_derive",
+          "std", "core", "alloc", "spl_token", "anchor_lang", "anchor_spl",
+          "solana_program", "pinocchio", "pinocchio_token", "fixed",
+        ]);
+        code = code.replace(
+          /(?:^|\n)([ \t]*)(?:#\[derive\([^\]]*\)\]\s*\n[ \t]*)?pub\s+struct\s+\w+\s*\(\s*([a-z]\w*)\s*::[^)]*\)\s*;/g,
+          (match, _indent, mod) => knownExternalMod.has(mod) ? match : "",
+        );
         return code;
       });
       // Dedup modules with the same name: merge bodies when two `pub mod X { ... }` collide
@@ -3654,6 +3664,17 @@ ${originalLines}
         // composite flatten, so the field type can't resolve.
         const allText = typeDef.rawCode ?? "";
         if (/\b\w+Accounts\s*<['_]/.test(allText)) return false;
+        // Drop tuple-struct wrappers around sibling-crate types (e.g.
+        // interface-account's `pub struct ExpectedAccount(new::ExpectedAccount);`).
+        // Detect: pub struct X(<lowercase>::Y) shape — and the lowercase
+        // segment isn't a known external crate.
+        const knownExternal = new Set([
+          "borsh", "bytemuck", "thiserror", "num_traits", "num_derive",
+          "std", "core", "alloc", "spl_token", "anchor_lang", "anchor_spl",
+          "solana_program", "pinocchio", "pinocchio_token", "fixed",
+        ]);
+        const tupleMatch = allText.match(/\bpub\s+struct\s+\w+\s*\(\s*([a-z]\w*)\s*::/);
+        if (tupleMatch && !knownExternal.has(tupleMatch[1] ?? "")) return false;
         return true;
       })
       .map((typeDef) => {
