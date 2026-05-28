@@ -2025,8 +2025,13 @@ export class AstVisitorBase {
         out.push(rawLine(preludeLine));
       }
     }
-    const fromVar = snakeCase(stmt.from);
-    const toVar = snakeCase(stmt.to);
+    const fromRaw = snakeCase(stmt.from);
+    const toRaw = snakeCase(stmt.to);
+    // The helper takes `&AccountInfo`; if the from/to name has been
+    // shadowed by a state rebind (e.g. `let mut pda = LamportsPda {};`),
+    // route through the AccountInfo backup binding.
+    const fromVar = w.resolveAccountInfoVar(fromRaw);
+    const toVar = w.resolveAccountInfoVar(toRaw);
     const amountExpr = w.resolveAmountExpr(stmt.amount);
     const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
     const isPinocchio = w.emitter.frameworkName === "Pinocchio";
