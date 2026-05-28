@@ -354,30 +354,46 @@ export class PinocchioEmitter extends BaseEmitter {
     // Guard: `signer` must not appear as a standalone identifier elsewhere
     // in the body — registry's withdraw passes the user's `signer` to
     // spl_token_transfer_signed and we must preserve it.
-    if (bodyCode.includes("// PDA signer seeds for")) {
-      const stripRe = /^[ \t]*let\s+signer\s*=\s*&\[\s*&\s*seeds\s*\[\s*\.\.\s*\]\s*\]\s*;\s*$/gm;
+    // Detect a synth signer block: either the comment header OR a
+    // `let signer_seeds = &[&seeds[..]];` followed by a CPI consumer.
+    const hasSynthSigner =
+      bodyCode.includes("// PDA signer seeds for") ||
+      /let\s+signer_seeds\s*=\s*&\[\s*&seeds\s*\[\s*\.\.\s*\]\s*\]\s*;/.test(bodyCode) ||
+      /\bregistrar_signer\b/.test(bodyCode); // registry's stake emits this name
+    if (hasSynthSigner) {
+      // Match `let <name> = &[&seeds[..]];` for ANY name except
+      // `signer_seeds` (the synth's own name).
+      const stripRe = /^[ \t]*let\s+((?!signer_seeds\b)\w+)\s*=\s*&\[\s*&\s*seeds\s*\[\s*\.\.\s*\]\s*\]\s*;\s*$/gm;
       const m = stripRe.exec(bodyCode);
       if (m) {
-        // Check if `signer` appears elsewhere as a standalone identifier,
-        // ignoring commented-out lines (Anvil's TODO/manual-port stubs
-        // often leave `signer` references inside `//`-prefixed code).
-        const without = bodyCode.replace(stripRe, "");
-        const uncommented = without
+        const targetName = m[1]!;
+        // Check if <targetName> is referenced AFTER the strip line (the
+        // shadowed binding would be used downstream). References BEFORE
+        // the strip line are the original binding (e.g. account binding
+        // `let member_signer = &accounts[13];`) and don't conflict.
+        const stripLineEnd = m.index + m[0].length;
+        const afterStrip = bodyCode.slice(stripLineEnd);
+        const uncommented = afterStrip
           .split("\n")
           .filter((ln) => {
             const t = ln.trim();
-            if (t.startsWith("//")) return false;
+            if (t === "" || t.startsWith("//")) return false;
             // Drop comment-fragment closers like `}, signer))?;` — these
             // are orphan tail lines left behind by Anvil's commentout pass
             // when a multi-line struct/call's body was partially commented.
             if (/^[}),\s?;:]*$/.test(t)) return false;
             if (/^\},?\s*\w*\s*\)+\??;?\s*$/.test(t)) return false;
+            // Orphan struct-field / call-arg fragments: lines that end
+            // with `,` and don't open a block (no `{` / `(` of their own).
+            // These survive partial commentout of multi-line literals
+            // and contain stale identifier references.
+            if (/,\s*$/.test(t) && !/[{(]/.test(t)) return false;
             return true;
           })
           .join("\n");
-        const usageRe = /(?<![\w_])signer(?![\w_])/g;
+        const usageRe = new RegExp(`(?<![\\w_])${targetName}(?![\\w_])`, "g");
         if (!usageRe.test(uncommented)) {
-          bodyCode = without;
+          bodyCode = bodyCode.replace(stripRe, "");
         }
       }
     }
