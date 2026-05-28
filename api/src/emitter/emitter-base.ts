@@ -3138,6 +3138,9 @@ impl ZeroCopy for ${accName} {}`;
     if accounts.len() < ${requiredAccountCount} {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
 ${bindings}
 ${preChecks ? `\n${preChecks}\n` : ""}
@@ -3288,12 +3291,12 @@ ${originalLines}
 
   protected emitArgParsing(args: Arg[]): string {
     if (args.length === 0) {
-      return `    if !data.is_empty() {
+      return `    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }`;
     }
 
-    const lines = ["    // Args", "    let mut remaining = data;"];
+    const lines = ["    // Args", "    let mut remaining: &[u8] = __ix_data;"];
     for (const arg of args) {
       lines.push(this.emitArgDeserialize(arg));
     }
