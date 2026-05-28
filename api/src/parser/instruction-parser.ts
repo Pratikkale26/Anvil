@@ -720,6 +720,12 @@ function parseMethodParameterNames(paramsNode: SyntaxNode): string[] {
     const patternNode = param.childForFieldName("pattern");
     if (!patternNode) continue;
     const name = patternNode.text.replace(/^mut\s+/, "").replace(/^pub\s+/, "").trim();
+    // Typed-self syntax: `self: &mut Game`. tree-sitter parses this as a
+    // regular parameter with pattern="self" + type="&mut Game", so the
+    // bare-text check above doesn't catch it. Skipping the pattern-name
+    // path lets receiver-method-call inliners substitute `self` themselves
+    // (otherwise self gets eaten by the first call-site arg).
+    if (name === "self") continue;
     if (name) names.push(name);
   }
 
