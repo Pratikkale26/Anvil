@@ -966,6 +966,11 @@ export abstract class BaseEmitter {
         if (statement.startsWith("use crate::")) return false;
         if (statement.startsWith("use self::")) return false;
         if (statement.startsWith("use super::")) return false;
+        // Use-blocks carrying `super::*` came from inside `#[program] mod`;
+        // after inlining into lib.rs, `super::*` is invalid (no crate above
+        // root) and the companion items in the block (Instruction,
+        // invoke_signed, etc) reference call sites the emit already rewrote.
+        if (/^use\s*\{[\s\S]*\bsuper::\*/.test(statement)) return false;
         if (statement.startsWith("use instructions::")) return false;
         if (statement.startsWith("use state::")) return false;
         if (statement.startsWith("use error::")) return false;
@@ -4848,7 +4853,11 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
       // `seeds::program = System::id()` (needs `&Pubkey`) contexts.
       // pinocchio's Pubkey = [u8; 32] so `&[0u8; 32]` is a valid `&Pubkey`.
       .replace(/\bSystem\s*::\s*id\s*\(\s*\)\s*\.\s*as_ref\s*\(\s*\)/g, "&[0u8; 32][..]")
-      .replace(/\bSystem\s*::\s*id\s*\(\s*\)/g, "&[0u8; 32]");
+      .replace(/\bSystem\s*::\s*id\s*\(\s*\)/g, "&[0u8; 32]")
+      // Anchor's bytemuck `trim_ascii_whitespace` trait method on `&[u8]`
+      // ships in `anchor_lang::solana_program::program_memory`. SBF rustc
+      // 1.80+ has stdlib `<[u8]>::trim_ascii` with identical semantics.
+      .replace(/\.trim_ascii_whitespace\b/g, ".trim_ascii");
   }
 
   /**
