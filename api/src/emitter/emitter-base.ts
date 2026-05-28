@@ -3849,8 +3849,22 @@ unsafe impl bytemuck::Pod for ${typeDef.name} {}${implBlock}`;
       const deriveLine = holdsAccountInfo
         ? `#[derive(Clone, Debug${extras.length ? `, ${extras.join(", ")}` : ""})]`
         : `#[derive(Clone, Debug, PartialEq, BorshDeserialize, BorshSerialize${extraSuffix})]`;
+      // Preserve where-clauses from the source so trait bounds on generic
+      // params survive (e.g. `where T: AnchorSerialize + AnchorDeserialize`).
+      // Without this, BorshSerialize/Deserialize derives on the struct fail
+      // E0277 because T/U have no bound. Rename Anchor traits to Borsh as
+      // we go — same substitution as the enum branch above.
+      let whereClause = "";
+      if (typeDef.rawCode) {
+        const wm = typeDef.rawCode.match(/\b(where\s+[^{]+?)\s*\{/);
+        if (wm) {
+          whereClause = "\n" + wm[1]!
+            .replace(/\bAnchorSerialize\b/g, "BorshSerialize")
+            .replace(/\bAnchorDeserialize\b/g, "BorshDeserialize");
+        }
+      }
       return `${deriveLine}
-pub struct ${typeDef.name}${generics} {
+pub struct ${typeDef.name}${generics}${whereClause} {
 ${allFields}
 }${implBlock}`;
     }).join("\n\n");
