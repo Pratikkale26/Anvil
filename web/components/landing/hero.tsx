@@ -37,8 +37,8 @@ export function Hero({ overallSavings }: { overallSavings: string }) {
 
       <p className="text-lead mx-auto max-w-[600px] mt-6">
         Anvil parses Anchor into a typed IR and emits idiomatic Pinocchio or
-        Native Rust — verified <span className="text-anvil-text">byte-equal</span> against the
-        Anchor reference under LiteSVM.
+        Native Rust — with a <span className="text-anvil-text">byte-equal</span> gate that checks
+        the output against the Anchor reference under LiteSVM, so you know when a port is deploy-safe.
       </p>
 
       <div className="mt-10 flex items-center justify-center gap-3 flex-wrap">

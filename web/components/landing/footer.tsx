@@ -29,9 +29,9 @@ export function Footer() {
               </div>
             </div>
             <p className="text-[13px] text-anvil-text-muted mt-4 max-w-[420px] leading-relaxed">
-              A typed-IR transpiler from Anchor to Pinocchio and Native Rust.
-              Every emit verified byte-equal against the Anchor reference under
-              LiteSVM.
+              A typed-IR transpiler from Anchor to Pinocchio and Native Rust,
+              with a byte-equal gate that checks output against the Anchor
+              reference under LiteSVM.
             </p>
           </div>
 
