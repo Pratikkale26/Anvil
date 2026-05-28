@@ -171,6 +171,27 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
         },
       );
     }
+    // Anchor `Account<'info, TokenAccount>` exposes `.mint`, `.owner`,
+    // `.amount`, `.delegate`, `.close_authority` via Deref. Route through
+    // pinocchio_token TokenAccount helpers. Skip if `acct` is a Mint
+    // account (already handled above for supply/decimals).
+    const tokenLikeAccounts = new Set<string>();
+    for (const acc of w.instr.accounts) {
+      const isToken = acc.accountType.includes("TokenAccount") ||
+        acc.constraints.some((c) => c.kind.startsWith("token::") || c.kind.startsWith("associated_token::"));
+      if (isToken) tokenLikeAccounts.add(snakeCase(acc.name));
+    }
+    if (tokenLikeAccounts.size > 0) {
+      lamportRewritten = lamportRewritten.replace(
+        /\b(\w+)\.(mint|owner|amount|delegate|close_authority)\b(?!\s*\()/g,
+        (full, acct, field) => {
+          if (!tokenLikeAccounts.has(acct)) return full;
+          const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
+          if (field === "amount") return `token_account_amount(${infoVar})?`;
+          return `*pinocchio_token::state::TokenAccount::from_account_info(${infoVar})?.${field}()`;
+        },
+      );
+    }
     // Anchor `Account<T>` exposes get/add/sub_lamports methods via the
     // AccountInfo wrapper. Pinocchio AccountInfo lacks these; after state
     // rebinding the receiver may be the struct (no methods). Route every
