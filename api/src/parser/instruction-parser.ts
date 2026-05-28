@@ -433,6 +433,42 @@ function parseInstructionFn(
     }
   }
 
+  // Rename instruction args that collide with account binding names. The
+  // emit ordering (account-bindings → arg-parsing → body) means a colliding
+  // arg shadows the account binding before the body runs, breaking any
+  // `<account-name>.method()` access. misc test_const_array_size hits this
+  // when arg `data: u8` shadows account `data: Account<Data>`.
+  const accountNamesSet = new Set(accounts.map((a) => a.name));
+  const collidingArgs = new Map<string, string>();
+  for (const arg of args) {
+    if (accountNamesSet.has(arg.name)) {
+      const newName = `__arg_${arg.name}`;
+      collidingArgs.set(arg.name, newName);
+      arg.name = newName;
+    }
+  }
+  if (collidingArgs.size > 0) {
+    for (const stmt of bodyStatements) {
+      if (stmt.kind === "pass_through") {
+        let code = (stmt as { code: string }).code;
+        for (const [oldName, newName] of collidingArgs) {
+          // Rewrite bare references to the original arg name. Skip refs that
+          // are part of `<X>.field` chains (preceded by `.`) — those are
+          // field accesses, not arg uses.
+          code = code.replace(
+            new RegExp(`(^|[^.\\w])${oldName}(?![\\w])`, "g"),
+            (full, prefix) => {
+              // Skip if this is `ctx.accounts.<arg-name>` — that's the
+              // account binding referenced via ctx path.
+              return `${prefix}${newName}`;
+            },
+          );
+        }
+        (stmt as { code: string }).code = code;
+      }
+    }
+  }
+
   return {
     name: fnName,
     accounts,
