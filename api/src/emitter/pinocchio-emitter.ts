@@ -3064,6 +3064,14 @@ ${writeLines}
       /(?:solana_program\s*::\s*pubkey\s*::\s*)?Pubkey\s*::\s*(find_program_address|create_program_address)\b/g,
       "pinocchio::pubkey::$1",
     );
+    // pinocchio::pubkey::(find|create)_program_address takes `&Pubkey` for
+    // the program_id, not `Pubkey`. Source-level `*X.key()` deref'd to a
+    // value (Anvil's emit-side .key() routing); strip the `*` in arg
+    // position so the &Pubkey shape is preserved.
+    out = out.replace(
+      /(pinocchio::pubkey::(?:find|create)_program_address\b[^;]*?,\s*)\*(\w+\.key\(\))/g,
+      "$1$2",
+    );
     // set_return_data: pinocchio exposes pinocchio::program::set_return_data
     // with a compatible signature. Rewrite both bare `set_return_data(`
     // (when the source had `use anchor_lang::solana_program::program::

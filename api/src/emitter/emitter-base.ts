@@ -6106,6 +6106,13 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
       /(?:solana_program\s*::\s*pubkey\s*::\s*)?Pubkey\s*::\s*(find_program_address|create_program_address)\b/g,
       "pinocchio::pubkey::$1",
     );
+    // Pinocchio's pubkey::find_program_address takes `&Pubkey` as the
+    // program_id arg, not `Pubkey` (value). Source-level `*X.key()` is
+    // a Pubkey value (deref); strip the deref to keep the &Pubkey shape.
+    out = out.replace(
+      /(\bpinocchio::pubkey::(?:find|create)_program_address\b[^;]*?,\s*)\*(\w+\.key\(\))/g,
+      "$1$2",
+    );
     // G62 — extend solana_program::{log,program}::* → pinocchio::* rewrite
     // to carried code (was already in postProcessPinocchioRewrites for
     // instruction body, but helpers + impl items missed it).
