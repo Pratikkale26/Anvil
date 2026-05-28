@@ -198,6 +198,33 @@ export function extractImports(root: SyntaxNode): string[] {
 
 // ─── Program ID extraction ──────────────────────────────────────────────────
 
+/**
+ * Count top-level declare_id!/declare_program! macros. extractProgramId returns
+ * the FIRST; when this returns >1 the caller raises `multiple_declare_id` so a
+ * dual-branch (mainnet/devnet) source doesn't silently emit the wrong ID.
+ */
+export function countProgramIdMacros(root: SyntaxNode): number {
+  let count = 0;
+  const isProgIdMacro = (node: SyntaxNode): boolean => {
+    if (node.type !== "macro_invocation") return false;
+    const macroName = node.namedChild(0)?.text;
+    return macroName === "declare_id" || macroName === "declare_program";
+  };
+  for (let i = 0; i < root.namedChildCount; i++) {
+    const child = root.namedChild(i);
+    if (!child) continue;
+    if (isProgIdMacro(child)) {
+      count++;
+      continue;
+    }
+    if (child.type === "expression_statement") {
+      const inner = child.namedChild(0);
+      if (inner && isProgIdMacro(inner)) count++;
+    }
+  }
+  return count;
+}
+
 export function extractProgramId(root: SyntaxNode): string | undefined {
   // tree-sitter-rust parses `declare_id!("...");` as an expression_statement
   // wrapping a macro_invocation, NOT a bare macro_invocation. The previous

@@ -2008,6 +2008,13 @@ export const ParserWarningCodeSchema = z.enum([
    */
   "cfg_gated_item_dropped",
   /**
+   * Multiple declare_id!/declare_program! macros found (e.g. dual-branch
+   * #[cfg(feature="mainnet")] / #[cfg(not(...))]). extractProgramId picks the
+   * FIRST in source order regardless of #[cfg], so the emitted program ID may
+   * not match the intended build target. Surfaces the picked ID to verify.
+   */
+  "multiple_declare_id",
+  /**
    * B6 — Parser saw a CPI-shape call (anchor_spl::* / token_interface::* /
    * <crate>::cpi::* / solana_program::program::invoke{_signed}) and could
    * NOT match it against any typed extractor. Emit drops the call into

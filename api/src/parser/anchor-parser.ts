@@ -36,7 +36,7 @@ import {
 } from "./ast-helpers.js";
 import { parseInstructions, extractImplTargetName, parseFromImplDeclaration, type FromImplCatalogEntry } from "./instruction-parser.js";
 import { parseAccountDataStruct, extractByteArrayConsts } from "./account-parser.js";
-import { parseErrorEnum, parseHelperFn, parseCustomType, extractImports, extractProgramId } from "./type-parser.js";
+import { parseErrorEnum, parseHelperFn, parseCustomType, extractImports, extractProgramId, countProgramIdMacros } from "./type-parser.js";
 import { createWarningCollector } from "./warning-collector.js";
 import { buildHelperCpiCatalog } from "./helper-cpi-catalog.js";
 import { rewriteErrMacroToExplicit, expandPubkeyMacro, vendorExternalProgramIDs, rewriteAnchorRequireMacros } from "./project-source.js";
@@ -310,6 +310,19 @@ export async function parseAnchor(
     // override warnings can be raised inline. Drained into `irRaw.warnings`
     // after instruction classification.
     const warningCollector = createWarningCollector();
+
+    // first-declare_id-wins: extractProgramId returns the first macro in source
+    // order regardless of #[cfg]. If the source has multiple (e.g. dual-branch
+    // mainnet/devnet IDs), surface it so the wrong ID isn't emitted silently.
+    if (programId && countProgramIdMacros(root) > 1) {
+      warningCollector.add({
+        code: "multiple_declare_id",
+        message:
+          `Multiple declare_id!/declare_program! macros found; Anvil used the first in ` +
+          `source order ("${programId}") regardless of #[cfg]. If your source has per-target ` +
+          `IDs (mainnet/devnet branches), verify this is the intended program ID for your build.`,
+      });
+    }
 
     // #60 — Top-level `const X: ... = [N, N, ...];` byte-array table.
     // Shared between account/event/instruction discriminator-override
