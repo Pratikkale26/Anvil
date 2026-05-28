@@ -85,6 +85,22 @@ function firstLine(s: string): string {
   return idx === -1 ? s : s.slice(0, idx);
 }
 
+/**
+ * Pre-audit normalization. Patterns the emitter is known to rewrite
+ * deterministically should not surface as audit findings — they compile,
+ * byte-equal, and the audit's purpose is to flag CLASSIFICATION GAPS
+ * rather than transcribe every Anchor surface that has a target shape.
+ */
+function normalizeForAudit(code: string): string {
+  // transformAccountReferences strips `.to_account_info()` universally and
+  // rewrites `ctx.accounts.X` to the canonical account binding in emit.
+  // Mirror the strip + ctx.accounts collapse here so the pre-emit audit
+  // doesn't double-report shapes the rewriter already handles.
+  let out = code.replace(/\.to_account_info\(\)/g, "");
+  out = out.replace(/\bctx\s*\.\s*accounts\s*\.\s*(\w+)/g, "$1");
+  return out;
+}
+
 export function auditPassthrough(ir: SolanaIR): PassthroughFinding[] {
   const findings: PassthroughFinding[] = [];
   for (const instr of ir.instructions) {
@@ -94,8 +110,9 @@ export function auditPassthrough(ir: SolanaIR): PassthroughFinding[] {
       if (!stmt || stmt.kind !== "pass_through") continue;
       const code = stmt.code;
       if (!code) continue;
+      const normalized = normalizeForAudit(code);
       for (const { pattern, message, severity } of PATTERNS) {
-        if (pattern.test(code)) {
+        if (pattern.test(normalized)) {
           findings.push({
             severity,
             message,

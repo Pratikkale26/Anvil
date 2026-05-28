@@ -953,6 +953,23 @@ function classifyLetDeclaration(
         },
       };
     }
+    // ── `let X = ctx.accounts.Y.to_account_info();` — Anchor's explicit
+    // AccountInfo borrow. Treat as a state_read alias; emit collapses to
+    // `let X = Y;` (or drops if names match), since Y is already an
+    // AccountInfo binding in our model.
+    const aiMatch = valueNode.text.match(/^&?\s*(?:mut\s+)?ctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*to_account_info\s*\(\s*\)\s*$/);
+    if (aiMatch?.[1]) {
+      const isMut = text.includes("&mut") || (patternNode?.type === "mut_pattern");
+      return {
+        stmt: {
+          kind: "state_read",
+          account: aiMatch[1],
+          localVar,
+          mutable: isMut,
+          accountType: "",
+        },
+      };
+    }
 
     const directTextMatch = valueNode.text.match(/^&(?:mut\s+)?ctx\.accounts\.(\w+)$/);
     if (directTextMatch?.[1]) {
