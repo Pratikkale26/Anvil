@@ -377,6 +377,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     transformedRawCode = rewritePinocchioTokenAccountFields(transformedRawCode);
   }
   transformedRawCode = rewriteNextAccountInfo(transformedRawCode, w);
+  transformedRawCode = rewriteUserStateAccountMethods(transformedRawCode, w);
   // Fallback: still run the regex versions in case tree-sitter parse
   // returned the code unchanged (parse error → no-op). The regex is
   // idempotent on already-structurally-rewritten text since the tree-
@@ -891,6 +892,63 @@ export function rewriteNextAccountInfo(code: string, w: BodyWalker): string {
   }
   result.push(code.slice(i));
   return result.join("");
+}
+
+/**
+ * Anchor's `Account<T>` deserialized wrapper exposes `.close(dest)` (close +
+ * lamport-drain to dest) and `.as_ref()` (borrow the underlying AccountInfo).
+ * Once Anvil lowers `Account<T>` to `T::from_account_info(<info>)?` the
+ * resulting `T` value has neither method. Map them back to the wire-level
+ * primitives using the AccountInfo binding the wrapper was built from.
+ */
+function rewriteUserStateAccountMethods(code: string, w: BodyWalker): string {
+  if (!/\.close\s*\(|\.as_ref\s*\(/.test(code)) return code;
+  const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+  if (!isPinocchio) return code;
+  // The state-read prelude lives in `w.lines`, not in the body pass-through
+  // text. Use the walker's stateVars/accountInfoVars maps populated by
+  // ensureStateReadStructural: <accountName> → <stateLocal>; <accountName>
+  // → <accountInfoVar>. From those, build <stateLocal> → <accountInfoVar>.
+  const stateBindings = new Map<string, string>();
+  for (const [accountName, stateLocal] of w.stateVars.entries()) {
+    const accountRef = w.instr.accounts.find((acc) => snakeCase(acc.name) === accountName);
+    if (!accountRef) continue;
+    if (!w.isGeneratedStateType(accountRef.accountType)) continue;
+    const accountInfoVar = w.accountInfoVars.get(accountName) ?? accountName;
+    stateBindings.set(stateLocal, accountInfoVar);
+  }
+  if (stateBindings.size === 0) return code;
+  let out = code;
+  for (const [local, info] of stateBindings) {
+    out = out.replace(
+      new RegExp(`\\b${local}\\.close\\s*\\(([^)]*)\\)\\?;`, "g"),
+      (_full, dest) => `close_program_account(${info}, ${(dest as string).trim()})?;`,
+    );
+    out = out.replace(
+      new RegExp(`\\b${local}\\.as_ref\\s*\\(\\)`, "g"),
+      info,
+    );
+  }
+  // After as_ref() collapsed `let LV: &AccountInfo = X.as_ref();` to
+  // `let LV: &AccountInfo = <info>;`, fix .owner/.key field accesses on
+  // LV — Pinocchio's AccountInfo exposes those as methods, not fields.
+  const aliasRe = /\blet\s+(\w+)\s*:\s*&AccountInfo\s*=\s*\w+\s*;/g;
+  const accountInfoAliases = new Set<string>();
+  let am: RegExpExecArray | null;
+  while ((am = aliasRe.exec(out)) !== null) {
+    if (am[1]) accountInfoAliases.add(am[1]);
+  }
+  for (const alias of accountInfoAliases) {
+    out = out.replace(
+      new RegExp(`\\b${alias}\\.owner\\b(?!\\s*\\()`, "g"),
+      `${alias}.owner()`,
+    );
+    out = out.replace(
+      new RegExp(`\\b${alias}\\.key\\b(?!\\s*\\()`, "g"),
+      `${alias}.key()`,
+    );
+  }
+  return out;
 }
 
 function renderAccountTryFrom(

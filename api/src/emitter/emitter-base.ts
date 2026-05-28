@@ -526,6 +526,7 @@ export abstract class BaseEmitter {
     mint: string,
     authority: string,
     signerSeeds?: string,
+    tokenProgram?: string,
   ): string;
 
   /**
@@ -4356,7 +4357,14 @@ ${allFields}
       const mint = snakeCase(ataMintConstraint.value);
       const authority = snakeCase(ataAuthorityConstraint.value);
       const payer = payerName ?? "payer";
-      return this.emitCreateAta(accountName, payer, mint, authority);
+      // Anchor's `associated_token::token_program = X` constraint points the ATA's
+      // token-program slot at a specific account binding. When absent, fall back
+      // to the conventional `token_program` name.
+      const ataTokenProgramConstraint = accountRef.constraints.find((c) => c.kind === "associated_token::token_program" && c.value);
+      const tokenProgram = ataTokenProgramConstraint?.value
+        ? snakeCase(ataTokenProgramConstraint.value)
+        : "token_program";
+      return this.emitCreateAta(accountName, payer, mint, authority, undefined, tokenProgram);
     }
 
     // ── `init mint::*` (Mint creation): SystemProgram::CreateAccount

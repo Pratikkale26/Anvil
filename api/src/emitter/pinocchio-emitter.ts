@@ -2464,13 +2464,14 @@ ${invokeCall}
     }`;
   }
 
-  override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string): string {
+  override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string, tokenProgram?: string): string {
     // pinocchio_associated_token_account 0.4 takes &AccountView, but pinocchio
     // 0.9's account slice gives us &AccountInfo. Different types, no automatic
     // conversion. So we hand-roll the CPI against the SPL ATA program ID
     // (ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL) — pubkey bytes are a
     // const, instruction data is empty, accounts list matches the Anchor ATA
     // create order: payer, ata, owner, mint, system_program, token_program.
+    const tp = tokenProgram ?? "token_program";
     return `    // Create Associated Token Account: ${ata}
     {
         const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];
@@ -2480,7 +2481,7 @@ ${invokeCall}
             pinocchio::instruction::AccountMeta::new(${authority}.key(), false, false),
             pinocchio::instruction::AccountMeta::new(${mint}.key(), false, false),
             pinocchio::instruction::AccountMeta::new(system_program.key(), false, false),
-            pinocchio::instruction::AccountMeta::new(token_program.key(), false, false),
+            pinocchio::instruction::AccountMeta::new(${tp}.key(), false, false),
         ];
         let __ata_ix = pinocchio::instruction::Instruction {
             program_id: &ATA_PROGRAM_ID,
@@ -2489,7 +2490,7 @@ ${invokeCall}
         };
         pinocchio::cpi::invoke(
             &__ata_ix,
-            &[${payer}, ${ata}, ${authority}, ${mint}, system_program, token_program],
+            &[${payer}, ${ata}, ${authority}, ${mint}, system_program, ${tp}],
         )?;
     }`;
   }
@@ -3075,6 +3076,27 @@ ${writeLines}
     // Anchor's `System::id()` returns the system program ID Pubkey.
     // Pinocchio's system program is `[0u8; 32]`. Rewrite call sites.
     out = out.replace(/\bSystem\s*::\s*id\s*\(\s*\)/g, "[0u8; 32]");
+    // User aliases of `&AccountInfo` from Anchor's `Account<T>::as_ref()`
+    // surface as `let LV: &AccountInfo = <info>;`. Subsequent `LV.owner` /
+    // `LV.key` uses (e.g. from require_keys_eq! on an owner field) hit
+    // Pinocchio's method-only API. Detect the bindings and rewrite their
+    // bare `.owner`/`.key` reads to the method form.
+    const accountInfoAliasRe = /\blet\s+(\w+)\s*:\s*&\s*AccountInfo\s*=\s*\w+\s*;/g;
+    const aliasNames = new Set<string>();
+    let am: RegExpExecArray | null;
+    while ((am = accountInfoAliasRe.exec(out)) !== null) {
+      if (am[1]) aliasNames.add(am[1]);
+    }
+    for (const alias of aliasNames) {
+      out = out.replace(
+        new RegExp(`\\b${alias}\\.owner\\b(?!\\s*\\()`, "g"),
+        `${alias}.owner()`,
+      );
+      out = out.replace(
+        new RegExp(`\\b${alias}\\.key\\b(?!\\s*\\()`, "g"),
+        `${alias}.key()`,
+      );
+    }
     // set_return_data: pinocchio exposes pinocchio::program::set_return_data
     // with a compatible signature. Rewrite both bare `set_return_data(`
     // (when the source had `use anchor_lang::solana_program::program::

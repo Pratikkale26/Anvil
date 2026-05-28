@@ -1593,13 +1593,14 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     }`;
   }
 
-  override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string): string {
+  override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string, tokenProgram?: string): string {
+    const tpKey = tokenProgram ? `${tokenProgram}.key` : "&spl_token::id()";
     return `    // Create Associated Token Account: ${ata}
     let create_ata_ix = spl_create_ata_ix(
         ${payer}.key,
         ${authority}.key,
         ${mint}.key,
-        &spl_token::id(),
+        ${tpKey},
     );
     invoke(
         &create_ata_ix,

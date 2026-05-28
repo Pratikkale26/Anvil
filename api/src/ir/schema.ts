@@ -87,6 +87,7 @@ export const ConstraintKindSchema = z.enum([
   "token::authority",
   "associated_token::mint",
   "associated_token::authority",
+  "associated_token::token_program",
   "mint::decimals",
   "mint::authority",
   "mint::freeze_authority",

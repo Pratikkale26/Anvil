@@ -224,15 +224,21 @@ function parseInstructionFn(
       if (attrName !== handlerName) renameMap.set(attrName, handlerName);
     }
     if (renameMap.size > 0) {
+      const rewrite = (text: string): string => {
+        let out = text;
+        for (const [from, to] of renameMap) {
+          out = out.replace(new RegExp(`\\b${from}\\b`, "g"), to);
+        }
+        return out;
+      };
       for (const account of accounts) {
         if (account.pdaSeeds && account.pdaSeeds.length > 0) {
-          account.pdaSeeds = account.pdaSeeds.map((seed) => {
-            let rewritten = seed;
-            for (const [from, to] of renameMap) {
-              rewritten = rewritten.replace(new RegExp(`\\b${from}\\b`, "g"), to);
-            }
-            return rewritten;
-          });
+          account.pdaSeeds = account.pdaSeeds.map(rewrite);
+        }
+        if (account.constraints && account.constraints.length > 0) {
+          for (const c of account.constraints) {
+            if (c.value) c.value = rewrite(c.value);
+          }
         }
       }
     }
@@ -439,9 +445,13 @@ function parseInstructionFn(
   // `<account-name>.method()` access. misc test_const_array_size hits this
   // when arg `data: u8` shadows account `data: Account<Data>`.
   const accountNamesSet = new Set(accounts.map((a) => a.name));
+  // Pinocchio/native function-parameter names that the body or synth-seed
+  // exprs read. A user arg matching one of these shadows the param before
+  // the body runs, breaking PDA-validation calls + raw pubkey use.
+  const synthParamNames = new Set(["program_id", "accounts"]);
   const collidingArgs = new Map<string, string>();
   for (const arg of args) {
-    if (accountNamesSet.has(arg.name)) {
+    if (accountNamesSet.has(arg.name) || synthParamNames.has(arg.name)) {
       // Use a prefix that survives snakeCase normalization (no leading
       // underscore — snakeCase collapses leading `__` to `_`).
       const newName = `arg_in_${arg.name}`;
@@ -479,6 +489,18 @@ function parseInstructionFn(
       } else if (stmt.kind === "emit") {
         const s = stmt as { fields: string };
         s.fields = rewriteRefs(s.fields);
+      }
+    }
+    // Also rewrite seeds/constraint values — synthesized bump_seed +
+    // signer-seeds emit literally use these strings.
+    for (const account of accounts) {
+      if (account.pdaSeeds && account.pdaSeeds.length > 0) {
+        account.pdaSeeds = account.pdaSeeds.map(rewriteRefs);
+      }
+      if (account.constraints && account.constraints.length > 0) {
+        for (const c of account.constraints) {
+          if (c.value) c.value = rewriteRefs(c.value);
+        }
       }
     }
   }
