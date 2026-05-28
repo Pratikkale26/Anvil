@@ -111,9 +111,20 @@ export function parseCustomType(
   // which lands in accountDataStructs), it's used as a field type inside
   // zero-copy account structs. Emit must produce repr(C) + Pod so the
   // containing account's bytemuck cast doesn't fail with E0204.
-  const isZeroCopy = attrs?.some(
+  let isZeroCopy = attrs?.some(
     (a) => /^#\[\s*zero_copy(\s*\([^\)]*\))?\s*\]/.test(a.text.replace(/\s+/g, " ")),
   );
+  // #86 — hand-rolled bytemuck Pod struct. Convention: `#[repr(C)]` +
+  // `#[derive(... Copy ...)]` declares a layout-stable, copy-only struct
+  // the user intends to cast via bytemuck (cast_slice_mut, from_bytes_mut,
+  // etc.). Pyth's Price account is the canonical case. Treat as zero-copy
+  // for emit purposes — same Pod/Zeroable shape applies.
+  if (!isZeroCopy && attrs && kind === "struct") {
+    const allAttrText = attrs.map((a) => a.text).join("\n");
+    const hasReprC = /#\[\s*repr\s*\(\s*C\s*\)\s*\]/.test(allAttrText);
+    const hasCopyDerive = /#\[\s*derive\s*\([^)]*\bCopy\b/.test(allAttrText);
+    if (hasReprC && hasCopyDerive) isZeroCopy = true;
+  }
 
   // Build rawCode with any preceding #[derive(...)] / #[repr(...)] / etc.
   // attributes prepended so the emitter's emitCustomTypes's

@@ -2441,7 +2441,16 @@ ${invokeCall}
   protected override carriedFunctionBlock(rawCode: string, ir?: SolanaIR): string {
     const baseOutput = super.carriedFunctionBlock(rawCode, ir);
     const stripped = stripAnchorWrappersInCode(baseOutput, "pin");
-    return commentOutT22ExtensionCallSites(stripped);
+    let out = commentOutT22ExtensionCallSites(stripped);
+    // #86 — Pyth-style `RefMut::map(X.try_borrow_mut_data().unwrap(), |y| *y)`.
+    // Source assumes solana_program's `Rc<RefCell<&mut [u8]>>` shape; Pinocchio
+    // returns `RefMut<[u8]>` directly so the identity-deref closure is a type
+    // error. Collapse the wrapper.
+    out = out.replace(
+      /RefMut\s*::\s*map\s*\(\s*([^,]+\.try_borrow_mut_data\s*\(\s*\)\s*\.\s*unwrap\s*\(\s*\))\s*,\s*\|\s*\w+\s*\|\s*\*\s*\w+\s*\)/g,
+      "$1",
+    );
+    return out;
   }
 
   override emitDiscriminatorWrite(accountName: string, typeName: string, discLen: number = 8): string {
@@ -3076,6 +3085,16 @@ ${writeLines}
     // Anchor's `System::id()` returns the system program ID Pubkey.
     // Pinocchio's system program is `[0u8; 32]`. Rewrite call sites.
     out = out.replace(/\bSystem\s*::\s*id\s*\(\s*\)/g, "[0u8; 32]");
+    // Pyth-style `RefMut::map(X.try_borrow_mut_data().unwrap(), |y| *y)`
+    // — solana_program's AccountInfo stored `Rc<RefCell<&mut [u8]>>` and
+    // the identity-deref closure dropped one indirection. Pinocchio's
+    // try_borrow_mut_data already returns RefMut<[u8]>, so the wrapping
+    // RefMut::map + deref closure is a no-op type error. Collapse the
+    // wrapper.
+    out = out.replace(
+      /RefMut\s*::\s*map\s*\(\s*([^,]+\.try_borrow_mut_data\s*\(\s*\)\s*\.\s*unwrap\s*\(\s*\))\s*,\s*\|\s*\w+\s*\|\s*\*\s*\w+\s*\)/g,
+      "$1",
+    );
     // User aliases of `&AccountInfo` from Anchor's `Account<T>::as_ref()`
     // surface as `let LV: &AccountInfo = <info>;`. Subsequent `LV.owner` /
     // `LV.key` uses (e.g. from require_keys_eq! on an owner field) hit

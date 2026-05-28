@@ -955,6 +955,15 @@ export abstract class BaseEmitter {
         // for SBF targets) and drop the std form.
         if (/^use\s+std::slice::Iter\s*;?$/.test(t)) return "";
         if (/^use\s+std::slice::IterMut\s*;?$/.test(t)) return "";
+        // #86 — Pinocchio's `AccountInfo::try_borrow{,_mut}_data` returns
+        // its OWN `pinocchio::account_info::RefMut`, not std's. Source code
+        // (e.g. pyth) commonly imports `std::cell::RefMut` and annotates
+        // locals with `RefMut<'_, [u8]>` — type-mismatch with the pinocchio
+        // variant. Rewrite the import on pinocchio so the bare `RefMut`
+        // identifier resolves to the right type.
+        if (!isNative && /^use\s+std::cell::RefMut\s*;?$/.test(t)) {
+          return `use pinocchio::account_info::RefMut;`;
+        }
         return rewritten;
       })
       .filter((stmt) => stmt.length > 0)
@@ -6131,6 +6140,14 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
     out = out.replace(
       /(?:anchor_lang\s*::\s*)?solana_program\s*::\s*program\s*::\s*(set_return_data|get_return_data)\b/g,
       "pinocchio::program::$1",
+    );
+    // #86 — Pyth-style `RefMut::map(X.try_borrow_mut_data().unwrap(), |y| *y)`.
+    // solana_program's `Rc<RefCell<&mut [u8]>>` shape needed the identity-
+    // deref to drop one indirection; Pinocchio returns `RefMut<[u8]>` directly
+    // so the wrapper is a type error. Collapse.
+    out = out.replace(
+      /RefMut\s*::\s*map\s*\(\s*([^,()]+\.try_borrow_mut_data\s*\(\s*\)\s*\.\s*unwrap\s*\(\s*\))\s*,\s*\|\s*\w+\s*\|\s*\*\s*\w+\s*\)/g,
+      "$1",
     );
   }
   return out;
