@@ -3944,6 +3944,12 @@ ${allFields}
       // Anchor Context type isn't in the scaffold, and stubbing the body
       // doesn't help since the signature itself fails type resolution.
       if (/\bContext\s*<\s*\w+/.test(raw)) continue;
+      // Drop methods whose signature references a `&XAccounts<'info>` /
+      // `&XAccounts<'_>` type — these are Anchor #[derive(Accounts)]
+      // struct types that get flattened away, so the reference can't
+      // resolve. registry: `impl BalanceSandbox { fn from(accs:
+      // &BalanceSandboxAccounts<'info>) }`.
+      if (/&\s*\w+Accounts\s*<['_]/.test(raw)) continue;
       let stubbed = rewriteRequireVariantsInCode(
         rewriteMsgCallsImpl(
           stripAnchorWrappersInCode(

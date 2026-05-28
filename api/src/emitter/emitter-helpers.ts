@@ -682,7 +682,13 @@ export function hasUnsalvageableHelperSignature(signature: string): boolean {
     /\bSystemAccount\s*<\s*'/.test(signature) ||
     /\bContext\s*</.test(signature) ||
     /\bUncheckedAccount\s*<\s*'/.test(signature) ||
-    /\bAccountLoader\s*<\s*'/.test(signature);
+    /\bAccountLoader\s*<\s*'/.test(signature) ||
+    // User-defined Accounts struct type passed by ref: `&XAccounts<'info>`.
+    // Anchor's #[derive(Accounts)] structs get flattened, so the type
+    // doesn't exist post-strip. lockup: `is_whitelisted(transfer:
+    // &WhitelistTransfer<'info>)`.
+    /&\s*\w+Accounts?\s*<['_]/.test(signature) ||
+    /&\s*\w+Transfer\s*<['_]/.test(signature);
 }
 
 /**
