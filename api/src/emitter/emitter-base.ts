@@ -3616,7 +3616,18 @@ ${originalLines}
   }
 
   protected emitCustomTypes(ir: SolanaIR): string {
-    return ir.types.map((typeDef) => {
+    return ir.types
+      .filter((typeDef) => {
+        // Drop user struct/enum definitions that reference a flattened
+        // Anchor Accounts struct type (e.g. swap's `pub struct
+        // OrderbookClient<'info> { market: MarketAccounts<'info>, ... }`).
+        // The supporting #[derive(Accounts)] struct doesn't survive the
+        // composite flatten, so the field type can't resolve.
+        const allText = typeDef.rawCode ?? "";
+        if (/\b\w+Accounts\s*<['_]/.test(allText)) return false;
+        return true;
+      })
+      .map((typeDef) => {
       // Complex enums need rawCode-verbatim emit:
       //   - tuple variants  : `Foo(i32, String)`           → `\\w+\\(...\\)`
       //   - struct variants : `Won { winner: Pubkey }`     → `\\w+\\s*\\{...\\}`
