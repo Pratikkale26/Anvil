@@ -48,6 +48,40 @@ const CACHE_TTL_DAYS = (() => {
   return Number.isFinite(n) && n >= 0 ? n : 7;
 })();
 
+// Size-based eviction cap. The TTL sweep above only catches stale entries;
+// a busy dev loop that compiles fresh artifacts every few minutes can fill
+// the cache (138GB observed 2026-05-28). After TTL, walk the cache LRU
+// (oldest mtime first) and remove dirs until total size ≤ cap.
+// Default 135GB; override via ANVIL_DIFF_CACHE_MAX_GB (set to 0 to disable).
+const CACHE_MAX_BYTES = (() => {
+  const raw = process.env.ANVIL_DIFF_CACHE_MAX_GB;
+  const n = raw ? parseFloat(raw) : NaN;
+  const gb = Number.isFinite(n) && n >= 0 ? n : 135;
+  return gb * 1024 * 1024 * 1024;
+})();
+
+function dirSizeBytes(p: string): number {
+  let total = 0;
+  try {
+    for (const e of readdirSync(p, { withFileTypes: true })) {
+      const cp = join(p, e.name);
+      try {
+        if (e.isDirectory()) {
+          total += dirSizeBytes(cp);
+        } else {
+          const s = statSync(cp);
+          total += s.size;
+        }
+      } catch {
+        // unreadable entry — skip
+      }
+    }
+  } catch {
+    // unreadable dir — skip
+  }
+  return total;
+}
+
 (() => {
   if (CACHE_TTL_DAYS === 0) return;
   if (!existsSync(CACHE_ROOT)) return;
@@ -76,6 +110,49 @@ const CACHE_TTL_DAYS = (() => {
     }
   } catch (err) {
     console.warn(`[diff-cache] sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+})();
+
+(() => {
+  if (CACHE_MAX_BYTES === 0) return;
+  if (!existsSync(CACHE_ROOT)) return;
+  try {
+    const entries: Array<{ path: string; mtimeMs: number; size: number }> = [];
+    for (const e of readdirSync(CACHE_ROOT, { withFileTypes: true })) {
+      if (!e.isDirectory()) continue;
+      const p = join(CACHE_ROOT, e.name);
+      try {
+        const s = statSync(p);
+        entries.push({ path: p, mtimeMs: s.mtimeMs, size: dirSizeBytes(p) });
+      } catch {
+        // skip
+      }
+    }
+    let total = entries.reduce((a, b) => a + b.size, 0);
+    if (total <= CACHE_MAX_BYTES) return;
+    entries.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    let evicted = 0;
+    let freed = 0;
+    for (const e of entries) {
+      if (total <= CACHE_MAX_BYTES) break;
+      try {
+        rmSync(e.path, { recursive: true, force: true });
+        total -= e.size;
+        freed += e.size;
+        evicted++;
+      } catch {
+        // skip unremovable
+      }
+    }
+    if (evicted > 0) {
+      const gb = (n: number) => (n / (1024 ** 3)).toFixed(1);
+      console.log(
+        `[diff-cache] size-evicted ${evicted} dir(s), freed ${gb(freed)}GB ` +
+          `(cap ${gb(CACHE_MAX_BYTES)}GB, post ${gb(total)}GB)`,
+      );
+    }
+  } catch (err) {
+    console.warn(`[diff-cache] size-sweep failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 })();
 
