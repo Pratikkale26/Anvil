@@ -124,6 +124,50 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
         return `${infoVar}.lamports()`;
       },
     );
+    // Anchor `Account<'info, Mint>` exposes `.supply` and `.decimals` via
+    // Deref. After Anvil strips the wrapper the receiver is `&AccountInfo`,
+    // which has no such fields. Route through pinocchio_token Mint helpers.
+    const mintLikeAccounts = new Set<string>();
+    for (const acc of w.instr.accounts) {
+      const isMint = acc.accountType.includes("Mint") ||
+        acc.constraints.some((c) => c.kind.startsWith("mint::"));
+      if (isMint) mintLikeAccounts.add(snakeCase(acc.name));
+    }
+    if (mintLikeAccounts.size > 0) {
+      lamportRewritten = lamportRewritten.replace(
+        /\b(\w+)\.(supply|decimals)\b(?!\s*\()/g,
+        (full, acct, field) => {
+          if (!mintLikeAccounts.has(acct)) return full;
+          const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
+          return `pinocchio_token::state::Mint::from_account_info(${infoVar})?.${field}()`;
+        },
+      );
+    }
+    // Anchor `Account<T>` exposes get/add/sub_lamports methods via the
+    // AccountInfo wrapper. Pinocchio AccountInfo lacks these; after state
+    // rebinding the receiver may be the struct (no methods). Route every
+    // call through the anvil_* helpers against the original AccountInfo.
+    lamportRewritten = lamportRewritten.replace(
+      /\b(\w+)\.get_lamports\(\)/g,
+      (_m, acct) => {
+        const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
+        return `anvil_get_lamports(${infoVar})`;
+      },
+    );
+    lamportRewritten = lamportRewritten.replace(
+      /\b(\w+)\.add_lamports\(([^)]*)\)/g,
+      (_m, acct, args) => {
+        const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
+        return `anvil_add_lamports(${infoVar}, ${args.trim()})`;
+      },
+    );
+    lamportRewritten = lamportRewritten.replace(
+      /\b(\w+)\.sub_lamports\(([^)]*)\)/g,
+      (_m, acct, args) => {
+        const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
+        return `anvil_sub_lamports(${infoVar}, ${args.trim()})`;
+      },
+    );
   } else {
     lamportRewritten = lamportRewritten.replace(
       /(\w+)\.to_account_info\(\)\.(try_borrow_mut_lamports|lamports)/g,
