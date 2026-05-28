@@ -442,7 +442,9 @@ function parseInstructionFn(
   const collidingArgs = new Map<string, string>();
   for (const arg of args) {
     if (accountNamesSet.has(arg.name)) {
-      const newName = `__arg_${arg.name}`;
+      // Use a prefix that survives snakeCase normalization (no leading
+      // underscore — snakeCase collapses leading `__` to `_`).
+      const newName = `arg_in_${arg.name}`;
       collidingArgs.set(arg.name, newName);
       arg.name = newName;
     }
