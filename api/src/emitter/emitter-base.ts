@@ -6231,6 +6231,35 @@ export function stripAnchorWrappersInCode(body: string, target: "pin" | "native"
       /(?:solana_program\s*::\s*pubkey\s*::\s*)?Pubkey\s*::\s*create_with_seed\b/g,
       "pinocchio::pubkey::create_with_seed",
     );
+    // #37 — Anchor's AccountInfo carries `data: Rc<RefCell<&mut [u8]>>`.
+    // Pinocchio has methods only: `try_borrow_data()` / `try_borrow_mut_data()`.
+    // Source patterns:
+    //   `X.data.borrow().as_ref()`              — get `&[u8]` (immut)
+    //   `X.data.as_ref().borrow_mut()`          — get `&mut [u8]`
+    //   `&mut X.data.as_ref().borrow_mut()`     — same w/ explicit ref
+    //   `X.data.borrow()`                       — Ref<&mut [u8]>
+    //   `X.data.borrow_mut()`                   — RefMut<&mut [u8]>
+    // Rewrite to pinocchio-equivalent shapes.
+    out = out.replace(
+      /(\w+)\.data\.borrow\s*\(\s*\)\s*\.\s*as_ref\s*\(\s*\)/g,
+      "$1.try_borrow_data()?.as_ref()",
+    );
+    out = out.replace(
+      /&\s*mut\s+(\w+)\.data\.as_ref\s*\(\s*\)\s*\.\s*borrow_mut\s*\(\s*\)/g,
+      "&mut *$1.try_borrow_mut_data()?",
+    );
+    out = out.replace(
+      /(\w+)\.data\.as_ref\s*\(\s*\)\s*\.\s*borrow_mut\s*\(\s*\)/g,
+      "*$1.try_borrow_mut_data()?",
+    );
+    out = out.replace(
+      /(\w+)\.data\.borrow_mut\s*\(\s*\)/g,
+      "$1.try_borrow_mut_data()?",
+    );
+    out = out.replace(
+      /(\w+)\.data\.borrow\s*\(\s*\)/g,
+      "$1.try_borrow_data()?",
+    );
     // #37 — borsh 1.x removed the `try_to_vec()` method on the
     // BorshSerialize trait — `borsh::to_vec(&value)?` is the replacement.
     // Rewrite call sites; this is safe because we always import borsh.

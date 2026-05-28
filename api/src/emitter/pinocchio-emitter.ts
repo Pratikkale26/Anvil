@@ -3085,6 +3085,25 @@ ${writeLines}
     // Anchor's `System::id()` returns the system program ID Pubkey.
     // Pinocchio's system program is `[0u8; 32]`. Rewrite call sites.
     out = out.replace(/\bSystem\s*::\s*id\s*\(\s*\)/g, "[0u8; 32]");
+    // #37 — AccountInfo.data.as_ref().borrow_mut() and friends. Mirrors
+    // the rewrites in stripAnchorWrappersInCode for body-level code that
+    // doesn't route through that helper.
+    out = out.replace(
+      /(\w+)\.data\.borrow\s*\(\s*\)\s*\.\s*as_ref\s*\(\s*\)/g,
+      "$1.try_borrow_data()?.as_ref()",
+    );
+    out = out.replace(
+      /&\s*mut\s+(\w+)\.data\.as_ref\s*\(\s*\)\s*\.\s*borrow_mut\s*\(\s*\)/g,
+      "&mut *$1.try_borrow_mut_data()?",
+    );
+    out = out.replace(
+      /(\w+)\.data\.as_ref\s*\(\s*\)\s*\.\s*borrow_mut\s*\(\s*\)/g,
+      "*$1.try_borrow_mut_data()?",
+    );
+    out = out.replace(
+      /(\w+)\.data\.borrow_mut\s*\(\s*\)/g,
+      "$1.try_borrow_mut_data()?",
+    );
     // Pyth-style `RefMut::map(X.try_borrow_mut_data().unwrap(), |y| *y)`
     // — solana_program's AccountInfo stored `Rc<RefCell<&mut [u8]>>` and
     // the identity-deref closure dropped one indirection. Pinocchio's
