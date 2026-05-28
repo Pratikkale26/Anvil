@@ -30,11 +30,11 @@ repo header.
 | First multi-file real-world byte-equal | Helium circuit-breaker (8 ix, 12 .rs files) | 2026-05-28 |
 | Cargo-green MUST_PASS fixtures | 193 | 2026-05-28 |
 | Demo programs build-sbf GREEN | 64/64 (100%) | 2026-05-28 |
-| Anchor test suite build-sbf GREEN | 64/77 (83%) | 2026-05-28 |
+| Anchor test suite build-sbf GREEN | 65/77 (84%) | 2026-05-28 |
 | IR body statement kinds | 100+ | 2026-05-28 |
 | Top DeFi: klend (63 ix) | **build-sbf GREEN** | 2026-05-27 |
 | Top DeFi: circuit-breaker (8 ix) | **build-sbf GREEN + BYTE-EQUAL** | 2026-05-28 |
-| Total commits | 1,289 | 2026-05-28 |
+| Total commits | 1,290 | 2026-05-28 |
 
 ## How this gets updated
 
