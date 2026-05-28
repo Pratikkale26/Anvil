@@ -1,6 +1,6 @@
 # Anvil
 
-> **Anchor → Pinocchio, with proof.** Paste an Anchor program in, get a cargo-buildable Pinocchio project out — verified byte-equal on `data + lamports + owner` against the Anchor original by running both inside a real VM.
+> **Anchor → Pinocchio, with proof.** Paste an Anchor program in, get a cargo-buildable Pinocchio project out — plus a byte-equal gate that runs both inside a real VM and checks `data + lamports + owner` against the Anchor original, so you know when a port is deploy-safe instead of trusting it. What's verified today is a growing corpus (below) — not a promise that every program transpiles cleanly.
 
 [anvilsol.xyz](https://anvilsol.xyz) · [npm](https://www.npmjs.com/package/anvil-sol) · [docs](docs/) · [security](SECURITY.md) · [audit trust model](docs/audit-trust-model.md)
 
