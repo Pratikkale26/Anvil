@@ -206,17 +206,6 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     );
   }
 
-  // Strip stale user-source `let signer = &[&seeds[..]];` lines. The
-  // user wrote `let seeds = …; let signer = &[&seeds[..]]; <cpi>;`. Anvil
-  // strips the `let seeds = …` (PDA seed pattern recognized) but kept the
-  // `let signer` line dangling. The visitor synthesizes its own
-  // `let signer_seeds = &[seeds];` at the CPI call site, so the carried
-  // user line is both wrong (references stripped seeds) and redundant.
-  // ido-pool exchange_redeemable_for_watermelon is the canonical case.
-  lamportRewritten = lamportRewritten.replace(
-    /^[ \t]*let\s+signer\s*=\s*&\[\s*&\s*seeds\s*\[\s*\.\.\s*\]\s*\]\s*;\s*$/gm,
-    "",
-  );
   // M5d Session 5a — context-name normalization runs FIRST so all
   // subsequent passes (structural + regex) only need to handle the
   // canonical `ctx` receiver. Cheap (no side effects).
