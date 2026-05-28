@@ -358,6 +358,37 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   // idempotent on already-structurally-rewritten text since the tree-
   // sitter passes match the same shapes the regex would.
   transformedRawCode = w.normalizeToAccountInfoCalls(transformedRawCode);
+  // Post-strip: now that .to_account_info() chains are gone, `<acct>.key.as_ref()`
+  // and `<acct>.key().as_ref()` shapes are visible. If <acct> is a state-bound
+  // name shadowed by a deserialized struct, route through the backup AccountInfo.
+  if (w.emitter.frameworkName === "Pinocchio") {
+    const stateBoundForKey = new Set<string>();
+    for (const acc of w.instr.accounts) {
+      if (w.isGeneratedStateType(acc.accountType)) {
+        stateBoundForKey.add(snakeCase(acc.name));
+      }
+    }
+    if (stateBoundForKey.size > 0) {
+      transformedRawCode = transformedRawCode.replace(
+        /\b(\w+)\.key(\(\))?\.as_ref\(\)/g,
+        (full, name) => {
+          if (!stateBoundForKey.has(name)) return full;
+          const infoVar = w.accountInfoVars.get(name) ?? w.resolveAccountInfoVar(snakeCase(name));
+          if (infoVar === name) return full;
+          return `${infoVar}.key().as_ref()`;
+        },
+      );
+      transformedRawCode = transformedRawCode.replace(
+        /\b(\w+)\.key\(\)(?!\.as_ref)/g,
+        (full, name) => {
+          if (!stateBoundForKey.has(name)) return full;
+          const infoVar = w.accountInfoVars.get(name) ?? w.resolveAccountInfoVar(snakeCase(name));
+          if (infoVar === name) return full;
+          return `${infoVar}.key()`;
+        },
+      );
+    }
+  }
   transformedRawCode = transformedRawCode
     .replace(/(?<!:)\bClock::get\(\)\?/g, w.qualifiedClockGetExpr())
     .replace(/(?<!:)\bRent::get\(\)\?/g, w.qualifiedRentGetExpr())

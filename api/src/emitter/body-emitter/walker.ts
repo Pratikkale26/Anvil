@@ -1102,6 +1102,11 @@ export class BodyWalker {
       // (#44-followup — without the lookahead, `*X.key().as_ref()`
       // emits and token-fundraiser refund seeds break).
       transformed = this.rewriteAccountKeyValueRefs(transformed, accountName);
+      // After state rebind shadows the AccountInfo binding, body code that
+      // does `<name>.key().as_ref()` or `<name>.key.as_ref()` calls `.key`
+      // on the struct (no such method). rewriteAccountKeyChains expands
+      // both shapes against the AccountInfo backup binding.
+      transformed = this.rewriteAccountKeyChains(transformed, accountName);
       // H7 Phase 5e — Account<'info, T> lamport-method family. Five rules
       // sharing the `\b${accountName}.<method>(args)` receiver shape but
       // diverging on arg-arity (0 / 1 paren-capture / 0+`?;`) and output
