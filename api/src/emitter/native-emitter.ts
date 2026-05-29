@@ -1726,7 +1726,7 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
       ? ""
       : `    let ${dataVar} = ${resolvedTypeName}::try_from_slice(&${accountInfoVar}.data.borrow()[8..])?;\n`;
     return `    // PDA signer seeds for '${account}'
-${maybeRead}    let seeds = &[
+${maybeRead}    let seeds: &[&[u8]] = &[
         ${seedsStr},
     ];
     let signer_seeds = &[&seeds[..]];`;
