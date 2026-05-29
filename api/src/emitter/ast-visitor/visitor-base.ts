@@ -1598,7 +1598,7 @@ export class AstVisitorBase {
     // trailing .with_X(...) chains.
     const efMatch = err.match(/^Error::from\((.+?)\)((?:\s*\.with_\w+\([\s\S]*?\))*)\s*$/);
     if (efMatch) {
-      err = efMatch[1].replace(/\.into\(\)$/, '') + '.into()';
+      err = efMatch[1]!.replace(/\.into\(\)$/, '') + '.into()';
     }
     err = err.replace(/\bsource!\(\)/g, '()');
     return [returnStmt(call(path(["Err"]), [parseSimpleExpr(err)]))];

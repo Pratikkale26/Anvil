@@ -476,7 +476,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     transformedRawCode = transformedRawCode.replace(
       /(&\[)([\s\S]*?)(\]\s*(?:,)?\s*\))/g,
       (_full, open, inner, close) => {
-        const cloned = inner.replace(/\b([a-z_][a-z0-9_]*)\b(?!\s*[.(:])/g, (id) => {
+        const cloned = inner.replace(/\b([a-z_][a-z0-9_]*)\b(?!\s*[.(:])/g, (id: string) => {
           if (/^(?:true|false|self|mut|ref|let|return|if|else|for|while|match|_)$/.test(id)) return id;
           return `${id}.clone()`;
         });
