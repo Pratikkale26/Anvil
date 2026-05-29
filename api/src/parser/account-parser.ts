@@ -112,6 +112,15 @@ export function parseAccountsStructFields(
       const rawFieldName = nameNodeRaw?.text ?? "";
       const rawType = typeNodeRaw?.text ?? "";
       const rawAccountTypeBase = extractAccountType(rawType).split("<")[0]!.trim();
+      // #30 — composite detection must key off the field's OUTERMOST type (its
+      // constructor), NOT extractAccountType's unwrapped inner type. Otherwise
+      // `Account<'info, Mint>` — an SPL account whose DATA type `Mint` shares a
+      // name with a `#[derive(Accounts)]` context struct (e.g. uxd's `Mint`
+      // mint-instruction context) — is mistaken for a composite ref to that
+      // struct, producing a false "Mint → Mint" cycle. A composite field's type
+      // is a bare Accounts struct (`Foo<'info>`); a wrapped account's outermost
+      // type is `Account`/`Box`/`Signer`/… and is never a registered struct.
+      const compositeTypeBase = rawType.split("<")[0]!.trim();
 
       // H1 — composite flatten path. When flattenComposites is enabled
       // and the field's type matches another Accounts struct, recurse:
@@ -124,16 +133,16 @@ export function parseAccountsStructFields(
         opts?.flattenComposites
         && opts.accountsStructRegistry
         && rawFieldName
-        && opts.accountsStructRegistry.has(rawAccountTypeBase)
+        && opts.accountsStructRegistry.has(compositeTypeBase)
       ) {
         const stack = opts._flattenStack ?? [];
-        if (stack.includes(rawAccountTypeBase) || parentStructName === rawAccountTypeBase) {
-          throw new CompositeAccountsCycleError(rawAccountTypeBase, [
+        if (stack.includes(compositeTypeBase) || parentStructName === compositeTypeBase) {
+          throw new CompositeAccountsCycleError(compositeTypeBase, [
             ...stack,
             parentStructName,
           ]);
         }
-        const innerEntry = opts.accountsStructRegistry.get(rawAccountTypeBase)!;
+        const innerEntry = opts.accountsStructRegistry.get(compositeTypeBase)!;
         const prefix = opts._flattenPrefix ?? "";
         const sourcePathPrefix = opts._sourcePathPrefix ?? "";
         // Recurse: inner struct's accounts get prefixed with `<rawFieldName>_`
