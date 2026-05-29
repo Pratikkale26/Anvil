@@ -2508,7 +2508,11 @@ export class AstVisitorBase {
     );
 
     const out: RustStmt[] = [];
-    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    // #29 — same fix as the pinocchio captured path: for ANY signed
+    // set_authority regenerate the authority PDA's canonical signer_seeds (the
+    // source's seeds var was consumed by the consolidator but the prelude only
+    // fired for the legacy "signer_seeds" name → dangling `signer` → E0425).
+    if (stmt.signerSeeds) {
       for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.currentAuthority)) {
         out.push(rawLine(preludeLine));
       }
@@ -2517,7 +2521,7 @@ export class AstVisitorBase {
     const currentAuthorityVar = stmt.signerSeeds
       ? w.resolveAccountInfoVar(snakeCase(stmt.currentAuthority))
       : snakeCase(stmt.currentAuthority);
-    const signerSeedsExpr = resolveSignerSeedsExpr(w, stmt.signerSeeds);
+    const signerSeedsExpr = stmt.signerSeeds ? "signer_seeds" : undefined;
     const crate = stmt.tokenProgram === "token_2022" ? "spl_token_2022" : "spl_token";
     // G107 — guard against double-prefix. If the source already qualified
     // `spl_token::instruction::AuthorityType::X` (set-authority demo),
@@ -4164,7 +4168,14 @@ export class AstVisitorBase {
       `Transformed: token::set_authority(${stmt.account}, ${stmt.authorityType})`,
     );
     const out: RustStmt[] = [];
-    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+    // #29 — a signed set_authority whose source named the seeds var something
+    // other than the legacy "signer_seeds" (e.g. `let signer = &[&seeds[..]]`)
+    // has that binding consumed by the consolidator but NOT regenerated (the
+    // prelude gate only fires for "signer_seeds", and stmt.signerSeeds stays
+    // the dropped source name → E0425). For ANY signed set_authority the signer
+    // is the currentAuthority PDA, so regenerate its canonical signer seeds
+    // (idempotent) and use `signer_seeds` below.
+    if (stmt.signerSeeds) {
       for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.currentAuthority)) {
         out.push(rawLine(preludeLine));
       }
@@ -4192,7 +4203,9 @@ export class AstVisitorBase {
       currentAuthority,
       stmt.authorityType,
       resolvedNewAuth,
-      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+      // #29 — ensureSignerSeedsForAccount above emits canonical `signer_seeds`;
+      // resolveSignerSeedsExpr would return the dropped source name here.
+      stmt.signerSeeds ? "signer_seeds" : undefined,
       {
         tokenProgram: stmt.tokenProgram,
         ...(stmt.tokenProgramArg ? { tokenProgramArg: snakeCase(stmt.tokenProgramArg) } : {}),

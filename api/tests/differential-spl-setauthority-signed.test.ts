@@ -28,7 +28,6 @@ import {
   sendSetupTx,
 } from "./differential-setup-helpers.ts";
 import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
-import { test } from "bun:test";
 
 const PROGRAM_ID = "CjuyXKTgowEitmmPe6TkdYWye35qqe9PSa2Zu2e5wQWg";
 
@@ -138,15 +137,8 @@ function defineSetAuthFixture(fixtureName: string, anvilTarget?: "native") {
   });
 }
 
-// GATED: blocked on a real cpi_set_authority emit bug — the signed-helper form
-// references ${signerSeeds} which resolves to the source's `signer` var, but the
-// CPI consolidator drops that binding for set_authority (transfer/mint regenerate
-// `signer_seeds`; set_authority preserves the source `let seeds` + drops `let signer`)
-// → E0425 cannot find value `signer`. See pinocchio-emitter.ts:1266. Run on demand:
-//   SET_AUTH_SIGNED=1 bun test tests/differential-spl-setauthority-signed.test.ts
-if (process.env.SET_AUTH_SIGNED) {
-  defineSetAuthFixture("spl-setauthority-signed");
-  defineSetAuthFixture("spl-setauthority-signed-native", "native");
-} else {
-  test.skip("spl-setauthority-signed — BLOCKED on cpi_set_authority signer-seeds bug (set SET_AUTH_SIGNED=1)", () => {});
-}
+// PDA-signed set_authority via the CpiContext helper + with_signer — byte-equal
+// on both pinocchio + native after the #29 fix (set_authority now regenerates
+// the authority PDA's canonical signer_seeds, like transfer/mint).
+defineSetAuthFixture("spl-setauthority-signed");
+defineSetAuthFixture("spl-setauthority-signed-native", "native");
