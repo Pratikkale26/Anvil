@@ -173,6 +173,13 @@ fixed-macro = "1"
 # emit on hand-rolled bytes (no crate dep needed). The source's
 # get_feed_id_from_hex("0x...") is parsed at emit time into a byte
 # array literal so the receiver-sdk isn't referenced at runtime either.
+
+# Match Anchor's generated [profile.release] (overflow-checks = true) and the
+# Anvil scaffold (project-scaffold.ts). Without this, /build ships programs
+# that WRAP on integer overflow where real Anchor reverts — a silent
+# money-loss divergence. Verified by differential-overflow-revert.
+[profile.release]
+overflow-checks = true
 `;
 
 // FUTURE: Emit-side blocker (c) — solana-vote-program scaffold dep.
@@ -230,6 +237,12 @@ sha3 = "0.10"
 # Source 'use pyth_*::*' lines are filtered out by
 # filteredSourceImports. Adding the crates would re-introduce the
 # borsh-derive proc-macro interop issue.
+
+# Match Anchor's generated [profile.release] (overflow-checks = true) and the
+# Anvil scaffold — see PINOCCHIO_CARGO_TOML above. Without it /build wraps on
+# overflow where real Anchor reverts (silent money-loss divergence).
+[profile.release]
+overflow-checks = true
 `;
 
 function cargoTomlFor(target: BuildTarget): string {

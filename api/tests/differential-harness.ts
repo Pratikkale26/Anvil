@@ -793,6 +793,9 @@ ${fixture.anchorLangFeatures && fixture.anchorLangFeatures.length > 0
   ? `anchor-lang = { version = "${fixture.anchorVersionOverride ?? "0.31"}", features = ["${fixture.anchorLangFeatures.join('", "')}"] }`
   : `anchor-lang = "${fixture.anchorVersionOverride ?? "0.31"}"`}
 ${fixture.anchorExtraDeps ?? ""}
+
+[profile.release]
+overflow-checks = true
 `;
   writeFileSync(join(scratch, "Cargo.toml"), cargoToml);
   writeFileSync(join(scratch, "src/lib.rs"), fixture.anchorSource);
