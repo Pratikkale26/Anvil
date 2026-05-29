@@ -382,6 +382,14 @@ ${langFeatures.length > 0
   ? `anchor-lang = { version = "${anchorLangVersion}", features = ["${langFeatures.join('", "')}"] }`
   : `anchor-lang = "${anchorLangVersion}"`}
 ${validatedExtraDeps.replace(/version = "0\.31"/g, `version = "${anchorLangVersion}"`).replace(/anchor-spl = "0\.31"/g, `anchor-spl = "${anchorLangVersion}"`)}
+
+# Real Anchor's generated [profile.release] enables overflow-checks. The Anvil
+# side of this byte-equal build gets it via the scaffold (project-scaffold.ts),
+# so the Anchor reference MUST match or /build's own byte-equal falsely diverges
+# on any overflow-prone program (Anchor wraps, Anvil reverts). See build-runner.ts
+# + differential-overflow-revert.
+[profile.release]
+overflow-checks = true
 `;
   writeFileSync(join(scratch, "Cargo.toml"), cargoToml);
   writeFileSync(
