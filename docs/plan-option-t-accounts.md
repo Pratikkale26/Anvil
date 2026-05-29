@@ -32,3 +32,9 @@ Result today: **RED** — `DATA MISMATCH on 'counter': anchor=8, anvil=7`. Ancho
 
 ## Done
 Un-guard the fixture (drop the `B6_OPTION_T` gate), remove the `unimplemented!()` stub for the covered shapes, and the `optional_accounts_unsupported` warning fires only for genuinely-unsupported residual shapes (documented).
+
+## Progress (2026-05-29)
+
+**Surface 1 — presence check: DONE (commit `0e59f24`, byte-equal green).** Behind `B6_OPTION_T`: optional accounts bind as `Option<&AccountInfo>` via the None-sentinel (emitter-base, `accounts.get(idx).filter(|a| a.key() != program_id)`); `ensureStateRead` + `stateAccountNames` skip optionals (walker); `ctx.accounts.X.is_some()` → `X.is_some()` was already wired (walker.ts:1920). Fixture `differential-option-account` (None case) green; no default regression (test:fast 1631/1631).
+
+**Next — if-let-Some deserialize (precise finding).** The deserialize-inside-Some rewrite ALREADY EXISTS at walker.ts:1925-1946 — but ONLY for the `&mut ctx.accounts.X` (mutable, emits trailing `T::save`) shape. The read-only `&ctx.accounts.X` shape (`if let Some(cfg) = &ctx.accounts.maybe_x { cfg.field }`) has NO handler → carried verbatim → `cfg.field` on `&AccountInfo` fails to compile. **ACTION:** add a parallel regex mirroring walker.ts:1926 but matching `&\s*ctx\.accounts` (no `&mut`) and emitting the deserialize WITHOUT the trailing save (read-only). Then extend the fixture with a Some-case scenario (init a `Config { factor }`, `bump(Some(config))` → counter += factor) and verify byte-equal green. Then: `.key()`/`.lamports()` on optionals, CPI/init/has_one, finally un-gate.
