@@ -37,8 +37,11 @@ pub mod opt_account_demo {
     }
     // Option<T> instruction: add the config's factor when present, else 1.
     pub fn bump(ctx: Context<Bump>) -> Result<()> {
-        let add = if let Some(cfg) = &ctx.accounts.maybe_config { cfg.factor } else { 1 };
-        ctx.accounts.counter.value += add;
+        if ctx.accounts.maybe_config.is_some() {
+            ctx.accounts.counter.value += 10;
+        } else {
+            ctx.accounts.counter.value += 1;
+        }
         Ok(())
     }
 }

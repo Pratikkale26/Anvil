@@ -144,7 +144,7 @@ export class BodyWalker {
     this.emittedBumps = new Set((ctx.preEmittedBumps ?? []).map((n) => snakeCase(n)));
 
     this.stateAccountNames = instr.accounts
-      .filter((account) => this.isGeneratedStateType(account.accountType))
+      .filter((account) => this.isGeneratedStateType(account.accountType) && !account.isOptional)
       .map((account) => snakeCase(account.name));
 
     this.mutableStateAccounts = new Set(
@@ -481,6 +481,10 @@ export class BodyWalker {
     const accountRef = this.instr.accounts.find(
       (acc) => snakeCase(acc.name) === normalized,
     );
+    // B6 Option<T>: optional accounts are bound as Option<&AccountInfo> (the
+    // None-sentinel binding in emitter-base) — don't emit a from_account_info
+    // read; the body uses the Option directly (.is_some() etc.).
+    if (accountRef?.isOptional) return normalized;
     const typeName = accountRef?.accountType ?? "Unknown";
     // #26 — zero-copy accounts: if the body has a zero_copy_load_* for
     // this account, that handler emits the canonical bytemuck cast

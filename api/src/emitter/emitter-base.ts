@@ -2966,7 +2966,10 @@ impl ZeroCopy for ${accName} {}`;
     // compiling vs. the ~20+ cargo errors a partial emit would yield.
     // The /parse warning (optional_accounts_unsupported) tells the user.
     const optionalAccounts = instr.accounts.filter((a) => a.isOptional);
-    if (optionalAccounts.length > 0) {
+    // B6 Option<T> arc: gated behind B6_OPTION_T. Default = the loud
+    // unimplemented!() stub (no regression). Under the flag, fall through to
+    // the real emit (None-sentinel binding below + presence-check body).
+    if (optionalAccounts.length > 0 && !process.env.B6_OPTION_T) {
       return this.emitOptionalAccountsStubFunction(instr, optionalAccounts);
     }
     // #70 — Non-unit Result<T> return types can't change Anvil's uniform
@@ -2991,7 +2994,7 @@ impl ZeroCopy for ${accName} {}`;
     // Account bindings
     const bindings = instr.accounts
       .map((acc, idx) => acc.isOptional
-        ? `    let ${snakeCase(acc.name)} = accounts.get(${idx});`
+        ? `    let ${snakeCase(acc.name)} = accounts.get(${idx}).filter(|a| a.key${this.frameworkName === "Pinocchio" ? "()" : ""} != program_id);`
         : this.emitAccountBinding(snakeCase(acc.name), idx))
       .join("\n");
 
