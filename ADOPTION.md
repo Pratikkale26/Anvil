@@ -26,7 +26,7 @@ repo header.
 
 | Signal | Value | As of |
 |---|---|---|
-| Byte-equal differential test files | 143 | 2026-05-28 |
+| Byte-equal differential test files | 150 | 2026-05-29 |
 | First multi-file real-world byte-equal | Helium circuit-breaker (8 ix, 12 .rs files) | 2026-05-28 |
 | Cargo-green MUST_PASS fixtures | 193 | 2026-05-28 |
 | Demo programs build-sbf GREEN | 64/64 (100%) | 2026-05-28 |
