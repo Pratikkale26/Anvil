@@ -56,6 +56,9 @@ pub fn initialize(
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let counter = &accounts[0];
     let authority = &accounts[1];
@@ -69,7 +72,7 @@ pub fn initialize(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -112,6 +115,9 @@ pub fn increment(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let counter = &accounts[0];
     let authority = &accounts[1];
@@ -127,7 +133,7 @@ pub fn increment(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -160,6 +166,9 @@ pub fn decrement(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let counter = &accounts[0];
     let authority = &accounts[1];
@@ -175,7 +184,7 @@ pub fn decrement(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -208,6 +217,9 @@ pub fn reset(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let counter = &accounts[0];
     let authority = &accounts[1];
@@ -222,7 +234,7 @@ pub fn reset(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 

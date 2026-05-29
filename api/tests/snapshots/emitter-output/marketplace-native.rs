@@ -60,6 +60,9 @@ pub fn initialize(
     if accounts.len() < 4 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let marketplace = &accounts[0];
     let admin = &accounts[1];
@@ -74,7 +77,7 @@ pub fn initialize(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 2 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -124,6 +127,9 @@ pub fn list(
     if accounts.len() < 9 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let seller = &accounts[0];
     let nft_mint = &accounts[1];
@@ -146,7 +152,7 @@ pub fn list(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -248,6 +254,9 @@ pub fn delist(
     if accounts.len() < 9 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let seller = &accounts[0];
     let _nft_mint = &accounts[1];
@@ -272,7 +281,7 @@ pub fn delist(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -299,7 +308,7 @@ pub fn delist(
         return Err(MarketplaceError::Unauthorized.into());
     }
     // PDA signer seeds for 'listing'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"listing",
         listing.seller.as_ref(),
         &listing.seed.to_le_bytes(),
@@ -350,6 +359,9 @@ pub fn purchase(
     if accounts.len() < 11 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let buyer = &accounts[0];
     let seller = &accounts[1];
@@ -359,7 +371,7 @@ pub fn purchase(
     let marketplace = &accounts[5];
     let treasury = &accounts[6];
     let vault = &accounts[7];
-    let _token_program = &accounts[8];
+    let token_program = &accounts[8];
     let _associated_token_program = &accounts[9];
     let _system_program = &accounts[10];
 
@@ -376,7 +388,7 @@ pub fn purchase(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -385,7 +397,7 @@ pub fn purchase(
         buyer.key,
         buyer.key,
         nft_mint.key,
-        &spl_token::id(),
+        token_program.key,
     );
     invoke(
         &create_ata_ix,
@@ -431,7 +443,7 @@ pub fn purchase(
         &[buyer.clone(), treasury.clone()],
     )?;
     // PDA signer seeds for 'listing'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"listing",
         listing.seller.as_ref(),
         &listing.seed.to_le_bytes(),
@@ -480,6 +492,9 @@ pub fn update_fee(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let marketplace = &accounts[0];
     let admin = &accounts[1];
@@ -495,7 +510,7 @@ pub fn update_fee(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 2 {
         return Err(ProgramError::InvalidInstructionData);
     }

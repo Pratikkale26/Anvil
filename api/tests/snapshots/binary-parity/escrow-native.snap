@@ -152,6 +152,9 @@ pub fn accept_escrow(
     if accounts.len() < 12 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let taker = &accounts[0];
     let maker = &accounts[1];
@@ -163,7 +166,7 @@ pub fn accept_escrow(
     let escrow = &accounts[7];
     let vault = &accounts[8];
     let _system_program = &accounts[9];
-    let _token_program = &accounts[10];
+    let token_program = &accounts[10];
     let _associated_token_program = &accounts[11];
 
     if !taker.is_signer {
@@ -176,7 +179,7 @@ pub fn accept_escrow(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -185,7 +188,7 @@ pub fn accept_escrow(
         taker.key,
         taker.key,
         mint_a.key,
-        &spl_token::id(),
+        token_program.key,
     );
     invoke(
         &create_ata_ix,
@@ -196,7 +199,7 @@ pub fn accept_escrow(
         taker.key,
         maker.key,
         mint_b.key,
-        &spl_token::id(),
+        token_program.key,
     );
     invoke(
         &create_ata_ix,
@@ -222,7 +225,7 @@ pub fn accept_escrow(
         return Err(ProgramError::InvalidSeeds);
     }
     // PDA signer seeds for 'escrow'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"escrow",
         escrow.maker.as_ref(),
         &escrow.seed.to_le_bytes(),
@@ -300,6 +303,9 @@ pub fn cancel_escrow(
     if accounts.len() < 6 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let maker = &accounts[0];
     let mint_a = &accounts[1];
@@ -318,7 +324,7 @@ pub fn cancel_escrow(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -339,7 +345,7 @@ pub fn cancel_escrow(
         return Err(ProgramError::InvalidSeeds);
     }
     // PDA signer seeds for 'escrow'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"escrow",
         escrow.maker.as_ref(),
         &escrow.seed.to_le_bytes(),
@@ -404,6 +410,9 @@ pub fn create_escrow(
     if accounts.len() < 10 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let maker = &accounts[0];
     let mint_a = &accounts[1];
@@ -424,7 +433,7 @@ pub fn create_escrow(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }

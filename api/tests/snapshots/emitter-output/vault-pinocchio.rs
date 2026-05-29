@@ -58,6 +58,9 @@ pub fn initialize(
     if accounts.len() < 4 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let vault_state = &accounts[0];
     let vault = &accounts[1];
@@ -71,7 +74,7 @@ pub fn initialize(
         return Err(ProgramError::InvalidAccountData);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -107,6 +110,9 @@ pub fn deposit(
     if accounts.len() < 4 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let vault_state = &accounts[0];
     let vault = &accounts[1];
@@ -124,7 +130,7 @@ pub fn deposit(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -162,6 +168,9 @@ pub fn withdraw(
     if accounts.len() < 4 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let vault_state = &accounts[0];
     let vault = &accounts[1];
@@ -179,7 +188,7 @@ pub fn withdraw(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -209,7 +218,7 @@ pub fn withdraw(
         return Err(VaultError::WouldBreakRentExempt.into());
     }
     // PDA signer seeds for 'vault'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"vault",
         vault_state.authority.as_ref(),
         &[vault_state.vault_bump],

@@ -63,6 +63,9 @@ pub fn initialize(
     if accounts.len() < 4 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let marketplace = &accounts[0];
     let admin = &accounts[1];
@@ -77,7 +80,7 @@ pub fn initialize(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 2 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -124,6 +127,9 @@ pub fn list(
     if accounts.len() < 9 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let seller = &accounts[0];
     let nft_mint = &accounts[1];
@@ -146,7 +152,7 @@ pub fn list(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -242,6 +248,9 @@ pub fn delist(
     if accounts.len() < 9 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let seller = &accounts[0];
     let _nft_mint = &accounts[1];
@@ -266,7 +275,7 @@ pub fn delist(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -289,7 +298,7 @@ pub fn delist(
     }
     // PDA signer seeds for 'listing'
     let seed_bytes = listing.seed.to_le_bytes();
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"listing",
         listing.seller.as_ref(),
         &seed_bytes,
@@ -317,6 +326,9 @@ pub fn purchase(
     if accounts.len() < 11 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let buyer = &accounts[0];
     let seller = &accounts[1];
@@ -343,7 +355,7 @@ pub fn purchase(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -394,7 +406,7 @@ pub fn purchase(
     transfer_lamports(buyer, treasury, fee)?;
     // PDA signer seeds for 'listing'
     let seed_bytes = listing.seed.to_le_bytes();
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"listing",
         listing.seller.as_ref(),
         &seed_bytes,
@@ -420,6 +432,9 @@ pub fn update_fee(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let marketplace = &accounts[0];
     let admin = &accounts[1];
@@ -435,7 +450,7 @@ pub fn update_fee(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 2 {
         return Err(ProgramError::InvalidInstructionData);
     }

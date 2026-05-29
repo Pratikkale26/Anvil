@@ -58,6 +58,9 @@ pub fn do_xfer(
     if accounts.len() < 5 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let from = &accounts[0];
     let to = &accounts[1];
@@ -73,7 +76,7 @@ pub fn do_xfer(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }

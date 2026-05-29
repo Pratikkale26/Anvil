@@ -78,6 +78,9 @@ pub fn record_min_balance(
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let state = &accounts[0];
     let authority = &accounts[1];
@@ -90,7 +93,7 @@ pub fn record_min_balance(
         return Err(ProgramError::InvalidAccountData);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 

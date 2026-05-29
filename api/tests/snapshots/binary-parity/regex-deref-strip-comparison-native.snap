@@ -9,6 +9,9 @@ pub fn approve(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let proposal = &accounts[0];
     let signer = &accounts[1];
@@ -23,7 +26,7 @@ pub fn approve(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 

@@ -40,6 +40,9 @@ pub fn append_four(
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let state = &accounts[0];
     let owner = &accounts[1];
@@ -56,7 +59,7 @@ pub fn append_four(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 1 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -136,6 +139,9 @@ pub fn append_one(
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let state = &accounts[0];
     let owner = &accounts[1];
@@ -152,7 +158,7 @@ pub fn append_one(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 1 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -211,6 +217,9 @@ pub fn append_two(
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let state = &accounts[0];
     let owner = &accounts[1];
@@ -227,7 +236,7 @@ pub fn append_two(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 1 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -292,6 +301,9 @@ pub fn init(
     if accounts.len() < 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let state = &accounts[0];
     let owner = &accounts[1];
@@ -304,7 +316,7 @@ pub fn init(
         return Err(ProgramError::InvalidAccountData);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 

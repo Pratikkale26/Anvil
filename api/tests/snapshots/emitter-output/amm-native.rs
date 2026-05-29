@@ -100,6 +100,9 @@ pub fn initialize_pool(
     if accounts.len() < 9 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let pool = &accounts[0];
     let vault_a = &accounts[1];
@@ -119,7 +122,7 @@ pub fn initialize_pool(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -267,6 +270,9 @@ pub fn add_liquidity(
     if accounts.len() < 10 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let user = &accounts[0];
     let pool = &accounts[1];
@@ -276,7 +282,7 @@ pub fn add_liquidity(
     let vault_b = &accounts[5];
     let lp_mint = &accounts[6];
     let user_lp_token = &accounts[7];
-    let token_program = &accounts[8];
+    let _token_program = &accounts[8];
     let _system_program = &accounts[9];
 
     if !user.is_signer {
@@ -290,7 +296,7 @@ pub fn add_liquidity(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -386,7 +392,6 @@ pub fn add_liquidity(
     if !(lp_tokens > 0) {
         return Err(AmmError::InsufficientLiquidity.into());
     }
-    let token_program_info = token_program;
     // SPL Token transfer — user_token_a → vault_a
     let transfer_ix = spl_token::instruction::transfer(
         &spl_token::id(),
@@ -417,7 +422,7 @@ pub fn add_liquidity(
     let token_mint_b = pool.token_mint_b;
     let pool_bump = pool.bump;
     // PDA signer seeds for 'pool'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"pool",
         token_mint_a.as_ref(),
         token_mint_b.as_ref(),
@@ -464,6 +469,9 @@ pub fn remove_liquidity(
     if accounts.len() < 9 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let user = &accounts[0];
     let pool = &accounts[1];
@@ -473,7 +481,7 @@ pub fn remove_liquidity(
     let vault_b = &accounts[5];
     let lp_mint = &accounts[6];
     let user_lp_token = &accounts[7];
-    let token_program = &accounts[8];
+    let _token_program = &accounts[8];
 
     if !user.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -486,7 +494,7 @@ pub fn remove_liquidity(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -548,12 +556,11 @@ pub fn remove_liquidity(
     if !(amount_b >= min_amount_b) {
         return Err(AmmError::SlippageExceeded.into());
     }
-    let token_program_info = token_program;
     let token_mint_a = pool.token_mint_a;
     let token_mint_b = pool.token_mint_b;
     let pool_bump = pool.bump;
     // PDA signer seeds for 'pool'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"pool",
         token_mint_a.as_ref(),
         token_mint_b.as_ref(),
@@ -627,6 +634,9 @@ pub fn swap(
     if accounts.len() < 7 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let user = &accounts[0];
     let pool = &accounts[1];
@@ -634,7 +644,7 @@ pub fn swap(
     let user_token_out = &accounts[3];
     let vault_a = &accounts[4];
     let vault_b = &accounts[5];
-    let token_program = &accounts[6];
+    let _token_program = &accounts[6];
 
     if !user.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -647,7 +657,7 @@ pub fn swap(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -722,12 +732,11 @@ pub fn swap(
     if !(amount_out < reserve_out) {
         return Err(AmmError::InsufficientLiquidity.into());
     }
-    let token_program_info = token_program;
     let token_mint_a = pool.token_mint_a;
     let token_mint_b = pool.token_mint_b;
     let pool_bump = pool.bump;
     // PDA signer seeds for 'pool'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"pool",
         token_mint_a.as_ref(),
         token_mint_b.as_ref(),
@@ -806,6 +815,9 @@ pub fn freeze_pool(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let pool = &accounts[0];
     let admin = &accounts[1];
@@ -820,7 +832,7 @@ pub fn freeze_pool(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -847,6 +859,9 @@ pub fn unfreeze_pool(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let pool = &accounts[0];
     let admin = &accounts[1];
@@ -861,7 +876,7 @@ pub fn unfreeze_pool(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -888,6 +903,9 @@ pub fn update_fee_rate(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let pool = &accounts[0];
     let admin = &accounts[1];
@@ -903,7 +921,7 @@ pub fn update_fee_rate(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -942,6 +960,9 @@ pub fn withdraw_protocol_fees(
     if accounts.len() < 7 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let pool = &accounts[0];
     let vault_a = &accounts[1];
@@ -949,7 +970,7 @@ pub fn withdraw_protocol_fees(
     let admin_token_a = &accounts[3];
     let admin_token_b = &accounts[4];
     let admin = &accounts[5];
-    let token_program = &accounts[6];
+    let _token_program = &accounts[6];
 
     if !admin.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -961,7 +982,7 @@ pub fn withdraw_protocol_fees(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -987,12 +1008,11 @@ pub fn withdraw_protocol_fees(
     if !(amount_a > 0 || amount_b > 0) {
         return Err(AmmError::NoProtocolFees.into());
     }
-    let token_program_info = token_program;
     let token_mint_a = pool.token_mint_a;
     let token_mint_b = pool.token_mint_b;
     let pool_bump = pool.bump;
     // PDA signer seeds for 'pool'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"pool",
         token_mint_a.as_ref(),
         token_mint_b.as_ref(),

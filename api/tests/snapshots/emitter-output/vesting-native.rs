@@ -66,6 +66,9 @@ pub fn create_vesting(
     if accounts.len() < 8 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let grantor = &accounts[0];
     let vesting = &accounts[1];
@@ -84,7 +87,7 @@ pub fn create_vesting(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 32 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -239,6 +242,9 @@ pub fn release(
     if accounts.len() < 5 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let beneficiary = &accounts[0];
     let vesting = &accounts[1];
@@ -256,7 +262,7 @@ pub fn release(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -296,7 +302,7 @@ pub fn release(
     let vesting_key = *vesting_account.key;
     let vault_bump = vesting.vault_bump;
     // PDA signer seeds for 'vesting_key'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         VAULT_SEED,
         vesting_key.as_ref(),
         &[vault_bump],
@@ -330,6 +336,9 @@ pub fn revoke(
     if accounts.len() < 5 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let grantor = &accounts[0];
     let vesting = &accounts[1];
@@ -347,7 +356,7 @@ pub fn revoke(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -402,6 +411,9 @@ pub fn close(
     if accounts.len() < 5 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let grantor = &accounts[0];
     let vesting = &accounts[1];
@@ -419,7 +431,7 @@ pub fn close(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -445,7 +457,7 @@ pub fn close(
     let vesting_key = *vesting_account.key;
     let vault_bump = vesting.vault_bump;
     // PDA signer seeds for 'vesting_key'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         VAULT_SEED,
         vesting_key.as_ref(),
         &[vault_bump],

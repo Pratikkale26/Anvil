@@ -96,6 +96,9 @@ pub fn initialize_pool(
     if accounts.len() < 9 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let pool = &accounts[0];
     let stake_vault = &accounts[1];
@@ -115,7 +118,7 @@ pub fn initialize_pool(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -248,6 +251,9 @@ pub fn stake(
     if accounts.len() < 7 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let user = &accounts[0];
     let user_stake = &accounts[1];
@@ -268,7 +274,7 @@ pub fn stake(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     if remaining.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -364,6 +370,9 @@ pub fn claim_rewards(
     if accounts.len() < 6 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let user = &accounts[0];
     let user_stake = &accounts[1];
@@ -382,7 +391,7 @@ pub fn claim_rewards(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -418,7 +427,7 @@ pub fn claim_rewards(
         return Err(StakingError::NoRewards.into());
     }
     // PDA signer seeds for 'pool'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"pool",
         pool.stake_mint.as_ref(),
         &[pool.bump],
@@ -461,6 +470,9 @@ pub fn unstake(
     if accounts.len() < 9 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let user = &accounts[0];
     let user_stake = &accounts[1];
@@ -485,7 +497,7 @@ pub fn unstake(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -526,7 +538,7 @@ pub fn unstake(
             .checked_div(1_000_000).ok_or(StakingError::Overflow)?
             .try_into().map_err(|_| ProgramError::from(StakingError::Overflow))?;
     // PDA signer seeds for 'pool'
-    let seeds = &[
+    let seeds: &[&[u8]] = &[
         b"pool",
         pool.stake_mint.as_ref(),
         &[pool.bump],
@@ -574,6 +586,9 @@ pub fn pause_pool(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let pool = &accounts[0];
     let admin = &accounts[1];
@@ -588,7 +603,7 @@ pub fn pause_pool(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -615,6 +630,9 @@ pub fn resume_pool(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let pool = &accounts[0];
     let admin = &accounts[1];
@@ -629,7 +647,7 @@ pub fn resume_pool(
         return Err(ProgramError::IncorrectProgramId);
     }
 
-    if !data.is_empty() {
+    if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
     }
 

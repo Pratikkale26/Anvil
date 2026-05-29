@@ -44,6 +44,9 @@ pub fn write_memo(
     if accounts.len() < 2 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
 
     let authority = &accounts[0];
     let _memo_program = &accounts[1];
@@ -53,7 +56,7 @@ pub fn write_memo(
     }
 
     // Args
-    let mut remaining = data;
+    let mut remaining: &[u8] = __ix_data;
     let data: Vec<u8> = BorshDeserialize::deserialize(&mut remaining)
         .map_err(|_| ProgramError::InvalidInstructionData)?;
     if !remaining.is_empty() {
