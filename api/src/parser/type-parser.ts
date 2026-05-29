@@ -196,6 +196,53 @@ export function extractImports(root: SyntaxNode): string[] {
   return imports;
 }
 
+// ─── Protocol version pinning (B3 pin-and-assert) ───────────────────────────
+
+/**
+ * Crates whose byte-level constants (instruction discriminators, account
+ * layouts, byte offsets) Anvil HARD-CODES. The pinned major.minor is the
+ * version those constants were written against; a source declaring a different
+ * major.minor risks wrong emitted bytes.
+ */
+const PINNED_PROTOCOL_VERSIONS: Record<string, string> = {
+  "mpl-token-metadata": "5.1",
+  "mpl-core": "0.10",
+  "anchor-spl": "0.31",
+  "pyth-sdk-solana": "0.10",
+};
+
+function protocolMajorMinor(v: string): string {
+  const m = v.replace(/^[=^~]\s*/, "").match(/^(\d+)\.(\d+)/);
+  return m ? `${m[1]}.${m[2]}` : v.trim();
+}
+
+/**
+ * pin-and-assert (B3): scan the source's dependency declarations for the pinned
+ * protocol crates and report any whose major.minor differs from Anvil's pin.
+ * Pure (input = source text) so it's directly unit-testable. Best-effort: only
+ * fires when the dep line is visible in `source` (project inputs / sources
+ * carrying their Cargo.toml block); a bare .rs paste has no dep block and
+ * yields no findings.
+ */
+export function detectProtocolVersionMismatches(
+  source: string,
+): Array<{ crate: string; found: string; pinned: string }> {
+  const out: Array<{ crate: string; found: string; pinned: string }> = [];
+  for (const [crate, pinned] of Object.entries(PINNED_PROTOCOL_VERSIONS)) {
+    const esc = crate.replace(/-/g, "[_-]");
+    const extended = source.match(
+      new RegExp(`\\b${esc}\\s*=\\s*\\{[^}]*\\bversion\\s*=\\s*"([^"]+)"`),
+    );
+    const terse = source.match(new RegExp(`\\b${esc}\\s*=\\s*"([^"]+)"`));
+    const found = extended?.[1] ?? terse?.[1];
+    if (!found) continue;
+    if (protocolMajorMinor(found) !== protocolMajorMinor(pinned)) {
+      out.push({ crate, found, pinned });
+    }
+  }
+  return out;
+}
+
 // ─── Program ID extraction ──────────────────────────────────────────────────
 
 /**

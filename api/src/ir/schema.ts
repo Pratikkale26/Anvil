@@ -2015,6 +2015,15 @@ export const ParserWarningCodeSchema = z.enum([
    */
   "multiple_declare_id",
   /**
+   * Source declares a protocol crate (mpl-token-metadata / mpl-core /
+   * anchor-spl / pyth-sdk-solana) at a version whose major.minor differs from
+   * Anvil's pin — the version its hardcoded discriminators / account layouts /
+   * byte offsets target. Emitted CPIs may hit the wrong instruction or read the
+   * wrong offsets. Best-effort: only fires when the dep block is visible in the
+   * parsed source.
+   */
+  "protocol_version_mismatch",
+  /**
    * B6 — Parser saw a CPI-shape call (anchor_spl::* / token_interface::* /
    * <crate>::cpi::* / solana_program::program::invoke{_signed}) and could
    * NOT match it against any typed extractor. Emit drops the call into

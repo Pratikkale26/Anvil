@@ -36,7 +36,7 @@ import {
 } from "./ast-helpers.js";
 import { parseInstructions, extractImplTargetName, parseFromImplDeclaration, type FromImplCatalogEntry } from "./instruction-parser.js";
 import { parseAccountDataStruct, extractByteArrayConsts } from "./account-parser.js";
-import { parseErrorEnum, parseHelperFn, parseCustomType, extractImports, extractProgramId, countProgramIdMacros } from "./type-parser.js";
+import { parseErrorEnum, parseHelperFn, parseCustomType, extractImports, extractProgramId, countProgramIdMacros, detectProtocolVersionMismatches } from "./type-parser.js";
 import { createWarningCollector } from "./warning-collector.js";
 import { buildHelperCpiCatalog } from "./helper-cpi-catalog.js";
 import { rewriteErrMacroToExplicit, expandPubkeyMacro, vendorExternalProgramIDs, rewriteAnchorRequireMacros } from "./project-source.js";
@@ -321,6 +321,20 @@ export async function parseAnchor(
           `Multiple declare_id!/declare_program! macros found; Anvil used the first in ` +
           `source order ("${programId}") regardless of #[cfg]. If your source has per-target ` +
           `IDs (mainnet/devnet branches), verify this is the intended program ID for your build.`,
+      });
+    }
+
+    // B3 pin-and-assert: warn when a protocol crate's declared version differs
+    // (major.minor) from the version Anvil's hardcoded byte-level constants
+    // target — emitted CPIs for that protocol may produce wrong bytes.
+    for (const mm of detectProtocolVersionMismatches(source)) {
+      warningCollector.add({
+        code: "protocol_version_mismatch",
+        message:
+          `Source declares ${mm.crate} ${mm.found}, but Anvil's hardcoded ` +
+          `discriminators / account layouts / byte offsets for ${mm.crate} are pinned to ` +
+          `${mm.pinned}. Emitted CPIs may target the wrong instruction or read the wrong ` +
+          `offsets — verify the emitted bytes against ${mm.crate} ${mm.pinned}.`,
       });
     }
 
