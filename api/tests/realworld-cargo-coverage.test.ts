@@ -3,9 +3,17 @@
  *
  * For each real-world Anchor fixture in realworld-fixtures.ts:
  *   - parse + Anvil emit + validator gate
- *   - if cargo-clean: run cargo-build-sbf, expect green
- *   - if cargo-refuse: run cargo-build-sbf, expect errors
+ *   - if cargo-clean: run host `cargo check` (runCargoCheckGate), expect green
+ *   - if cargo-refuse: run host `cargo check`, expect errors
  *   - if validator-refuse: stop at validator with expected error
+ *
+ * NOTE (#22): this runs HOST `cargo check`, NOT `cargo build-sbf` (an earlier
+ * version of this comment wrongly claimed build-sbf). It is a fast type-check
+ * pre-filter — it compiles the non-cfg-gated handler bodies and catches type
+ * errors, and matched build-sbf on the cohort program tested — but it does NOT
+ * exercise the sBPF target, codegen/link, or the 4KB stack-frame limit. The
+ * authoritative SBF build is `cargo build-sbf` (in /build via build-runner, and
+ * realworld-cargo.test.ts via runBuild). See reports/check-vs-build-sbf-gap.md.
  *
  * Fixtures live in realworld-fixtures.ts (no `.test.ts`) so importing
  * from this file doesn't trigger duplicate test runs.

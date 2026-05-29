@@ -59,6 +59,13 @@ export interface CargoGateOptions {
 /**
  * Run `cargo check` in `scratchDir` and classify the result.
  *
+ * #22 — this is HOST `cargo check` (type-check, x86 target), NOT `cargo
+ * build-sbf`. It compiles the (non-cfg-gated) handler bodies and catches type
+ * errors — a sound, fast pre-filter that matched build-sbf on the cohort
+ * program tested — but it does NOT exercise the sBPF target, codegen/link, or
+ * the sBPF 4KB stack-frame limit. `cargo build-sbf` (in /build via
+ * build-runner) is authoritative. See reports/check-vs-build-sbf-gap.md.
+ *
  * The scratch dir MUST already contain a Cargo.toml + src/ tree as
  * produced by buildProjectScaffold + emit.files. Caller is responsible
  * for dir lifecycle (create + clean up).
