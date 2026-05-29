@@ -3147,11 +3147,15 @@ impl ZeroCopy for ${accName} {}`;
     // #37 — apply destructure-rename mappings from emitArgDeserialize.
     // Each entry maps a colliding arg-field name to its `__arg_<name>`
     // form so body references resolve to the arg value (not the same-
-    // named AccountInfo binding). Skip `<X>.method()` calls and `<X>.field`
-    // accesses since those target the AccountInfo, not the Pubkey arg.
+    // named AccountInfo binding). Skip `<X>.method()` / `<X>.field` accesses
+    // (those target the AccountInfo, not the Pubkey arg) AND `<X>:` positions:
+    // struct-literal field names + type ascriptions are NOT arg-value
+    // references — renaming them produces a phantom `__arg_<name>` struct
+    // field (E0560, found on helium price-oracle, #30). An arg *value*
+    // reference is never immediately followed by `:`.
     if (this._argRenameMap.size > 0) {
       for (const [from, to] of this._argRenameMap) {
-        const re = new RegExp(`(^|[^\\w.])${from}(?![\\w.])`, "g");
+        const re = new RegExp(`(^|[^\\w.])${from}(?![\\w.:])`, "g");
         rawBodyCode = rawBodyCode.replace(re, (_full, prefix: string) => `${prefix}${to}`);
       }
     }
