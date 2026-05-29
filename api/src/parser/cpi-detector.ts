@@ -432,6 +432,13 @@ export function detectCpi(
     if (/confidential_mint_burn::instruction::initialize_mint/.test(firstArgText)) {
       return extractT22ConfidentialMintBurnInitMint(callNode, collector);
     }
+    // Raw system_instruction::transfer via invoke/invoke_signed (#20):
+    // normalize the inline-builder form into the byte-equal-proven
+    // cpi_system_transfer kind; non-inline forms fall through to cpi_custom.
+    if (/system_instruction\s*::\s*transfer\s*\(/.test(firstArgText)) {
+      const sysTransfer = extractRawSystemTransfer(callNode, funcText);
+      if (sysTransfer) return sysTransfer;
+    }
     return extractCustomCpi(callNode, collector);
   }
 
@@ -3351,6 +3358,53 @@ function extractSystemTransfer(callNode: SyntaxNode, collector?: WarningCollecto
     to: cleanAccountRef(to),
     amount,
     signerSeeds,
+  };
+}
+
+// ─── Raw invoke/invoke_signed → system_instruction::transfer (#20) ──────────
+
+/**
+ * `invoke(&system_instruction::transfer(from, to, lamports), …)` /
+ * `invoke_signed(&system_instruction::transfer(…), …, seeds)`.
+ *
+ * The instruction builder is nested as the first *argument* of the invoke
+ * (not the called function), so it never reaches `extractSystemTransfer`.
+ * Only the INLINE builder form is normalized; a let-bound or imperatively
+ * mutated instruction returns undefined → falls through to the cpi_custom
+ * stub (honest, since we can't statically read its accounts/data).
+ *
+ * Emit is shared with the CpiContext path (visitCpiSystemTransfer), so the
+ * produced node is identical to the already-byte-equal-proven kind. The
+ * "signer_seeds" marker triggers seed regeneration from the `from` account's
+ * PDA constraints — the same mechanism the Anchor with_signer path uses.
+ */
+function extractRawSystemTransfer(
+  callNode: SyntaxNode,
+  funcText: string,
+): BodyStatement | undefined {
+  const argsNode = callNode.childForFieldName("arguments");
+  const args = argsNode ? getArguments(argsNode) : [];
+  const firstArg = args[0];
+  if (!firstArg) return undefined;
+
+  // Locate the system_instruction::transfer(...) call nested in `&<call>`.
+  const builderCall =
+    firstArg.type === "call_expression" ? firstArg : findDescendant(firstArg, "call_expression");
+  if (!builderCall) return undefined;
+  const builderFn = (builderCall.childForFieldName("function")?.text ?? "").replace(/\s+/g, "");
+  if (!/(?:^|::)system_instruction::transfer$/.test(builderFn)) return undefined;
+
+  const builderArgsNode = builderCall.childForFieldName("arguments");
+  const builderArgs = builderArgsNode ? getArguments(builderArgsNode) : [];
+  if (builderArgs.length < 3) return undefined;
+
+  const stripRef = (t: string) => t.trim().replace(/^[&*]\s*/, "");
+  return {
+    kind: "cpi_system_transfer",
+    from: cleanAccountRef(stripRef(builderArgs[0]!.text)),
+    to: cleanAccountRef(stripRef(builderArgs[1]!.text)),
+    amount: cleanAmountExpr(builderArgs[2]!.text),
+    signerSeeds: funcText === "invoke_signed" ? "signer_seeds" : undefined,
   };
 }
 
