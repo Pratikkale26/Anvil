@@ -64,6 +64,14 @@ pub mod opt_account_demo {
         }
         Ok(())
     }
+    // to_account_info() routes to the AccountInfo binding, so .lamports() on it
+    // is valid (the direct cfg.lamports() is not valid Anchor on Account<T>).
+    pub fn read_lamports(ctx: Context<Bump>) -> Result<()> {
+        if let Some(cfg) = &ctx.accounts.maybe_config {
+            ctx.accounts.counter.value += cfg.to_account_info().lamports();
+        }
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -168,6 +176,14 @@ if (process.env.B6_OPTION_T) {
           { pubkey: ctx.config, isSigner: false, isWritable: false },
         ],
         Buffer.from(anchorIxDiscriminator("read_key")),
+      );
+      // read_lamports: counter += cfg.to_account_info().lamports() (config's rent-exempt balance)
+      send(
+        [
+          { pubkey: ctx.counter, isSigner: false, isWritable: true },
+          { pubkey: ctx.config, isSigner: false, isWritable: false },
+        ],
+        Buffer.from(anchorIxDiscriminator("read_lamports")),
       );
     },
 

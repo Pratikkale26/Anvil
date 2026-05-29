@@ -1968,8 +1968,10 @@ export class BodyWalker {
           ),
         )
           // AccountInfo-level calls route to the underlying AccountInfo (the
-          // deserialized struct has none of these). key()/owner() return
-          // &Pubkey on pinocchio — deref to an owned Pubkey to match Anchor.
+          // deserialized struct has none of these). to_account_info() IS the
+          // binding; key()/owner() return &Pubkey on pinocchio — deref to an
+          // owned Pubkey to match Anchor.
+          .replace(new RegExp(`\\b${localVar}\\.to_account_info\\s*\\(\\s*\\)`, "g"), accountInfoVar)
           .replace(new RegExp(`\\b${localVar}\\.(key|owner)\\s*\\(\\s*\\)`, "g"), `(*${accountInfoVar}.$1())`)
           .replace(
             new RegExp(`\\b${localVar}\\.(lamports|data_len|is_signer|is_writable)\\s*\\(\\s*\\)`, "g"),
