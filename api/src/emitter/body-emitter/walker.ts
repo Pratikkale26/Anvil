@@ -1966,7 +1966,15 @@ export class BodyWalker {
               this.transformCtxAccountsReferences(this.transformNestedAnchorCode(body)),
             ),
           ),
-        );
+        )
+          // AccountInfo-level calls route to the underlying AccountInfo (the
+          // deserialized struct has none of these). key()/owner() return
+          // &Pubkey on pinocchio — deref to an owned Pubkey to match Anchor.
+          .replace(new RegExp(`\\b${localVar}\\.(key|owner)\\s*\\(\\s*\\)`, "g"), `(*${accountInfoVar}.$1())`)
+          .replace(
+            new RegExp(`\\b${localVar}\\.(lamports|data_len|is_signer|is_writable)\\s*\\(\\s*\\)`, "g"),
+            `${accountInfoVar}.$1()`,
+          );
         return `if let Some(${accountInfoVar}) = ${normalizedAccount} {\n        let ${localVar} = ${typeName}::from_account_info(${accountInfoVar})?;\n${indentBlock(transformedBody.trim(), "        ")}\n    }`;
       },
     );

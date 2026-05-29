@@ -54,6 +54,16 @@ pub mod opt_account_demo {
         }
         Ok(())
     }
+    // AccountInfo-level call on an optional: cfg.key() must route to the
+    // underlying AccountInfo binding (with deref) to match Anchor's owned Pubkey.
+    pub fn read_key(ctx: Context<Bump>) -> Result<()> {
+        if let Some(cfg) = &ctx.accounts.maybe_config {
+            if cfg.key() != ctx.accounts.counter.key() {
+                ctx.accounts.counter.value += 7;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -150,6 +160,14 @@ if (process.env.B6_OPTION_T) {
       send(
         [{ pubkey: ctx.config, isSigner: false, isWritable: true }],
         Buffer.from(anchorIxDiscriminator("bump_mut")),
+      );
+      // read_key: cfg.key() != counter.key() (true) → counter += 7
+      send(
+        [
+          { pubkey: ctx.counter, isSigner: false, isWritable: true },
+          { pubkey: ctx.config, isSigner: false, isWritable: false },
+        ],
+        Buffer.from(anchorIxDiscriminator("read_key")),
       );
     },
 
