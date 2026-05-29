@@ -29,14 +29,14 @@ pub fn bump_seed(
 use crate::*;
 use crate::helpers::*;
 
-pub mod raw_transfer;
-pub use raw_transfer::raw_transfer;
+pub mod raw_cpi;
+pub use raw_cpi::raw_cpi;
 
 
-=== instructions/raw_transfer.rs ===
+=== instructions/raw_cpi.rs ===
 use super::*;
 
-pub fn raw_transfer(
+pub fn raw_cpi(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     data: &[u8],
@@ -51,11 +51,10 @@ pub fn raw_transfer(
     //             &[
     //                 ctx.accounts.from.to_account_info(),
     //                 ctx.accounts.to.to_account_info(),
-    //                 ctx.accounts.system_program.to_account_info(),
     //             ],
     //         )
     let _ = (program_id, accounts, data);
-    unimplemented!("Anvil: cpi_custom to 'unknown' in 'raw_transfer' — manual port required for Pinocchio");
+    unimplemented!("Anvil: cpi_custom to 'unknown' in 'raw_cpi' — manual port required for Pinocchio");
 }
 
 === lib.rs ===
@@ -109,7 +108,7 @@ fn router(
     data: &[u8],
 ) -> ProgramResult {
     match discriminator {
-        [249, 110, 36, 159, 241, 70, 236, 18] => raw_transfer(program_id, accounts, data),
+        [25, 99, 229, 183, 191, 231, 195, 73] => raw_cpi(program_id, accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }

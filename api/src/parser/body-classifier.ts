@@ -26,6 +26,9 @@ import {
   findLastTopLevelComma,
   containsAnchorPatterns,
   detectUnrecognizedCpiShape,
+  getArguments,
+  cleanAccountRef,
+  cleanAmountExpr,
 } from "./ast-helpers.js";
 import { detectCpi } from "./cpi-detector.js";
 import { type WarningCollector, locFromNode } from "./warning-collector.js";
@@ -134,6 +137,11 @@ export function classifyBody(
   // CpiContext::new accounts arg is a variable reference instead of an
   // inline struct.
   const cpiAccountsByVar = new Map<string, CpiAccountsBinding>();
+  // #20 — let-bound `let X = system_instruction::transfer(from,to,amount)`
+  // bindings: varName → args. A downstream raw `invoke[_signed](&X, …)`
+  // resolves through this to a cpi_system_transfer. Only single, never-
+  // mutated bindings are registered (letBoundTransferIsClean gates entry).
+  const systemTransferByVar = new Map<string, { from: string; to: string; amount: string }>();
 
   // Flatten one level of synthetic wrapper blocks the impl-method inliner
   // produces: `{<inlined body>}?;` becomes an expression_statement wrapping
@@ -194,7 +202,7 @@ export function classifyBody(
     // a syntax error.
     if (child.type === "attribute_item") continue;
 
-    const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog, pendingPythLoad, constStringMap, pendingSwitchboardLoad);
+    const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog, pendingPythLoad, constStringMap, pendingSwitchboardLoad, systemTransferByVar);
     const childLoc = locFromNode(child);
 
     // Track seeds for PDA signer seeds grouping
@@ -255,6 +263,18 @@ export function classifyBody(
     if (classified._cpiContext) {
       cpiContexts.set(classified._cpiContext.varName, classified._cpiContext);
       continue;
+    }
+
+    // #20 — register a clean let-bound system_instruction::transfer and drop
+    // the let (the downstream raw invoke folds it into cpi_system_transfer).
+    // If the dataflow guard bails, fall through and emit the let verbatim
+    // (the raw invoke then stays cpi_custom — the conservative behavior).
+    if (classified._systemTransferBinding) {
+      const stb = classified._systemTransferBinding;
+      if (letBoundTransferIsClean(bodyText, stb.varName)) {
+        systemTransferByVar.set(stb.varName, { from: stb.from, to: stb.to, amount: stb.amount });
+        continue;
+      }
     }
 
     // Track CPI accounts struct bindings (H2-followup). These are pure
@@ -418,6 +438,13 @@ interface ClassifyResult {
    *  binding so the next `let Y = X.value()...` produces a typed
    *  cpi_switchboard_read_feed IR stmt. */
   _switchboardLoadData?: { feedAccount: string; feedBinding: string };
+  /** #20 — `let X = system_instruction::transfer(from, to, amount)` was
+   *  recognised. Carries the extracted args so the loop can register the
+   *  binding (after a single-use / no-mutation dataflow guard) for a
+   *  downstream raw `invoke[_signed](&X, …)` to fold into cpi_system_transfer.
+   *  `stmt` holds the verbatim let as a pass_through fallback if the guard
+   *  bails. */
+  _systemTransferBinding?: { varName: string; from: string; to: string; amount: string };
 }
 
 const SPL_CPI_STRUCT_NAMES = new Set([
@@ -427,6 +454,26 @@ const SPL_CPI_STRUCT_NAMES = new Set([
   "CloseAccount", "SetAuthority",
   "Approve", "Revoke",
 ]);
+
+/**
+ * #20 dataflow guard for a let-bound `system_instruction::transfer`. The
+ * binding is safe to fold into cpi_system_transfer only if `varName` is bound
+ * exactly once and is never reassigned or field-accessed/-mutated. Conservative
+ * by design — ANY `varName.` access or extra `varName =` bails (the raw invoke
+ * then stays cpi_custom). This keeps imperatively-built / mutated instructions
+ * (e.g. `let mut ix = Instruction{…}; ix.accounts = …`) out of the fold.
+ */
+function letBoundTransferIsClean(bodyText: string, varName: string): boolean {
+  const esc = varName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const lets = (bodyText.match(new RegExp(`\\blet\\s+(?:mut\\s+)?${esc}\\b`, "g")) ?? []).length;
+  if (lets !== 1) return false;
+  // The binding's own `=` is the only assignment allowed.
+  const assigns = (bodyText.match(new RegExp(`\\b${esc}\\b\\s*=(?!=)`, "g")) ?? []).length;
+  if (assigns !== 1) return false;
+  // Any field access (`ix.lamports`, `ix.accounts = …`, `ix.field.push(…)`) bails.
+  if (new RegExp(`\\b${esc}\\b\\s*\\.`).test(bodyText)) return false;
+  return true;
+}
 
 // ─── Main dispatcher ────────────────────────────────────────────────────────
 
@@ -441,6 +488,7 @@ function classifyStatement(
   pendingPythLoad: { feedAccount: string; feedBinding: string } | null = null,
   constStringMap?: Map<string, string>,
   pendingSwitchboardLoad: { feedAccount: string; feedBinding: string } | null = null,
+  systemTransferByVar?: Map<string, { from: string; to: string; amount: string }>,
 ): ClassifyResult {
   const text = node.text;
 
@@ -449,7 +497,7 @@ function classifyStatement(
       return classifyLetDeclaration(node, pendingSeeds, cpiAccountsByVar, hasUserSeedsManagement, pendingPythLoad, constStringMap, pendingSwitchboardLoad);
 
     case "expression_statement":
-      return classifyExpressionStatement(node, cpiContexts, collector, helperCpiCatalog);
+      return classifyExpressionStatement(node, cpiContexts, collector, helperCpiCatalog, systemTransferByVar);
 
     case "macro_invocation":
       return { stmt: classifyMacroInvocation(node) };
@@ -738,6 +786,38 @@ function classifyLetDeclaration(
         stmt: { kind: "pass_through", code: "", needsReview: false }, // placeholder, won't be emitted
         _cpiContext: cpiInfo,
       };
+    }
+  }
+
+  // ── `let X = system_instruction::transfer(from, to, amount)` (#20) ──
+  // Record the binding so a downstream raw `invoke[_signed](&X, …)` folds
+  // into the byte-equal-proven cpi_system_transfer kind. The outer loop
+  // applies a single-use / no-mutation dataflow guard before registering;
+  // if it bails, `stmt` (the verbatim let) is emitted as an ordinary
+  // pass_through and the raw invoke stays cpi_custom (current behavior).
+  if (valueNode && localVar) {
+    const vt = valueNode.text.replace(/\s+/g, "");
+    if (/^&?(?:[\w:]+::)?system_instruction::transfer\(/.test(vt)) {
+      const callN = valueNode.type === "call_expression"
+        ? valueNode
+        : findDescendant(valueNode, "call_expression");
+      const fnText = (callN?.childForFieldName("function")?.text ?? "").replace(/\s+/g, "");
+      if (callN && /(?:^|::)system_instruction::transfer$/.test(fnText)) {
+        const argsN = callN.childForFieldName("arguments");
+        const args = argsN ? getArguments(argsN) : [];
+        if (args.length >= 3) {
+          const stripRef = (t: string) => t.trim().replace(/^[&*]\s*/, "");
+          return {
+            stmt: { kind: "pass_through", code: text, needsReview: false },
+            _systemTransferBinding: {
+              varName: localVar,
+              from: cleanAccountRef(stripRef(args[0]!.text)),
+              to: cleanAccountRef(stripRef(args[1]!.text)),
+              amount: cleanAmountExpr(args[2]!.text),
+            },
+          };
+        }
+      }
     }
   }
 
@@ -1046,11 +1126,15 @@ function classifyExpressionStatement(
   cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string; mint?: string }>,
   collector?: WarningCollector,
   helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
+  systemTransferByVar?: Map<string, { from: string; to: string; amount: string }>,
 ): ClassifyResult {
   // Lookup callback passed into the CPI detector so the variable-bound
   // CpiContext branch can recover signer_seeds (and unresolved struct
   // fields) from previously-tracked `let X = CpiContext::new(...)` lets.
   const cpiCtxLookup = (name: string) => cpiContexts.get(name);
+  const systemTransferLookup = systemTransferByVar
+    ? (name: string) => systemTransferByVar.get(name)
+    : undefined;
   const text = node.text;
   const expr = node.namedChild(0);
   if (!expr) return { stmt: { kind: "pass_through", code: text, needsReview: false } };
@@ -1090,7 +1174,7 @@ function classifyExpressionStatement(
 
   // ── Try expression: something()? ──
   if (expr.type === "try_expression") {
-    const cpi = detectCpi(expr, collector, cpiCtxLookup);
+    const cpi = detectCpi(expr, collector, cpiCtxLookup, systemTransferLookup);
     if (cpi) {
       // Resolve from/to using CPI context if they're unresolved
       return { stmt: resolveCpiFields(cpi, cpiContexts) };
@@ -1107,7 +1191,7 @@ function classifyExpressionStatement(
 
   // ── Direct call expression ──
   if (expr.type === "call_expression") {
-    const cpi = detectCpi(expr, collector, cpiCtxLookup);
+    const cpi = detectCpi(expr, collector, cpiCtxLookup, systemTransferLookup);
     if (cpi) {
       return { stmt: resolveCpiFields(cpi, cpiContexts) };
     }

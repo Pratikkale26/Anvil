@@ -46,6 +46,17 @@ export interface CpiContextLookup {
 }
 
 /**
+ * Resolves a variable bound to a `system_instruction::transfer(from, to, amount)`
+ * call (#20 let-bound form) to its extracted args, so a downstream
+ * `invoke[_signed](&var, …)` can normalize into cpi_system_transfer. Populated
+ * by the body-classifier pre-pass; only single, never-mutated bindings are
+ * recorded (anything mutated/reassigned bails to the cpi_custom stub).
+ */
+export interface SystemTransferLookup {
+  (varName: string): { from: string; to: string; amount: string } | undefined;
+}
+
+/**
  * Strict CPI function-name match. Avoids the substring-collision class
  * that produced the T22-ext misroute bug (fix landed in commit ac4e23d
  * after the live API surfaced `transfer_fee_initialize` getting routed
@@ -108,6 +119,7 @@ export function detectCpi(
   node: SyntaxNode,
   collector?: WarningCollector,
   cpiCtxLookup?: CpiContextLookup,
+  systemTransferLookup?: SystemTransferLookup,
 ): BodyStatement | null {
   // Unwrap try_expression (expr?) to get the inner call
   let callNode = node;
@@ -438,6 +450,22 @@ export function detectCpi(
     if (/system_instruction\s*::\s*transfer\s*\(/.test(firstArgText)) {
       const sysTransfer = extractRawSystemTransfer(callNode, funcText);
       if (sysTransfer) return sysTransfer;
+    }
+    // Let-bound form: invoke[_signed](&ix, …) where `ix` was bound to a
+    // system_instruction::transfer(...) call elsewhere in the fn (#20). The
+    // body-classifier records only single, never-mutated bindings; resolve here.
+    const sysXferIdent = firstArgText.trim().replace(/^&\s*/, "");
+    if (systemTransferLookup && /^[A-Za-z_]\w*$/.test(sysXferIdent)) {
+      const b = systemTransferLookup(sysXferIdent);
+      if (b) {
+        return {
+          kind: "cpi_system_transfer",
+          from: b.from,
+          to: b.to,
+          amount: b.amount,
+          signerSeeds: funcText === "invoke_signed" ? "signer_seeds" : undefined,
+        };
+      }
     }
     return extractCustomCpi(callNode, collector);
   }

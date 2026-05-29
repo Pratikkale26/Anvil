@@ -47,6 +47,42 @@ describe("parser warnings — loud degradation signal", () => {
     // form, which still survives as pass_through — a separate gap). Modern
     // Anchor sources commonly `use anchor_lang::solana_program::program::
     // {invoke, invoke_signed}` and call bare, which is what this exercises.
+    //
+    // Builder is system_instruction::allocate (not transfer): as of #20, a
+    // bare invoke[_signed](&ix) where `ix` is a system_instruction::transfer
+    // is FOLDED into the typed cpi_system_transfer kind (byte-equal verified
+    // in differential-raw-invoke-sol-letbound), so transfer no longer warns.
+    // allocate has no such fold → it remains the unhandled bare-invoke case.
+    const src = shellAround(`
+    use anchor_lang::solana_program::program::invoke_signed;
+    pub fn run(ctx: Context<Demo>) -> Result<()> {
+        let ix = anchor_lang::solana_program::system_instruction::allocate(
+            ctx.accounts.vault.key,
+            100,
+        );
+        invoke_signed(
+            &ix,
+            &[ctx.accounts.vault.to_account_info(), ctx.accounts.recipient.to_account_info()],
+            &[&[b"vault", &[1u8]]],
+        )?;
+        Ok(())
+    }
+`);
+    const r = await parseAnchor(src);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const codes = r.ir.warnings.map((w) => w.code);
+    expect(codes).toContain("cpi_custom_emitted");
+    const w = r.ir.warnings.find((w) => w.code === "cpi_custom_emitted")!;
+    expect(w.instruction).toBe("run");
+    expect(w.snippet).toBeTruthy();
+  });
+
+  test("let-bound system_instruction::transfer folds to cpi_system_transfer, no warning (#20)", async () => {
+    // The deliberate counterpart to the test above: the SAME let-bound shape,
+    // but with transfer (not allocate), must NOW fold into the typed kind —
+    // no cpi_custom_emitted warning, the typed stmt present, and the
+    // `let ix = …transfer(…)` binding dropped (not left as pass_through).
     const src = shellAround(`
     use anchor_lang::solana_program::program::invoke_signed;
     pub fn run(ctx: Context<Demo>) -> Result<()> {
@@ -66,11 +102,12 @@ describe("parser warnings — loud degradation signal", () => {
     const r = await parseAnchor(src);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const codes = r.ir.warnings.map((w) => w.code);
-    expect(codes).toContain("cpi_custom_emitted");
-    const w = r.ir.warnings.find((w) => w.code === "cpi_custom_emitted")!;
-    expect(w.instruction).toBe("run");
-    expect(w.snippet).toBeTruthy();
+    expect(r.ir.warnings.map((w) => w.code)).not.toContain("cpi_custom_emitted");
+    const body = r.ir.instructions.find((i) => i.name === "run")!.body;
+    expect(body.some((s) => s.kind === "cpi_system_transfer")).toBe(true);
+    expect(
+      body.some((s) => s.kind === "pass_through" && /system_instruction::transfer/.test((s as { code?: string }).code ?? "")),
+    ).toBe(false);
   });
 
   test("variable-bound SPL CpiContext → signer_seeds_lost_variable_binding warning", async () => {
@@ -96,9 +133,8 @@ describe("parser warnings — loud degradation signal", () => {
     const src = shellAround(`
     use anchor_lang::solana_program::program::invoke;
     pub fn run(ctx: Context<Demo>) -> Result<()> {
-        let ix = anchor_lang::solana_program::system_instruction::transfer(
+        let ix = anchor_lang::solana_program::system_instruction::allocate(
             ctx.accounts.vault.key,
-            ctx.accounts.recipient.key,
             100,
         );
         invoke(&ix, &[])?;
@@ -121,9 +157,8 @@ describe("parser warnings — loud degradation signal", () => {
     const src = shellAround(`
     use anchor_lang::solana_program::program::invoke;
     pub fn run(ctx: Context<Demo>) -> Result<()> {
-        let ix = anchor_lang::solana_program::system_instruction::transfer(
+        let ix = anchor_lang::solana_program::system_instruction::allocate(
             ctx.accounts.vault.key,
-            ctx.accounts.recipient.key,
             100,
         );
         invoke(&ix, &[])?;
