@@ -2086,9 +2086,15 @@ export abstract class BaseEmitter {
       const carried = this.carriedFunctionBlock(helper.rawCode, ir);
       const refsInstrContext = [...instrContextNames].some((n) => new RegExp(`\\b${n}(?:Accounts|Args|Base|Bumps)?\\b`).test(carried));
       if (hasResidualUnsupportedBody(carried) || hasResidualUnsalvageablePatterns(carried) || refsInstrContext) {
+        // Make the stub LOUD: a bare `unimplemented!()` here was silent (no
+        // parser warning, and the output-validator doesn't scan unimplemented!),
+        // so a stubbed user helper (e.g. a merkle `verify`) would panic at
+        // runtime with no signal. Emit the ⚠️ Anvil marker (validator flags it
+        // as a non-functional stub) + a warning, mirroring the cpi_custom path.
         const stubbed = carried
           .replace(/^\/\/ Carried from source \([^)]*\)/, "// Carried from source (body stubbed — unsupported patterns)")
-          .replace(/\{[\s\S]*$/, `{\n    unimplemented!("Anvil: carried helper with unsupported body")\n}`);
+          .replace(/\{[\s\S]*$/, `{\n    // ${MARKER_ANVIL_PREFIX}: helper '${helper.name}' body uses unsupported patterns — stubbed; manual port required.\n    unimplemented!("Anvil: carried helper '${helper.name}' — manual port required for ${this.frameworkName}")\n}`);
+        this.warnings.push(`Helper '${helper.name}' carried from source but its body uses unsupported patterns — stubbed as unimplemented!(). Manual port required for ${this.frameworkName}.`);
         sections.push(stubbed);
       } else {
         sections.push(carried);
