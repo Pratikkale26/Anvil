@@ -47,6 +47,13 @@ pub mod opt_account_demo {
         }
         Ok(())
     }
+    // Mutable optional: deserialize, mutate, save (exercises the &mut if-let-Some handler).
+    pub fn bump_mut(ctx: Context<BumpMut>) -> Result<()> {
+        if let Some(cfg) = &mut ctx.accounts.maybe_config {
+            cfg.factor += 5;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -71,6 +78,12 @@ pub struct InitConfig<'info> {
 pub struct Bump<'info> {
     #[account(mut, seeds = [b"counter"], bump)]
     pub counter: Account<'info, Counter>,
+    pub maybe_config: Option<Account<'info, Config>>,
+}
+
+#[derive(Accounts)]
+pub struct BumpMut<'info> {
+    #[account(mut)]
     pub maybe_config: Option<Account<'info, Config>>,
 }
 
@@ -132,6 +145,11 @@ if (process.env.B6_OPTION_T) {
           { pubkey: ctx.config, isSigner: false, isWritable: false },
         ],
         Buffer.from(anchorIxDiscriminator("bump")),
+      );
+      // bump_mut with maybe_config = Some(config) → deserialize, mutate, save → config.factor 10 → 15
+      send(
+        [{ pubkey: ctx.config, isSigner: false, isWritable: true }],
+        Buffer.from(anchorIxDiscriminator("bump_mut")),
       );
     },
 
