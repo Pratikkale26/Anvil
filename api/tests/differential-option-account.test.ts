@@ -1,16 +1,15 @@
 /**
- * B6 Option<T> arc — TARGET fixture (fixture-first). Defines what "done" looks
- * like for optional-account support. Currently RED: Anvil stubs any instruction
- * with an Option<T> account as `unimplemented!()`, so `bump` panics → reverts
- * while Anchor succeeds. That divergence is the gap this arc closes, surface by
- * surface (see docs/plan-option-t-accounts.md).
+ * B6 Option<T> arc — TARGET fixture (fixture-first). Exercises BOTH Option
+ * branches of `bump`: None (else → +1) and Some (deserialize the optional
+ * Config → += cfg.factor). Verifies the read-only if-let-Some deserialize
+ * surface end-to-end (not just compile).
  *
- * GUARDED OFF by default (process.env.B6_OPTION_T) so it doesn't break the suite
- * while the emit is unimplemented. Un-guard once the emit surfaces land + it
- * goes byte-equal green. Run now with: B6_OPTION_T=1 bun test tests/differential-option-account.test.ts
+ * GUARDED OFF by default (process.env.B6_OPTION_T) so it doesn't break the
+ * suite while Option<T> emit is experimental. Run on demand:
+ *   B6_OPTION_T=1 bun test tests/differential-option-account.test.ts
  *
- * It exercises both gates at once: account byte-compare (counter value) AND the
- * B5 revert-parity gate (bump must succeed on both, not panic on one).
+ * Exercises account byte-compare (counter + config) AND the B5 revert-parity
+ * gate (every tx must succeed on both runtimes).
  */
 import { test } from "bun:test";
 import { Transaction, TransactionInstruction, SystemProgram } from "@solana/web3.js";
@@ -35,10 +34,14 @@ pub mod opt_account_demo {
         ctx.accounts.counter.value = 7;
         Ok(())
     }
-    // Option<T> instruction: add the config's factor when present, else 1.
+    pub fn init_config(ctx: Context<InitConfig>) -> Result<()> {
+        ctx.accounts.config.factor = 10;
+        Ok(())
+    }
+    // Option<T>: add the config's factor when present, else 1.
     pub fn bump(ctx: Context<Bump>) -> Result<()> {
-        if ctx.accounts.maybe_config.is_some() {
-            ctx.accounts.counter.value += 10;
+        if let Some(cfg) = &ctx.accounts.maybe_config {
+            ctx.accounts.counter.value += cfg.factor;
         } else {
             ctx.accounts.counter.value += 1;
         }
@@ -50,6 +53,15 @@ pub mod opt_account_demo {
 pub struct InitCounter<'info> {
     #[account(init, payer = payer, space = 16, seeds = [b"counter"], bump)]
     pub counter: Account<'info, Counter>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct InitConfig<'info> {
+    #[account(init, payer = payer, space = 16, seeds = [b"config"], bump)]
+    pub config: Account<'info, Config>,
     #[account(mut)]
     pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -80,28 +92,32 @@ if (process.env.B6_OPTION_T) {
       const payer = Keypair.generate();
       const programId = new PublicKey(PROGRAM_ID);
       const [counter] = PublicKey.findProgramAddressSync([Buffer.from("counter")], programId);
-      return { payer, counter };
+      const [config] = PublicKey.findProgramAddressSync([Buffer.from("config")], programId);
+      return { payer, counter, config };
     },
 
     callScript: async (svm: LiteSVM, ctx, programId: PublicKey) => {
-      svm.airdrop(ctx.payer.publicKey, BigInt(2_000_000_000));
-      const send = (keys: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[], data: Buffer) => {
+      svm.airdrop(ctx.payer.publicKey, BigInt(3_000_000_000));
+      const send = (
+        keys: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[],
+        data: Buffer,
+      ) => {
         const tx = new Transaction().add(new TransactionInstruction({ programId, keys, data }));
         tx.recentBlockhash = svm.latestBlockhash();
         tx.feePayer = ctx.payer.publicKey;
         tx.sign(ctx.payer);
         svm.sendTransaction(tx); // tolerate failure — revert-parity captures the outcome
       };
+      const payerKeys = (pda: PublicKey) => [
+        { pubkey: pda, isSigner: false, isWritable: true },
+        { pubkey: ctx.payer.publicKey, isSigner: true, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ];
       // init_counter → counter.value = 7
-      send(
-        [
-          { pubkey: ctx.counter, isSigner: false, isWritable: true },
-          { pubkey: ctx.payer.publicKey, isSigner: true, isWritable: true },
-          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-        ],
-        Buffer.from(anchorIxDiscriminator("init_counter")),
-      );
-      // bump with maybe_config = None (Anchor's None sentinel = the program id) → counter += 1 = 8
+      send(payerKeys(ctx.counter), Buffer.from(anchorIxDiscriminator("init_counter")));
+      // init_config → config.factor = 10
+      send(payerKeys(ctx.config), Buffer.from(anchorIxDiscriminator("init_config")));
+      // bump with maybe_config = None (program-id sentinel) → else → counter += 1 = 8
       send(
         [
           { pubkey: ctx.counter, isSigner: false, isWritable: true },
@@ -109,9 +125,20 @@ if (process.env.B6_OPTION_T) {
         ],
         Buffer.from(anchorIxDiscriminator("bump")),
       );
+      // bump with maybe_config = Some(config) → deserialize → counter += cfg.factor(10) = 18
+      send(
+        [
+          { pubkey: ctx.counter, isSigner: false, isWritable: true },
+          { pubkey: ctx.config, isSigner: false, isWritable: false },
+        ],
+        Buffer.from(anchorIxDiscriminator("bump")),
+      );
     },
 
-    accountsToCompare: (ctx) => [{ pubkey: ctx.counter, label: "counter" }],
+    accountsToCompare: (ctx) => [
+      { pubkey: ctx.counter, label: "counter" },
+      { pubkey: ctx.config, label: "config" },
+    ],
   });
 } else {
   // B6 Option<T> arc target. RED until the emit surfaces land (see

@@ -1945,6 +1945,32 @@ export class BodyWalker {
       },
     );
 
+    // B6 Option<T>: read-only `if let Some(x) = &ctx.accounts.opt { … }` (no
+    // &mut → no trailing save). Mirrors the &mut handler above; deserializes
+    // the optional account inside the Some branch so `x.<field>` resolves.
+    transformed = transformed.replace(
+      /if\s+let\s+Some\((\w+)\)\s*=\s*&\s*ctx\.accounts\.(\w+)\s*\{([\s\S]*?)\n?\}/g,
+      (_full, localVar: string, accountName: string, body: string) => {
+        const normalizedAccount = snakeCase(accountName);
+        const accountRef = this.instr.accounts.find(
+          (acc) => snakeCase(acc.name) === normalizedAccount,
+        );
+        const typeName = accountRef?.accountType ?? "Unknown";
+        if (!this.isGeneratedStateType(typeName)) {
+          return `if let Some(${localVar}) = ${normalizedAccount} {\n${body}\n}`;
+        }
+        const accountInfoVar = `${localVar}_account`;
+        const transformedBody = simplifyPassThroughCode(
+          this.normalizeKeyValueUsages(
+            this.transformAccountReferences(
+              this.transformCtxAccountsReferences(this.transformNestedAnchorCode(body)),
+            ),
+          ),
+        );
+        return `if let Some(${accountInfoVar}) = ${normalizedAccount} {\n        let ${localVar} = ${typeName}::from_account_info(${accountInfoVar})?;\n${indentBlock(transformedBody.trim(), "        ")}\n    }`;
+      },
+    );
+
     transformed = transformed.replace(
       /require!\(([\s\S]+?),\s*([\w:]+(?:::\w+)*)\s*\);/g,
       (_full, condition: string, error: string) =>
