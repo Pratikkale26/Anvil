@@ -405,6 +405,17 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    */
   compareMsgLogs?: boolean;
   /**
+   * Revert-parity (B5). If true, capture each tx's outcome (ok vs revert) in
+   * scenario order and assert Anchor + Anvil AGREE. Catches Anvil accepting a
+   * tx Anchor rejects (or vice versa) when the (non-)write touches no compared
+   * account, and asserts agreement instead of trivially passing on two empty
+   * post-revert snapshots. Outcome only — NOT error codes (Anvil maps Anchor
+   * errors to generic ProgramError, so codes diverge by design). The fixture's
+   * callScript MUST tolerate the failing tx (not throw) so the scenario reaches
+   * the compare.
+   */
+  compareTxOutcomes?: boolean;
+  /**
    * Pin Clock::get().unix_timestamp before the first instruction.
    * Default: 1_700_000_000 (a fixed Unix timestamp in 2023). Programs
    * reading the clock see this exact value in both Anchor and Anvil
@@ -534,17 +545,22 @@ export function defineDifferential<S extends DifferentialSetup>(
         const anvilReturnData: Array<string | null> = [];
         const anchorMsgLogs: string[] = [];
         const anvilMsgLogs: string[] = [];
+        const compareTxOutcomes = fixture.compareTxOutcomes ?? false;
+        const anchorTxOutcomes: Array<"ok" | "revert"> = [];
+        const anvilTxOutcomes: Array<"ok" | "revert"> = [];
         const anchorState = await runScenario(
           fixture, anchorSo, ctx, programId,
           compareEventLogs ? anchorEventLogs : undefined,
           compareReturnData ? anchorReturnData : undefined,
           compareMsgLogs ? anchorMsgLogs : undefined,
+          compareTxOutcomes ? anchorTxOutcomes : undefined,
         );
         const anvilState = await runScenario(
           fixture, anvilSo, ctx, programId,
           compareEventLogs ? anvilEventLogs : undefined,
           compareReturnData ? anvilReturnData : undefined,
           compareMsgLogs ? anvilMsgLogs : undefined,
+          compareTxOutcomes ? anvilTxOutcomes : undefined,
         );
 
         const accounts = fixture.accountsToCompare(ctx);
@@ -557,7 +573,8 @@ export function defineDifferential<S extends DifferentialSetup>(
           | { kind: "presence"; label: string; anchorPresent: boolean; anvilPresent: boolean }
           | { kind: "events"; anchor: string[]; anvil: string[] }
           | { kind: "returnData"; anchor: Array<string | null>; anvil: Array<string | null> }
-          | { kind: "msgLogs"; anchor: string[]; anvil: string[] };
+          | { kind: "msgLogs"; anchor: string[]; anvil: string[] }
+          | { kind: "txOutcomes"; anchor: Array<"ok" | "revert">; anvil: Array<"ok" | "revert"> };
         let firstMismatch: Mismatch | null = null;
 
         for (const { pubkey, label } of accounts) {
@@ -638,6 +655,15 @@ export function defineDifferential<S extends DifferentialSetup>(
           }
         }
 
+        // Revert-parity (B5). Order-significant: Anchor + Anvil must agree on
+        // success-vs-revert at each tx. Outcome only (codes diverge by design).
+        if (compareTxOutcomes) {
+          if (anchorTxOutcomes.length !== anvilTxOutcomes.length ||
+              anchorTxOutcomes.some((o, i) => o !== anvilTxOutcomes[i])) {
+            firstMismatch ??= { kind: "txOutcomes", anchor: anchorTxOutcomes, anvil: anvilTxOutcomes };
+          }
+        }
+
         if (firstMismatch) {
           if (firstMismatch.kind === "data") {
             console.log(`\n[differential-${fixture.fixtureName}] DATA MISMATCH on '${firstMismatch.label}':`);
@@ -686,6 +712,11 @@ export function defineDifferential<S extends DifferentialSetup>(
             console.log(`  anchor present: ${firstMismatch.anchorPresent}`);
             console.log(`  anvil  present: ${firstMismatch.anvilPresent}`);
             console.log(`  one side closed/reaped the account; the other left it live.`);
+          } else if (firstMismatch.kind === "txOutcomes") {
+            console.log(`\n[differential-${fixture.fixtureName}] TX OUTCOME MISMATCH (revert-parity):`);
+            console.log(`  anchor (${firstMismatch.anchor.length} txs): ${firstMismatch.anchor.join(", ") || "<none>"}`);
+            console.log(`  anvil  (${firstMismatch.anvil.length} txs): ${firstMismatch.anvil.join(", ") || "<none>"}`);
+            console.log(`  one runtime reverted where the other succeeded (or a different number of txs ran).`);
           }
         }
         expect(firstMismatch).toBeNull();
@@ -1005,6 +1036,7 @@ async function runScenario<S extends DifferentialSetup>(
   collectedEventLogs?: string[],
   collectedReturnData?: Array<string | null>,
   collectedMsgLogs?: string[],
+  collectedTxOutcomes?: Array<"ok" | "revert">,
 ): Promise<Map<string, AccountSnapshot>> {
   const svm = new LiteSVM();
   svm.addProgram(programId, programSo);
@@ -1047,7 +1079,7 @@ async function runScenario<S extends DifferentialSetup>(
   // decides per-surface whether to actually compare. Surfaces are
   // captured from the standard tx-metadata API (logs() + returnData())
   // — no LiteSVM internals leaked.
-  const needsTxCapture = !!collectedEventLogs || !!collectedReturnData || !!collectedMsgLogs;
+  const needsTxCapture = !!collectedEventLogs || !!collectedReturnData || !!collectedMsgLogs || !!collectedTxOutcomes;
   if (needsTxCapture) {
     const origSend = svm.sendTransaction.bind(svm);
     (svm as unknown as { sendTransaction: (tx: unknown) => unknown }).sendTransaction = (tx: unknown) => {
@@ -1066,6 +1098,12 @@ async function runScenario<S extends DifferentialSetup>(
         } else if (ctorName === "FailedTransactionMetadata") {
           const meta = (r as { meta?: () => { logs: () => string[] } }).meta?.();
           logs = meta?.logs?.() ?? [];
+        }
+        if (collectedTxOutcomes) {
+          // Revert-parity (B5): record outcome per tx in scenario order.
+          // Outcome only — NOT the error code (Anvil maps Anchor errors to
+          // generic ProgramError, so codes diverge by design).
+          collectedTxOutcomes.push(ctorName === "FailedTransactionMetadata" ? "revert" : "ok");
         }
         for (const l of logs) {
           if (collectedEventLogs && l.startsWith("Program data: ")) {
