@@ -47,13 +47,12 @@ pub mod opt_account_demo {
         }
         Ok(())
     }
-    // Mutable optional: deserialize, mutate, save (exercises the &mut if-let-Some handler).
-    pub fn bump_mut(ctx: Context<BumpMut>) -> Result<()> {
-        if let Some(cfg) = &mut ctx.accounts.maybe_config {
-            cfg.factor += 5;
-        }
-        Ok(())
-    }
+    // NOTE: a constrained optional (e.g. #[account(mut)]) is intentionally NOT
+    // exercised here. The detector's Axis C stubs constrained optionals until
+    // their prechecks (writable/has_one/seeds/owner) are emitted conditionally
+    // inside the Some-branch AND adversarially verified — a separate slice (see
+    // docs/plan-option-t-accounts.md). This fixture covers only BARE optionals,
+    // which is exactly what the detector un-gates.
     // AccountInfo-level call on an optional: cfg.key() must route to the
     // underlying AccountInfo binding (with deref) to match Anchor's owned Pubkey.
     pub fn read_key(ctx: Context<Bump>) -> Result<()> {
@@ -96,12 +95,6 @@ pub struct InitConfig<'info> {
 pub struct Bump<'info> {
     #[account(mut, seeds = [b"counter"], bump)]
     pub counter: Account<'info, Counter>,
-    pub maybe_config: Option<Account<'info, Config>>,
-}
-
-#[derive(Accounts)]
-pub struct BumpMut<'info> {
-    #[account(mut)]
     pub maybe_config: Option<Account<'info, Config>>,
 }
 
@@ -163,11 +156,6 @@ if (process.env.B6_OPTION_T) {
           { pubkey: ctx.config, isSigner: false, isWritable: false },
         ],
         Buffer.from(anchorIxDiscriminator("bump")),
-      );
-      // bump_mut with maybe_config = Some(config) → deserialize, mutate, save → config.factor 10 → 15
-      send(
-        [{ pubkey: ctx.config, isSigner: false, isWritable: true }],
-        Buffer.from(anchorIxDiscriminator("bump_mut")),
       );
       // read_key: cfg.key() != counter.key() (true) → counter += 7
       send(

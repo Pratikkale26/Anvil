@@ -55,11 +55,111 @@ Un-guard the fixture (drop the `B6_OPTION_T` gate), remove the `unimplemented!()
 - Existing `differential-option-account` verifies **1 trailing optional**.
 - squads-v4's 8 optional-bearing instructions are **all TRAILING** but **multiple**: 7 have 2 optionals (`@[2,3]` or `@[4,5]`), `spending_limit_use` has **5** (`@[5,6,7,8,9]`). NONE interleaved. So the real-world demand is multi-trailing, which the single fixture never covered.
 
-**New fixture: `differential-option-account-multi.test.ts`** (gated `B6_OPTION_T`) — 2 trailing optionals, factors 10 & 100 so a None in slot-1-only vs slot-2-only is distinguishable; scenario hits all four combos (None,None)(Some,None)(None,Some)(Some,Some). Emit verified correct by inspection (each optional binds independently `accounts.get(idx).filter(key!=program_id)` + per-branch deserialize; idx stable because Anchor sentinel-fills every optional slot). **Byte-equal differential RUNNING — result is the gate.**
+**New fixture: `differential-option-account-multi.test.ts`** (gated `B6_OPTION_T`) — 2 trailing optionals, factors 10 & 100 so a None in slot-1-only vs slot-2-only is distinguishable; scenario hits all four combos (None,None)(Some,None)(None,Some)(Some,Some). Emit verified correct by inspection (each optional binds independently `accounts.get(idx).filter(key!=program_id)` + per-branch deserialize; idx stable because Anchor sentinel-fills every optional slot). **Byte-equal differential GREEN (commit `7f8ad1d`)** — multi-trailing layout verified.
 
-**Next (in order):**
-1. Confirm `differential-option-account-multi` byte-equal green (+ revert-parity). If green → the multi-TRAILING layout is verified.
-2. Write the un-gate detector `optionalAccountsAllCovered(instr)` replacing the `!process.env.B6_OPTION_T` gate, requiring BOTH: (a) **layout = all-optionals-trailing** (every optional index > every required index — the verified family; interleaved → stub), AND (b) every body reference to every optional is a covered shape (is_some / if-let-Some read+mut / key / owner / to_account_info / lamports). ANY uncovered use OR interleaved layout → keep the loud stub. Conservative on both axes.
-3. Verify: existing single + new multi fixtures pass with the detector (gate removed); `test:fast` green (no default regression); squads-v4's 8 instructions classify correctly (covered body-use? → real emit; else → stub).
-4. Tail surfaces (CPI/init/has_one optional) remain separate later slices; the detector keeps them stubbed until each is fixture-verified.
-All slices LOCAL for review (emit-path + safety-critical). Clones in /tmp/rw; squads at /tmp/rw/v4.
+## Progress (2026-05-30 cont'd) — un-gate detector IMPLEMENTED (sole gate, env bypass removed)
+
+`optionalAccountsAllCovered(instr, isStateType)` lands in the new shared module
+**`src/emitter/body-emitter/optional-accounts.ts`** and *replaces* the
+`!process.env.B6_OPTION_T` emit gate at emitter-base.ts (the env var is now only
+a test-runner selector for the gated fixtures, never an emit gate — there is no
+longer any way to force-emit a non-covered shape). Three axes, all must hold or
+the loud `unimplemented!()` stub stays:
+
+- **A. layout** — `min(optionalIdx) > max(requiredIdx)` (all-trailing; the
+  verified family). Interleaved/leading → stub. 2-trailing is byte-equal proven;
+  N-trailing is the same mechanism (each optional binds independently via its own
+  `accounts.get(idx)`), so squads-v4's up-to-5 trailing optionals pass Axis A
+  (they're nonetheless stubbed by Axis B — their types aren't state structs).
+- **B. type** — every optional wraps a generated state type
+  (`Option<Account<'info, S>>`, `S ∈ ir.accounts`). `Option<Program/Signer/
+  UncheckedAccount>` → stub.
+- **C. constraint-free** — every optional is a BARE `Option<Account<…>>` (no
+  `mut`/`signer`/`init`/`pda`/`seeds`/`has_one`/`owner`/`address`). **Advisor-
+  caught + empirically confirmed:** the emit's signer/writable/owner prechecks
+  all filter `!a.isOptional`, and no `has_one`/seeds verification is emitted for
+  optionals, so a constrained optional un-gated with NONE of its checks (verified
+  via `/tmp/confirm-gap.ts`: `#[account(mut, has_one, seeds, bump)]` optional →
+  zero checks) — Anvil would deserialize+mutate whatever account sits in the slot
+  = wrong-PDA / `has_one` bypass. Stub until those checks are emitted
+  conditionally inside the Some-branch + adversarially byte-equal verified
+  (a separate slice). Consequence: the single fixture's `bump_mut` (`#[account
+  (mut)]` optional) was removed — the `&mut` surface returns with that slice.
+- **D. body-use** — strip the three covered shapes (`is_some` / `if-let-Some &` /
+  `if-let-Some &mut`) using the walker's *exact* regexes, then any surviving
+  `ctx.accounts.<optional>` token → stub. Empty body → stub. **Nested-optional
+  guard:** an optional's if-let body referencing another optional false-passes
+  the residue check (non-greedy `}` eats the inner header) → caught explicitly →
+  stub (clean stub, not a compile error — advisor-flagged).
+
+**Single-source-of-truth (critical):** the three regexes live ONLY in
+`optional-accounts.ts`; the walker imports the factory functions
+(`makeOptionalIf...Re`) instead of inlining literals. A future edit to a walker
+shape can't silently desync the gate from what emit actually handles — that
+desync *is* the silent-miscompile class this arc prevents.
+
+**Default-suite flip set = EMPTY (verified before un-gating).** Demos have zero
+optional *accounts*; `optional-state.rs`'s `Option<>` are borsh state fields, not
+accounts; the only internal optional-account fixtures (`fixture-if-let-ctx-
+accounts`, `fixture-cargo-gate`) are `Option<Program<Token>>` → Axis B keeps them
+stubbed (unchanged). So removing the env gate flips nothing in `test:fast`.
+
+**Verification — all green:** detector unit tests `tests/optional-accounts-
+detector.test.ts` (7, each axis covered+uncovered incl. constraint + nested)
+pass; squads-v4 re-classify still 8/8 STUB; `test:fast` **1731/0** (+7 new tests,
+zero snapshot flipped — empty flip set confirmed); both B6 differentials
+**byte-equal green with the detector driving emit** (`B6_OPTION_T=1`, 2/2);
+`tsc` clean.
+
+**Target scope — PINOCCHIO only (advisor-flagged).** The gate lives in the
+shared `BaseEmitter`, so the detector un-gates BOTH emitters, but the two
+differentials default to `anvilTarget: pinocchio`. The Native optional emit
+(`.key` field vs `.key()` method in the binding) is plausibly correct but NOT
+yet differential-verified — a Native optional-account differential is a
+follow-up; until then the byte-equal claim is Pinocchio-scoped.
+
+**Deserialize enforcement (advisor's final gate) — disc YES, owner NO.** The
+happy-path differentials always pass the correct account, so they can't prove
+what a bare `Option<Account<'info, T>>` relies on intrinsically: Anchor's
+`Account<T>` enforces **owner == program_id** AND **disc == T** on deserialize,
+even with zero constraints. Inspected the generated `T::from_account_info` →
+`Self::read` (`/tmp/check-fai.ts`):
+- **Discriminator: enforced** (`if data[..8] != Self::DISCRIMINATOR { return Err
+  (InvalidAccountData) }`) — a wrong-TYPE account is rejected, matching Anchor.
+- **Owner: NOT enforced** — `from_account_info` does `borrow_data` + `read`, no
+  `owner() == program_id`. So a wrong-OWNER account carrying a forged Config
+  discriminator would be accepted by Anvil and rejected by Anchor (ConstraintOwner).
+
+**This is NOT optional-specific and NOT introduced by this slice** — it's the
+behavior of `from_account_info` for *every read-only* `Account<T>` deserialize
+(the handler emits an explicit owner check only for `mut` custom-state accounts,
+`!a.isOptional && a.isMut`; read-only reads rely on `from_account_info`, which
+skips owner). The un-gate just extends the same existing path to bare optionals.
+**Claim scope:** bare-optional emit is happy-path byte-equal + discriminator-
+enforced; owner enforcement is *inherited (currently absent)*, a pre-existing
+general gap. → **FINDING for the user** (separate slice; fixing it = adding an
+owner check to the read-only `Account<T>` deserialize for ALL accounts, broad
+blast radius, its own adversarial verification). Do not word the un-gate as
+"byte-equal safe for bare optionals" unqualified.
+
+**Real-world classification (squads-v4, /tmp/squads-classify.ts):** all **8**
+optional-bearing instructions classify **STUB** — and the reason is the safety
+win. Their layout is all-trailing (Axis A would pass: `@[2,3]`, `@[4,5]`,
+`spending_limit_use @[5,6,7,8,9]`), but their optionals are
+`Signer`/`System`/`Mint`/`TokenAccount`/`TokenInterface` — **none a generated
+state type**, so **Axis B keeps every one loud-stubbed**. The detector refuses to
+un-gate a type family it never byte-equal-verified. So this slice does NOT yet
+transpile squads; it un-gates only the verified `Option<Account<'info, State>>`
+pattern (which my fixtures + real DeFi optional-state accounts use).
+
+**Remaining / next (in order):**
+1. **`Option<Signer>` / `Option<Program>` / `Option<Token*>` surface** — the
+   actual squads un-gate. Each its own byte-equal fixture-slice (presence +
+   used-in-CPI), then extend Axis B to admit the verified type. Until then squads
+   stays correctly stubbed.
+2. Un-gate the differential fixtures (drop their test-level `B6_OPTION_T` guard →
+   permanent `test:slow` coverage) once this slice is reviewed.
+3. Tail surfaces (optional in CPI arg / `init` / `has_one`) stay stubbed by Axis
+   C until each is its own fixture-verified slice.
+All LOCAL for review (emit-path + safety-critical). Clones in /tmp/rw; squads at
+/tmp/rw/v4; classifier at /tmp/squads-classify.ts.

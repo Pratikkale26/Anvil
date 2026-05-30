@@ -48,6 +48,11 @@ import type { BodyEmitterCallbacks, BodyEmitterContext } from "./types.js";
 // (handlePassThrough, handlePdaSignerSeeds) live in body-emitter/ leaf
 // modules and are imported by the visitor directly.
 import { applyPostEmitCleanup } from "./post-emit-cleanup.js";
+import {
+  makeOptionalIsSomeRe,
+  makeOptionalIfLetMutRe,
+  makeOptionalIfLetReadRe,
+} from "./optional-accounts.js";
 import { MARKER_ANVIL_PREFIX } from "../markers.js";
 import { tryStructuralizeExpr } from "../ast-visitor/rust-stmt-from-text.js";
 import { resolveAccountExprAstPipeline } from "../ast-visitor/expr-transform.js";
@@ -1918,12 +1923,12 @@ export class BodyWalker {
     );
 
     transformed = transformed.replace(
-      /ctx\.accounts\.(\w+)\.is_some\(\)/g,
+      makeOptionalIsSomeRe(),
       (_full, name: string) => `${snakeCase(name)}.is_some()`,
     );
 
     transformed = transformed.replace(
-      /if\s+let\s+Some\((\w+)\)\s*=\s*&mut\s*ctx\.accounts\.(\w+)\s*\{([\s\S]*?)\n?\}/g,
+      makeOptionalIfLetMutRe(),
       (_full, localVar: string, accountName: string, body: string) => {
         const normalizedAccount = snakeCase(accountName);
         const accountRef = this.instr.accounts.find(
@@ -1949,7 +1954,7 @@ export class BodyWalker {
     // &mut → no trailing save). Mirrors the &mut handler above; deserializes
     // the optional account inside the Some branch so `x.<field>` resolves.
     transformed = transformed.replace(
-      /if\s+let\s+Some\((\w+)\)\s*=\s*&\s*ctx\.accounts\.(\w+)\s*\{([\s\S]*?)\n?\}/g,
+      makeOptionalIfLetReadRe(),
       (_full, localVar: string, accountName: string, body: string) => {
         const normalizedAccount = snakeCase(accountName);
         const accountRef = this.instr.accounts.find(

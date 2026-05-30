@@ -93,6 +93,7 @@ import {
   type BodyEmitterCallbacks,
   type Token2022Opts,
 } from "./body-emitter/index.js";
+import { optionalAccountsAllCovered } from "./body-emitter/optional-accounts.js";
 import { transformHelperCode as transformHelperCodeImpl, rewriteMsgCalls as rewriteMsgCallsImpl, rewriteSelfReferences, collapseModulePaths, rewriteCtxAccountsDestructure } from "./anchor-transforms.js";
 import { hasResidualAnchorPatterns, hasResidualUnsalvageablePatterns, hasResidualUnsupportedBody, hasUnsalvageableHelperSignature, recognizeCpiWrapperHelper, rewriteCpiWrapperCallSites } from "./emitter-helpers.js";
 import {
@@ -2979,10 +2980,18 @@ impl ZeroCopy for ${accName} {}`;
     // compiling vs. the ~20+ cargo errors a partial emit would yield.
     // The /parse warning (optional_accounts_unsupported) tells the user.
     const optionalAccounts = instr.accounts.filter((a) => a.isOptional);
-    // B6 Option<T> arc: gated behind B6_OPTION_T. Default = the loud
-    // unimplemented!() stub (no regression). Under the flag, fall through to
-    // the real emit (None-sentinel binding below + presence-check body).
-    if (optionalAccounts.length > 0 && !process.env.B6_OPTION_T) {
+    // B6 Option<T> arc: emit real code only when EVERY optional account is
+    // provably covered by the byte-equal-verified shapes (all-trailing layout
+    // + generated-state-type + body-use entirely within is_some / if-let-Some).
+    // `optionalAccountsAllCovered` is the sole gate; anything it doesn't pass
+    // keeps the loud unimplemented!() stub — a partial Option<T> emit (wrong
+    // slot / unhandled shape) is more dangerous than the stub (see
+    // docs/plan-option-t-accounts.md). The detector shares the walker's exact
+    // rewrite regexes so the gate can never drift from what emit handles.
+    if (
+      optionalAccounts.length > 0 &&
+      !optionalAccountsAllCovered(instr, (t) => ir.accounts.some((a) => a.name === t))
+    ) {
       return this.emitOptionalAccountsStubFunction(instr, optionalAccounts);
     }
     // #70 — Non-unit Result<T> return types can't change Anvil's uniform
