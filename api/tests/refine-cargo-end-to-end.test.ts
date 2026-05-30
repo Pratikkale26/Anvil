@@ -98,13 +98,37 @@ if (!HAS_AI_KEY) {
         // 4. Map cargo errors → ValidationIssue and feed to refineOutput.
         const validationIssues = broken.errors.map(diagnosticToValidationIssue);
         const refineFiles = corruptedFiles.map((f) => ({ path: f.path, content: f.content }));
-        const result = await refineOutput({
-          target: "pinocchio",
-          ir: parsed.ir,
-          files: refineFiles,
-          validationIssues,
-          issueSource: "cargo",
-        });
+        let result;
+        try {
+          result = await refineOutput({
+            target: "pinocchio",
+            ir: parsed.ir,
+            files: refineFiles,
+            validationIssues,
+            issueSource: "cargo",
+          });
+        } catch (e: unknown) {
+          // refineOutput's only external dependency here is the live Anthropic
+          // API call (refine.ts → providers/anthropic.ts). A failure of THAT
+          // call — billing (400 "credit balance too low"), auth (401),
+          // rate-limit (429), server (5xx), or a network error — is
+          // environmental and must NOT flake this e2e. Skip ONLY for that.
+          // Re-throw anything else (a real refineOutput/pipeline bug). Note this
+          // catch is BEFORE the patch/cargo assertions below, so it cannot hide
+          // an API that RESPONDS with a bad patch — those assertions still run
+          // and fail on a successful-but-wrong response.
+          const err = e as { name?: string; statusCode?: number; category?: string; message?: string };
+          const apiCallFailed =
+            err?.name === "AIError" ||
+            err?.statusCode != null ||
+            err?.category != null ||
+            /fetch failed|ECONN|ETIMEDOUT|timed.?out|terminated|socket|network|Connection error/i.test(String(err?.message ?? ""));
+          if (!apiCallFailed) throw e;
+          console.warn(
+            `[cargo-e2e] SKIPPED — Anthropic API call unavailable (${err?.statusCode ?? err?.category ?? "network"}): ${String(err?.message ?? e).slice(0, 160)}`,
+          );
+          return;
+        }
 
         // 5. Diagnostic logging — same shape as differential-with-ai so a
         //    future regression surfaces the cause without grep diving.
