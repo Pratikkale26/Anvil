@@ -74,6 +74,7 @@ The dangerous surface is `POST /build` (and `POST /build/auto-fix`, which calls 
 - `SENTRY_DSN=...` for error visibility; `SENTRY_RELEASE=...` for per-deploy tracking
 - `CORS_ORIGIN` set to the actual frontend origin (default is permissive for dev)
 - Place a CDN / WAF in front of the public hostname.
+- **Egress-restrict the build path (A4).** The one-time `cargo fetch` warmup runs outside the build sandbox with network (it must, to populate `$CARGO_HOME` before the offline sandboxed build). The *application-layer* cut is already enforced **in code** and needs no operator action: `/build` uses a hard-coded dep list; `/build/differential` runs every `anchorExtraDeps` through `validateAnchorExtraDeps` (crate-name allowlist + refuses `git`/`path`/`branch`/`tag`/`rev`/`registry`/`package`), so the warmup can only reach crates.io for ~30 named crates and cannot be pointed at an arbitrary host. For defense-in-depth against a crates.io compromise, **restrict the deploy's network egress to `crates.io` + `release.anza.xyz`** (platform-tools) at the infra layer (VPC firewall / egress proxy). This is a **deploy step, not application code** — same lane as `REDIS_URL` / `TRUST_PROXY`.
 
 ## Versioning
 

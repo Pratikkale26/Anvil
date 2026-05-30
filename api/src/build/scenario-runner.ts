@@ -862,7 +862,7 @@ export function runScenarioOnSo(
         .warpToTimestamp(BigInt(scenario.clock.timestamp));
     } else {
       console.warn(
-        `[scenario-runner] scenario.clock.timestamp=${scenario.clock.timestamp} requested but LiteSVM ${LITESVM_CONTRACT.hasWarpToTimestamp ? "" : "doesn't expose warpToTimestamp"} — running with SVM default. Byte-equal verdict still valid (both sides identical) but cross-run determinism reduced for clock-dependent programs. Upgrade to litesvm 1.0+ for clock pinning (Solana Kit migration; ~4-6 hrs).`,
+        `[scenario-runner] scenario.clock.timestamp=${scenario.clock.timestamp} requested but this verifier's LiteSVM has no warpToTimestamp — running on the SVM default clock. The verdict is downgraded to BYTE_EQUAL_WITH_WARNINGS (amber, via clock_pin_ignored): bytes still match but the requested timestamp was NOT applied, so a time-dependent program's pinned-time behavior is UNVERIFIED here. Pin litesvm 1.0+ on the verifier for clock pinning (Solana Kit migration; ~4-6 hrs).`,
       );
     }
   }
@@ -1195,8 +1195,55 @@ export interface SanityWarning {
     | "zero_mutation"
     | "no_compare_targets"
     | "partial_compare_scope"
-    | "discriminator_mismatch";
+    | "discriminator_mismatch"
+    // A6 — scenario requested a clock pin the verifier's LiteSVM can't honor.
+    | "clock_pin_ignored";
   message: string;
+}
+
+/**
+ * Sanity-warning kinds that WEAKEN a byte-equal claim → downgrade BYTE_EQUAL
+ * to BYTE_EQUAL_WITH_WARNINGS (amber, not green). Single source of truth for
+ * the B4 downgrade decision in compareScenarioRuns (exported so the gate test
+ * verifies the REAL set, not a drifting mirror). The other kinds
+ * (all_steps_reverted / no_compare_targets / discriminator_mismatch) already
+ * fail loudly via other paths, so they're not in this set.
+ */
+export const WEAKENING_SANITY_KINDS: ReadonlySet<SanityWarning["kind"]> = new Set([
+  "partial_compare_scope",
+  "zero_mutation",
+  "clock_pin_ignored",
+]);
+
+/**
+ * A6 — detect a requested clock pin the verifier can't honor. When LiteSVM
+ * lacks warpToTimestamp/warpToSlot, BOTH runs fall back to the SAME default
+ * clock, so a time-dependent program (vesting, reward accrual) still produces
+ * matching bytes — a green that NEVER exercised the requested time. Returns a
+ * weakening sanity warning so the verdict downgrades to amber and that green
+ * can't be misread as a clean pinned-time pass. Returns null when no pin was
+ * requested or the verifier can honor it. Pure (contract injected) so the gate
+ * test runs without a LiteSVM/.so fixture.
+ */
+export function clockPinIgnoredWarning(
+  clock: { timestamp?: number; slot?: number },
+  contract: { hasWarpToTimestamp: boolean; hasWarpToSlot: boolean },
+): SanityWarning | null {
+  const tsIgnored = clock.timestamp !== undefined && !contract.hasWarpToTimestamp;
+  const slotIgnored = clock.slot !== undefined && !contract.hasWarpToSlot;
+  if (!tsIgnored && !slotIgnored) return null;
+  const parts: string[] = [];
+  if (tsIgnored) parts.push(`timestamp=${clock.timestamp} (verifier LiteSVM has no warpToTimestamp)`);
+  if (slotIgnored) parts.push(`slot=${clock.slot} (verifier LiteSVM has no warpToSlot)`);
+  return {
+    kind: "clock_pin_ignored",
+    message:
+      `Clock pin requested [${parts.join("; ")}] but this verifier could not honor it — ` +
+      `both runs used the SVM default clock. This verdict does NOT reflect the requested ` +
+      `${tsIgnored ? "timestamp" : "slot"}: a time-dependent program's pinned-time behavior ` +
+      `was NOT verified (both sides matching on the default clock can MASK a real pinned-time ` +
+      `divergence). Pin LiteSVM 1.0+ on the verifier to test the pinned condition.`,
+  };
 }
 
 export interface ScenarioVerdict {
@@ -1566,21 +1613,29 @@ export function compareScenarioRuns(
     }
   }
 
+  // A6 — a requested clock pin the verifier couldn't honor weakens the claim
+  // (both runs ran on the SAME default clock, so a time-dependent program's
+  // pinned-time behavior went untested even though bytes match). Fire it here
+  // so the B4 downgrade below turns the green amber.
+  const clockWarn = clockPinIgnoredWarning(scenario.clock, LITESVM_CONTRACT);
+  if (clockWarn) sanityWarnings.push(clockWarn);
+
   // B4 — downgrade BYTE_EQUAL → BYTE_EQUAL_WITH_WARNINGS when a sanity
   // warning fired that materially weakens the claim. The byte-comparison
   // itself is still honest (bytes match), but the verdict overstates the
-  // scope of what was verified. Two cases:
+  // scope of what was verified:
   //   - partial_compare_scope: only a subset of touched accounts compared.
   //   - zero_mutation: all compared post-states were zero — equality is
   //     trivial because nothing changed.
+  //   - clock_pin_ignored (A6): the requested timestamp/slot wasn't applied.
   // Downstream consumers (CLI --strict, workbench badge) treat the
   // downgraded verdict as amber. The original BYTE_EQUAL stays for the
-  // case where ALL compares are tight + non-trivial.
+  // case where ALL compares are tight + non-trivial. WEAKENING_SANITY_KINDS
+  // is the single source of truth (also asserted by the gate test).
   if (verdict === "BYTE_EQUAL") {
-    const weakening = sanityWarnings.some(
-      (w) => w.kind === "partial_compare_scope" || w.kind === "zero_mutation",
-    );
-    if (weakening) verdict = "BYTE_EQUAL_WITH_WARNINGS";
+    if (sanityWarnings.some((w) => WEAKENING_SANITY_KINDS.has(w.kind))) {
+      verdict = "BYTE_EQUAL_WITH_WARNINGS";
+    }
   }
 
   return {

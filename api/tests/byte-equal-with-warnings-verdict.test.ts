@@ -23,6 +23,7 @@
  */
 import { describe, test, expect } from "bun:test";
 import type { ScenarioVerdict } from "../src/build/scenario-runner.ts";
+import { clockPinIgnoredWarning, WEAKENING_SANITY_KINDS } from "../src/build/scenario-runner.ts";
 
 // We can't run compareScenarioRuns end-to-end without LiteSVM + .so
 // fixtures, so this test focuses on the contract surface: the verdict
@@ -101,5 +102,46 @@ describe("B4 — differentialDivergenceIssues skips both green verdicts", () => 
   });
   test("DIVERGED → synthetic issues fed to refine", () => {
     expect(skipsRefineFeedback("DIVERGED")).toBe(false);
+  });
+});
+
+describe("A6 — clock_pin_ignored downgrades a green that didn't test the pin", () => {
+  // The failure mode: a time-dependent program clock-pins (e.g. vesting),
+  // the verifier's LiteSVM lacks warpToTimestamp, BOTH runs fall back to the
+  // same default clock → bytes match → a green that NEVER exercised the pin.
+  // clockPinIgnoredWarning fires a weakening sanity warning so the verdict
+  // downgrades to amber and that green can't be misread as a pinned-time pass.
+  test("fires when a timestamp pin can't be honored — strong, not soft", () => {
+    const w = clockPinIgnoredWarning(
+      { timestamp: 1_700_000_000 },
+      { hasWarpToTimestamp: false, hasWarpToSlot: true },
+    );
+    expect(w?.kind).toBe("clock_pin_ignored");
+    // Must say the verdict does NOT reflect the pin — not "determinism reduced".
+    expect(w?.message).toMatch(/does NOT reflect the requested timestamp/);
+    expect(w?.message).toMatch(/NOT verified/);
+  });
+
+  test("fires for an unhonorable slot pin too", () => {
+    const w = clockPinIgnoredWarning({ slot: 12345 }, { hasWarpToTimestamp: true, hasWarpToSlot: false });
+    expect(w?.kind).toBe("clock_pin_ignored");
+    expect(w?.message).toMatch(/slot=12345/);
+  });
+
+  test("null when the verifier CAN honor the pin (no false amber)", () => {
+    expect(
+      clockPinIgnoredWarning({ timestamp: 1_700_000_000 }, { hasWarpToTimestamp: true, hasWarpToSlot: true }),
+    ).toBeNull();
+  });
+
+  test("null when no clock pin was requested", () => {
+    expect(clockPinIgnoredWarning({}, { hasWarpToTimestamp: false, hasWarpToSlot: false })).toBeNull();
+  });
+
+  test("clock_pin_ignored is in the REAL weakening set → forces amber, not green", () => {
+    // Asserts the actual set compareScenarioRuns uses for the B4 downgrade,
+    // so a regression that drops the kind fires here.
+    expect(WEAKENING_SANITY_KINDS.has("clock_pin_ignored")).toBe(true);
+    expect(isGreen("BYTE_EQUAL_WITH_WARNINGS")).toBe(false);
   });
 });
