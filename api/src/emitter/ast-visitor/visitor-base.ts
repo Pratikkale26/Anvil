@@ -2516,6 +2516,18 @@ export class AstVisitorBase {
       for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.currentAuthority)) {
         out.push(rawLine(preludeLine));
       }
+      // Body-computed PDA seeds (plain AccountInfo authority) leave signer_seeds
+      // unbound — ensureSignerSeedsForAccount only binds it for a declared-seeds
+      // PDA. Bind from the source with_signer expression so the set_authority
+      // helper's signer_seeds reference resolves (E0425). See the Pinocchio
+      // captured-path twin for the full rationale.
+      if (!w.signerSeedsInScope && w.accountsWithSignerSeeds.size === 0) {
+        // Bind only; do NOT set signerSeedsInScope. A later signed CPI in the
+        // same instruction must resolve its OWN seeds (a different PDA would
+        // otherwise be forced onto this binding); a second body-seeds CPI
+        // re-binds and Rust shadowing handles it.
+        out.push(rawLine(`    let signer_seeds = ${stmt.signerSeeds};`));
+      }
     }
     const accountVar = snakeCase(stmt.account);
     const currentAuthorityVar = stmt.signerSeeds
@@ -4217,6 +4229,20 @@ export class AstVisitorBase {
     if (stmt.signerSeeds) {
       for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.currentAuthority)) {
         out.push(rawLine(preludeLine));
+      }
+      // ensureSignerSeedsForAccount binds canonical `signer_seeds` only for a
+      // DECLARED-seeds PDA authority. When the authority's seeds are computed in
+      // the instruction body (plain AccountInfo authority, e.g. coral-escrow's
+      // `let seeds = &[..]; ...with_signer(&[&seeds[..]])`) and nothing earlier
+      // bound signer_seeds, bind it from the source with_signer expression so
+      // the downstream `signer_seeds[0]` resolves instead of dangling (E0425).
+      // Same shape/type as the canonical `let signer_seeds = &[seeds];`.
+      if (!w.signerSeedsInScope && w.accountsWithSignerSeeds.size === 0) {
+        // Bind only; do NOT set signerSeedsInScope. A later signed CPI in the
+        // same instruction must resolve its OWN seeds (a different PDA would
+        // otherwise be forced onto this binding); a second body-seeds CPI
+        // re-binds and Rust shadowing handles it.
+        out.push(rawLine(`    let signer_seeds = ${stmt.signerSeeds};`));
       }
     }
     const currentAuthority = stmt.signerSeeds
