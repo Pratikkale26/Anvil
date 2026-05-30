@@ -232,6 +232,11 @@ arrayref = "0.3"
 fixed = "=1.28"
 sha2 = "0.10"
 sha3 = "0.10"
+# thiserror is a BASE dep of the project-scaffold native template (Anchor
+# error enums + carried source that imports it). It was missing here, so a
+# native program using thiserror was byte-equal in the differential but
+# failed /build. Mirrored (verbatim, guarded by build-config-drift.test.ts).
+thiserror = "2.0"
 # Note: pyth_* crates intentionally NOT added — N5b unified the Pyth
 # emit on hand-rolled bytes (see emitter-base.ts emitPythReadPrice*).
 # Source 'use pyth_*::*' lines are filtered out by

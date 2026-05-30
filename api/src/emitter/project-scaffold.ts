@@ -64,7 +64,7 @@ function capitalize(s: string): string {
  *   3. External program SDKs that are lint-flagged but kept compilable
  *      (mpl-core, mpl-token-metadata, pyth, switchboard)
  */
-const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
+export const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
   // External program SDKs.
   // Note: pyth_sdk_solana and pyth_solana_receiver_sdk are NOT in this
   // list. N5b unified Pyth emit on hand-rolled bytes (see emitter-base
@@ -143,7 +143,7 @@ const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
  * pinocchio scaffold only ships pinocchio + pinocchio-system + pinocchio-token
  * + pinocchio-associated-token-account; everything else is on-demand.
  */
-const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
+export const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
   // External program SDKs (these typically don't depend on solana-program,
   // so they tend to compile on pinocchio with `default-features = false`)
   // Same rationale as NATIVE_OPTIONAL_DEPS — mpl_core dropped post task #48 S1.
@@ -178,9 +178,9 @@ const PINOCCHIO_OPTIONAL_DEPS: Record<string, string> = {
   // Fixed-point arithmetic for AMM / DEX programs — no_std-compat
   // when default-features disabled. Pinned to 1.28 (rustc 1.89 compat).
   fixed:                     `fixed = { version = "=1.28", default-features = false }`,
-  fixed_macro:               `fixed-macro = "1.2"`,
+  fixed_macro:               `fixed-macro = "1"`,
   // Derive-macro crates for carried structs/enums (no runtime deps)
-  num_enum:                  `num-enum = "0.7"`,
+  num_enum:                  `num_enum = { version = "0.7", default-features = false }`,
   strum:                     `strum = { version = "0.26", default-features = false, features = ["derive"] }`,
   serde:                     `serde = { version = "1", default-features = false, features = ["derive"] }`,
 };
