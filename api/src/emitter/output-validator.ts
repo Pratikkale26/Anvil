@@ -972,11 +972,32 @@ function checkManualTodos(content: string, path: string): ValidationIssue[] {
  * Operates on raw content (not stripLineComments output) because the
  * regex pattern checks above can't see line comments.
  */
-function checkUnsafeMarkers(content: string, path: string): ValidationIssue[] {
+export function checkUnsafeMarkers(content: string, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
+    // Anvil-emitted `unimplemented!("anvil: …")` stubs are non-functional: they
+    // compile via the never-type but PANIC at runtime, and the original Anchor
+    // behavior is gone. The validator otherwise can't see them (unimplemented!()
+    // isn't a comment), so they were SILENT — surfaced repeatedly via real-world
+    // scanning (carried-helper, AccountLoader, __anvil_unported_self__). Flag as
+    // an unsafe stub UNLESS a `⚠️ Anvil` marker already classifies it within the
+    // preceding lines — e.g. the AccountLoader impl-level marker sits up to ~14
+    // lines above its load/load_mut/load_init methods. One stub, one issue, from
+    // whichever path owns it (the marker path gives a better, specific caption).
+    if (/\bunimplemented!\s*\(\s*"[Aa]nvil/.test(line)) {
+      const above = lines.slice(Math.max(0, i - 16), i).join("\n");
+      if (!ANVIL_LINE_MARKER_RE.test(above) && !ANVIL_BLOCK_MARKER_RE.test(above)) {
+        issues.push({
+          severity: "error",
+          message: "Anvil non-functional stub (unimplemented!(\"anvil: …\")) — compiles via the never-type but PANICS at runtime; the original Anchor behavior is not implemented. Manual port required.",
+          path,
+          line: i + 1,
+        });
+      }
+      continue;
+    }
     const isAnvilMarker = ANVIL_LINE_MARKER_RE.test(line) || ANVIL_BLOCK_MARKER_RE.test(line);
     if (!isAnvilMarker) continue;
     // Truly-broken markers contain one of these phrases; the surrounding
