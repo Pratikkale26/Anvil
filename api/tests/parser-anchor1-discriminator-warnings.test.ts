@@ -1,18 +1,14 @@
 /**
- * #60 — Loud-signal coverage for Anchor 1.x discriminator overrides that
- * Anvil cannot yet honor.
+ * #60 — Anchor 1.x discriminator override coverage.
  *
- * The narrow happy path (#[instruction(discriminator = [N; 8])]) is
- * already surfaced as IR.discriminator and tested in
- * parser-anchor1-discriminator.test.ts. This file pins the OPPOSITE: every
- * unsupported override form (scalar / short array / byte-str / const /
- * const-fn for instructions; ANY form for #[account]/#[event]) must drop
- * a ParserWarning so users see the silent-misroute / silent-byte-mismatch
- * risk before deploy.
- *
- * Once the variable-length discriminator rework lands, these warnings
- * graduate to honored emit and this file's expectations move to
- * `discriminator` field assertions.
+ * The variable-length INSTRUCTION-discriminator rework has landed: resolvable
+ * overrides (int / short array / byte-string / const-ref) are now honored by the
+ * router (`buildRouter` emits `[<bytes>, data @ ..]` slice patterns) and
+ * byte-equal verified in differential-custom-instruction-disc.test.ts — so they
+ * DROP the warning and carry `customDiscriminator.bytes`. Only an UNRESOLVABLE
+ * form (const fn) keeps the loud `instruction_discriminator_override_unsupported`
+ * warning. Account/event-disc overrides are likewise honored (no warning). This
+ * file pins both directions so the "still unsupported" boundary stays visible.
  */
 import { describe, test, expect } from "bun:test";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
@@ -69,6 +65,34 @@ pub mod test_program {
     use super::*;
     #[instruction(discriminator = MY_DISC)]
     pub fn const_ref(ctx: Context<Empty>) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct Empty<'info> {
+    pub signer: Signer<'info>,
+}
+`;
+
+// const-fn override: not statically resolvable by the parser → still warns.
+const CONST_FN_INSTRUCTION = `
+use anchor_lang::prelude::*;
+
+declare_id!("Counter111111111111111111111111111111111111");
+
+const fn get_disc(input: &str) -> &'static [u8] {
+    match input.as_bytes() {
+        b"wow" => &[9, 11],
+        _ => unimplemented!(),
+    }
+}
+
+#[program]
+pub mod test_program {
+    use super::*;
+    #[instruction(discriminator = get_disc("wow"))]
+    pub fn const_fn_ix(ctx: Context<Empty>) -> Result<()> {
         Ok(())
     }
 }
@@ -146,51 +170,58 @@ pub struct MyAccount {
 `;
 
 describe("#60 — Anchor 1.x discriminator override warnings", () => {
-  test("scalar instruction discriminator fires warning + IR carries customDiscriminator", async () => {
+  // Resolvable instruction-disc overrides (int / short-array / byte-string /
+  // const-ref) are now HONORED by the variable-length router → no warning. Only
+  // unresolvable forms (const fn) still warn. (account/event-disc tested below.)
+  test("scalar instruction discriminator → no warning, IR carries customDiscriminator", async () => {
     const r = await parseAnchor(SCALAR_INSTRUCTION);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    // Bytes are RESOLVED (`= 1` → `[1]`) but still warn because the
-    // dispatcher emit hardcodes 8-byte `split_at(8)` — a 1-byte disc
-    // would silently misroute. The IR carries the bytes for future
-    // variable-length dispatch.
     const w = r.ir.warnings?.find(
       (w) => w.code === "instruction_discriminator_override_unsupported",
     );
-    expect(w).toBeDefined();
-    expect(w!.instruction).toBe("one_byte");
-    expect(w!.snippet).toBe("1");
+    expect(w).toBeUndefined();
     const ix = r.ir.instructions.find((i) => i.name === "one_byte");
+    // Non-8-byte → legacy hex field stays empty; bytes live on customDiscriminator.
     expect(ix?.discriminator).toBeUndefined();
     expect(ix?.customDiscriminator).toEqual({ bytes: [1] });
   });
 
-  test("short-array instruction discriminator fires warning + IR carries bytes", async () => {
+  test("short-array instruction discriminator → no warning, IR carries bytes", async () => {
     const r = await parseAnchor(SHORT_ARRAY_INSTRUCTION);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const w = r.ir.warnings?.find(
       (w) => w.code === "instruction_discriminator_override_unsupported",
     );
-    expect(w).toBeDefined();
-    expect(w!.instruction).toBe("four_byte");
-    expect(w!.snippet).toBe("[1, 2, 3, 4]");
+    expect(w).toBeUndefined();
     const ix = r.ir.instructions.find((i) => i.name === "four_byte");
     expect(ix?.customDiscriminator).toEqual({ bytes: [1, 2, 3, 4] });
   });
 
-  test("const-reference instruction discriminator resolves + warns", async () => {
+  test("const-reference instruction discriminator resolves → no warning", async () => {
     const r = await parseAnchor(CONST_INSTRUCTION);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const w = r.ir.warnings?.find(
       (w) => w.code === "instruction_discriminator_override_unsupported",
     );
-    expect(w).toBeDefined();
-    expect(w!.instruction).toBe("const_ref");
-    expect(w!.snippet).toBe("MY_DISC");
+    expect(w).toBeUndefined();
     const ix = r.ir.instructions.find((i) => i.name === "const_ref");
     expect(ix?.customDiscriminator).toEqual({ bytes: [55, 66, 77, 88] });
+  });
+
+  test("const-FN instruction discriminator (unresolvable) → STILL warns, no customDiscriminator", async () => {
+    const r = await parseAnchor(CONST_FN_INSTRUCTION);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const w = r.ir.warnings?.find(
+      (w) => w.code === "instruction_discriminator_override_unsupported",
+    );
+    expect(w).toBeDefined();
+    expect(w!.instruction).toBe("const_fn_ix");
+    const ix = r.ir.instructions.find((i) => i.name === "const_fn_ix");
+    expect(ix?.customDiscriminator).toBeUndefined();
   });
 
   test("#[account(discriminator = N)] populates customDiscriminator (no warning)", async () => {

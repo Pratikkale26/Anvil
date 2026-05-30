@@ -6,6 +6,7 @@
  */
 
 import { createHash } from "crypto";
+import type { SolanaIR } from "../ir/schema.js";
 
 // ─── Discriminator helpers ───────────────────────────────────────────────────
 
@@ -46,6 +47,121 @@ export function discriminatorBytes(namespace: string): number[] {
 
 export function formatByteArray(bytes: number[]): string {
   return `[${bytes.join(", ")}]`;
+}
+
+// ─── Instruction dispatch (router) ───────────────────────────────────────────
+//
+// The two emitters (Pinocchio, Native) emit byte-identical dispatch code, so it
+// lives here as the single source of truth — both `emitEntrypoint`/`emitRouter`
+// overrides delegate to `buildEntrypoint`/`buildRouter`.
+
+/**
+ * The actual discriminator bytes an instruction dispatches on (any length).
+ * Anchor 1.x `#[instruction(discriminator = ...)]` can be a 1-byte int, a short
+ * array, a byte string, or a const ref — the parser resolves these onto
+ * `customDiscriminator.bytes`. Falls back to the legacy 8-byte hex field, then
+ * to the default sha256("global:<name>")[..8].
+ */
+export function instructionDiscriminatorBytes(instr: {
+  name: string;
+  discriminator?: string;
+  customDiscriminator?: { bytes: number[] };
+}): number[] {
+  if (instr.customDiscriminator && instr.customDiscriminator.bytes.length > 0) {
+    return instr.customDiscriminator.bytes;
+  }
+  if (instr.discriminator && /^[0-9a-fA-F]{16}$/.test(instr.discriminator)) {
+    const bytes: number[] = [];
+    for (let i = 0; i < 16; i += 2) bytes.push(parseInt(instr.discriminator.slice(i, i + 2), 16));
+    return bytes;
+  }
+  return discriminatorBytes(`global:${instr.name}`);
+}
+
+/** True when any instruction uses a discriminator that isn't exactly 8 bytes. */
+export function hasNon8ByteDiscriminator(ir: SolanaIR): boolean {
+  return ir.instructions.some((i) => instructionDiscriminatorBytes(i).length !== 8);
+}
+
+/**
+ * The `process_instruction` entrypoint. When every discriminator is 8 bytes we
+ * keep the fixed `split_at(8)` shape (zero churn to existing programs); when any
+ * is non-8-byte we pass the whole `instruction_data` to the router, which
+ * prefix-matches each instruction's disc.
+ */
+export function buildEntrypoint(ir: SolanaIR): string {
+  if (hasNon8ByteDiscriminator(ir)) {
+    return `entrypoint!(process_instruction);
+
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    router(program_id, accounts, instruction_data)
+}`;
+  }
+  return `entrypoint!(process_instruction);
+
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    if instruction_data.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (discriminator, data) = instruction_data.split_at(8);
+    router(program_id, accounts, discriminator, data)
+}`;
+}
+
+/**
+ * The `router` match. For non-8-byte programs each arm is a Rust slice-rest
+ * pattern `[<disc bytes>, data @ ..]` over the whole `instruction_data` — which
+ * handles mixed disc lengths in one program. Arms are sorted longest-disc-first
+ * so a shorter disc can't shadow a longer one that shares its prefix.
+ */
+export function buildRouter(ir: SolanaIR): string {
+  if (hasNon8ByteDiscriminator(ir)) {
+    const sorted = [...ir.instructions].sort(
+      (a, b) => instructionDiscriminatorBytes(b).length - instructionDiscriminatorBytes(a).length,
+    );
+    const arms = sorted
+      .map(
+        (instr) =>
+          `        [${instructionDiscriminatorBytes(instr).join(", ")}, data @ ..] => ${snakeCase(instr.name)}(program_id, accounts, data),`,
+      )
+      .join("\n");
+    return `fn router(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    instruction_data: &[u8],
+) -> ProgramResult {
+    match instruction_data {
+${arms}
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}`;
+  }
+  const arms = ir.instructions
+    .map(
+      (instr) =>
+        `        ${routerDiscriminator(instr)} => ${snakeCase(instr.name)}(program_id, accounts, data),`,
+    )
+    .join("\n");
+  return `fn router(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    discriminator: &[u8],
+    data: &[u8],
+) -> ProgramResult {
+    match discriminator {
+${arms}
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}`;
 }
 
 // ─── Account type helpers ────────────────────────────────────────────────────

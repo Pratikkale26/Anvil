@@ -14,7 +14,8 @@ import { rewriteRequireVariantsInCode, decodeBase58 } from "../parser/project-so
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
 import {
   instrDiscriminator,
-  routerDiscriminator,
+  buildEntrypoint,
+  buildRouter,
   accountDiscriminator,
   snakeCase,
   toPascalCase,
@@ -750,42 +751,12 @@ export class PinocchioEmitter extends BaseEmitter {
     return parts.join("\n");
   }
 
-  override emitEntrypoint(_ir: SolanaIR): string {
-    return `entrypoint!(process_instruction);
-
-pub fn process_instruction(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    instruction_data: &[u8],
-) -> ProgramResult {
-    if instruction_data.len() < 8 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-
-    let (discriminator, data) = instruction_data.split_at(8);
-    router(program_id, accounts, discriminator, data)
-}`;
+  override emitEntrypoint(ir: SolanaIR): string {
+    return buildEntrypoint(ir);
   }
 
   override emitRouter(ir: SolanaIR): string {
-    const arms = ir.instructions
-      .map(
-        (instr) =>
-          `        ${routerDiscriminator(instr)} => ${snakeCase(instr.name)}(program_id, accounts, data),`
-      )
-      .join("\n");
-
-    return `fn router(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    discriminator: &[u8],
-    data: &[u8],
-) -> ProgramResult {
-    match discriminator {
-${arms}
-        _ => Err(ProgramError::InvalidInstructionData),
-    }
-}`;
+    return buildRouter(ir);
   }
 
   override emitAccountBinding(name: string, index: number): string {

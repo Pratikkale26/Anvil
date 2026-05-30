@@ -2049,16 +2049,15 @@ export const ParserWarningCodeSchema = z.enum([
   // files+entryPath so buildProjectSourceGraph can walk the module tree.
   "multi_file_shim_detected",
   /**
-   * #60 — Anchor 1.x `#[instruction(discriminator = ...)]` override saw a
-   * form the parser doesn't yet support. The 8-byte literal array variant
-   * (`= [N, N, N, N, N, N, N, N]`) IS surfaced onto IR.discriminator;
-   * everything else (scalar `= 1`, short array `= [1, 2, 3, 4]`,
-   * byte string `= b"hi"`, const reference `= MY_DISC`, const fn
-   * `= get_disc("wow")`) currently silently falls back to the default
-   * sha256("global:<name>") discriminator. Router emit + the dispatcher's
-   * `split_at(8)` shape both assume 8 bytes; widening parser regex
-   * without rewiring dispatch would emit invalid Rust. Surfaced so users
-   * see the silent-misroute risk before deploy.
+   * #60 — Anchor 1.x `#[instruction(discriminator = ...)]` override that the
+   * parser cannot statically resolve (const fn `= get_disc("wow")`, opaque
+   * const). Resolvable forms — scalar `= 1`, short array `= [1, 2, 3, 4]`,
+   * byte string `= b"hi"`, const reference `= MY_DISC`, and the 8-byte array
+   * — are now HONORED: their bytes land on `customDiscriminator` (8-byte also
+   * on `discriminator`) and the variable-length router (`buildRouter`)
+   * dispatches on them via `[<bytes>, data @ ..]` slice patterns. Only the
+   * unresolvable forms fall back to sha256("global:<name>")[..8] and keep
+   * this warning so users see the silent-misroute risk before deploy.
    */
   "instruction_discriminator_override_unsupported",
   /**

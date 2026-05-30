@@ -392,10 +392,11 @@ function parseInstructionFn(
   //
   // Back-compat split: for 8-byte resolved overrides we also populate
   // the legacy `discriminator` hex-string field so `routerDiscriminator`
-  // emits the bytes via the existing match-arm path. For non-8-byte
-  // overrides the dispatcher rewrite is deferred — emit still uses the
-  // sha256 default and we keep the loud warning so users see the
-  // silent-misroute risk.
+  // emits the bytes via the existing match-arm path. Non-8-byte overrides
+  // populate `customDiscriminator.bytes`; the variable-length router
+  // (`buildRouter`) now dispatches on them via `[<bytes>, data @ ..]`
+  // slice patterns. Only unresolvable forms (const fn, opaque) keep the
+  // warning.
   const rawOverride = detectInstructionDiscriminatorRhs(fnAttrs);
   let discriminator: string | undefined;
   let customDiscriminator: { bytes: number[] } | undefined;
@@ -405,24 +406,9 @@ function parseInstructionFn(
       discriminator = bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
       customDiscriminator = { bytes };
     } else if (bytes) {
+      // Non-8-byte resolved override. The variable-length router dispatches
+      // on these bytes directly (`[<bytes>, data @ ..]`), so no warning.
       customDiscriminator = { bytes };
-      if (collector) {
-        collector.add({
-          code: "instruction_discriminator_override_unsupported",
-          message:
-            `instruction \`${fnName}\`: #[instruction(discriminator = ${rawOverride})] ` +
-            `resolves to ${bytes.length} bytes — Anvil's router emit assumes ` +
-            `8-byte discriminators (\`split_at(8)\` dispatch shape). The IR ` +
-            `carries the bytes for future variable-length dispatch but emit ` +
-            `currently falls back to sha256("global:${fnName}")[..8], which ` +
-            `will silently misroute calls from clients building instruction ` +
-            `data with the override bytes. Hand-port the dispatch arm or ` +
-            `rewrite the source to the 8-byte form until the variable-length ` +
-            `discriminator rework lands.`,
-          instruction: fnName,
-          snippet: rawOverride,
-        });
-      }
     } else if (collector) {
       collector.add({
         code: "instruction_discriminator_override_unsupported",
