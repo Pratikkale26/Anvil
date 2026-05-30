@@ -92,13 +92,23 @@ function firstLine(s: string): string {
  * rather than transcribe every Anchor surface that has a target shape.
  */
 function normalizeForAudit(code: string): string {
-  // transformAccountReferences strips `.to_account_info()` universally and
-  // rewrites `ctx.accounts.X` to the canonical account binding in emit.
-  // Mirror the strip + ctx.accounts collapse here so the pre-emit audit
-  // doesn't double-report shapes the rewriter already handles.
-  let out = code.replace(/\.to_account_info\(\)/g, "");
-  out = out.replace(/\bctx\s*\.\s*accounts\s*\.\s*(\w+)/g, "$1");
-  return out;
+  // `.to_account_info()` is the ONE universally emit-handled account pattern:
+  // `ctx.accounts.X.to_account_info()` lowers to the canonical account binding
+  // `X` on every target (the standard CPI shape), so flagging it is a false
+  // positive — strip ONLY that.
+  //
+  // Every OTHER `ctx.accounts.X` reference STAYS (so the audit still flags it):
+  // field reads/writes, AccountInfo accessors (.lamports/.key/.owner/…), bare
+  // refs, and anything nested in a closure / let-else / partial match-arm. Those
+  // are exactly the shapes the rewriter may NOT cleanly handle, which is what
+  // this pre-emit audit exists to catch. (B2: a prior blanket
+  // `ctx.accounts.X → X` strip removed the net entirely; a match-arm WRITE to a
+  // typed field is byte-equal-proven to persist, but that proof does NOT extend
+  // to reads / closures / let-else, so they stay flagged.)
+  return code.replace(
+    /\bctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*to_account_info\s*\(\s*\)/g,
+    "$1",
+  );
 }
 
 export function auditPassthrough(ir: SolanaIR): PassthroughFinding[] {
