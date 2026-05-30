@@ -46,3 +46,20 @@ Un-guard the fixture (drop the `B6_OPTION_T` gate), remove the `unimplemented!()
 **Surface 5 — `to_account_info()` + `lamports()`: DONE (`55edf00`).** `cfg.to_account_info()` routes to the AccountInfo binding; this is the *only* valid way to reach `lamports()` (the direct `cfg.lamports()` doesn't compile on Anchor's `Account<T>`).
 
 **Remaining tail (harder/rarer):** optional in a state-changing CPI arg, optional in an `init` constraint, optional in `has_one` — each its own fixture-slice. **Then un-gate** (drop `B6_OPTION_T`, un-skip fixture, remove the stub for covered shapes) — only safe once the tail is covered OR a conservative "instruction uses the optional only in covered shapes" detector gates the stub. Plan rule still holds: never ship a partial. Minor wart to optimize later: surface 5 emits a dead `let cfg = …::from_account_info` when only the AccountInfo is touched (harmless unused-var warning).
+
+## Progress (2026-05-30) — un-gate slice started; the detector needs TWO axes
+
+**Key correction (advisor): the un-gate detector must gate on BOTH (a) layout-matches-a-verified-fixture AND (b) all-body-uses-covered — not body-use alone.** Body-use says how the optional is read (the 5 surfaces); it says nothing about the highest-risk axis (line 22): the account-meta slot + None-sentinel + hardcoded `idx` mapping. A body-use-only detector would happily un-gate a layout the fixture never exercised → wrong-account read = the partial the plan forbids, via the axis the detector doesn't look at.
+
+**Measurement (decisive):**
+- Existing `differential-option-account` verifies **1 trailing optional**.
+- squads-v4's 8 optional-bearing instructions are **all TRAILING** but **multiple**: 7 have 2 optionals (`@[2,3]` or `@[4,5]`), `spending_limit_use` has **5** (`@[5,6,7,8,9]`). NONE interleaved. So the real-world demand is multi-trailing, which the single fixture never covered.
+
+**New fixture: `differential-option-account-multi.test.ts`** (gated `B6_OPTION_T`) — 2 trailing optionals, factors 10 & 100 so a None in slot-1-only vs slot-2-only is distinguishable; scenario hits all four combos (None,None)(Some,None)(None,Some)(Some,Some). Emit verified correct by inspection (each optional binds independently `accounts.get(idx).filter(key!=program_id)` + per-branch deserialize; idx stable because Anchor sentinel-fills every optional slot). **Byte-equal differential RUNNING — result is the gate.**
+
+**Next (in order):**
+1. Confirm `differential-option-account-multi` byte-equal green (+ revert-parity). If green → the multi-TRAILING layout is verified.
+2. Write the un-gate detector `optionalAccountsAllCovered(instr)` replacing the `!process.env.B6_OPTION_T` gate, requiring BOTH: (a) **layout = all-optionals-trailing** (every optional index > every required index — the verified family; interleaved → stub), AND (b) every body reference to every optional is a covered shape (is_some / if-let-Some read+mut / key / owner / to_account_info / lamports). ANY uncovered use OR interleaved layout → keep the loud stub. Conservative on both axes.
+3. Verify: existing single + new multi fixtures pass with the detector (gate removed); `test:fast` green (no default regression); squads-v4's 8 instructions classify correctly (covered body-use? → real emit; else → stub).
+4. Tail surfaces (CPI/init/has_one optional) remain separate later slices; the detector keeps them stubbed until each is fixture-verified.
+All slices LOCAL for review (emit-path + safety-critical). Clones in /tmp/rw; squads at /tmp/rw/v4.
