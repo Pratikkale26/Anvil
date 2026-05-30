@@ -2384,6 +2384,13 @@ impl<'info, T> AccountLoader<'info, T> {
 // so the load() call resolves to a never-type — type inference at the
 // call site accepts any expected Ref<T>/RefMut<T>. Real semantics need
 // type-aware bytemuck casts behind a RefCell-shaped wrapper; deferred.
+//
+// ${MARKER_ANVIL_PREFIX}: AccountLoader::load/load_mut/load_init — zero-copy not yet supported.
+// NON-FUNCTIONAL stubs: the call COMPILES (never-type coercion) but PANICS at
+// runtime. An instruction that loads a zero-copy account this way needs a
+// manual port (task #19). The marker is on the line above so the
+// output-validator classifies it as an unsafe (non-functional) stub — it does
+// NOT scan unimplemented!() itself, so without it this was silent.
 impl<'info, T> AccountLoader<'info, T> {
     pub fn load(&self) -> Result<core::cell::Ref<'_, T>, ProgramError> {
         unimplemented!("anvil: AccountLoader::load stub — real impl needs RefCell + bytemuck::from_bytes")
