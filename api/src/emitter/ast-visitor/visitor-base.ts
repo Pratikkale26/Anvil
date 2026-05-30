@@ -3911,6 +3911,36 @@ export class AstVisitorBase {
    * captureAndConvert) — same text shapes, now emitted from the visitor
    * with the same applyStructuralize-routed RustStmt[] return.
    */
+  /**
+   * task #19 — `LazyAccount<'info, T>` reaches these handlers because it shares
+   * the `.load()/.load_mut()/.load_init()` syntax with a zero-copy AccountLoader.
+   * But T is a Borsh `#[account]` struct, not a bytemuck Pod: emitting the Pod
+   * cast (`from_bytes`) fails E0277 (`T: AnyBitPattern` unsatisfied) — loud but
+   * misleading (the user blames their struct, not the unsupported wrapper).
+   * Until the Borsh-lazy port lands, refuse loudly: a `⚠️ Anvil` + `unimplemented!`
+   * stub the validator surfaces as a non-functional stub. The `let` keeps its
+   * concrete `&[mut] T` type so subsequent field statements still type-check
+   * (never-coercion); it PANICS at runtime. Whole-struct `.load*()` only —
+   * per-field `load_<field>()` accessors aren't classified here.
+   */
+  private emitLazyAccountStub(
+    accountName: string,
+    localVar: string,
+    accountInfoVar: string,
+    accountType: string,
+    variant: "load" | "load_mut" | "load_init",
+    mutable: boolean,
+  ): RustStmt[] {
+    const w = this.walker;
+    const refKw = mutable ? "&mut " : "&";
+    const lines: string[] = [
+      `    // ${MARKER_ANVIL_PREFIX}: LazyAccount::${variant} not yet supported — LazyAccount<'info, ${accountType}> is Borsh-lazy, not zero-copy Pod; whole-struct .${variant}() needs a manual port (task #19). NON-FUNCTIONAL stub: compiles via never-coercion, PANICS at runtime.`,
+      `    let ${localVar}: ${refKw}${accountType} = unimplemented!("anvil: LazyAccount::${variant} stub — Borsh-lazy deserialize not yet supported (task #19)");`,
+    ];
+    registerZeroCopyHandle(w, accountName, localVar, accountInfoVar);
+    return this.applyStructuralize(lines);
+  }
+
   visitZeroCopyLoadInit(stmt: ZeroCopyLoadInit): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
@@ -3920,6 +3950,9 @@ export class AstVisitorBase {
     const accountType = stmt.accountType;
     if (!accountType) {
       return [comment(`[zero-copy] unresolved account type for ${stmt.account}; load_init skipped`)];
+    }
+    if (stmt.isLazy) {
+      return this.emitLazyAccountStub(accountName, localVar, accountInfoVar, accountType, "load_init", true);
     }
     const dataVar = `__${accountName}_data`;
     const discLen = w.ir.accounts.find((a) => a.name === accountType)
@@ -3952,6 +3985,9 @@ export class AstVisitorBase {
     if (!accountType) {
       return [comment(`[zero-copy] unresolved account type for ${stmt.account}; load_mut skipped`)];
     }
+    if (stmt.isLazy) {
+      return this.emitLazyAccountStub(accountName, localVar, accountInfoVar, accountType, "load_mut", true);
+    }
     const dataVar = `__${accountName}_data`;
     const discLen = w.ir.accounts.find((a) => a.name === accountType)
       ?.customDiscriminator?.bytes.length ?? 8;
@@ -3982,6 +4018,9 @@ export class AstVisitorBase {
     const accountType = stmt.accountType;
     if (!accountType) {
       return [comment(`[zero-copy] unresolved account type for ${stmt.account}; load skipped`)];
+    }
+    if (stmt.isLazy) {
+      return this.emitLazyAccountStub(accountName, localVar, accountInfoVar, accountType, "load", false);
     }
     const dataVar = `__${accountName}_data`;
     const discLen = w.ir.accounts.find((a) => a.name === accountType)

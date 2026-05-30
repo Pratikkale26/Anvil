@@ -171,6 +171,13 @@ export const AccountRefSchema = z.object({
    * recognition in the body classifier.
    */
   isZeroCopy: z.boolean().optional(),
+  /**
+   * Set when the field type is `LazyAccount<'info, T>` — Anchor 0.31's
+   * lazy-deserialization wrapper. Distinct from `isZeroCopy`: LazyAccount is
+   * Borsh-lazy, NOT bytemuck Pod. Used to refuse `.load*()` with a loud stub
+   * (task #19) instead of mis-emitting a Pod cast that fails E0277.
+   */
+  isLazy: z.boolean().optional(),
 });
 
 export type AccountRef = z.infer<typeof AccountRefSchema>;
@@ -1584,18 +1591,23 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     account: z.string(),
     localVar: z.string(),
     accountType: z.string(),
+    // Set when `account` is a `LazyAccount<'info, T>` (not an AccountLoader) —
+    // the emit refuses with a loud stub instead of a Pod cast (task #19).
+    isLazy: z.boolean().optional(),
   }),
   z.object({
     kind: z.literal("zero_copy_load_mut"),
     account: z.string(),
     localVar: z.string(),
     accountType: z.string(),
+    isLazy: z.boolean().optional(),
   }),
   z.object({
     kind: z.literal("zero_copy_load"),
     account: z.string(),
     localVar: z.string(),
     accountType: z.string(),
+    isLazy: z.boolean().optional(),
   }),
 
   // N5b — Inline-parsed `get_feed_id_from_hex("0x...")` call. The

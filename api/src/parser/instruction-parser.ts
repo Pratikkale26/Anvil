@@ -368,6 +368,17 @@ function parseInstructionFn(
       const matchingAccount = accounts.find((a) => a.name === stmt.account);
       if (matchingAccount) {
         stmt.accountType = matchingAccount.accountType;
+        // LazyAccount<'info,T> shares the `.load*()` syntax with AccountLoader
+        // but is Borsh-lazy, not bytemuck Pod — flag it so the emit refuses
+        // with a loud stub instead of mis-emitting a Pod cast (task #19).
+        if (
+          matchingAccount.isLazy &&
+          (stmt.kind === "zero_copy_load_init" ||
+            stmt.kind === "zero_copy_load_mut" ||
+            stmt.kind === "zero_copy_load")
+        ) {
+          stmt.isLazy = true;
+        }
       }
     }
   }

@@ -317,6 +317,7 @@ function parseAccountField(
   const rawType = typeNode.text;
   const accountType = extractAccountType(rawType);
   const isZeroCopy = /\bAccountLoader\s*<\s*'/.test(rawType);
+  const isLazy = /\bLazyAccount\s*<\s*'/.test(rawType);
 
   // Parse all #[account(...)] attributes for this field (there may be multiple)
   const accountAttrParts: string[] = [];
@@ -378,6 +379,7 @@ function parseAccountField(
     loc: locFromNode(fieldNode),
   };
   if (isZeroCopy) ref.isZeroCopy = true;
+  if (isLazy) ref.isLazy = true;
   return ref;
 }
 
