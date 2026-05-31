@@ -347,6 +347,20 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     to: z.string(),
     amount: z.string(),
     signerSeeds: z.string().optional(),
+    /**
+     * Set when the transfer is gated by a runtime `if <cond> { … }` (e.g.
+     * squads' `realloc_if_needed`: `if delta > 0 { system_program::transfer(…) }`).
+     * The emit wraps the CPI in `if <condition> { … }` so a no-op condition
+     * skips the transfer — preserving byte-equality vs an unconditional emit.
+     */
+    condition: z.string().optional(),
+    /**
+     * `let`-bindings that sit inside the guarded block BEFORE the transfer
+     * (e.g. `let delta = target - current;`). Emitted verbatim inside the
+     * `if { … }` so the transfer's amount/args resolve. Restricted to
+     * let_declarations at parse time (pure local bindings — byte-equal safe).
+     */
+    conditionPrelude: z.string().optional(),
   }),
 
   // SPL Token transfer CPI

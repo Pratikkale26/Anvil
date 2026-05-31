@@ -492,6 +492,21 @@ function classifyStatement(
 ): ClassifyResult {
   const text = node.text;
 
+  // #13 — conditional money-movement. An `if <cond> { … }` statement may arrive
+  // as a bare `if_expression` or wrapped in an `expression_statement`; handle
+  // both before the switch. Only the narrow `if { system_program::transfer }`
+  // shape is intercepted (else → falls through unchanged).
+  const ifNode =
+    node.type === "if_expression"
+      ? node
+      : node.type === "expression_statement" && node.namedChild(0)?.type === "if_expression"
+        ? node.namedChild(0)!
+        : null;
+  if (ifNode) {
+    const condTransfer = tryConditionalSystemTransfer(ifNode, collector, cpiContexts, systemTransferByVar);
+    if (condTransfer) return { stmt: condTransfer };
+  }
+
   switch (node.type) {
     case "let_declaration":
       return classifyLetDeclaration(node, pendingSeeds, cpiAccountsByVar, hasUserSeedsManagement, pendingPythLoad, constStringMap, pendingSwitchboardLoad);
@@ -530,6 +545,49 @@ function classifyStatement(
       // if/for/while/match/block — pure Rust, pass through.
       return passThroughDefault(text, node, collector);
   }
+}
+
+/**
+ * #13 — `if <cond> { system_program::transfer(…) }` (squads realloc_if_needed
+ * rent top-up). Narrow on purpose: a SINGLE system_program::transfer CPI inside
+ * an if-block with no `else`. Returns a cpi_system_transfer carrying `condition`
+ * (the emit wraps it in `if <cond> { … }`); null otherwise → pass-through, so no
+ * other if-shape is intercepted → zero regression on existing fixtures.
+ */
+function tryConditionalSystemTransfer(
+  ifNode: SyntaxNode,
+  collector: WarningCollector | undefined,
+  cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string; mint?: string }>,
+  systemTransferByVar: Map<string, { from: string; to: string; amount: string }> | undefined,
+): BodyStatement | null {
+  if (ifNode.childForFieldName("alternative")) return null; // has `else` → out of scope
+  const cond = ifNode.childForFieldName("condition");
+  const cons = ifNode.childForFieldName("consequence");
+  if (!cond || !cons) return null;
+  // Cheap text gate BEFORE any detectCpi probe — detectCpi has side effects
+  // (registers CPI contexts), so probing an unrelated if-block (e.g. an
+  // `if let Some(..) = ctx.accounts.X { .. }`) would corrupt its later
+  // classification. Only proceed when a system transfer is actually present.
+  if (!/system_program::transfer|system_instruction::transfer/.test(cons.text)) return null;
+  const inner: SyntaxNode[] = [];
+  for (let i = 0; i < cons.namedChildCount; i++) {
+    const s = cons.namedChild(i);
+    if (s && !s.type.includes("comment")) inner.push(s);
+  }
+  if (inner.length === 0) return null;
+  // The transfer must be the LAST statement; everything before it must be a
+  // plain `let` binding (pure local arithmetic, e.g. `let delta = …;`) carried
+  // verbatim into the guarded block. Anything else (a 2nd CPI, control flow,
+  // a trailing statement) → out of scope → pass-through (no false interception).
+  const last = inner[inner.length - 1]!;
+  const lastExpr = last.type === "expression_statement" ? last.namedChild(0) : last;
+  if (!lastExpr) return null;
+  const cpi = detectCpi(lastExpr, collector, cpiContexts, systemTransferByVar);
+  if (!cpi || cpi.kind !== "cpi_system_transfer") return null;
+  const preludeNodes = inner.slice(0, inner.length - 1);
+  if (!preludeNodes.every((n) => n.type === "let_declaration")) return null;
+  const conditionPrelude = preludeNodes.map((n) => n.text).join("\n        ") || undefined;
+  return { ...cpi, condition: cond.text, conditionPrelude };
 }
 
 function passThroughDefault(

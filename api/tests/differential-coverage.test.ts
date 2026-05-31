@@ -107,6 +107,8 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   "zero-copy-foo": "zero-copy-foo.rs",
   // LazyAccount whole-struct load_mut() Borsh byte-equal (#19).
   "lazy-counter": "lazy-counter.rs",
+  // Conditional money-movement: if <cond> { system_program::transfer } (#13 1a).
+  "conditional-transfer": "conditional-transfer.rs",
   // Metaplex Token Metadata byte-equal fixtures (2026-05-09 → 2026-05-19).
   // Each entry maps the fixtureName the .test.ts file declares to the demo
   // it loads (`api/src/demo-programs/mpl-*.rs`). The differential gate runs

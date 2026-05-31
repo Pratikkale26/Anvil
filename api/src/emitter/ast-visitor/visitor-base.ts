@@ -2055,6 +2055,25 @@ export class AstVisitorBase {
     const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
     const isPinocchio = w.emitter.frameworkName === "Pinocchio";
 
+    // #13 — conditional money-movement: `if <cond> { system_program::transfer(…) }`
+    // (squads realloc_if_needed rent top-up). Wrap the CPI in the source's guard
+    // so a no-op condition skips the transfer (byte-equal vs an unconditional
+    // emit). The condition references locals already in scope (e.g. `delta`),
+    // emitted verbatim. Built as text → applyStructuralize (same path as the
+    // captured set_authority / zero-copy emits).
+    if (stmt.condition) {
+      const prelude = stmt.conditionPrelude ? `        ${stmt.conditionPrelude}\n` : "";
+      const inner = isPinocchio
+        ? (signerSeedsResolved
+            ? `        transfer_lamports_signed(${fromVar}, ${toVar}, ${amountExpr}, ${signerSeedsResolved})?;`
+            : `        transfer_lamports(${fromVar}, ${toVar}, ${amountExpr})?;`)
+        : (signerSeedsResolved
+            ? `        let transfer_ix = system_instruction::transfer(&${fromVar}.key, &${toVar}.key, ${amountExpr});\n        invoke_signed(&transfer_ix, &[${fromVar}.clone(), ${toVar}.clone()], ${signerSeedsResolved})?;`
+            : `        let transfer_ix = system_instruction::transfer(&${fromVar}.key, &${toVar}.key, ${amountExpr});\n        invoke(&transfer_ix, &[${fromVar}.clone(), ${toVar}.clone()])?;`);
+      const ifBlock = `    if ${stmt.condition} {\n${prelude}${inner}\n    }`;
+      return [...out, ...this.applyStructuralize([ifBlock])];
+    }
+
     if (isPinocchio) {
       if (signerSeedsResolved) {
         out.push(comment("System transfer with PDA signer"));
