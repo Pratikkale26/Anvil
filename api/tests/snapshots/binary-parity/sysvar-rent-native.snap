@@ -85,7 +85,7 @@ pub fn record_min_balance(
         __init_data[..8].copy_from_slice(&StateAccount::DISCRIMINATOR);
     }
     let rent = solana_program::sysvar::rent::Rent::get()?;
-    let min_balance = Rent::get()?.minimum_balance(StateAccount::INIT_SPACE + 8);
+    let min_balance = rent.minimum_balance(StateAccount::INIT_SPACE + 8);
     let state_account = state;
     let mut state = StateAccount { min_balance: 0 };
     state.min_balance = min_balance;

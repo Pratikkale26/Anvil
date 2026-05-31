@@ -5612,9 +5612,20 @@ export function rewriteGetInstancePackedLen(body: string): string {
  * method names — they only come from sysvar-typed bindings in source.
  */
 export function rewriteRentSysvarMethods(body: string): string {
+  // Locals bound to a Rent value (`let rent = …Rent::get()…;`) already hold a
+  // Rent, so `rent.minimum_balance(…)` compiles as-is. Rewriting it would
+  // re-call Rent::get() (a redundant syscall) and orphan the binding (unused-
+  // var warning). Skip those receivers; only rewrite the Sysvar<'info, Rent>
+  // account case, which Anvil lowers to &AccountInfo (no minimum_balance method)
+  // and which is never introduced by a `let … = Rent::get()` binding.
+  const rentLocals = new Set<string>();
+  const bindRe = /\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=;]+)?=\s*[^;]*\bRent::get\s*\(\s*\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = bindRe.exec(body)) !== null) rentLocals.add(m[1]);
   return body.replace(
-    /\b\w+\.(minimum_balance|exempt_minimum|burn_percent)\s*\(/g,
-    (full, method: string) => `Rent::get()?.${method}(`,
+    /\b(\w+)\.(minimum_balance|exempt_minimum|burn_percent)\s*\(/g,
+    (full, recv: string, method: string) =>
+      rentLocals.has(recv) ? full : `Rent::get()?.${method}(`,
   );
 }
 

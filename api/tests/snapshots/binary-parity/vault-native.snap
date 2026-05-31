@@ -308,7 +308,7 @@ pub fn withdraw(
         return Err(ProgramError::InvalidAccountData);
     }
     let rent = solana_program::sysvar::rent::Rent::get()?;
-    let rent_minimum = Rent::get()?.minimum_balance(0);
+    let rent_minimum = rent.minimum_balance(0);
     let post_balance = vault.lamports().checked_sub(amount).ok_or(VaultError::InsufficientFunds)?;
     if !(post_balance >= rent_minimum) {
         return Err(VaultError::WouldBreakRentExempt.into());

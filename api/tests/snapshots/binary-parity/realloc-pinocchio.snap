@@ -102,7 +102,7 @@ pub fn append(
         let __state_for_realloc = LogState::from_account_info(state)?;
         let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 1) as usize;
         let __rent = pinocchio::sysvars::rent::Rent::get()?;
-        let __new_lamports = Rent::get()?.minimum_balance(__new_size);
+        let __new_lamports = __rent.minimum_balance(__new_size);
         let __cur_lamports = state.lamports();
         if __new_lamports > __cur_lamports {
             let __delta = __new_lamports - __cur_lamports;
