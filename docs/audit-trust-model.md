@@ -154,7 +154,14 @@ anvil-sol differential ./your-program.rs \
     --scenario your-audited-scenarios.json \
     --fuzz 1000
 
-# 5. Confirm the audit log
+# 5. Use Anvil as a generic gate on any two pre-built .so (not just its own emit):
+#    byte-equal two builds, or measure the compute-unit difference.
+#    (the .so don't embed their ABI, so --source supplies it; an ABI mismatch
+#     fails loudly — it can't false-pass unrelated binaries. See docs/differential-testing.md Option 3.)
+anvil-sol diff before.so after.so --source program.rs --scenario s.json
+anvil-sol bench mine.so --against anchor.so --source program.rs --scenario s.json
+
+# 6. Confirm the audit log
 #    (every IR kind exercised, every gate result, seeds of any divergence)
 ```
 

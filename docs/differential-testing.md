@@ -212,6 +212,39 @@ Per-fixture features beyond the JSON shape:
 
 ---
 
+## Option 3 — Compare two pre-built binaries (Anvil as a generic gate)
+
+Options 1 and 2 build the Anvil `.so` from your source and compare it to an Anchor reference. But the same scenario engine works on **any two pre-built `.so`** — Anvil is a generic equivalence gate, not just a check on its own emit. Use it to prove a rebuild, a refactor, a compiler-flag change, or a hand-optimization didn't change on-chain behaviour.
+
+Both modes need `--source <program.rs>` (parsed *only* for the ABI — instruction discriminators, arg layout, account flags — that `.so` files don't embed) and `--scenario <s.json>` (the same JSON format as Option 1). **Both `.so` must share that ABI**; an ABI mismatch fails loudly (the scenario instruction is rejected) — it cannot silently report two unrelated binaries as equal.
+
+### `anvil diff <before.so> <after.so>` — runtime byte-equal
+
+Runs the scenario against both binaries in LiteSVM and byte-compares the resulting accounts.
+
+```bash
+anvil diff before.so after.so --source program.rs --scenario s.json
+#   ✓ BYTE-EQUAL — before.so ≡ after.so across all 1 compared account(s). (202ms)
+```
+
+Exit codes match Option 1 (`0` byte-equal, `2` diverged, `1` build/parse/scenario error). `--json` for a machine-readable verdict. *(With two source files instead of `.so`, `anvil diff` runs the static storage-layout / upgrade-safety diff instead — the mode is chosen by argument type.)*
+
+### `anvil bench <subject.so> --against <reference.so>` — runtime compute units
+
+The byte-equal gate deliberately does **not** compare compute units — Pinocchio is intentionally cheaper, so equality there would defeat the migration's purpose. When you *want* to see that difference, `bench --against` measures it: it runs the scenario against both binaries and reports `computeUnitsConsumed()` per instruction.
+
+```bash
+anvil bench mine.so --against anchor.so --source program.rs --scenario s.json
+#   CU BENCH — mine.so (subject) vs anchor.so (reference)
+#       initialize: subject 6376 CU  vs  reference 9775 CU  (-3399)
+#       increment:  subject 4907 CU  vs  reference 2998 CU  (+1909)
+#   Total: subject 11283 CU  vs  reference 12773 CU  (-1490) (-11.7%)
+```
+
+Per-instruction deltas are honest in both directions — a negative total with a positive line tells you exactly where a rewrite paid off and where it cost. `--json` emits the structured per-instruction breakdown. If the two binaries diverge in state, the report says so (CU numbers across behaviourally-different programs are apples-to-oranges).
+
+---
+
 ## Fixtures locked under this gate today (May 2026)
 
 `bun test api/tests/differential-*.test.ts` runs **141 differential test files**. Representative categories:
