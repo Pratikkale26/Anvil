@@ -100,6 +100,9 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   // EM2 Session 3 — GroupPointer (init + update) + GroupMemberPointer (init + update).
   "t22-group-pointer": "t22-group-pointer.rs",
   "t22-group-member-pointer": "t22-group-member-pointer.rs",
+  // Direct standalone initialize_mint2 CPI (#34 — covers cpi_t22_initialize_mint2,
+  // byte-equal differential at differential-t22-init-mint2.test.ts).
+  "t22-init-mint2": "t22-init-mint2.rs",
   // Zero-copy AccountLoader handle (zero_copy_load_init/_mut/_).
   "zero-copy-foo": "zero-copy-foo.rs",
   // Metaplex Token Metadata byte-equal fixtures (2026-05-09 → 2026-05-19).
@@ -292,16 +295,8 @@ const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
   "cpi_t22_confidential_transfer_initialize_mint",
   "cpi_t22_confidential_transfer_fee_init",
   "cpi_t22_confidential_mint_burn_initialize_mint",
-  // cpi_t22_initialize_mint2 (Finding #44, commit 5cf974b — direct standalone
-  // initialize_mint2 CPI for manually-composed T22 mint init). UNLIKE the
-  // siblings above, this has NO hard external blocker: it's emittable + covered
-  // at the parser/emit unit level, and T22 deps build here. It's deferred only
-  // because no demo program manually composes create_account + extension-init +
-  // initialize_mint2 yet, so the byte-equal fixture hasn't been authored. The
-  // real fixture (a manual-T22-mint-init demo + mint scenario) is tracked as
-  // task #34 for a fresh session. This entry just stops the existing latent gate
-  // failure (red since 5cf974b, 2026-05-22) from masking genuinely-new gaps.
-  "cpi_t22_initialize_mint2",
+  // (cpi_t22_initialize_mint2 promoted OUT of deferred 2026-05-31 — now has a
+  // real byte-equal fixture: t22-init-mint2 / differential-t22-init-mint2.test.ts, #34.)
 ]);
 
 function listBodyStatementKinds(): string[] {
