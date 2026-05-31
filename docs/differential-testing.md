@@ -243,6 +243,8 @@ anvil bench mine.so --against anchor.so --source program.rs --scenario s.json
 
 Per-instruction deltas are honest in both directions — a negative total with a positive line tells you exactly where a rewrite paid off and where it cost. `--json` emits the structured per-instruction breakdown. If the two binaries diverge in state, the report says so (CU numbers across behaviourally-different programs are apples-to-oranges).
 
+> **These are LiteSVM compute units.** Both binaries run in the same VM, so the *relative* delta is sound (apples-to-apples). The *absolute* values differ from a full `solana-test-validator` / mainnet run — e.g. the README's measured-CU table (run on `solana-test-validator`) reports different absolutes for the same demos. Use `bench --against` for "did my change get cheaper, and where"; use `scripts/measure-cu.ts` (validator-based) for headline absolute numbers.
+
 ---
 
 ## Fixtures locked under this gate today (May 2026)
