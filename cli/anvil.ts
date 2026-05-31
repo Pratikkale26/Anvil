@@ -16,6 +16,7 @@
 import { existsSync, readFileSync, mkdirSync, writeFileSync, statSync } from "fs";
 import { resolve, join, basename, dirname } from "path";
 
+import type { DifferentialScenario } from "./scenario-runner.js";
 import { parseAnchor } from "../api/src/parser/anchor-parser.js";
 import { emitPinocchioFull } from "../api/src/emitter/pinocchio-emitter.js";
 import { emitNativeFull } from "../api/src/emitter/native-emitter.js";
@@ -177,6 +178,12 @@ interface CliArgs {
    */
   scenario: string | null;
   /**
+   * `diff <before.so> <after.so> --source <program.rs>` — the program's Anchor
+   * source, parsed only for the ABI (instruction discriminators, arg layout,
+   * account flags) needed to drive the scenario. .so files don't embed it.
+   */
+  source: string | null;
+  /**
    * `differential --anchor-so path.so` — pre-built Anchor reference .so.
    * If unset, the runner builds it from the same source as the Anvil side
    * (assumes the user wants a self-test against the input source itself).
@@ -301,6 +308,7 @@ function parseArgs(argv: string[]): CliArgs {
     permissive: false,
     cargoCheck: "auto",
     scenario: null,
+    source: null,
     anchorSo: null,
     anvilSo: null,
     anchorExtraDeps: [],
@@ -448,6 +456,12 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--scenario") {
       args.scenario = rest[i + 1] ?? null;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--source") {
+      args.source = rest[i + 1] ?? null;
       i += 2;
       continue;
     }
@@ -795,26 +809,39 @@ function printSnapshotHelp(): void {
 
 function printDiffHelp(): void {
   console.log(`
-  ${c.bold}anvil diff${c.reset} — Storage-layout diff between two program versions.
+  ${c.bold}anvil diff${c.reset} — Diff two program versions. Two modes, by argument type:
+
+    • two source files/dirs → STATIC storage-layout / upgrade-safety diff
+    • two ${c.bold}.so${c.reset} files       → RUNTIME byte-equal compare in LiteSVM (Anvil as a
+                            generic equivalence gate — prove a rebuild/refactor
+                            is on-chain-behaviour-identical)
 
   ${c.bold}USAGE${c.reset}
 
     anvil diff <before> <after> [--json | --markdown]
+    anvil diff <before.so> <after.so> --source <program.rs> --scenario <s.json> [--json]
 
   ${c.bold}ARGUMENTS${c.reset}
 
-    <before>    Old program (file or directory)
-    <after>     New program (file or directory)
+    <before>    Old program (source file/dir) — or a pre-built .so
+    <after>     New program (source file/dir) — or a pre-built .so
 
   ${c.bold}OPTIONS${c.reset}
 
-    --json                  JSON diff report
-    --markdown, --md        Markdown upgrade-safety report
+    --json                  JSON report (both modes)
+    --markdown, --md        Markdown upgrade-safety report (source mode)
+    --source <program.rs>   (.so mode) the program's Anchor source — parsed only
+                            for the ABI (discriminators, arg layout, account flags)
+                            the .so files don't embed. BOTH .so must share this
+                            ABI; an ABI mismatch fails loudly (it won't false-pass).
+    --scenario <s.json>     (.so mode) how to invoke + which accounts to compare.
+                            See examples/differential/.
 
   ${c.bold}EXAMPLES${c.reset}
 
     anvil diff ./v1 ./v2
     anvil diff old.rs new.rs --markdown > upgrade-safety.md
+    anvil diff before.so after.so --source program.rs --scenario s.json
 `);
 }
 
@@ -1700,7 +1727,115 @@ async function cmdSnapshot(args: CliArgs): Promise<void> {
   if (cmp.regressions.length > 0) process.exit(1);
 }
 
-// ─── anvil diff ──────────────────────────────────────────────────────────────
+// ─── anvil diff <before.so> <after.so> (runtime byte-equal gate) ──────────────
+
+/**
+ * `anvil diff <before.so> <after.so> --source <program.rs> --scenario <s.json>`
+ *
+ * Runs a scenario against two PRE-BUILT Solana binaries in LiteSVM and
+ * byte-compares the resulting accounts — Anvil as a generic equivalence gate,
+ * not just a transpiler. Use it to prove a rebuild / refactor / optimization
+ * (before.so vs after.so) is on-chain-behaviour-identical. `--source` is the
+ * program's Anchor source, parsed only for the ABI the .so files don't embed.
+ *
+ * Reuses the same runScenarioDifferential core as `differential --anchor-so
+ * --anvil-so`; this is the ergonomic two-positional surface for it.
+ */
+async function cmdDiffSo(args: CliArgs): Promise<void> {
+  const beforePath = args.input!;
+  const afterPath = args.input2!;
+  if (!args.source) {
+    fatal(
+      "anvil diff <before.so> <after.so> needs --source <program.rs>.\n\n" +
+      "  The .so files don't embed their ABI (instruction discriminators, arg\n" +
+      "  layout, account flags), so the program's Anchor source drives the\n" +
+      "  scenario. Usage:\n\n" +
+      "    anvil diff <before.so> <after.so> --source <program.rs> --scenario <s.json> [--json]",
+    );
+  }
+  if (!args.scenario) {
+    fatal(
+      "anvil diff <before.so> <after.so> needs --scenario <s.json> (how to invoke\n" +
+      "  the program + which accounts to byte-compare). See examples/differential/.",
+    );
+  }
+  for (const [label, p] of [
+    ["before .so", beforePath],
+    ["after .so", afterPath],
+    ["--source", args.source],
+    ["--scenario", args.scenario],
+  ] as const) {
+    if (!existsSync(p)) fatal(`${label} not found: ${p}`);
+  }
+  if (!args.json) banner();
+
+  const beforeBytes = readFileSync(beforePath);
+  const afterBytes = readFileSync(afterPath);
+  progress(`Parsing --source ${args.source} for the ABI...`);
+  const parsed = await parseAnchor(resolveSource(args.source));
+  if (!parsed.ok) {
+    error(`Parse failed (--source ${args.source}): ${parsed.error}`);
+    process.exit(1);
+  }
+  let scenario: DifferentialScenario;
+  try {
+    scenario = JSON.parse(readFileSync(args.scenario, "utf-8"));
+  } catch (err) {
+    error(`scenario JSON parse failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
+  progress("Running scenario in LiteSVM against both binaries...");
+  let runResult;
+  try {
+    const { runScenarioDifferential } = await import("./scenario-runner.js");
+    runResult = await runScenarioDifferential({
+      scenario,
+      anchorSo: beforeBytes,
+      anvilSo: afterBytes,
+      ir: parsed.ir,
+      compareEventLogs: args.compareEvents,
+      compareReturnData: args.compareReturnData,
+      compareMsgLogs: args.compareMsgLogs,
+    });
+  } catch (err) {
+    error(`diff run failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
+  const before = basename(beforePath);
+  const after = basename(afterPath);
+
+  if (args.json) {
+    console.log(JSON.stringify({
+      verdict: runResult.ok ? "byte-equal" : "diverged",
+      before: beforePath,
+      after: afterPath,
+      results: runResult.results,
+      durationMs: runResult.durationMs,
+    }, null, 2));
+    process.exit(runResult.ok ? 0 : 2);
+  }
+
+  console.log();
+  if (runResult.ok) {
+    success(`${c.bold}BYTE-EQUAL${c.reset} — ${before} ≡ ${after} across all ${runResult.results.length} compared account(s). (${runResult.durationMs}ms)`);
+    for (const r of runResult.results) console.log(`    ${c.green}✓${c.reset} ${r.name}`);
+    console.log();
+    console.log(`  ${c.dim}The two binaries produced identical on-chain state under this scenario.${c.reset}`);
+    console.log();
+    return;
+  }
+  error(`${c.bold}DIVERGED${c.reset} — ${before} and ${after} produced different state. (${runResult.durationMs}ms)`);
+  for (const r of runResult.results) {
+    if (r.ok) console.log(`    ${c.green}✓${c.reset} ${r.name}`);
+    else console.log(`    ${c.red}✗${c.reset} ${r.name} [${r.kind}] ${r.details}`);
+  }
+  console.log();
+  process.exit(2);
+}
+
+// ─── anvil diff <old-version> <new-version> (static IR version-diff) ──────────
 
 async function cmdDiff(args: CliArgs): Promise<void> {
   if (!args.input || !args.input2) {
@@ -2147,7 +2282,14 @@ async function main(): Promise<void> {
       await cmdSnapshot(args);
       break;
     case "diff":
-      await cmdDiff(args);
+      // Two `.so` positionals → runtime byte-equal compare of two pre-built
+      // binaries (Anvil as a generic gate). Otherwise the static source/IR
+      // version-diff.
+      if (args.input?.endsWith(".so") && args.input2?.endsWith(".so")) {
+        await cmdDiffSo(args);
+      } else {
+        await cmdDiff(args);
+      }
       break;
     case "completion":
       cmdCompletion(args);
