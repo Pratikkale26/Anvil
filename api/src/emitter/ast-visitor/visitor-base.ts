@@ -3998,6 +3998,15 @@ export class AstVisitorBase {
       return [comment(`[zero-copy] unresolved account type for ${stmt.account}; load_mut skipped`)];
     }
     if (stmt.isLazy) {
+      // LazyAccount<T> is Borsh-lazy: whole-struct load_mut() is the SAME Borsh
+      // deserialize the mutable Account<T> path emits, and the downstream
+      // state_field_assign already emits the `T::save` write-back. Reuse that
+      // seam so a LazyAccount mutates correctly (byte-equal) — load_mut for
+      // free. Fall back to the loud stub only when the inner type isn't a
+      // generated #[account] struct we can Borsh-deserialize.
+      if (w.isGeneratedStateType(accountType)) {
+        return this.ensureStateReadStructural(accountName, localVar, true);
+      }
       return this.emitLazyAccountStub(accountName, localVar, accountInfoVar, accountType, "load_mut", true);
     }
     const dataVar = `__${accountName}_data`;
@@ -4032,6 +4041,12 @@ export class AstVisitorBase {
       return [comment(`[zero-copy] unresolved account type for ${stmt.account}; load skipped`)];
     }
     if (stmt.isLazy) {
+      // LazyAccount<T> whole-struct load() == an immutable Borsh deserialize —
+      // reuse the Account<T> read path (no write-back). Loud-stub fallback when
+      // the inner type isn't a generated #[account] struct.
+      if (w.isGeneratedStateType(accountType)) {
+        return this.ensureStateReadStructural(accountName, localVar, false);
+      }
       return this.emitLazyAccountStub(accountName, localVar, accountInfoVar, accountType, "load", false);
     }
     const dataVar = `__${accountName}_data`;
