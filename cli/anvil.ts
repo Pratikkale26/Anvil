@@ -184,6 +184,12 @@ interface CliArgs {
    */
   source: string | null;
   /**
+   * `bench <subject.so> --against <reference.so>` — measure the subject's
+   * compute units against a reference binary (runtime CU gate, sibling to the
+   * .so byte-equal mode of `diff`).
+   */
+  against: string | null;
+  /**
    * `differential --anchor-so path.so` — pre-built Anchor reference .so.
    * If unset, the runner builds it from the same source as the Anvil side
    * (assumes the user wants a self-test against the input source itself).
@@ -309,6 +315,7 @@ function parseArgs(argv: string[]): CliArgs {
     cargoCheck: "auto",
     scenario: null,
     source: null,
+    against: null,
     anchorSo: null,
     anvilSo: null,
     anchorExtraDeps: [],
@@ -462,6 +469,12 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--source") {
       args.source = rest[i + 1] ?? null;
+      i += 2;
+      continue;
+    }
+
+    if (arg === "--against") {
+      args.against = rest[i + 1] ?? null;
       i += 2;
       continue;
     }
@@ -753,25 +766,34 @@ function printLintHelp(): void {
 
 function printBenchHelp(): void {
   console.log(`
-  ${c.bold}anvil bench${c.reset} — Per-instruction CU estimate vs Anchor baseline.
+  ${c.bold}anvil bench${c.reset} — Per-instruction compute units. Two modes:
+
+    • <input.rs>              STATIC IR-based CU estimate vs Anchor baseline
+    • <subject.so> --against  RUNTIME CU measured in LiteSVM vs a reference .so
+                              (prove Anvil's emit is cheaper than the Anchor build)
 
   ${c.bold}USAGE${c.reset}
 
     anvil bench <input> [--json | --markdown]
+    anvil bench <subject.so> --against <reference.so> --source <program.rs> --scenario <s.json> [--json]
 
   ${c.bold}ARGUMENTS${c.reset}
 
-    <input>     Rust source file (.rs) or project directory
+    <input>     Rust source file (.rs) / project dir — or a subject .so (--against mode)
 
   ${c.bold}OPTIONS${c.reset}
 
-    --json                  JSON CU report
-    --markdown, --md        Markdown CU table ranked by hotspots
+    --json                  JSON CU report (both modes)
+    --markdown, --md        Markdown CU table ranked by hotspots (static mode)
+    --against <ref.so>      (runtime mode) reference binary to measure CU against
+    --source <program.rs>   (runtime mode) the ABI both .so were built against
+    --scenario <s.json>     (runtime mode) how to invoke the program
 
   ${c.bold}EXAMPLES${c.reset}
 
     anvil bench program.rs
     anvil bench program.rs --markdown > bench.md
+    anvil bench mine.so --against anchor.so --source program.rs --scenario s.json
 `);
 }
 
@@ -1586,9 +1608,129 @@ async function cmdLint(args: CliArgs): Promise<void> {
   if (report.counts.blocker > 0) process.exit(1);
 }
 
-// ─── anvil bench ─────────────────────────────────────────────────────────────
+// ─── anvil bench <subject.so> --against <reference.so> (runtime CU gate) ──────
+
+/**
+ * Measure the compute units a SUBJECT binary spends vs a REFERENCE binary,
+ * per instruction, by running the same scenario against both in LiteSVM — the
+ * perf-gate sibling to `diff`'s correctness gate. Typical use: confirm Anvil's
+ * emit (subject) is cheaper than the Anchor build (reference). Both .so must
+ * share the --source ABI; an ABI mismatch fails loudly via the scenario run.
+ */
+async function cmdBenchAgainst(args: CliArgs): Promise<void> {
+  const subjectPath = args.input;
+  const referencePath = args.against!;
+  if (!subjectPath || !subjectPath.endsWith(".so")) {
+    fatal(
+      "anvil bench --against needs a subject .so as the first argument:\n\n" +
+      "    anvil bench <subject.so> --against <reference.so> --source <program.rs> --scenario <s.json>",
+    );
+  }
+  if (!args.source) {
+    fatal("anvil bench --against needs --source <program.rs> (the ABI the .so files don't embed).");
+  }
+  if (!args.scenario) {
+    fatal("anvil bench --against needs --scenario <s.json> (how to invoke the program).");
+  }
+  for (const [label, p] of [
+    ["subject .so", subjectPath],
+    ["--against .so", referencePath],
+    ["--source", args.source],
+    ["--scenario", args.scenario],
+  ] as const) {
+    if (!existsSync(p)) fatal(`${label} not found: ${p}`);
+  }
+  if (!args.json) banner();
+
+  const subjectBytes = readFileSync(subjectPath);
+  const referenceBytes = readFileSync(referencePath);
+  progress(`Parsing --source ${args.source} for the ABI...`);
+  const parsed = await parseAnchor(resolveSource(args.source));
+  if (!parsed.ok) {
+    error(`Parse failed (--source ${args.source}): ${parsed.error}`);
+    process.exit(1);
+  }
+  let scenario: DifferentialScenario;
+  try {
+    scenario = JSON.parse(readFileSync(args.scenario, "utf-8"));
+  } catch (err) {
+    error(`scenario JSON parse failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
+  progress("Measuring compute units in LiteSVM (subject + reference)...");
+  let runResult;
+  try {
+    const { runScenarioDifferential } = await import("./scenario-runner.js");
+    // anchorSo carries the SUBJECT (→ cu.anchor), anvilSo the REFERENCE.
+    runResult = await runScenarioDifferential({
+      scenario,
+      anchorSo: subjectBytes,
+      anvilSo: referenceBytes,
+      ir: parsed.ir,
+      captureCu: true,
+    });
+  } catch (err) {
+    error(`bench run failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
+  const subjectCu = runResult.cu?.anchor ?? [];
+  const referenceCu = runResult.cu?.anvil ?? [];
+  const ixNames = scenario.instructions.map((i) => i.ix);
+  const subjectTotal = subjectCu.reduce((a, b) => a + b, 0);
+  const referenceTotal = referenceCu.reduce((a, b) => a + b, 0);
+  const deltaTotal = subjectTotal - referenceTotal;
+  const pct = referenceTotal > 0 ? ((deltaTotal / referenceTotal) * 100).toFixed(1) : "?";
+
+  if (args.json) {
+    console.log(JSON.stringify({
+      subject: subjectPath,
+      reference: referencePath,
+      stateByteEqual: runResult.ok,
+      perInstruction: ixNames.map((ix, i) => ({
+        ix,
+        subjectCu: subjectCu[i] ?? null,
+        referenceCu: referenceCu[i] ?? null,
+        deltaCu: (subjectCu[i] ?? 0) - (referenceCu[i] ?? 0),
+      })),
+      subjectTotalCu: subjectTotal,
+      referenceTotalCu: referenceTotal,
+      deltaCu: deltaTotal,
+      deltaPct: pct,
+    }, null, 2));
+    return;
+  }
+
+  console.log();
+  console.log(`  ${c.bold}CU BENCH${c.reset} — ${basename(subjectPath)} (subject) vs ${basename(referencePath)} (reference)`);
+  if (!runResult.ok) {
+    console.log(`  ${c.yellow}⚠ the two binaries DIVERGED in state — CU numbers may be apples-to-oranges.${c.reset}`);
+  }
+  console.log();
+  const fmtDelta = (d: number) => {
+    const col = d < 0 ? c.green : d > 0 ? c.red : c.dim;
+    return `${col}(${d >= 0 ? "+" : ""}${d})${c.reset}`;
+  };
+  for (let i = 0; i < ixNames.length; i++) {
+    const s = subjectCu[i];
+    const r = referenceCu[i];
+    console.log(`    ${ixNames[i]}: subject ${s ?? "?"} CU  vs  reference ${r ?? "?"} CU  ${fmtDelta((s ?? 0) - (r ?? 0))}`);
+  }
+  console.log();
+  console.log(`  ${c.bold}Total:${c.reset} subject ${subjectTotal} CU  vs  reference ${referenceTotal} CU  ${fmtDelta(deltaTotal)} ${c.dim}(${pct}%)${c.reset}`);
+  console.log();
+}
+
+// ─── anvil bench <input> (static IR-based CU estimate) ────────────────────────
 
 async function cmdBench(args: CliArgs): Promise<void> {
+  // `bench <subject.so> --against <reference.so>` → runtime compute-unit
+  // compare of two pre-built binaries. Otherwise the static IR-based estimate.
+  if (args.against) {
+    await cmdBenchAgainst(args);
+    return;
+  }
   if (!args.input) {
     fatal("Missing input file or directory.\n\n  Usage: anvil bench <input> [--json|--markdown]");
   }

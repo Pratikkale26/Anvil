@@ -192,6 +192,8 @@ export interface ScenarioRunResult {
     | { name: string; ok: false; kind: "data" | "lamports" | "missing" | "events" | "returnData" | "msgLogs"; details: string }
   >;
   durationMs: number;
+  /** Per-instruction compute units consumed by each program, when captureCu was set. */
+  cu?: { anchor: number[]; anvil: number[] };
 }
 
 export async function runScenarioDifferential(args: {
@@ -212,6 +214,8 @@ export async function runScenarioDifferential(args: {
    * expected to trigger program-side rejections.
    */
   softFailOnTxError?: boolean;
+  /** When true, capture computeUnitsConsumed() per tx for both programs (bench --against). */
+  captureCu?: boolean;
 }): Promise<ScenarioRunResult> {
   const t0 = Date.now();
   const deps = await loadRuntimeDeps();
@@ -232,6 +236,9 @@ export async function runScenarioDifferential(args: {
   const anvilReturn: Array<string | null> = [];
   const anchorMsg: string[] = [];
   const anvilMsg: string[] = [];
+  const captureCu = args.captureCu ?? false;
+  const anchorCu: number[] = [];
+  const anvilCu: number[] = [];
   const softFail = args.softFailOnTxError ?? false;
   const anchorState = await runOneScenario(
     args.scenario, args.anchorSo, programId, ctx, args.ir, deps,
@@ -239,6 +246,7 @@ export async function runScenarioDifferential(args: {
     captureReturn ? anchorReturn : undefined,
     captureMsg ? anchorMsg : undefined,
     softFail,
+    captureCu ? anchorCu : undefined,
   );
   const anvilState = await runOneScenario(
     args.scenario, args.anvilSo, programId, ctx, args.ir, deps,
@@ -246,6 +254,7 @@ export async function runScenarioDifferential(args: {
     captureReturn ? anvilReturn : undefined,
     captureMsg ? anvilMsg : undefined,
     softFail,
+    captureCu ? anvilCu : undefined,
   );
 
   const results: ScenarioRunResult["results"] = [];
@@ -345,6 +354,7 @@ export async function runScenarioDifferential(args: {
     ok: results.every((r) => r.ok),
     results,
     durationMs: Date.now() - t0,
+    ...(captureCu ? { cu: { anchor: anchorCu, anvil: anvilCu } } : {}),
   };
 }
 
@@ -433,6 +443,8 @@ async function runOneScenario(
    * and plain --fuzz: callers there want a loud failure on tx error.
    */
   softFailOnTxError?: boolean,
+  /** When set, push computeUnitsConsumed() per successful tx (for `bench --against`). */
+  collectedCu?: number[],
 ): Promise<Map<string, AccountSnapshot>> {
   const svm = new deps.LiteSVM();
   svm.addProgram(programId, programSo);
@@ -530,7 +542,7 @@ async function runOneScenario(
       throw new Error(`scenario instruction '${ix.ix}' failed: ${errStr}${logsStr}`);
     }
     // Success — capture surfaces from tx metadata when collectors set.
-    if (collectedEventLogs || collectedReturnData || collectedMsgLogs) {
+    if (collectedEventLogs || collectedReturnData || collectedMsgLogs || collectedCu) {
       try {
         const ctorName = (r as any)?.constructor?.name ?? "";
         let logs: string[] = [];
@@ -539,6 +551,9 @@ async function runOneScenario(
           const md = r as any;
           logs = typeof md.logs === "function" ? md.logs() : [];
           returnData = typeof md.returnData === "function" ? md.returnData() ?? null : null;
+          if (collectedCu && typeof md.computeUnitsConsumed === "function") {
+            collectedCu.push(Number(md.computeUnitsConsumed()));
+          }
         }
         for (const l of logs) {
           if (collectedEventLogs && l.startsWith("Program data: ")) {
