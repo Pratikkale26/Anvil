@@ -52,8 +52,8 @@ async function startServer(): Promise<void> {
     let buf = "";
     let errBuf = "";
     const timer = setTimeout(
-      () => reject(new Error(`server did not start within 30s. stderr tail:\n${errBuf.slice(-2000)}`)),
-      30_000,
+      () => reject(new Error(`server did not start within 60s. stderr tail:\n${errBuf.slice(-2000)}`)),
+      60_000,
     );
     const onData = (d: Buffer) => {
       buf += d.toString();
@@ -143,16 +143,26 @@ describe("/emit?gate=cargo (#22 / B2 backend)", () => {
     return;
   }
 
-  // Boot the API once for the whole file. Per-test respawn on the same fixed
-  // port raced on port release between the two tests and flaked under suite
-  // load ("server did not start within 5s"); one lifecycle removes the race
-  // and pays the startup cost once.
-  beforeAll(async () => { await startServer(); });
+  // Boot the API once for the whole file, lazily, INSIDE the first test that
+  // needs it — NOT in beforeAll. Two flakes drove this:
+  //   1. Per-test respawn on the same fixed port raced on port release between
+  //      the two tests ("server did not start within 5s"). One memoized
+  //      lifecycle removes the race and pays startup once.
+  //   2. bun's beforeAll has a fixed ~5s hook timeout and does NOT accept a
+  //      timeout arg, so a cold boot under full-suite CPU load (~160 files)
+  //      died at 5s in the hook. Booting inside the test body runs the boot
+  //      under the test's own 240s budget instead.
+  let serverPromise: Promise<void> | null = null;
+  const ensureServer = (): Promise<void> => {
+    if (!serverPromise) serverPromise = startServer();
+    return serverPromise;
+  };
   afterAll(() => { stopServer(); });
 
   test(
     "good source: cargoGate.ok=true, validationIssues unchanged",
     async () => {
+      await ensureServer();
       const { status, body } = await emitWithGate(GOOD_SOURCE);
       expect(status).toBe(200);
       expect(body.cargoGate).toBeDefined();
@@ -174,6 +184,7 @@ describe("/emit?gate=cargo (#22 / B2 backend)", () => {
   test(
     "broken source: cargoGate.ok=false, errors mirrored into validationIssues",
     async () => {
+      await ensureServer();
       const { status, body } = await emitWithGate(BROKEN_SOURCE);
       expect(status).toBe(200);
       const gate = body.cargoGate as { ok: boolean; errors: unknown[] };
