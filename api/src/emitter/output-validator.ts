@@ -603,12 +603,42 @@ function checkHasOneConstraints(content: string, ir: SolanaIR, path: string): Va
         );
         const hasFieldRead = fieldAccessRe.test(fnBody);
         const hasErrPath = fnBodyHasAnyErrorReturn(fnBody);
-        const hasCheck = hasFieldRead && hasErrPath;
 
-        if (!hasCheck) {
+        // #3 — a field read plus a stray Err *anywhere* is co-satisfiable
+        // theater: the loose `hasFieldRead && hasErrPath` gate wrongly passes
+        // `.field` read into a log message + an unrelated `?` elsewhere, with
+        // no relationship check at all. Mirror the owner check's
+        // comparison-awareness (B2/B7): require the field be COMPARED against
+        // the related account's key. Anchor `has_one = X` means
+        // `self.X == X.key()`, so the related account is the one named by the
+        // constraint value; alias-resolve BOTH operands (the emit shape is
+        // `<state>.<field> != *<related>.key()` on both targets). Accept either
+        // operand order and `require_keys_eq!/neq!`. This validator runs on
+        // Anvil's own canonical emit (and AI patches of it), so the spelling
+        // set is bounded — false-refuse rate is the open question, swept across
+        // the corpus before shipping. Bytes-level placement is still beyond a
+        // text check; the differential gate remains the real correctness signal.
+        const relatedAliases = extractStateAliases(fnBody, fieldName);
+        const fieldTok = `(?:&\\s*)?(?:\\*\\s*)?(?:${aliases.map(escapeForRegex).join("|")})\\s*\\.\\s*${escapeForRegex(fieldName)}\\b`;
+        const keyTok = `(?:&\\s*)?(?:\\*\\s*)?(?:${relatedAliases.map(escapeForRegex).join("|")})\\s*\\.\\s*key\\b\\s*(?:\\(\\s*\\))?`;
+        const comparisons: RegExp[] = [
+          new RegExp(`${fieldTok}\\s*[=!]=\\s*${keyTok}`),
+          new RegExp(`${keyTok}\\s*[=!]=\\s*${fieldTok}`),
+          new RegExp(`require_keys_(?:eq|neq)!\\s*\\(\\s*${fieldTok}\\s*,\\s*${keyTok}`),
+          new RegExp(`require_keys_(?:eq|neq)!\\s*\\(\\s*${keyTok}\\s*,\\s*${fieldTok}`),
+        ];
+        const hasComparison = comparisons.some((re) => re.test(fnBody));
+
+        if (!hasFieldRead || !hasErrPath) {
           issues.push({
             severity: "error",
             message: `'${fnName}': has_one constraint '${acc.name}.${fieldName}' is not enforced in emitted output.`,
+            path,
+          });
+        } else if (!hasComparison) {
+          issues.push({
+            severity: "error",
+            message: `'${fnName}': has_one constraint '${acc.name}.${fieldName}' reads '.${fieldName}' and has an error path but never COMPARES it against '${fieldName}.key()'. A bare field read plus an unrelated error does not enforce the relationship — emit '<state>.${fieldName} == ${fieldName}.key()' (or '!=' guarding a revert).`,
             path,
           });
         }
