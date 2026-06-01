@@ -51,6 +51,10 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   staking: "staking.rs",
   vesting: "vesting.rs",
   multisig: "multisig.rs",
+  // B2 gold-standard: read-only Account<T> owner-check revert-parity. Same demo;
+  // kinds covered by "multisig" above. (Registered late — differential-* files are
+  // excluded from test:fast, so the M3 matrix only catches this when run directly.)
+  "multisig-readonly-owner-reject": "multisig.rs",
   "ata-mint": "ata-mint.rs",
   "set-authority": "set-authority.rs",
   "spl-transfer": "spl-transfer.rs",
@@ -69,6 +73,9 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   "return-err": "return-err.rs",
   "cpi-memo": "cpi-memo.rs",
   "cpi-custom": "cpi-custom.rs",
+  // #5 gold-standard generic-CPI gate (GATED behind CPI_CUSTOM_REAL_EMIT until #5
+  // lands a real invoke emit). Demo produces cpi_custom — already covered above.
+  "cpi-custom-goldstandard": "cpi-counter-caller.rs",
   // Perp-funding: hand-rolled differential gating initialize_market
   // byte-equal + auto-scenario stub.
   "perp-funding": "perp-funding.rs",
