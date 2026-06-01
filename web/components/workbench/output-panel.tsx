@@ -321,25 +321,28 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
                     AI refined
                   </span>
                 )}
-                {/* Byte-equal corpus badge. Whitelist match by program name —
-                    these are the fixtures with passing differential tests in
-                    api/tests/differential-*.test.ts (Anchor + Anvil .so built,
-                    same instructions in LiteSVM, byte-compared). For any
-                    other program the corpus doesn't cover it, so we say so
-                    explicitly rather than implying coverage. */}
+                {/* Byte-equal status badge. CRITICAL: this badge must NOT claim
+                    the USER'S current emit is byte-equal — the only signal here
+                    is a program-NAME match against Anvil's fixture corpus, which
+                    says nothing about whether this specific source/emit is
+                    equivalent (a program named "counter" can be anything). The
+                    real per-source proof is the "Verify byte-equal" panel
+                    (use-differential); this badge only surfaces corpus context
+                    and routes the user there. A prior green "✓ byte-equal" badge
+                    keyed on the name match implied verification that never ran. */}
                 {(() => {
                   const corpus = new Set(["counter", "vault", "ata_mint", "ata-mint"]);
                   const inCorpus = corpus.has(programName);
                   return inCorpus ? (
                     <span
-                      title="Anvil's emit for this program has been byte-compared against the Anchor original in LiteSVM. See api/tests/differential-*.test.ts."
-                      className="text-[10px] font-bold text-anvil-teal px-1.5 py-px rounded bg-[rgba(14,168,128,0.12)] border border-[rgba(14,168,128,0.28)]"
+                      title="Anvil ships a byte-equal differential fixture with this name (api/tests/differential-*.test.ts). That proves ANVIL'S fixture is byte-equal — it does NOT verify YOUR current source, which can differ. Use the Verify byte-equal panel to byte-compare your actual emit."
+                      className="text-[10px] font-medium text-anvil-text-muted px-1.5 py-px rounded bg-white/[0.03] border border-anvil-card-border"
                     >
-                      ✓ byte-equal
+                      byte-equal: corpus fixture — verify yours
                     </span>
                   ) : (
                     <span
-                      title="This program isn't in Anvil's differential fixture corpus — emit compiled OK, but byte-equal correctness vs the Anchor original is not proven. Verify behavior before deploy."
+                      title="This program isn't in Anvil's differential fixture corpus — emit compiled OK, but byte-equal correctness vs the Anchor original is not proven. Use the Verify byte-equal panel before deploy."
                       className="text-[10px] font-medium text-anvil-text-muted px-1.5 py-px rounded bg-white/[0.03] border border-anvil-card-border"
                     >
                       byte-equal: not in corpus

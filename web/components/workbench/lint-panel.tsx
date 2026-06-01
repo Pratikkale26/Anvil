@@ -18,6 +18,18 @@ import { Panel } from "./panel";
 export function LintPanel({ state }: { state: AnvilPipelineState }) {
   const { lintReport, lintBusy, hasOutput } = state;
 
+  // Hooks MUST run unconditionally and in the same order every render. These
+  // collapsible-section toggles were previously declared AFTER the early
+  // returns below (behind a rules-of-hooks eslint-disable), so the first
+  // render with output went from 0 hooks → 3 hooks and React hard-crashed the
+  // entire workbench ("Rendered more hooks than during the previous render").
+  // Declared at the top, the early returns below are safe.
+  // Default-open the urgent groups (blocker always; review unless gated by a
+  // blocker); ready starts collapsed — it's the celebration, not the work.
+  const [openBlocker, setOpenBlocker] = useState(true);
+  const [openReview, setOpenReview] = useState(true);
+  const [openReady, setOpenReady] = useState(false);
+
   if (!hasOutput) return null;
 
   if (lintBusy && !lintReport) {
@@ -45,16 +57,6 @@ export function LintPanel({ state }: { state: AnvilPipelineState }) {
       : lintReport.verdict === "reviewable"
         ? "REVIEWABLE"
         : "BLOCKED";
-
-  // Each level group is collapsible. Default-open the urgent ones (blocker
-  // always; review only if there's no blocker — otherwise the user's eye
-  // should land on blockers first); ready collapsed by default since it's
-  // the celebration, not the work.
-  /* eslint-disable react-hooks/rules-of-hooks */
-  const [openBlocker, setOpenBlocker] = useState(true);
-  const [openReview, setOpenReview] = useState(true);
-  const [openReady, setOpenReady] = useState(false);
-  /* eslint-enable react-hooks/rules-of-hooks */
 
   const levelOrder: LintLevel[] = ["blocker", "review", "ready"];
   const levelHeading: Record<LintLevel, string> = {
