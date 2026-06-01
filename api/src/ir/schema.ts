@@ -91,6 +91,15 @@ export const ConstraintKindSchema = z.enum([
   "mint::decimals",
   "mint::authority",
   "mint::freeze_authority",
+  // Finding #19 — Anchor 0.30+ Token-Interface `mint::token_program = <acct>`
+  // binds which token program (legacy Token vs Token-2022) governs this mint.
+  // Recognized so it's carried in IR instead of dropped with a false-alarm
+  // unrecognized-key warning: the init already routes correctly via sibling
+  // detection (byte-equal-verified by program-examples-t22-basics). emitCreateMint
+  // refuses LOUDLY only when the named account DISAGREES with the routed sibling
+  // (multiple token-program accounts present) — per-mint disambiguation is not
+  // yet supported, and a silent re-route is never emitted.
+  "mint::token_program",
   "realloc",
   // G91 — Anchor's `realloc::payer = <account>` constraint pins the
   // rent-delta payer when reallocating. emitReallocPrelude consumes it

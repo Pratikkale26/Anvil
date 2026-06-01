@@ -28,6 +28,9 @@ const KNOWN_CONSTRAINT_KEYS: Record<string, ConstraintKind> = {
   "mint::decimals":         "mint::decimals",
   "mint::authority":        "mint::authority",
   "mint::freeze_authority": "mint::freeze_authority",
+  // Finding #19 — recognize (don't drop) Token-Interface mint::token_program.
+  // emitCreateMint honors it via loud-on-mismatch (sibling routing otherwise).
+  "mint::token_program":    "mint::token_program",
   realloc:                        "realloc",
   "realloc::payer":               "realloc::payer",
   "realloc::zero":                "realloc::zero",

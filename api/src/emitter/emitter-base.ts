@@ -4504,6 +4504,32 @@ ${allFields}
       });
       const tokenProgram = tokenProgramSibling ? snakeCase(tokenProgramSibling.name) : undefined;
 
+      // #19 — honor `mint::token_program = X` via loud-on-mismatch (never a
+      // silent re-route). The constraint names the token program that governs
+      // THIS mint. The sibling routing above is byte-equal-correct in the
+      // common case (the constraint names the same `token_program` account the
+      // sibling picks → they agree → no marker, identical emit). But when
+      // multiple token-program accounts are present and the constraint names
+      // one that ISN'T the sibling Anvil routed to (or the sibling search
+      // missed it entirely), silently initializing through the wrong program
+      // would be a fund-adjacent miscompile. Per-mint disambiguation isn't
+      // built yet, so refuse LOUDLY (⚠️ marker → validator error) and require
+      // manual review instead of guessing.
+      const mintTpConstraint = accountRef.constraints.find(
+        (c) => c.kind === "mint::token_program" && c.value,
+      );
+      let tpMismatchMarker = "";
+      if (mintTpConstraint?.value) {
+        const named = stripKey(mintTpConstraint.value);
+        if (named !== (tokenProgram ?? "")) {
+          tpMismatchMarker =
+            `    // ⚠️ Anvil: mint::token_program binds '${named}', but the mint init routes to ` +
+            `'${tokenProgram ?? "the legacy SPL Token program"}'. Per-mint token-program ` +
+            `disambiguation (multiple token-program accounts present) is not yet supported — ` +
+            `manual review required.\n`;
+        }
+      }
+
       const extSpace = computeT22ExtensionSpace(accountRef.constraints);
       const totalSpace = extSpace > 0 ? 82 + 83 + extSpace : undefined;
 
@@ -4519,10 +4545,10 @@ ${allFields}
     let init_${accountName}_signer_seeds = &[&init_${accountName}_seeds[..]];`;
         const signerSeedsExpr = `init_${accountName}_signer_seeds`;
         const mintCreate = this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, signerSeedsExpr, tokenProgram, totalSpace);
-        return `${seedDeserPrelude ? seedDeserPrelude + "\n" : ""}${bumpPrelude}\n${seedsPrelude}\n${mintCreate}`;
+        return `${tpMismatchMarker}${seedDeserPrelude ? seedDeserPrelude + "\n" : ""}${bumpPrelude}\n${seedsPrelude}\n${mintCreate}`;
       }
 
-      return this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, undefined, tokenProgram, totalSpace);
+      return `${tpMismatchMarker}${this.emitCreateMint(accountName, payer, decimals, mintAuthority, freezeAuthority, undefined, tokenProgram, totalSpace)}`;
     }
 
     // ── `init token::*` (non-ATA token account): account is a fresh keypair
