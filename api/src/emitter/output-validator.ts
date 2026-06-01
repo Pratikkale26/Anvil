@@ -1,5 +1,5 @@
 import type { EmitterOutput, SolanaIR, BodyStatement } from "../ir/schema.js";
-import { snakeCase } from "./emitter-utils.js";
+import { snakeCase, maskLiteralsAndComments } from "./emitter-utils.js";
 import { UNSUPPORTED_IMPORT_PATTERNS, type LintTarget } from "../cli/lint-analyzer.js";
 import {
   T22_EXTENSION_BY_IR_KIND,
@@ -105,89 +105,11 @@ function extractInstructionBody(content: string, fnName: string): string | null 
  *
  * Exported for unit testing.
  */
-export function stripCommentsAndStringsForValidator(text: string): string {
-  const out: string[] = [];
-  let i = 0;
-  const n = text.length;
-  while (i < n) {
-    const ch = text[i] ?? "";
-    const next = text[i + 1] ?? "";
-    if (ch === "/" && next === "/") {
-      // Line comment to next newline (or EOF). Preserve newlines so line
-      // numbers stay aligned.
-      while (i < n && text[i] !== "\n") {
-        out.push(" ");
-        i++;
-      }
-      continue;
-    }
-    if (ch === "/" && next === "*") {
-      // Block comment terminator: '*' followed by '/'.
-      out.push("  ");
-      i += 2;
-      while (i < n) {
-        if (text[i] === "*" && text[i + 1] === "/") {
-          out.push("  ");
-          i += 2;
-          break;
-        }
-        out.push(text[i] === "\n" ? "\n" : " ");
-        i++;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      out.push('"');
-      i++;
-      while (i < n && text[i] !== '"') {
-        if (text[i] === "\\" && i + 1 < n) {
-          out.push("  ");
-          i += 2;
-          continue;
-        }
-        out.push(text[i] === "\n" ? "\n" : " ");
-        i++;
-      }
-      if (i < n && text[i] === '"') {
-        out.push('"');
-        i++;
-      }
-      continue;
-    }
-    if (ch === "'") {
-      // Lifetime tick (`'info`, `'_`, …) vs char literal. Tree-sitter
-      // distinguishes these; we approximate: if the next char is a
-      // letter/underscore and the one AFTER that ISN'T a `'`, it's a
-      // lifetime — keep. Otherwise treat as char literal and strip.
-      const c1 = text[i + 1] ?? "";
-      const c2 = text[i + 2] ?? "";
-      if (/[A-Za-z_]/.test(c1) && c2 !== "'") {
-        out.push("'");
-        i++;
-        continue;
-      }
-      out.push("'");
-      i++;
-      while (i < n && text[i] !== "'") {
-        if (text[i] === "\\" && i + 1 < n) {
-          out.push("  ");
-          i += 2;
-          continue;
-        }
-        out.push(" ");
-        i++;
-      }
-      if (i < n && text[i] === "'") {
-        out.push("'");
-        i++;
-      }
-      continue;
-    }
-    out.push(ch);
-    i++;
-  }
-  return out.join("");
-}
+// B4 — the lexer moved to emitter-utils.ts (now shared with the pass-through
+// emit pipeline, which needs the same string/char-literal awareness for its
+// field rewrites + bracket counter). Re-exported under the original name so the
+// validator's owner/has_one regex pre-strip + the unit test keep working.
+export const stripCommentsAndStringsForValidator = maskLiteralsAndComments;
 
 /**
  * B7 — escape regex meta-chars in a name fragment so we can interpolate

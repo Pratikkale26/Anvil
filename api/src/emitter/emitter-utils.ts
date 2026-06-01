@@ -495,3 +495,130 @@ export function simplifyPassThroughCode(value: string): string {
   simplified = simplified.replace(/'info\b/g, "'_");
   return simplified;
 }
+
+// ─── String/char-literal-aware text scanning (B4) ─────────────────────────────
+
+/**
+ * Mask Rust string literals, char literals, and comments to spaces —
+ * length- and newline-PRESERVING, so a masked index maps 1:1 to the original.
+ * Code regions are kept verbatim; only literal/comment CONTENT becomes spaces
+ * (the delimiters `"`/`'` are kept). Lifetimes (`'info`, `'_`) are recognised
+ * and kept, NOT treated as char literals.
+ *
+ * Used so position-sensitive scans (bracket balance) and field rewrites ignore
+ * what's inside strings: a `(` inside `msg!("need (")` must not count toward
+ * bracket balance, and `<acct>.amount` inside `msg!("vault.amount low")` must
+ * not be rewritten. Was `stripCommentsAndStringsForValidator` in
+ * output-validator.ts (which now re-exports this for back-compat).
+ */
+export function maskLiteralsAndComments(text: string): string {
+  const out: string[] = [];
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const ch = text[i] ?? "";
+    const next = text[i + 1] ?? "";
+    if (ch === "/" && next === "/") {
+      while (i < n && text[i] !== "\n") {
+        out.push(" ");
+        i++;
+      }
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      out.push("  ");
+      i += 2;
+      while (i < n) {
+        if (text[i] === "*" && text[i + 1] === "/") {
+          out.push("  ");
+          i += 2;
+          break;
+        }
+        out.push(text[i] === "\n" ? "\n" : " ");
+        i++;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      out.push('"');
+      i++;
+      while (i < n && text[i] !== '"') {
+        if (text[i] === "\\" && i + 1 < n) {
+          out.push("  ");
+          i += 2;
+          continue;
+        }
+        out.push(text[i] === "\n" ? "\n" : " ");
+        i++;
+      }
+      if (i < n && text[i] === '"') {
+        out.push('"');
+        i++;
+      }
+      continue;
+    }
+    if (ch === "'") {
+      // Lifetime tick (`'info`, `'_`, …) vs char literal. Approximation: if the
+      // next char is a letter/underscore and the one AFTER that ISN'T a `'`,
+      // it's a lifetime — keep. Otherwise treat as a char literal and strip.
+      const c1 = text[i + 1] ?? "";
+      const c2 = text[i + 2] ?? "";
+      if (/[A-Za-z_]/.test(c1) && c2 !== "'") {
+        out.push("'");
+        i++;
+        continue;
+      }
+      out.push("'");
+      i++;
+      while (i < n && text[i] !== "'") {
+        if (text[i] === "\\" && i + 1 < n) {
+          out.push("  ");
+          i += 2;
+          continue;
+        }
+        out.push(" ");
+        i++;
+      }
+      if (i < n && text[i] === "'") {
+        out.push("'");
+        i++;
+      }
+      continue;
+    }
+    out.push(ch);
+    i++;
+  }
+  return out.join("");
+}
+
+/**
+ * Apply `re`'s replacement ONLY to code regions — never inside string/char
+ * literals or comments. Field-access rewrites (`<acct>.owner/.amount/…`) match
+ * common words that also appear in `msg!`/`require!` strings; rewriting them
+ * inside the quotes silently corrupts the string. We match on the literal-
+ * masked, position-preserving view (so a `\w`-anchored match can only land in
+ * code), then splice the replacement into the REAL text by offset — code
+ * regions are byte-identical between masked and real, so the match's capture
+ * groups are the real ones.
+ *
+ * SOUND ONLY for regexes that cannot match across a masked gap (every caller is
+ * `\w`-anchored). `re` MUST carry the global flag (matchAll requires it).
+ * Limitation: does not model Rust raw strings (`r"…"` / `r#"…"#`).
+ */
+export function replaceInCodeRegions(
+  text: string,
+  re: RegExp,
+  replacer: (...args: string[]) => string,
+): string {
+  const masked = maskLiteralsAndComments(text);
+  let out = "";
+  let last = 0;
+  for (const m of masked.matchAll(re)) {
+    const idx = m.index ?? 0;
+    out += text.slice(last, idx);
+    out += replacer(...(m as unknown as string[]), String(idx), text);
+    last = idx + m[0].length;
+  }
+  out += text.slice(last);
+  return out;
+}

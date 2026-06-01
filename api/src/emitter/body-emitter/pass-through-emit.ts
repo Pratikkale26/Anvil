@@ -16,6 +16,8 @@ import {
   snakeCase,
   cleanInlineExpr,
   simplifyPassThroughCode,
+  maskLiteralsAndComments,
+  replaceInCodeRegions,
 } from "../emitter-utils.js";
 import { hasResidualAnchorPatterns } from "../emitter-helpers.js";
 import { MARKER_ANVIL_PREFIX, MARKER_ANVIL_REVIEW_PREFIX } from "../markers.js";
@@ -147,7 +149,8 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
       );
     }
     if (rentSysvarAccounts.size > 0) {
-      lamportRewritten = lamportRewritten.replace(
+      lamportRewritten = replaceInCodeRegions(
+        lamportRewritten,
         /\b(\w+)\.(lamports_per_byte_year|exemption_threshold|burn_percent|minimum_balance)\b/g,
         (full, name, field) => rentSysvarAccounts.has(name) ? `${rentGet}.${field}` : full,
       );
@@ -162,7 +165,8 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
       if (isMint) mintLikeAccounts.add(snakeCase(acc.name));
     }
     if (mintLikeAccounts.size > 0) {
-      lamportRewritten = lamportRewritten.replace(
+      lamportRewritten = replaceInCodeRegions(
+        lamportRewritten,
         /\b(\w+)\.(supply|decimals)\b(?!\s*\()/g,
         (full, acct, field) => {
           if (!mintLikeAccounts.has(acct)) return full;
@@ -182,7 +186,8 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
       if (isToken) tokenLikeAccounts.add(snakeCase(acc.name));
     }
     if (tokenLikeAccounts.size > 0) {
-      lamportRewritten = lamportRewritten.replace(
+      lamportRewritten = replaceInCodeRegions(
+        lamportRewritten,
         /\b(\w+)\.(mint|owner|amount|delegate|close_authority)\b(?!\s*\()/g,
         (full, acct, field) => {
           if (!tokenLikeAccounts.has(acct)) return full;
@@ -578,9 +583,12 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   }
 
   // Safety: detect unbalanced brackets (e.g. from half-commented macro expansions).
-  // Strip comments then count brackets — if unbalanced, comment out the entire
-  // statement to prevent cascading syntax errors.
-  const stripped = code.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  // If unbalanced, comment out the entire statement to prevent cascading syntax
+  // errors. B4 — count on a literal-masked view so brackets INSIDE string/char
+  // literals (and comments) don't count: `msg!("need (")` is balanced. Without
+  // this, a string-internal bracket flipped the balance and the whole statement
+  // (incl. any security check) was silently commented out.
+  const stripped = maskLiteralsAndComments(code);
   let balance = 0;
   for (const ch of stripped) {
     if (ch === "(" || ch === "[" || ch === "{") balance++;

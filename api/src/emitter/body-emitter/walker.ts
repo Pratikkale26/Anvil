@@ -40,6 +40,7 @@ import {
   emitRequireGuard,
   simplifyPassThroughCode,
   indentBlock,
+  replaceInCodeRegions,
 } from "../emitter-utils.js";
 import type { BodyEmitterCallbacks, BodyEmitterContext } from "./types.js";
 // H1 Session G (2026-05-13) — all per-kind handlers retired. The visitor
@@ -1155,9 +1156,14 @@ export class BodyWalker {
         account.accountType.includes("Mint") ||
         account.constraints.some((c) => c.kind.startsWith("mint::"));
       const isPinocchio = this.emitter.frameworkName === "Pinocchio";
+      // B4 — these field rewrites match common words (.amount/.owner/.mint/…)
+      // that also appear in msg!/require! string literals; run them ONLY over
+      // code regions so a dotted field inside a log string isn't rewritten
+      // (silent string corruption).
       if (mintLike) {
         for (const { field, build } of mintFieldRules) {
-          transformed = transformed.replace(
+          transformed = replaceInCodeRegions(
+            transformed,
             new RegExp(`(^|[^\\w.])${accountName}\\.${field}\\b(?!\\s*\\()`, "g"),
             (_full, prefix: string) => `${prefix}${build(accountInfoVar, isPinocchio)}`,
           );
@@ -1165,7 +1171,8 @@ export class BodyWalker {
       }
       if (tokenLike) {
         for (const { regex, build } of tokenAccountFieldRules) {
-          transformed = transformed.replace(
+          transformed = replaceInCodeRegions(
+            transformed,
             new RegExp(regex(accountName), "g"),
             (_full, prefix: string) => `${prefix}${build(accountInfoVar, isPinocchio)}`,
           );
@@ -1174,7 +1181,8 @@ export class BodyWalker {
           const localVar = this.stateVars.get(accountName);
           if (localVar && localVar !== accountName) {
             for (const { field, build } of tokenLocalVarFieldRules) {
-              transformed = transformed.replace(
+              transformed = replaceInCodeRegions(
+                transformed,
                 new RegExp(`(^|[^\\w.])&?${localVar}\\.${field}\\b(?!\\s*\\()`, "g"),
                 (_full, prefix: string) => `${prefix}${build(localVar)}`,
               );
