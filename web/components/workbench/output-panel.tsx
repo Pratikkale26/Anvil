@@ -158,11 +158,16 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     return probe(singleFileCode);
   }, [outputFiles, singleFileCode]);
   const [stubAck, setStubAck] = useState(false);
-  // Reset ack whenever the underlying emit changes — a new pipeline
-  // run produces a fresh outputFiles identity, so this fires.
-  const lastOutputRef = useRef(outputFiles);
-  if (lastOutputRef.current !== outputFiles) {
-    lastOutputRef.current = outputFiles;
+  // Reset ack whenever the underlying emit changes — a new pipeline run
+  // produces a fresh outputFiles identity, so this fires. Uses React's
+  // canonical "adjust state when a prop changes during render" pattern
+  // (track the previous value in state, not a ref) — React processes the
+  // setState during render before committing, so there's no extra paint.
+  // (#16 — the prior `useRef().current` form tripped react-hooks/refs:
+  // refs must not be read or written during render.)
+  const [prevOutputFiles, setPrevOutputFiles] = useState(outputFiles);
+  if (prevOutputFiles !== outputFiles) {
+    setPrevOutputFiles(outputFiles);
     if (stubAck) setStubAck(false);
   }
   const gateActive = stubsPresentInEmit && !stubAck;
