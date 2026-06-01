@@ -175,6 +175,33 @@ function extractStateAliases(fnBody: string, accountName: string): string[] {
     }
   }
 
+  // #24 — zero-copy AccountLoader load chain. The emitter binds a zero-copy
+  // account in two hops:
+  //   let __<acc>_data = <acc>.try_borrow_data()?;        (Native)
+  //   let __<acc>_data = <acc>.borrow_data_unchecked();   (Pinocchio)
+  //   let _<acc>: &T = bytemuck::from_bytes(&__<acc>_data[8..8 + T::LEN]);
+  // The has_one / owner field-access regexes look for `<alias>.field`; without
+  // following both hops the struct binding (`_<acc>`) isn't in the alias set, so
+  // an ENFORCED has_one (`_<acc>.field != other.key()`) reads as not-enforced —
+  // a pre-existing FALSE-REFUSE in the safe-by-default gate for zero-copy programs.
+  // Hop 1: collect the raw data-buffer binding(s) borrowed from the account.
+  const dataAliases = new Set<string>();
+  const borrowRe = new RegExp(
+    `let\\s+(?:mut\\s+)?(\\w+)\\s*=\\s*(?:unsafe\\s*\\{\\s*)?(?:${[...aliases].map(escapeForRegex).join("|")})(?:_account)?\\s*\\.\\s*` +
+      `(?:try_borrow_mut_data|try_borrow_data|borrow_mut_data|borrow_data_unchecked|borrow_data)\\s*\\(\\s*\\)`,
+    "g",
+  );
+  for (const m of fnBody.matchAll(borrowRe)) { if (m[1]) dataAliases.add(m[1]); }
+  // Hop 2: the bytemuck cast of a data buffer is the struct binding.
+  if (dataAliases.size) {
+    const bytemuckRe = new RegExp(
+      `let\\s+(?:mut\\s+)?(\\w+)\\s*(?::\\s*[^=]+?)?=\\s*bytemuck::from_bytes(?:_mut)?\\(\\s*&?\\s*` +
+        `(?:${[...dataAliases].map(escapeForRegex).join("|")})\\b`,
+      "g",
+    );
+    for (const m of fnBody.matchAll(bytemuckRe)) { if (m[1]) aliases.add(m[1]); }
+  }
+
   return [...aliases];
 }
 
