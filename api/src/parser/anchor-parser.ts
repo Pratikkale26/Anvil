@@ -120,9 +120,20 @@ function computeParseTimeout(lineCount: number): number {
  * (string-aware), strip the whole attribute including `]`. Idempotent
  * on already-stripped sources.
  */
-function stripAccessControlAttrs(source: string): string {
+interface DroppedAccessControl {
+  /** The guard expression(s) inside `#[access_control(...)]`, verbatim. */
+  guard: string;
+  /** The handler fn the guard sits above, when resolvable from source order. */
+  fnName: string | null;
+}
+
+function stripAccessControlAttrs(source: string): {
+  source: string;
+  dropped: DroppedAccessControl[];
+} {
   let out = "";
   let i = 0;
+  const dropped: DroppedAccessControl[] = [];
   while (i < source.length) {
     const idx = source.indexOf("#[", i);
     if (idx === -1) { out += source.slice(i); break; }
@@ -164,10 +175,16 @@ function stripAccessControlAttrs(source: string): string {
       i = idx + 2;
       continue;
     }
+    // Capture the guard body + the handler it guards (scan forward for the
+    // next `fn <name>`, skipping any intervening attributes) so the dropped
+    // authorization check can be surfaced loudly and bound to its instruction.
+    const guard = source.slice(parenStart + 1, j).trim();
+    const fnMatch = source.slice(k + 1, k + 1 + 400).match(/\bfn\s+([A-Za-z_]\w*)/);
+    dropped.push({ guard, fnName: fnMatch ? fnMatch[1]! : null });
     // Strip the whole attribute (don't append anything for it).
     i = k + 1;
   }
-  return out;
+  return { source: out, dropped };
 }
 
 export interface ParseOptions {
@@ -241,8 +258,13 @@ export async function parseAnchor(
   // classified as ERROR. Anvil's instruction parser already extracts
   // access_control info from `attrs` via a separate pass; the runtime
   // check itself isn't transpiled today. Strip the attribute pre-parse
-  // so tree-sitter can see the surrounding fn / mod_item.
-  source = stripAccessControlAttrs(source);
+  // so tree-sitter can see the surrounding fn / mod_item. The guards are NOT
+  // discarded — they're captured here and surfaced as loud warnings + a
+  // validator-error emit marker below (B1) so a dropped authorization check
+  // can never ship silently.
+  const acStrip = stripAccessControlAttrs(source);
+  source = acStrip.source;
+  const droppedAccessControl = acStrip.dropped;
   // task #41 — same fix for `pubkey!("...")` macro. Anchor's prelude
   // provides it; Pinocchio doesn't. Single-file parseAnchor was bypassing
   // buildProjectSource's expansion; surfaced by diff-arc on pda-derivation
@@ -472,6 +494,28 @@ export async function parseAnchor(
       } else {
         throw err;
       }
+    }
+
+    // ── B1: dropped #[access_control(...)] guards ──
+    // Bind each guard stripped pre-parse to its instruction (populates the
+    // otherwise-dead Instruction.accessControl, which the emitter renders as
+    // a validator-error marker) and raise a loud warning. Left silent, the
+    // emitted handler runs UNGUARDED yet passes happy-path byte-equal.
+    for (const ac of droppedAccessControl) {
+      const inst = ac.fnName
+        ? instructions.find((x) => x.name === ac.fnName)
+        : undefined;
+      if (inst) inst.accessControl = ac.guard;
+      warningCollector.add({
+        code: "access_control_dropped",
+        message:
+          `#[access_control(${ac.guard.replace(/\s+/g, " ").trim()})] guard ` +
+          `${inst ? `on instruction \`${inst.name}\` ` : ""}is NOT transpiled — ` +
+          `this on-chain authorization check is dropped, so the emitted handler runs ` +
+          `UNGUARDED. Re-add the check manually before deploy.`,
+        instruction: inst?.name,
+        snippet: ac.guard.slice(0, 200),
+      });
     }
 
     // ── Parse errors ──

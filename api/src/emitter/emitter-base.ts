@@ -3226,7 +3226,21 @@ impl ZeroCopy for ${accName} {}`;
     // Re-split: the post-process may have rewritten the concatenated string
     // arbitrarily; we just take it as the final body. The function signature
     // below references `bodyCode` not the separate preludes anymore.
-    const bodyCode = processedContent;
+    let bodyCode = processedContent;
+
+    // B1 — a `#[access_control(...)]` guard was stripped at parse and is NOT
+    // transpiled. Prepend a validator-error marker ("not yet supported" hits
+    // the unsafe-marker error branch in output-validator) so safe-by-default
+    // and both deploy gates refuse the output rather than silently shipping an
+    // unguarded handler. The marker is a comment — runtime behavior is intact.
+    if (instr.accessControl) {
+      const guardOneLine = instr.accessControl.replace(/\s+/g, " ").trim();
+      bodyCode =
+        `    // ${MARKER_ANVIL_PREFIX}: access_control guard not yet supported on this target — ` +
+        `original Anchor check \`${guardOneLine}\` is dropped, so this handler runs UNGUARDED. ` +
+        `Manual port required.\n` +
+        bodyCode;
+    }
 
     // Check if body already ends with Ok(()) — no `return_ok` in body means we add one
     const bodyHasReturnOk = instr.body.some(s => s.kind === "return_ok");

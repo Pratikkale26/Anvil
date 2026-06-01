@@ -2119,6 +2119,16 @@ export const ParserWarningCodeSchema = z.enum([
    * propagation arc lands.
    */
   "optional_accounts_unsupported",
+  /**
+   * B1 — a `#[access_control(check(&ctx))]` guard was stripped pre-parse (so
+   * tree-sitter could read the handler) and is NOT transpiled. The guard is
+   * an on-chain authorization check; left silent, the emitted handler runs
+   * UNGUARDED yet passes happy-path byte-equal. Surfaced loudly and bound to
+   * the instruction; the emitter renders it as a validator-error marker so
+   * safe-by-default + both deploy gates refuse the output until the guard is
+   * hand-ported (or the access_control-transpile arc lands).
+   */
+  "access_control_dropped",
 ]);
 
 export type ParserWarningCode = z.infer<typeof ParserWarningCodeSchema>;
