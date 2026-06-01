@@ -539,6 +539,42 @@ export function maskLiteralsAndComments(text: string): string {
       }
       continue;
     }
+    // #7 — Raw string literals: r"…" / r#"…"# / r##"…"## / br"…"# (variable #
+    // count). No escape processing — a `\` is literal — so the regular " handler
+    // below would mis-terminate them. Only at a TOKEN BOUNDARY (prev char not an
+    // identifier char) so `result`, `for r in …`, `x.replace(…)` aren't mistaken
+    // for a raw-string start. Byte strings `b"…"` are NOT raw (they keep escapes)
+    // and fall through to the regular " branch.
+    if (ch === "r" || (ch === "b" && next === "r")) {
+      const prevCh = i > 0 ? (text[i - 1] ?? "") : "";
+      const atBoundary = !/[A-Za-z0-9_]/.test(prevCh);
+      const prefixLen = ch === "b" ? 2 : 1; // "br" vs "r"
+      let j = i + prefixLen;
+      let hashes = 0;
+      while (j < n && text[j] === "#") { hashes++; j++; }
+      if (atBoundary && j < n && text[j] === '"') {
+        // Keep the opening delimiter (r/br + #s + ") verbatim; mask content until
+        // the close (" followed by exactly `hashes` #s), newlines preserved.
+        for (let k = 0; k < prefixLen + hashes + 1; k++) out.push(text[i + k] ?? "");
+        i = j + 1;
+        while (i < n) {
+          if (text[i] === '"') {
+            let h = 0;
+            while (h < hashes && text[i + 1 + h] === "#") h++;
+            if (h === hashes) {
+              out.push('"');
+              for (let k = 0; k < hashes; k++) out.push("#");
+              i += 1 + hashes;
+              break;
+            }
+          }
+          out.push(text[i] === "\n" ? "\n" : " ");
+          i++;
+        }
+        continue;
+      }
+      // Not a raw string — fall through to normal char handling.
+    }
     if (ch === '"') {
       out.push('"');
       i++;
