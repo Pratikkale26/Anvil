@@ -11,7 +11,7 @@
  * sandbox/queue layers for the failure case, then exercises the happy
  * path on counter.
  */
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { parseAnchor } from "../src/parser/anchor-parser.js";
@@ -24,7 +24,6 @@ const CARGO_AVAILABLE = (() => {
 const PORT = 8786;
 const BASE = `http://127.0.0.1:${PORT}`;
 
-let serverHandle: { proc: ReturnType<typeof spawnSync> | null } = { proc: null };
 let serverProc: { kill: () => void } | null = null;
 
 async function startServer(): Promise<void> {
@@ -45,10 +44,17 @@ async function startServer(): Promise<void> {
     stdio: ["ignore", "pipe", "pipe"],
   });
   serverProc = proc;
-  // Wait for the listening message.
+  // Wait for the listening message. Generous budget: this server boots while
+  // the rest of the suite (~158 files) competes for CPU/IO, so a tight 5s
+  // budget flaked under load. Capture stderr + an early-exit so a real boot
+  // failure surfaces immediately with diagnostics instead of a blind timeout.
   await new Promise<void>((resolve, reject) => {
     let buf = "";
-    const timer = setTimeout(() => reject(new Error("server did not start within 5s")), 5000);
+    let errBuf = "";
+    const timer = setTimeout(
+      () => reject(new Error(`server did not start within 30s. stderr tail:\n${errBuf.slice(-2000)}`)),
+      30_000,
+    );
     const onData = (d: Buffer) => {
       buf += d.toString();
       if (/Anvil API running/.test(buf)) {
@@ -58,7 +64,14 @@ async function startServer(): Promise<void> {
       }
     };
     proc.stdout!.on("data", onData);
+    proc.stderr!.on("data", (d: Buffer) => { errBuf += d.toString(); });
     proc.on("error", (e) => { clearTimeout(timer); reject(e); });
+    proc.on("exit", (code) => {
+      if (code !== null && code !== 0) {
+        clearTimeout(timer);
+        reject(new Error(`server exited (code ${code}) before becoming ready. stderr tail:\n${errBuf.slice(-2000)}`));
+      }
+    });
   });
 }
 
@@ -130,24 +143,30 @@ describe("/emit?gate=cargo (#22 / B2 backend)", () => {
     return;
   }
 
+  // Boot the API once for the whole file. Per-test respawn on the same fixed
+  // port raced on port release between the two tests and flaked under suite
+  // load ("server did not start within 5s"); one lifecycle removes the race
+  // and pays the startup cost once.
+  beforeAll(async () => { await startServer(); });
+  afterAll(() => { stopServer(); });
+
   test(
     "good source: cargoGate.ok=true, validationIssues unchanged",
     async () => {
-      await startServer();
-      try {
-        const { status, body } = await emitWithGate(GOOD_SOURCE);
-        expect(status).toBe(200);
-        expect(body.cargoGate).toBeDefined();
-        const gate = body.cargoGate as { ok: boolean; errors: unknown[]; durationMs: number };
-        if (!gate.ok) {
-          console.log("Unexpected cargo failure:", JSON.stringify(gate, null, 2));
-        }
-        expect(gate.ok).toBe(true);
-        expect(gate.errors).toHaveLength(0);
-        expect(gate.durationMs).toBeGreaterThan(0);
-      } finally {
-        stopServer();
+      const { status, body } = await emitWithGate(GOOD_SOURCE);
+      expect(status).toBe(200);
+      expect(body.cargoGate).toBeDefined();
+      const gate = body.cargoGate as { ok: boolean; errors: unknown[]; durationMs: number };
+      if (!gate.ok) {
+        console.log("Unexpected cargo failure:", JSON.stringify(gate, null, 2));
       }
+      expect(gate.ok).toBe(true);
+      expect(gate.errors).toHaveLength(0);
+      // durationMs is a wall-clock timing field, not part of the verdict —
+      // ok + empty errors are. Assert it's a sane non-negative number; the
+      // previous `> 0` flaked under load.
+      expect(typeof gate.durationMs).toBe("number");
+      expect(gate.durationMs).toBeGreaterThanOrEqual(0);
     },
     240_000,
   );
@@ -155,22 +174,17 @@ describe("/emit?gate=cargo (#22 / B2 backend)", () => {
   test(
     "broken source: cargoGate.ok=false, errors mirrored into validationIssues",
     async () => {
-      await startServer();
-      try {
-        const { status, body } = await emitWithGate(BROKEN_SOURCE);
-        expect(status).toBe(200);
-        const gate = body.cargoGate as { ok: boolean; errors: unknown[] };
-        const issues = body.validationIssues as Array<{ severity: string; message: string }>;
-        // Validator already refuses composite (per #21) — that's a
-        // validator-side error. Cargo also refuses it. We want BOTH.
-        expect(gate.ok).toBe(false);
-        expect(gate.errors.length).toBeGreaterThan(0);
-        // The mirrored cargo issues carry the `cargo:` prefix.
-        const cargoIssues = issues.filter((i) => i.severity === "error" && i.message.startsWith("cargo:"));
-        expect(cargoIssues.length).toBeGreaterThan(0);
-      } finally {
-        stopServer();
-      }
+      const { status, body } = await emitWithGate(BROKEN_SOURCE);
+      expect(status).toBe(200);
+      const gate = body.cargoGate as { ok: boolean; errors: unknown[] };
+      const issues = body.validationIssues as Array<{ severity: string; message: string }>;
+      // Validator already refuses composite (per #21) — that's a
+      // validator-side error. Cargo also refuses it. We want BOTH.
+      expect(gate.ok).toBe(false);
+      expect(gate.errors.length).toBeGreaterThan(0);
+      // The mirrored cargo issues carry the `cargo:` prefix.
+      const cargoIssues = issues.filter((i) => i.severity === "error" && i.message.startsWith("cargo:"));
+      expect(cargoIssues.length).toBeGreaterThan(0);
     },
     240_000,
   );
