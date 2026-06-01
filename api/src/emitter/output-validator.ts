@@ -930,7 +930,14 @@ export function checkUnsafeMarkers(content: string, path: string): ValidationIss
     if (!isAnvilMarker) continue;
     // Truly-broken markers contain one of these phrases; the surrounding
     // code is a non-functional stub.
-    const isBroken = /manual rebuild required|manual implementation|could not resolve|not yet supported|TODO\(manual\)|TODO:|__BUMPS_FULL_STRUCT_TODO__|doesn't parse contexts/i.test(line);
+    // #17 — "manual port required" is the phrase the cpi_custom, Option<T>,
+    // non-unit-Result, carried-helper, lost-self, and B4 unbalanced-bracket
+    // stubs use; every one is a NON-FUNCTIONAL stub (unimplemented!() / commented
+    // -out body). It was missing here, so those ⚠️ Anvil markers were classified
+    // as warnings AND (being ⚠️ Anvil markers) suppressed the unimplemented!()
+    // error-scan → safe-by-default shipped runtime-panic programs (cnft-vault).
+    // It is semantically identical to "manual rebuild required".
+    const isBroken = /manual rebuild required|manual port required|manual implementation|could not resolve|not yet supported|TODO\(manual\)|TODO:|__BUMPS_FULL_STRUCT_TODO__|doesn't parse contexts/i.test(line);
     issues.push({
       severity: isBroken ? "error" : "warning",
       message: isBroken
