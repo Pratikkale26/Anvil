@@ -3448,7 +3448,23 @@ function extractRawSystemTransfer(
 
 function extractCustomCpi(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
   const funcText = callNode.childForFieldName("function")?.text ?? "";
-  const signerSeeds = funcText === "invoke_signed" ? "signer_seeds" : undefined;
+  // #28 (prereq for #23 generic-CPI emit) — capture the ACTUAL signer-seeds
+  // argument, not a hardcoded "signer_seeds" placeholder. `invoke_signed(
+  // instruction, account_infos, signers_seeds)` → the 3rd arg is the seeds. A
+  // bare identifier (variable-bound form, e.g. `invoke_signed(&ix, &infos,
+  // signer_seeds)`) is captured as that name and naturally matches the emit's
+  // `signer_seeds` sentinel (resolveSignerSeedsExpr); an INLINE expression
+  // (`&[&[b"x", &[bump]]]`) is captured verbatim so the generic-CPI emit can
+  // translate it (the old code lost it, hardcoding the nonexistent name). The
+  // cpi_custom stub ignores signerSeeds today, so this is behaviour-neutral
+  // until #23 wires the real emit. Defensive fallback to the legacy sentinel if
+  // a 3rd arg can't be resolved (preserves prior behaviour).
+  let signerSeeds: string | undefined;
+  if (funcText === "invoke_signed") {
+    const argsNode = callNode.childForFieldName("arguments");
+    const seedsArg = argsNode ? getArguments(argsNode)[2] : undefined;
+    signerSeeds = seedsArg ? seedsArg.text.trim() : "signer_seeds";
+  }
 
   collector?.add({
     code: "cpi_custom_emitted",
