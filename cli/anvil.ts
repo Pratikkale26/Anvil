@@ -1082,6 +1082,48 @@ function writeOutputFiles(
 
 // ─── Commands ────────────────────────────────────────────────────────────────
 
+/**
+ * #1 — verification-tier summary. `anvil compile` proves AT MOST "compiles
+ * (host cargo check)"; it NEVER proves SBF deployability (build-sbf) or runtime
+ * byte-equality (the differential harness). Print the ladder + the gap so a
+ * clean compile is never mistaken for a verified one — the over-claim the
+ * production-readiness review flagged.
+ */
+function printVerificationTier(
+  target: TargetName,
+  emitErrors: number,
+  cargo: "clean" | "failed" | "unavailable" | "skipped",
+): void {
+  const ok = `${c.green}✓${c.reset}`;
+  const no = `${c.red}✗${c.reset}`;
+  const na = `${c.dim}·${c.reset}`;
+  const emitClean = emitErrors === 0;
+  const cargoClean = cargo === "clean";
+  const highest = cargoClean
+    ? "compiles (host cargo check)"
+    : emitClean ? "emit validator-clean" : "parsed";
+
+  console.log(`  ${c.bold}Verification tier${c.reset} ${c.dim}(${target})${c.reset}`);
+  console.log(`    ${ok} parsed`);
+  console.log(
+    `    ${emitClean ? ok : no} emit validator-clean` +
+      (emitClean ? "" : ` ${c.dim}(${emitErrors} error${emitErrors !== 1 ? "s" : ""})${c.reset}`),
+  );
+  console.log(
+    `    ${cargo === "clean" ? ok : cargo === "failed" ? no : na} cargo check (host)` +
+      (cargo === "unavailable" ? ` ${c.dim}— cargo not on PATH; NOT verified${c.reset}`
+        : cargo === "skipped" ? ` ${c.dim}— skipped (--no-cargo-check)${c.reset}` : ""),
+  );
+  console.log(`    ${na} build-sbf (deployable .so) ${c.dim}— not run by compile; cargo check ≠ SBF deployability${c.reset}`);
+  console.log(`    ${na} byte-equal (runtime equivalence vs Anchor) ${c.dim}— NOT proven by compile${c.reset}`);
+  console.log();
+  console.log(`  ${c.bold}Highest tier reached: ${c.cyan}${highest}${c.reset}`);
+  console.log(`    ${c.dim}A clean compile is NOT proof of on-chain equivalence. To prove runtime${c.reset}`);
+  console.log(`    ${c.dim}behavior matches the Anchor original, run:${c.reset}`);
+  console.log(`      ${c.cyan}anvil differential <src.rs> --anchor-so <anchor.so> --anvil-so <anvil.so> --scenario <s.json>${c.reset}`);
+  console.log();
+}
+
 async function cmdCompile(args: CliArgs): Promise<void> {
   if (args.help) {
     printCompileHelp();
@@ -1268,6 +1310,10 @@ async function cmdCompile(args: CliArgs): Promise<void> {
   //   force-on   (--cargo-check):    gate MUST run; missing cargo = exit 3
   //   force-off  (--no-cargo-check): skip silently
   //   auto       (default):          run when available, warn when not
+  // Outcome is captured (not exited inline) so the verification-tier summary
+  // below prints even when cargo check fails — the user sees exactly which tier
+  // they reached. The exit(3) is deferred to after the tier print.
+  let cargoOutcome: "clean" | "failed" | "unavailable" | "skipped" = "skipped";
   if (args.cargoCheck !== "force-off") {
     const { runCargoCheckGate, cargoAvailable } = await import(
       "../api/src/build/cargo-gate.js"
@@ -1284,6 +1330,7 @@ async function cmdCompile(args: CliArgs): Promise<void> {
         "cargo not on PATH — emit was NOT verified against rustc. " +
           "Install rustup (https://rustup.rs) and re-run, or pass --no-cargo-check to silence.",
       );
+      cargoOutcome = "unavailable";
     } else {
       progress("Running cargo check (this can take 30-60s on first run)…");
       const result = await runCargoCheckGate(outputDir);
@@ -1295,6 +1342,7 @@ async function cmdCompile(args: CliArgs): Promise<void> {
               : "") +
             ")",
         );
+        cargoOutcome = "clean";
       } else {
         error(
           `cargo check: ${result.errors.length} error${result.errors.length !== 1 ? "s" : ""} (${result.durationMs}ms)`,
@@ -1312,11 +1360,18 @@ async function cmdCompile(args: CliArgs): Promise<void> {
         console.log(
           `  ${c.dim}Pass --no-cargo-check to skip this gate (NOT recommended for deploy paths).${c.reset}`,
         );
-        process.exit(3);
+        cargoOutcome = "failed";
       }
     }
     console.log();
   }
+
+  // #1 — verification-tier summary: make explicit what compile DID and did NOT
+  // prove. A clean compile reaches at most cargo-check; SBF deployability and
+  // runtime byte-equality are never proven here.
+  printVerificationTier(target, errors.length, cargoOutcome);
+
+  if (cargoOutcome === "failed") process.exit(3);
 }
 
 async function cmdParse(args: CliArgs): Promise<void> {

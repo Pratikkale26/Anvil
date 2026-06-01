@@ -25,33 +25,41 @@ const SCRATCH = "/tmp/anvil-cli-gate-tests";
 // Anchor's composite Accounts test case — Anvil's parser doesn't yet
 // flatten nested #[derive(Accounts)] fields. #21 escalated this to a
 // validator error, but the cargo gate would refuse it independently
-// anyway (emit references AccountInfo.dummy_a which doesn't exist).
-// Used here because the simpler if-let case happens to transpile via
-// the walker.ts regex post-process for single-instruction shapes; the
-// composite case fails cargo reliably.
+// Must be broken on TWO independent axes so the test exercises both gates:
+//   (a) a VALIDATOR error → the v0.4 strict gate refuses (exit 2);
+//   (b) a CARGO error → the cargo gate refuses (exit 3) once strict is opted
+//       out via --permissive.
+// Earlier this used a composite #[derive(Accounts)] case, but Anvil's composite
+// flatten now handles that cleanly (it emits 0 errors → exit 0), so the fixture
+// went stale. This 2-instruction shape is robustly broken on current Anvil:
+//   custom_cpi → uncataloged invoke_signed → cpi_custom unimplemented!() stub →
+//                validator ERROR (#17) → strict refuses;
+//   undef      → an undefined symbol carried verbatim in pass_through → cargo
+//                E0425 (the cpi_custom stub itself compiles, so the cargo error
+//                comes from this instruction).
 const BROKEN_SOURCE = `
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::program::invoke_signed;
+use anchor_lang::solana_program::instruction::Instruction;
 declare_id!("EHthziFziNoac9LBGxEaVN47Y3uUiRoXvqAiR6oes4iU");
 #[program]
-mod composite_broken {
+mod stub_and_undef_broken {
     use super::*;
-    pub fn composite_update(ctx: Context<CompositeUpdate>, dummy_a: u64) -> Result<()> {
-        let a = &mut ctx.accounts.foo.dummy_a;
-        a.data = dummy_a;
+    pub fn custom_cpi(ctx: Context<Plain>, data: Vec<u8>) -> Result<()> {
+        let ix = Instruction { program_id: *ctx.accounts.target.key, accounts: vec![], data };
+        invoke_signed(&ix, &[ctx.accounts.target.to_account_info()], &[&[b"s", &[1u8]]])?;
+        Ok(())
+    }
+    pub fn undef(_ctx: Context<Plain>) -> Result<()> {
+        let _ = totally_undefined_symbol_xyz();
         Ok(())
     }
 }
 #[derive(Accounts)]
-pub struct CompositeUpdate<'info> {
-    foo: Foo<'info>,
+pub struct Plain<'info> {
+    /// CHECK: target program for the raw CPI
+    pub target: UncheckedAccount<'info>,
 }
-#[derive(Accounts)]
-pub struct Foo<'info> {
-    #[account(mut)]
-    pub dummy_a: Account<'info, DummyA>,
-}
-#[account]
-pub struct DummyA { pub data: u64 }
 `;
 
 beforeAll(() => {
