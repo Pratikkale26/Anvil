@@ -51,6 +51,30 @@ parseRoute.post("/", async (req, res) => {
     entryPath?: string;
   };
 
+  // #12 — close the unauthenticated file-read oracle. `sourcePath` / `projectPath`
+  // make the SERVER read a local file path (resolveLocalSource resolve()s any path,
+  // leaking path existence via distinct errors + reading .rs content + sibling
+  // project files). No legitimate remote client uses them — the web sends inline
+  // `source` / `files` / `repoUrl`, and the CLI calls parseAnchor directly. Deny by
+  // default with an explicit opt-in escape hatch for self-hosted/local use (mirrors
+  // the ANVIL_ALLOW_* gates in index.ts). Reject on the PRESENCE of these keys (not a
+  // silent ignore) so the contract is predictable and the oracle can't be probed.
+  if (
+    process.env.ANVIL_ALLOW_LOCAL_FS_INPUTS !== "1" &&
+    (typeof sourcePath === "string" || typeof projectPath === "string")
+  ) {
+    const err = new AnvilError(
+      ErrorCode.LOCAL_FS_INPUT_DISABLED,
+      "Local file-path inputs are disabled",
+      "sourcePath / projectPath read files from the server's local filesystem and are " +
+        "disabled. Send inline `source`, `files` + `entryPath`, or `repoUrl` instead. " +
+        "(Self-hosted operators may set ANVIL_ALLOW_LOCAL_FS_INPUTS=1 to re-enable.)",
+      403,
+    );
+    res.status(err.statusCode).json(err.toJSON());
+    return;
+  }
+
   let resolvedSource = source;
   let resolvedPath: string | undefined;
   let candidates: string[] | undefined;

@@ -24,6 +24,8 @@ export enum ErrorCode {
   REPO_FETCH_FAILED = 1005,
   /** Project directory did not contain a recognizable entry file */
   NO_ENTRY_FILE = 1006,
+  /** Local-filesystem path inputs (sourcePath/projectPath) are disabled on this server */
+  LOCAL_FS_INPUT_DISABLED = 1007,
 
   // Emit errors (2xxx)
   /** IR object failed Zod schema validation */
