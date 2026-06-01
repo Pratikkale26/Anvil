@@ -150,6 +150,15 @@ export interface ScenarioCompareSpec {
   stripDiscriminator?: boolean;
   /** Default true. Set false when lamports are expected to vary across runs. */
   compareLamports?: boolean;
+  /**
+   * Default true. Compare the account OWNER (program). #2 — parity with the
+   * test harness (differential-harness.ts): data + lamports can byte-equal
+   * while Anvil's emit silently (re)assigned the account to a DIFFERENT
+   * program — a real authority/fund bug class the harness already catches but
+   * the shipped CLI runner did not. Set false only when the account
+   * intentionally changes owner mid-scenario.
+   */
+  compareOwner?: boolean;
 }
 
 export interface DifferentialScenario {
@@ -189,7 +198,7 @@ export interface ScenarioRunResult {
   /** Per-account compare result, in the same order as scenario.compare. */
   results: Array<
     | { name: string; ok: true }
-    | { name: string; ok: false; kind: "data" | "lamports" | "missing" | "events" | "returnData" | "msgLogs"; details: string }
+    | { name: string; ok: false; kind: "data" | "lamports" | "owner" | "missing" | "events" | "returnData" | "msgLogs"; details: string }
   >;
   durationMs: number;
   /** Per-instruction compute units consumed by each program, when captureCu was set. */
@@ -310,6 +319,20 @@ export async function runScenarioDifferential(args: {
       });
       continue;
     }
+    // #2 — owner (program) parity with the test harness. data + lamports equal
+    // but owner diverged ⇒ Anvil silently reassigned the account to a different
+    // program (an authority/fund bug class). The shipped CLI verdict must catch
+    // this too, not just the in-repo differential suite.
+    const compareOwner = spec.compareOwner ?? true;
+    if (compareOwner && a.owner !== v.owner) {
+      results.push({
+        name: spec.name,
+        ok: false,
+        kind: "owner",
+        details: `owner diverges: anchor=${a.owner} anvil=${v.owner}`,
+      });
+      continue;
+    }
     results.push({ name: spec.name, ok: true });
   }
 
@@ -419,6 +442,8 @@ function buildScenarioContext(
 interface AccountSnapshot {
   data: Buffer;
   lamports: bigint;
+  /** Owner program, base58. Compared as a string across the two runs. */
+  owner: string;
 }
 
 async function runOneScenario(
@@ -584,6 +609,11 @@ async function runOneScenario(
       snap.set(pubkey.toBase58(), {
         data: Buffer.from(acct.data),
         lamports: BigInt(acct.lamports),
+        // LiteSVM returns owner as a PublicKey here (not raw bytes); normalize
+        // to base58 so both anchor/anvil snapshots compare as strings.
+        owner: typeof acct.owner?.toBase58 === "function"
+          ? acct.owner.toBase58()
+          : new deps.PublicKey(acct.owner).toBase58(),
       });
     }
   }
