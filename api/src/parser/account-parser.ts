@@ -13,6 +13,21 @@ import type { SyntaxNode } from "./ts-init.js";
 import { extractAccountAttrInner } from "./ast-helpers.js";
 import { parseConstraints, parseInitMetadata } from "./constraint-parser.js";
 import { normalizeSolanaType } from "./utils.js";
+import { createHash } from "node:crypto";
+
+// #20 — SPL transfer-hook interface `#[discriminator_hash_input(...)]` namespaces,
+// read verbatim from spl-transfer-hook-interface-0.9.0/src/instruction.rs. The
+// SplDiscriminate derive computes the 8-byte discriminator as sha256(namespace)[..8]
+// (spl-discriminator-0.5.2/src/discriminator.rs: hashv→Sha256, [..8]) — identical to
+// Anvil's own discriminatorBytes. These are EXTERNAL-crate consts Anvil can't see, so
+// they can't resolve as local const refs; resolve the three KNOWN interface structs by
+// their published namespace. Any other `<Struct>::SPL_DISCRIMINATOR(_SLICE)?` falls
+// through to the unresolved warning — never guess a namespace for an unknown struct.
+const SPL_TRANSFER_HOOK_HASH_INPUTS: Readonly<Record<string, string>> = {
+  ExecuteInstruction: "spl-transfer-hook-interface:execute",
+  InitializeExtraAccountMetaListInstruction: "spl-transfer-hook-interface:initialize-extra-account-metas",
+  UpdateExtraAccountMetaListInstruction: "spl-transfer-hook-interface:update-extra-account-metas",
+};
 import { locFromNode } from "./warning-collector.js";
 import type { WarningCollector } from "./warning-collector.js";
 
@@ -544,6 +559,19 @@ export function resolveDiscriminatorRhs(
   if (/^[A-Z_][A-Z0-9_]*$/.test(trimmed) && byteArrayConsts) {
     const bytes = byteArrayConsts.get(trimmed);
     if (bytes) return [...bytes];
+  }
+
+  // #20 — SPL transfer-hook interface discriminator slice, e.g.
+  // `ExecuteInstruction::SPL_DISCRIMINATOR_SLICE` (optionally fully-qualified:
+  // `spl_transfer_hook_interface::instruction::ExecuteInstruction::SPL_DISCRIMINATOR_SLICE`).
+  // Resolve the LAST struct segment against the known-namespace map only; an
+  // unknown struct returns undefined → existing unresolved-discriminator warning.
+  const splMatch = trimmed.match(
+    /(?:^|::)\s*([A-Za-z_][A-Za-z0-9_]*)\s*::\s*SPL_DISCRIMINATOR(?:_SLICE)?$/,
+  );
+  if (splMatch?.[1]) {
+    const ns = SPL_TRANSFER_HOOK_HASH_INPUTS[splMatch[1]];
+    if (ns) return [...createHash("sha256").update(ns).digest().subarray(0, 8)];
   }
 
   return undefined;
