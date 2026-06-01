@@ -1977,20 +1977,28 @@ function extractSplCloseAccount(callNode: SyntaxNode, collector?: WarningCollect
   const args = getArguments(argsNode);
   const firstArg = args[0];
 
-  let account = "account";
-  let destination = "destination";
-  let authority = "authority";
-  let signerSeeds: string | undefined;
-
-  if (firstArg && firstArg.text.includes("CpiContext::")) {
-    const closeStruct = findDescendant(firstArg, "struct_expression");
-    if (closeStruct) {
-      account = extractStructField(closeStruct, "account") ?? "account";
-      destination = extractStructField(closeStruct, "destination") ?? "destination";
-      authority = extractStructField(closeStruct, "authority") ?? "authority";
-    }
-    signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  // B3 — only emit a typed SPL close CPI when the first arg is an inline
+  // CpiContext we can read the CloseAccount struct from. The dispatch matches
+  // `close_account` namespace-free, so a bare user fn that happens to share the
+  // name reaches here; a variable-bound context (`let cpi = CpiContext::new(...);
+  // close_account(cpi)`) also has no inline struct. Fabricating
+  // account/destination/authority defaults would emit a real token-close CPI
+  // against bogus accounts — a silent miscompile. Fall back to pass_through +
+  // a loud warning instead (mirrors extractSplSetAuthority).
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(collector, "SPL token::close_account (no inline CpiContext — bare call or variable-bound context)", callNode);
+    return fallbackPassThrough(callNode);
   }
+  const closeStruct = findDescendant(firstArg, "struct_expression");
+  if (!closeStruct) {
+    warnClassificationLost(collector, "SPL token::close_account (no inline accounts struct)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+
+  const account = extractStructField(closeStruct, "account") ?? "account";
+  const destination = extractStructField(closeStruct, "destination") ?? "destination";
+  const authority = extractStructField(closeStruct, "authority") ?? "authority";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
 
   return {
     kind: "cpi_spl_close_account",
