@@ -112,6 +112,9 @@ pub fn approve(
     if !proposal.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
+    if multisig.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if proposal.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -238,6 +241,9 @@ pub fn execute(
     if !proposal.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
+    if multisig.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if proposal.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -315,6 +321,9 @@ pub fn propose(
     }
     if !proposal.is_writable() || !proposer.is_writable() {
         return Err(ProgramError::InvalidAccountData);
+    }
+    if multisig.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
     }
 
     // Args

@@ -390,6 +390,9 @@ pub fn claim_rewards(
     if user_stake.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
+    if pool.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
 
     if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);

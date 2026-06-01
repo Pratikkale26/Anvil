@@ -3038,11 +3038,18 @@ impl ZeroCopy for ${accName} {}`;
       ? this.emitWritableCheck(writableAccountNames)
       : "";
 
-    // Owner checks — only for accounts whose type is a custom state struct
-    // (i.e., in ir.accounts). Token/System/Sysvar accounts are excluded:
-    // they are owned by their respective programs, not this one.
+    // Owner checks — for accounts whose type is a custom state struct
+    // (i.e., in ir.accounts). Token/System/Sysvar/Signer accounts are excluded:
+    // they are owned by their respective programs, not this one (their types
+    // aren't in ir.accounts, so isCustomState filters them out).
+    // B2 — applies to READ-ONLY custom state too, not just `mut`. Anchor's
+    // `Account<T>::try_from` enforces `owner == program_id` unconditionally;
+    // `mut` only gates writeback. Skipping the check on read-only state let an
+    // attacker pass a same-size, same-discriminator account owned by another
+    // program for an authorization read (e.g. a read-only `config` whose
+    // `admin` field gates a privileged path) — class-wide, both targets.
     const ownerChecks = instr.accounts
-      .filter((a) => !a.isOptional && !a.isInit && a.isMut && isCustomState(a.accountType))
+      .filter((a) => !a.isOptional && !a.isInit && isCustomState(a.accountType))
       .map((a) => this.emitOwnerCheck(snakeCase(a.name)))
       .join("\n");
 

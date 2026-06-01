@@ -477,7 +477,13 @@ function checkOwnerChecks(content: string, ir: SolanaIR, path: string): Validati
     const fnBody = stripCommentsAndStringsForValidator(rawFnBody);
 
     for (const acc of instr.accounts) {
-      if (!acc.isMut || acc.isInit || acc.isOptional) continue;
+      // B2 — owner-check enforcement covers READ-ONLY custom state too, not
+      // just `mut`. Anchor enforces `owner == program_id` on every Account<T>
+      // regardless of mutability; this keeps the validator in lockstep with
+      // the emitter so an AI/regression that drops a read-only owner check is
+      // caught. (init/optional accounts are still skipped: init writes the
+      // account this program owns; optional may be absent.)
+      if (acc.isInit || acc.isOptional) continue;
       if (!stateNames.has(acc.accountType)) continue;
       const accountName = snakeCase(acc.name);
       // Build candidate names: the source name + every alias the
