@@ -29,8 +29,32 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { execSync } from "node:child_process";
+import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 
 export type SandboxKind = "firejail" | "bwrap" | "unshare" | "none";
+
+/**
+ * Read-only paths the sandboxed cargo / cargo-build-sbf must SEE: the warmed
+ * cargo registry (+ rustup toolchain). The differential/workbench build does a
+ * `cargo fetch` OUTSIDE the sandbox (network) to populate $CARGO_HOME/registry
+ * — which `cargo fetch` fully extracts to `registry/src` (verified) — then runs
+ * `cargo-build-sbf --offline` INSIDE the sandbox. The FS-restricting sandboxes
+ * (firejail `--whitelist=cwd`, bwrap binds only /usr+/lib+/etc+cwd) otherwise
+ * HIDE $CARGO_HOME, so the offline build fails with "no matching package named
+ * `anchor-lang` found ... offline mode (--offline)" on fresh deploys (DO/Docker).
+ * unshare doesn't restrict the FS, which is why it works locally but DO doesn't.
+ *
+ * READ-ONLY is sufficient + safe: fetch pre-extracts the sources, build outputs
+ * go to the rw-bound cwd/target, and the build can't mutate the shared registry.
+ * existsSync-guarded so a missing path never breaks the sandbox invocation.
+ */
+function readonlyDepPaths(): string[] {
+  const home = process.env.HOME ?? homedir();
+  const cargoHome = process.env.CARGO_HOME ?? `${home}/.cargo`;
+  const rustupHome = process.env.RUSTUP_HOME ?? `${home}/.rustup`;
+  return [...new Set([cargoHome, rustupHome])].filter((p) => existsSync(p));
+}
 
 interface SandboxConfig {
   kind: SandboxKind;
@@ -85,7 +109,7 @@ function detectSandbox(): SandboxConfig {
   return noneSandbox();
 }
 
-function firejailSandbox(): SandboxConfig {
+export function firejailSandbox(): SandboxConfig {
   return {
     kind: "firejail",
     wrap: (cwd: string) => ({
@@ -103,12 +127,16 @@ function firejailSandbox(): SandboxConfig {
         "--rlimit-fsize=268435456",
         "--rlimit-nproc=128",
         `--whitelist=${cwd}`,
+        // Expose the warmed cargo registry / toolchain READ-ONLY so the offline
+        // build can resolve deps (see readonlyDepPaths). --whitelist makes them
+        // visible; --read-only keeps them immutable to the sandboxed build.
+        ...readonlyDepPaths().flatMap((p) => [`--whitelist=${p}`, `--read-only=${p}`]),
       ],
     }),
   };
 }
 
-function bwrapSandbox(): SandboxConfig {
+export function bwrapSandbox(): SandboxConfig {
   return {
     kind: "bwrap",
     wrap: (cwd: string) => ({
@@ -120,6 +148,9 @@ function bwrapSandbox(): SandboxConfig {
         "--ro-bind", "/bin", "/bin",
         "--ro-bind", "/etc", "/etc",
         "--bind", cwd, cwd,
+        // Expose the warmed cargo registry / toolchain READ-ONLY (see
+        // readonlyDepPaths) so the offline cargo-build-sbf can resolve deps.
+        ...readonlyDepPaths().flatMap((p) => ["--ro-bind", p, p]),
         "--tmpfs", "/tmp",
         "--proc", "/proc",
         "--dev", "/dev",
