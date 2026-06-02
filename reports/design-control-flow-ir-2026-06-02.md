@@ -87,17 +87,78 @@ proven by the synthetic `early_ret` probe rather than a corpus instance.
   +1) → RED. Post-fix: Anvil loudly refuses (compile-tier gate / differential records refusal) →
   no silent divergence. (Same gold-standard discipline as #5: the gate must *bite*.)
 
-### Slice 2 (COVERAGE): conditional money-movement — if-guarded CPI
-Extend the proven `condition`-on-`cpi_system_transfer` pattern (`body-classifier.ts:650`) to the
-other CPI kinds the corpus if-guards wrap — `cpi_spl_transfer`, and the now-real `cpi_custom`.
-Parser: when an `if <cond> { <single recognized CPI>; }` (no `else`, no trailing stmts — the
-existing narrow shape) wraps a recognized CPI, attach `condition` to that CPI's IR instead of
-dropping the block to `pass_through`. Emit: wrap the typed CPI emit in `if <cond> { … }` per target.
-- Fail-closed: any non-narrow shape (`else`, multi-stmt, computed/unhandled condition, nesting)
-  keeps the Slice-1 loud refusal.
-- Gate: `conditional-transfer-spl.rs`, one ix, `if amount > threshold { token::transfer(…) }`,
-  exercised both branch paths, byte-equal vs Anchor on both targets. RED against the current loud
-  stub, GREEN after emit.
+### Slice 2 — OUTCOME: NON-RESULT (already handled). Reverted. [2026-06-02]
+Implemented the IR-kind `condition`-on-`cpi_spl_transfer` path, then **reverted it** — a
+ground-truth corpus + pre/post-change `git stash` comparison proved it adds no coverage and is
+redundant + regression-risk. The evidence:
+
+- **The inline `if <cond> { token::transfer(CpiContext::new[_with_signer](…), amt) }` shape is
+  ALREADY handled** by the existing pass_through path (`pass-through-emit.ts` →
+  `transformBranchedSplCpis`): it derives the PDA bump, rewrites `ctx.bumps.*`, converts to
+  `spl_token_transfer[_signed](…)`, and preserves the user's `if` as verbatim text. Pre-change
+  `git stash` run: validatorErrs=0, both targets, byte-equal-looking.
+- **Corpus scan: all 5 conditional token::transfers** (vesting ×1, perp-funding ×4) are exactly that
+  shape — **inline + PDA-signed**. `vesting.rs` transpiles clean both targets *and is already
+  byte-equal-gated* by `differential-vesting.test.ts`; `perp-funding.rs` is clean on Native (its
+  3 Pinocchio validator errors are a *separate* pre-existing unsupported pattern, not the
+  conditional transfer). So the corpus shape is handled AND transitively gated already.
+- My IR-kind path just re-routed the inline form to an equivalent emit (redundant), and **broke**
+  on the let-bound (`let ctx = CpiContext::new(…); …`) and signed-seeds-`let` forms — it carries the
+  consumed setup `let`s into `conditionPrelude` verbatim → `ctx.bumps`/`CpiContext` mangle to
+  `unimplemented!`. Those forms are FAIL-CLOSED today anyway (let-bound → loud refuse, validatorErrs=2).
+- This is my own banked lesson firing (prod-readiness memory: *check whether the emit ALREADY honors
+  it via another mechanism before "honoring" it*). Should have grepped the corpus + checked
+  pass_through first.
+
+**Genuinely-unsupported shape (deferred):** the **let-bound `CpiContext` inside an `if`** is refused
+today (fail-closed) — and is **corpus-absent**. Making it a typed conditional CPI requires the deep
+prelude-collision work (drop the consumed `CpiContext`/signer-seeds `let`s from `conditionPrelude`,
+for BOTH let-bound and PDA-signed) — one coherent piece, done whole or not at all, and there is no
+corpus target driving it. Deferred (same follow-on family as #13-tail's money-path inlining).
+
+**Net: Slice 2 ships no code.** Conditional SPL transfer (the real corpus shape) already works and
+is already gated. Honest non-result.
+
+<details><summary>(superseded) original concretized Slice-2 plan — kept for context</summary>
+
+#### Slice 2 (COVERAGE): conditional money-movement — if-guarded CPI  [CONCRETIZED 2026-06-02]
+Extend the proven `condition`-on-`cpi_system_transfer` pattern to `cpi_spl_transfer`. Grounded in a
+parallel understand sweep (run `wf_fb40b8b2-1e3`) over parser / spl-transfer / cpi-custom / if-routing.
+
+**Scope = conditional regular SPL `token::transfer` only.** Two deliberate fail-closed DEFERRALS,
+surfaced by the sweep:
+- **cpi_custom — DEFER.** Its canonical emit pushes 3–9 *independent* `lines[]` (each
+  applyStructuralize'd separately); consolidating into one `if { … }` string re-creates the
+  "struct-literal split across entries loses its braces" hazard the code already warns about. No
+  corpus program has a conditional custom CPI. Not worth the risk now.
+- **Token-2022 transfer — DEFER, fail-closed at the PARSER.** `visitCpiSplTransfer:2140` routes
+  `tokenProgram === "token_2022"` to `visitT22Transfer` *first*, which has no condition handling →
+  a conditional T22 transfer would **silently drop the guard**. Mitigation: in the parser, do NOT
+  attach `condition` to a T22 `cpi_spl_transfer` (return null → pass_through → the T22 text leaks →
+  output-validator loud-refuses). Plus a defense-in-depth loud guard in the emitter.
+
+**Changes:**
+1. `schema.ts` cpi_spl_transfer (376-403): add `condition?: string` + `conditionPrelude?: string`
+   (mirror cpi_system_transfer 365/372).
+2. `body-classifier.ts` rename `tryConditionalSystemTransfer` → `tryConditionalCpi` (712-746):
+   broaden the cheap text gate (726) to also match `token::transfer`; change the kind check (741)
+   from `!== "cpi_system_transfer"` to "system_transfer OR (spl_transfer AND not token_2022)"; keep
+   EVERY fail-closed guard (no-`else` 718, prelude-must-be-`let` 743, single-last-CPI). Object
+   spread `{ ...cpi, condition, conditionPrelude }` already works for any kind.
+3. `visitor-base.ts`: extract the `if <cond> { prelude inner } → applyStructuralize` wrap (currently
+   inline in `visitCpiSystemTransfer` 2064-2074) into a shared helper, and call it from
+   `visitCpiSplTransfer` with the SPL inner string (Pinocchio `spl_token_transfer[_signed](…)?;`;
+   Native `let transfer_ix = spl_token::instruction::transfer(…)?; invoke[_signed](…)?;`). The wrap
+   is identical to the byte-equal-proven system path; the inner SPL transfer is byte-equal-proven
+   unconditionally (spl-transfer differential + binary-parity) → conditional-SPL = proven-wrap ∘
+   proven-inner. Add a loud guard: T22 + condition → refuse (dead code given the parser guard, but
+   defense-in-depth).
+- Gate: `conditional-transfer-spl.rs`, one ix, `if amount >= threshold { token::transfer(…) }`,
+  exercised both branch paths, byte-equal vs Anchor on both targets — mirrors the existing
+  `differential-conditional-transfer.test.ts` (system). RED (emit-level): pre-fix the if leaks to
+  pass_through → validator refuses. GREEN: real conditional emit + byte-equal differential.
+
+</details>
 
 ### Slice 3: DEFER `for`/`while`/`match` general IR
 **Justified by corpus-absence** — zero for/while/match across all 95 corpus programs, zero fixtures.
