@@ -5,6 +5,7 @@ import { emitNative, emitNativeFull } from "../emitter/native-emitter.js";
 import { analyzeCU } from "../emitter/cu-analyzer.js";
 import { validateEmitterOutput } from "../emitter/output-validator.js";
 import { auditPassthrough } from "../emitter/passthrough-audit.js";
+import { emitCostCap, MAX_EMIT_INSTRUCTIONS, MAX_EMIT_BODY_STATEMENTS } from "./emit-cost-cap.js";
 import { refineOutput, REFINE_PROMPT_VERSION } from "../ai/refine.js";
 import { RejectedAttemptSchema, type RejectedAttempt } from "../ai/refine-schemas.js";
 import { checkSpendCap, recordSpend, shouldRefuseDueToSpendBackend } from "../ai/spend-tracker.js";
@@ -130,6 +131,21 @@ emitRoute.post("/", async (req, res) => {
   }
 
   const ir: SolanaIR = parsed.data;
+
+  // #27 — emit-cost cap. The 8 MB body limit bounds IR bytes; this bounds emit
+  // COMPUTE (~O(instruction count × body size)) so a pathological IR can't pin
+  // a worker. Mirrors /parse's O(source) guard. See routes/emit-cost-cap.ts.
+  const cost = emitCostCap(ir);
+  if (cost.over) {
+    const err = new AnvilError(
+      ErrorCode.SOURCE_TOO_LARGE,
+      `IR too large to emit (${cost.instructions} instructions / ${cost.bodyStatements} body statements; caps ${MAX_EMIT_INSTRUCTIONS} / ${MAX_EMIT_BODY_STATEMENTS})`,
+      undefined,
+      413,
+    );
+    res.status(err.statusCode).json(err.toJSON());
+    return;
+  }
 
   // Run the full emitter to get warnings + transform report
   try {
