@@ -516,6 +516,20 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     rawCode: z.string(),          // full CPI block as original Rust
     signerSeeds: z.string().optional(),
     needsReview: z.boolean().default(true),
+    // #23 — structured fields for the SAFELY-TRANSFORMABLE canonical invoke shape:
+    //   invoke[_signed](&<ixVar>, &[<accountInfo expr>, ...], [<signerSeeds>])
+    // where each accountInfo is `<expr>.to_account_info()`. Populated by
+    // extractCustomCpi ONLY when the rawCode parses cleanly into this shape;
+    // absent otherwise. This is the SINGLE source of truth (fail-closed): a
+    // present `canonical` is the boundary decision (real-emit) AND the emit
+    // input; absent ⇒ non-canonical ⇒ the loud unimplemented!() stub stays.
+    // Emit does not consume this yet (behaviour-neutral) — it's the foundation
+    // for the per-target generic-invoke emit (the next #23 slices).
+    canonical: z.object({
+      func: z.enum(["invoke", "invoke_signed"]),
+      ixVar: z.string(),                 // the let-bound Instruction variable
+      accountInfos: z.array(z.string()), // the &[...] element exprs, in order
+    }).optional(),
   }),
 
   // ── Token-2022 extension CPIs (EM2 arc) ──

@@ -3459,12 +3459,22 @@ function extractCustomCpi(callNode: SyntaxNode, collector?: WarningCollector): B
   // cpi_custom stub ignores signerSeeds today, so this is behaviour-neutral
   // until #23 wires the real emit. Defensive fallback to the legacy sentinel if
   // a 3rd arg can't be resolved (preserves prior behaviour).
+  const argsNode = callNode.childForFieldName("arguments");
+  const argNodes = argsNode ? getArguments(argsNode) : [];
+
   let signerSeeds: string | undefined;
   if (funcText === "invoke_signed") {
-    const argsNode = callNode.childForFieldName("arguments");
-    const seedsArg = argsNode ? getArguments(argsNode)[2] : undefined;
+    const seedsArg = argNodes[2];
     signerSeeds = seedsArg ? seedsArg.text.trim() : "signer_seeds";
   }
+
+  // #23 — structured extraction of the SAFELY-TRANSFORMABLE canonical invoke
+  // shape (see schema cpi_custom.canonical). Fail-closed: only populated when
+  // the AST parses cleanly into `invoke[_signed](&<ident>, &[<expr>.to_account_info(),
+  // ...], [seeds])`; any deviation leaves it undefined → the loud stub stays.
+  // This same extraction will drive both the emit boundary and the emit input
+  // (no separate permissive regex). Behaviour-neutral until the emit consumes it.
+  const canonical = extractCanonicalInvoke(funcText, argNodes);
 
   collector?.add({
     code: "cpi_custom_emitted",
@@ -3479,7 +3489,52 @@ function extractCustomCpi(callNode: SyntaxNode, collector?: WarningCollector): B
     rawCode: callNode.text,
     signerSeeds,
     needsReview: true,
+    ...(canonical ? { canonical } : {}),
   };
+}
+
+/**
+ * #23 — parse the canonical, safely-transformable generic-invoke shape into
+ * structured fields, or return undefined (fail-closed). Canonical means:
+ *   invoke(&<ix>, &[<e>.to_account_info(), ...])                  (arity 2)
+ *   invoke_signed(&<ix>, &[<e>.to_account_info(), ...], <seeds>)  (arity 3)
+ * where `&<ix>` is a reference to a bare identifier (the let-bound Instruction)
+ * and the 2nd arg is a reference to an array literal whose every element is a
+ * `<expr>.to_account_info()` call. Anything else (computed program id /
+ * dynamically-built accounts vec / builder-pattern / non-.to_account_info infos
+ * / wrong arity) is non-canonical and keeps the loud unimplemented!() stub.
+ */
+function extractCanonicalInvoke(
+  funcText: string,
+  argNodes: SyntaxNode[],
+): { func: "invoke" | "invoke_signed"; ixVar: string; accountInfos: string[] } | undefined {
+  if (funcText !== "invoke" && funcText !== "invoke_signed") return undefined;
+  const wantArity = funcText === "invoke_signed" ? 3 : 2;
+  if (argNodes.length !== wantArity) return undefined;
+
+  // arg0: `&<ident>` — a reference to the let-bound Instruction variable.
+  const arg0 = argNodes[0];
+  if (!arg0 || arg0.type !== "reference_expression") return undefined;
+  const ixVar = arg0.childForFieldName("value")?.text?.trim();
+  if (!ixVar || !/^[A-Za-z_]\w*$/.test(ixVar)) return undefined;
+
+  // arg1: `&[ <expr>.to_account_info(), ... ]` — a reference to an array literal
+  // whose every element ends in `.to_account_info()`.
+  const arg1 = argNodes[1];
+  if (!arg1 || arg1.type !== "reference_expression") return undefined;
+  const arr = arg1.childForFieldName("value");
+  if (!arr || arr.type !== "array_expression") return undefined;
+  const accountInfos: string[] = [];
+  for (let i = 0; i < arr.namedChildCount; i++) {
+    const el = arr.namedChild(i);
+    if (!el) return undefined;
+    const t = el.text.trim();
+    if (!/\.\s*to_account_info\s*\(\s*\)$/.test(t)) return undefined;
+    accountInfos.push(t);
+  }
+  if (accountInfos.length === 0) return undefined;
+
+  return { func: funcText, ixVar, accountInfos };
 }
 
 // ─── Fallback ───────────────────────────────────────────────────────────────
