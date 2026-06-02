@@ -118,6 +118,8 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   "lazy-counter": "lazy-counter.rs",
   // Conditional money-movement: if <cond> { system_program::transfer } (#13 1a).
   "conditional-transfer": "conditional-transfer.rs",
+  // Control-flow byte-equal: for-loop + match dispatch, varied args (#4).
+  "control-flow": "control-flow.rs",
   // realloc_if_needed mechanism: conditional rent transfer + account.realloc (#13 1b+1c).
   "realloc-with-rent": "realloc-with-rent.rs",
   // Metaplex Token Metadata byte-equal fixtures (2026-05-09 → 2026-05-19).
