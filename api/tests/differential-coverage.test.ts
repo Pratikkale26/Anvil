@@ -73,9 +73,11 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   "return-err": "return-err.rs",
   "cpi-memo": "cpi-memo.rs",
   "cpi-custom": "cpi-custom.rs",
-  // #5 gold-standard generic-CPI gate (GATED behind CPI_CUSTOM_REAL_EMIT until #5
-  // lands a real invoke emit). Demo produces cpi_custom — already covered above.
+  // #5 gold-standard generic-CPI gate (GATED behind CPI_CUSTOM_REAL_EMIT until the
+  // Pinocchio slice lands). Demo produces cpi_custom — already covered above.
   "cpi-custom-goldstandard": "cpi-counter-caller.rs",
+  // #5 Native generic-CPI byte-equal gate (real invoke_signed emit — GREEN). Same demo.
+  "cpi-custom-native": "cpi-counter-caller.rs",
   // Perp-funding: hand-rolled differential gating initialize_market
   // byte-equal + auto-scenario stub.
   "perp-funding": "perp-funding.rs",

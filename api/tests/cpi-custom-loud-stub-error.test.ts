@@ -34,11 +34,16 @@ pub mod m {
     use super::*;
     pub fn forward(ctx: Context<Forward>, data: Vec<u8>) -> Result<()> {
         let ix = Instruction { program_id: ctx.accounts.target_program.key(), accounts: vec![], data };
-        invoke_signed(
-            &ix,
-            &[ctx.accounts.target_program.to_account_info(), ctx.accounts.authority.to_account_info()],
-            &[&[b"auth", &[1u8]]],
-        )?;
+        // NON-canonical on purpose: the account_infos come from a dynamically
+        // built Vec (not an inline &[...] array literal of .to_account_info()
+        // calls), so the #23 canonical-shape detector does NOT fire → this stays
+        // an uncataloged cpi_custom STUB on BOTH targets, which is exactly the
+        // shape #17 verifies the validator refuses.
+        let infos = vec![
+            ctx.accounts.target_program.to_account_info(),
+            ctx.accounts.authority.to_account_info(),
+        ];
+        invoke_signed(&ix, &infos, &[&[b"auth", &[1u8]]])?;
         Ok(())
     }
 }

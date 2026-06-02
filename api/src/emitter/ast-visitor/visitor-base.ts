@@ -3232,6 +3232,50 @@ export class AstVisitorBase {
   visitCpiCustom(stmt: CpiCustom): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
+
+    // #23 — Native generic-CPI REAL emit from the fail-closed `canonical` fields.
+    // Reached only for Native + canonical (the emitInstructionFunction dispatch
+    // keeps Pinocchio and any non-canonical shape on the loud stub). The
+    // `let ix = Instruction{…}` that defines `ixVar` is a separate pass_through
+    // emitted just above as valid solana_program code; here we emit the matching
+    // invoke, byte-equal-gated by differential-cpi-custom-native.
+    if (stmt.canonical && w.emitter.frameworkName === "Native") {
+      const c = stmt.canonical;
+      // Each account-info `<acc>.to_account_info()` → `<binding>.clone()`: a raw
+      // solana_program AccountInfo has no `.to_account_info()`, and invoke wants
+      // owned AccountInfo (which is Clone). ctx.accounts.X → the local binding via
+      // the same transforms pass_through CPI bodies use.
+      const infos = c.accountInfos.map((ai) => {
+        // The transforms reduce `ctx.accounts.X.to_account_info()` to the local
+        // binding `X` (a &AccountInfo). solana_program's invoke wants OWNED
+        // AccountInfo (`&[AccountInfo]`), so clone — `<&AccountInfo>.clone()`
+        // resolves to AccountInfo::clone → owned. Strip any surviving literal
+        // `.to_account_info()` first so we never emit `<x>.to_account_info().clone()`.
+        const t = w
+          .normalizeKeyValueUsages(
+            w.transformAccountReferences(w.transformCtxAccountsReferences(ai)),
+          )
+          .trim()
+          .replace(/\.\s*to_account_info\s*\(\s*\)\s*$/, "");
+        return `${t}.clone()`;
+      });
+      const lines: string[] = [];
+      if (c.func === "invoke_signed") {
+        // Signer seeds: resolve `ctx.bumps.X` to the derived bump binding (+ any
+        // prelude it needs) and ctx.accounts.* references, exactly as pass_through
+        // CPI bodies do. Native's invoke_signed takes `&[&[&[u8]]]` directly.
+        const { prelude, code } = w.replaceBumpRefs(stmt.signerSeeds ?? "");
+        for (const p of prelude) lines.push(p);
+        const seeds = w.normalizeKeyValueUsages(
+          w.transformAccountReferences(w.transformCtxAccountsReferences(code)),
+        );
+        lines.push(`    invoke_signed(&${c.ixVar}, &[${infos.join(", ")}], ${seeds})?;`);
+      } else {
+        lines.push(`    invoke(&${c.ixVar}, &[${infos.join(", ")}])?;`);
+      }
+      return this.applyStructuralize(lines);
+    }
+
     w.ctx.warnings.push(
       `Custom CPI to '${stmt.programAccount}' — passed through as raw code. Verify framework compatibility.`,
     );

@@ -9,27 +9,53 @@ pub use raw_cpi::raw_cpi;
 
 === instructions/raw_cpi.rs ===
 use super::*;
-use solana_program::program::{invoke, invoke_signed};
+use solana_program::program::invoke;
 
 pub fn raw_cpi(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    // ⚠️ Anvil: cpi_custom CPI(s) to 'unknown' — manual port required.
-    // Anvil can't auto-port bare `invoke()` / `invoke_signed()` calls:
-    //   - Pinocchio uses pinocchio::cpi::* with different ownership semantics
-    //   - Native uses solana_program::program::invoke and `.key` as a struct field
-    // Original (raw) source preserved below for manual reference:
-    // invoke(
-    //             &ix,
-    //             &[
-    //                 ctx.accounts.from.to_account_info(),
-    //                 ctx.accounts.to.to_account_info(),
-    //             ],
-    //         )
-    let _ = (program_id, accounts, data);
-    unimplemented!("Anvil: cpi_custom to 'unknown' in 'raw_cpi' — manual port required for Native");
+    if accounts.len() < 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    // Capture instruction data before account bindings; an account named
+    // "data" would otherwise shadow the parameter and break arg parsing.
+    let __ix_data: &[u8] = data;
+
+    let from = &accounts[0];
+    let to = &accounts[1];
+    let target_program = &accounts[2];
+
+    if !from.is_writable || !to.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // Args
+    let mut remaining: &[u8] = __ix_data;
+    if remaining.len() < 8 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (arg_bytes, rest) = remaining.split_at(8);
+    remaining = rest;
+    let amount: u64 = u64::from_le_bytes(
+        arg_bytes.try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+    );
+    if !remaining.is_empty() {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let ix = Instruction {
+            program_id: *target_program.key,
+            accounts: vec![
+                AccountMeta::new(*from.key, true),
+                AccountMeta::new(*to.key, false),
+            ],
+            data: amount.to_le_bytes().to_vec(),
+        };
+    invoke(&ix, &[from.clone(), to.clone()])?;
+    Ok(())
+
 }
 
 === lib.rs ===

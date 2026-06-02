@@ -2973,7 +2973,21 @@ impl ZeroCopy for ${accName} {}`;
     // source preserved as a comment to manually port.
     const cpiCustomStatements = instr.body.filter((s) => s.kind === "cpi_custom");
     if (cpiCustomStatements.length > 0) {
-      return this.emitCpiCustomStubFunction(instr, ir, cpiCustomStatements as Array<{ kind: "cpi_custom"; rawCode: string; programAccount: string }>);
+      // #23 — generic-CPI REAL emit for the safely-transformable canonical shape,
+      // NATIVE target only (gated by its byte-equal differential
+      // differential-cpi-custom-native; Pinocchio's Instruction-type translation is
+      // a separate slice). When EVERY cpi_custom statement carries `canonical` (the
+      // fail-closed parser extraction) AND we emit Native, fall through to normal
+      // per-statement emit: the `let ix = Instruction{…}` pass_through is valid
+      // solana_program code and visitCpiCustom emits the invoke. ANY non-canonical
+      // statement — or the Pinocchio target — keeps the whole-instruction loud stub.
+      const allCanonical = cpiCustomStatements.every(
+        (s) => !!(s as { canonical?: unknown }).canonical,
+      );
+      if (!(allCanonical && this.frameworkName === "Native")) {
+        return this.emitCpiCustomStubFunction(instr, ir, cpiCustomStatements as Array<{ kind: "cpi_custom"; rawCode: string; programAccount: string }>);
+      }
+      // all-canonical + Native → fall through to normal body emit.
     }
     // #66 — Option<T>-wrapped accounts aren't propagated through the
     // emit surface yet. Stubbing the entire body keeps the scaffold

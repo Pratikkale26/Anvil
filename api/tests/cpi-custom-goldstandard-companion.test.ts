@@ -52,32 +52,47 @@ describe("#5 cpi_custom gold-standard — companion (pre-#5 state, always-on)", 
     expect((bump?.body ?? []).some((s) => s.kind === "cpi_custom")).toBe(true);
   });
 
-  for (const [target, emit] of [
-    ["pinocchio", emitPinocchioFull] as const,
-    ["native", emitNativeFull] as const,
-  ]) {
-    test(`${target}: emits the cpi_custom stub AND the validator marks it BROKEN (safe-by-default refuses)`, async () => {
-      const r = await parseAnchor(SRC);
-      expect(r.ok).toBe(true);
-      if (!r.ok) return;
-      const out = emit(r.ir);
-      const text = out.files.map((f) => f.content).join("\n");
+  // PINOCCHIO — the generic-CPI emit hasn't landed for Pinocchio yet (its
+  // Instruction-type translation, solana_program → pinocchio::instruction, is a
+  // separate slice). So the canonical cpi_custom still emits the loud stub and
+  // the validator refuses it. When the Pinocchio slice lands, THIS test fails —
+  // the cue to flip CPI_CUSTOM_REAL_EMIT in differential-cpi-custom-goldstandard.
+  test("pinocchio: still emits the cpi_custom stub AND the validator marks it BROKEN (safe-by-default refuses)", async () => {
+    const r = await parseAnchor(SRC);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const out = emitPinocchioFull(r.ir);
+    const text = out.files.map((f) => f.content).join("\n");
+    expect(text).toContain(STUB); // stable review-required stub (TRIGGER)
+    expect(text).toMatch(/⚠️ Anvil: cpi_custom/);
+    const errs = validateEmitterOutput(r.ir, out).filter(
+      (i) =>
+        i.severity === "error" &&
+        /⚠️ Anvil|unsafe-marker|manual (port|rebuild)|not yet supported/i.test(i.message),
+    );
+    expect(errs.length).toBeGreaterThan(0);
+  });
 
-      // (1) the stable review-required stub is present (TRIGGER substring).
-      expect(text).toContain(STUB);
-      // and the human-facing ⚠️ marker that the validator keys on.
-      expect(text).toMatch(/⚠️ Anvil: cpi_custom/);
-
-      // (2) safe-by-default REFUSES: the validator raises an error on the
-      // ⚠️ Anvil unsafe-marker the cpi_custom stub carries (wording is
-      // "… manual rebuild / TODO / not yet supported").
-      const issues = validateEmitterOutput(r.ir, out);
-      const errs = issues.filter(
-        (i) =>
-          i.severity === "error" &&
-          /⚠️ Anvil|unsafe-marker|manual (port|rebuild)|not yet supported/i.test(i.message),
-      );
-      expect(errs.length).toBeGreaterThan(0);
-    });
-  }
+  // NATIVE — the generic-CPI emit HAS landed (byte-equal-gated by
+  // differential-cpi-custom-native, Anvil=12=Anchor). The canonical cpi_custom
+  // now emits a real invoke_signed (no stub) and the validator does NOT refuse it.
+  test("native: real-emits invoke_signed (no stub) and the validator does NOT refuse", async () => {
+    const r = await parseAnchor(SRC);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const out = emitNativeFull(r.ir);
+    const text = out.files.map((f) => f.content).join("\n");
+    // The review-required stub is GONE; a real invoke_signed of the hand-built ix
+    // is emitted with owned-AccountInfo (.clone()) account_infos.
+    expect(text).not.toContain(STUB);
+    expect(text).toMatch(/invoke_signed\s*\(\s*&ix\s*,/);
+    expect(text).toMatch(/\.clone\(\)/);
+    // No cpi_custom stub/unsafe-marker error remains.
+    const cpiErrs = validateEmitterOutput(r.ir, out).filter(
+      (i) =>
+        i.severity === "error" &&
+        /cpi_custom|⚠️ Anvil: cpi_custom|manual port required/i.test(i.message),
+    );
+    expect(cpiErrs).toEqual([]);
+  });
 });
