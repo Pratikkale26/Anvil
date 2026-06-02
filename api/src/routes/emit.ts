@@ -143,7 +143,8 @@ emitRoute.post("/", async (req, res) => {
     let validationIssues = validateEmitterOutput(ir, output);
 
     // B2 — wire pass_through audit into the API surface. CLI strict mode
-    // already runs auditPassthrough() at cli/src/anvil.ts:1158; the
+    // already runs auditPassthrough() in cli/anvil.ts (the live dev entry —
+    // NOT cli/src/, which is a gitignored prepack copy); the
     // workbench's /emit response previously got no signal for Anchor-only
     // constructs hiding inside complex pass_through statements. Without
     // this, an `anchor_spl::*` import buried in a let-else / closure /

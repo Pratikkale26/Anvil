@@ -698,6 +698,8 @@ function classifyStatement(
 
     default:
       // if/for/while/match/block — pure Rust, pass through.
+      // DEFER(control-flow): for/while/match as typed IR — corpus-absent (0/95);
+      // see reports/design-control-flow-ir-2026-06-02.md (#4 Slice 3).
       return passThroughDefault(text, node, collector);
   }
 }

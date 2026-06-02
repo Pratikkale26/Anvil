@@ -3,8 +3,9 @@
  * into validationIssues so the workbench safety net matches CLI strict
  * mode.
  *
- * Pre-B2: cli/src/anvil.ts:1158 ran auditPassthrough() and refused to
- * write on errors. The /emit API route ran ONLY validateEmitterOutput.
+ * Pre-B2: cli/anvil.ts (the live CLI; cli/src/ is a gitignored prepack copy)
+ * ran auditPassthrough() and refused to write on errors. The /emit API route
+ * ran ONLY validateEmitterOutput.
  * A pass_through statement carrying `anchor_spl::*` / `CpiContext::` /
  * `ctx.accounts.X` would slip the regex post-process and reach the
  * workbench user as "compiled output" with no warning.
