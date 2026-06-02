@@ -11,7 +11,7 @@ import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorWrappersInCode } from "./emitter-base.js";
 import { rewriteMsgCalls, collapseModulePaths } from "./anchor-transforms.js";
 import { rewriteRequireVariantsInCode } from "../parser/project-source.js";
-import { applyT22ExtensionCommentout, NATIVE_T22_TYPE_BLACKLIST, NATIVE_T22_FN_BLACKLIST } from "./pinocchio-emitter.js";
+import { applyT22ExtensionCommentout, NATIVE_T22_TYPE_BLACKLIST, NATIVE_T22_FN_BLACKLIST } from "./t22-extension-commentout.js";
 import { promoteImplFnVisibility } from "./emitter-base-utils.js";
 import {
   instrDiscriminator,

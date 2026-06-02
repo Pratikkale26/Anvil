@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { __testOnlyCommentOutT22ExtensionCallSites as commentOutT22 } from "../src/emitter/pinocchio-emitter.ts";
+import { __testOnlyCommentOutT22ExtensionCallSites as commentOutT22 } from "../src/emitter/t22-extension-commentout.ts";
 
 function bracesBalanced(src: string): boolean {
   let depth = 0;
