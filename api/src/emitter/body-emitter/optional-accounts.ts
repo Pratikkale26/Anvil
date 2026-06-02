@@ -58,7 +58,11 @@ export const makeOptionalIfLetReadRe = (): RegExp => new RegExp(OPTIONAL_IF_LET_
  *     optional would silently ACCEPT an account Anchor rejects (wrong-PDA /
  *     `has_one` bypass / non-writable). Reproducing those checks conditionally
  *     inside the Some-branch + adversarially verifying them is a separate slice;
- *     until then → stub.
+ *     until then → stub. NOTE: the INTRINSIC owner check (which Anchor's
+ *     `Account<T>::try_from` enforces even with zero constraints) IS now emitted
+ *     for bare optionals — the walker injects `owner==program_id` inside the
+ *     Some-branch (gated by differential-option-account-owner-reject). Axis C
+ *     still stubs *explicitly*-constrained optionals (has_one/seeds/etc.).
  *
  *  D. BODY-USE — every reference to every optional is one of the three covered
  *     shapes. Strip those (the shared regexes), then any surviving

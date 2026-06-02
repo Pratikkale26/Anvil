@@ -1897,7 +1897,14 @@ export class BodyWalker {
             ),
           ),
         );
-        return `if let Some(${accountInfoVar}) = ${normalizedAccount} {\n        let mut ${localVar} = ${typeName}::from_account_info(${accountInfoVar})?;\n${indentBlock(transformedBody.trim(), "        ")}\n        ${typeName}::save(${accountInfoVar}, &${localVar})?;\n    }`;
+        // Intrinsic owner check (mirrors B2 for non-optional Account<T>):
+        // Anchor's Account<T>::try_from enforces owner==program_id even on a
+        // bare Option<Account<T>> when present. The preamble ownerChecks skip
+        // optionals (!a.isOptional), so inject it here, inside the Some-branch
+        // (present→checked, absent→skipped, matching Anchor). Re-indent the
+        // emitter's 4-space owner check to the Some-branch's 8-space level.
+        const ownerGuard = this.emitter.emitOwnerCheck(accountInfoVar).split("\n").map((l) => `    ${l}`).join("\n");
+        return `if let Some(${accountInfoVar}) = ${normalizedAccount} {\n${ownerGuard}\n        let mut ${localVar} = ${typeName}::from_account_info(${accountInfoVar})?;\n${indentBlock(transformedBody.trim(), "        ")}\n        ${typeName}::save(${accountInfoVar}, &${localVar})?;\n    }`;
       },
     );
 
@@ -1933,7 +1940,11 @@ export class BodyWalker {
             new RegExp(`\\b${localVar}\\.(lamports|data_len|is_signer|is_writable)\\s*\\(\\s*\\)`, "g"),
             `${accountInfoVar}.$1()`,
           );
-        return `if let Some(${accountInfoVar}) = ${normalizedAccount} {\n        let ${localVar} = ${typeName}::from_account_info(${accountInfoVar})?;\n${indentBlock(transformedBody.trim(), "        ")}\n    }`;
+        // Intrinsic owner check — see the &mut handler above. Anchor enforces
+        // owner==program_id on a present bare Option<Account<T>>; the preamble
+        // skips optionals, so inject it inside the Some-branch.
+        const ownerGuard = this.emitter.emitOwnerCheck(accountInfoVar).split("\n").map((l) => `    ${l}`).join("\n");
+        return `if let Some(${accountInfoVar}) = ${normalizedAccount} {\n${ownerGuard}\n        let ${localVar} = ${typeName}::from_account_info(${accountInfoVar})?;\n${indentBlock(transformedBody.trim(), "        ")}\n    }`;
       },
     );
 
