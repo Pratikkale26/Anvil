@@ -188,7 +188,13 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     if (tokenLikeAccounts.size > 0) {
       lamportRewritten = replaceInCodeRegions(
         lamportRewritten,
-        /\b(\w+)\.(mint|owner|amount|delegate|close_authority)\b(?!\s*\()/g,
+        // Optional `ctx.accounts.` prefix is CONSUMED by the match (and dropped
+        // in the replacement) so a `let x = ctx.accounts.vault.amount;` that
+        // reached here un-stripped resolves to a clean `token_account_amount(x)?`
+        // instead of `ctx.accounts.token_account_amount(x)?` — the latter trips
+        // commentOutResidualAnchorLeaks and gets mangled to `0u64` on Pinocchio
+        // (Finding B: token-balance reads silently dropped, Native ≠ Pinocchio).
+        /(?:\bctx\s*\.\s*accounts\s*\.\s*)?\b(\w+)\.(mint|owner|amount|delegate|close_authority)\b(?!\s*\()/g,
         (full, acct, field) => {
           if (!tokenLikeAccounts.has(acct)) return full;
           const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
