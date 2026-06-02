@@ -58,6 +58,11 @@ import {
   detectPassThroughStateMutations,
   computeMutableStateAccounts,
 } from "./state-mutation-scan.js";
+import {
+  type BranchedSplCpi,
+  BRANCHED_SPL_CPIS,
+  buildBranchedSplCpiRegex,
+} from "./branched-spl-cpi-recognizer.js";
 import { MARKER_ANVIL_PREFIX } from "../markers.js";
 import { tryStructuralizeExpr } from "../ast-visitor/rust-stmt-from-text.js";
 import { resolveAccountExprAstPipeline } from "../ast-visitor/expr-transform.js";
@@ -1521,36 +1526,12 @@ export class BodyWalker {
     // literal (e.g. Burn has `mint`-first, but `argOrder` maps to the
     // helper's `from`-first signature). authorityIdx names which field
     // becomes the resolveAccountInfoVar() arg vs the snakeCase() arg.
-    type SplCpi = {
-      tokenFn: string;
-      structName: string;
-      structFields: readonly string[];
-      helperBase: string;
-      authorityIdx: number;
-      /** Permutation: which captured field goes to which helper-arg slot. */
-      argOrder: readonly number[];
-      hasAmount: boolean;
-    };
-    const splCpis: readonly SplCpi[] = [
-      { tokenFn: "token::transfer",      structName: "Transfer",     structFields: ["from", "to", "authority"],        helperBase: "spl_token_transfer",      authorityIdx: 2, argOrder: [0, 1, 2], hasAmount: true },
-      { tokenFn: "token::mint_to",       structName: "MintTo",       structFields: ["mint", "to", "authority"],        helperBase: "spl_token_mint_to",       authorityIdx: 2, argOrder: [0, 1, 2], hasAmount: true },
-      { tokenFn: "token::burn",          structName: "Burn",         structFields: ["mint", "from", "authority"],      helperBase: "spl_token_burn",          authorityIdx: 2, argOrder: [1, 0, 2], hasAmount: true },
-      { tokenFn: "token::close_account", structName: "CloseAccount", structFields: ["account", "destination", "authority"], helperBase: "spl_token_close_account", authorityIdx: 2, argOrder: [0, 1, 2], hasAmount: false },
-    ];
-    const fieldRe = (name: string) =>
-      `${name}:\\s*ctx\\.accounts\\.(\\w+)\\.to_account_info\\(\\),\\s*`;
-    const buildSplCpiRegex = (cpi: SplCpi, signed: boolean): RegExp => {
-      const fields = cpi.structFields.map(fieldRe).join("");
-      const ctor = signed ? "CpiContext::new_with_signer" : "CpiContext::new";
-      const post = signed
-        ? "\\},\\s*([\\w\\[\\]&\\s.]+?)\\s*,\\s*\\)"
-        : "\\}\\s*,\\s*\\)";
-      const tail = cpi.hasAmount ? "\\s*,\\s*([\\s\\S]*?)\\s*" : "\\s*";
-      return new RegExp(
-        `(?:anchor_spl::)?${cpi.tokenFn}\\(\\s*${ctor}\\(\\s*ctx\\.accounts\\.\\w+\\.to_account_info\\(\\),\\s*(?:anchor_spl::token::)?${cpi.structName}\\s*\\{\\s*${fields}${post}${tail}\\)\\?;`,
-        "g",
-      );
-    };
+    // Inline SPL CPI table + regex builder are shared single-source with the
+    // pre-emit passthrough-audit (branched-spl-cpi-recognizer.ts) so the audit
+    // never ERROR-blocks a shape this walker actually rewrites byte-equal.
+    type SplCpi = BranchedSplCpi;
+    const splCpis = BRANCHED_SPL_CPIS;
+    const buildSplCpiRegex = buildBranchedSplCpiRegex;
     const buildHelperArgs = (cpi: SplCpi, captures: string[]): string => {
       return cpi.argOrder
         .map((srcIdx) => {

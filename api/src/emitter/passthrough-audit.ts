@@ -21,6 +21,7 @@
  * existing render path.
  */
 import type { SolanaIR } from "../ir/schema.js";
+import { stripHandledBranchedSplCpis } from "./body-emitter/branched-spl-cpi-recognizer.js";
 
 export interface PassthroughFinding {
   severity: "error" | "warning";
@@ -105,7 +106,18 @@ function normalizeForAudit(code: string): string {
   // `ctx.accounts.X → X` strip removed the net entirely; a match-arm WRITE to a
   // typed field is byte-equal-proven to persist, but that proof does NOT extend
   // to reads / closures / let-else, so they stay flagged.)
-  return code.replace(
+  //
+  // Branched/control-flow-wrapped inline SPL CPIs (`token::transfer|mint_to|
+  // burn|close_account(CpiContext::new[_with_signer](…))`) are rewritten to the
+  // `spl_token_*` helpers by the walker (Phase 5a) — byte-equal-proven by
+  // differential-staking / -vesting. Remove the exact shapes the walker handles
+  // FIRST (before the .to_account_info() strip, which the recognizer's regex
+  // depends on) so their `CpiContext::` doesn't trip a false classification-gap
+  // error. Single-source: the recognizer is shared with the walker, so a shape
+  // it does NOT match (let-else / closure / computed program-id / a mangled
+  // partial) is left intact and still flagged. (#4 Finding: staking unstake.)
+  const withoutHandledCpis = stripHandledBranchedSplCpis(code);
+  return withoutHandledCpis.replace(
     /\bctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*to_account_info\s*\(\s*\)/g,
     "$1",
   );
