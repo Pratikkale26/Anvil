@@ -529,6 +529,25 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
       func: z.enum(["invoke", "invoke_signed"]),
       ixVar: z.string(),                 // the let-bound Instruction variable
       accountInfos: z.array(z.string()), // the &[...] element exprs, in order
+      // #23 Pinocchio (option C) — the hand-built `let <ixVar> = Instruction{…}`
+      // definition, captured so BOTH targets emit the instruction from the IR
+      // (the consumed pass_through is dropped). Native re-assembles the
+      // solana_program form (its differential re-verifies the capture is
+      // faithful); Pinocchio translates to pinocchio::instruction::Instruction.
+      // Present ONLY when the literal parses cleanly into this exact shape:
+      //   Instruction { program_id: <P>, accounts: vec![AccountMeta::new
+      //   (<pk>, <signer>) | AccountMeta::new_readonly(<pk>, <signer>), …],
+      //   data: <D> }
+      // Absent ⇒ the generic-CPI emit falls back to the loud stub (fail-closed).
+      instruction: z.object({
+        programId: z.string(),
+        data: z.string(),
+        metas: z.array(z.object({
+          pubkey: z.string(),
+          writable: z.boolean(),
+          signer: z.boolean(),
+        })),
+      }).optional(),
     }).optional(),
   }),
 

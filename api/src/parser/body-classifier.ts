@@ -13,6 +13,7 @@
  */
 
 import type { SyntaxNode } from "./ts-init.js";
+import { getParserSync } from "./ts-init.js";
 import type { BodyStatement } from "../ir/schema.js";
 import {
   findCtxAccountsAccess,
@@ -97,6 +98,118 @@ export interface ClassifiedBody {
   locs: Array<SourceLoc | undefined>;
 }
 
+/** #23 — captured `Instruction{}` literal for the generic-CPI emit (option C). */
+export interface CapturedInstruction {
+  programId: string;
+  data: string;
+  metas: Array<{ pubkey: string; writable: boolean; signer: boolean }>;
+}
+
+/**
+ * #23 — extract the account binding name from an account-key reference, e.g.
+ * `*ctx.accounts.counter.key` / `ctx.accounts.counter.key()` / `counter.key()`
+ * → "counter". Returns null for anything that isn't a plain account-key ref
+ * (a literal Pubkey, `crate::ID`, a computed expr) → fail-closed → stub. This is
+ * what keeps the generic-CPI emit on the VERIFIED shape only: every program_id /
+ * meta pubkey must be a `<account>.key`, so the emit can render it per target
+ * (`*<acct>.key` solana_program / `<acct>.key()` pinocchio).
+ */
+function accountKeyName(expr: string): string | null {
+  const m = expr
+    .trim()
+    .match(/^(?:&\s*)?(?:\*\s*)?(?:ctx\s*\.\s*accounts\s*\.\s*)?([A-Za-z_]\w*)\s*\.\s*key\s*(?:\(\s*\))?$/);
+  return m?.[1] ?? null;
+}
+
+function findFirstOfType(node: SyntaxNode, type: string): SyntaxNode | null {
+  if (node.type === type) return node;
+  for (let i = 0; i < node.namedChildCount; i++) {
+    const c = node.namedChild(i);
+    if (c) {
+      const r = findFirstOfType(c, type);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+/**
+ * #23 (option C) — parse `accounts: vec![AccountMeta::new(pk, sig) |
+ * AccountMeta::new_readonly(pk, sig), …]` into structured metas, FAIL-CLOSED.
+ * The `vec!` body is a macro token-tree (tree-sitter doesn't parse the calls
+ * inside it), so we re-parse `vec!`→`[…]` as an array expression. EVERY element
+ * must be exactly `AccountMeta::new`/`new_readonly(<pubkey>, <literal bool>)` —
+ * a computed/non-literal signer flag, an unknown ctor, or any other shape
+ * returns null → the generic-CPI emit falls back to the loud stub (so a bool we
+ * can't read with certainty is never silently mis-captured).
+ */
+function parseAccountMetasFromVec(vecText: string): CapturedInstruction["metas"] | null {
+  const m = vecText.trim().match(/^vec!\s*(\[[\s\S]*\])\s*$/);
+  if (!m?.[1]) return null;
+  const parser = getParserSync();
+  if (!parser) return null;
+  let tree;
+  try {
+    tree = parser.parse(`fn __m(){ let __a = ${m[1]}; }`);
+  } catch {
+    return null;
+  }
+  if (!tree) return null;
+  const arr = findFirstOfType(tree.rootNode, "array_expression");
+  if (!arr) return null;
+  const metas: CapturedInstruction["metas"] = [];
+  for (let i = 0; i < arr.namedChildCount; i++) {
+    const el = arr.namedChild(i);
+    if (!el || el.type !== "call_expression") return null;
+    const fn = el.childForFieldName("function")?.text;
+    const writable = fn === "AccountMeta::new" ? true : fn === "AccountMeta::new_readonly" ? false : null;
+    if (writable === null) return null;
+    const argsNode = el.childForFieldName("arguments");
+    const args = argsNode ? getArguments(argsNode) : [];
+    if (args.length !== 2) return null;
+    const pubkey = accountKeyName(args[0]!.text); // account NAME (fail-closed)
+    const sig = args[1]!.text.trim();
+    if (sig !== "true" && sig !== "false") return null;
+    if (!pubkey) return null;
+    metas.push({ pubkey, writable, signer: sig === "true" });
+  }
+  return metas.length > 0 ? metas : null;
+}
+
+/**
+ * #23 (option C) — if `node` is `let <var> = Instruction { program_id: <P>,
+ * accounts: vec![…], data: <D> }`, capture {varName, def}; else null (fail-closed).
+ */
+function captureInstructionLiteral(node: SyntaxNode): { varName: string; def: CapturedInstruction } | null {
+  if (node.type !== "let_declaration") return null;
+  const varName = node.childForFieldName("pattern")?.text?.trim();
+  if (!varName || !/^[A-Za-z_]\w*$/.test(varName)) return null;
+  const val = node.childForFieldName("value");
+  if (!val || val.type !== "struct_expression") return null;
+  if (val.childForFieldName("name")?.text !== "Instruction") return null;
+  const body = val.childForFieldName("body");
+  if (!body) return null;
+  let programId: string | undefined;
+  let data: string | undefined;
+  let metas: CapturedInstruction["metas"] | null = null;
+  for (let i = 0; i < body.namedChildCount; i++) {
+    const fi = body.namedChild(i);
+    if (!fi || fi.type !== "field_initializer") return null; // only plain field inits
+    const fname = (fi.childForFieldName("field") ?? fi.childForFieldName("name"))?.text;
+    const fval = fi.childForFieldName("value")?.text?.trim();
+    if (!fname || !fval) return null;
+    if (fname === "program_id") {
+      const pn = accountKeyName(fval); // program id must be an account-key ref
+      if (!pn) return null;
+      programId = pn;
+    } else if (fname === "data") data = fval;
+    else if (fname === "accounts") metas = parseAccountMetasFromVec(fval);
+    else return null; // unknown field → not the canonical shape
+  }
+  if (!programId || !data || !metas) return null;
+  return { varName, def: { programId, data, metas } };
+}
+
 /**
  * Classify all statements in a function body block.
  *
@@ -142,6 +255,12 @@ export function classifyBody(
   // resolves through this to a cpi_system_transfer. Only single, never-
   // mutated bindings are registered (letBoundTransferIsClean gates entry).
   const systemTransferByVar = new Map<string, { from: string; to: string; amount: string }>();
+
+  // #23 (option C) — `let <var> = Instruction{…}` definitions captured for the
+  // generic-CPI emit. A downstream canonical cpi_custom referencing <var> gets
+  // this attached to its `canonical.instruction` (post-pass below) so BOTH
+  // targets emit the instruction from the IR, and the consumed `let` is dropped.
+  const instructionByVar = new Map<string, CapturedInstruction>();
 
   // Flatten one level of synthetic wrapper blocks the impl-method inliner
   // produces: `{<inlined body>}?;` becomes an expression_statement wrapping
@@ -204,6 +323,12 @@ export function classifyBody(
 
     const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog, pendingPythLoad, constStringMap, pendingSwitchboardLoad, systemTransferByVar);
     const childLoc = locFromNode(child);
+
+    // #23 (option C) — capture a `let <var> = Instruction{…}` definition (the let
+    // still classifies as a pass_through; the post-pass drops it iff a canonical
+    // cpi_custom consumes it).
+    const ixCap = captureInstructionLiteral(child);
+    if (ixCap) instructionByVar.set(ixCap.varName, ixCap.def);
 
     // Track seeds for PDA signer seeds grouping
     if (classified._seedsData) {
@@ -371,6 +496,36 @@ export function classifyBody(
       needsReview: false,
     });
     locs.splice(adjustedIndex, 0, undefined);
+  }
+
+  // #23 (option C) — attach captured Instruction defs to canonical cpi_custom
+  // statements, and drop the now-consumed `let <ixVar> = Instruction{…}`
+  // pass_through (BOTH targets re-emit the instruction from canonical.instruction).
+  if (instructionByVar.size > 0) {
+    const consumedIxVars = new Set<string>();
+    for (const stmt of statements) {
+      if (stmt.kind === "cpi_custom" && stmt.canonical) {
+        const def = instructionByVar.get(stmt.canonical.ixVar);
+        if (def) {
+          stmt.canonical.instruction = def;
+          consumedIxVars.add(stmt.canonical.ixVar);
+        }
+      }
+    }
+    if (consumedIxVars.size > 0) {
+      const isConsumedIxLet = (s: BodyStatement): boolean => {
+        if (s.kind !== "pass_through") return false;
+        const code = (s as { code?: string }).code ?? "";
+        return [...consumedIxVars].some((v) =>
+          new RegExp(`^\\s*let\\s+(?:mut\\s+)?${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b[^=]*=\\s*Instruction\\s*\\{`).test(code),
+        );
+      };
+      const keep = statements.map((s) => !isConsumedIxLet(s));
+      return {
+        statements: statements.filter((_, i) => keep[i]),
+        locs: locs.filter((_, i) => keep[i]),
+      };
+    }
   }
 
   return { statements, locs };

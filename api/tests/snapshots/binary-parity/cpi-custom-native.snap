@@ -45,14 +45,7 @@ pub fn raw_cpi(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    let ix = Instruction {
-            program_id: *target_program.key,
-            accounts: vec![
-                AccountMeta::new(*from.key, true),
-                AccountMeta::new(*to.key, false),
-            ],
-            data: amount.to_le_bytes().to_vec(),
-        };
+    let ix = Instruction { program_id: *target_program.key, accounts: vec![AccountMeta::new(*from.key, true), AccountMeta::new(*to.key, false)], data: amount.to_le_bytes().to_vec() };
     invoke(&ix, &[from.clone(), to.clone()])?;
     Ok(())
 

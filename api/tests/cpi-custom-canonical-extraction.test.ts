@@ -48,7 +48,7 @@ describe("#23 — cpi_custom canonical-invoke extraction (fail-closed)", () => {
   test("real demo: invoke_signed (PDA) populates canonical", async () => {
     const r = await parseAnchor(readFileSync(join(import.meta.dir, "..", "src", "demo-programs", "cpi-counter-caller.rs"), "utf8"));
     const c = cpiCustomOf(r.ir, "bump_counter");
-    expect(c?.canonical).toEqual({
+    expect(c?.canonical).toMatchObject({
       func: "invoke_signed",
       ixVar: "ix",
       accountInfos: [
@@ -61,7 +61,7 @@ describe("#23 — cpi_custom canonical-invoke extraction (fail-closed)", () => {
   test("real demo: plain invoke (tx-signer) populates canonical", async () => {
     const r = await parseAnchor(readFileSync(join(import.meta.dir, "..", "src", "demo-programs", "cpi-custom.rs"), "utf8"));
     const c = cpiCustomOf(r.ir, "raw_cpi");
-    expect(c?.canonical).toEqual({
+    expect(c?.canonical).toMatchObject({
       func: "invoke",
       ixVar: "ix",
       accountInfos: [

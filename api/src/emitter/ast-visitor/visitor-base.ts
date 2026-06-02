@@ -3233,45 +3233,74 @@ export class AstVisitorBase {
     const w = this.walker;
     w.ctx.transformedCount++;
 
-    // #23 — Native generic-CPI REAL emit from the fail-closed `canonical` fields.
-    // Reached only for Native + canonical (the emitInstructionFunction dispatch
-    // keeps Pinocchio and any non-canonical shape on the loud stub). The
-    // `let ix = Instruction{…}` that defines `ixVar` is a separate pass_through
-    // emitted just above as valid solana_program code; here we emit the matching
-    // invoke, byte-equal-gated by differential-cpi-custom-native.
-    if (stmt.canonical && w.emitter.frameworkName === "Native") {
+    // #23 (option C) — generic-CPI REAL emit from the fail-closed canonical
+    // fields, BOTH targets. The `let ixVar = Instruction{…}` pass_through was
+    // captured into canonical.instruction and DROPPED (body-classifier), so here
+    // we re-emit the instruction + the invoke. Native re-assembles the
+    // solana_program form (differential-cpi-custom-native re-verifies the capture
+    // byte-equal); Pinocchio translates to pinocchio::instruction::Instruction
+    // (differential-cpi-custom-goldstandard gates it). Reached only when
+    // canonical.instruction is present (the dispatch keeps everything else on the
+    // loud stub). pubkeys/program_id are account binding NAMES (accountKeyName) →
+    // `*<n>.key` (solana_program Pubkey) / `<n>.key()` (pinocchio &Pubkey).
+    if (stmt.canonical?.instruction) {
       const c = stmt.canonical;
-      // Each account-info `<acc>.to_account_info()` → `<binding>.clone()`: a raw
-      // solana_program AccountInfo has no `.to_account_info()`, and invoke wants
-      // owned AccountInfo (which is Clone). ctx.accounts.X → the local binding via
-      // the same transforms pass_through CPI bodies use.
-      const infos = c.accountInfos.map((ai) => {
-        // The transforms reduce `ctx.accounts.X.to_account_info()` to the local
-        // binding `X` (a &AccountInfo). solana_program's invoke wants OWNED
-        // AccountInfo (`&[AccountInfo]`), so clone — `<&AccountInfo>.clone()`
-        // resolves to AccountInfo::clone → owned. Strip any surviving literal
-        // `.to_account_info()` first so we never emit `<x>.to_account_info().clone()`.
-        const t = w
-          .normalizeKeyValueUsages(
-            w.transformAccountReferences(w.transformCtxAccountsReferences(ai)),
-          )
-          .trim()
-          .replace(/\.\s*to_account_info\s*\(\s*\)\s*$/, "");
-        return `${t}.clone()`;
-      });
+      const def = c.instruction;
+      const isPin = w.emitter.frameworkName === "Pinocchio";
+      const xform = (e: string): string =>
+        w.normalizeKeyValueUsages(w.transformAccountReferences(w.transformCtxAccountsReferences(e)));
+      const infoBinding = (ai: string): string =>
+        xform(ai).trim().replace(/\.\s*to_account_info\s*\(\s*\)\s*$/, "");
       const lines: string[] = [];
-      if (c.func === "invoke_signed") {
-        // Signer seeds: resolve `ctx.bumps.X` to the derived bump binding (+ any
-        // prelude it needs) and ctx.accounts.* references, exactly as pass_through
-        // CPI bodies do. Native's invoke_signed takes `&[&[&[u8]]]` directly.
-        const { prelude, code } = w.replaceBumpRefs(stmt.signerSeeds ?? "");
-        for (const p of prelude) lines.push(p);
-        const seeds = w.normalizeKeyValueUsages(
-          w.transformAccountReferences(w.transformCtxAccountsReferences(code)),
-        );
-        lines.push(`    invoke_signed(&${c.ixVar}, &[${infos.join(", ")}], ${seeds})?;`);
+
+      // NB: each entry must be ONE complete statement — applyStructuralize
+      // processes entries independently, so a struct literal split across entries
+      // loses its braces. Emit each construct on a single (logical) line.
+      if (isPin) {
+        const metasStr = def.metas
+          .map((m) => `pinocchio::instruction::AccountMeta::new(${m.pubkey}.key(), ${m.writable}, ${m.signer})`)
+          .join(", ");
+        lines.push(`    let __cpi_metas = [${metasStr}];`);
+        // Bind data to a local so the &[u8] outlives the borrowing Instruction.
+        lines.push(`    let __cpi_data = ${xform(def.data)};`);
+        lines.push(`    let ${c.ixVar} = pinocchio::instruction::Instruction { program_id: ${def.programId}.key(), accounts: &__cpi_metas, data: &__cpi_data };`);
+        const infos = c.accountInfos.map(infoBinding); // &[&AccountInfo] — pass bindings
+        if (c.func === "invoke_signed") {
+          const { prelude, code } = w.replaceBumpRefs(stmt.signerSeeds ?? "");
+          for (const p of prelude) lines.push(p);
+          const seeds = xform(code);
+          // Build a pinocchio Signer from the first seed group (reuses the T22 shape).
+          // Bind with the explicit &[&[&[u8]]] type FIRST: an inline seeds literal
+          // like `&[&[b"x", &[bump]]]` only unifies its differently-sized byte
+          // arrays (b"x": [u8;N], &[bump]: [u8;1]) to &[u8] when an expected slice
+          // type drives the coercion — which `invoke_signed`'s param provides on
+          // Native but a bare `let` does not. The annotation restores it, then
+          // index [0] for the first seed group.
+          lines.push(`    let __cpi_all_seeds: &[&[&[u8]]] = ${seeds};`);
+          lines.push(`    let __cpi_seed_refs = __cpi_all_seeds[0];`);
+          lines.push(`    let mut __cpi_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] = core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));`);
+          lines.push(`    for (__cpi_i, __cpi_s) in __cpi_seed_refs.iter().enumerate() { if __cpi_i >= __cpi_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); } __cpi_pda_seeds[__cpi_i] = pinocchio::instruction::Seed::from(*__cpi_s); }`);
+          lines.push(`    let __cpi_signer = pinocchio::instruction::Signer::from(&__cpi_pda_seeds[..__cpi_seed_refs.len()]);`);
+          lines.push(`    pinocchio::cpi::invoke_signed(&${c.ixVar}, &[${infos.join(", ")}], &[__cpi_signer])?;`);
+        } else {
+          lines.push(`    pinocchio::cpi::invoke(&${c.ixVar}, &[${infos.join(", ")}])?;`);
+        }
       } else {
-        lines.push(`    invoke(&${c.ixVar}, &[${infos.join(", ")}])?;`);
+        // Native: solana_program Instruction + invoke[_signed]. AccountMeta::new =
+        // writable, new_readonly = readonly; account_infos are OWNED (.clone()).
+        const metasStr = def.metas
+          .map((m) => `${m.writable ? "AccountMeta::new" : "AccountMeta::new_readonly"}(*${m.pubkey}.key, ${m.signer})`)
+          .join(", ");
+        lines.push(`    let ${c.ixVar} = Instruction { program_id: *${def.programId}.key, accounts: vec![${metasStr}], data: ${xform(def.data)} };`);
+        const infos = c.accountInfos.map((ai) => `${infoBinding(ai)}.clone()`);
+        if (c.func === "invoke_signed") {
+          const { prelude, code } = w.replaceBumpRefs(stmt.signerSeeds ?? "");
+          for (const p of prelude) lines.push(p);
+          const seeds = xform(code);
+          lines.push(`    invoke_signed(&${c.ixVar}, &[${infos.join(", ")}], ${seeds})?;`);
+        } else {
+          lines.push(`    invoke(&${c.ixVar}, &[${infos.join(", ")}])?;`);
+        }
       }
       return this.applyStructuralize(lines);
     }

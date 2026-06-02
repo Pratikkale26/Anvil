@@ -1,24 +1,20 @@
 /**
- * #5 GOLD-STANDARD companion — the ALWAYS-ON half of the cpi_custom gate.
+ * #5/#23 cpi_custom gold-standard companion — emit-level regression guard.
  *
- * The full runtime byte-equal differential (differential-cpi-custom-goldstandard)
- * is GATED behind `CPI_CUSTOM_REAL_EMIT = false` because Anvil cannot yet type a
- * generic CPI: `bump_counter` (a hand-built Instruction + invoke_signed to an
- * arbitrary program) emits the review-required stub today, so a live differential
- * would (correctly) show Anvil reverting where Anchor succeeds — red CI for a
- * known, loudly-refused gap. This companion runs WITHOUT the SBF toolchain and
- * pins exactly that pre-#5 state:
+ * The generic-CPI emit (a hand-built `Instruction` + invoke[_signed] to an
+ * arbitrary program) is now REAL on BOTH targets, byte-equal proven by
+ * differential-cpi-custom-native (Native) and differential-cpi-custom-goldstandard
+ * (Pinocchio) against the committed counter_callee.so. This companion is the
+ * fast, no-SBF guard on the EMIT SHAPE:
  *
- *   1. the parser raises `cpi_custom_emitted` for the invoke_signed,
- *   2. BOTH targets emit the stable `unimplemented!("Anvil: cpi_custom …` stub,
- *   3. the output-validator marks it BROKEN → safe-by-default REFUSES to ship it.
+ *   1. the parser raises `cpi_custom_emitted` + captures the fail-closed
+ *      `canonical` (incl. the parsed Instruction definition),
+ *   2. BOTH targets real-emit the invoke (the loud `unimplemented!` stub is GONE),
+ *   3. the output-validator does NOT refuse it (no cpi_custom unsafe-marker).
  *
- * SELF-SIGNALING TRIGGER: this test PASSES today and FAILS the moment #5 makes
- * cpi_custom emit a real invoke (the stub disappears). That failure is the cue to
- * flip `CPI_CUSTOM_REAL_EMIT = true` in the differential and let the runtime
- * byte-equal gate take over. The gate's reference behaviour (each adversarial
- * variant of the CPI actually reverts at the callee) is proven independently by
- * counter-callee-fixture-smoke.test.ts against the committed counter_callee.so.
+ * If a regression drops the real emit back to the stub, this fails fast (no SBF
+ * build needed). The adversarial reference (each bad CPI variant reverts at the
+ * callee) is proven by counter-callee-fixture-smoke.test.ts.
  */
 import { describe, test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -32,67 +28,41 @@ const SRC = readFileSync(
   join(import.meta.dir, "..", "src", "demo-programs", "cpi-counter-caller.rs"),
   "utf-8",
 );
+const STUB = `unimplemented!("Anvil: cpi_custom`;
 
-// Stable cross-target substring of the cpi_custom stub (target suffix differs:
-// "… for Pinocchio" / "… for Native"). If #5 lands a real generic-invoke emit,
-// this stub is gone and the assertions below fail — the cue to activate the
-// runtime differential (flip CPI_CUSTOM_REAL_EMIT).
-const STUB = `unimplemented!("Anvil: cpi_custom to 'unknown' in 'bump_counter' — manual port required for`;
-
-describe("#5 cpi_custom gold-standard — companion (pre-#5 state, always-on)", () => {
-  test("parser raises cpi_custom_emitted for the invoke_signed", async () => {
+describe("#5/#23 cpi_custom gold-standard — emit-level regression guard", () => {
+  test("parser raises cpi_custom_emitted + captures canonical (with Instruction def)", async () => {
     const r = await parseAnchor(SRC);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const warns = r.ir.warnings.filter((w) => w.code === "cpi_custom_emitted");
-    expect(warns.length).toBeGreaterThan(0);
-    // The instruction is parsed (not dropped) and carries the cpi_custom kind.
-    const bump = r.ir.instructions.find((i) => i.name === "bump_counter");
-    expect(bump).toBeDefined();
-    expect((bump?.body ?? []).some((s) => s.kind === "cpi_custom")).toBe(true);
+    expect(r.ir.warnings.some((w) => w.code === "cpi_custom_emitted")).toBe(true);
+    const cc = r.ir.instructions
+      .find((i) => i.name === "bump_counter")
+      ?.body.find((s) => s.kind === "cpi_custom") as
+      | { canonical?: { func: string; instruction?: { metas: unknown[] } } }
+      | undefined;
+    expect(cc?.canonical?.func).toBe("invoke_signed");
+    expect(cc?.canonical?.instruction?.metas).toHaveLength(2);
   });
 
-  // PINOCCHIO — the generic-CPI emit hasn't landed for Pinocchio yet (its
-  // Instruction-type translation, solana_program → pinocchio::instruction, is a
-  // separate slice). So the canonical cpi_custom still emits the loud stub and
-  // the validator refuses it. When the Pinocchio slice lands, THIS test fails —
-  // the cue to flip CPI_CUSTOM_REAL_EMIT in differential-cpi-custom-goldstandard.
-  test("pinocchio: still emits the cpi_custom stub AND the validator marks it BROKEN (safe-by-default refuses)", async () => {
-    const r = await parseAnchor(SRC);
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    const out = emitPinocchioFull(r.ir);
-    const text = out.files.map((f) => f.content).join("\n");
-    expect(text).toContain(STUB); // stable review-required stub (TRIGGER)
-    expect(text).toMatch(/⚠️ Anvil: cpi_custom/);
-    const errs = validateEmitterOutput(r.ir, out).filter(
-      (i) =>
-        i.severity === "error" &&
-        /⚠️ Anvil|unsafe-marker|manual (port|rebuild)|not yet supported/i.test(i.message),
-    );
-    expect(errs.length).toBeGreaterThan(0);
-  });
-
-  // NATIVE — the generic-CPI emit HAS landed (byte-equal-gated by
-  // differential-cpi-custom-native, Anvil=12=Anchor). The canonical cpi_custom
-  // now emits a real invoke_signed (no stub) and the validator does NOT refuse it.
-  test("native: real-emits invoke_signed (no stub) and the validator does NOT refuse", async () => {
-    const r = await parseAnchor(SRC);
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    const out = emitNativeFull(r.ir);
-    const text = out.files.map((f) => f.content).join("\n");
-    // The review-required stub is GONE; a real invoke_signed of the hand-built ix
-    // is emitted with owned-AccountInfo (.clone()) account_infos.
-    expect(text).not.toContain(STUB);
-    expect(text).toMatch(/invoke_signed\s*\(\s*&ix\s*,/);
-    expect(text).toMatch(/\.clone\(\)/);
-    // No cpi_custom stub/unsafe-marker error remains.
-    const cpiErrs = validateEmitterOutput(r.ir, out).filter(
-      (i) =>
-        i.severity === "error" &&
-        /cpi_custom|⚠️ Anvil: cpi_custom|manual port required/i.test(i.message),
-    );
-    expect(cpiErrs).toEqual([]);
-  });
+  for (const [target, emit, invokeRe] of [
+    ["pinocchio", emitPinocchioFull, /pinocchio::cpi::invoke_signed\s*\(\s*&ix\s*,/] as const,
+    ["native", emitNativeFull, /(?<!cpi::)invoke_signed\s*\(\s*&ix\s*,/] as const,
+  ]) {
+    test(`${target}: real-emits invoke_signed (no stub), validator does NOT refuse`, async () => {
+      const r = await parseAnchor(SRC);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const out = emit(r.ir);
+      const text = out.files.map((f) => f.content).join("\n");
+      expect(text).not.toContain(STUB); // the loud stub is gone
+      expect(invokeRe.test(text)).toBe(true); // a real target-appropriate invoke
+      const cpiErrs = validateEmitterOutput(r.ir, out).filter(
+        (i) =>
+          i.severity === "error" &&
+          /cpi_custom|⚠️ Anvil: cpi_custom|manual port required/i.test(i.message),
+      );
+      expect(cpiErrs).toEqual([]);
+    });
+  }
 });

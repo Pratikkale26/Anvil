@@ -46,7 +46,7 @@ import {
 // make-or-break invoke_signed-through-PDA happy path yields counter == 12u64 (0x0c)
 // with outcomes [ok, ok]; Anvil's pre-#5 stub diverges to 0 (revert). So the gate
 // BITES today — flipping the flag post-#5 turns a real Anvil emit (→ 12) GREEN.
-const CPI_CUSTOM_REAL_EMIT = false;
+const CPI_CUSTOM_REAL_EMIT = true;
 
 const MAIN_ID = mkTestProgramId("Counterca11er111111111111111111111111111111");
 const CALLEE_ID = mkTestProgramId("Counterca11ee111111111111111111111111111111");

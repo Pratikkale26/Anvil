@@ -2981,13 +2981,18 @@ impl ZeroCopy for ${accName} {}`;
       // per-statement emit: the `let ix = Instruction{…}` pass_through is valid
       // solana_program code and visitCpiCustom emits the invoke. ANY non-canonical
       // statement — or the Pinocchio target — keeps the whole-instruction loud stub.
-      const allCanonical = cpiCustomStatements.every(
-        (s) => !!(s as { canonical?: unknown }).canonical,
+      // #23 (option C) — real-emit on BOTH targets when EVERY cpi_custom carries
+      // the captured Instruction definition (canonical.instruction, fail-closed:
+      // present only for the verified hand-built-Instruction shape). visitCpiCustom
+      // re-emits the instruction + invoke per target (the consumed ix pass_through
+      // was dropped). ANY cpi_custom without a captured instruction → loud stub.
+      const allReal = cpiCustomStatements.every(
+        (s) => !!(s as { canonical?: { instruction?: unknown } }).canonical?.instruction,
       );
-      if (!(allCanonical && this.frameworkName === "Native")) {
+      if (!allReal) {
         return this.emitCpiCustomStubFunction(instr, ir, cpiCustomStatements as Array<{ kind: "cpi_custom"; rawCode: string; programAccount: string }>);
       }
-      // all-canonical + Native → fall through to normal body emit.
+      // all cpi_custom captured → fall through to normal body emit (both targets).
     }
     // #66 — Option<T>-wrapped accounts aren't propagated through the
     // emit surface yet. Stubbing the entire body keeps the scaffold
