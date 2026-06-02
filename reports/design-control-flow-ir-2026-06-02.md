@@ -1,0 +1,130 @@
+# #4 Control-flow IR — design (2026-06-02)
+
+Grounded in a parallel understand-fan-out (parser/emit/verification/corpus maps, run
+`w7jzoi7jt`) **plus an empirical posture probe** (`emitNativeFull`/`emitPinocchioFull` +
+`validateEmitterOutput` on minimal control-flow programs). **Design-first; no emit code yet.**
+
+## Corpus reality (decides scope)
+Inside `#[program]` instruction bodies, across demo-programs + fixtures:
+
+| construct | instances | verdict |
+|---|---|---|
+| `if`-guarded CPI (conditional money-movement) | 6 programs | load-bearing |
+| simple `if … return Err` validation guard | 1 | minor |
+| conditional state update | ~4 (2 programs) | minor |
+| `for` over remaining_accounts/Vec | **0** | not load-bearing |
+| `while` | **0** | not load-bearing |
+| `match` dispatch | **0** | not load-bearing |
+
+`for`/`while`/`match` do **not** appear in real Anchor instruction bodies. Building structured
+IR + per-target emit + a byte-equal gate for constructs with zero corpus instances and zero
+fixtures is speculative ("partial worse than not-done" — nothing to verify against).
+
+## Empirical posture probe — what is actually safe vs silent TODAY
+Control-flow currently classifies to flat `pass_through` (verified: `if`/`for`/`while` blocks →
+`pass_through`; `require!`/conditional-`system_transfer`/`msg!`/`emit!`/`return` → structured).
+What the emit does with each:
+
+1. **Recognized CPI inside an `if` (e.g. `if x { token::transfer(…) }`)** → **LOUD** (validator
+   errors=2: the leaked `anchor_spl::`/`CpiContext::` text trips the unsafe-marker). Safe-refused.
+2. **Simple loop with pure state mutation, no early exit** (`for _ in 0..10 { state.counter += 1 }`)
+   → **silent BUT byte-equal-CORRECT.** The field-rewrite applies inside the loop body and the
+   `St::read`/`St::write` is hoisted once around the block — matching Anchor's read-once /
+   exit-serialize-once semantics. A blanket loud-refuse of all loops would **regress** this.
+3. **Non-error early exit buried in a control-flow pass_through, after a mutation** —
+   ```rust
+   state.counter += 1;          // mutation
+   if flag { return Ok(()); }   // pass_through — opaque to write-injection
+   state.counter += 100;
+   // emit hoists St::write HERE → skipped when flag==true
+   ```
+   → **SILENT-WRONG.** validator errors=0, no warning. When `flag==true`: Anchor's exit hook
+   serializes `counter+1`; Anvil's early `return Ok` skips the hoisted `St::write` → the `+1` is
+   **lost**. This is a state/money-loss class.
+4. **Top-level early `return Ok` (structured `return_ok` node)** → **CORRECT**: the emitter injects
+   `St::write` *before* it. So the bug in (3) is *specifically* the early-exit being invisible
+   inside opaque pass_through, not early-return in general.
+
+**Net:** the silent-wrong locus is precise — *a non-error early exit (`return Ok`/`return <non-Err>`)
+inside a control-flow pass_through block, in an instruction that has hoisted state writes.*
+`return Err`/`?` are safe (revert == revert byte-equal). `break`/`continue` stay in-function so the
+post-loop write is still reached. Simple loops and top-level returns are already correct.
+
+## Design — three slices, fail-closed, safety first
+
+### Slice 1 (SAFETY — do first): loud-refuse the silent-wrong early-exit class
+Detect, per instruction: a `pass_through` statement whose (masked) text contains a **non-error
+early return** — `return;`, `return Ok`, `return <expr>` where `<expr>` is not `Err(...)` — **and**
+the instruction emits ≥1 hoisted state write (any `state_field_assign` / state-mutation). On match →
+**loud stub + validator error** ("control-flow early-return may skip state serialization — manual
+port required"), exactly the safe-by-default posture the rest of the session established. This is a
+*correctness* fix (converts a silent state-loss into a refusal), independent of any new coverage.
+
+**Recall fix (advisor-caught false negative).** First cut keyed `hasStateWrite` on
+`state_field_assign` IR-node presence — strictly NARROWER than the emit's actual writeback trigger.
+When the mutation is buried inside the *same* pass_through as the early return
+(`if done { s.x += 1; return Ok(()); }`) there is no `state_field_assign` node, yet the walker's
+text-level mutation scan still hoists `T::write` → the guard missed the exact class it exists to
+catch. Fixed: `hasStateWrite` now reuses the walker's writeback signal verbatim
+(`computeMutableStateAccounts` = `state_field_assign` ∪ mutable `state_read` ∪
+`detectPassThroughStateMutations`), extracted into a shared single-source-of-truth module
+`body-emitter/state-mutation-scan.ts` that BOTH the walker and the guard import (never a copy — the
+desync would re-open the silent class). Empirically confirmed: the buried variant now refuses.
+
+**Predicate = conservative, settled by corpus-refusal count (not judgment).** Applied the candidate
+predicate to the whole corpus (69 demo + 26 realworld/fixtures = 95 programs): **0 over-refusals
+with the WIDE (recall-fixed) predicate.** Zero over-refusals → the conservative predicate is free;
+no need for the more precise "write hoisted *after* the early-exit" ordering analysis. (If a
+future corpus addition flips a byte-equal-passing program to refuse, revisit toward the precise
+form — but today there is nothing to regress.) The silent-wrong shape is, like for/while/match,
+absent from the corpus — Slice 1 protects external/user programs (the #17/#19 fail-closed posture),
+proven by the synthetic `early_ret` probe rather than a corpus instance.
+- Must NOT regress: simple loops (no early exit), top-level `return_ok`, `if …{ return Err }` guards
+  (revert==revert), instructions with no state writes. Probe-verify each stays GREEN (corpus count
+  already confirms 0/95 affected).
+- Gate: a RED→GREEN differential — the `early_ret(flag)` program above, run with `flag=true` and
+  `flag=false`. Pre-fix: Anvil diverges from Anchor on the `flag=true` path (counter unchanged vs
+  +1) → RED. Post-fix: Anvil loudly refuses (compile-tier gate / differential records refusal) →
+  no silent divergence. (Same gold-standard discipline as #5: the gate must *bite*.)
+
+### Slice 2 (COVERAGE): conditional money-movement — if-guarded CPI
+Extend the proven `condition`-on-`cpi_system_transfer` pattern (`body-classifier.ts:650`) to the
+other CPI kinds the corpus if-guards wrap — `cpi_spl_transfer`, and the now-real `cpi_custom`.
+Parser: when an `if <cond> { <single recognized CPI>; }` (no `else`, no trailing stmts — the
+existing narrow shape) wraps a recognized CPI, attach `condition` to that CPI's IR instead of
+dropping the block to `pass_through`. Emit: wrap the typed CPI emit in `if <cond> { … }` per target.
+- Fail-closed: any non-narrow shape (`else`, multi-stmt, computed/unhandled condition, nesting)
+  keeps the Slice-1 loud refusal.
+- Gate: `conditional-transfer-spl.rs`, one ix, `if amount > threshold { token::transfer(…) }`,
+  exercised both branch paths, byte-equal vs Anchor on both targets. RED against the current loud
+  stub, GREEN after emit.
+
+### Slice 3: DEFER `for`/`while`/`match` general IR
+**Justified by corpus-absence** — zero for/while/match across all 95 corpus programs, zero fixtures.
+The `RustStmtIr.if_stmt` schema (schema.ts:262) stays an *unpopulated* future foundation; the
+M5-phase-2 general rewrite is not justified now. Re-open only corpus-triggered, with a byte-equal
+fixture in hand.
+
+**Residual risk, stated honestly (do not overclaim Slice-1 coverage):** Slice 1 catches only the
+*early-return* silent class. The emit-map fan-out flagged a *different* silent class that Slice 1
+does **not** cover — branch-divergent account-reference rewrites in `if-else` / `match` arms (the
+emit's account-rewrite "applies only to the first occurrence" / "can cross from one arm to another").
+This class is currently uncovered. The deferral is acceptable **because the corpus contains zero
+multi-arm `match`/`if-else` constructs that would trigger it** — not because Slice 1 guards it. If a
+real program with divergent-branch account rewrites appears, that's a *new* loud-refuse guard to
+build (a Slice-1 sibling), tracked here so the gap is a recorded decision, not an oversight.
+
+## Rollout order
+1. Slice 1 (safety guard + RED→GREEN gate). Smallest, highest-value, no coverage risk.
+2. Slice 2 (conditional-CPI coverage + byte-equal gate), on top of the guard.
+3. Stop; record Slice 3 deferral as a decision (DEFER tag for #14).
+
+## Open questions for review
+- Slice-1 predicate precision: detecting "`return` not-`Err`" inside masked pass_through text — is a
+  regex on masked text tight enough, or does it need the parser's existing block AST to avoid
+  masking false-positives (e.g. `return` in a string/comment, or `returns` as an identifier)?
+- Should Slice 1 also refuse on `?`-with-side-effect-after-mutation, or is `?`→Err→revert always
+  byte-equal-safe (so out of scope)? (Current read: `?` is safe.)
+- Is "instruction has ≥1 state write" the right gate, or should it be "a state write is hoisted to
+  *after* the early-exit-bearing pass_through"? The latter is more precise but needs ordering
+  analysis; the former is conservative (may over-refuse, safe direction).

@@ -54,6 +54,10 @@ import {
   makeOptionalIfLetMutRe,
   makeOptionalIfLetReadRe,
 } from "./optional-accounts.js";
+import {
+  detectPassThroughStateMutations,
+  computeMutableStateAccounts,
+} from "./state-mutation-scan.js";
 import { MARKER_ANVIL_PREFIX } from "../markers.js";
 import { tryStructuralizeExpr } from "../ast-visitor/rust-stmt-from-text.js";
 import { resolveAccountExprAstPipeline } from "../ast-visitor/expr-transform.js";
@@ -153,14 +157,11 @@ export class BodyWalker {
       .filter((account) => this.isGeneratedStateType(account.accountType) && !account.isOptional)
       .map((account) => snakeCase(account.name));
 
-    this.mutableStateAccounts = new Set(
-      statements.flatMap((stmt) => {
-        if (stmt.kind === "state_field_assign") return [snakeCase(stmt.account)];
-        if (stmt.kind === "state_read" && stmt.mutable) return [snakeCase(stmt.account)];
-        if (stmt.kind === "pass_through") return this.detectPassThroughMutations(stmt.code);
-        return [];
-      }),
-    );
+    // Single source of truth — the early-exit guard (#4 Slice 1) consumes the
+    // same scan via state-mutation-scan.ts, so the two never desync. See that
+    // module's header for why a narrower guard signal would re-open the
+    // silent-state-loss class.
+    this.mutableStateAccounts = computeMutableStateAccounts(statements, this.stateAccountNames);
 
     this.mutatedAccounts = new Set(
       statements.flatMap((stmt) =>
@@ -291,50 +292,11 @@ export class BodyWalker {
     return this.ir.accounts.some((account) => account.name === typeName);
   }
 
+  /** Thin wrapper over the shared scan (state-mutation-scan.ts) bound to this
+   *  walker's state-account names. Single source of truth so the early-exit
+   *  guard (#4 Slice 1) can't desync from what actually drives the writeback. */
   detectPassThroughMutations(code: string): string[] {
-    // Detect mutations on a state account in pass-through code. Three shapes:
-    //   1. Direct/chained assignment: `<account>.<field-chain>… = <RHS>`
-    //      (also catches index assignment like `state.signers[i] = true`)
-    //   2. Compound assignment: `<account>.<field>.<sub> += …` etc.
-    //   3. Mutating method call: `<account>.<field-chain>.<mut-method>(…)`
-    //      where mut-method is a known &mut self method (Vec::push,
-    //      HashMap::insert, etc.) — this previously slipped through and
-    //      produced E0596 "cannot borrow as mutable" on the state read,
-    //      because the binding was emitted as `let X` instead of `let mut X`.
-    //
-    // Match an arbitrary chain of `.field` / `[index]` followed by either
-    // `=` (not part of ==/!=/<=/>=) OR `.<mut-method>(`.
-    const MUT_METHODS = [
-      "push", "push_back", "push_front", "pop", "pop_back", "pop_front",
-      "insert", "remove", "swap_remove",
-      "extend", "extend_from_slice", "append",
-      "clear", "drain", "splice", "truncate", "resize", "resize_with",
-      "retain", "retain_mut", "dedup", "dedup_by", "dedup_by_key",
-      "sort", "sort_by", "sort_by_key", "sort_unstable", "sort_unstable_by",
-      "reverse", "swap", "fill", "fill_with",
-      "set", "replace",
-    ];
-    const mutMethodAlt = MUT_METHODS.join("|");
-    // Normalize whitespace before matching so multi-line method chains
-    // (`ctx.accounts\n  .sample\n  .data\n  .resize_with(...)`, common in
-    // real-world Anchor code) reach the regex as a single-line chain.
-    // Two normalizations needed: collapse runs of whitespace, AND strip
-    // whitespace immediately around the `.` operator (anchor sources
-    // commonly format chained accesses as `obj\n  .field\n  .method(...)`,
-    // so even after flattening the `.` is surrounded by spaces). Without
-    // this, the `\.\w+` repeated group misses real-world realloc-style
-    // patterns and emits `let sample` (non-mut), cargo refuses with
-    // E0596. Surfaced by realloc-array on 2026-05-12.
-    const flat = code.replace(/\s+/g, " ").replace(/\s*\.\s*/g, ".");
-    return this.stateAccountNames.filter((accountName) => {
-      if (
-        new RegExp(`\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\s*[+\\-*/]?=(?!=)`).test(flat)
-      ) return true;
-      if (
-        new RegExp(`\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\.(?:${mutMethodAlt})\\s*\\(`).test(flat)
-      ) return true;
-      return false;
-    });
+    return detectPassThroughStateMutations(code, this.stateAccountNames);
   }
 
   /**

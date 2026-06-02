@@ -50,6 +50,7 @@ export {
   normalizeConditionKey,
   emitRequireGuard,
   simplifyPassThroughCode,
+  maskLiteralsAndComments,
 } from "./emitter-utils.js";
 
 export {
@@ -94,6 +95,7 @@ import {
   type Token2022Opts,
 } from "./body-emitter/index.js";
 import { optionalAccountsAllCovered } from "./body-emitter/optional-accounts.js";
+import { unsafeEarlyExitDetail } from "./body-emitter/early-exit-guard.js";
 import { transformHelperCode as transformHelperCodeImpl, rewriteMsgCalls as rewriteMsgCallsImpl, rewriteSelfReferences, collapseModulePaths, rewriteCtxAccountsDestructure } from "./anchor-transforms.js";
 import { hasResidualAnchorPatterns, hasResidualUnsalvageablePatterns, hasResidualUnsupportedBody, hasUnsalvageableHelperSignature, recognizeCpiWrapperHelper, rewriteCpiWrapperCallSites } from "./emitter-helpers.js";
 import {
@@ -3030,6 +3032,17 @@ impl ZeroCopy for ${accName} {}`;
     if (!isUnitResult) {
       return this.emitTypedResultStubFunction(instr, returnType!);
     }
+    // #4 Slice 1 — control-flow early-exit safety guard. Both targets hoist
+    // state serialization to the textual end of the handler; a non-Err early
+    // return buried inside an opaque control-flow pass_through (e.g.
+    // `if flag { return Ok(()); }`) skips that hoisted write while Anchor's
+    // exit hook still serializes — a SILENT state-loss. Refuse loudly rather
+    // than ship a silently-wrong handler. Conservative predicate, corpus
+    // refusal count 0/95 (see body-emitter/early-exit-guard.ts).
+    const earlyExitSnippet = unsafeEarlyExitDetail(instr, ir);
+    if (earlyExitSnippet) {
+      return this.emitEarlyExitStubFunction(instr, earlyExitSnippet);
+    }
     const requiredAccountCount = instr.accounts.filter((a) => !a.isOptional).length;
 
     // Account bindings
@@ -3373,6 +3386,42 @@ ${originalLines}
 ${originalLines}
     let _ = (program_id, accounts, data);
     unimplemented!("Anvil: Option<T> account field(s) [${fieldList}] in '${instr.name}' — manual port required for ${this.frameworkName}");
+}`;
+  }
+
+  /**
+   * #4 Slice 1 — stub body for instructions where a non-Err early return is
+   * buried inside an opaque control-flow `pass_through` AND the instruction
+   * emits a hoisted state write. The emit would place `T::write` after the
+   * control-flow block, so the early-return success path skips it while
+   * Anchor's exit hook serializes regardless — a silent state-loss. Refuse
+   * loudly (the marker + unimplemented!() trip the output-validator) instead
+   * of shipping a divergent binary. Mirrors emitOptionalAccountsStubFunction.
+   */
+  private emitEarlyExitStubFunction(
+    instr: Instruction,
+    snippet: string,
+  ): string {
+    this.warnings.push(
+      `Instruction '${instr.name}' has a non-Err early return ('${snippet}') inside control flow alongside state mutation — stubbed as unimplemented!(). The hoisted state write would be skipped on the early-return path (silent divergence from Anchor's exit-hook serialization); manual port required for ${this.frameworkName}.`,
+    );
+    const originalLines = (instr.rawBody ?? "")
+      .split("\n")
+      .map((l) => `    // ${l}`)
+      .join("\n");
+    return `pub fn ${snakeCase(instr.name)}(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    // ${MARKER_ANVIL_PREFIX}: control-flow early return ('${snippet}') may skip state serialization — manual port required.
+    // A non-Err early return (e.g. \`return Ok(())\`) inside an opaque control-flow
+    // block would skip the state write Anvil hoists to the end of the handler,
+    // while Anchor's exit hook serializes on any Ok return — a silent state loss.
+    // Original (raw) source preserved below for manual reference:
+${originalLines}
+    let _ = (program_id, accounts, data);
+    unimplemented!("Anvil: control-flow early return in '${instr.name}' may skip state serialization — manual port required for ${this.frameworkName}");
 }`;
   }
 
