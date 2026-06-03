@@ -597,6 +597,7 @@ export abstract class BaseEmitter {
     mint: string,
     authority: string,
     signerSeeds?: string,
+    tokenProgram?: string,
   ): string;
 
   /**
@@ -4677,6 +4678,23 @@ ${allFields}
       const authority = snakeCase(tokenAuthorityConstraint.value);
       const payer = payerName ?? "payer";
 
+      // S10 — same token-program detection as the mint-init branch above:
+      // find the runtime token_program sibling (Interface<TokenInterface> /
+      // Program<Token2022|Token>). When present, the init reads the program ID
+      // from this AccountInfo instead of hardcoding legacy SPL Token — so a
+      // Token-2022 token account (InterfaceAccount<TokenAccount> under a T22
+      // mint) initializes through T22 rather than reverting with MissingAccount.
+      // (token::token_program isn't a parsed constraint kind, so — like the
+      // mint path — we rely on the sibling, which is byte-equal-correct for the
+      // legacy case too: sibling.key() == the legacy id at runtime.)
+      const tokenProgramSibling = instr.accounts.find((a) => {
+        const n = snakeCase(a.name);
+        if (n === "token_program") return true;
+        const t = a.accountType ?? "";
+        return /\b(?:TokenInterface|Token2022|TokenAccount|Token)\b/.test(t) && /^(Interface|Program)\b/.test(t.trim());
+      });
+      const tokenProgram = tokenProgramSibling ? snakeCase(tokenProgramSibling.name) : undefined;
+
       // PDA case: derive bump first (body code references bump_<name>) +
       // build the signer-seeds expression that gets threaded into the
       // create_account CPI. Reuses the same shape as the existing
@@ -4716,12 +4734,12 @@ ${allFields}
         ];
     let init_${accountName}_signer_seeds = &[&init_${accountName}_seeds[..]];`;
         const signerSeedsExpr = `init_${accountName}_signer_seeds`;
-        const tokenCreate = this.emitCreateTokenAccount(accountName, payer, mint, authority, signerSeedsExpr);
+        const tokenCreate = this.emitCreateTokenAccount(accountName, payer, mint, authority, signerSeedsExpr, tokenProgram);
         return `${bumpPrelude}\n${seedsPrelude}\n${tokenCreate}`;
       }
 
       // Non-PDA case: account-as-signer create. Just the init CPI.
-      return this.emitCreateTokenAccount(accountName, payer, mint, authority);
+      return this.emitCreateTokenAccount(accountName, payer, mint, authority, undefined, tokenProgram);
     }
 
     if (!payerName || !accountRef.initSpace) {

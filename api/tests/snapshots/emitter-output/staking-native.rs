@@ -106,7 +106,7 @@ pub fn initialize_pool(
     let stake_mint = &accounts[3];
     let reward_mint = &accounts[4];
     let admin = &accounts[5];
-    let _token_program = &accounts[6];
+    let token_program = &accounts[6];
     let _system_program = &accounts[7];
     let _rent = &accounts[8];
 
@@ -179,11 +179,11 @@ pub fn initialize_pool(
         stake_vault.key,
         __ta_lamports,
         165,
-        &spl_token::id(),
+        token_program.key,
     );
     invoke_signed(&__ta_create, &[admin.clone(), stake_vault.clone()], init_stake_vault_signer_seeds)?;
     let __ta_init = spl_token::instruction::initialize_account3(
-        &spl_token::id(),
+        token_program.key,
         stake_vault.key,
         stake_mint.key,
         pool.key,
@@ -206,11 +206,11 @@ pub fn initialize_pool(
         reward_vault.key,
         __ta_lamports,
         165,
-        &spl_token::id(),
+        token_program.key,
     );
     invoke_signed(&__ta_create, &[admin.clone(), reward_vault.clone()], init_reward_vault_signer_seeds)?;
     let __ta_init = spl_token::instruction::initialize_account3(
-        &spl_token::id(),
+        token_program.key,
         reward_vault.key,
         reward_mint.key,
         pool.key,

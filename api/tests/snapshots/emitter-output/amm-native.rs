@@ -176,11 +176,11 @@ pub fn initialize_pool(
         vault_a.key,
         __ta_lamports,
         165,
-        &spl_token::id(),
+        token_program.key,
     );
     invoke_signed(&__ta_create, &[admin.clone(), vault_a.clone()], init_vault_a_signer_seeds)?;
     let __ta_init = spl_token::instruction::initialize_account3(
-        &spl_token::id(),
+        token_program.key,
         vault_a.key,
         token_mint_a.key,
         pool.key,
@@ -203,11 +203,11 @@ pub fn initialize_pool(
         vault_b.key,
         __ta_lamports,
         165,
-        &spl_token::id(),
+        token_program.key,
     );
     invoke_signed(&__ta_create, &[admin.clone(), vault_b.clone()], init_vault_b_signer_seeds)?;
     let __ta_init = spl_token::instruction::initialize_account3(
-        &spl_token::id(),
+        token_program.key,
         vault_b.key,
         token_mint_b.key,
         pool.key,

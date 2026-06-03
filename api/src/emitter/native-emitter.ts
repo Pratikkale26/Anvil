@@ -1580,13 +1580,20 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
   }
 
   override emitCreateTokenAccount(
-    account: string, payer: string, mint: string, authority: string, signerSeeds?: string,
+    account: string, payer: string, mint: string, authority: string, signerSeeds?: string, tokenProgram?: string,
   ): string {
     // Two-step: rent-exempt allocate (165 bytes for SPL TokenAccount) +
     // initialize_account3 binding mint and authority. The create_account
     // CPI signs with the account itself when non-PDA, or with PDA seeds
     // when given. The init CPI never needs a signer (no signer-required
     // accounts in v3 init).
+    //
+    // S10 — when a runtime token_program binding is present (Interface<
+    // TokenInterface>/Program<Token2022>), read the program ID from it
+    // (${tokenProgram}.key) so Token-2022 accounts init through T22; the
+    // initialize_account3 builder takes the program ID as its first arg, so a
+    // T22 pubkey produces a valid T22 init (same v3 layout). Else legacy.
+    const tpExpr = tokenProgram ? `${tokenProgram}.key` : `&spl_token::id()`;
     const createInvoke = signerSeeds
       ? `invoke_signed(&__ta_create, &[${payer}.clone(), ${account}.clone()], ${signerSeeds})?;`
       : `invoke(&__ta_create, &[${payer}.clone(), ${account}.clone()])?;`;
@@ -1597,11 +1604,11 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
         ${account}.key,
         __ta_lamports,
         165,
-        &spl_token::id(),
+        ${tpExpr},
     );
     ${createInvoke}
     let __ta_init = spl_token::instruction::initialize_account3(
-        &spl_token::id(),
+        ${tpExpr},
         ${account}.key,
         ${mint}.key,
         ${authority}.key,

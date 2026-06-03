@@ -167,7 +167,6 @@ pub fn initialize_pool(
     let init_vault_a_signer_seeds = &[&init_vault_a_seeds[..]];
     // Init token account: vault_a
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
         // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
         // PDA-signed create — build a Signer<Seed> from the threaded seeds.
@@ -183,7 +182,7 @@ pub fn initialize_pool(
             to: vault_a,
             lamports: __ta_rent,
             space: 165u64,
-            owner: &TOKEN_PROGRAM_ID,
+            owner: token_program.key(),
         }.invoke_signed(&[__ta_signer])?;
         // 2. InitializeAccount3 — discriminator 18, data: 32-byte authority.
         let mut __ta_init_data = [0u8; 33];
@@ -194,7 +193,7 @@ pub fn initialize_pool(
             pinocchio::instruction::AccountMeta::new(token_mint_a.key(), false, false),
         ];
         let __ta_init_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_PROGRAM_ID,
+            program_id: token_program.key(),
             accounts: &__ta_init_metas,
             data: &__ta_init_data,
         };
@@ -209,7 +208,6 @@ pub fn initialize_pool(
     let init_vault_b_signer_seeds = &[&init_vault_b_seeds[..]];
     // Init token account: vault_b
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
         // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
         // PDA-signed create — build a Signer<Seed> from the threaded seeds.
@@ -225,7 +223,7 @@ pub fn initialize_pool(
             to: vault_b,
             lamports: __ta_rent,
             space: 165u64,
-            owner: &TOKEN_PROGRAM_ID,
+            owner: token_program.key(),
         }.invoke_signed(&[__ta_signer])?;
         // 2. InitializeAccount3 — discriminator 18, data: 32-byte authority.
         let mut __ta_init_data = [0u8; 33];
@@ -236,7 +234,7 @@ pub fn initialize_pool(
             pinocchio::instruction::AccountMeta::new(token_mint_b.key(), false, false),
         ];
         let __ta_init_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_PROGRAM_ID,
+            program_id: token_program.key(),
             accounts: &__ta_init_metas,
             data: &__ta_init_data,
         };

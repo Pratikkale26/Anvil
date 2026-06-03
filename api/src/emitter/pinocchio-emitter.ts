@@ -2481,8 +2481,13 @@ ${invokeCall}
   }
 
   override emitCreateTokenAccount(
-    account: string, payer: string, mint: string, authority: string, signerSeeds?: string,
+    account: string, payer: string, mint: string, authority: string, signerSeeds?: string, tokenProgram?: string,
   ): string {
+    // S10 — when a runtime token_program binding is present (Interface<
+    // TokenInterface> / Program<Token2022>), read the program ID from it so a
+    // Token-2022 token account initializes through T22; otherwise fall back to
+    // the legacy SPL Token hardcoded ID (correct for Program<Token> sources).
+    const ownerExpr = tokenProgram ? `${tokenProgram}.key()` : `&TOKEN_PROGRAM_ID`;
     // Anchor's `init token::*` lowers to system::create_account (165 bytes,
     // owner=token_program) + Token::initialize_account3 (binds mint +
     // authority). When signerSeeds is provided (PDA-derived account, e.g.
@@ -2508,19 +2513,23 @@ ${invokeCall}
             to: ${account},
             lamports: __ta_rent,
             space: 165u64,
-            owner: &TOKEN_PROGRAM_ID,
+            owner: ${ownerExpr},
         }.invoke_signed(&[__ta_signer])?;`
       : `pinocchio_system::instructions::CreateAccount {
             from: ${payer},
             to: ${account},
             lamports: __ta_rent,
             space: 165u64,
-            owner: &TOKEN_PROGRAM_ID,
+            owner: ${ownerExpr},
         }.invoke()?;`;
+    // Only declare the legacy const when we actually fall back to it (else
+    // it's an unused const when tokenProgram drives ownerExpr to .key()).
+    const tpConstDecl = tokenProgram
+      ? ""
+      : `        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];\n`;
     return `    // Init token account: ${account}
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
-        // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
+${tpConstDecl}        // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
         ${createInvoke}
         // 2. InitializeAccount3 — discriminator 18, data: 32-byte authority.
@@ -2532,7 +2541,7 @@ ${invokeCall}
             pinocchio::instruction::AccountMeta::new(${mint}.key(), false, false),
         ];
         let __ta_init_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_PROGRAM_ID,
+            program_id: ${ownerExpr},
             accounts: &__ta_init_metas,
             data: &__ta_init_data,
         };

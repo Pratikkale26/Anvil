@@ -137,7 +137,7 @@ pub fn list(
     let listing = &accounts[3];
     let marketplace = &accounts[4];
     let vault = &accounts[5];
-    let _token_program = &accounts[6];
+    let token_program = &accounts[6];
     let _associated_token_program = &accounts[7];
     let _system_program = &accounts[8];
 
@@ -197,11 +197,11 @@ pub fn list(
         vault.key,
         __ta_lamports,
         165,
-        &spl_token::id(),
+        token_program.key,
     );
     invoke(&__ta_create, &[seller.clone(), vault.clone()])?;
     let __ta_init = spl_token::instruction::initialize_account3(
-        &spl_token::id(),
+        token_program.key,
         vault.key,
         nft_mint.key,
         listing.key,

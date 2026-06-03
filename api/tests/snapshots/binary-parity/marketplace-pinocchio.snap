@@ -362,7 +362,7 @@ pub fn list(
     let listing = &accounts[3];
     let marketplace = &accounts[4];
     let vault = &accounts[5];
-    let _token_program = &accounts[6];
+    let token_program = &accounts[6];
     let _associated_token_program = &accounts[7];
     let _system_program = &accounts[8];
 
@@ -415,7 +415,6 @@ pub fn list(
     }
     // Init token account: vault
     {
-        const TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];
         // 1. Allocate + assign to token program (rent-exempt for 165 bytes).
         let __ta_rent = pinocchio::sysvars::rent::Rent::get()?.minimum_balance(165);
         pinocchio_system::instructions::CreateAccount {
@@ -423,7 +422,7 @@ pub fn list(
             to: vault,
             lamports: __ta_rent,
             space: 165u64,
-            owner: &TOKEN_PROGRAM_ID,
+            owner: token_program.key(),
         }.invoke()?;
         // 2. InitializeAccount3 — discriminator 18, data: 32-byte authority.
         let mut __ta_init_data = [0u8; 33];
@@ -434,7 +433,7 @@ pub fn list(
             pinocchio::instruction::AccountMeta::new(nft_mint.key(), false, false),
         ];
         let __ta_init_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_PROGRAM_ID,
+            program_id: token_program.key(),
             accounts: &__ta_init_metas,
             data: &__ta_init_data,
         };
