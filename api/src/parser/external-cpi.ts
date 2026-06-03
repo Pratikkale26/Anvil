@@ -106,11 +106,22 @@ export function parseExternalIdlMap(raw: Record<string, unknown> | undefined): E
 // place — see differential-program-examples-cpi-lever-hand.test.ts). NOTE for
 // future int support: `<arg>.to_le_bytes()` on a literal arg is E0689 and the
 // S7b validator scan won't catch it (no parens) — gate it before adding.
+// Fixed-width integers share ONE encoding mechanism — Borsh = the value's
+// little-endian bytes — so `((arg) as T).to_le_bytes()` is correct-by-
+// construction for every width (the type drives the byte count). The cast also
+// dodges the E0689 trap on a literal arg (`some_cpi(ctx, 5)` → `(5 as u32)`,
+// not the bare `5.to_le_bytes()` the S7b scan can't catch). Gated by the u32
+// differential (external::cpi::update). bool (1 byte) / pubkey (32 bytes) are
+// DISTINCT mechanisms → still fail-closed until each gets its own fixture.
+const INT_TYPES = new Set(["u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128"]);
 function encodeArgStmt(buf: string, argExpr: string, idlType: unknown): string | null {
   const t = typeof idlType === "string" ? idlType.toLowerCase() : null;
   if (t === "string") {
     // Borsh String = u32 LE length + UTF-8 bytes.
     return `${buf}.extend_from_slice(&(${argExpr}.len() as u32).to_le_bytes()); ${buf}.extend_from_slice(${argExpr}.as_bytes());`;
+  }
+  if (t && INT_TYPES.has(t)) {
+    return `${buf}.extend_from_slice(&((${argExpr}) as ${t}).to_le_bytes());`;
   }
   return null; // unsupported (ungated) arg type → fail-closed
 }
@@ -140,9 +151,17 @@ function enclosingStatement(node: SyntaxNode): SyntaxNode {
  * Returns null if the expr doesn't start with a plain (ctx.accounts.)?ident.
  */
 function accountRefOf(expr: string): string | null {
+  // Anchor the WHOLE expr: a clean (ctx.accounts.)?ident optionally followed by
+  // .to_account_info() / .key() / .key — and NOTHING else. This fails CLOSED on
+  // anything richer (a composite-account value like `ext::cpi::accounts::Update
+  // { .. }`, a method chain, an expression): such a value returns null → the CPI
+  // is not rewritten → the original loud-refuse stands, instead of emitting a
+  // meta that references an undefined binding (non-compiling, validator-clean).
   const m = expr
     .trim()
-    .match(/^&?\s*((?:ctx\s*\.\s*accounts\s*\.\s*)?[A-Za-z_]\w*)\b/);
+    .match(
+      /^&?\s*((?:ctx\s*\.\s*accounts\s*\.\s*)?[A-Za-z_]\w*)\s*(?:\.\s*to_account_info\s*\(\s*\)|\.\s*key\s*(?:\(\s*\))?)?\s*$/,
+    );
   return m?.[1] ? m[1].replace(/\s+/g, "") : null;
 }
 
@@ -267,15 +286,21 @@ export async function rewriteDeclareProgramCpis(source: string, idlMap: External
   const consumedLetVars = new Set<string>();
   let synthCount = 0;
 
-  // Find external CPI calls: FN(ctxVar, args...) where FN is an aliased import.
+  // Find external CPI calls. Two source forms resolve to {crate, ix}:
+  //   - aliased import:  use lever::cpi::switch_power;  switch_power(ctx, …)
+  //   - qualified path:  external::cpi::update(ctx, …)   (Anchor's canonical style)
   walk(root, (n) => {
     if (n.type !== "call_expression") return;
     const fnName = n.childForFieldName("function")?.text?.trim();
     if (!fnName) return;
-    const alias = aliases.get(fnName);
-    if (!alias) return;
-    const idl = idlMap[alias.crate];
-    const idlIx = idl?.instructions[alias.ix];
+    let resolved = aliases.get(fnName);
+    if (!resolved) {
+      const qm = fnName.replace(/\s+/g, "").match(/^([A-Za-z_]\w*)::cpi::([A-Za-z_]\w*)$/);
+      if (qm && knownCrates.has(qm[1]!)) resolved = { crate: qm[1]!, ix: qm[2]! };
+    }
+    if (!resolved) return;
+    const idl = idlMap[resolved.crate];
+    const idlIx = idl?.instructions[resolved.ix];
     if (!idlIx) return; // unknown instruction → leave as-is (loud refuse)
 
     const argsNode = n.childForFieldName("arguments");
