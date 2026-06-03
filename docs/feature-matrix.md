@@ -13,6 +13,7 @@
 | `#[derive(InitSpace)]` + `#[max_len]` | Y | Y |
 | PDA derivation + signer seeds | Y | Y |
 | `require_*!` / `msg!` / `emit!` | Y | Y |
+| `emit_cpi!` | Y (compiles) — see Known gaps: event semantics not preserved | Y (compiles) |
 | System-program `transfer` | Y | Y |
 | System-program `create_account` (with arbitrary owner) | Y | Y |
 | SPL Token: `transfer` / `mint_to` / `burn` / `close_account` | Y | Y |
@@ -57,6 +58,7 @@ Quasar emit was deleted from the production path on 2026-05-05 (`quasar-lang` ha
 - **Confidential T22 family** (`ConfidentialTransferMint`, `ConfidentialTransferFee`, `ConfidentialMintBurn`). **Init slots fully supported** (3 IR kinds: cpi_t22_confidential_transfer_initialize_mint, cpi_t22_confidential_transfer_fee_init, cpi_t22_confidential_mint_burn_initialize_mint — discriminators 27/37/42 with inner=0, fixed-size Pod payloads 67/66/70 bytes). Cargo-check across both Pinocchio + Native scaffolds. Byte-equal differential deferred (needs T22 mint-with-extension setup harness work). Configure/Deposit/Withdraw/Transfer operations remain lint-only — they require zk-proof prelude (Groth16 verification via a companion ProofInstruction CPI), a separate multi-week research arc.
 - **Impl-method inlining for `ctx.accounts.foo()`.** Partial: the flattener preserves impl-scoped names, but inlining method bodies into instruction handlers interacts with the CPI-consolidation regex. Affects some escrow-style programs. Tracked-ceiling in `realworld-tracking.test.ts`.
 - **Jupiter aggregator + other sibling-program CPIs.** Routed through `cpi_custom` with a manual TODO marker; user must hand-roll the CPI against the target program ID since the sibling program's instruction layout isn't accessible from the consumer's IDL.
+- **`emit_cpi!` event semantics.** `emit_cpi!` compiles (it's collapsed to the same direct `sol_log_data` as `emit!`), but the **self-CPI semantics are not preserved**: real Anchor `emit_cpi!` invokes the program itself with an `event_authority` PDA + the program account (so the instruction's account list differs, and it can revert if those accounts are absent), whereas the Anvil emit just logs directly. The event *payload* bytes match `emit!`, but a client that relies on the `event_authority` self-CPI account requirements (or on the CPI-log vs program-data-log channel) will see a behavioral difference. Auto-scenario byte-equal correctly leaves event-log comparison OFF for `emit_cpi!` programs (it would be a false divergence); the differential CLI uses `--ignore-events`. Event payloads are an unverified surface (see `docs/audit-trust-model.md`).
 
 ## CU savings
 
