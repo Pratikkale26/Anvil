@@ -197,6 +197,25 @@ use external::program::External;
     }
   });
 
+  test("bool + pubkey args emit Borsh shapes (1 byte / 32 bytes)", async () => {
+    const src = `use anchor_lang::prelude::*;
+declare_id!("Dec1areProgram11111111111111111111111111111");
+declare_program!(cfg);
+#[program] pub mod c { use super::*;
+  pub fn f(ctx: Context<A>, flag: bool, admin: Pubkey) -> Result<()> {
+    let cpi_ctx = CpiContext::new(ctx.accounts.cfg_program.key(),
+      cfg::cpi::accounts::SetConfig { config: ctx.accounts.config.to_account_info() });
+    cfg::cpi::set_config(cpi_ctx, flag, admin)?; Ok(())
+  }
+}
+#[derive(Accounts)] pub struct A<'info> { #[account(mut)] pub config: Account<'info, cfg::accounts::Config>, pub cfg_program: AccountInfo<'info> }`;
+    const idl = { metadata: { name: "cfg" }, instructions: [{ name: "set_config", discriminator: [1, 2, 3, 4, 5, 6, 7, 8], accounts: [{ name: "config", writable: true }], args: [{ name: "flag", type: "bool" }, { name: "admin", type: "pubkey" }] }] };
+    const ir = await irOf(src, { cfg: idl });
+    const data = cpiOf(ir)?.canonical?.instruction?.data ?? "";
+    expect(data).toContain("(flag) as u8");        // Borsh bool → 1 byte
+    expect(data).toContain("(admin).as_ref()");     // Borsh Pubkey → 32 raw bytes
+  });
+
   test("composite-account value (struct as field value) → NOT rewritten (fail-closed)", async () => {
     // A field value that is itself an accounts struct (external::cpi::accounts::
     // Update {..}) is not a plain account ref — must fail closed, never emit a

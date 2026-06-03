@@ -148,6 +148,10 @@ function encodeArgStmt(buf: string, argExpr: string, idlType: unknown): string |
   if (t && INT_TYPES.has(t)) {
     return `${buf}.extend_from_slice(&((${argExpr}) as ${t}).to_le_bytes());`;
   }
+  // Borsh bool = 1 byte (0/1); Pubkey = its 32 raw bytes (AsRef<[u8]>). Both
+  // gated by the config_program differential (set_config(flag: bool, admin: pubkey)).
+  if (t === "bool") return `${buf}.push((${argExpr}) as u8);`;
+  if (t === "pubkey" || t === "publickey") return `${buf}.extend_from_slice((${argExpr}).as_ref());`;
   return null; // unsupported (ungated) arg type → fail-closed
 }
 
