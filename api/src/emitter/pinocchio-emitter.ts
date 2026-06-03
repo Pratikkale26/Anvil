@@ -953,7 +953,7 @@ export class PinocchioEmitter extends BaseEmitter {
         return `    // Token-2022 transfer (unchecked) — ${from} → ${to}
     {
 ${TOKEN_2022_PROGRAM_ID_CONST}
-        let __t22_amount = (${amount}).to_le_bytes();
+        let __t22_amount = ((${amount}) as u64).to_le_bytes();
         let __t22_data: [u8; 9] = [
             3,
             __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
@@ -1006,7 +1006,7 @@ ${invokeCall}
         : `&TOKEN_2022_PROGRAM_ID`;
       return `    // Token-2022 transfer_checked — ${from} → ${to}
 ${prelude}    {
-${programIdConstBlock}        let __t22_amount = (${amount}).to_le_bytes();
+${programIdConstBlock}        let __t22_amount = ((${amount}) as u64).to_le_bytes();
         let __t22_data: [u8; 10] = [
             12,
             __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
@@ -1051,7 +1051,7 @@ ${invokeCall}
         const invokeCall = emitT22Invoke(`${mint}, ${to}, ${authority}`, signerSeeds);
         return `    // Token-2022 mint_to (unchecked) — ${mint} → ${to}
     {
-${programIdConstBlock}        let __t22_amount = (${amount}).to_le_bytes();
+${programIdConstBlock}        let __t22_amount = ((${amount}) as u64).to_le_bytes();
         let __t22_data: [u8; 9] = [
             7,
             __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
@@ -1076,7 +1076,7 @@ ${invokeCall}
       const invokeCall = emitT22Invoke(`${mint}, ${to}, ${authority}`, signerSeeds);
       return `    // Token-2022 mint_to_checked — ${mint} → ${to}
 ${prelude}    {
-${programIdConstBlock}        let __t22_amount = (${amount}).to_le_bytes();
+${programIdConstBlock}        let __t22_amount = ((${amount}) as u64).to_le_bytes();
         let __t22_data: [u8; 10] = [
             14,
             __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
@@ -1115,7 +1115,7 @@ ${invokeCall}
         const invokeCall = emitT22Invoke(`${from}, ${mint}, ${authority}`, signerSeeds);
         return `    // Token-2022 burn (unchecked) — ${from}
     {
-${programIdConstBlock}        let __t22_amount = (${amount}).to_le_bytes();
+${programIdConstBlock}        let __t22_amount = ((${amount}) as u64).to_le_bytes();
         let __t22_data: [u8; 9] = [
             8,
             __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
@@ -1140,7 +1140,7 @@ ${invokeCall}
       const invokeCall = emitT22Invoke(`${from}, ${mint}, ${authority}`, signerSeeds);
       return `    // Token-2022 burn_checked — ${from}
 ${prelude}    {
-${programIdConstBlock}        let __t22_amount = (${amount}).to_le_bytes();
+${programIdConstBlock}        let __t22_amount = ((${amount}) as u64).to_le_bytes();
         let __t22_data: [u8; 10] = [
             15,
             __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
