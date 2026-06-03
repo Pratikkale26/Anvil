@@ -243,7 +243,7 @@ interface CpiCtxLet {
   programExpr: string;
   /** struct field name → value expr (e.g. "power" → "ctx.accounts.power.to_account_info()"). */
   fields: Map<string, string>;
-  /** true for new_with_signer (we fail-closed on that for now). */
+  /** true for new_with_signer — currently fail-closed (#10 deferred). */
   withSigner: boolean;
   node: SyntaxNode;
 }
@@ -342,7 +342,11 @@ export async function rewriteDeclareProgramCpis(source: string, idlMap: External
     if (callArgs.length < 1) return;
     const ctxVar = callArgs[0]!.text.trim();
     const ctxLet = cpiCtxLets.get(ctxVar);
-    if (!ctxLet || ctxLet.withSigner) return; // need a plain CpiContext::new binding
+    if (!ctxLet) return; // need a CpiContext::new binding
+    // #10 deferred — new_with_signer (PDA-signed) fails closed: the seeds-prep
+    // bumps emit (`let bump = [ctx.bumps.X]` → scalar u8) breaks invoke_signed
+    // (E0308), so it can't be byte-equal-gated yet.
+    if (ctxLet.withSigner) return;
 
     // Args after the cpi_ctx, matched positionally to the IDL args.
     const valueArgs = callArgs.slice(1).map((a) => a.text.trim());
