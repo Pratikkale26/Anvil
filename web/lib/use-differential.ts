@@ -93,7 +93,12 @@ export function useDifferential(args: {
     try {
       const r = await fetch(`${API_BASE}/build/differential/quota`);
       if (r.ok) setQuota(await r.json() as DifferentialQuota);
-    } catch { /* offline / no-cors -- ignore */ }
+      else console.warn(`[differential] quota fetch HTTP ${r.status} from ${API_BASE} — byte-equal panel may render "unavailable"`);
+    } catch (err) {
+      // A swallowed CORS / network failure here leaves quota=null, which the
+      // verify path reports as "unavailable" — log it so it's diagnosable.
+      console.warn(`[differential] quota fetch failed from ${API_BASE}:`, err instanceof Error ? err.message : String(err));
+    }
   }, []);
   useEffect(() => { void refreshQuota(); }, [refreshQuota]);
 

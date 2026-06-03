@@ -852,16 +852,30 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   for (const name of signerNames) comparedAccounts.add(`$signer:${name}`);
   // Detect emit/msg usage to suggest opt-in compares.
   let usesEmit = false;
+  let usesEmitCpi = false;
   let usesMsg = false;
   for (const ix of ir.instructions) {
     for (const stmt of ix.body) {
-      if (stmt.kind === "emit") usesEmit = true;
+      if (stmt.kind === "emit") {
+        usesEmit = true;
+        if ((stmt as { viaCpi?: boolean }).viaCpi) usesEmitCpi = true;
+      }
       if (stmt.kind === "msg") usesMsg = true;
     }
   }
-  if (usesEmit) {
+  // emit!() events ARE byte-equal across targets (same sol_log_data), so
+  // comparing them is a real signal. emit_cpi!() is NOT: Anvil collapses it to
+  // a direct log while Anchor self-CPIs to the event_authority PDA, so the
+  // event stream + step success diverge -> false DIVERGED. Only compare events
+  // when the program uses emit!() and NOT emit_cpi!().
+  const compareEventLogs = usesEmit && !usesEmitCpi;
+  if (compareEventLogs) {
     notes.push({
       message: "Program uses emit!() -- enabled compareEventLogs. Both targets must produce byte-identical event payloads.",
+    });
+  } else if (usesEmitCpi) {
+    notes.push({
+      message: "Program uses emit_cpi!() -- left compareEventLogs OFF. Anvil emits a direct log while Anchor self-CPIs to the event_authority PDA, so event streams legitimately differ; comparing them would be a false divergence.",
     });
   }
   if (usesMsg) {
@@ -951,7 +965,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       accounts: [...comparedAccounts],
       lamports: true,
       owner: true,
-      eventLogs: usesEmit,
+      eventLogs: compareEventLogs,
       msgLogs: false,
       returnData: false,
     },

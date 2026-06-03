@@ -347,6 +347,11 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     kind: z.literal("emit"),
     event: z.string(),
     fields: z.string(),
+    // True when this came from emit_cpi! (self-CPI to event_authority) rather
+    // than emit! (direct sol_log_data). Both reduce to the same direct-log on
+    // non-Anchor targets, so this only signals that event-log comparison is
+    // unreliable (Anchor self-CPIs; Anvil direct-logs → false DIVERGED).
+    viaCpi: z.boolean().optional(),
   }),
 
   // System program SOL transfer CPI

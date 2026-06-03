@@ -1947,13 +1947,16 @@ function classifyMacroInvocation(node: SyntaxNode): BodyStatement {
       // differential CLI. Treat them as the same IR kind so coral-events
       // and similar fixtures cargo-build cleanly. The audit-trust-model
       // already calls out event log payloads as unverified.
+      // viaCpi only for emit_cpi! — emit! events ARE byte-equal across targets
+      // (same sol_log_data); emit_cpi!'s self-CPI path is what diverges.
+      const viaCpi = macroName === "emit_cpi";
       const braceIdx = argsText.indexOf("{");
       if (braceIdx !== -1) {
         const event = argsText.slice(0, braceIdx).trim();
         const fields = argsText.slice(braceIdx + 1, argsText.lastIndexOf("}")).trim();
-        return { kind: "emit", event, fields };
+        return { kind: "emit", event, fields, ...(viaCpi ? { viaCpi: true } : {}) };
       }
-      return { kind: "emit", event: argsText, fields: "" };
+      return { kind: "emit", event: argsText, fields: "", ...(viaCpi ? { viaCpi: true } : {}) };
     }
 
     default:
