@@ -253,6 +253,19 @@ const ERROR_PATTERNS: Array<{ pattern: RegExp; message: string; targets?: Array<
     pattern: /\b0u8\s*\/\*\s*TODO:\s*decimals\b/,
     message: "Token-2022 decimals fallback (0u8 /* TODO: decimals */) — wrong decimals would silently corrupt on-chain transfers. Hand-edit the literal or fix the source so the parser can resolve mint.decimals.",
   },
+  {
+    // S7b — an UNSUFFIXED integer literal in parens immediately followed by
+    // `.to_le_bytes()` is `{integer}::to_le_bytes`, which rustc rejects as
+    // E0689 (ambiguous numeric type) — it can't pick u8/u16/.../u64. This is
+    // a validator BLIND SPOT class: `(1).to_le_bytes()` lints clean (no Anchor
+    // markers, no leaked macro) yet never compiles, so a "clean" .so ships that
+    // /build later refuses. Legitimate emit always carries an `as TYPE` cast
+    // (`((amount) as u64).to_le_bytes()`, `(name.len() as u32).to_le_bytes()`),
+    // so this only fires on the bare-literal mistake. The original instance
+    // (T22 amount sites) is fixed; this is the fail-loud net for future paths.
+    pattern: /\(\s*[0-9][0-9_]*\s*\)\.to_le_bytes\s*\(\s*\)/,
+    message: "Untyped integer literal `(N).to_le_bytes()` — rustc rejects this as E0689 (ambiguous numeric type); the emit lints clean but will not compile. Cast the value first, e.g. `((N) as u64).to_le_bytes()`.",
+  },
   // NOTE: line-comment markers (// ⚠️ Anvil, // TODO(manual)) are NOT in
   // ERROR_PATTERNS — they get stripped by stripLineComments() before the
   // regex check below. They are caught instead by checkUnsafeMarkers() and

@@ -1018,13 +1018,28 @@ async function runBuildInternal(
     // to look (stderrTail is a separate field that no frontend renders).
     if (run.exitCode !== 0 && errors.length === 0 && !run.timedOut) {
       const inlineStderr = stderrTail.trim().slice(0, 2000);
+      // A cold reference-build (anchor-spl + the user program) inside the
+      // production sandbox compiles under firejail rlimits (--rlimit-cpu=60,
+      // --rlimit-as=2GiB). If that ceiling is hit the inner rustc/ld is killed
+      // by signal — surfaced here as a non-zero exit whose stderr carries the
+      // signal marker rather than a cargo diagnostic. Without a hint this reads
+      // identically to a logic failure; prepend the rlimit cause so the runbook
+      // (raise --rlimit-cpu/--rlimit-as in firejailSandbox(), src/build/
+      // sandbox.ts) is one grep away. Pure observability — no limit is changed.
+      const sandboxKilled =
+        /\bsignal:?\s*(?:9|24)\b|SIGKILL|SIGXCPU|cpu time limit|\bKilled\b|terminated with signal/i.test(
+          inlineStderr,
+        );
+      const killHint = sandboxKilled
+        ? "the inner compile was killed by signal — likely the sandbox rlimit (--rlimit-cpu=60 / --rlimit-as=2GiB in firejailSandbox()) on a cold anchor-spl build. Raise the limit in src/build/sandbox.ts if this recurs.\n"
+        : "";
       errors.push({
         filePath: "",
         line: 0,
         column: 0,
         code: null,
         message: inlineStderr.length > 0
-          ? `${cmdLabel} failed (exit code ${run.exitCode}):\n${inlineStderr}`
+          ? `${cmdLabel} failed (exit code ${run.exitCode}): ${killHint}${inlineStderr}`
           : `${cmdLabel} failed (exit code ${run.exitCode}) with no stderr output.`,
         spanText: "",
       });
