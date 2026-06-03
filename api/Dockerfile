@@ -92,6 +92,20 @@ RUN set -e; \
     (cd /root/.anvil-build/anvil-build-pinocchio && cargo fetch) || true; \
     (cd /root/.anvil-build/anvil-build-native && cargo fetch) || true
 
+# Pre-fetch the Anchor REFERENCE build deps (anchor-lang + anchor-spl). The
+# /build/differential endpoint builds an Anchor reference .so under --offline
+# (firejail --net=none); without these in $CARGO_HOME the build fails with
+# "no matching package named anchor-lang/anchor-spl ... offline mode" — the
+# runtime warm-fetch (differential-build.ts) can't reach crates.io on DO's
+# locked-down container network. Mirrors the pinocchio/native pre-fetch above;
+# pinned to 0.31 (= avm pin + the reference build's sniff default). Feature
+# union covers the common anchor-spl shapes (sniffAnchorExtraDeps).
+RUN set -e; \
+    mkdir -p /root/.anvil-build/anvil-build-anchor/src; \
+    printf '[package]\nname = "anvil-build-anchor"\nversion = "0.1.0"\nedition = "2021"\n[lib]\ncrate-type = ["cdylib", "lib"]\n[dependencies]\nanchor-lang = { version = "0.31", features = ["init-if-needed"] }\nanchor-spl = { version = "0.31", features = ["associated_token", "memo", "metadata", "token_2022"] }\n' > /root/.anvil-build/anvil-build-anchor/Cargo.toml; \
+    echo 'pub fn x() {}' > /root/.anvil-build/anvil-build-anchor/src/lib.rs; \
+    (cd /root/.anvil-build/anvil-build-anchor && cargo fetch) || true
+
 # Install dependencies
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
