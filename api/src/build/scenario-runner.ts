@@ -710,14 +710,18 @@ export function buildStepInstruction(
       // pool) are signed via CPI signer_seeds; the outer TX must NOT mark
       // them is_signer (no private key available).
       //
-      // ATA-derived and mint-bucket refs ($ata:foo / $mint:foo) are NEVER
-      // signers regardless of IR isInit. Init'd ATAs (escrow's
-      // init_if_needed for taker_ata_a/maker_ata_b) are PDAs of the ATA
-      // program — created via the program's create_idempotent CPI, not
-      // by the outer transaction, so they have no private key. The IR's
-      // isPda flag only catches Anchor PDAs (with explicit `seeds=[]`),
-      // not ATA-derived addresses, so we gate on the ref prefix here.
-      const isProgramDerivedRef = ref.startsWith("$ata:") || ref.startsWith("$mint:");
+      // Program-derived refs ($ata:foo / $mint:foo / $pda:foo) are NEVER
+      // outer-TX signers regardless of IR isInit — they have no private key
+      // (PDA/ATA inits sign via CPI signer_seeds / create_idempotent, not the
+      // outer tx). We gate on the REF prefix, not the IR's isPda flag, because
+      // an account can be a seeds-PDA in one ix and an init'd ATA (isPda=false)
+      // in another while keeping a single global $pda: ref — without $pda: here
+      // the init&&!isPda branch wrongly marks the $pda address as a signer and
+      // the tx fails "Missing signature" (sweep S9: token_2022_basics's
+      // token_account, a seeds-PDA in create_token_account but an ATA in
+      // create_associated_token_account).
+      const isProgramDerivedRef =
+        ref.startsWith("$ata:") || ref.startsWith("$mint:") || ref.startsWith("$pda:");
       isSigner =
         irAcc.isSigner ||
         (irAcc.isInit && !irAcc.isPda && !isProgramDerivedRef) ||
