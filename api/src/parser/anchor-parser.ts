@@ -40,6 +40,7 @@ import { parseErrorEnum, parseHelperFn, parseCustomType, extractImports, extract
 import { createWarningCollector } from "./warning-collector.js";
 import { buildHelperCpiCatalog } from "./helper-cpi-catalog.js";
 import { rewriteErrMacroToExplicit, expandPubkeyMacro, vendorExternalProgramIDs, rewriteAnchorRequireMacros } from "./project-source.js";
+import { parseExternalIdlMap, rewriteDeclareProgramCpis } from "./external-cpi.js";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -207,6 +208,14 @@ export interface ParseOptions {
    * module graph.
    */
   wasFlattened?: boolean;
+  /**
+   * #2 / S4 — raw Anchor IDL JSON for crates imported via declare_program!(X),
+   * keyed by crate name (e.g. { lever: <idl.json> }). When present, a pre-parse
+   * rewrite turns `<crate>::cpi::<fn>(CpiContext::new(prog, Accounts{...}), args)`
+   * into the hand-built Instruction + invoke shape the generic-CPI path already
+   * handles. Absent ⇒ no-op (declare_program! CPIs keep their loud-refuse).
+   */
+  externalIdls?: Record<string, unknown>;
 }
 
 export async function parseAnchor(
@@ -222,6 +231,11 @@ export async function parseAnchor(
   // macros only).
   source = rewriteErrMacroToExplicit(source);
   source = rewriteAnchorRequireMacros(source);
+  // #2 / S4 — declare_program! cross-program CPI: pre-parse rewrite into the
+  // generic-CPI Instruction+invoke shape (no-op unless externalIdls supplied).
+  if (opts?.externalIdls) {
+    source = await rewriteDeclareProgramCpis(source, parseExternalIdlMap(opts.externalIdls));
+  }
   // G11 — Arcium framework support. Source uses `#[arcium_program]` +
   // sibling attribute macros (`#[arcium_callback]`,
   // `#[queue_computation_accounts]`, `#[callback_accounts]`,

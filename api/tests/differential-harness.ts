@@ -458,6 +458,14 @@ export interface DifferentialFixture<S extends DifferentialSetup = DifferentialS
    * gate is meant to prevent.
    */
   auxiliaryPrograms?: Array<{ programId: string; soFilename: string }>;
+  /**
+   * #2 / S4 — raw Anchor IDL JSON for crates the program imports via
+   * declare_program!(X), keyed by crate name (e.g. { lever: <idl.json> }).
+   * Passed to parseAnchor so the Anvil side can rewrite `<crate>::cpi::<fn>`
+   * CPIs into the generic-CPI invoke shape. The Anchor reference build still
+   * resolves the IDL from its own crate dir (anchorReferenceCrateDir/idls/).
+   */
+  externalIdls?: Record<string, unknown>;
 }
 
 /** Single account snapshot — captured post-scenario for byte-compare. */
@@ -818,7 +826,10 @@ async function buildAnvilSo<S extends DifferentialSetup>(
   fixture: DifferentialFixture<S>,
   outPath: string,
 ): Promise<void> {
-  const parsed = await parseAnchor(fixture.anchorSource);
+  const parsed = await parseAnchor(
+    fixture.anchorSource,
+    fixture.externalIdls ? { externalIdls: fixture.externalIdls } : undefined,
+  );
   if (!parsed.ok) {
     throw new Error(`parseAnchor failed for ${fixture.fixtureName}: ${parsed.error}`);
   }
