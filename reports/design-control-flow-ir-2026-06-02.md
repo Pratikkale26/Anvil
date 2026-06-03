@@ -189,3 +189,7 @@ build (a Slice-1 sibling), tracked here so the gap is a recorded decision, not a
 - Is "instruction has ≥1 state write" the right gate, or should it be "a state write is hoisted to
   *after* the early-exit-bearing pass_through"? The latter is more precise but needs ordering
   analysis; the former is conservative (may over-refuse, safe direction).
+
+---
+## UPDATE 2026-06-03 — corpus-absence REFUTED by the expanded sweep corpus
+A body-level census across the 2026-06-03 internet sweep (program-examples + coral tests + squads + drift + futarchy) found **147 control-flow instances** in instruction bodies: 107 if-block, 26 for-loop, 14 match, 14 let=if. The original "0/95, corpus-absent" verdict held for the narrower demo/fixture corpus but does NOT hold for real third-party protocols. **Slice 1 (`if {return Err}` guard → require) SHIPPED `acb0374`** (parser-only reuse; byte-equal via return-err differentials). Slice 2 (`let = if/else` cond-binding) + for/match remain — see task #3.
