@@ -34,6 +34,7 @@ import {
 import { detectCpi } from "./cpi-detector.js";
 import { type WarningCollector, locFromNode } from "./warning-collector.js";
 import { type HelperCpiCatalogEntry, stripLeadingAmp } from "./helper-cpi-catalog.js";
+import { rewriteAnchorRequireMacros, rewriteRequireVariantsInCode } from "./project-source.js";
 import type { SourceLoc } from "../ir/schema.js";
 
 // ─── Hardcoded pattern lists (extracted for property testing) ──────────────
@@ -322,6 +323,21 @@ export function classifyBody(
     if (child.type === "attribute_item") continue;
 
     const classified = classifyStatement(child, pendingSeeds, cpiContexts, cpiAccountsByVar, hasUserSeedsManagement, collector, helperCpiCatalog, pendingPythLoad, constStringMap, pendingSwitchboardLoad, systemTransferByVar);
+    // #4 control-flow slice 2 — desugar Anchor require!/require_*! macros that
+    // survived into ANY pass_through statement (the pre-parse rewrite misses
+    // require! nested inside a `let = if {…}` expression). Single chokepoint over
+    // every pass_through-creation path. Produces valid target code
+    // (`if !(cond) { return Err((err).into()); }`) so the passthrough-audit no
+    // longer false-refuses require!-in-let=if (e.g. amm add_liquidity); the emit
+    // already produces this exact form, so it's idempotent → 0 byte-equal change.
+    if (
+      classified.stmt?.kind === "pass_through" &&
+      typeof (classified.stmt as { code?: string }).code === "string" &&
+      /\brequire(?:_keys)?(?:_eq|_neq|_gt|_gte|_lt|_lte)?!\s*\(/.test((classified.stmt as { code: string }).code)
+    ) {
+      const c = classified.stmt as { code: string };
+      c.code = rewriteRequireVariantsInCode(rewriteAnchorRequireMacros(c.code));
+    }
     const childLoc = locFromNode(child);
 
     // #23 (option C) — capture a `let <var> = Instruction{…}` definition (the let

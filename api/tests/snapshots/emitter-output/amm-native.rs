@@ -367,16 +367,12 @@ pub fn add_liquidity(
                 .checked_div(pool.reserve_a as u128).ok_or(AmmError::Overflow)? as u64;
 
             let (a, b) = if amount_b_optimal <= amount_b_desired {
-                if !(amount_b_optimal >= amount_b_min) {
-            return Err(AmmError::SlippageExceeded.into());
-        }
+                if !(amount_b_optimal >= amount_b_min) { return Err((AmmError::SlippageExceeded).into()); }
                 (amount_a_desired, amount_b_optimal)
             } else {
                 let amount_a_optimal = (amount_b_desired as u128).checked_mul(pool.reserve_a as u128).ok_or(AmmError::Overflow)?
                     .checked_div(pool.reserve_b as u128).ok_or(AmmError::Overflow)? as u64;
-                if !(amount_a_optimal >= amount_a_min) {
-            return Err(AmmError::SlippageExceeded.into());
-        }
+                if !(amount_a_optimal >= amount_a_min) { return Err((AmmError::SlippageExceeded).into()); }
                 (amount_a_optimal, amount_b_desired)
             };
 
