@@ -193,3 +193,15 @@ build (a Slice-1 sibling), tracked here so the gap is a recorded decision, not a
 ---
 ## UPDATE 2026-06-03 — corpus-absence REFUTED by the expanded sweep corpus
 A body-level census across the 2026-06-03 internet sweep (program-examples + coral tests + squads + drift + futarchy) found **147 control-flow instances** in instruction bodies: 107 if-block, 26 for-loop, 14 match, 14 let=if. The original "0/95, corpus-absent" verdict held for the narrower demo/fixture corpus but does NOT hold for real third-party protocols. **Slice 1 (`if {return Err}` guard → require) SHIPPED `acb0374`** (parser-only reuse; byte-equal via return-err differentials). Slice 2 (`let = if/else` cond-binding) + for/match remain — see task #3.
+
+## SLICE 3 (`for`/`while`/`match`) — DEFERRED with evidence (2026-06-03)
+Adversarial 5-area corpus hunt (program-examples, coral tests, metaDAO futarchy, drift, **squads** — incl. `config_transaction_execute`'s real `for action in actions { match action {…} }` state loop): **0 candidates / 0 survivors**. Every for/while/match in a #[program] instruction body falls into one of three buckets, none helped by for/match IR:
+- (a) **log-only** (e.g. lever `match power.is_on { true=>msg!, false=>msg! }`) → already emit-CLEAN; not a blocker; not state-verifiable (logs unverified).
+- (b) **pure state mutation** (`for _ in 0..n { state.x += 1 }`) → already byte-equal-correct (carried verbatim, St::read/write hoisted).
+- (c) **anchor-content-bearing** → refuses because of a CPI / ctx.accounts / remaining_accounts / Option<T> account / state-derived PDA seed **inside** the loop (S4/other territory), never the loop structure. Squads, cnft-burn/vault, futarchy, drift all confirm: remove every loop → still REFUSE.
+
+`while` in an instruction body = **0/corpus** (pure speculation). Discipline-bar criterion "the loop STRUCTURE is the blocker" fails universally → building for/match IR = the "partial worse than not-done" mistake.
+
+**Silent-wrong axis closed:** the only shape a refuse-keyed census can't see — a clean-but-WRONG early `return Ok` buried in a loop — is ALREADY caught by the slice-1 guard (`unsafeEarlyExitDetail` fires; the whole loop is one pass_through string). Verified + locked in: `tests/control-flow-early-exit-guard.test.ts` SILENT_WRONG_IN_LOOP (detector + both-target loud-refuse). Residual (0 corpus instances): an early exit interleaved with state writes split across sibling statements → that's a slice-1 widening (reachability analysis), not a new IR family.
+
+**Net control-flow arc:** slice 1 (`if {return Err}` guard, `acb0374`) + slice 2 (require!-in-let=if audit fix, `fcab265`) shipped; slice 3 deferred with evidence. The arc's tractable, byte-equal-verifiable surface is fully covered.
