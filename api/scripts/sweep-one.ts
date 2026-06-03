@@ -334,6 +334,8 @@ async function main() {
       accountDiffs: (verdict.accountDiffs ?? []).map((d: any) => ({ name: d.name, status: d.status })),
       anchorSteps: verdict.steps?.anchor?.map((s: any) => s.status ?? (s.ok ? "ok" : "revert")) ?? [],
       anvilSteps: verdict.steps?.anvil?.map((s: any) => s.status ?? (s.ok ? "ok" : "revert")) ?? [],
+      anvilStepErrors: verdict.steps?.anvil?.map((s: any) => s.ok ? null : { ix: s.ix, error: s.error, logTail: (s.logs ?? []).slice(-6) }).filter(Boolean) ?? [],
+      anchorStepErrors: verdict.steps?.anchor?.map((s: any) => s.ok ? null : { ix: s.ix, error: s.error }).filter(Boolean) ?? [],
       eventLogDiff: verdict.eventLogDiff ? { diverged: verdict.eventLogDiff.diverged, anchor: verdict.eventLogDiff.anchor?.slice(0, 4), anvil: verdict.eventLogDiff.anvil?.slice(0, 4) } : null,
       msgLogDiff: verdict.msgLogDiff ? { diverged: verdict.msgLogDiff.diverged, anchor: verdict.msgLogDiff.anchor?.slice(0, 4), anvil: verdict.msgLogDiff.anvil?.slice(0, 4) } : null,
       assertions: (verdict.assertions ?? []).map((a: any) => ({ passed: a.passed, message: (a.message ?? "").slice(0, 120) })),

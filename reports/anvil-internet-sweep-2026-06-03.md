@@ -274,6 +274,19 @@ if events are "unverified"). **Effort: ~half day.**
 differential CLI's `--ignore-events` posture). `coral_events` re-run is now amber, not DIVERGED.
 (b) feature-matrix doc still TODO.
 
+### 🔴 S10 (HIGH — real emit bug, found by S9's fix) — Anvil inits Token-2022 token accounts through the LEGACY SPL Token program
+Surfaced once S9 un-blocked `token_2022_basics`: `create_token_account` reverted on Anvil
+(`InstructionError MissingAccount`, log: *"Unknown program Tokenkeg…"*) while Anchor succeeded — Anvil's
+`emitCreateTokenAccount` **hardcoded the legacy SPL Token program** for the `create_account` owner + the
+`InitializeAccount3` CPI, even under a Token-2022 mint. Step-1 (mint init) already honored T22 (a prior
+fix); the token-ACCOUNT init was the un-fixed analog. Class-level: every `init token::*` /
+`InterfaceAccount<TokenAccount>` under Token-2022.
+**✅ FIXED this session:** `emitCreateTokenAccount` now takes a `tokenProgram?` arg (like `emitCreateMint`);
+the caller detects the runtime `token_program` sibling and the init reads the program ID from it
+(`token_program.key()` / `.key` native) when present, else legacy. `token_2022_basics` → DIVERGED→amber
+(step 2 now succeeds on both). Byte-equal preserved for legacy fixtures (escrow/marketplace/vesting
+differentials re-run green; `.key()` == legacy id at runtime); 6 binary-parity snapshots re-baselined.
+
 ### ⚪ S9 (LOW — tooling, auto-scenario) — auto-scenario can't synthesize multi-signer T22 init flows
 `token_2022_basics` RUN_THREW: *"Missing signature for public key …"* — the auto-synthesised scenario
 didn't provide a required signer (T22 mint/account creation needs the new account as a signer). Not an
