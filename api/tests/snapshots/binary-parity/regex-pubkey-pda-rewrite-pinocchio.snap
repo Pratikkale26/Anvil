@@ -75,8 +75,8 @@ pub fn check_pda(
             program_id,
         );
     if derived != *candidate.key() {
-            return Err(ProgramError::from(PdaError::Mismatch));
-        }
+        return Err(ProgramError::from(PdaError::Mismatch).into());
+    }
     Ok(())
 
 }

@@ -660,6 +660,13 @@ function classifyStatement(
   if (ifNode) {
     const condTransfer = tryConditionalSystemTransfer(ifNode, collector, cpiContexts, systemTransferByVar);
     if (condTransfer) return { stmt: condTransfer };
+    // #4 control-flow slice — `if <C> { return Err(E); }` validation guard.
+    // Semantically `require!(!(C), E)`; reuse the require kind (emitRequireGuard
+    // unwraps the negation → clean `if <C> { return Err(E.into()); }`). Revert
+    // on the branch == Anchor's revert → byte-equal. Only the Err shape (NOT
+    // return Ok — that's the Slice-1 silent-wrong early-exit class).
+    const guard = tryConditionalReturnGuard(ifNode);
+    if (guard) return { stmt: guard };
   }
 
   switch (node.type) {
@@ -745,6 +752,37 @@ function tryConditionalSystemTransfer(
   if (!preludeNodes.every((n) => n.type === "let_declaration")) return null;
   const conditionPrelude = preludeNodes.map((n) => n.text).join("\n        ") || undefined;
   return { ...cpi, condition: cond.text, conditionPrelude };
+}
+
+/**
+ * #4 control-flow slice — `if <cond> { return Err(<E>); }` (single-statement
+ * validation guard, no `else`). Maps to the existing `require` IR kind with the
+ * INVERTED condition: `require!(!(cond), E)`. `emitRequireGuard` unwraps the
+ * top-level negation, so the emit is a clean `if <cond> { return Err(E.into()); }`
+ * — byte-equal with Anchor (revert on the branch == revert). Returns null for
+ * anything but the narrow shape (has `else`, multiple statements, or returns
+ * non-Err e.g. `return Ok(())` — the Slice-1 silent-wrong class — or a value),
+ * so there is no false interception / regression.
+ */
+function tryConditionalReturnGuard(ifNode: SyntaxNode): BodyStatement | null {
+  if (ifNode.childForFieldName("alternative")) return null; // has `else` → out of scope
+  const cond = ifNode.childForFieldName("condition");
+  const cons = ifNode.childForFieldName("consequence");
+  if (!cond || !cons) return null;
+  const inner: SyntaxNode[] = [];
+  for (let i = 0; i < cons.namedChildCount; i++) {
+    const s = cons.namedChild(i);
+    if (s && !s.type.includes("comment")) inner.push(s);
+  }
+  if (inner.length !== 1) return null; // must be JUST the return-Err
+  const only = inner[0]!;
+  const retNode = only.type === "expression_statement" ? (only.namedChild(0) ?? only) : only;
+  // Only intercept an Err/err! return (revert). return Ok / return <value> → out.
+  if (!/\b(?:return\s+)?(?:Err\s*\(|err!\s*\()/.test(retNode.text)) return null;
+  const cls = classifyReturn(retNode);
+  if (cls.kind !== "return_err") return null;
+  const errCode = (cls.error ?? "ProgramError::Custom(0)").replace(/\s*\.\s*into\s*\(\s*\)\s*$/, "").trim();
+  return { kind: "require", condition: `!(${cond.text.trim()})`, error: errCode };
 }
 
 function passThroughDefault(

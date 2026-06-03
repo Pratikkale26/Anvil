@@ -185,8 +185,8 @@ pub fn try_set(
         }
     }
     if value == 0 {
-            return Err(DemoError::ZeroNotAllowed.into());
-        }
+        return Err(DemoError::ZeroNotAllowed.into());
+    }
     let state_account = state;
     let mut state = match StateAccount::from_account_info(state_account) {
         Ok(__existing) => __existing,
