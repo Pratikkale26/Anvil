@@ -75,6 +75,22 @@ const RETURN_NO_WRITE = wrap(`pub fn no_write(ctx: Context<B>, flag: bool) -> Re
   Ok(())
 }`);
 
+// THE BUG (variant C): non-Err early return buried inside a FOR-LOOP body, with
+// a state write hoisted after the loop. The whole loop is one pass_through
+// string, so the guard's per-pass_through scan catches the buried `return Ok`.
+// This is the one silent-wrong shape a REFUSE-keyed for/match census can't see
+// — verified + locked in during the slice-3 (for/match) deferral (2026-06-03):
+// building for/match IR adds nothing because (a) clean loops already emit
+// correctly and (b) this dangerous in-loop early-exit is already guarded here.
+const SILENT_WRONG_IN_LOOP = wrap(`pub fn loop_ret(ctx: Context<B>, n: u64) -> Result<()> {
+  for i in 0..n {
+    ctx.accounts.state.counter += 1;
+    if i == 3 { return Ok(()); }
+  }
+  ctx.accounts.state.counter += 100;
+  Ok(())
+}`);
+
 async function irOf(src: string) {
   const r = await parseAnchor(src);
   expect(r.ok).toBe(true);
@@ -92,6 +108,13 @@ describe("#4 Slice 1 — control-flow early-exit guard (detector unit)", () => {
     // no state_field_assign node here — must still flag via the shared mutation scan
     expect(ir.instructions[0].body.some((s: { kind: string }) => s.kind === "state_field_assign")).toBe(false);
     expect(unsafeEarlyExitDetail(ir.instructions[0], ir)).toBeTruthy();
+  });
+  test("flags the silent-wrong shape (early return Ok BURIED in a for-loop body)", async () => {
+    const ir = await irOf(SILENT_WRONG_IN_LOOP);
+    // the loop is a single pass_through string; the buried `return Ok` after a
+    // state write must still be caught (detail names the loop header).
+    const detail = unsafeEarlyExitDetail(ir.instructions[0], ir);
+    expect(detail).toBeTruthy();
   });
   test("does NOT flag: simple loop with state mutation, no early exit", async () => {
     const ir = await irOf(SIMPLE_LOOP);
@@ -128,6 +151,15 @@ describe("#4 Slice 1 — emit refuses LOUDLY on both targets", () => {
 
     test(`${target}: buried-mutation shape (recall) → loud stub + validator error`, async () => {
       const ir = await irOf(SILENT_WRONG_BURIED);
+      const out = emit(ir);
+      const text = out.files.map((f) => f.content).join("\n");
+      expect(/unimplemented!\("Anvil: control-flow early return/.test(text)).toBe(true);
+      const errs = validateEmitterOutput(ir, out).filter((i) => i.severity === "error");
+      expect(errs.length).toBeGreaterThan(0);
+    });
+
+    test(`${target}: in-loop early-return-Ok shape → loud stub + validator error`, async () => {
+      const ir = await irOf(SILENT_WRONG_IN_LOOP);
       const out = emit(ir);
       const text = out.files.map((f) => f.content).join("\n");
       expect(/unimplemented!\("Anvil: control-flow early return/.test(text)).toBe(true);
