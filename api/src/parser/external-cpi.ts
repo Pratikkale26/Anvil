@@ -84,6 +84,31 @@ export function parseExternalIdl(raw: unknown): ExternalIdl | null {
   return { address: typeof o.address === "string" ? o.address : undefined, name, instructions };
 }
 
+/**
+ * Collect `{ crate: rawIdlJson }` from a project's files by scanning for
+ * `**​/idls/<crate>.json` (Anchor's convention — the dir declare_program! reads).
+ * Used by the /parse ingestion paths (folder upload, local dir, cloned repo) to
+ * supply ParseOptions.externalIdls so declare_program! CPIs transpile on the
+ * real path, not just the test fixture. Malformed JSON is skipped (the CPI then
+ * stays loud-refused — fail-closed).
+ */
+export function collectExternalIdls(
+  files: Array<{ path: string; content: string }>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const f of files) {
+    if (typeof f?.path !== "string" || typeof f?.content !== "string") continue;
+    const m = f.path.replace(/\\/g, "/").match(/(?:^|\/)idls\/([A-Za-z_]\w*)\.json$/);
+    if (!m?.[1]) continue;
+    try {
+      out[m[1]] = JSON.parse(f.content);
+    } catch {
+      /* skip malformed IDL → declare_program! CPI stays loud-refused */
+    }
+  }
+  return out;
+}
+
 /** Parse a raw `{ crate: idlJson }` map (the ParseOptions.externalIdls input). */
 export function parseExternalIdlMap(raw: Record<string, unknown> | undefined): ExternalIdlMap {
   const map: ExternalIdlMap = {};

@@ -7,6 +7,7 @@ import {
   type CfgGatedDrop,
   type ProjectFile,
 } from "./project-source.js";
+import { collectExternalIdls } from "./external-cpi.js";
 
 /**
  * G84 — workspace path-dependency inlining. For real-world Anchor programs
@@ -162,6 +163,31 @@ export interface LocalSourceResolution {
   /** B9 — cfg(feature=...) items dropped during flattening; surface as parser warnings. */
   cfgDrops?: CfgGatedDrop[];
   wasFlattened?: boolean;
+  /** #2/S4 — declare_program! IDLs (crate → raw IDL JSON) found under idls/. */
+  externalIdls?: Record<string, unknown>;
+}
+
+/**
+ * #2/S4 — walk up from the entry file to find an `idls/` dir (Anchor's
+ * convention, the same dir declare_program! reads) and collect its *.json as
+ * {crate → raw IDL}. Bounded walk; returns undefined when none found.
+ */
+function collectLocalIdls(entryPath: string): Record<string, unknown> | undefined {
+  let dir = dirname(entryPath);
+  for (let i = 0; i < 6; i++) {
+    const idlsDir = join(dir, "idls");
+    if (existsSync(idlsDir) && statSync(idlsDir).isDirectory()) {
+      const files = readdirSync(idlsDir)
+        .filter((f) => f.endsWith(".json"))
+        .map((f) => ({ path: `idls/${f}`, content: readFileSync(join(idlsDir, f), "utf-8") }));
+      const collected = collectExternalIdls(files);
+      if (Object.keys(collected).length > 0) return collected;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
 }
 
 function isRustFile(path: string): boolean {
@@ -248,6 +274,7 @@ export function resolveLocalSource(inputPath: string): LocalSourceResolution {
       projectEntryPath,
       cfgDrops: build.cfgDrops,
       wasFlattened: build.wasFlattened ?? false,
+      externalIdls: collectLocalIdls(resolvedPath),
     };
   }
 
@@ -280,5 +307,6 @@ export function resolveLocalSource(inputPath: string): LocalSourceResolution {
     projectFiles,
     projectEntryPath,
     cfgDrops: build.cfgDrops,
+    externalIdls: collectLocalIdls(selected),
   };
 }

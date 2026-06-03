@@ -1,5 +1,6 @@
 import type { CfgGatedDrop, ProjectFile } from "./project-source.js";
 import { buildProjectSourceGraph } from "./project-source.js";
+import { collectExternalIdls } from "./external-cpi.js";
 
 export interface RepoSourceInput {
   repoUrl: string;
@@ -26,6 +27,8 @@ export interface RepoSourceResolution {
   projectEntryPath: string;
   /** B9 — cfg(feature=...) items dropped during flattening; surface as parser warnings. */
   cfgDrops?: CfgGatedDrop[];
+  /** #2/S4 — declare_program! IDLs (crate → raw IDL JSON) found under idls/. */
+  externalIdls?: Record<string, unknown>;
   /**
    * H2 — list of every program candidate the repo contains (one entry
    * per `programs/<name>/src/lib.rs` hit). Populated even when only one
@@ -96,13 +99,20 @@ async function resolveDefaultBranch(owner: string, repo: string): Promise<string
   return payload.default_branch ?? "main";
 }
 
-async function fetchRepoTree(owner: string, repo: string, ref: string): Promise<string[]> {
+async function fetchRepoTree(
+  owner: string,
+  repo: string,
+  ref: string,
+): Promise<{ rust: string[]; idls: string[] }> {
   const payload = await githubJson<{ tree?: { path: string; type: string }[] }>(
     `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`
   );
-  return (payload.tree ?? [])
-    .filter((node) => node.type === "blob" && node.path.endsWith(".rs"))
-    .map((node) => node.path);
+  const blobs = (payload.tree ?? []).filter((node) => node.type === "blob");
+  return {
+    rust: blobs.filter((n) => n.path.endsWith(".rs")).map((n) => n.path),
+    // #2/S4 — declare_program! IDLs live in an `idls/` dir (Anchor convention).
+    idls: blobs.filter((n) => /(?:^|\/)idls\/[A-Za-z_]\w*\.json$/.test(n.path)).map((n) => n.path),
+  };
 }
 
 /**
@@ -212,7 +222,8 @@ export async function resolveRepoSource(input: RepoSourceInput): Promise<RepoSou
 
   const ref = input.repoRef?.trim() || parsed.ref?.trim() || await resolveDefaultBranch(parsed.owner, parsed.repo);
   const repoSubpath = input.repoSubpath?.trim() || parsed.subpath?.trim();
-  const allRustPaths = (await fetchRepoTree(parsed.owner, parsed.repo, ref)).sort((a, b) => a.localeCompare(b));
+  const tree = await fetchRepoTree(parsed.owner, parsed.repo, ref);
+  const allRustPaths = tree.rust.sort((a, b) => a.localeCompare(b));
   if (allRustPaths.length === 0) {
     throw new Error("No Rust (.rs) files found in this repository");
   }
@@ -250,6 +261,24 @@ export async function resolveRepoSource(input: RepoSourceInput): Promise<RepoSou
   const projectEntryPath = sourceRoot ? entry.slice(sourceRoot.length + 1) : entry;
   const build = buildProjectSourceGraph(projectEntryPath, projectFiles);
 
+  // #2/S4 — fetch declare_program! IDLs (idls/<crate>.json) so the parser can
+  // transpile cross-program <crate>::cpi::* CPIs. Best-effort: a fetch failure
+  // leaves the CPI loud-refused (fail-closed), never blocks the parse.
+  let externalIdls: Record<string, unknown> | undefined;
+  if (tree.idls.length > 0) {
+    const idlFiles = await Promise.all(
+      tree.idls.map(async (path) => {
+        try {
+          return { path, content: await fetchRawFile(parsed.owner, parsed.repo, ref, path) };
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const collected = collectExternalIdls(idlFiles.filter((f): f is { path: string; content: string } => f !== null));
+    if (Object.keys(collected).length > 0) externalIdls = collected;
+  }
+
   return {
     source: build.source,
     resolvedPath: entry,
@@ -258,5 +287,6 @@ export async function resolveRepoSource(input: RepoSourceInput): Promise<RepoSou
     projectEntryPath,
     cfgDrops: build.cfgDrops,
     programCandidates: programCandidates.length > 0 ? programCandidates : undefined,
+    externalIdls,
   };
 }

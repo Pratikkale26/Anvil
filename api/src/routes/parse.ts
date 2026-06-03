@@ -2,6 +2,7 @@ import { Router } from "express";
 import { parseAnchor } from "../parser/anchor-parser.js";
 import { metrics } from "../metrics.js";
 import { resolveLocalSource } from "../parser/local-source.js";
+import { collectExternalIdls } from "../parser/external-cpi.js";
 import { buildProjectSourceGraph, type CfgGatedDrop, type ProjectFile } from "../parser/project-source.js";
 import { resolveRepoSource } from "../parser/repo-source.js";
 import { AnvilError, ErrorCode } from "../errors.js";
@@ -93,6 +94,9 @@ parseRoute.post("/", async (req, res) => {
   // parseAnchor uses it to suppress the multi-file-shim warning that
   // fires on raw `mod X;` decls in single-file mode.
   let resolvedWasFlattened = false;
+  // #2/S4 — declare_program! IDLs (crate → raw IDL JSON) collected from the
+  // project's idls/ dir so cross-program <crate>::cpi::* CPIs transpile.
+  let resolvedExternalIdls: Record<string, unknown> | undefined;
 
   try {
     // ── 1. Folder upload: { files, entryPath } ──────────────────────────────
@@ -114,6 +118,11 @@ parseRoute.post("/", async (req, res) => {
       candidates = projectFiles.map((file) => file.path);
       resolvedCfgDrops = build.cfgDrops;
       resolvedWasFlattened = build.wasFlattened ?? false;
+      // Scan the RAW upload (incl. idls/*.json, which the .rs filter above drops).
+      const idls = collectExternalIdls(
+        files.filter((f) => f && typeof f.path === "string" && typeof f.content === "string"),
+      );
+      if (Object.keys(idls).length > 0) resolvedExternalIdls = idls;
     }
 
     // ── 2. Local server path: { sourcePath } ───────────────────────────────
@@ -124,6 +133,7 @@ parseRoute.post("/", async (req, res) => {
       candidates = resolved.candidates;
       resolvedCfgDrops = resolved.cfgDrops;
       resolvedWasFlattened = (resolved as { wasFlattened?: boolean }).wasFlattened ?? false;
+      resolvedExternalIdls = resolved.externalIdls;
     }
 
     // ── 3. Local server path: { projectPath } ──────────────────────────────
@@ -134,6 +144,7 @@ parseRoute.post("/", async (req, res) => {
       candidates = resolved.candidates;
       resolvedCfgDrops = resolved.cfgDrops;
       resolvedWasFlattened = (resolved as { wasFlattened?: boolean }).wasFlattened ?? false;
+      resolvedExternalIdls = resolved.externalIdls;
     }
 
     // ── 4. GitHub repo: { repoUrl, repoRef?, repoSubpath?, programName? } ──
@@ -144,6 +155,7 @@ parseRoute.post("/", async (req, res) => {
       candidates = resolved.candidates;
       resolvedProgramCandidates = resolved.programCandidates;
       resolvedCfgDrops = resolved.cfgDrops;
+      resolvedExternalIdls = resolved.externalIdls;
     }
   } catch (error) {
     if (error instanceof AnvilError) {
@@ -182,7 +194,7 @@ parseRoute.post("/", async (req, res) => {
     return;
   }
 
-  const result = await parseAnchor(resolvedSource, { cfgDrops: resolvedCfgDrops, wasFlattened: resolvedWasFlattened });
+  const result = await parseAnchor(resolvedSource, { cfgDrops: resolvedCfgDrops, wasFlattened: resolvedWasFlattened, externalIdls: resolvedExternalIdls });
   metrics.recordParse(result.ok);
   if (!result.ok) {
     const code = result.error.includes("No Anchor #[program] module")
