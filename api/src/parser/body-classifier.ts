@@ -560,6 +560,11 @@ interface CpiContextInfo {
   // CpiContextLookup. Pre-fix the mint was dropped, producing TODO(manual)
   // markers in the emit.
   mint?: string;
+  // The CpiContext program-arg account name (`CpiContext::new(ctx.accounts.X..)`).
+  // Carried so an unqualified `*_checked` CPI reads this account's key at runtime
+  // instead of hardcoding a Token-2022 const (which silently misrouted legacy
+  // `Program<Token>` callers).
+  program?: string;
 }
 
 interface CpiAccountsBinding {
@@ -2204,6 +2209,11 @@ function extractCpiContextInfo(
   const authorityMatch = fullText.match(/authority:\s*ctx\.accounts\.(\w+)/);
   // Finding #45 — also extract mint for T22 transfer_checked / mint_to_checked.
   const mintMatch = fullText.match(/mint:\s*ctx\.accounts\.(\w+)/);
+  // The CpiContext program arg — `CpiContext::new(ctx.accounts.X.., accounts)`.
+  // For unqualified `*_checked` CPIs the emit must read THIS account's key at
+  // runtime (so `Program<Token>` routes to Tokenkeg, not a hardcoded T22 const).
+  const programMatch = fullText.match(/CpiContext::new(?:_with_signer)?\s*\(\s*ctx\.accounts\.(\w+)/);
+  const program = programMatch?.[1];
 
   // H2-followup (#35): inline-struct match failed. Try the chain rescue:
   // CpiContext::new(prog, X) where X was bound earlier as
@@ -2236,6 +2246,7 @@ function extractCpiContextInfo(
           signerSeeds: hasSigner ? "signer_seeds" : undefined,
           // Finding #45 — propagate mint from the chain-rescue branch.
           mint: tracked.mint,
+          program,
         };
       }
     }
@@ -2260,6 +2271,7 @@ function extractCpiContextInfo(
     authority: authorityMatch?.[1],
     signerSeeds,
     mint: mintMatch?.[1],
+    program,
   };
 }
 

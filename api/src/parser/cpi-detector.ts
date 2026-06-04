@@ -42,6 +42,9 @@ export interface CpiContextLookup {
     // T22 transfer_checked / mint_to_checked which need it in the
     // emitted CPI args.
     mint?: string;
+    // The CpiContext program-arg account name — read at runtime by the
+    // unqualified *_checked emit (token-program dispatch) instead of a const.
+    program?: string;
   } | undefined;
 }
 
@@ -332,29 +335,53 @@ export function detectCpi(
   // After CpiContext consolidation collapses
   // `let cpi_ctx = CpiContext::new(prog, TransferChecked { ... });
   //  transfer_checked(cpi_ctx, amount, decimals)?;`
-  // into a single call, the namespace prefix (`token_interface::`) is gone.
-  // The `_checked` suffix is reserved for Token-2022 (Anchor exposes the
-  // same names under `token::` for legacy SPL-Token, but in practice these
-  // arrive via `token_interface` and are routed to Token-2022 at runtime),
-  // so we infer tokenProgram = "token_2022".
+  // into a single call, the namespace prefix is gone. The `_checked` form is
+  // used by BOTH `token_interface::*` (Token-2022 / Interface<TokenInterface>)
+  // AND legacy `anchor_spl::token::*_checked` imported unqualified
+  // (`Program<Token>`). The instruction *data* (disc 12/14/15 + decimals) is
+  // identical across runtimes, so the ONLY thing that differs is the program
+  // ID — which must come from the runtime account, NOT a hardcoded const.
+  // We capture the CpiContext program-arg account (sister to set_authority's
+  // tokenProgramArg, commit 935e8b7) so the emit reads `<arg>.key()` at call
+  // time: correct for legacy Tokenkeg, Token-2022, and Interface alike.
+  // `tokenProgram: "token_2022"` still selects the *_checked variant (the data
+  // shape works for both runtimes); a bare const T22 ID with NO runtime read
+  // was the silent misroute for `Program<Token>`.
+  const checkedTokenProgramArg = (() => {
+    const argsNode = callNode.childForFieldName("arguments");
+    const args = argsNode ? getArguments(argsNode) : [];
+    const firstArgText = args[0]?.text ?? "";
+    // Inline form: transfer_checked(CpiContext::new(ctx.accounts.X.., ..), ..).
+    const inline = firstArgText.match(
+      /CpiContext\s*::\s*new(?:_with_signer)?\s*\(\s*ctx\s*\.\s*accounts\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)/,
+    );
+    if (inline?.[1]) return inline[1];
+    // Let-bound form (post-consolidation, the common shape): the call's first
+    // arg is the bound var; recover the program account from the tracked
+    // CpiContext binding. Guard the call: some callers (the conditional-
+    // system-transfer path) pass a raw Map here, not a function — invoking it
+    // would throw. A non-function lookup just means "no binding info" → const.
+    const varName = firstArgText.trim().replace(/^&\s*/, "");
+    return typeof cpiCtxLookup === "function" ? cpiCtxLookup(varName)?.program : undefined;
+  })();
   if (/^transfer_checked$|::transfer_checked$/.test(funcText)) {
     const result = extractSplTransfer(callNode, collector, cpiCtxLookup);
     if (result.kind === "cpi_spl_transfer") {
-      return { ...result, tokenProgram: "token_2022" as const };
+      return { ...result, tokenProgram: "token_2022" as const, ...(checkedTokenProgramArg ? { tokenProgramArg: checkedTokenProgramArg } : {}) };
     }
     return result;
   }
   if (/^mint_to_checked$|::mint_to_checked$/.test(funcText)) {
     const result = extractSplMintTo(callNode, collector);
     if (result.kind === "cpi_spl_mint_to") {
-      return { ...result, tokenProgram: "token_2022" as const };
+      return { ...result, tokenProgram: "token_2022" as const, ...(checkedTokenProgramArg ? { tokenProgramArg: checkedTokenProgramArg } : {}) };
     }
     return result;
   }
   if (/^burn_checked$|::burn_checked$/.test(funcText)) {
     const result = extractSplBurn(callNode, collector);
     if (result.kind === "cpi_spl_burn") {
-      return { ...result, tokenProgram: "token_2022" as const };
+      return { ...result, tokenProgram: "token_2022" as const, ...(checkedTokenProgramArg ? { tokenProgramArg: checkedTokenProgramArg } : {}) };
     }
     return result;
   }

@@ -238,6 +238,25 @@ const EXTERNAL_FIXTURES = new Set<string>([
   "program-examples-token-swap-create-amm",
   "program-examples-transfer-sol",
   "program-examples-transfer-tokens",
+  // declare_program! cross-program CPI fixtures (#2) — inline caller source +
+  // committed .so callees, no local demo file; their kinds (cpi_custom) are
+  // covered by in-tree demos. Catalogued so the coverage matrix accounts for
+  // every differential-declare-program-*.test.ts.
+  "declare-program-array",
+  "declare-program-bytes",
+  "declare-program-collections",
+  "declare-program-composite",
+  "declare-program-config-bool-pubkey",
+  "declare-program-defined-struct",
+  "declare-program-enum",
+  "declare-program-external-update",
+  "declare-program-option",
+  "declare-program-vault-signed",
+  // Legacy SPL transfer_checked misroute byte-equal gate (this fix).
+  "spl-transfer-checked-legacy",
+  // Original #2 hand→lever declare_program! CPI + the read-only-owner reject.
+  "program-examples-cpi-lever-hand",
+  "option-account-owner-reject",
 ]);
 
 /**
