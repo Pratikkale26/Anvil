@@ -3806,6 +3806,37 @@ ${originalLines}
   }
 
   /**
+   * #2 (loud-refuse) — does `typeName` serialize to a content-dependent
+   * (VARIABLE) on-disk length? A type that transitively contains a String /
+   * Vec / Option (or a complex enum with variant payloads) has a byte length
+   * that depends on the actual value, so the fixed-offset read/write path in
+   * buildReadLine/buildWriteLine — which advances `offset` by a constant
+   * resolveTypeSize — desyncs the cursor and SILENTLY corrupts every field
+   * after it on Anchor interop. Top-level String/Vec/Option have their own
+   * variable-length branch; this catches them NESTED inside a struct or
+   * fixed-array, where resolveTypeSize falls back to a hardcoded default
+   * (String:64, enum:1). `#[max_len]` does NOT make a String fixed — Borsh
+   * still serializes len+content; max_len only sizes the allocation.
+   */
+  protected isVariableLengthType(typeName: string, visited = new Set<string>()): boolean {
+    if (typeName === "String" || /^Vec<.+>$/.test(typeName) || /^Option<.+>$/.test(typeName)) return true;
+    const fixedArray = parseFixedArrayType(typeName);
+    if (fixedArray) return this.isVariableLengthType(fixedArray.elementType, visited);
+    if (visited.has(typeName)) return false;
+    const typeDef = this.customTypeDef(typeName);
+    if (!typeDef) return false; // primitive / Pubkey / [u8;N] / unknown → fixed
+    if (typeDef.kind === "enum") {
+      // Complex enum (variant payloads) → variable; unit-only enum → 1 byte.
+      return !!typeDef.rawCode && /\w+\s*[({]/.test(typeDef.rawCode);
+    }
+    if (!typeDef.fields) return false;
+    visited.add(typeName);
+    const result = typeDef.fields.some((f) => this.isVariableLengthType(f.type, visited));
+    visited.delete(typeName);
+    return result;
+  }
+
+  /**
    * Finding #55 — minimum on-disk size for an account struct. Used by the
    * emitted read()/write() guards when the struct has any String or Vec
    * fields whose actual serialized size depends on content length. The
@@ -4345,6 +4376,15 @@ ${allFields}
         offset += ${size};`;
     }
     if (fixedArray || typeDef?.kind === "struct") {
+      if (this.isVariableLengthType(typeName)) {
+        // #2 — this nested type transitively contains a String/Vec/Option (or a
+        // complex enum), so its on-disk length is content-dependent. The fixed
+        // `offset += ${size}` below would desync the cursor and silently corrupt
+        // every following field on Anchor interop. Loud-refuse rather than emit
+        // a wrong byte layout (a faithful variable-length nested read is a
+        // separate, larger change to the offset machinery).
+        return `        let ${fieldName}: ${typeName} = unimplemented!("anvil: account field '${fieldName}' has type '${typeName}', a nested variable-length type (String/Vec/Option/complex-enum member); reading it at a fixed byte offset would corrupt the fields after it — not supported");`;
+      }
       return `        let mut ${fieldName}_bytes = &__data_buf[offset..offset + ${size}];
         let ${fieldName}: ${typeName} = BorshDeserialize::deserialize(&mut ${fieldName}_bytes)
             .map_err(|_| ProgramError::InvalidAccountData)?;
@@ -4420,6 +4460,12 @@ ${allFields}
         offset += ${size};`;
     }
     if (fixedArray || typeDef?.kind === "struct") {
+      if (this.isVariableLengthType(typeName)) {
+        // #2 — mirror buildReadLine: a nested variable-length type written at a
+        // fixed offset desyncs the cursor and corrupts following fields. Loud-
+        // refuse instead of emitting a wrong byte layout.
+        return `        unimplemented!("anvil: account field '${fieldName}' has type '${typeName}', a nested variable-length type (String/Vec/Option/complex-enum member); writing it at a fixed byte offset would corrupt the fields after it — not supported");`;
+      }
       return `        {
             let mut ${fieldName}_bytes = &mut __data_buf[offset..offset + ${size}];
             BorshSerialize::serialize(&value.${fieldName}, &mut ${fieldName}_bytes)
