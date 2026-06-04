@@ -28,6 +28,12 @@ export interface ExternalIdlAccount {
   name: string;
   writable: boolean;
   signer: boolean;
+  /**
+   * Composite account: the Anchor IDL nests a `#[derive(Accounts)]` struct's
+   * leaves here (e.g. update_composite's `update` → [authority, my_account]).
+   * Present ⇒ this is a composite to flatten; writable/signer are not meaningful.
+   */
+  accounts?: ExternalIdlAccount[];
 }
 export interface ExternalIdlArg {
   name: string;
@@ -49,6 +55,13 @@ export interface ExternalIdl {
 /** Keyed by declare_program! crate name (e.g. "lever"). */
 export type ExternalIdlMap = Record<string, ExternalIdl>;
 
+/** Parse one IDL account entry, recursing into composite `accounts` leaves. */
+function parseIdlAccount(a: unknown): ExternalIdlAccount {
+  const acc = a as Record<string, unknown>;
+  const base = { name: String(acc.name), writable: acc.writable === true, signer: acc.signer === true };
+  return Array.isArray(acc.accounts) ? { ...base, accounts: acc.accounts.map(parseIdlAccount) } : base;
+}
+
 /** Validate + narrow a single raw Anchor IDL JSON object. Null if unusable. */
 export function parseExternalIdl(raw: unknown): ExternalIdl | null {
   if (!raw || typeof raw !== "object") return null;
@@ -61,12 +74,7 @@ export function parseExternalIdl(raw: unknown): ExternalIdl | null {
     for (const ixRaw of o.instructions) {
       const ix = ixRaw as Record<string, unknown>;
       if (typeof ix?.name !== "string" || !Array.isArray(ix.discriminator)) continue;
-      const accounts: ExternalIdlAccount[] = Array.isArray(ix.accounts)
-        ? ix.accounts.map((a) => {
-            const acc = a as Record<string, unknown>;
-            return { name: String(acc.name), writable: acc.writable === true, signer: acc.signer === true };
-          })
-        : [];
+      const accounts: ExternalIdlAccount[] = Array.isArray(ix.accounts) ? ix.accounts.map(parseIdlAccount) : [];
       const args: ExternalIdlArg[] = Array.isArray(ix.args)
         ? ix.args.map((a) => {
             const arg = a as Record<string, unknown>;
@@ -288,6 +296,69 @@ function collectCpiCtxLets(root: SyntaxNode): Map<string, CpiCtxLet> {
   return out;
 }
 
+/** Re-parse a struct-literal value (`Path::S { f: v, … }`) into field→value text. */
+function parseStructFields(text: string, parser: { parse(s: string): unknown }): Map<string, string> | null {
+  let tree: { rootNode: SyntaxNode } | null;
+  try {
+    tree = parser.parse(`fn __anvil_s() { let __x = ${text}; }`) as { rootNode: SyntaxNode } | null;
+  } catch {
+    return null;
+  }
+  if (!tree) return null;
+  let structNode: SyntaxNode | null = null;
+  walk(tree.rootNode, (n) => {
+    if (!structNode && n.type === "struct_expression") structNode = n;
+  });
+  if (!structNode) return null;
+  const body = (structNode as SyntaxNode).childForFieldName("body");
+  if (!body) return null;
+  const fields = new Map<string, string>();
+  for (let i = 0; i < body.namedChildCount; i++) {
+    const fi = body.namedChild(i);
+    if (!fi || fi.type !== "field_initializer") continue;
+    const fname = (fi.childForFieldName("field") ?? fi.childForFieldName("name"))?.text;
+    const fval = fi.childForFieldName("value")?.text?.trim();
+    if (fname && fval) fields.set(fname, fval);
+  }
+  return fields.size > 0 ? fields : null;
+}
+
+interface LeafAccount {
+  ref: string;
+  writable: boolean;
+  signer: boolean;
+}
+
+/**
+ * Flatten IDL accounts (recursing into composites) against the caller's
+ * CpiContext struct fields. Returns the ordered leaf accounts, or null if any
+ * leaf can't be resolved (missing field, non-account-ref value, unparsable
+ * nested struct) → the CPI then fails closed (no rewrite).
+ */
+function resolveLeafAccounts(
+  idlAccounts: ExternalIdlAccount[],
+  fields: Map<string, string>,
+  parser: { parse(s: string): unknown },
+): LeafAccount[] | null {
+  const out: LeafAccount[] = [];
+  for (const acct of idlAccounts) {
+    const fieldVal = fields.get(acct.name);
+    if (fieldVal === undefined) return null;
+    if (acct.accounts) {
+      const nestedFields = parseStructFields(fieldVal, parser);
+      if (!nestedFields) return null;
+      const nested = resolveLeafAccounts(acct.accounts, nestedFields, parser);
+      if (!nested) return null;
+      out.push(...nested);
+    } else {
+      const ref = accountRefOf(fieldVal);
+      if (!ref) return null;
+      out.push({ ref, writable: acct.writable, signer: acct.signer });
+    }
+  }
+  return out;
+}
+
 /**
  * The whole rewrite. Returns the rewritten source (or the original unchanged
  * when nothing applies / a guard fails).
@@ -356,27 +427,17 @@ export async function rewriteDeclareProgramCpis(source: string, idlMap: External
     const progRef = accountRefOf(ctxLet.programExpr);
     if (!progRef) return;
 
-    // metas + account_infos: one per IDL account, IN IDL ORDER, resolved from
-    // the caller's struct field whose name == the IDL account name.
-    const metaParts: string[] = [];
-    const infoParts: string[] = [];
+    // metas + account_infos: the leaf accounts IN IDL ORDER, resolved from the
+    // caller's CpiContext struct fields. Composite accounts (a nested
+    // #[derive(Accounts)] struct, e.g. update_composite) are flattened
+    // recursively on BOTH sides (IDL .accounts ⇆ the nested struct's fields).
+    const leaves = resolveLeafAccounts(idlIx.accounts, ctxLet.fields, parser);
+    if (!leaves) return; // a leaf didn't resolve (missing field / non-account-ref) → fail-closed
+    const metaParts = leaves.map(
+      (l) => `${l.writable ? "AccountMeta::new" : "AccountMeta::new_readonly"}(*${l.ref}.key, ${l.signer})`,
+    );
+    const infoParts = leaves.map((l) => `${l.ref}.to_account_info()`);
     let ok = true;
-    for (const acct of idlIx.accounts) {
-      const fieldVal = ctxLet.fields.get(acct.name);
-      if (!fieldVal) {
-        ok = false;
-        break;
-      }
-      const ref = accountRefOf(fieldVal);
-      if (!ref) {
-        ok = false;
-        break;
-      }
-      const ctor = acct.writable ? "AccountMeta::new" : "AccountMeta::new_readonly";
-      metaParts.push(`${ctor}(*${ref}.key, ${acct.signer})`);
-      infoParts.push(`${ref}.to_account_info()`);
-    }
-    if (!ok) return;
 
     // data = discriminator bytes + Borsh(args), as a Vec<u8> block expression.
     const discBytes = idlIx.discriminator.map((b) => `${b & 0xff}u8`).join(", ");

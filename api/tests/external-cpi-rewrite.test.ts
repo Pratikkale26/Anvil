@@ -216,7 +216,35 @@ declare_program!(cfg);
     expect(data).toContain("(admin).as_ref()");     // Borsh Pubkey → 32 raw bytes
   });
 
-  test("composite-account value (struct as field value) → NOT rewritten (fail-closed)", async () => {
+  test("composite account WITH IDL nested leaves → flattened recursively", async () => {
+    const src = `use anchor_lang::prelude::*;
+declare_id!("Dec1areProgram11111111111111111111111111111");
+declare_program!(external);
+#[program] pub mod c { use super::*;
+  pub fn f(ctx: Context<A>, value: u32) -> Result<()> {
+    let cpi_ctx = CpiContext::new(ctx.accounts.external_program.key(),
+      external::cpi::accounts::UpdateComposite { update: external::cpi::accounts::Update { authority: ctx.accounts.authority.to_account_info(), my_account: ctx.accounts.my_account.to_account_info() } });
+    external::cpi::update_composite(cpi_ctx, value)?; Ok(())
+  }
+}
+#[derive(Accounts)] pub struct A<'info> { pub authority: Signer<'info>, #[account(mut)] pub my_account: Account<'info, external::accounts::MyAccount>, pub external_program: AccountInfo<'info> }`;
+    // IDL marks `update` as a composite carrying its leaves (authority, my_account).
+    const idl = { metadata: { name: "external" }, instructions: [{ name: "update_composite", discriminator: [1, 2, 3, 4, 5, 6, 7, 8],
+      accounts: [{ name: "update", accounts: [{ name: "authority", signer: true }, { name: "my_account", writable: true }] }],
+      args: [{ name: "value", type: "u32" }] }] };
+    const ir = await irOf(src, { external: idl });
+    const inst = cpiOf(ir)?.canonical?.instruction;
+    expect(inst?.metas).toEqual([
+      { pubkey: "authority", writable: false, signer: true },
+      { pubkey: "my_account", writable: true, signer: false },
+    ]);
+    expect(cpiOf(ir)?.canonical?.accountInfos).toEqual([
+      "ctx.accounts.authority.to_account_info()",
+      "ctx.accounts.my_account.to_account_info()",
+    ]);
+  });
+
+  test("composite-account value but IDL marks it a LEAF → NOT rewritten (fail-closed)", async () => {
     // A field value that is itself an accounts struct (external::cpi::accounts::
     // Update {..}) is not a plain account ref — must fail closed, never emit a
     // meta referencing the (undefined) crate ident.
