@@ -114,10 +114,21 @@ describe("#2 (S4) — declare_program! CPI rewrite → cpi_custom.canonical", ()
     expect(errsOf(ir, emitPinocchioFull).length).toBeGreaterThan(0);
   });
 
-  test("still-ungated arg type (bytes) → NOT rewritten (fail-closed)", async () => {
-    // String + fixed-width ints are gated (lever/external differentials); bool,
-    // pubkey, bytes/Vec, defined types remain unsupported → must fail closed
-    // (never a silent unverified re-route).
+  test("bytes/Vec<u8> arg → len-prefix + raw bytes (rides the String gate)", async () => {
+    const idl = {
+      ...LEVER_IDL,
+      instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
+        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: "bytes" }] }],
+    };
+    const ir = await irOf(HAND, { lever: idl });
+    const data = cpiOf(ir)?.canonical?.instruction?.data ?? "";
+    expect(data).toContain("(name.len() as u32).to_le_bytes()"); // same length prefix as String
+    expect(data).toContain("extend_from_slice(&name)");          // raw bytes, not .as_bytes()
+  });
+
+  test("still-ungated arg type (Vec<u64>) → NOT rewritten (fail-closed)", async () => {
+    // bytes/Vec<u8> rides the String gate, but Vec<non-u8>, Option, arrays, and
+    // defined structs remain unsupported → must fail closed.
     const idl = {
       ...LEVER_IDL,
       instructions: [
@@ -125,7 +136,7 @@ describe("#2 (S4) — declare_program! CPI rewrite → cpi_custom.canonical", ()
           name: "switch_power",
           discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
           accounts: [{ name: "power", writable: true }],
-          args: [{ name: "name", type: "bytes" }],
+          args: [{ name: "name", type: { vec: "u64" } }],
         },
       ],
     };

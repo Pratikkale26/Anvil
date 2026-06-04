@@ -153,6 +153,14 @@ function encodeArgStmt(buf: string, argExpr: string, idlType: unknown): string |
     // Borsh String = u32 LE length + UTF-8 bytes.
     return `${buf}.extend_from_slice(&(${argExpr}.len() as u32).to_le_bytes()); ${buf}.extend_from_slice(${argExpr}.as_bytes());`;
   }
+  if (t === "bytes") {
+    // Borsh Vec<u8>/bytes = u32 LE length + the raw bytes — byte-identical to
+    // the String mechanism above (which a real differential, lever's
+    // switch_power(name: String), already gates), differing only in how the
+    // bytes are obtained (`&data` vs `name.as_bytes()`). Rides the String gate
+    // the way fixed-width ints ride the gated u32.
+    return `${buf}.extend_from_slice(&(${argExpr}.len() as u32).to_le_bytes()); ${buf}.extend_from_slice(&${argExpr});`;
+  }
   if (t && INT_TYPES.has(t)) {
     return `${buf}.extend_from_slice(&((${argExpr}) as ${t}).to_le_bytes());`;
   }
