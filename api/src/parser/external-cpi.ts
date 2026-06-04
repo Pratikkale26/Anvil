@@ -154,17 +154,54 @@ function rustTypeOf(idlType: unknown, seen: Set<string>): string | null {
  * type isn't a plain struct of supported fields. Adds any nested defined-type
  * names to `seen` (the caller generates those too, transitively).
  */
-function genStructDef(name: string, types: Record<string, unknown>, seen: Set<string>): string | null {
-  const body = types[name] as { kind?: string; fields?: unknown } | undefined;
-  if (!body || body.kind !== "struct" || !Array.isArray(body.fields)) return null;
-  const fields: string[] = [];
-  for (const f of body.fields as Array<{ name?: string; type?: unknown }>) {
-    if (typeof f?.name !== "string") return null;
-    const rt = rustTypeOf(f.type, seen);
-    if (rt === null) return null;
-    fields.push(`pub ${f.name}: ${rt}`);
+const DERIVE = "#[derive(AnchorSerialize, AnchorDeserialize, Clone)]";
+
+/** True when an enum variant's `fields` is the struct form ([{name,type}]) vs the tuple form ([type]). */
+function isStructVariant(fields: unknown[]): boolean {
+  return fields.every((f) => f != null && typeof f === "object" && "name" in (f as object));
+}
+
+function genTypeDef(name: string, types: Record<string, unknown>, seen: Set<string>): string | null {
+  const body = types[name] as { kind?: string; fields?: unknown; variants?: unknown } | undefined;
+  if (!body) return null;
+  if (body.kind === "struct" && Array.isArray(body.fields)) {
+    const fields: string[] = [];
+    for (const f of body.fields as Array<{ name?: string; type?: unknown }>) {
+      if (typeof f?.name !== "string") return null;
+      const rt = rustTypeOf(f.type, seen);
+      if (rt === null) return null;
+      fields.push(`pub ${f.name}: ${rt}`);
+    }
+    return `${DERIVE}\npub struct ${name} { ${fields.join(", ")} }`;
   }
-  return `#[derive(AnchorSerialize, AnchorDeserialize, Clone)]\npub struct ${name} { ${fields.join(", ")} }`;
+  if (body.kind === "enum" && Array.isArray(body.variants)) {
+    const variants: string[] = [];
+    for (const v of body.variants as Array<{ name?: string; fields?: unknown }>) {
+      if (typeof v?.name !== "string") return null;
+      const vf = Array.isArray(v.fields) ? (v.fields as unknown[]) : [];
+      if (vf.length === 0) {
+        variants.push(v.name);
+      } else if (isStructVariant(vf)) {
+        const fs: string[] = [];
+        for (const f of vf as Array<{ name?: string; type?: unknown }>) {
+          const rt = rustTypeOf(f.type, seen);
+          if (typeof f?.name !== "string" || rt === null) return null;
+          fs.push(`${f.name}: ${rt}`);
+        }
+        variants.push(`${v.name} { ${fs.join(", ")} }`);
+      } else {
+        const ts: string[] = [];
+        for (const f of vf) {
+          const rt = rustTypeOf(f, seen);
+          if (rt === null) return null;
+          ts.push(rt);
+        }
+        variants.push(`${v.name}(${ts.join(", ")})`);
+      }
+    }
+    return `${DERIVE}\npub enum ${name} { ${variants.join(", ")} }`;
+  }
+  return null;
 }
 
 /**
@@ -249,23 +286,57 @@ function encodeArgStmt(
     if (innerStmt === null) return null;
     return `${buf}.extend_from_slice(&(${argExpr}.len() as u32).to_le_bytes()); for ${e} in ${argExpr} { ${innerStmt} }`;
   }
-  // Borsh of a defined struct = its fields encoded in order. The IDL spells the
-  // arg `{ defined: { name } }` and carries the body under types[name] =
-  // { kind: "struct", fields: [{name,type}] }. Each field is `argExpr.fieldName`.
-  // Fails closed on a non-struct kind (enum), missing type, or unsupported field.
+  // Borsh of a defined type. The IDL spells the arg `{ defined: { name } }` and
+  // carries the body under types[name]. STRUCT = its fields encoded in order
+  // (`argExpr.fieldName`). ENUM = a u8 variant discriminant (declaration index)
+  // + the matched variant's fields, via a `match`. Fails closed on a missing
+  // type or any unsupported field.
   if (idlType && typeof idlType === "object" && "defined" in (idlType as object)) {
     const def = (idlType as { defined: unknown }).defined;
     const typeName = typeof def === "string" ? def : (def as { name?: string } | null)?.name;
-    const body = typeName ? (types[typeName] as { kind?: string; fields?: unknown } | undefined) : undefined;
-    if (!body || body.kind !== "struct" || !Array.isArray(body.fields)) return null;
-    const parts: string[] = [];
-    for (const f of body.fields as Array<{ name?: string; type?: unknown }>) {
-      if (typeof f?.name !== "string") return null;
-      const fstmt = encodeArgStmt(buf, `${argExpr}.${f.name}`, f.type, types, depth + 1);
-      if (fstmt === null) return null;
-      parts.push(fstmt);
+    const body = typeName
+      ? (types[typeName] as { kind?: string; fields?: unknown; variants?: unknown } | undefined)
+      : undefined;
+    if (!body) return null;
+    if (body.kind === "struct" && Array.isArray(body.fields)) {
+      const parts: string[] = [];
+      for (const f of body.fields as Array<{ name?: string; type?: unknown }>) {
+        if (typeof f?.name !== "string") return null;
+        const fstmt = encodeArgStmt(buf, `${argExpr}.${f.name}`, f.type, types, depth + 1);
+        if (fstmt === null) return null;
+        parts.push(fstmt);
+      }
+      return parts.join(" ");
     }
-    return parts.join(" ");
+    if (body.kind === "enum" && Array.isArray(body.variants)) {
+      const arms: string[] = [];
+      const variants = body.variants as Array<{ name?: string; fields?: unknown }>;
+      for (let i = 0; i < variants.length; i++) {
+        const v = variants[i]!;
+        if (typeof v.name !== "string") return null;
+        const vf = Array.isArray(v.fields) ? (v.fields as unknown[]) : [];
+        if (vf.length === 0) {
+          arms.push(`${typeName}::${v.name} => { ${buf}.push(${i}u8); }`);
+          continue;
+        }
+        const struct = isStructVariant(vf);
+        const binders: string[] = [];
+        const encs: string[] = [];
+        for (let j = 0; j < vf.length; j++) {
+          const bind = struct ? (vf[j] as { name?: string }).name : `__anvil_f${depth}_${j}`;
+          const ft = struct ? (vf[j] as { type?: unknown }).type : vf[j];
+          if (typeof bind !== "string") return null;
+          const enc = encodeArgStmt(buf, bind, ft, types, depth + 1);
+          if (enc === null) return null;
+          binders.push(bind);
+          encs.push(enc);
+        }
+        const pat = struct ? `{ ${binders.join(", ")} }` : `(${binders.join(", ")})`;
+        arms.push(`${typeName}::${v.name} ${pat} => { ${buf}.push(${i}u8); ${encs.join(" ")} }`);
+      }
+      return `match ${argExpr} { ${arms.join(", ")} }`;
+    }
+    return null;
   }
   // Borsh fixed array `[T; N]` = the N elements in order, NO length prefix.
   // `[u8; N]` is the fast path (`&arr` coerces to `&[u8]`); any other element
@@ -650,7 +721,7 @@ export async function rewriteDeclareProgramCpis(source: string, idlMap: External
         const { crate, name } = queue.shift()!;
         if (defs.has(name)) continue;
         const nested = new Set<string>();
-        const def = genStructDef(name, idlMap[crate]!.types, nested);
+        const def = genTypeDef(name, idlMap[crate]!.types, nested);
         if (!def) {
           genFailed = true;
           break;

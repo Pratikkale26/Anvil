@@ -140,14 +140,14 @@ describe("#2 (S4) — declare_program! CPI rewrite → cpi_custom.canonical", ()
     expect(data).toContain("as u64).to_le_bytes()");      // inner u64
   });
 
-  test("Option<unsupported inner> (Option<defined-enum>) → NOT rewritten (fail-closed)", async () => {
-    // Option<Vec>, Option<array>, Option<struct> are all supported now; only a
-    // genuinely-unsupported inner (a defined enum) makes Option fail closed.
+  test("unsupported defined type (missing from IDL types) → NOT rewritten (fail-closed)", async () => {
+    // Structs + enums are supported; a defined type the IDL doesn't carry (or an
+    // unsupported field) can't be generated/encoded → must fail closed.
     const idl = {
       ...LEVER_IDL,
       instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
-        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { option: { defined: { name: "E" } } } }] }],
-      types: [{ name: "E", type: { kind: "enum", variants: [{ name: "A" }] } }],
+        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { option: { defined: { name: "Missing" } } } }] }],
+      // no `types` entry for "Missing"
     };
     const ir = await irOf(HAND, { lever: idl });
     expect(cpiOf(ir)?.canonical?.instruction).toBeFalsy();
@@ -180,22 +180,23 @@ use ext::program::Ext;
     expect(errsOf(ir, emitPinocchioFull)).toEqual([]);
   });
 
-  test("defined-struct with an UNSUPPORTED field (enum/missing) → NOT rewritten (fail-closed)", async () => {
+  test("defined type with a transitively-missing nested type → NOT rewritten (fail-closed)", async () => {
     const src = `use anchor_lang::prelude::*;
 declare_id!("Dec1areProgram11111111111111111111111111111");
 declare_program!(ext);
 #[program] pub mod c { use super::*;
-  pub fn f(ctx: Context<A>, args: ext::types::Bad) -> Result<()> {
+  pub fn f(ctx: Context<A>, args: ext::types::Outer) -> Result<()> {
     let cpi_ctx = CpiContext::new(ctx.accounts.ext_program.key(),
       ext::cpi::accounts::Process { state: ctx.accounts.state.to_account_info() });
     ext::cpi::process(cpi_ctx, args)?; Ok(())
   }
 }
 #[derive(Accounts)] pub struct A<'info> { #[account(mut)] pub state: Account<'info, ext::accounts::St>, pub ext_program: AccountInfo<'info> }`;
-    // Bad is an enum (not a struct) → can't generate/encode → fail closed.
+    // Outer is generatable, but its field references Inner, which the IDL omits →
+    // all-or-nothing type generation can't complete → fail closed.
     const idl = { metadata: { name: "ext" },
-      instructions: [{ name: "process", discriminator: [1, 2, 3, 4, 5, 6, 7, 8], accounts: [{ name: "state", writable: true }], args: [{ name: "args", type: { defined: { name: "Bad" } } }] }],
-      types: [{ name: "Bad", type: { kind: "enum", variants: [{ name: "X" }] } }] };
+      instructions: [{ name: "process", discriminator: [1, 2, 3, 4, 5, 6, 7, 8], accounts: [{ name: "state", writable: true }], args: [{ name: "args", type: { defined: { name: "Outer" } } }] }],
+      types: [{ name: "Outer", type: { kind: "struct", fields: [{ name: "x", type: { defined: { name: "Inner" } } }] } }] };
     const ir = await irOf(src, { ext: idl });
     expect(cpiOf(ir)?.canonical?.instruction).toBeFalsy();
   });
@@ -238,16 +239,38 @@ declare_program!(ext);
     expect(data).not.toContain("len() as u32");       // fixed array → no length prefix
   });
 
-  test("defined-ENUM arg → NOT rewritten (fail-closed)", async () => {
-    // structs are supported (generated); enums are not → must fail closed.
-    const idl = {
-      ...LEVER_IDL,
-      instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
-        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { defined: { name: "E" } } }] }],
-      types: [{ name: "E", type: { kind: "enum", variants: [{ name: "A" }, { name: "B" }] } }],
-    };
-    const ir = await irOf(HAND, { lever: idl });
-    expect(cpiOf(ir)?.canonical?.instruction).toBeFalsy();
+  test("defined-ENUM arg → generated enum + match discriminant encoding", async () => {
+    const src = `use anchor_lang::prelude::*;
+declare_id!("Dec1areProgram11111111111111111111111111111");
+declare_program!(ext);
+use ext::program::Ext;
+#[program] pub mod c { use super::*;
+  pub fn f(ctx: Context<A>, mode: ext::types::E) -> Result<()> {
+    let cpi_ctx = CpiContext::new(ctx.accounts.ext_program.key(),
+      ext::cpi::accounts::Process { state: ctx.accounts.state.to_account_info() });
+    ext::cpi::process(cpi_ctx, mode)?; Ok(())
+  }
+}
+#[derive(Accounts)] pub struct A<'info> { #[account(mut)] pub state: Account<'info, ext::accounts::St>, pub ext_program: Program<'info, Ext> }`;
+    const idl = { metadata: { name: "ext" },
+      instructions: [{ name: "process", discriminator: [1, 2, 3, 4, 5, 6, 7, 8], accounts: [{ name: "state", writable: true }], args: [{ name: "mode", type: { defined: { name: "E" } } }] }],
+      types: [{ name: "E", type: { kind: "enum", variants: [{ name: "A" }, { name: "B" }, { name: "C", fields: ["u32"] }, { name: "D", fields: [{ name: "n", type: "u64" }, { name: "flag", type: "bool" }] }] } }] };
+    const ir = await irOf(src, { ext: idl });
+    // arg type rewritten to the bare name; enum injected; match-discriminant encode.
+    expect(ir.instructions[0]!.args).toEqual([{ name: "mode", type: "E" }]);
+    const data = cpiOf(ir)?.canonical?.instruction?.data ?? "";
+    expect(data).toContain("match mode");
+    expect(data).toContain("E::A => { ");            // unit variant
+    expect(data).toContain("push(0u8)");              // discriminant 0
+    expect(data).toContain("E::C (");                 // tuple variant — positional bind
+    expect(data).toContain("push(2u8)");              // discriminant 2 (C)
+    expect(data).toContain("as u32).to_le_bytes()");  // C's u32 field
+    expect(data).toContain("E::D { n, flag }");       // struct variant — named destructure
+    expect(data).toContain("push(3u8)");              // discriminant 3 (D)
+    expect(data).toContain("as u64).to_le_bytes()");  // D's u64 field, in order
+    const text = emitPinocchioFull(ir).files.map((f) => f.content).join("\n");
+    expect(/enum E /.test(text)).toBe(true);          // injected enum def
+    expect(errsOf(ir, emitPinocchioFull)).toEqual([]);
   });
 
   // ── qualified-path call form + numeric (u32) arg (Anchor canonical style) ──
