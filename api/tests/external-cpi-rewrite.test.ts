@@ -152,6 +152,53 @@ describe("#2 (S4) — declare_program! CPI rewrite → cpi_custom.canonical", ()
     expect(cpiOf(ir)?.canonical?.instruction).toBeFalsy();
   });
 
+  test("defined-struct arg → struct injected + fields encoded in order", async () => {
+    const src = `use anchor_lang::prelude::*;
+declare_id!("Dec1areProgram11111111111111111111111111111");
+declare_program!(ext);
+use ext::program::Ext;
+#[program] pub mod c { use super::*;
+  pub fn f(ctx: Context<A>, args: ext::types::MyArgs) -> Result<()> {
+    let cpi_ctx = CpiContext::new(ctx.accounts.ext_program.key(),
+      ext::cpi::accounts::Process { state: ctx.accounts.state.to_account_info() });
+    ext::cpi::process(cpi_ctx, args)?; Ok(())
+  }
+}
+#[derive(Accounts)] pub struct A<'info> { #[account(mut)] pub state: Account<'info, ext::accounts::St>, pub ext_program: Program<'info, Ext> }`;
+    const idl = { metadata: { name: "ext" },
+      instructions: [{ name: "process", discriminator: [1, 2, 3, 4, 5, 6, 7, 8], accounts: [{ name: "state", writable: true }], args: [{ name: "args", type: { defined: { name: "MyArgs" } } }] }],
+      types: [{ name: "MyArgs", type: { kind: "struct", fields: [{ name: "a", type: "u64" }, { name: "b", type: "string" }] } }] };
+    const ir = await irOf(src, { ext: idl });
+    // arg type rewritten to the bare name + the struct injected into the emit.
+    expect(ir.instructions[0]!.args).toEqual([{ name: "args", type: "MyArgs" }]);
+    const data = cpiOf(ir)?.canonical?.instruction?.data ?? "";
+    expect(data).toContain("((args.a) as u64).to_le_bytes()");   // field a (u64)
+    expect(data).toContain("args.b.as_bytes()");                  // field b (string), in order
+    const text = emitPinocchioFull(ir).files.map((f) => f.content).join("\n");
+    expect(/struct MyArgs/.test(text)).toBe(true);                // injected def
+    expect(errsOf(ir, emitPinocchioFull)).toEqual([]);
+  });
+
+  test("defined-struct with an UNSUPPORTED field (enum/missing) → NOT rewritten (fail-closed)", async () => {
+    const src = `use anchor_lang::prelude::*;
+declare_id!("Dec1areProgram11111111111111111111111111111");
+declare_program!(ext);
+#[program] pub mod c { use super::*;
+  pub fn f(ctx: Context<A>, args: ext::types::Bad) -> Result<()> {
+    let cpi_ctx = CpiContext::new(ctx.accounts.ext_program.key(),
+      ext::cpi::accounts::Process { state: ctx.accounts.state.to_account_info() });
+    ext::cpi::process(cpi_ctx, args)?; Ok(())
+  }
+}
+#[derive(Accounts)] pub struct A<'info> { #[account(mut)] pub state: Account<'info, ext::accounts::St>, pub ext_program: AccountInfo<'info> }`;
+    // Bad is an enum (not a struct) → can't generate/encode → fail closed.
+    const idl = { metadata: { name: "ext" },
+      instructions: [{ name: "process", discriminator: [1, 2, 3, 4, 5, 6, 7, 8], accounts: [{ name: "state", writable: true }], args: [{ name: "args", type: { defined: { name: "Bad" } } }] }],
+      types: [{ name: "Bad", type: { kind: "enum", variants: [{ name: "X" }] } }] };
+    const ir = await irOf(src, { ext: idl });
+    expect(cpiOf(ir)?.canonical?.instruction).toBeFalsy();
+  });
+
   test("Vec<u64> arg → u32 length + per-element loop", async () => {
     const idl = {
       ...LEVER_IDL,

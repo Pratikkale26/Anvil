@@ -51,6 +51,13 @@ export interface ExternalIdl {
   name: string;
   /** Keyed by snake_case instruction name. */
   instructions: Record<string, ExternalIdlInstruction>;
+  /**
+   * Defined types, keyed by name → the IDL `type` body (e.g.
+   * { kind: "struct", fields: [{name,type}] }). Used both to GENERATE the Rust
+   * struct def (so the caller can deserialize an external struct arg) and to
+   * encode it. Non-struct kinds (enum) stay unsupported → fail-closed.
+   */
+  types: Record<string, unknown>;
 }
 /** Keyed by declare_program! crate name (e.g. "lever"). */
 export type ExternalIdlMap = Record<string, ExternalIdl>;
@@ -89,7 +96,75 @@ export function parseExternalIdl(raw: unknown): ExternalIdl | null {
       };
     }
   }
-  return { address: typeof o.address === "string" ? o.address : undefined, name, instructions };
+  const types: Record<string, unknown> = {};
+  if (Array.isArray(o.types)) {
+    for (const tRaw of o.types) {
+      const t = tRaw as Record<string, unknown>;
+      if (typeof t?.name === "string" && t.type) types[t.name] = t.type;
+    }
+  }
+  return { address: typeof o.address === "string" ? o.address : undefined, name, instructions, types };
+}
+
+/**
+ * Map an Anchor IDL type token to a Rust type string (for generating an
+ * external struct definition the caller can deserialize). Recurses into vec /
+ * option / array / defined. Returns null if any leg is unsupported → the whole
+ * struct gen / CPI fails closed. `seen` collects referenced defined-type names
+ * so the caller can transitively generate them too.
+ */
+function rustTypeOf(idlType: unknown, seen: Set<string>): string | null {
+  if (typeof idlType === "string") {
+    const t = idlType.toLowerCase();
+    if (t === "string") return "String";
+    if (t === "bool") return "bool";
+    if (t === "pubkey" || t === "publickey") return "Pubkey";
+    if (t === "bytes") return "Vec<u8>";
+    if (INT_TYPES.has(t)) return t;
+    return null;
+  }
+  if (idlType && typeof idlType === "object") {
+    const o = idlType as Record<string, unknown>;
+    if ("vec" in o) {
+      const inner = rustTypeOf(o.vec, seen);
+      return inner ? `Vec<${inner}>` : null;
+    }
+    if ("option" in o) {
+      const inner = rustTypeOf(o.option, seen);
+      return inner ? `Option<${inner}>` : null;
+    }
+    if ("array" in o && Array.isArray(o.array)) {
+      const inner = rustTypeOf(o.array[0], seen);
+      const n = o.array[1];
+      return inner && typeof n === "number" ? `[${inner}; ${n}]` : null;
+    }
+    if ("defined" in o) {
+      const def = o.defined;
+      const name = typeof def === "string" ? def : (def as { name?: string } | null)?.name;
+      if (typeof name !== "string") return null;
+      seen.add(name);
+      return name;
+    }
+  }
+  return null;
+}
+
+/**
+ * Generate a Rust struct definition for an IDL defined type, or null if the
+ * type isn't a plain struct of supported fields. Adds any nested defined-type
+ * names to `seen` (the caller generates those too, transitively).
+ */
+function genStructDef(name: string, types: Record<string, unknown>, seen: Set<string>): string | null {
+  const body = types[name] as { kind?: string; fields?: unknown } | undefined;
+  if (!body || body.kind !== "struct" || !Array.isArray(body.fields)) return null;
+  const fields: string[] = [];
+  for (const f of body.fields as Array<{ name?: string; type?: unknown }>) {
+    if (typeof f?.name !== "string") return null;
+    const rt = rustTypeOf(f.type, seen);
+    if (rt === null) return null;
+    fields.push(`pub ${f.name}: ${rt}`);
+  }
+  return `#[derive(AnchorSerialize, AnchorDeserialize, Clone)]\npub struct ${name} { ${fields.join(", ")} }`;
 }
 
 /**
@@ -147,15 +222,21 @@ export function parseExternalIdlMap(raw: Record<string, unknown> | undefined): E
 // differential (external::cpi::update). bool (1 byte) / pubkey (32 bytes) are
 // DISTINCT mechanisms → still fail-closed until each gets its own fixture.
 const INT_TYPES = new Set(["u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128"]);
-function encodeArgStmt(buf: string, argExpr: string, idlType: unknown, depth = 0): string | null {
-  if (depth > 3) return null; // bound recursion (e.g. Option<Option<…>>)
+function encodeArgStmt(
+  buf: string,
+  argExpr: string,
+  idlType: unknown,
+  types: Record<string, unknown> = {},
+  depth = 0,
+): string | null {
+  if (depth > 4) return null; // bound recursion (nested Option / defined types)
   // Borsh Option<T> = a 1-byte tag (0 None / 1 Some) + (if Some) the inner T,
   // encoded recursively. The IDL spells it `{ option: <T> }`. Matching by value
   // moves/copies the arg (used only here) so the inner encode is identical to a
   // top-level one. Fails closed if the inner type isn't itself supported.
   if (idlType && typeof idlType === "object" && "option" in (idlType as object)) {
     const v = `__anvil_opt${depth}`;
-    const innerStmt = encodeArgStmt(buf, v, (idlType as { option: unknown }).option, depth + 1);
+    const innerStmt = encodeArgStmt(buf, v, (idlType as { option: unknown }).option, types, depth + 1);
     if (innerStmt === null) return null;
     return `match ${argExpr} { Some(${v}) => { ${buf}.push(1u8); ${innerStmt} }, None => { ${buf}.push(0u8); } }`;
   }
@@ -164,9 +245,27 @@ function encodeArgStmt(buf: string, argExpr: string, idlType: unknown, depth = 0
   // encode is identical to a top-level one. Fails closed if T isn't supported.
   if (idlType && typeof idlType === "object" && "vec" in (idlType as object)) {
     const e = `__anvil_vec${depth}`;
-    const innerStmt = encodeArgStmt(buf, e, (idlType as { vec: unknown }).vec, depth + 1);
+    const innerStmt = encodeArgStmt(buf, e, (idlType as { vec: unknown }).vec, types, depth + 1);
     if (innerStmt === null) return null;
     return `${buf}.extend_from_slice(&(${argExpr}.len() as u32).to_le_bytes()); for ${e} in ${argExpr} { ${innerStmt} }`;
+  }
+  // Borsh of a defined struct = its fields encoded in order. The IDL spells the
+  // arg `{ defined: { name } }` and carries the body under types[name] =
+  // { kind: "struct", fields: [{name,type}] }. Each field is `argExpr.fieldName`.
+  // Fails closed on a non-struct kind (enum), missing type, or unsupported field.
+  if (idlType && typeof idlType === "object" && "defined" in (idlType as object)) {
+    const def = (idlType as { defined: unknown }).defined;
+    const typeName = typeof def === "string" ? def : (def as { name?: string } | null)?.name;
+    const body = typeName ? (types[typeName] as { kind?: string; fields?: unknown } | undefined) : undefined;
+    if (!body || body.kind !== "struct" || !Array.isArray(body.fields)) return null;
+    const parts: string[] = [];
+    for (const f of body.fields as Array<{ name?: string; type?: unknown }>) {
+      if (typeof f?.name !== "string") return null;
+      const fstmt = encodeArgStmt(buf, `${argExpr}.${f.name}`, f.type, types, depth + 1);
+      if (fstmt === null) return null;
+      parts.push(fstmt);
+    }
+    return parts.join(" ");
   }
   // Borsh fixed array `[u8; N]` = the N raw bytes, no length prefix. The IDL
   // spells it `{ array: ["u8", N] }`; `&arr` coerces to `&[u8]`. Non-u8 element
@@ -483,7 +582,7 @@ export async function rewriteDeclareProgramCpis(source: string, idlMap: External
     const bufVar = `__anvil_cpi_data_${synthCount}`;
     const argStmts: string[] = [];
     for (let i = 0; i < idlIx.args.length; i++) {
-      const stmt = encodeArgStmt(bufVar, valueArgs[i]!, idlIx.args[i]!.type);
+      const stmt = encodeArgStmt(bufVar, valueArgs[i]!, idlIx.args[i]!.type, idl.types);
       if (stmt === null) {
         ok = false;
         break;
@@ -514,17 +613,69 @@ export async function rewriteDeclareProgramCpis(source: string, idlMap: External
 
   if (synthCount === 0) return source; // nothing rewritten → untouched
 
+  // ── External-type generation (defined-struct args) ──
+  // A reference like `<crate>::types::<T>` (an external struct used as a CPI
+  // arg) needs T DEFINED so the caller can deserialize it. Generate the struct
+  // def from idl.types (transitively for nested defined types), rewrite the
+  // refs to the bare name, and inject the defs where the first declare_program!
+  // was. ALL-OR-NOTHING: if any referenced type can't be generated (enum,
+  // missing, unsupported field), skip the whole injection — the refs stay so
+  // Anvil keeps the external type and the arg loud-refuses (the CPI's
+  // encodeArgStmt fails closed in lockstep). Never emit a ref to an undefined type.
+  let injectedDefs = "";
+  {
+    const typeRefRe = new RegExp(`\\b(${[...knownCrates].join("|")})\\s*::\\s*types\\s*::\\s*([A-Za-z_]\\w*)`, "g");
+    const refEdits: Array<{ start: number; end: number; replacement: string }> = [];
+    const needed: Array<{ crate: string; name: string }> = [];
+    const neededNames = new Set<string>();
+    let m: RegExpExecArray | null;
+    while ((m = typeRefRe.exec(source)) !== null) {
+      const crate = m[1]!;
+      const name = m[2]!;
+      refEdits.push({ start: m.index, end: m.index + m[0].length, replacement: name });
+      if (!neededNames.has(name)) {
+        neededNames.add(name);
+        needed.push({ crate, name });
+      }
+    }
+    if (needed.length > 0) {
+      const defs = new Map<string, string>();
+      const queue = [...needed];
+      let genFailed = false;
+      while (queue.length) {
+        const { crate, name } = queue.shift()!;
+        if (defs.has(name)) continue;
+        const nested = new Set<string>();
+        const def = genStructDef(name, idlMap[crate]!.types, nested);
+        if (!def) {
+          genFailed = true;
+          break;
+        }
+        defs.set(name, def);
+        for (const nm of nested) if (!defs.has(nm)) queue.push({ crate, name: nm });
+      }
+      if (!genFailed) {
+        injectedDefs = [...defs.values()].join("\n\n");
+        edits.push(...refEdits);
+      }
+    }
+  }
+
   // Strip the consumed CpiContext lets.
   for (const v of consumedLetVars) {
     const ctxLet = cpiCtxLets.get(v);
     if (ctxLet) edits.push({ start: ctxLet.node.startIndex, end: ctxLet.node.endIndex, replacement: "" });
   }
   // Strip declare_program! statements + external-crate use imports (they
-  // reference a crate absent from the emitted output).
+  // reference a crate absent from the emitted output). The FIRST declare_program!
+  // strip site doubles as the injection point for generated external struct defs.
+  let injectedYet = false;
   for (const d of declarePrograms) {
     if (!knownCrates.has(d.crate)) continue;
     const stmt = enclosingStatement(d.node);
-    edits.push({ start: stmt.startIndex, end: stmt.endIndex, replacement: "" });
+    const replacement = !injectedYet && injectedDefs ? `\n${injectedDefs}\n` : "";
+    if (!injectedYet && injectedDefs) injectedYet = true;
+    edits.push({ start: stmt.startIndex, end: stmt.endIndex, replacement });
   }
   for (const u of stripNodes) {
     edits.push({ start: u.startIndex, end: u.endIndex, replacement: "" });
