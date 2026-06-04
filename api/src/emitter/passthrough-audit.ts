@@ -22,6 +22,42 @@
  */
 import type { SolanaIR } from "../ir/schema.js";
 import { stripHandledBranchedSplCpis } from "./body-emitter/branched-spl-cpi-recognizer.js";
+import { snakeCase } from "./emitter-utils.js";
+
+/**
+ * Remove system-program CPIs the walker deterministically lowers to
+ * `invoke(&system_instruction::*)` — the same shape the native emitter's
+ * SYSPROG_CPI_RE matches. Byte-equal-proven by
+ * differential-program-examples-create-account. Verbs are restricted to the
+ * unambiguous system-program ops (NOT `transfer`, which collides with the
+ * token-CPI name and is handled by stripHandledBranchedSplCpis). Balanced-paren
+ * removal so the residual `ctx.accounts.<prog>.key()` + `CpiContext::` inside
+ * the call can't trip a false classification-gap error; unbalanced input is
+ * left intact (fail-closed → still flagged).
+ */
+function stripHandledSystemProgramCpis(code: string): string {
+  const TRIGGER =
+    /\b(?:create_account|create_account_with_seed|allocate|assign)\s*\(\s*CpiContext\s*::\s*new(?:_with_signer)?\s*\(/;
+  let out = code;
+  for (;;) {
+    const match = TRIGGER.exec(out);
+    if (!match) break;
+    const start = match.index;
+    const openParen = out.indexOf("(", start);
+    let depth = 0;
+    let end = -1;
+    for (let i = openParen; i < out.length; i++) {
+      const ch = out[i];
+      if (ch === "(") depth++;
+      else if (ch === ")" && --depth === 0) { end = i; break; }
+    }
+    if (end === -1) break; // unbalanced → leave intact (fail-closed)
+    let tail = end + 1;
+    while (tail < out.length && /[?;\s]/.test(out[tail]!)) tail++;
+    out = out.slice(0, start) + out.slice(tail);
+  }
+  return out;
+}
 
 export interface PassthroughFinding {
   severity: "error" | "warning";
@@ -92,7 +128,7 @@ function firstLine(s: string): string {
  * byte-equal, and the audit's purpose is to flag CLASSIFICATION GAPS
  * rather than transcribe every Anchor surface that has a target shape.
  */
-function normalizeForAudit(code: string): string {
+function normalizeForAudit(code: string, tokenAccounts: ReadonlySet<string> = new Set()): string {
   // `.to_account_info()` is the ONE universally emit-handled account pattern:
   // `ctx.accounts.X.to_account_info()` lowers to the canonical account binding
   // `X` on every target (the standard CPI shape), so flagging it is a false
@@ -116,8 +152,25 @@ function normalizeForAudit(code: string): string {
   // error. Single-source: the recognizer is shared with the walker, so a shape
   // it does NOT match (let-else / closure / computed program-id / a mangled
   // partial) is left intact and still flagged. (#4 Finding: staking unstake.)
-  const withoutHandledCpis = stripHandledBranchedSplCpis(code);
-  return withoutHandledCpis.replace(
+  //
+  // System-program CPIs (create_account / create_account_with_seed / allocate /
+  // assign via CpiContext::new[_with_signer]) lower to the target
+  // system_instruction CPI by the walker — byte-equal-proven by
+  // differential-program-examples-create-account. Strip that exact shape first
+  // (its residual `ctx.accounts.<prog>.key()` + `CpiContext::` would otherwise
+  // trip the patterns). Same single-source principle as the branched-SPL strip.
+  const withoutSysprogCpis = stripHandledSystemProgramCpis(code);
+  const withoutHandledCpis = stripHandledBranchedSplCpis(withoutSysprogCpis);
+  // Token-account `.amount` reads lower to `token_account_amount(X)?` (Finding
+  // B, e52af5a) — proven for token-LIKE accounts ONLY. Strip that exact shape
+  // for known token accounts so it doesn't trip the ctx.accounts pattern; a
+  // `.amount` on a non-token account (an arbitrary struct field) stays flagged,
+  // since that lowering is NOT proven (keeps the B2 silent-read guard intact).
+  const withoutTokenAmount = withoutHandledCpis.replace(
+    /\bctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*amount\b/g,
+    (full: string, name: string) => (tokenAccounts.has(name) ? `token_account_amount(${name})` : full),
+  );
+  return withoutTokenAmount.replace(
     /\bctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*to_account_info\s*\(\s*\)/g,
     "$1",
   );
@@ -126,13 +179,25 @@ function normalizeForAudit(code: string): string {
 export function auditPassthrough(ir: SolanaIR): PassthroughFinding[] {
   const findings: PassthroughFinding[] = [];
   for (const instr of ir.instructions) {
+    // Token-like account names (same gate the .amount lowering uses in
+    // emitter-helpers): Account<'info, TokenAccount> or a token::/
+    // associated_token:: constraint. normalizeForAudit strips `.amount` reads
+    // only for these.
+    const tokenAccounts = new Set(
+      (instr.accounts ?? [])
+        .filter((a) =>
+          a.accountType.includes("TokenAccount") ||
+          (a.constraints ?? []).some((c) => c.kind.startsWith("token::") || c.kind.startsWith("associated_token::")),
+        )
+        .map((a) => snakeCase(a.name)),
+    );
     const body = instr.body ?? [];
     for (let i = 0; i < body.length; i++) {
       const stmt = body[i];
       if (!stmt || stmt.kind !== "pass_through") continue;
       const code = stmt.code;
       if (!code) continue;
-      const normalized = normalizeForAudit(code);
+      const normalized = normalizeForAudit(code, tokenAccounts);
       for (const { pattern, message, severity } of PATTERNS) {
         if (pattern.test(normalized)) {
           findings.push({
