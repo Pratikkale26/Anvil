@@ -147,7 +147,18 @@ export function parseExternalIdlMap(raw: Record<string, unknown> | undefined): E
 // differential (external::cpi::update). bool (1 byte) / pubkey (32 bytes) are
 // DISTINCT mechanisms → still fail-closed until each gets its own fixture.
 const INT_TYPES = new Set(["u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128"]);
-function encodeArgStmt(buf: string, argExpr: string, idlType: unknown): string | null {
+function encodeArgStmt(buf: string, argExpr: string, idlType: unknown, depth = 0): string | null {
+  if (depth > 3) return null; // bound recursion (e.g. Option<Option<…>>)
+  // Borsh Option<T> = a 1-byte tag (0 None / 1 Some) + (if Some) the inner T,
+  // encoded recursively. The IDL spells it `{ option: <T> }`. Matching by value
+  // moves/copies the arg (used only here) so the inner encode is identical to a
+  // top-level one. Fails closed if the inner type isn't itself supported.
+  if (idlType && typeof idlType === "object" && "option" in (idlType as object)) {
+    const v = `__anvil_opt${depth}`;
+    const innerStmt = encodeArgStmt(buf, v, (idlType as { option: unknown }).option, depth + 1);
+    if (innerStmt === null) return null;
+    return `match ${argExpr} { Some(${v}) => { ${buf}.push(1u8); ${innerStmt} }, None => { ${buf}.push(0u8); } }`;
+  }
   const t = typeof idlType === "string" ? idlType.toLowerCase() : null;
   if (t === "string") {
     // Borsh String = u32 LE length + UTF-8 bytes.

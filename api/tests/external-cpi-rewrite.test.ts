@@ -126,6 +126,30 @@ describe("#2 (S4) — declare_program! CPI rewrite → cpi_custom.canonical", ()
     expect(data).toContain("extend_from_slice(&name)");          // raw bytes, not .as_bytes()
   });
 
+  test("Option<u64> arg → Borsh tag + inner (match encoding)", async () => {
+    const idl = {
+      ...LEVER_IDL,
+      instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
+        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { option: "u64" } }] }],
+    };
+    const ir = await irOf(HAND, { lever: idl });
+    const data = cpiOf(ir)?.canonical?.instruction?.data ?? "";
+    expect(data).toContain("match name");
+    expect(data).toContain("push(1u8)");                  // Some tag
+    expect(data).toContain("push(0u8)");                  // None tag
+    expect(data).toContain("as u64).to_le_bytes()");      // inner u64
+  });
+
+  test("Option<unsupported inner> (Option<Vec<u64>>) → NOT rewritten (fail-closed)", async () => {
+    const idl = {
+      ...LEVER_IDL,
+      instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
+        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { option: { vec: "u64" } } }] }],
+    };
+    const ir = await irOf(HAND, { lever: idl });
+    expect(cpiOf(ir)?.canonical?.instruction).toBeFalsy();
+  });
+
   test("still-ungated arg type (Vec<u64>) → NOT rewritten (fail-closed)", async () => {
     // bytes/Vec<u8> rides the String gate, but Vec<non-u8>, Option, arrays, and
     // defined structs remain unsupported → must fail closed.
