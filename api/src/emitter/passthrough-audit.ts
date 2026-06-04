@@ -36,8 +36,13 @@ import { snakeCase } from "./emitter-utils.js";
  * left intact (fail-closed → still flagged).
  */
 function stripHandledSystemProgramCpis(code: string): string {
+  // Only the create_account family — create_account is differential-proven
+  // (differential-program-examples-create-account) and create_account_with_seed
+  // shares its lowering. allocate/assign go through the same SYSPROG walker but
+  // have NO test/corpus coverage, so leave them flagged (a loud pre-emit refuse
+  // beats silently passing them to a downstream cargo error).
   const TRIGGER =
-    /\b(?:create_account|create_account_with_seed|allocate|assign)\s*\(\s*CpiContext\s*::\s*new(?:_with_signer)?\s*\(/;
+    /\b(?:create_account|create_account_with_seed)\s*\(\s*CpiContext\s*::\s*new(?:_with_signer)?\s*\(/;
   let out = code;
   for (;;) {
     const match = TRIGGER.exec(out);
