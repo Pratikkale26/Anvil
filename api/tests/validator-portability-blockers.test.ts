@@ -9,10 +9,17 @@
  * the write upfront.
  *
  * This file locks the contract:
- * - mpl_core blocks BOTH targets (no structural rewrite + no helper)
- * - pyth_sdk_solana + pyth_solana_receiver_sdk are now "review"
+ * - mpl_core + switchboard_on_demand are "review" (NOT blockers): both
+ *   ship typed CPI transpilation (MPL Core catalog #48; Switchboard
+ *   On-Demand feed reads #47), so a working program must pass the strict
+ *   gate. An *unrecognized* sub-instruction still lands in pass_through
+ *   and is caught by the B6 cpi_unrecognized_dropped guard, not this
+ *   import-prefix pass — so relaxing here opens no silent-loss hole.
+ * - pyth_sdk_solana + pyth_solana_receiver_sdk are "review"
  *   since N5b unified the Pyth emit on hand-rolled bytes (no crate
  *   dep needed; emit compiles cleanly).
+ * - genuinely-unported crates (drift, jupiter, switchboard_v2/_solana,
+ *   pythnet_sdk) stay blockers.
  * - clean imports (anchor_lang, anchor_spl::token) → no errors
  * - duplicate-prefix dedupe so one offending crate yields one error
  */
@@ -73,11 +80,34 @@ describe("validator checkPortabilityBlockers", () => {
     expect(blockers.length).toBe(0);
   });
 
-  test("mpl_core blocks BOTH pinocchio AND native (no structural rewrite either way)", () => {
+  test("mpl_core → no portability error on either target (catalog transpiled #48, verdict review)", () => {
     const ir = buildIr(["use mpl_core::accounts::Asset;"]);
     for (const target of ["pinocchio", "native"] as const) {
       const issues = validateEmitterOutput(ir, mkOutput(target));
       const blockers = issues.filter((i) => i.severity === "error" && i.message.includes("[portability]") && i.message.includes("mpl_core"));
+      expect(blockers.length).toBe(0);
+    }
+  });
+
+  test("switchboard_on_demand → no portability error (feed reads transpiled #47, verdict review)", () => {
+    const ir = buildIr(["use switchboard_on_demand::accounts::PullFeedAccountData;"]);
+    for (const target of ["pinocchio", "native"] as const) {
+      const issues = validateEmitterOutput(ir, mkOutput(target));
+      const blockers = issues.filter((i) => i.severity === "error" && i.message.includes("[portability]") && i.message.includes("switchboard_on_demand"));
+      expect(blockers.length).toBe(0);
+    }
+  });
+
+  test("genuinely-unported crates stay blockers (drift, jupiter, switchboard_v2, pythnet_sdk)", () => {
+    for (const imp of [
+      "use drift_program::cpi::deposit;",
+      "use jupiter_cpi::swap;",
+      "use switchboard_v2::AggregatorAccountData;",
+      "use pythnet_sdk::wire::v1::MerklePriceUpdate;",
+    ]) {
+      const ir = buildIr([imp]);
+      const issues = validateEmitterOutput(ir, mkOutput("pinocchio"));
+      const blockers = issues.filter((i) => i.severity === "error" && i.message.includes("[portability]"));
       expect(blockers.length).toBeGreaterThan(0);
     }
   });
@@ -95,15 +125,15 @@ describe("validator checkPortabilityBlockers", () => {
   });
 
   test("multiple blockers in one file → one error per unique prefix (deduped)", () => {
-    // Use a prefix that's still a blocker (mpl_core, drift) — pyth_sdk_solana
-    // is no longer a blocker post-M2b.
+    // Use a prefix that's still a blocker (drift_program) — mpl_core and
+    // pyth_sdk_solana are now "review", not blockers.
     const ir = buildIr([
-      "use mpl_core::accounts::Asset;",
-      "use mpl_core::utils;",
-      "use mpl_core::constants;",
+      "use drift_program::state::User;",
+      "use drift_program::cpi::deposit;",
+      "use drift_program::constants;",
     ]);
     const issues = validateEmitterOutput(ir, mkOutput("pinocchio"));
-    const blockers = issues.filter((i) => i.severity === "error" && i.message.includes("[portability]") && i.message.includes("mpl_core"));
+    const blockers = issues.filter((i) => i.severity === "error" && i.message.includes("[portability]") && i.message.includes("drift_program"));
     expect(blockers.length).toBe(1);
   });
 });

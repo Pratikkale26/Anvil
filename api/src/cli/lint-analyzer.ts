@@ -45,9 +45,11 @@ export type LintReport = {
 // deps that would resolve these imports, so they block the port.
 //
 // The Metaplex / oracle / DEX / scheduler imports are owned by
-// UNSUPPORTED_IMPORT_PATTERNS below — those have per-target verdicts
-// (e.g. mpl_core blocks all targets, not just non-native). Don't add
-// them here or you'll fire duplicate findings.
+// UNSUPPORTED_IMPORT_PATTERNS below — those carry per-target verdicts
+// (transpiled catalogs like mpl_core / mpl_token_metadata / pyth /
+// switchboard_on_demand are "review"; genuinely-unported crates like
+// drift / jupiter / switchboard_v2 are "blocker"). Don't add them here
+// or you'll fire duplicate findings.
 const EXTERNAL_BLOCKER_CRATES: Array<{ crate: string; reason: string }> = [
   { crate: "solana_sha256_hasher",     reason: "Native-only hash crate; Pinocchio doesn't ship it." },
   { crate: "solana_keccak_hasher",     reason: "Native-only hash crate; Pinocchio doesn't ship it." },
@@ -87,23 +89,19 @@ export const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
   // ── Metaplex Core ──────────────────────────────────────────────────────
   {
     prefix: "mpl_core",
-    category: "Unsupported integration",
+    category: "Partial integration",
     title: "mpl_core / mpl-core-sdk imports",
-    detail: (t) =>
-      t === "native"
-        ? "Native carries the mpl-core dep, but Anvil doesn't structurally rewrite Metaplex Core CPIs yet. Suggested fix: keep the call site verbatim and verify against the mpl-core crate after emit."
-        : "No pinocchio_mpl_core equivalent — the emit will carry imports but stub the CPI. Suggested fix: rewrite Metaplex Core CPIs manually, or run `anvil compile --target native` for crate support.",
-    verdict: () => "blocker",
+    detail: () =>
+      "Anvil transpiles the MPL Core catalog as hand-rolled CPIs (CreateV2, UpdateV2, TransferV1, BurnV1, CreateCollectionV2 + the plugin family — see docs/feature-matrix.md), byte-equal on both targets. Other MPL Core instructions pass through and are caught by the unrecognized-CPI guard. Suggested fix: confirm your call sites are within the catalog; non-catalog calls need a manual rewrite after emit.",
+    verdict: () => "review",
   },
   {
     prefix: "mpl_core_sdk",
-    category: "Unsupported integration",
+    category: "Partial integration",
     title: "mpl_core_sdk imports",
-    detail: (t) =>
-      t === "native"
-        ? "Native carries the mpl-core dep, but Anvil doesn't structurally rewrite Metaplex Core CPIs yet. Suggested fix: keep the call site verbatim and verify against the mpl-core crate after emit."
-        : "No pinocchio_mpl_core equivalent — the emit will carry imports but stub the CPI. Suggested fix: rewrite Metaplex Core CPIs manually, or run `anvil compile --target native` for crate support.",
-    verdict: () => "blocker",
+    detail: () =>
+      "Anvil transpiles the MPL Core catalog as hand-rolled CPIs (CreateV2, UpdateV2, TransferV1, BurnV1, CreateCollectionV2 + the plugin family — see docs/feature-matrix.md), byte-equal on both targets. Other MPL Core instructions pass through and are caught by the unrecognized-CPI guard. Suggested fix: confirm your call sites are within the catalog; non-catalog calls need a manual rewrite after emit.",
+    verdict: () => "review",
   },
   // ── Metaplex Token Metadata ────────────────────────────────────────────
   //
@@ -189,11 +187,11 @@ export const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
   },
   {
     prefix: "switchboard_on_demand",
-    category: "Unsupported integration",
+    category: "Partial integration",
     title: "switchboard_on_demand imports",
     detail: () =>
-      "Switchboard On-Demand reads aren't transpiled. Suggested fix: rewrite the feed pull + result extraction manually after emit.",
-    verdict: () => "blocker",
+      "Switchboard On-Demand feed reads (PullFeedAccountData::parse) are transpiled (task #47) on both targets via hand-rolled byte deserialization; the switchboard-on-demand crate dep is dropped. Byte offsets are pinned to the PullFeedAccountData layout — byte-equal verification is deferred pending a feed .so fixture, so verify against a real feed account before deploy. Other Switchboard On-Demand calls pass through.",
+    verdict: () => "review",
   },
   // ── Drift ──────────────────────────────────────────────────────────────
   {
