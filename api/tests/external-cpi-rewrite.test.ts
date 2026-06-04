@@ -140,29 +140,48 @@ describe("#2 (S4) — declare_program! CPI rewrite → cpi_custom.canonical", ()
     expect(data).toContain("as u64).to_le_bytes()");      // inner u64
   });
 
-  test("Option<unsupported inner> (Option<Vec<u64>>) → NOT rewritten (fail-closed)", async () => {
+  test("Option<unsupported inner> (Option<[u64;3]>) → NOT rewritten (fail-closed)", async () => {
+    // Option<Vec<u64>> is now SUPPORTED (both layers are); a non-u8 array stays
+    // unsupported, so Option<[u64;3]> must still fail closed.
     const idl = {
       ...LEVER_IDL,
       instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
-        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { option: { vec: "u64" } } }] }],
+        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { option: { array: ["u64", 3] } } }] }],
     };
     const ir = await irOf(HAND, { lever: idl });
     expect(cpiOf(ir)?.canonical?.instruction).toBeFalsy();
   });
 
-  test("still-ungated arg type (Vec<u64>) → NOT rewritten (fail-closed)", async () => {
-    // bytes/Vec<u8> rides the String gate, but Vec<non-u8>, Option, arrays, and
-    // defined structs remain unsupported → must fail closed.
+  test("Vec<u64> arg → u32 length + per-element loop", async () => {
     const idl = {
       ...LEVER_IDL,
-      instructions: [
-        {
-          name: "switch_power",
-          discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
-          accounts: [{ name: "power", writable: true }],
-          args: [{ name: "name", type: { vec: "u64" } }],
-        },
-      ],
+      instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
+        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { vec: "u64" } }] }],
+    };
+    const ir = await irOf(HAND, { lever: idl });
+    const data = cpiOf(ir)?.canonical?.instruction?.data ?? "";
+    expect(data).toContain("(name.len() as u32).to_le_bytes()"); // length prefix
+    expect(data).toContain("for ");                               // per-element loop
+    expect(data).toContain("as u64).to_le_bytes()");              // element encode
+  });
+
+  test("[u8; N] arg → raw bytes (no length prefix)", async () => {
+    const idl = {
+      ...LEVER_IDL,
+      instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
+        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { array: ["u8", 32] } }] }],
+    };
+    const ir = await irOf(HAND, { lever: idl });
+    const data = cpiOf(ir)?.canonical?.instruction?.data ?? "";
+    expect(data).toContain("extend_from_slice(&name)");
+    expect(data).not.toContain("len() as u32"); // fixed array → no length prefix
+  });
+
+  test("non-u8 array ([u64; 3]) → NOT rewritten (fail-closed)", async () => {
+    const idl = {
+      ...LEVER_IDL,
+      instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
+        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { array: ["u64", 3] } }] }],
     };
     const ir = await irOf(HAND, { lever: idl });
     expect(cpiOf(ir)?.canonical?.instruction).toBeFalsy();

@@ -159,6 +159,26 @@ function encodeArgStmt(buf: string, argExpr: string, idlType: unknown, depth = 0
     if (innerStmt === null) return null;
     return `match ${argExpr} { Some(${v}) => { ${buf}.push(1u8); ${innerStmt} }, None => { ${buf}.push(0u8); } }`;
   }
+  // Borsh Vec<T> = u32 LE length + each element in order. The IDL spells it
+  // `{ vec: <T> }`. Iterate by value (the arg is consumed once); the element
+  // encode is identical to a top-level one. Fails closed if T isn't supported.
+  if (idlType && typeof idlType === "object" && "vec" in (idlType as object)) {
+    const e = `__anvil_vec${depth}`;
+    const innerStmt = encodeArgStmt(buf, e, (idlType as { vec: unknown }).vec, depth + 1);
+    if (innerStmt === null) return null;
+    return `${buf}.extend_from_slice(&(${argExpr}.len() as u32).to_le_bytes()); for ${e} in ${argExpr} { ${innerStmt} }`;
+  }
+  // Borsh fixed array `[u8; N]` = the N raw bytes, no length prefix. The IDL
+  // spells it `{ array: ["u8", N] }`; `&arr` coerces to `&[u8]`. Non-u8 element
+  // arrays fail closed (need per-element iteration + a fixture).
+  if (idlType && typeof idlType === "object" && "array" in (idlType as object)) {
+    const arr = (idlType as { array: unknown }).array;
+    const elem = Array.isArray(arr) ? arr[0] : undefined;
+    if (typeof elem === "string" && elem.toLowerCase() === "u8") {
+      return `${buf}.extend_from_slice(&${argExpr});`;
+    }
+    return null;
+  }
   const t = typeof idlType === "string" ? idlType.toLowerCase() : null;
   if (t === "string") {
     // Borsh String = u32 LE length + UTF-8 bytes.
