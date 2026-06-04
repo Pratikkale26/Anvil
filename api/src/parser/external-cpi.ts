@@ -62,10 +62,19 @@ export interface ExternalIdl {
 /** Keyed by declare_program! crate name (e.g. "lever"). */
 export type ExternalIdlMap = Record<string, ExternalIdl>;
 
-/** Parse one IDL account entry, recursing into composite `accounts` leaves. */
+/** Parse one IDL account entry, recursing into composite `accounts` leaves.
+ *  Accepts BOTH the modern Anchor key form (`writable`/`signer`) and the legacy
+ *  one (`isMut`/`isSigner`). Reading only the modern keys silently dropped the
+ *  writable/signer privilege on a legacy/hand-edited IDL → an under-privileged
+ *  AccountMeta that reverts at runtime (fail-OPEN). Honor either spelling so a
+ *  meta is never silently demoted. */
 function parseIdlAccount(a: unknown): ExternalIdlAccount {
   const acc = a as Record<string, unknown>;
-  const base = { name: String(acc.name), writable: acc.writable === true, signer: acc.signer === true };
+  const base = {
+    name: String(acc.name),
+    writable: acc.writable === true || acc.isMut === true,
+    signer: acc.signer === true || acc.isSigner === true,
+  };
   return Array.isArray(acc.accounts) ? { ...base, accounts: acc.accounts.map(parseIdlAccount) } : base;
 }
 

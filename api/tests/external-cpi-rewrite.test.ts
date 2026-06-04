@@ -90,6 +90,21 @@ describe("#2 (S4) — declare_program! CPI rewrite → cpi_custom.canonical", ()
     expect(errsOf(ir, emitNativeFull)).toEqual([]);
   });
 
+  test("legacy isMut/isSigner IDL keys are honored (not silently dropped to false)", async () => {
+    // A hybrid IDL: discriminator present (so the instruction parses) but the
+    // accounts use the LEGACY isMut/isSigner spelling. Reading only writable/
+    // signer would emit AccountMeta::new_readonly(.., false) for both → an
+    // under-privileged CPI that reverts at runtime (fail-open). Both spellings
+    // must produce identical metas.
+    const legacyIdl = {
+      metadata: { name: "lever" },
+      instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
+        accounts: [{ name: "power", isMut: true, isSigner: false }], args: [{ name: "name", type: "string" }] }],
+    };
+    const ir = await irOf(HAND, { lever: legacyIdl });
+    expect(cpiOf(ir)?.canonical?.instruction?.metas).toEqual([{ pubkey: "power", writable: true, signer: false }]);
+  });
+
   // ── FAIL-CLOSED — never a silent wrong emit ──
   test("no externalIdls → NOT rewritten, loud-refuses", async () => {
     const ir = await irOf(HAND); // no IDL
