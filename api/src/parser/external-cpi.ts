@@ -243,8 +243,10 @@ interface CpiCtxLet {
   programExpr: string;
   /** struct field name → value expr (e.g. "power" → "ctx.accounts.power.to_account_info()"). */
   fields: Map<string, string>;
-  /** true for new_with_signer — currently fail-closed (#10 deferred). */
+  /** true for new_with_signer → emit invoke_signed with `signerSeeds`. */
   withSigner: boolean;
+  /** The 3rd new_with_signer arg (the &[..] signer seeds), captured verbatim. */
+  signerSeeds?: string;
   node: SyntaxNode;
 }
 
@@ -280,7 +282,8 @@ function collectCpiCtxLets(root: SyntaxNode): Map<string, CpiCtxLet> {
       const fval = fi.childForFieldName("value")?.text?.trim();
       if (fname && fval) fields.set(fname, fval);
     }
-    out.set(varName, { varName, programExpr, fields, withSigner, node: n });
+    const signerSeeds = withSigner && args[2] ? args[2].text.trim() : undefined;
+    out.set(varName, { varName, programExpr, fields, withSigner, signerSeeds, node: n });
   });
   return out;
 }
@@ -342,11 +345,8 @@ export async function rewriteDeclareProgramCpis(source: string, idlMap: External
     if (callArgs.length < 1) return;
     const ctxVar = callArgs[0]!.text.trim();
     const ctxLet = cpiCtxLets.get(ctxVar);
-    if (!ctxLet) return; // need a CpiContext::new binding
-    // #10 deferred — new_with_signer (PDA-signed) fails closed: the seeds-prep
-    // bumps emit (`let bump = [ctx.bumps.X]` → scalar u8) breaks invoke_signed
-    // (E0308), so it can't be byte-equal-gated yet.
-    if (ctxLet.withSigner) return;
+    if (!ctxLet) return; // need a CpiContext::new[_with_signer] binding
+    if (ctxLet.withSigner && !ctxLet.signerSeeds) return; // new_with_signer w/o captured seeds → fail-closed
 
     // Args after the cpi_ctx, matched positionally to the IDL args.
     const valueArgs = callArgs.slice(1).map((a) => a.text.trim());
@@ -395,9 +395,17 @@ export async function rewriteDeclareProgramCpis(source: string, idlMap: External
 
     const ixVar = `__anvil_cpi_ix_${synthCount}`;
     synthCount++;
+    // new_with_signer → invoke_signed with the captured seeds. The seeds-prep
+    // lets (`let bump = ctx.bumps.X; let seeds = &[…, &[bump]]`) stay as
+    // pass_through and emit via the same bumps/seeds path the SPL-CPI-with-signer
+    // demos (escrow/vesting) already drive byte-equal; extractCanonicalInvoke
+    // captures the arity-3 invoke_signed + signerSeeds.
+    const invokeLine = ctxLet.withSigner
+      ? `    invoke_signed(&${ixVar}, &[${infoParts.join(", ")}], ${ctxLet.signerSeeds})?;`
+      : `    invoke(&${ixVar}, &[${infoParts.join(", ")}])?;`;
     const replacement =
       `let ${ixVar} = Instruction { program_id: *${progRef}.key, accounts: vec![${metaParts.join(", ")}], data: ${dataBlock} };\n` +
-      `    invoke(&${ixVar}, &[${infoParts.join(", ")}])?;`;
+      invokeLine;
 
     const stmt = enclosingStatement(n);
     edits.push({ start: stmt.startIndex, end: stmt.endIndex, replacement });

@@ -239,14 +239,22 @@ declare_program!(external);
     expect(/AccountMeta[^,]*\bexternal\.key/.test(text)).toBe(false);
   });
 
-  test("new_with_signer → NOT rewritten (fail-closed)", async () => {
+  test("new_with_signer → invoke_signed with captured seeds (PDA-signed)", async () => {
     const src = HAND.replace(
-      "CpiContext::new(",
-      "CpiContext::new_with_signer(",
-    ).replace(
-      "ctx.accounts.power.to_account_info() },",
-      "ctx.accounts.power.to_account_info() }, signer_seeds },",
+      "CpiContext::new(\n      ctx.accounts.lever_program.key(),\n      SwitchPower { power: ctx.accounts.power.to_account_info() },\n    )",
+      "CpiContext::new_with_signer(\n      ctx.accounts.lever_program.key(),\n      SwitchPower { power: ctx.accounts.power.to_account_info() },\n      signer_seeds,\n    )",
     );
+    const ir = await irOf(src, { lever: LEVER_IDL });
+    const cpi = cpiOf(ir);
+    expect(cpi?.canonical?.func).toBe("invoke_signed");
+    expect(cpi?.canonical?.instruction).toBeTruthy();
+    // the 3rd new_with_signer arg is captured verbatim as the signer seeds.
+    expect((cpi as { signerSeeds?: string })?.signerSeeds).toBe("signer_seeds");
+  });
+
+  test("new_with_signer WITHOUT a 3rd seeds arg → fail-closed", async () => {
+    // malformed (no seeds) → must not synthesize.
+    const src = HAND.replace("CpiContext::new(", "CpiContext::new_with_signer(");
     const ir = await irOf(src, { lever: LEVER_IDL });
     expect(cpiOf(ir)?.canonical?.instruction).toBeFalsy();
   });
