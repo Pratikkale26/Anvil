@@ -267,16 +267,20 @@ function encodeArgStmt(
     }
     return parts.join(" ");
   }
-  // Borsh fixed array `[u8; N]` = the N raw bytes, no length prefix. The IDL
-  // spells it `{ array: ["u8", N] }`; `&arr` coerces to `&[u8]`. Non-u8 element
-  // arrays fail closed (need per-element iteration + a fixture).
+  // Borsh fixed array `[T; N]` = the N elements in order, NO length prefix.
+  // `[u8; N]` is the fast path (`&arr` coerces to `&[u8]`); any other element
+  // type iterates by value (edition-2021 array IntoIterator) and encodes each
+  // element recursively. Fails closed if the element type is unsupported.
   if (idlType && typeof idlType === "object" && "array" in (idlType as object)) {
     const arr = (idlType as { array: unknown }).array;
     const elem = Array.isArray(arr) ? arr[0] : undefined;
     if (typeof elem === "string" && elem.toLowerCase() === "u8") {
       return `${buf}.extend_from_slice(&${argExpr});`;
     }
-    return null;
+    const e = `__anvil_arr${depth}`;
+    const innerStmt = encodeArgStmt(buf, e, elem, types, depth + 1);
+    if (innerStmt === null) return null;
+    return `for ${e} in ${argExpr} { ${innerStmt} }`;
   }
   const t = typeof idlType === "string" ? idlType.toLowerCase() : null;
   if (t === "string") {

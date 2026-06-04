@@ -140,13 +140,14 @@ describe("#2 (S4) — declare_program! CPI rewrite → cpi_custom.canonical", ()
     expect(data).toContain("as u64).to_le_bytes()");      // inner u64
   });
 
-  test("Option<unsupported inner> (Option<[u64;3]>) → NOT rewritten (fail-closed)", async () => {
-    // Option<Vec<u64>> is now SUPPORTED (both layers are); a non-u8 array stays
-    // unsupported, so Option<[u64;3]> must still fail closed.
+  test("Option<unsupported inner> (Option<defined-enum>) → NOT rewritten (fail-closed)", async () => {
+    // Option<Vec>, Option<array>, Option<struct> are all supported now; only a
+    // genuinely-unsupported inner (a defined enum) makes Option fail closed.
     const idl = {
       ...LEVER_IDL,
       instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
-        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { option: { array: ["u64", 3] } } }] }],
+        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { option: { defined: { name: "E" } } } }] }],
+      types: [{ name: "E", type: { kind: "enum", variants: [{ name: "A" }] } }],
     };
     const ir = await irOf(HAND, { lever: idl });
     expect(cpiOf(ir)?.canonical?.instruction).toBeFalsy();
@@ -224,15 +225,29 @@ declare_program!(ext);
     expect(data).not.toContain("len() as u32"); // fixed array → no length prefix
   });
 
-  test("non-u8 array ([u64; 3]) → NOT rewritten (fail-closed)", async () => {
+  test("non-u8 array ([u64; 3]) arg → per-element loop (no length prefix)", async () => {
     const idl = {
       ...LEVER_IDL,
       instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
         accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { array: ["u64", 3] } }] }],
     };
     const ir = await irOf(HAND, { lever: idl });
+    const data = cpiOf(ir)?.canonical?.instruction?.data ?? "";
+    expect(data).toContain("for ");                  // per-element loop
+    expect(data).toContain("as u64).to_le_bytes()");  // element encode
+    expect(data).not.toContain("len() as u32");       // fixed array → no length prefix
+  });
+
+  test("defined-ENUM arg → NOT rewritten (fail-closed)", async () => {
+    // structs are supported (generated); enums are not → must fail closed.
+    const idl = {
+      ...LEVER_IDL,
+      instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
+        accounts: [{ name: "power", writable: true }], args: [{ name: "name", type: { defined: { name: "E" } } }] }],
+      types: [{ name: "E", type: { kind: "enum", variants: [{ name: "A" }, { name: "B" }] } }],
+    };
+    const ir = await irOf(HAND, { lever: idl });
     expect(cpiOf(ir)?.canonical?.instruction).toBeFalsy();
-    expect(errsOf(ir, emitPinocchioFull).length).toBeGreaterThan(0);
   });
 
   // ── qualified-path call form + numeric (u32) arg (Anchor canonical style) ──
