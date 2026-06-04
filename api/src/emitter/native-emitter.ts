@@ -1975,7 +1975,17 @@ ${this.emitZeroCopyTraitImpls(acc.name)}`;
     if (!acc.implItems || acc.implItems.length === 0) return "";
     const knownNames = ir ? this.collectKnownTopLevelNames(ir) : new Set<string>();
     const filtered = acc.implItems
-      .filter((raw) => !STANDARD_IMPL_NAME_RE.test(raw))
+      .filter((raw) => {
+        if (STANDARD_IMPL_NAME_RE.test(raw)) return false;
+        // #6 — prune an anchor-only impl method inlined at its call site(s)
+        // (0 references left) so its dead, marker-carrying stub doesn't
+        // false-refuse the strict gate. See implMethodReferencedElsewhere.
+        if (ir) {
+          const fnName = raw.match(/\bfn\s+(\w+)/);
+          if (fnName && stubAnchorOnlyImplItem(raw) !== raw && !this.implMethodReferencedElsewhere(fnName[1]!, ir)) return false;
+        }
+        return true;
+      })
       .map((raw) => {
         let processed = rewriteRequireVariantsInCode(
           rewriteMsgCalls(

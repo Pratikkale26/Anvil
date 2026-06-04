@@ -3837,6 +3837,28 @@ ${originalLines}
   }
 
   /**
+   * #6 — is impl-method `name` referenced anywhere in the program OTHER than
+   * its own definition? Used to decide whether a stubbed impl method is dead
+   * (inlined away → prune) or still called (keep). We strip every `fn <name>`
+   * DEFINITION from each text first, then look for any surviving occurrence of
+   * the name (a call / qualified ref). Conservative: any surviving mention —
+   * across instruction bodies, other carried impl items, helper fns, trait
+   * impls — counts as a reference, so a live method is never pruned (the only
+   * cost of a false "referenced" is leaving a dead stub, the status quo).
+   */
+  protected implMethodReferencedElsewhere(name: string, ir: SolanaIR): boolean {
+    const defRe = new RegExp(`\\bfn\\s+${name}\\b`, "g");
+    const refRe = new RegExp(`\\b${name}\\b`);
+    const referenced = (text: string) => refRe.test(text.replace(defRe, ""));
+    if (referenced(JSON.stringify(ir.instructions.map((i) => i.body ?? [])))) return true;
+    const carried: string[] = [];
+    for (const a of ir.accounts) for (const it of a.implItems ?? []) carried.push(it);
+    for (const t of ir.types ?? []) for (const it of t.implItems ?? []) carried.push(it);
+    carried.push(JSON.stringify(ir.helperFns ?? []), JSON.stringify(ir.userTraitImpls ?? []));
+    return carried.some(referenced);
+  }
+
+  /**
    * Finding #55 — minimum on-disk size for an account struct. Used by the
    * emitted read()/write() guards when the struct has any String or Vec
    * fields whose actual serialized size depends on content length. The
@@ -4251,11 +4273,25 @@ ${allFields}
       // resolve. registry: `impl BalanceSandbox { fn from(accs:
       // &BalanceSandboxAccounts<'info>) }`.
       if (/&\s*\w+Accounts\s*<['_]/.test(raw)) continue;
+      // #6 — an impl method whose body would be STUBBED (it references
+      // CpiContext / ctx.accounts / require!) but whose name is referenced
+      // NOWHERE else in the program was inlined at its call site(s) by the
+      // impl-method inliner (#18). The carried copy is dead code that still
+      // carries a `⚠️ Anvil TODO: manual port required` marker — factually
+      // false (the behavior WAS ported via inlining) and the default-strict
+      // CLI refuses on it. Prune it. Conservative: only when the would-be
+      // stub differs from the source AND no other carried text mentions the
+      // name (any mention → keep), so a still-called method is never dropped.
+      const afterStub = stubAnchorOnlyImplItem(raw);
+      if (afterStub !== raw && irForCollapse) {
+        const fnNameMatch = raw.match(/\bfn\s+(\w+)/);
+        if (fnNameMatch && !this.implMethodReferencedElsewhere(fnNameMatch[1]!, irForCollapse)) continue;
+      }
       let stubbed = rewriteRequireVariantsInCode(
         rewriteMsgCallsImpl(
           stripAnchorWrappersInCode(
             stripAnchorLangPrefixes(
-              rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(stubAnchorOnlyImplItem(raw)))),
+              rewriteGetInstancePackedLen(rewriteAnchorResultAlias(rewriteTryIntoUnwrap(afterStub))),
             ),
             this.frameworkName === "Pinocchio" ? "pin" : "native",
           ),
