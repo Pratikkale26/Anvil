@@ -168,6 +168,23 @@ export const FRAMEWORK_SHADOW_TYPES = new Set([
  * Depth-aware split on `,` (angle brackets tracked), then per-param trim
  * everything after the first `:` at depth 0.
  */
+/**
+ * F6 — return the first UNIT enum variant (name not followed by `{`/`(` in the
+ * enum's source), or null if every variant is non-unit. Used to pick a safe
+ * default-init that compiles (a struct/tuple variant emitted as a bare unit
+ * path is E0533). Falls back to the variant name when the shape can't be read
+ * from rawCode (preserves the old bare-path behaviour).
+ */
+function firstUnitVariantName(variants: string[], rawCode: string): string | null {
+  for (const v of variants) {
+    if (!v) continue;
+    const re = new RegExp(`\\b${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*([({,}]|$)`, "m");
+    const m = re.exec(rawCode);
+    if (!m || (m[1] !== "{" && m[1] !== "(")) return v;
+  }
+  return null;
+}
+
 function stripGenericBounds(generics: string): string {
   const trimmed = generics.trim();
   if (trimmed.length === 0) return "";
@@ -2092,6 +2109,11 @@ export abstract class BaseEmitter {
         const a = s as any;
         return [a.code, a.value, a.condition, a.fields, a.from, a.to, a.authority, a.amount, a.event].filter(Boolean).join(" ");
       })),
+      // F5 — account-constraint guards (e.g. `constraint = validate_bet(&bet)`)
+      // emit a call site too; without seeding their text, a helper referenced
+      // ONLY from a constraint gets DCE-pruned while its call site survives →
+      // undefined-fn, stamped clean. Seed every constraint value.
+      ...ir.instructions.flatMap((ix) => ix.accounts.flatMap((acc) => (acc.constraints ?? []).map((c) => c.value ?? ""))),
       ...constantsForHoist,
       ...((ir as any).userModules ?? []) as string[],
     ].join("\n");
@@ -5369,8 +5391,15 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
     if (arrayMatch?.[1]) return `[0u8; ${arrayMatch[1]}]`;
     if (normalized === "String") return "String::new()";
     if (normalized === "Vec<u8>") return "Vec::new()";
-    if (typeDef?.kind === "enum" && typeDef.variants?.[0]) {
-      return `${normalized}::${typeDef.variants[0]}`;
+    if (typeDef?.kind === "enum" && typeDef.variants?.length) {
+      // F6 — variants store names only (the struct/tuple field block is
+      // dropped at parse). A non-unit first variant (`Identity::Evm { .. }`)
+      // emitted as a bare unit path is E0533. Pick the first UNIT variant
+      // (any compiles; the placeholder is dead-overwritten before save). If
+      // every variant is non-unit, refuse loudly via the never-type stub.
+      const unit = firstUnitVariantName(typeDef.variants, typeDef.rawCode ?? "");
+      if (unit) return `${normalized}::${unit}`;
+      return `unimplemented!("anvil: enum ${normalized} has only non-unit variants — default-init unsupported")`;
     }
     // User-defined struct: inline a field-by-field struct literal instead
     // of `T::default()`. Anchor auto-implements Default via its derive
