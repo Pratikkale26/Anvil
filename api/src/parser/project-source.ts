@@ -1255,7 +1255,8 @@ export function neutralizeUnsupportedMacros(source: string): string {
       .split("\n")
       .map((line, idx) => idx === 0 ? `// ⚠️ Anvil TODO: macro_rules! unsupported — manual port required\n// ${line}` : `// ${line}`)
       .join("\n");
-    out = out.slice(0, r.start) + commented + out.slice(r.end);
+    // Trailing newline is load-bearing: trailing delimiters after the macro must not glue onto the last `//` line.
+    out = out.slice(0, r.start) + commented + "\n" + out.slice(r.end);
   }
 
   // Append construct_uint! stubs at the END so they're at top level.
@@ -2687,6 +2688,16 @@ const CPI_REGION_RE = /\/\*<<ANVIL_CPI_BEGIN>>\*\/[\s\S]*?\/\*<<ANVIL_CPI_END>>\
  * verbatim. Wraps each new replacement in markers so the next pass leaves
  * it alone.
  */
+// F9 — the consolidator regexes chain lazy `[\s\S]*?` spans + a `\1` backref;
+// on a region with a CPI struct literal NOT followed by a matching
+// CpiContext::new(...) call (common once a >100 KB sibling crate is inlined),
+// the backref mismatch forces super-linear backtracking → flatten hangs
+// (>120 s on the 184 KB helium sources). Normal single-program flatten is
+// <10 KB, so skipping consolidation above this bound never touches a real
+// program: the un-consolidated CPIs simply fall to pass_through → loud-refuse,
+// which is the safe outcome (large multi-crate programs refuse regardless).
+const MAX_CONSOLIDATOR_REGION = 50_000;
+
 function applyCpiConsolidator(
   source: string,
   regex: RegExp,
@@ -2699,7 +2710,9 @@ function applyCpiConsolidator(
   for (let i = 0; i < parts.length; i++) {
     const region = parts[i]!;
     out.push(
-      region.replace(regex, (...args: unknown[]) => `${CPI_BEGIN}${replace(...args)}${CPI_END}`),
+      region.length > MAX_CONSOLIDATOR_REGION
+        ? region
+        : region.replace(regex, (...args: unknown[]) => `${CPI_BEGIN}${replace(...args)}${CPI_END}`),
     );
     if (i < consumedRegions.length) out.push(consumedRegions[i]!);
   }
