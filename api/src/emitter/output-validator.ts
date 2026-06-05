@@ -840,10 +840,75 @@ function checkTokenConstraintCoverage(content: string, ir: SolanaIR, path: strin
           message: `'${fnName}': token/ATA constraints for '${accountName}' are present in IR, but validator cannot prove the emitted runtime checks.`,
           path,
         });
+        continue;
+      }
+
+      // F2 — a non-init `associated_token::mint`+`authority` account carries a
+      // canonical-ATA ADDRESS pin (Anchor derives get_associated_token_address
+      // and rejects a mismatch). Being merely CONSUMED in a transfer does NOT
+      // verify that address, so the heuristic above counts it "covered" while
+      // the pin is silently dropped. Require evidence of an actual derivation/
+      // compare; else warn (init ATAs are derived by the CreateAssociatedToken
+      // prelude and are exempt).
+      const hasAtaAddressPin =
+        acc.constraints.some((c) => c.kind === "associated_token::mint") &&
+        acc.constraints.some((c) => c.kind === "associated_token::authority");
+      if (hasAtaAddressPin && !acc.isInit) {
+        const provesAtaAddress =
+          fnBody.includes("get_associated_token_address") ||
+          fnBody.includes("ConstraintAssociated");
+        if (!provesAtaAddress) {
+          issues.push({
+            severity: "warning",
+            message: `'${fnName}': non-init associated_token address pin for '${accountName}' is used without an ATA derivation/compare — Anchor verifies the canonical ATA; the emit consumes it unchecked.`,
+            path,
+          });
+        }
       }
     }
   }
 
+  return issues;
+}
+
+/**
+ * F4 — dropped PDA signer seeds. The source uses
+ * `let seeds = &[X.as_ref(), &[bump]]; let signer = [&seeds[..]];
+ *  token::mint_to(CpiContext::new_with_signer(.., &signer), ..)`. When the
+ * `new_with_signer` binding isn't literally named `signer_seeds`, the emit
+ * drops the signer and routes to the UNSIGNED `spl_token_*` helper, leaving the
+ * computed seeds dead — the CPI then fails at runtime (MissingRequiredSignature)
+ * for a PDA authority, with zero validation signal. Detect the signature (a
+ * dead seeds-shaped binding + an unsigned SPL CPI in the same body) and refuse
+ * loudly until the emitter routes it to the `_signed` variant.
+ */
+function checkDroppedSignerSeeds(content: string, ir: SolanaIR, path: string): ValidationIssue[] {
+  if (!shouldRunInstructionBodyChecks(path, content)) return [];
+  const issues: ValidationIssue[] = [];
+  for (const instr of ir.instructions) {
+    const fnName = snakeCase(instr.name);
+    const rawBody = extractInstructionBody(content, fnName);
+    if (!rawBody) continue;
+    const body = stripCommentsAndStringsForValidator(rawBody);
+    // An unsigned SPL CPI (the `_signed` variants end in `_signed(`, so `(`
+    // right after the verb excludes them).
+    if (!/\bspl_token_(?:mint_to|transfer|burn)\s*\(/.test(body)) continue;
+    // A signer-seeds-shaped binding: `let X = &[ … &[ … ] … ];` (outer array
+    // with a nested `&[bump]` group), with no type annotation (the live
+    // `init_*_seeds: &[&[u8]] = …` bindings carry one and are used).
+    for (const m of body.matchAll(/\blet\s+(\w+)\s*=\s*&?\[[^;]*&\s*\[[^;]*\][^;]*\]\s*;/g)) {
+      const name = m[1]!;
+      const uses = (body.match(new RegExp(`\\b${name}\\b`, "g")) ?? []).length;
+      if (uses === 1) {
+        issues.push({
+          severity: "error",
+          message: `'${fnName}': PDA signer seeds '${name}' are computed but unused while an SPL token CPI is emitted unsigned — a new_with_signer signer was dropped; the CPI fails at runtime for a PDA authority. Manual port required.`,
+          path,
+        });
+        break;
+      }
+    }
+  }
   return issues;
 }
 
@@ -1361,6 +1426,8 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     issues.push(...checkCloseConstraints(file.content, ir, file.path));
     issues.push(...checkInitConstraintCoverage(file.content, ir, file.path));
     issues.push(...checkTokenConstraintCoverage(file.content, ir, file.path));
+    issues.push(...checkDroppedSignerSeeds(file.content, ir, file.path));
+    issues.push(...checkUnresolvedHandlerCtx(file.content, file.path));
     issues.push(...checkLongFunctions(file.content, file.path));
   }
 
@@ -1536,17 +1603,42 @@ function checkPortabilityBlockers(
   return issues;
 }
 
+/**
+ * F1 — wrapper-shell detection. Emitted handlers take (program_id, accounts,
+ * data) and never bind `ctx`. A bare `ctx` token therefore means a `#[program]`-
+ * mod delegation wrapper (`instructions::foo(ctx, ..)`) was emitted as the body
+ * without resolving the real submodule/free-function handler — so every
+ * transfer / state-write / guard in the real handler is silently dropped and the
+ * output cannot compile (undefined `ctx`). Refuse loudly instead of stamping it
+ * clean. (0 emitted snapshots reference a bare `ctx`, so this does not over-fire.)
+ */
+function checkUnresolvedHandlerCtx(content: string, path: string): ValidationIssue[] {
+  const masked = stripCommentsAndStringsForValidator(content);
+  const m = /\bctx\b/.exec(masked);
+  if (!m) return [];
+  const line = masked.slice(0, m.index).split("\n").length;
+  return [{
+    severity: "error",
+    message: "Emitted handler references undefined 'ctx' — a #[program]-mod delegation wrapper was emitted as the body without resolving the real handler; instruction logic is dropped (wrapper-shell). Manual port required.",
+    path,
+    line,
+  }];
+}
+
 function checkUndefinedAssociatedConsts(files: EmitterOutput["files"]): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const definedTypes = collectDefinedTypes(files);
   const definedConsts = collectDefinedAssociatedConsts(files);
 
   for (const file of files) {
+    // Mask comments/strings first (length- and newline-preserving) so a
+    // reference in commented-out carried dead code doesn't false-positive.
+    const scanText = stripCommentsAndStringsForValidator(file.content);
     // Match Type::CONST AND Type::Variant (the regex used to require the
     // RHS to be ALL_CAPS; that missed enum variants like `Version::V1`).
     // Now match any leading-uppercase RHS; the catalog + enum-variant
     // collection handle the disambiguation.
-    for (const match of file.content.matchAll(/\b([A-Z][A-Za-z0-9_]*)::([A-Z][A-Za-z0-9_]*)\b/g)) {
+    for (const match of scanText.matchAll(/\b([A-Z][A-Za-z0-9_]*)::([A-Z][A-Za-z0-9_]*)\b/g)) {
       const typeName = match[1];
       const constName = match[2];
       if (!typeName || !constName) continue;
@@ -1558,7 +1650,7 @@ function checkUndefinedAssociatedConsts(files: EmitterOutput["files"]): Validati
       if (isExternalCatalogConst(typeName, constName)) continue;
       if (!definedTypes.has(typeName)) continue;
       if (definedConsts.get(typeName)?.has(constName)) continue;
-      const line = file.content.slice(0, match.index ?? 0).split("\n").length;
+      const line = scanText.slice(0, match.index ?? 0).split("\n").length;
       issues.push({
         severity: "error",
         message: `Associated constant '${typeName}::${constName}' is referenced but not defined in emitted output.`,
