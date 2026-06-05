@@ -385,7 +385,7 @@ pub fn claim_rewards(
     let pool = &accounts[2];
     let reward_mint = &accounts[3];
     let user_reward_ata = &accounts[4];
-    let _token_program = &accounts[5];
+    let token_program = &accounts[5];
 
     if !user.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -398,6 +398,17 @@ pub fn claim_rewards(
     }
     if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
+    }
+    // anvil: ATA address check: user_reward_ata
+    {
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];
+        let (__expected_ata, _) = pinocchio::pubkey::find_program_address(
+            &[user.key().as_ref(), token_program.key().as_ref(), reward_mint.key().as_ref()],
+            &ATA_PROGRAM_ID,
+        );
+        if user_reward_ata.key() != &__expected_ata {
+            return Err(ProgramError::Custom(2009u32));
+        }
     }
 
     if !__ix_data.is_empty() {
@@ -472,7 +483,7 @@ pub fn unstake(
     let user_stake_ata = &accounts[4];
     let stake_vault = &accounts[5];
     let user_reward_ata = &accounts[6];
-    let _token_program = &accounts[7];
+    let token_program = &accounts[7];
     let _system_program = &accounts[8];
 
     if !user.is_signer() {
@@ -486,6 +497,17 @@ pub fn unstake(
     }
     if pool.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
+    }
+    // anvil: ATA address check: user_reward_ata
+    {
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];
+        let (__expected_ata, _) = pinocchio::pubkey::find_program_address(
+            &[user.key().as_ref(), token_program.key().as_ref(), reward_mint.key().as_ref()],
+            &ATA_PROGRAM_ID,
+        );
+        if user_reward_ata.key() != &__expected_ata {
+            return Err(ProgramError::Custom(2009u32));
+        }
     }
 
     if !__ix_data.is_empty() {

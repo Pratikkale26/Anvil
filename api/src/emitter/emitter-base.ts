@@ -269,6 +269,11 @@ export abstract class BaseEmitter {
   abstract emitSignerCheck(name: string): string;
   abstract emitOwnerCheck(name: string): string;
   abstract emitWritableCheck(names: string[]): string;
+  // F2 — non-init associated_token address-pin verification. Base is a no-op so
+  // Native (no differential gate yet) inherits nothing; Pinocchio overrides.
+  emitAtaAddressCheck(_accountName: string, _mint: string, _authority: string, _tokenProgram: string): string {
+    return "";
+  }
   abstract emitAccountKeyExpr(accountName: string): string;
   abstract emitAccountKeyAsRefExpr(accountName: string): string;
   abstract emitAccountLamportsExpr(accountName: string): string;
@@ -3152,6 +3157,34 @@ impl ZeroCopy for ${accName} {}`;
       .map((a) => this.emitOwnerCheck(snakeCase(a.name)))
       .join("\n");
 
+    // F2 — a NON-init `associated_token::mint + authority` account carries a
+    // canonical-ATA address pin Anchor verifies. Emit a runtime
+    // find_program_address([authority, token_program, mint], ATA_PROGRAM) compare.
+    // SAFE: only when mint+authority+token_program all resolve to in-struct
+    // accounts (a guessed token program derives a WRONG address and false-rejects
+    // a valid account); otherwise emit nothing and keep the F2 validator warning.
+    const inStructAccount = (binding: string): boolean =>
+      instr.accounts.some((x) => snakeCase(x.name) === snakeCase(binding));
+    const ataAddressChecks = instr.accounts
+      .filter((a) => {
+        if (a.isInit || a.isOptional) return false;
+        const m = a.constraints.find((c) => c.kind === "associated_token::mint" && c.value);
+        const au = a.constraints.find((c) => c.kind === "associated_token::authority" && c.value);
+        return !!(m?.value && au?.value && inStructAccount(m.value) && inStructAccount(au.value));
+      })
+      .map((a) => {
+        const mint = snakeCase(a.constraints.find((c) => c.kind === "associated_token::mint" && c.value)!.value!);
+        const authority = snakeCase(a.constraints.find((c) => c.kind === "associated_token::authority" && c.value)!.value!);
+        const tpc = a.constraints.find((c) => c.kind === "associated_token::token_program" && c.value);
+        let tokenProgram: string | null = null;
+        if (tpc?.value && inStructAccount(tpc.value)) tokenProgram = snakeCase(tpc.value);
+        else if (inStructAccount("token_program")) tokenProgram = "token_program";
+        if (!tokenProgram) return "";
+        return this.emitAtaAddressCheck(snakeCase(a.name), mint, authority, tokenProgram);
+      })
+      .filter(Boolean)
+      .join("\n");
+
     // Arg parsing
     const argsBlock = this.emitArgParsing(instr.args);
 
@@ -3361,7 +3394,7 @@ impl ZeroCopy for ${accName} {}`;
     const renderedHasOkTail = /\bOk\s*\(\s*\(\s*\)\s*\)\s*;?\s*$/.test(bodyCode.trimEnd());
     const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough && !renderedHasOkTail;
 
-    const preChecks = [signerChecks, writableCheck, ownerChecks].filter(Boolean).join("\n");
+    const preChecks = [signerChecks, writableCheck, ownerChecks, ataAddressChecks].filter(Boolean).join("\n");
 
     // `pub fn` so the multi-file layout's `pub use X::X;` re-export in
     // instructions/mod.rs resolves (CLI emits project-layout by default;

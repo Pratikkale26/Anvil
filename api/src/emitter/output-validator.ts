@@ -855,6 +855,7 @@ function checkTokenConstraintCoverage(content: string, ir: SolanaIR, path: strin
         acc.constraints.some((c) => c.kind === "associated_token::authority");
       if (hasAtaAddressPin && !acc.isInit) {
         const provesAtaAddress =
+          fnBody.includes(`// anvil: ATA address check: ${accountName}`) ||
           fnBody.includes("get_associated_token_address") ||
           fnBody.includes("ConstraintAssociated");
         if (!provesAtaAddress) {

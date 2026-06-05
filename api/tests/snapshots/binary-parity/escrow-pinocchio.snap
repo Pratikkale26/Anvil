@@ -203,6 +203,17 @@ pub fn accept_escrow(
     if escrow.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
+    // anvil: ATA address check: taker_ata_b
+    {
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];
+        let (__expected_ata, _) = pinocchio::pubkey::find_program_address(
+            &[taker.key().as_ref(), token_program.key().as_ref(), mint_b.key().as_ref()],
+            &ATA_PROGRAM_ID,
+        );
+        if taker_ata_b.key() != &__expected_ata {
+            return Err(ProgramError::Custom(2009u32));
+        }
+    }
 
     if !__ix_data.is_empty() {
         return Err(ProgramError::InvalidInstructionData);
@@ -307,7 +318,7 @@ pub fn cancel_escrow(
     let maker_ata_a = &accounts[2];
     let escrow = &accounts[3];
     let vault = &accounts[4];
-    let _token_program = &accounts[5];
+    let token_program = &accounts[5];
 
     if !maker.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -317,6 +328,17 @@ pub fn cancel_escrow(
     }
     if escrow.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
+    }
+    // anvil: ATA address check: maker_ata_a
+    {
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];
+        let (__expected_ata, _) = pinocchio::pubkey::find_program_address(
+            &[maker.key().as_ref(), token_program.key().as_ref(), mint_a.key().as_ref()],
+            &ATA_PROGRAM_ID,
+        );
+        if maker_ata_a.key() != &__expected_ata {
+            return Err(ProgramError::Custom(2009u32));
+        }
     }
 
     if !__ix_data.is_empty() {
@@ -386,6 +408,17 @@ pub fn create_escrow(
     }
     if !maker.is_writable() || !maker_ata_a.is_writable() || !escrow.is_writable() || !vault.is_writable() {
         return Err(ProgramError::InvalidAccountData);
+    }
+    // anvil: ATA address check: maker_ata_a
+    {
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];
+        let (__expected_ata, _) = pinocchio::pubkey::find_program_address(
+            &[maker.key().as_ref(), token_program.key().as_ref(), mint_a.key().as_ref()],
+            &ATA_PROGRAM_ID,
+        );
+        if maker_ata_a.key() != &__expected_ata {
+            return Err(ProgramError::Custom(2009u32));
+        }
     }
 
     // Args

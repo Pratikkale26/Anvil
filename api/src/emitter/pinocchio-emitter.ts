@@ -783,6 +783,25 @@ export class PinocchioEmitter extends BaseEmitter {
     }`;
   }
 
+  override emitAtaAddressCheck(accountName: string, mint: string, authority: string, tokenProgram: string): string {
+    // F2 — verify the canonical ATA address for a non-init associated_token
+    // account. Anchor: get_associated_token_address_with_program_id(authority,
+    // mint, token_program); seeds = [authority, token_program, mint] under the
+    // ATA program. The token_program key is read at RUNTIME, so the derivation
+    // byte-matches whichever program (legacy SPL or Token-2022) Anchor's macro used.
+    return `    // anvil: ATA address check: ${accountName}
+    {
+        const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];
+        let (__expected_ata, _) = pinocchio::pubkey::find_program_address(
+            &[${authority}.key().as_ref(), ${tokenProgram}.key().as_ref(), ${mint}.key().as_ref()],
+            &ATA_PROGRAM_ID,
+        );
+        if ${accountName}.key() != &__expected_ata {
+            return Err(ProgramError::Custom(2009u32));
+        }
+    }`;
+  }
+
   override emitWritableCheck(names: string[]): string {
     const checks = names.map((n) => `!${n}.is_writable()`).join(" || ");
     return `    if ${checks} {
