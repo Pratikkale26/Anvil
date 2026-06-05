@@ -305,3 +305,29 @@ cargo permission). Each is file:line-specced in §"Coverage gaps & TODOs" above.
 **Why stop here:** the project is byte-equal-gated; landing byte-altering emit changes without the
 differential pass risks silent byte-equal regressions. The 7 above are safe because they only convert
 broken/silent output to loud refuses or fix non-emit paths.
+
+---
+
+## Implementation status — update 2 (cargo unblocked, byte-equal-verified)
+
+Cargo was unblocked mid-session (the `--byte-equal` probe returned `BYTE_EQUAL`, WSL stayed >10 GB
+free, serial builds). Two more fixes landed with **cargo/byte-equal verification**:
+
+- **F4-full (`3733e16`)** — the emit half of F4. `extractSplMintTo`/`extractSplBurn` got a
+  `cpiCtxLookup` + variable-bound branch (mirror of `extractSplTransfer`); `extractCpiContextInfo`
+  now recovers the *actual* signer expression (`extractSignerSeedsExpr`) instead of the hardcoded
+  literal `signer_seeds`. A variable-bound `new_with_signer` whose binding isn't named `signer_seeds`
+  now emits `spl_token_mint_to_signed`/`_transfer_signed` correctly. **Proof:** new
+  `differential-spl-mint-signed-varbound` byte-equals (would diverge pre-fix); existing
+  spl-mint-signed / spl-burn-signed / vault-signed differentials still byte-equal; test:fast 2006/0.
+- **F15 (`95b2b5d`)** — *new finding* uncovered while cargo-verifying F4-full: `STR_CONST.parse::<Pubkey>()`
+  was carried verbatim, but Pinocchio `Pubkey = [u8;32]` has no `FromStr` → E0277, validator-blind
+  (clean-but-non-compiling). `expandStrParsePubkey` resolves the `&str` const + rewrites to
+  `Pubkey::new_from_array([..])`. **Proof:** with F4-full + F15 the **solana-staker emit now compiles
+  end-to-end** (signed CPIs + address constants); unit test 5/0; test:fast 2006/0; 0 fixtures regressed.
+
+**Session tally: 11 fixes committed** (6 commits `d6259e4`→`95b2b5d`). The validator-detection (silent→
+loud) catches *broken* output; F4-full/F15 are the first *byte-altering* emit fixes, now possible
+because cargo verification is available. **Still byte-altering / deferred** (need their own cargo
+verification): F1-full (2-part parser, broad blast radius — see task #12 diagnosis), F3, F2-full,
+F7, F8/F11, typed-`Result`, F14.
