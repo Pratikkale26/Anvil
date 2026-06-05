@@ -357,3 +357,27 @@ the parser/flatten level + no-regression, which is the correct bar for a flatten
 
 **Session tally: 13 fixes across 9 commits (`d6259e4`→`0fa9e30`).** Remaining byte-altering TODOs:
 F3, F2-full, F7, F8/F11, typed-`Result`, F14.
+
+---
+
+## Implementation status — update 4: F2-full (non-init ATA address-pin) LANDED
+
+**F2-full (`273b21f`, Pinocchio)** — the non-init ATA address-pin / potential-theft finding, root-caused
++ de-risked via an investigation workflow. A non-init
+`#[account(mut, associated_token::mint = M, associated_token::authority = A)]` account now emits a runtime
+`find_program_address([authority, token_program, mint], ATA_PROGRAM_ID)` + key-compare (reject =
+`ConstraintAssociated`). The `token_program` key is read at **runtime**, so the derivation byte-matches
+whichever program (legacy SPL / Token-2022) Anchor's macro used. **Safe scope:** only when mint + authority +
+token_program all resolve to in-struct accounts; otherwise emit nothing and keep the F2 warning (a guessed
+program derives a wrong address and false-rejects valid accounts). Native deferred (no differential gate).
+
+**Verification (the gold standard):** a new `differential-ata-non-init-attack` fixture with **teeth** —
+pre-fix the attack (a real token account with the right mint+authority but a non-canonical address) **drains
+tokens on Anvil while Anchor reverts** (DATA MISMATCH on `dest`); post-fix both revert (parity). The
+escrow / staking / marketplace differentials (which carry real non-init ATAs) still **byte-equal**, proving the
+derivation is exactly Anchor's; the init-ATA path (`ata-mint`) is unchanged; `test:fast` **2012/0**;
+`predict_memecoin`'s theft vector is closed. **Separate finding flagged (not conflated):** Anvil doesn't verify
+`token_program` is a legitimate token program (an unchecked `Program<T>` identity issue).
+
+**Session tally: 14 fixes across 11 commits (`d6259e4`→`273b21f`).** Remaining byte-altering TODOs: F3, F7,
+F8/F11, typed-`Result`, F14.
