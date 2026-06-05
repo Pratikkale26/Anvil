@@ -235,6 +235,9 @@ pub fn accept_escrow(
     if escrow.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
+    if maker.owner() != &[0u8; 32] {
+        return Err(ProgramError::Custom(3011u32));
+    }
     // anvil: ATA address check: taker_ata_b
     {
         const ATA_PROGRAM_ID: pinocchio::pubkey::Pubkey = [140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89];

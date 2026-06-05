@@ -274,6 +274,11 @@ export abstract class BaseEmitter {
   emitAtaAddressCheck(_accountName: string, _mint: string, _authority: string, _tokenProgram: string): string {
     return "";
   }
+  // F7 — SystemAccount owner check (owner == system_program::ID). Base no-op;
+  // Pinocchio overrides (Native deferred, no differential gate).
+  emitSystemAccountOwnerCheck(_accountName: string): string {
+    return "";
+  }
   abstract emitAccountKeyExpr(accountName: string): string;
   abstract emitAccountKeyAsRefExpr(accountName: string): string;
   abstract emitAccountLamportsExpr(accountName: string): string;
@@ -3157,6 +3162,16 @@ impl ZeroCopy for ${accName} {}`;
       .map((a) => this.emitOwnerCheck(snakeCase(a.name)))
       .join("\n");
 
+    // F7 — a `SystemAccount<'info>` must be owned by the System Program (Anchor
+    // err AccountNotSystemOwned). Anvil maps it to a bare &AccountInfo with no
+    // check, so an attacker-owned account is accepted. Excludes init (the
+    // account is being created) and optional accounts.
+    const systemAccountChecks = instr.accounts
+      .filter((a) => !a.isOptional && !a.isInit && a.accountType === "SystemAccount")
+      .map((a) => this.emitSystemAccountOwnerCheck(snakeCase(a.name)))
+      .filter(Boolean)
+      .join("\n");
+
     // F2 — a NON-init `associated_token::mint + authority` account carries a
     // canonical-ATA address pin Anchor verifies. Emit a runtime
     // find_program_address([authority, token_program, mint], ATA_PROGRAM) compare.
@@ -3394,7 +3409,7 @@ impl ZeroCopy for ${accName} {}`;
     const renderedHasOkTail = /\bOk\s*\(\s*\(\s*\)\s*\)\s*;?\s*$/.test(bodyCode.trimEnd());
     const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough && !renderedHasOkTail;
 
-    const preChecks = [signerChecks, writableCheck, ownerChecks, ataAddressChecks].filter(Boolean).join("\n");
+    const preChecks = [signerChecks, writableCheck, ownerChecks, systemAccountChecks, ataAddressChecks].filter(Boolean).join("\n");
 
     // `pub fn` so the multi-file layout's `pub use X::X;` re-export in
     // instructions/mod.rs resolves (CLI emits project-layout by default;

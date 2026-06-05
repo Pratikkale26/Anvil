@@ -802,6 +802,14 @@ export class PinocchioEmitter extends BaseEmitter {
     }`;
   }
 
+  override emitSystemAccountOwnerCheck(name: string): string {
+    // F7 — SystemAccount must be owned by the System Program ([0u8; 32] in
+    // Pinocchio). Anchor: AccountNotSystemOwned (3011).
+    return `    if ${name}.owner() != &[0u8; 32] {
+        return Err(ProgramError::Custom(3011u32));
+    }`;
+  }
+
   override emitWritableCheck(names: string[]): string {
     const checks = names.map((n) => `!${n}.is_writable()`).join(" || ");
     return `    if ${checks} {
