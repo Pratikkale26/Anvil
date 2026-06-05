@@ -539,6 +539,35 @@ export function expandPubkeyMacro(source: string): string {
 }
 
 /**
+ * F15 — expand `<x>.parse::<Pubkey>().unwrap()/.expect(..)` into the byte-array
+ * constant, where `<x>` is a base58 string literal or a `const NAME: &str = ".."`.
+ * Pinocchio's `Pubkey` is `[u8; 32]` and does NOT implement `FromStr`, so a
+ * carried `STAKE_MINT_ADDRESS.parse::<Pubkey>().unwrap()` is E0277 — and the
+ * validator is blind to it (clean-but-non-compiling). Any trailing `.as_ref()`
+ * etc. is left intact. Skips non-base58 / wrong-length (cargo will flag).
+ *
+ * Exported for unit testing.
+ */
+export function expandStrParsePubkey(source: string): string {
+  const strConsts = new Map<string, string>();
+  for (const m of source.matchAll(
+    /\b(?:pub\s+)?const\s+(\w+)\s*:\s*&\s*(?:'static\s+)?str\s*=\s*"([1-9A-HJ-NP-Za-km-z]+)"/g,
+  )) {
+    strConsts.set(m[1]!, m[2]!);
+  }
+  return source.replace(
+    /(?:"([1-9A-HJ-NP-Za-km-z]+)"|\b([A-Za-z_]\w*)\b)\s*\.\s*parse\s*::\s*<\s*Pubkey\s*>\s*\(\s*\)\s*\.\s*(?:unwrap\s*\(\s*\)|expect\s*\([^)]*\))/g,
+    (whole, literal: string | undefined, ident: string | undefined) => {
+      const base58 = literal ?? (ident ? strConsts.get(ident) : undefined);
+      if (!base58) return whole;
+      const bytes = decodeBase58(base58);
+      if (!bytes || bytes.length !== 32) return whole;
+      return `Pubkey::new_from_array([${bytes.join(", ")}])`;
+    },
+  );
+}
+
+/**
  * Well-known external program ID constants for crates Anvil intentionally
  * does NOT pull into the scaffold (borsh-derive version conflicts). When
  * source references one of these as an aliased `use crate::ID as ALIAS`
@@ -2477,6 +2506,7 @@ function buildFlattenedSource(
   // ID = pubkey!("...") }`) hit this. The expanded form compiles in any
   // target framework that exposes a Pubkey type.
   source = expandPubkeyMacro(source);
+  source = expandStrParsePubkey(source);
   // Vendor well-known external program IDs (mpl_core::ID etc.) — see
   // anchor-parser for full rationale.
   source = vendorExternalProgramIDs(source);
@@ -2978,7 +3008,7 @@ export function buildProjectSourceGraph(
     : rewriteAnchorRequireMacros(rewriteErrMacroToExplicit(consolidated));
   const cfgRes = stripInactiveCfgItemsWithDrops(macroRewritten);
   return {
-    source: expandPubkeyMacro(cfgRes.source),
+    source: expandStrParsePubkey(expandPubkeyMacro(cfgRes.source)),
     includedFiles: [normalizedEntry],
     missingModules: [],
     cfgDrops: cfgRes.drops,
