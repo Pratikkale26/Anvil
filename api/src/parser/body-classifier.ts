@@ -31,7 +31,7 @@ import {
   cleanAccountRef,
   cleanAmountExpr,
 } from "./ast-helpers.js";
-import { detectCpi } from "./cpi-detector.js";
+import { detectCpi, extractSignerSeedsExpr } from "./cpi-detector.js";
 import { type WarningCollector, locFromNode } from "./warning-collector.js";
 import { type HelperCpiCatalogEntry, stripLeadingAmp } from "./helper-cpi-catalog.js";
 import { rewriteAnchorRequireMacros, rewriteRequireVariantsInCode } from "./project-source.js";
@@ -2243,7 +2243,7 @@ function extractCpiContextInfo(
           from: tracked.from,
           to: tracked.to,
           authority: tracked.authority,
-          signerSeeds: hasSigner ? "signer_seeds" : undefined,
+          signerSeeds: hasSigner ? extractSignerSeedsExpr(fullText) : undefined,
           // Finding #45 — propagate mint from the chain-rescue branch.
           mint: tracked.mint,
           program,
@@ -2257,12 +2257,11 @@ function extractCpiContextInfo(
   // Allow extraction when we have at least (mint + to) or (from + to).
   if (!fromMatch?.[1] && !toMatch?.[1] && !mintMatch?.[1]) return null;
 
-  // Check for signer_seeds variable reference
-  let signerSeeds: string | undefined;
-  if (hasSigner) {
-    const signerMatch = fullText.match(/signer_seeds/);
-    if (signerMatch) signerSeeds = "signer_seeds";
-  }
+  // F4 — recover the ACTUAL signer-seeds expression (3rd arg of
+  // new_with_signer / arg of .with_signer), not the literal name `signer_seeds`.
+  // Programs that bind it as `signer`/`signer_pda`/… previously dropped the
+  // signer and emitted an unsigned CPI that reverts for a PDA authority.
+  const signerSeeds: string | undefined = hasSigner ? extractSignerSeedsExpr(fullText) : undefined;
 
   return {
     varName,

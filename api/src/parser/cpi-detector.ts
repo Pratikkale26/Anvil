@@ -256,14 +256,14 @@ export function detectCpi(
       return result;
     }
     if (funcText.includes("mint_to")) {
-      const result = extractSplMintTo(callNode, collector);
+      const result = extractSplMintTo(callNode, collector, cpiCtxLookup);
       if (result.kind === "cpi_spl_mint_to") {
         return { ...result, tokenProgram: "token_2022" as const };
       }
       return result;
     }
     if (funcText.includes("burn")) {
-      const result = extractSplBurn(callNode, collector);
+      const result = extractSplBurn(callNode, collector, cpiCtxLookup);
       if (result.kind === "cpi_spl_burn") {
         return { ...result, tokenProgram: "token_2022" as const };
       }
@@ -292,12 +292,12 @@ export function detectCpi(
 
   // ── SPL Token mint_to ──
   if (funcText.includes("token::mint_to") || funcText.includes("token::MintTo")) {
-    return extractSplMintTo(callNode, collector);
+    return extractSplMintTo(callNode, collector, cpiCtxLookup);
   }
 
   // ── SPL Token burn ──
   if (funcText.includes("token::burn") || funcText.includes("token::Burn")) {
-    return extractSplBurn(callNode, collector);
+    return extractSplBurn(callNode, collector, cpiCtxLookup);
   }
 
   // ── Unqualified legacy SPL Token CPI calls (post-consolidation) ──
@@ -324,8 +324,8 @@ export function detectCpi(
     const args = argsNode ? getArguments(argsNode) : [];
     const firstArg = args[0];
     if (firstArg && firstArg.text.includes("CpiContext::")) {
-      if (funcText === "mint_to") return extractSplMintTo(callNode, collector);
-      if (funcText === "burn") return extractSplBurn(callNode, collector);
+      if (funcText === "mint_to") return extractSplMintTo(callNode, collector, cpiCtxLookup);
+      if (funcText === "burn") return extractSplBurn(callNode, collector, cpiCtxLookup);
       if (funcText === "close_account") return extractSplCloseAccount(callNode, collector);
       if (funcText === "set_authority") return extractSplSetAuthority(callNode, collector);
     }
@@ -372,14 +372,14 @@ export function detectCpi(
     return result;
   }
   if (/^mint_to_checked$|::mint_to_checked$/.test(funcText)) {
-    const result = extractSplMintTo(callNode, collector);
+    const result = extractSplMintTo(callNode, collector, cpiCtxLookup);
     if (result.kind === "cpi_spl_mint_to") {
       return { ...result, tokenProgram: "token_2022" as const, ...(checkedTokenProgramArg ? { tokenProgramArg: checkedTokenProgramArg } : {}) };
     }
     return result;
   }
   if (/^burn_checked$|::burn_checked$/.test(funcText)) {
-    const result = extractSplBurn(callNode, collector);
+    const result = extractSplBurn(callNode, collector, cpiCtxLookup);
     if (result.kind === "cpi_spl_burn") {
       return { ...result, tokenProgram: "token_2022" as const, ...(checkedTokenProgramArg ? { tokenProgramArg: checkedTokenProgramArg } : {}) };
     }
@@ -1813,7 +1813,7 @@ function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector, 
 
 // ─── SPL Token Mint To ──────────────────────────────────────────────────────
 
-function extractSplMintTo(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+function extractSplMintTo(callNode: SyntaxNode, collector?: WarningCollector, cpiCtxLookup?: CpiContextLookup): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
   if (!argsNode) {
     warnClassificationLost(collector, "SPL token::mint_to", callNode);
@@ -1842,6 +1842,26 @@ function extractSplMintTo(callNode: SyntaxNode, collector?: WarningCollector): B
       authority = extractStructField(mintStruct, "authority") ?? "authority";
     }
     signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  } else if (firstArg) {
+    // F4 — variable-bound CpiContext (`let cpi_ctx = CpiContext::new_with_signer(...);
+    // mint_to(cpi_ctx, amount)?;`). Mirror extractSplTransfer: recover the signer
+    // seeds (and any unresolved fields) from the tracked binding, else warn loudly.
+    const varName = firstArg.text.trim().replace(/^&\s*/, "");
+    const ctx = cpiCtxLookup?.(varName);
+    if (ctx) {
+      signerSeeds = ctx.signerSeeds;
+      if (ctx.to) to = ctx.to;
+      if (ctx.authority) authority = ctx.authority;
+      if (ctx.mint) mint = ctx.mint;
+    } else {
+      signerSeeds = undefined;
+      collector?.add({
+        code: "signer_seeds_lost_variable_binding",
+        message: `SPL mint_to's CpiContext was variable-bound to '${varName}' and the binding wasn't tracked; signer_seeds are not carried into emit. PDA-signed mint_to may revert at runtime.`,
+        snippet: callNode.text,
+        loc: locFromNode(callNode),
+      });
+    }
   }
 
   if (isChecked && args.length >= 3) {
@@ -1864,7 +1884,7 @@ function extractSplMintTo(callNode: SyntaxNode, collector?: WarningCollector): B
 
 // ─── SPL Token Burn ─────────────────────────────────────────────────────────
 
-function extractSplBurn(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+function extractSplBurn(callNode: SyntaxNode, collector?: WarningCollector, cpiCtxLookup?: CpiContextLookup): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
   if (!argsNode) {
     warnClassificationLost(collector, "SPL token::burn", callNode);
@@ -1894,6 +1914,24 @@ function extractSplBurn(callNode: SyntaxNode, collector?: WarningCollector): Bod
       authority = extractStructField(burnStruct, "authority") ?? "authority";
     }
     signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  } else if (firstArg) {
+    // F4 — variable-bound CpiContext, mirror extractSplTransfer/extractSplMintTo.
+    const varName = firstArg.text.trim().replace(/^&\s*/, "");
+    const ctx = cpiCtxLookup?.(varName);
+    if (ctx) {
+      signerSeeds = ctx.signerSeeds;
+      if (ctx.from) from = ctx.from;
+      if (ctx.authority) authority = ctx.authority;
+      if (ctx.mint) mint = ctx.mint;
+    } else {
+      signerSeeds = undefined;
+      collector?.add({
+        code: "signer_seeds_lost_variable_binding",
+        message: `SPL burn's CpiContext was variable-bound to '${varName}' and the binding wasn't tracked; signer_seeds are not carried into emit. PDA-signed burn may revert at runtime.`,
+        snippet: callNode.text,
+        loc: locFromNode(callNode),
+      });
+    }
   }
 
   if (isChecked && args.length >= 3) {
@@ -3575,7 +3613,7 @@ function extractCanonicalInvoke(
  * the anchor-escrow PDA-signed pattern). When the third arg can't be
  * isolated cleanly, fall back to the legacy default.
  */
-function extractSignerSeedsExpr(firstArgText: string): string {
+export function extractSignerSeedsExpr(firstArgText: string): string {
   // Fluent form: `CpiContext::new(prog, accs).with_signer(seeds)`.
   // Detect first since it's the simpler shape and the more common
   // pattern in real Anchor source (pda-mint-authority and most
