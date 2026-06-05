@@ -1728,9 +1728,18 @@ function normalizeProjectPath(path: string): string {
 
 function resolveModulePath(currentFile: string, moduleName: string, fileMap: Map<string, ProjectFile>): string | null {
   const currentDir = posix.dirname(currentFile);
+  // Rust module resolution: a crate root (lib.rs/main.rs) and a directory-module
+  // (mod.rs) resolve `mod X;` to a sibling in the SAME directory. A file-module
+  // `foo.rs` resolves its `mod X;` into a sibling `foo/` subdirectory — e.g.
+  // `instructions.rs` declaring `mod deposit_funds;` → `instructions/deposit_funds.rs`.
+  // Without the subdir case, file-module submodules (and their `#[derive(Accounts)]`
+  // structs) are never included in the flattened source.
+  const fileName = posix.basename(currentFile, ".rs");
+  const ownsCurrentDir = fileName === "mod" || fileName === "lib" || fileName === "main";
+  const moduleDir = ownsCurrentDir ? currentDir : posix.join(currentDir, fileName);
   const candidates = [
-    posix.join(currentDir, `${moduleName}.rs`),
-    posix.join(currentDir, moduleName, "mod.rs"),
+    posix.join(moduleDir, `${moduleName}.rs`),
+    posix.join(moduleDir, moduleName, "mod.rs"),
   ].map((candidate) => candidate.replace(/^\.\//, ""));
 
   return candidates.find((candidate) => fileMap.has(candidate)) ?? null;

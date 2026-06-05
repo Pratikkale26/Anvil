@@ -629,11 +629,16 @@ function resolveHandlerWrapper(
   // lives in its own module and the wrapper at lib.rs delegates by full path.
   if (qualifier.length > 0 && fnName !== "handler") {
     const found = functionIndex.find((entry) =>
+      entry.node !== fnNode &&
       entry.node.childForFieldName("name")?.text === fnName &&
       entry.modulePath.join("::") === qualifier.join("::"),
     ) ?? functionIndex.find((entry) =>
       // Fallback: same fn name anywhere in the index (handles flattened
       // multi-file projects where the module path was lost during flatten).
+      // The `entry.node !== fnNode` guard prevents a wrapper that shares its
+      // handler's name from resolving to ITSELF (circular self-delegation,
+      // e.g. solana-staking's `deposit_funds_handler`).
+      entry.node !== fnNode &&
       entry.node.childForFieldName("name")?.text === fnName,
     );
     if (found) return found;
@@ -642,6 +647,7 @@ function resolveHandlerWrapper(
   // Pattern 2: Direct `handler(...)` — handler at top level (flattened multi-file)
   if (qualifier.length === 0 && fnName === "handler") {
     const found = functionIndex.find((entry) =>
+      entry.node !== fnNode &&
       entry.node.childForFieldName("name")?.text === "handler" &&
       entry.modulePath.length === 0,
     );
@@ -655,9 +661,11 @@ function resolveHandlerWrapper(
   // dedicated impl-method inliner handles separately.
   if (qualifier.length === 0 && fnName !== "handler" && /^[a-z_]/.test(fnName)) {
     const found = functionIndex.find((entry) =>
+      entry.node !== fnNode &&
       entry.node.childForFieldName("name")?.text === fnName &&
       entry.modulePath.length === 0,
     ) ?? functionIndex.find((entry) =>
+      entry.node !== fnNode &&
       entry.node.childForFieldName("name")?.text === fnName,
     );
     if (found) return found;
