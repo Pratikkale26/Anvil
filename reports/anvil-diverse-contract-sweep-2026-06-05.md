@@ -331,3 +331,29 @@ loud) catches *broken* output; F4-full/F15 are the first *byte-altering* emit fi
 because cargo verification is available. **Still byte-altering / deferred** (need their own cargo
 verification): F1-full (2-part parser, broad blast radius — see task #12 diagnosis), F3, F2-full,
 F7, F8/F11, typed-`Result`, F14.
+
+---
+
+## Implementation status — update 3: F1-full (the headline) LANDED
+
+**F1-full (`0fa9e30`)** — root-caused via an investigation workflow to a single flatten-phase bug,
+*not* the struct-collection recursion first hypothesised. `resolveModulePath` (project-source.ts)
+resolved a **file-module** `instructions.rs`'s `mod deposit_funds;` in the file's own directory
+(`src/deposit_funds.rs`) instead of the sibling `src/instructions/deposit_funds.rs`, so the
+instruction files — and their `#[derive(Accounts)]` structs — were never flattened in. Fix computes a
+`moduleDir`: crate roots (lib/main) + directory-modules (mod.rs) own the current dir; a file-module
+`foo.rs` owns a `foo/` subdir. Plus a defensive `resolveHandlerWrapper` guard (skip the wrapper's own
+node) so a same-named wrapper/handler can't self-resolve.
+
+**Result on solana-staking:** all 4 instructions now resolve accounts and emit the *real* handler
+bodies (state writes, PDA derivation, owner/writable checks) — the silent broken shell is gone. The
+remaining refusal is the *honest* control-flow-IR limitation, not the silent-ship.
+
+**Verification:** new `parser-file-module-resolution` guard test (locks Part A + Part B); test:fast
+**2011/0**; multi-file corpus (voter-stake-registry 24/24, lazy-distributor 13/13) **unchanged**;
+differential pipeline smoke-test byte-equal. (A full byte-equal proof isn't possible — the
+differential harness is single-file and staking refuses on control-flow — so F1-full is verified at
+the parser/flatten level + no-regression, which is the correct bar for a flatten-correctness fix.)
+
+**Session tally: 13 fixes across 9 commits (`d6259e4`→`0fa9e30`).** Remaining byte-altering TODOs:
+F3, F2-full, F7, F8/F11, typed-`Result`, F14.
