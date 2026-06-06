@@ -381,3 +381,20 @@ derivation is exactly Anchor's; the init-ATA path (`ata-mint`) is unchanged; `te
 
 **Session tally: 14 fixes across 11 commits (`d6259e4`→`273b21f`).** Remaining byte-altering TODOs: F3, F7,
 F8/F11, typed-`Result`, F14.
+
+---
+
+## Implementation status — update 5: F7 + F3 LANDED
+
+- **F7 (`6d88b55`, Pinocchio)** — `SystemAccount<'info>` now emits `if X.owner() != &[0u8; 32] { Custom(3011) }`
+  (AccountNotSystemOwned), closing the latent slot-substitution gap. Verified: escrow differential still
+  byte-equal (no-op on a real system-owned `maker`); test:fast green (escrow snapshot updated).
+- **F3 (`aacfb7d`)** — hand-rolled `space = Type::INIT_SPACE/LEN` was silently mis-allocated (rewritten to
+  `8 + Anvil's-recompute` → e.g. 136 vs Anchor's 48). Now const-evaluates the source expr to a literal when it
+  fully resolves against the source's own consts (top-level + impl), emitting that literal; everything
+  unresolvable (`#[derive(InitSpace)]`, methods) bails to the legacy heuristic (unchanged). Also fixed
+  `resolveConstExprValue` to be paren-aware + correct-precedence. Verified with a teeth-checked
+  `differential-hand-rolled-space` (post-fix 56 byte-equal / pre-fix 104 diverges); test:fast 2012/0.
+
+**Session tally: 17 fixes across 14 commits (`d6259e4`→`aacfb7d`).** Remaining: F8/F11 (nested has_one +
+seeds::program), typed-`Result`, F14 (fanout `format!`), token_program-identity.
