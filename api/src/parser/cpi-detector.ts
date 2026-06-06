@@ -696,8 +696,23 @@ function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCol
       new RegExp(`(?:[{,]\\s*)${field}(?=\\s*[,}])`),
     );
     if (shorthand) return field;
-    const explicit = dataText.match(new RegExp(`\\b${field}\\s*:\\s*([^,}]+)`));
-    return explicit?.[1]?.trim() ?? "";
+    // F14 — depth-aware value capture: stop at the FIRST `,`/`}` at brace/
+    // paren depth 0, not the first literal one. A naive `[^,}]+` truncated a
+    // value containing commas/braces — e.g. `name: format!("Staked {}", x)`
+    // captured `format!("Staked {` → mangled, unbalanced output.
+    const m = new RegExp(`\\b${field}\\s*:\\s*`).exec(dataText);
+    if (!m) return "";
+    const start = m.index + m[0].length;
+    let depth = 0;
+    let i = start;
+    while (i < dataText.length) {
+      const ch = dataText[i]!;
+      if (ch === "{" || ch === "[" || ch === "(") depth++;
+      else if (ch === "}" || ch === "]" || ch === ")") { if (depth === 0) break; depth--; }
+      else if (ch === "," && depth === 0) break;
+      i++;
+    }
+    return dataText.slice(start, i).trim();
   };
   // Task #84 closed: creators, collection, uses all captured.
   const creatorsExpr = extractDataV2NestedExpression(dataText, "creators");
