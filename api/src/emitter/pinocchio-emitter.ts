@@ -20,7 +20,7 @@ import {
   snakeCase,
   toPascalCase,
   isProgramAccount,
-  knownTokenProgramIdLiteral,
+  programIdentityMembers,
   emitRequireGuard,
 } from "./emitter-utils.js";
 import {
@@ -814,12 +814,14 @@ export class PinocchioEmitter extends BaseEmitter {
   }
 
   override emitProgramIdentityCheck(name: string, accountType: string): string {
-    // #17 — Program<'info, T> for a well-known token program must carry that
-    // program's id (Anchor's Program<T> key check). key() returns &Pubkey, so
-    // compare against &<id literal>.
-    const id = knownTokenProgramIdLiteral(accountType);
-    if (!id) return "";
-    return `    if ${name}.key() != &${id} {
+    // #17 / #20 — Program<'info, T> / Interface<'info, TokenInterface> must
+    // carry a member of the program's id set (Anchor's Program<T> single-id /
+    // Interface Ids-set check). key() returns &Pubkey, so compare against &<id>.
+    // Single id → `key != id`; TokenInterface → `key != id1 && key != id2`.
+    const ids = programIdentityMembers(accountType);
+    if (ids.length === 0) return "";
+    const cond = ids.map((id) => `${name}.key() != &${id}`).join(" && ");
+    return `    if ${cond} {
         return Err(ProgramError::IncorrectProgramId);
     }`;
   }

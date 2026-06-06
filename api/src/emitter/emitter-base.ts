@@ -79,7 +79,7 @@ import {
   snakeCase,
   toPascalCase,
   isProgramAccount,
-  knownTokenProgramIdLiteral,
+  programIdentityMembers,
   cleanInlineExpr,
   stripAnchorConstraintError,
   emitRequireGuard,
@@ -3222,12 +3222,14 @@ impl ZeroCopy for ${accName} {}`;
       .filter(Boolean)
       .join("\n");
 
-    // #17 — Program<'info, T> identity: verify a well-known token program's
-    // account key == T::id() (Anchor's Program<T> constraint). Gated on
-    // knownTokenProgramIdLiteral (non-null only for Token/Token2022/ATA), so
-    // System, Interface<TokenInterface>, and user programs emit nothing.
+    // #17 / #20 — Program<'info, T> / Interface<'info, TokenInterface> identity:
+    // verify the account key is a member of the program's id set (Anchor's
+    // Program<T> single-id check / Interface Ids-set membership). Gated on
+    // programIdentityMembers (non-empty for Token/Token2022/ATA single-id and
+    // TokenInterface 2-member), so System, user programs, and
+    // InterfaceAccount<Mint/TokenAccount> DATA accounts emit nothing.
     const programIdentityChecks = instr.accounts
-      .filter((a) => !a.isOptional && !a.isInit && knownTokenProgramIdLiteral(a.accountType) !== null)
+      .filter((a) => !a.isOptional && !a.isInit && programIdentityMembers(a.accountType).length > 0)
       .map((a) => this.emitProgramIdentityCheck(snakeCase(a.name), a.accountType))
       .filter(Boolean)
       .join("\n");

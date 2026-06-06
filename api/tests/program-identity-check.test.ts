@@ -24,7 +24,7 @@ const SRC = `
 use anchor_lang::prelude::*;
 use anchor_spl::token::Token;
 use anchor_spl::token_2022::Token2022;
-use anchor_spl::token_interface::TokenInterface;
+use anchor_spl::token_interface::{TokenInterface, Mint, TokenAccount};
 use anchor_spl::associated_token::AssociatedToken;
 declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 
@@ -42,6 +42,8 @@ pub struct Go<'info> {
     pub ata_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
     pub token_iface: Interface<'info, TokenInterface>,
+    pub mint: InterfaceAccount<'info, Mint>,
+    pub vault: InterfaceAccount<'info, TokenAccount>,
 }
 `;
 
@@ -49,25 +51,35 @@ const TOKEN_BYTES = "6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 20
 const TOKEN_2022_BYTES = "6, 221, 246, 225, 238, 117, 143, 222, 24, 66, 93, 188, 228, 108, 205, 218, 182, 26, 252, 77, 131, 185, 13, 39, 254, 189, 249, 40, 216, 161, 139, 252";
 const ATA_BYTES = "140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89";
 
-describe("#17 Program<T> identity check", () => {
+describe("#17/#20 Program<T> + Interface<TokenInterface> identity check", () => {
   for (const [target, emit, keyExpr] of [
     ["pinocchio", emitPinocchioFull, (n: string) => `${n}.key() != &`],
     ["native", emitNativeFull, (n: string) => `*${n}.key != Pubkey::new_from_array(`],
   ] as const) {
-    test(`fires for token programs, excludes System + Interface (${target})`, async () => {
+    test(`single-id for Program<T>, 2-member set for TokenInterface, excludes System + data accounts (${target})`, async () => {
       const parsed = await parseAnchor(SRC);
       if (!parsed.ok) throw new Error(`parse failed: ${parsed.error}`);
       const code = emit(parsed.ir).singleFile;
 
-      // Fires with the correct id literal per token program.
+      // #17 — single-id check per Program<T> token program.
       expect(code).toContain(`${keyExpr("token_program")}[${TOKEN_BYTES}]`);
       expect(code).toContain(`${keyExpr("token_program_2022")}[${TOKEN_2022_BYTES}]`);
       expect(code).toContain(`${keyExpr("ata_program")}[${ATA_BYTES}]`);
 
-      // The exclusion boundary: NO identity check on system_program or the
-      // token Interface (which accepts either program).
+      // #20 — Interface<TokenInterface> = a 2-member set check accepting EITHER
+      // program: both ids present, joined by && on token_iface.
+      expect(code).toContain(`${keyExpr("token_iface")}[${TOKEN_BYTES}]`);
+      expect(code).toContain(`${keyExpr("token_iface")}[${TOKEN_2022_BYTES}]`);
+      expect(code).toMatch(/token_iface\.key[^\n]*&&[^\n]*token_iface\.key/);
+
+      // Exclusion boundary: System (out of scope), and CRITICALLY the
+      // InterfaceAccount DATA accounts — `mint` (Mint) and `vault`
+      // (TokenAccount) must NEVER get a program-id check (they are token data
+      // accounts, not the program). They parse to "Mint"/"TokenAccount", not
+      // "TokenInterface", so the gate can't fire on them.
       expect(code).not.toMatch(/system_program\.key\(?\)? ?!=/);
-      expect(code).not.toMatch(/token_iface\.key\(?\)? ?!=/);
+      expect(code).not.toMatch(/\bmint\.key\b/);
+      expect(code).not.toMatch(/\bvault\.key\b/);
     });
   }
 });

@@ -538,3 +538,24 @@ closed the more-common shape *in this corpus*; Interface skews higher in newer e
 **Session tally: 21 fixes.** Open follow-ups: F8 (#16, deferred); user-`Program<T>` via declare_id-extraction
 (#19); `Interface<TokenInterface>` set-membership identity (#20); malicious-spoof differential pre-existing-red
 (#18).
+
+### #20 — Interface<TokenInterface> token_program identity (set-membership), byte-equal + revert-parity, both targets
+
+The modern token_program shape #17 left open. Anchor's `Interface<'info, TokenInterface>` accepts a MEMBER of
+`{SPL Token, Token-2022}` (anchor-spl's `Ids::ids()`) and reverts otherwise; a single-id check would wrongly
+reject the valid alternate. Unified with #17 via a new `programIdentityMembers(accountType): string[]` helper —
+single-id programs return 1 id (so the existing #17 emit stays **byte-identical**, zero re-churn), `TokenInterface`
+returns BOTH, and `emitProgramIdentityCheck` joins them with `&&` (`if key != id1 && key != id2 { Err }`).
+- **#1 landmine ruled out** (the InterfaceAccount confusion): the parser gives `Interface<'info, TokenInterface>`
+  → accountType `"TokenInterface"` (account-parser.ts:769), while `InterfaceAccount<'info, Mint>` → `"Mint"` and
+  `InterfaceAccount<'info, TokenAccount>` → `"TokenAccount"` (account-parser.ts:749/761) — DATA accounts, a
+  different accountType, so the gate can never fire a program-id check on them. Verified empirically + locked in
+  the unit test (`mint`/`vault` get no check).
+- Verified: new `differential-interface-identity` (both targets, compareTxOutcomes) — happy (SPL Token member)
+  OK, attack (System program, non-member) reverts on both. The OTHER member (Token-2022) is proven by
+  `differential-program-examples-t22-basics` (passes TOKEN_2022_PROGRAM_ID through an Interface token_program,
+  now carrying the check) staying byte-equal — a regression there would mean the set wrongly excludes Token-2022.
+  `program-examples-escrow` (real Interface fixture, Tokenkeg) byte-equal. 4 snapshots churned (t22-transfer +
+  regex-unsalvageable-helper) — audited as only the membership check. test:fast green.
+
+**Session tally: 22 fixes.** Open: F8 (#16, deferred); user-`Program<T>` (#19); malicious-spoof (#18).

@@ -20,7 +20,7 @@ import {
   snakeCase,
   toPascalCase,
   isProgramAccount,
-  knownTokenProgramIdLiteral,
+  programIdentityMembers,
   emitRequireGuard,
 } from "./emitter-utils.js";
 import {
@@ -592,14 +592,17 @@ use solana_program::{
   }
 
   override emitProgramIdentityCheck(name: string, accountType: string): string {
-    // #17 — Program<'info, T> for a well-known token program must carry that
-    // program's id (Anchor's Program<T> key check). Native AccountInfo.key is a
-    // `&Pubkey` field; solana_program's Pubkey is a STRUCT (not a [u8; 32] alias
-    // like pinocchio's), so the id literal must be wrapped in
-    // Pubkey::new_from_array to type-match the deref'd key.
-    const id = knownTokenProgramIdLiteral(accountType);
-    if (!id) return "";
-    return `    if *${name}.key != Pubkey::new_from_array(${id}) {
+    // #17 / #20 — Program<'info, T> / Interface<'info, TokenInterface> must
+    // carry a member of the program's id set (Anchor's Program<T> single-id /
+    // Interface Ids-set check). Native AccountInfo.key is a `&Pubkey` field;
+    // solana_program's Pubkey is a STRUCT (not a [u8; 32] alias like
+    // pinocchio's), so each id literal is wrapped in Pubkey::new_from_array to
+    // type-match the deref'd key. Single id → `key != id`; TokenInterface →
+    // `key != id1 && key != id2`.
+    const ids = programIdentityMembers(accountType);
+    if (ids.length === 0) return "";
+    const cond = ids.map((id) => `*${name}.key != Pubkey::new_from_array(${id})`).join(" && ");
+    return `    if ${cond} {
         return Err(ProgramError::IncorrectProgramId);
     }`;
   }

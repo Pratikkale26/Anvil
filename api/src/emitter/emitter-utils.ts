@@ -211,6 +211,31 @@ export function knownTokenProgramIdLiteral(accountType: string): string | null {
 }
 
 /**
+ * #17 / #20 — the set of program-id literals a `Program<'info, T>` /
+ * `Interface<'info, T>` account's key must be a member of (Anchor's
+ * `Program<T>` single-id check, or `Interface<T>`'s `Ids`-set membership).
+ *
+ *  - single-id token programs (Token / Token2022 / AssociatedToken) → 1 id;
+ *  - `Interface<'info, TokenInterface>` (accountType "TokenInterface") → BOTH
+ *    {SPL Token, Token-2022}, because Anchor's TokenInterface accepts either
+ *    (anchor-spl's `Ids::ids()` = [spl_token::ID, spl_token_2022::ID]); a single
+ *    id would wrongly reject the valid alternate;
+ *  - everything else (System, user programs, InterfaceAccount<Mint/TokenAccount>
+ *    DATA accounts which parse to "Mint"/"TokenAccount", not "TokenInterface")
+ *    → empty (no check).
+ *
+ * Returns [] when no identity check applies — that's the per-account emit gate.
+ */
+export function programIdentityMembers(accountType: string): string[] {
+  if (accountType === "TokenInterface") {
+    // Interface<'info, TokenInterface> — Tokenkeg OR Token-2022.
+    return [knownTokenProgramIdLiteral("Token")!, knownTokenProgramIdLiteral("Token2022")!];
+  }
+  const id = knownTokenProgramIdLiteral(accountType);
+  return id ? [id] : [];
+}
+
+/**
  * Returns true if the type should use checked arithmetic (checked_add, checked_sub)
  * to prevent silent overflow in release mode. Applies to 64-bit and wider integer
  * types that are commonly used for financial values (lamports, token amounts, etc.).
