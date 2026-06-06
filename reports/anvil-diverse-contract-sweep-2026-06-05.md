@@ -457,3 +457,52 @@ F8 (#16, deferred), token_program-identity (#17, new).
 
 **Session tally: 20 fixes.** Remaining: F8 (#16, deferred), token_program-identity (#17, new),
 malicious-spoof differential pre-existing-red (#18, separate investigation).
+
+---
+
+## #17 token_program / `Program<'info, T>` identity — DEFERRED with a ready-to-execute plan
+
+**Finding** (real, elevated severity): a `Program<'info, T>` account's identity is never verified. Anchor's
+`Program<T>` checks `info.key == &T::id()` (+ executable); Anvil emits none. Some CPI paths use the *passed*
+account — e.g. `pinocchio AccountMeta::new(token_program.key(), …)` (visitor-base.ts:3164) and the
+`tokenProgram.key()` owner-expr (pinocchio-emitter.ts:2519) — so a substituted program account can **redirect a
+CPI** on those paths (money-loss vector), not merely diverge on revert. Other CPI paths hardcode
+`&SPL_TOKEN_PROGRAM_ID` (1265), so severity is mixed; "at least revert-parity, plausibly CPI-redirect" is enough
+to justify the fix.
+
+**Why deferred (not a clean slice):** (1) the high-value half — arbitrary *user* `Program<'info, MyProg>` — is
+**blocked**: `T::id()` isn't resolvable at emit time (parser doesn't extract a sibling/imported `declare_id!`);
+needs a separate parser→IR arc. (2) The shippable subset is well-known programs only (System/Token/Token2022/
+ATA), the lower-value part. (3) Large snapshot blast radius (every `system_program`/`token_program` slot in the
+corpus churns). (4) The real verification work is an **attack teeth fixture** — no existing fixture passes a
+substitutable `Program<T>`, so the guard would ship unexercised without one.
+
+**Ready-to-execute plan (well-known-program subset, mirrors F7/F2):**
+1. Shared helper `knownTokenProgramIdLiteral(accountType): string|null` in `emitter-utils.ts` returning the Rust
+   array literal: `Token`/`TokenProgram` → `[6,221,246,225,215,101,161,147,217,203,225,70,206,235,121,172,28,
+   180,133,237,95,91,55,145,58,140,245,133,126,255,0,169]`; `Token2022` → `[6,221,246,225,238,117,143,222,24,66,
+   93,188,228,108,205,218,182,26,252,77,131,185,13,39,254,189,249,40,216,161,139,252]`; `AssociatedToken`/
+   `AssociatedTokenProgram` → `[140,151,37,143,78,36,137,241,187,61,16,41,20,142,13,131,11,90,19,153,218,255,16,
+   132,4,142,123,216,219,233,248,89]`; else null. (Decide separately whether to include `System`→`[0u8;32]` —
+   correct per Anchor but ~3× the churn for the lowest-value, runtime-mitigated case.)
+2. Base no-op `emitProgramIdentityCheck(name, accountType)` in emitter-base (next to `emitSystemAccountOwnerCheck`
+   :313). Pinocchio override: `if ${name}.key() != &${id} { return Err(ProgramError::IncorrectProgramId); }`.
+   Native override: `if *${name}.key != ${id} { … }` (Native `AccountInfo.key` is a `&Pubkey` field → deref;
+   cf. native-emitter.ts:632). Both targets — the Native idiom is unambiguous, so don't copy F7's incidental
+   Pinocchio-only scope.
+3. Collect+join: `const programIdentityChecks = instr.accounts.filter(a => !a.isOptional && !a.isInit &&
+   knownTokenProgramIdLiteral(a.accountType) !== null).map(...).filter(Boolean).join("\n")` — gate on the
+   literal helper, **NOT** `isProgramAccount` (it returns false for `Token2022` — a latent bug). Add to the
+   `preChecks` array (emitter-base.ts:3454).
+4. **Exclusion guard (critical correctness boundary):** `Interface<'info, TokenInterface>` (accountType
+   `TokenInterface`) must get **no** check — it legitimately accepts either Tokenkeg OR Token-2022 → helper
+   returns null. Lock with a fast parse+emit unit test asserting the check appears for `Program<Token>`/
+   `Program<Token2022>`/`AssociatedToken`, and is absent for `Interface<TokenInterface>`, a user
+   `Program<Jupiter>`, and `AccountInfo`.
+5. Verify: regenerate churned snapshots (diff each → confirm ONLY the identity check was added); happy-path
+   byte-equal on an existing `Program<Token>` differential, both targets (check runs + passes → byte-equal); and
+   a NEW attack differential — a minimal handler with `Program<'info, Token>`, callScript passes a WRONG pubkey
+   in that slot, `compareTxOutcomes` → Anchor reverts (ConstraintProgram), Anvil now reverts too (revert-parity).
+   That attack fixture is the value demonstration + the teeth.
+6. Separate follow-up (the high-value half): extract the source's `declare_id!` (and any imported program ids)
+   into the IR so arbitrary user `Program<T>` can be checked against `T::id()`.
