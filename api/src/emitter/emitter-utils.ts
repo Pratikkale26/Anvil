@@ -261,7 +261,9 @@ export function parseFixedArrayType(typeName: string): { elementType: string; le
 }
 
 export function resolveConstExprValue(expr: string, constants: string[], seen = new Set<string>()): number | null {
-  const trimmed = expr.trim();
+  // Collapse internal whitespace so a multi-line const RHS (e.g. a hand-rolled
+  // `pub const INIT_SPACE = 8 + 32 +\n  4 + 0;`) resolves through the +/* matchers.
+  const trimmed = expr.trim().replace(/\s+/g, " ");
   if (/^\d+$/.test(trimmed)) {
     return Number.parseInt(trimmed, 10);
   }
@@ -281,18 +283,36 @@ export function resolveConstExprValue(expr: string, constants: string[], seen = 
     return resolveConstExprValue(rhs, constants, seen);
   }
 
-  const multMatch = trimmed.match(/^(.+)\*\s*(.+)$/);
-  if (multMatch?.[1] && multMatch[2]) {
-    const left = resolveConstExprValue(multMatch[1], constants, new Set(seen));
-    const right = resolveConstExprValue(multMatch[2], constants, new Set(seen));
-    return left !== null && right !== null ? left * right : null;
+  // F3 — qualified impl/associated const: `Profile::INIT_SPACE`, `Rec::LEN`.
+  // Strip the qualifier and resolve the const name against the pool (the caller
+  // includes the owning type's implItems). Anvil's own INIT_SPACE/LEN is
+  // synthesized at emit time, not in this pool, so there is no collision.
+  const qualMatch = trimmed.match(/^[A-Za-z_][A-Za-z0-9_]*::([A-Z_][A-Z0-9_]*)$/);
+  if (qualMatch?.[1]) {
+    return resolveConstExprValue(qualMatch[1], constants, seen);
   }
 
-  const addMatch = trimmed.match(/^(.+)\+\s*(.+)$/);
-  if (addMatch?.[1] && addMatch[2]) {
-    const left = resolveConstExprValue(addMatch[1], constants, new Set(seen));
-    const right = resolveConstExprValue(addMatch[2], constants, new Set(seen));
-    return left !== null && right !== null ? left + right : null;
+  // Paren-aware split at the LAST top-level (paren-depth 0) operator, lowest
+  // precedence first (`+`/`-` before `*`), giving correct precedence + left
+  // associativity and not splitting inside `(4 + 128)`.
+  const splitTopLevel = (s: string, ops: string): [string, string, string] | null => {
+    let depth = 0;
+    for (let i = s.length - 1; i > 0; i--) {
+      const ch = s[i]!;
+      if (ch === ")") depth++;
+      else if (ch === "(") depth--;
+      else if (depth === 0 && ops.includes(ch)) return [s.slice(0, i), ch, s.slice(i + 1)];
+    }
+    return null;
+  };
+  for (const ops of ["+-", "*"]) {
+    const parts = splitTopLevel(trimmed, ops);
+    if (parts) {
+      const left = resolveConstExprValue(parts[0], constants, new Set(seen));
+      const right = resolveConstExprValue(parts[2], constants, new Set(seen));
+      if (left === null || right === null) return null;
+      return parts[1] === "+" ? left + right : parts[1] === "-" ? left - right : left * right;
+    }
   }
 
   return null;

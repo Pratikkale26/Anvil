@@ -5037,6 +5037,23 @@ ${allFields}
     // skips (b).
     const rawSpace = (accountRef.initSpace ?? "").trim();
     const initSpaceExpr = (() => {
+      // F3 — if the source `space = <expr>` fully resolves to a concrete byte
+      // count using the source's OWN const defs (top-level + the owning type's
+      // impl consts), emit that literal. Anchor allocates exactly eval(space);
+      // emitting the literal sidesteps the shadowed-const problem (Anvil's
+      // emitted Type::INIT_SPACE is its body-only recompute, not the user's
+      // value) and the duplicate-const compile error. All-or-nothing: a
+      // #[derive(InitSpace)] const / a method call / any unresolved token
+      // returns null → fall through to the legacy heuristics below (unchanged).
+      // The leading letter gate keeps pure-numeric exprs (`8 + 8`) verbatim.
+      if (/[A-Za-z]/.test(rawSpace)) {
+        const ownerType =
+          (ir.accounts ?? []).find((a) => a.name === accountRef.accountType) ??
+          (ir.types ?? []).find((t) => t.name === accountRef.accountType);
+        const constPool = [...(ir.constants ?? []), ...((ownerType as { implItems?: string[] } | undefined)?.implItems ?? [])];
+        const resolved = resolveConstExprValue(rawSpace, constPool);
+        if (resolved !== null) return String(resolved);
+      }
       // (a) `space = Type::LEN` → rewrite to Type::TOTAL_LEN (8 + body).
       if (/^[A-Z][A-Za-z0-9_]*::LEN$/.test(rawSpace)) {
         return rawSpace.replace(/::LEN$/, "::TOTAL_LEN");
