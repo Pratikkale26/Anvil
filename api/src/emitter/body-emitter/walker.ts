@@ -801,10 +801,25 @@ export class BodyWalker {
     // runtime check.
     const seedsProgramC = accountRef?.constraints?.find((c) => c.kind === "seeds::program");
     let programIdArg = "program_id";
+    let seedsProgramRefuse: string | null = null;
     if (seedsProgramC?.value) {
       const v = seedsProgramC.value.trim();
+      const isInStructAccount = (n: string) =>
+        this.instr.accounts.some((a) => snakeCase(a.name) === snakeCase(n));
       // `<account>.key()` shape — emit the AccountInfo's key by-value.
       const m = v.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\.key\(\)$/);
+      if (!m?.[1] && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(v) && isInStructAccount(v)) {
+        // F11 — a bare in-struct account name as the override program → its key
+        // (same as the `.key()` shape; Anchor derefs the account to its pubkey).
+        programIdArg = `${snakeCase(v)}.key`;
+      } else if (!m?.[1]) {
+        // F11 — a `seeds::program` override Anvil cannot resolve to an in-struct
+        // program account (a const, System::id(), an instruction arg, a function
+        // call). Refuse LOUDLY rather than silently verify the PDA against the
+        // CURRENT program — that would accept a key valid as a PDA of program_id
+        // but not of the override (a ConstraintSeeds divergence vs Anchor).
+        seedsProgramRefuse = v;
+      }
       if (m?.[1]) {
         // Pinocchio AccountInfo has `.key()` returning &Pubkey; native has
         // `.key` (field). The emitter dispatches per-target via
@@ -825,7 +840,10 @@ export class BodyWalker {
       pdaSeeds,
       this.resolveAccountInfoVar(snakeCase(accountName)),
     );
-    return emitted
+    const refuseMarker = seedsProgramRefuse
+      ? `    // ⚠️ Anvil: seeds::program = ${seedsProgramRefuse} could not be resolved to an in-struct program account — the PDA would verify against the wrong program. manual rebuild required.\n`
+      : "";
+    return refuseMarker + emitted
       .replace(/\blet bump =/g, `let bump_${snakeCase(accountName)} =`)
       .replace(
         /\blet\s+\(expected_key,\s*bump\)\s*=/g,
