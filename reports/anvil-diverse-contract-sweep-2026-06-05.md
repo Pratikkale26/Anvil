@@ -561,3 +561,24 @@ returns BOTH, and `emitProgramIdentityCheck` joins them with `&&` (`if key != id
   regex-unsalvageable-helper) — audited as only the membership check. test:fast green.
 
 **Session tally: 22 fixes.** Open: F8 (#16, deferred); user-`Program<T>` (#19); malicious-spoof (#18).
+
+### #21 — Program<'info, Metadata> (17×) + Program<'info, Memo> identity, byte-equal + revert-parity, both targets
+
+The well-known-program gap the #19 corpus grep surfaced: `Program<'info, Metadata>` (MPL Token Metadata, 17
+files) + `Program<'info, Memo>` (SPL Memo) — fixed-id programs #17 missed. Added both to `knownProgramIdLiteral`
+(renamed from `knownTokenProgramIdLiteral` now that it covers non-token programs); bytes decoded via Anvil's OWN
+`decodeBase58` from the program-id strings it already trusts in scenario-runner.ts (correct-by-construction).
+- **Landmine #17/#20 didn't have, handled**: the parser maps BOTH `Program<'info, Metadata>` and a user
+  `Account<'info, Metadata>` data account to accountType `"Metadata"` (AccountRef has no Program-vs-Account flag,
+  unlike Interface vs InterfaceAccount which differ). Added a `!ir.accounts.some(def => def.name === accountType)`
+  guard to the filter: a program type is never an `#[account]` def, so the check fires on `Program<Metadata>` but
+  NOT on a same-named state struct. Verified both ways in the unit test.
+- Verified: new `differential-metadata-identity` (both targets, compareTxOutcomes) — happy (the metaqbxx id with
+  an executable program loaded there via `auxiliaryPrograms`; Anchor's `Program<T>` validates key + executable,
+  not the program's code, so any `.so` works) OK, attack (System program, wrong key) reverts on both. Unit test
+  locks Program<Metadata>/Memo fire + the Account<Metadata> data-account guard. `cpi-memo` snapshot churned
+  (it uses `Program<'info, Memo>`) — audited as only the check. The single-id refactor keeps #17 byte-identical.
+
+**Session tally: 23 fixes.** Open: F8 (#16, deferred); malicious-spoof (#18). The token + Metadata + Memo
+program-identity gap is now closed for every well-known program in the corpus; only arbitrary user `Program<T>`
+(#19, corpus-absent) remains, deferred.

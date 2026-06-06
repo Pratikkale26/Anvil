@@ -314,10 +314,11 @@ export abstract class BaseEmitter {
   emitSystemAccountOwnerCheck(_accountName: string): string {
     return "";
   }
-  // #17 — Program<'info, T> identity check (key == T::id()) for well-known
-  // token programs. Base no-op; both targets override (the per-target key-access
-  // idiom differs). Gated by knownTokenProgramIdLiteral, which returns null for
-  // System / Interface / user programs (see emitter-utils).
+  // #17/#20/#21 — Program<'info, T> / Interface<'info, TokenInterface> identity
+  // check (key is a member of T's id set) for well-known programs. Base no-op;
+  // both targets override (the per-target key-access idiom differs). Gated by
+  // programIdentityMembers, which is empty for System / user programs (see
+  // emitter-utils).
   emitProgramIdentityCheck(_accountName: string, _accountType: string): string {
     return "";
   }
@@ -3222,14 +3223,22 @@ impl ZeroCopy for ${accName} {}`;
       .filter(Boolean)
       .join("\n");
 
-    // #17 / #20 — Program<'info, T> / Interface<'info, TokenInterface> identity:
-    // verify the account key is a member of the program's id set (Anchor's
-    // Program<T> single-id check / Interface Ids-set membership). Gated on
-    // programIdentityMembers (non-empty for Token/Token2022/ATA single-id and
-    // TokenInterface 2-member), so System, user programs, and
-    // InterfaceAccount<Mint/TokenAccount> DATA accounts emit nothing.
+    // #17 / #20 / #21 — Program<'info, T> / Interface<'info, TokenInterface>
+    // identity: verify the account key is a member of the program's id set
+    // (Anchor's Program<T> single-id check / Interface Ids-set membership).
+    // Gated on programIdentityMembers (non-empty for Token/Token2022/ATA/
+    // Metadata/Memo single-id and TokenInterface 2-member). The
+    // `!ir.accounts.some(...)` guard distinguishes the PROGRAM (Program<Metadata>)
+    // from a same-named user DATA account (Account<Metadata>): the parser maps
+    // both wrappers to the same accountType (it loses Program-vs-Account), so we
+    // only emit the check when the type is NOT a generated state struct — a
+    // program type is never an #[account] def. (Token/TokenInterface are never
+    // state types, so this is a no-op for #17/#20; it makes #21 safe.)
     const programIdentityChecks = instr.accounts
-      .filter((a) => !a.isOptional && !a.isInit && programIdentityMembers(a.accountType).length > 0)
+      .filter((a) =>
+        !a.isOptional && !a.isInit
+        && programIdentityMembers(a.accountType).length > 0
+        && !ir.accounts.some((def) => def.name === a.accountType))
       .map((a) => this.emitProgramIdentityCheck(snakeCase(a.name), a.accountType))
       .filter(Boolean)
       .join("\n");

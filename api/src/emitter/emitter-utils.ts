@@ -179,23 +179,24 @@ export function isProgramAccount(accountType: string): boolean {
 }
 
 /**
- * #17 — Rust array literal for a well-known token-program's id, keyed by the
+ * #17/#21 — Rust array literal for a well-known program's id, keyed by the
  * Anchor inner type of a `Program<'info, T>` field. Anchor's `Program<T>`
  * constraint verifies `info.key == &T::id()`; Anvil otherwise emits no such
  * check, so a substituted program account can redirect a CPI on the emit paths
  * that read the passed account (e.g. `AccountMeta::new(token_program.key()…)`).
  *
- * Scoped to the token programs — the CPI-redirect vector. Returns null for:
+ * Covers the well-known programs whose id is a fixed compile-time constant:
+ * the token programs (Token / Token2022 / AssociatedToken — the CPI-redirect
+ * vector) plus MPL Token Metadata and SPL Memo. Returns null for:
  *  - `System` ([0u8;32]) — runtime-mitigated, lowest value, highest churn;
- *  - `Interface<'info, TokenInterface>` (accountType "TokenInterface") — it
- *    legitimately accepts EITHER Tokenkeg OR Token-2022, so it must stay
- *    unchecked (a hardcoded id would wrongly reject the other program);
+ *  - `Interface<'info, TokenInterface>` — handled separately (a 2-id set, not a
+ *    single id; see programIdentityMembers);
  *  - arbitrary user programs — `T::id()` isn't resolvable at emit time.
  *
- * Gate the per-account emit on this returning non-null, NOT on
+ * Gate the per-account emit on programIdentityMembers (which wraps this), NOT on
  * isProgramAccount() (which returns false for "Token2022").
  */
-export function knownTokenProgramIdLiteral(accountType: string): string | null {
+export function knownProgramIdLiteral(accountType: string): string | null {
   switch (accountType) {
     case "Token":
     case "TokenProgram":
@@ -205,6 +206,15 @@ export function knownTokenProgramIdLiteral(accountType: string): string | null {
     case "AssociatedToken":
     case "AssociatedTokenProgram":
       return "[140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89]";
+    case "Metadata":
+      // MPL Token Metadata — metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s.
+      // Bytes decoded via Anvil's own decodeBase58 (same decoder used for the
+      // Pubkey literals it emits) from the program-id string Anvil already
+      // trusts in scenario-runner.ts — correct-by-construction.
+      return "[11, 112, 101, 177, 227, 209, 124, 69, 56, 157, 82, 127, 107, 4, 195, 205, 88, 184, 108, 115, 26, 160, 253, 181, 73, 182, 209, 188, 3, 248, 41, 70]";
+    case "Memo":
+      // SPL Memo — MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr.
+      return "[5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124, 124, 53, 181, 221, 188, 146, 187, 129, 228, 31, 168, 64, 65, 5, 68, 141]";
     default:
       return null;
   }
@@ -229,9 +239,9 @@ export function knownTokenProgramIdLiteral(accountType: string): string | null {
 export function programIdentityMembers(accountType: string): string[] {
   if (accountType === "TokenInterface") {
     // Interface<'info, TokenInterface> — Tokenkeg OR Token-2022.
-    return [knownTokenProgramIdLiteral("Token")!, knownTokenProgramIdLiteral("Token2022")!];
+    return [knownProgramIdLiteral("Token")!, knownProgramIdLiteral("Token2022")!];
   }
-  const id = knownTokenProgramIdLiteral(accountType);
+  const id = knownProgramIdLiteral(accountType);
   return id ? [id] : [];
 }
 

@@ -83,3 +83,64 @@ describe("#17/#20 Program<T> + Interface<TokenInterface> identity check", () => 
     });
   }
 });
+
+const META_BYTES = "11, 112, 101, 177, 227, 209, 124, 69, 56, 157, 82, 127, 107, 4, 195, 205, 88, 184, 108, 115, 26, 160, 253, 181, 73, 182, 209, 188, 3, 248, 41, 70";
+const MEMO_BYTES = "5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124, 124, 53, 181, 221, 188, 146, 187, 129, 228, 31, 168, 64, 65, 5, 68, 141";
+
+// #21 — Program<'info, Metadata> (MPL Token Metadata) and Program<'info, Memo>.
+// The parser maps BOTH `Program<Metadata>` and a user `Account<Metadata>` data
+// account to accountType "Metadata" (it loses the Program-vs-Account wrapper),
+// so the gate must additionally exclude any accountType that is a generated
+// state struct — a program type is never an #[account] def.
+const META_PROG_SRC = `
+use anchor_lang::prelude::*;
+use anchor_spl::metadata::Metadata;
+use anchor_spl::memo::Memo;
+declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+#[program]
+pub mod p { use super::*; pub fn go(_ctx: Context<Go>) -> Result<()> { Ok(()) } }
+#[derive(Accounts)]
+pub struct Go<'info> {
+    pub signer: Signer<'info>,
+    pub token_metadata_program: Program<'info, Metadata>,
+    pub memo_program: Program<'info, Memo>,
+}
+`;
+
+// A user state struct ALSO named Metadata, used as a DATA account.
+const META_DATA_SRC = `
+use anchor_lang::prelude::*;
+declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+#[program]
+pub mod p { use super::*; pub fn go(_ctx: Context<Go>) -> Result<()> { Ok(()) } }
+#[account]
+pub struct Metadata { pub x: u64 }
+#[derive(Accounts)]
+pub struct Go<'info> {
+    pub signer: Signer<'info>,
+    pub md: Account<'info, Metadata>,
+}
+`;
+
+describe("#21 Program<Metadata> / Program<Memo> identity check", () => {
+  for (const [target, emit, keyExpr] of [
+    ["pinocchio", emitPinocchioFull, (n: string) => `${n}.key() != &`],
+    ["native", emitNativeFull, (n: string) => `*${n}.key != Pubkey::new_from_array(`],
+  ] as const) {
+    test(`fires for Program<Metadata>/Program<Memo>, NOT for a same-named Account<Metadata> data account (${target})`, async () => {
+      const prog = await parseAnchor(META_PROG_SRC);
+      if (!prog.ok) throw new Error(`parse failed: ${prog.error}`);
+      const progCode = emit(prog.ir).singleFile;
+      expect(progCode).toContain(`${keyExpr("token_metadata_program")}[${META_BYTES}]`);
+      expect(progCode).toContain(`${keyExpr("memo_program")}[${MEMO_BYTES}]`);
+
+      // The guard: a user `Account<'info, Metadata>` data account (a generated
+      // state struct) must NOT get the program-id check.
+      const data = await parseAnchor(META_DATA_SRC);
+      if (!data.ok) throw new Error(`parse failed: ${data.error}`);
+      const dataCode = emit(data.ir).singleFile;
+      expect(dataCode).not.toMatch(/11, 112, 101, 177, 227, 209/); // Metadata program id bytes
+      expect(dataCode).not.toMatch(/\bmd\.key[^\n]*!=/);
+    });
+  }
+});

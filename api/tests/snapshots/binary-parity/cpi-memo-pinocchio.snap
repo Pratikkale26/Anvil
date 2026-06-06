@@ -49,10 +49,13 @@ pub fn write_memo(
     let __ix_data: &[u8] = data;
 
     let authority = &accounts[0];
-    let _memo_program = &accounts[1];
+    let memo_program = &accounts[1];
 
     if !authority.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
+    }
+    if memo_program.key() != &[5, 74, 83, 90, 153, 41, 33, 6, 77, 36, 232, 113, 96, 218, 56, 124, 124, 53, 181, 221, 188, 146, 187, 129, 228, 31, 168, 64, 65, 5, 68, 141] {
+        return Err(ProgramError::IncorrectProgramId);
     }
 
     // Args
