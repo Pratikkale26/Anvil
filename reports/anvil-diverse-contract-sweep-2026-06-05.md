@@ -555,6 +555,8 @@ returns BOTH, and `emitProgramIdentityCheck` joins them with `&&` (`if key != id
   OK, attack (System program, non-member) reverts on both. The OTHER member (Token-2022) is proven by
   `differential-program-examples-t22-basics` (passes TOKEN_2022_PROGRAM_ID through an Interface token_program,
   now carrying the check) staying byte-equal — a regression there would mean the set wrongly excludes Token-2022.
+  Confirmed on a FORCED clean rebuild (cleared the Anvil cache → 56s `Compiling basics` → byte-equal), so the
+  Token-2022-acceptance proof rests on the #20 emit, not a stale cached `.so`.
   `program-examples-escrow` (real Interface fixture, Tokenkeg) byte-equal. 4 snapshots churned (t22-transfer +
   regex-unsalvageable-helper) — audited as only the membership check. test:fast green.
 
