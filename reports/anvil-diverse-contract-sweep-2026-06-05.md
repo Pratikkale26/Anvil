@@ -524,7 +524,17 @@ The plan above shipped exactly as written. `emitProgramIdentityCheck` (base no-o
 - Churn: 24 snapshots (6 `Program<Token>` fixtures — amm/escrow/marketplace/staking/vesting/set-authority/
   spl-burn/spl-transfer across emitter-output + binary-parity); every diff audited = only the identity check (+
   `_token_program`→`token_program` un-prefix, now that the binding is used). test:fast green.
-- Still open (the high-value half): step 6 above — arbitrary user `Program<T>` needs `declare_id!` → IR extraction.
+- Real-handler verified: `differential-vesting` (a real token-CPI handler now carrying the check) is byte-equal
+  1/0 — confirms runtime byte-equal of a non-trivial handler, not just the mechanism on a trivial `touch`.
 
-**Session tally: 21 fixes.** Open: F8 (#16, deferred), #17-user-programs (declare_id-extraction follow-up),
-malicious-spoof differential pre-existing-red (#18).
+**Coverage — what #17 did and did NOT close.** It closed the LEGACY `Program<'info, Token>` (+ `Token2022` /
+`AssociatedToken`) shape. It did NOT close `Interface<'info, TokenInterface>` — the *modern* token_program shape,
+deliberately left unchecked because a single hardcoded id would wrongly reject the valid alternate token program.
+That's the same vulnerability class (Anvil accepts a substituted program in an Interface slot Anchor would reject)
+but needs a SET-MEMBERSHIP check (`key ∈ {Tokenkeg, Token-2022}`), not a single-id literal — a separate follow-up
+(#20). Corpus prevalence here: `Program<'info, Token>` in 16 files vs `Interface<TokenInterface>` in 5, so #17
+closed the more-common shape *in this corpus*; Interface skews higher in newer external code.
+
+**Session tally: 21 fixes.** Open follow-ups: F8 (#16, deferred); user-`Program<T>` via declare_id-extraction
+(#19); `Interface<TokenInterface>` set-membership identity (#20); malicious-spoof differential pre-existing-red
+(#18).
