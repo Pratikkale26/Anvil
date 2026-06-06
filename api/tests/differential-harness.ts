@@ -29,7 +29,7 @@ import {
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { join, dirname as nodeDirname } from "node:path";
+import { join, dirname as nodeDirname, basename } from "node:path";
 import { LiteSVM } from "litesvm";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -763,11 +763,15 @@ async function buildAnchorSo<S extends DifferentialSetup>(
       join(fixture.anchorReferenceCrateDir, "../../target/deploy"),
       join(fixture.anchorReferenceCrateDir, "../target/deploy"),
     ];
+    // The program crate's dir basename is the package name (programs/<name>),
+    // so the built artifact is `<name>.so` — select it from a shared workspace
+    // target/deploy rather than whichever .so sorts first.
+    const programName = basename(fixture.anchorReferenceCrateDir);
     let so: Buffer | null = null;
     for (const c of candidates) {
       if (!existsSync(c)) continue;
       try {
-        so = readSoFromDir(c);
+        so = readSoFromDir(c, programName);
         break;
       } catch { /* keep looking */ }
     }
@@ -1168,9 +1172,20 @@ async function runScenario<S extends DifferentialSetup>(
   return snap;
 }
 
-function readSoFromDir(dir: string): Buffer {
+function readSoFromDir(dir: string, preferredName?: string): Buffer {
   const entries = readdirSync(dir).filter((f) => f.endsWith(".so"));
   if (entries.length === 0) throw new Error(`no .so found in ${dir}`);
+  // Multi-program workspaces (e.g. coral's cpi-returns: callee + malicious)
+  // emit several .so to a SHARED target/deploy. Picking entries[0] (first
+  // alphabetically) silently served a SIBLING program's .so — e.g. `callee.so`
+  // for the malicious fixture, whose declare_id! then mismatches the deployed
+  // program id at runtime (DeclaredProgramIdMismatch). Select the .so matching
+  // this fixture's program (Anchor names it `<package>.so`, hyphens → '_') when
+  // a preferred name is given; fall back to the first for single-crate builds.
+  if (preferredName) {
+    const want = `${preferredName.replace(/-/g, "_")}.so`;
+    if (entries.includes(want)) return readFileSync(join(dir, want));
+  }
   return readFileSync(join(dir, entries[0]!));
 }
 

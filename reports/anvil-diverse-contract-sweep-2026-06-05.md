@@ -603,6 +603,21 @@ they differ. The 2026-05-27 attempt (`7b574e0` revert) prefixed the constraint v
   + the recorded compositePrefix. No-regression: has_one unit suite green, coral-relations-derivation byte-equal,
   ZERO snapshot churn (non-composite has_one emit is byte-identical). tsc clean.
 
-**Session tally: 24 fixes.** Open: malicious-spoof differential pre-existing-red (#18); user-`Program<T>` (#19,
-corpus-absent). The sweep's F1–F11 + typed-Result + the program-identity arc (#17/#20/#21) + F8 (#16) are now all
-landed or deferred-with-cause.
+### #18 — pre-existing RED `coral-cpi-returns-malicious-spoof` differential, ROOT-CAUSED + fixed (harness bug)
+
+The malicious-spoof differential was RED all session: the Anchor REFERENCE program self-rejected with
+`DeclaredProgramIdMismatch` on a fresh build. NOT a product bug — a HARNESS `.so`-selection bug. Root cause: the
+`malicious` and `callee` programs are workspace members of coral's `cpi-returns`, sharing ONE `target/deploy`.
+`readSoFromDir` returned `entries[0]` (the FIRST `.so` alphabetically) — `callee.so` sorts before `malicious.so`,
+so the malicious fixture's Anchor reference was served the CALLEE's `.so` (declare_id `Fg6Pa…`); deployed at the
+malicious id (`6nWiF…`) and invoked, the callee's `declare_id!` self-check failed. PROVEN: the two `_anchor.so`
+are byte-IDENTICAL (md5 `9327499d`), and `strings` shows `programs/callee/src/lib.rs` inside the "malicious" `.so`.
+Callee passed only by alphabetical luck. Fix (differential-harness.ts): `readSoFromDir(dir, preferredName?)` selects
+`<preferredName>.so` (preferredName = the program crate's dir basename; hyphens → `_`) when present, falling back to
+`entries[0]` for single-crate builds. Verified: malicious differential now GREEN (revert-parity restored), callee
+still GREEN. Diagnostic lesson recorded: a fresh-build `DeclaredProgramIdMismatch` on a differential's Anchor
+reference ⇒ suspect cross-contamination; md5 the `.so` against sibling fixtures.
+
+**Session tally: 24 fixes + 1 harness fix.** Open: only user-`Program<T>` (#19, corpus-absent → deferred). Every
+finding F1–F11 + typed-Result + the program-identity arc (#17/#20/#21) + F8 (#16) is landed; the lone pre-existing
+RED differential (#18) is root-caused + fixed. The sweep's task list is exhausted.
