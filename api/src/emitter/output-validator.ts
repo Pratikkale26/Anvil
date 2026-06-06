@@ -65,7 +65,9 @@ function normalizedConstraintValue(value: string): string {
  */
 export function extractResultInnerType(returnType: string): string | null {
   const t = returnType.replace(/^->\s*/, "").trim();
-  const m = t.match(/^Result\s*<\s*/);
+  // Accept a leading path qualifier (`anchor_lang::Result<…>`) as well as the
+  // bare `Result<…>` form.
+  const m = t.match(/^(?:[A-Za-z_]\w*::)*Result\s*<\s*/);
   if (!m) return null;
   let depth = 1;
   let i = m[0].length;
@@ -1279,34 +1281,16 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
   // instruction body inits on it?" — answerable from the IR alone.
   issues.push(...checkT22ExtensionSpaceAllocation(ir));
 
-  // ── Typed-Result instruction return refusal (#20) ──
+  // ── Typed-Result instruction returns (#20 / typed-Result wiring) ──
   //
-  // Anchor's `pub fn ix(...) -> Result<T>` for non-unit T relies on the
-  // anchor_lang macro expanding to a set_return_data() call. Anvil
-  // doesn't reproduce that wire format end-to-end on Pinocchio/Native
-  // (the documented design choice — see api/src/demo-programs/
-  // return-data.rs:8-12, which recommends explicit set_return_data
-  // instead). Silently dropping the typed return produces broken emit:
-  //   Ok(value);   // discarded statement, E inference fails
-  //   Ok(())       // unit tail from emitter
-  // which cargo refuses with E0282 "cannot infer type parameter E".
-  //
-  // Refuse the emit and point users at the supported workaround.
-  for (const ix of ir.instructions) {
-    if (!ix.returnType) continue;
-    const innerT = extractResultInnerType(ix.returnType);
-    if (innerT === null) continue; // not a Result-shaped return
-    if (innerT === "()" || innerT === "") continue; // unit Result is fine
-    issues.push({
-      severity: "error",
-      message:
-        `instruction '${ix.name}': typed Result<${innerT}> return is not supported. ` +
-        `Anchor's macro wires set_return_data() for non-unit T; Anvil does not reproduce ` +
-        `that wire format. Workaround: change the source to return Result<()> and call ` +
-        `set_return_data(&value_bytes) explicitly inside the handler body (see ` +
-        `api/src/demo-programs/return-data.rs for the supported pattern).`,
-    });
-  }
+  // Anchor's `pub fn ix(...) -> Result<T>` for non-unit T expands (via the
+  // #[program] macro) to `set_return_data(&borsh::to_vec(&value)?); Ok(())`.
+  // The emitter now wires that same pattern for single-tail `Ok(<expr>)`
+  // getters (isWireableTypedResult) — byte-identical by delegation. Anything
+  // it can't wire still falls to the loud `unimplemented!("Anvil: non-unit
+  // Result<…>")` stub, which the non-functional-stub scan above already flags.
+  // The emitter is therefore the single source of truth: no separate IR-level
+  // refusal here (a parallel predicate would only drift from the emitter's).
 
   // Parser-degradation warnings (loud signal). Each was emitted at a fallback
   // site in cpi-detector / body-classifier when the parser couldn't fully

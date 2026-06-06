@@ -1627,8 +1627,13 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     rawCode: z.string(),
   }),
 
-  // Ok(()) — return success
-  z.object({ kind: z.literal("return_ok") }),
+  // Ok(()) — return success. `value` carries the inner expression for a
+  // non-unit typed return (`Ok(<expr>)` where the handler is `-> Result<T>`,
+  // T != ()). The emitter wires `set_return_data(&borsh::to_vec(&(<value>))?)`
+  // before the uniform `Ok(())` tail — mirroring Anchor's macro expansion,
+  // which serializes the same value via the same Borsh path. Absent / "()"
+  // for the ordinary unit `Ok(())`.
+  z.object({ kind: z.literal("return_ok"), value: z.string().optional() }),
 
   // return Err(...)
   z.object({

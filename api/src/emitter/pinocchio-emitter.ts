@@ -675,6 +675,8 @@ export class PinocchioEmitter extends BaseEmitter {
       i.body.some((s) =>
         (s.kind === "pass_through" && /\bset_return_data\s*\(/.test(s.code))
         || (s.kind === "state_field_assign" && /\bset_return_data\s*\(/.test(s.value))
+        // Typed-Result getter: the return_ok visitor synthesizes the call.
+        || (s.kind === "return_ok" && !!s.value && s.value !== "()")
       ),
     );
     const usesGetReturnData = _ir.instructions.some((i) =>

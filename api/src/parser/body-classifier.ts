@@ -712,8 +712,12 @@ function classifyStatement(
     // corpus this single case accounted for 43 of 100 pass_through
     // statements (counter, vault, escrow, marketplace, staking,
     // vesting, amm, multisig, init-if-needed, realloc, simple-staking).
-    case "call_expression":
-      if (text.trim() === "Ok(())") return { stmt: { kind: "return_ok" } };
+    case "call_expression": {
+      // Bare `Ok(())` (unit) or `Ok(<expr>)` (typed getter tail) — Rust's
+      // implicit return. classifyOkReturn captures the inner value for the
+      // non-unit case so the emitter can wire set_return_data.
+      const tailOk = classifyOkReturn(text);
+      if (tailOk) return { stmt: tailOk };
       // Bare `Err(...)` at tail — same rationale; uncommon in real
       // Anchor handlers (most use `return Err(...)` explicitly), but
       // catching it here keeps the contract symmetric with the
@@ -723,6 +727,7 @@ function classifyStatement(
       // returning Result) fall through to the default pass_through
       // path so the printer carries them verbatim.
       return passThroughDefault(text, node, collector);
+    }
 
     default:
       // if/for/while/match/block — pure Rust, pass through.
@@ -1487,10 +1492,12 @@ function classifyExpressionStatement(
     if (setInnerExpansion) return setInnerExpansion;
   }
 
-  // ── Ok(()) ──
-  if (text.trim() === "Ok(())" || (expr.type === "call_expression" && expr.text.trim() === "Ok(())")) {
-    return { stmt: { kind: "return_ok" } };
-  }
+  // ── Ok(()) / Ok(<expr>) ──
+  // The unit `Ok(())` maps to a bare return_ok; a non-unit `Ok(<expr>)` (the
+  // tail of a `-> Result<T>` getter/view handler) captures the inner value so
+  // the emitter can wire set_return_data. See classifyOkReturn.
+  const okReturn = classifyOkReturn(text);
+  if (okReturn) return { stmt: okReturn };
 
   // ── Default: pass through ──
   //
@@ -2026,11 +2033,52 @@ function classifyMacroInvocation(node: SyntaxNode): BodyStatement {
 
 // ─── Return classification ──────────────────────────────────────────────────
 
+/**
+ * Classify an `Ok(...)` success-return expression, capturing the inner value.
+ *
+ * Handles both the bare tail form (`Ok(x)`) and the `return Ok(x);` form. The
+ * Ok(...) argument is extracted with a paren-balanced scan (not a naive regex)
+ * so nested calls and bracketed/braced literals survive intact:
+ *   `Ok(())`                  -> { kind: "return_ok" }              (unit)
+ *   `Ok(10)`                  -> { kind: "return_ok", value: "10" }
+ *   `Ok(vec![1, 2, 3])`       -> { kind: "return_ok", value: "vec![1, 2, 3]" }
+ *   `return Ok(account.value)`-> { kind: "return_ok", value: "account.value" }
+ *
+ * Returns null when `text` is not a standalone Ok(...) expression (e.g. `Ok` is
+ * nested inside a larger expression, or the parens don't balance).
+ */
+function classifyOkReturn(
+  text: string,
+): { kind: "return_ok"; value?: string } | null {
+  const t = text.trim().replace(/;\s*$/, "").replace(/^return\s+/, "").trim();
+  if (!t.startsWith("Ok(") || !t.endsWith(")")) return null;
+  let depth = 1;
+  let end = -1;
+  for (let i = 3; i < t.length; i++) {
+    const ch = t[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  // The Ok(...) must span the whole expression — nothing may trail the close
+  // paren (guards against `Ok(x).map_err(..)` and similar chained forms).
+  if (end !== t.length - 1) return null;
+  const inner = t.slice(3, end).trim();
+  if (inner === "" || inner === "()") return { kind: "return_ok" };
+  return { kind: "return_ok", value: inner };
+}
+
 function classifyReturn(node: SyntaxNode): BodyStatement {
   const text = node.text;
 
-  if (text.includes("Ok(())")) {
-    return { kind: "return_ok" };
+  // `return Ok(())` / `return Ok(<expr>)`. classifyOkReturn strips the leading
+  // `return` and trailing `;`, then paren-balances the Ok(...) argument so a
+  // typed return value survives (vs the old loose `includes("Ok(())")`).
+  const okReturn = classifyOkReturn(text);
+  if (okReturn) {
+    return okReturn;
   }
 
   // `return err!(MyError::X);` — Anchor macro that expands to

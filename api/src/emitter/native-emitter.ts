@@ -321,9 +321,13 @@ export class NativeEmitter extends BaseEmitter {
     // `use anchor_lang::solana_program::program::set_return_data` is
     // stripped). Same detection shape as needsInvoke. return-data demo
     // failed compile pre-G108 because the function wasn't imported.
+    // Also fires for typed-Result getters: the wired `set_return_data(...)`
+    // is synthesized by the return_ok visitor (not a pass_through), so a
+    // `return_ok` carrying a value needs the import just the same.
     const needsSetReturnData = _ir.instructions.some((instr) =>
       instr.body.some((stmt) =>
-        stmt.kind === "pass_through" && /\bset_return_data\s*\(/.test(stmt.code)
+        (stmt.kind === "pass_through" && /\bset_return_data\s*\(/.test(stmt.code))
+        || (stmt.kind === "return_ok" && !!stmt.value && stmt.value !== "()")
       )
     );
     const needsGetReturnData = _ir.instructions.some((instr) =>

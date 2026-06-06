@@ -420,3 +420,40 @@ seeds::program), typed-`Result`, F14 (fanout `format!`), token_program-identity.
 
 **Session tally: 19 fixes across ~17 commits (`d6259e4`→`0b48658`).** Remaining: typed-`Result` (#13, in progress),
 F8 (#16, deferred), token_program-identity (#17, new).
+
+---
+
+## Implementation status — update 7: typed-`Result` LANDED (byte-equal, both targets)
+
+- **Typed-`Result` (#13)** — a non-unit `-> Result<T>` handler (T != ()) was loud-refused (uniform router can't
+  carry T). Anchor's `#[program]` macro expands `Ok(value)` to
+  `set_return_data(&borsh::to_vec(&value)?); Ok(())`. Anvil now **wires that same pattern** for single-tail
+  `Ok(<expr>)` getters/views (`isWireableTypedResult`): the parser captures the inner value
+  (`return_ok.value`, paren-balanced), the visitor emits
+  `set_return_data(&borsh::to_vec::<T>(&(<expr>)).map_err(|_| ProgramError::InvalidInstructionData)?)`.
+  - **Byte-equal by *delegation*** — Anvil doesn't re-implement Borsh; it calls the same `borsh::to_vec`
+    Anchor's `AnchorSerialize` (= Borsh) does, on the same value → identical bytes.
+  - **Two bugs the differential caught** (why it has teeth): (1) detaching the literal from `-> Result<T>` made
+    `10` infer `i32` (4 bytes, not u64's 8) and `vec![..]` infer `Vec<i32>` → fixed with a **turbofish `::<T>`**
+    that re-pins the type to the declared inner T; (2) pinocchio's `ProgramError` has no `From<io::Error>` so the
+    bare `?` failed E0277 → fixed with `.map_err(...)` (dead arm for in-memory values, byte-equal either way).
+  - **Conservative predicate** — only a single-tail `Ok(<expr>)` with a turbofish-renderable T (no
+    lifetimes/`dyn`/`impl`, no earlier `Ok(`-bearing statement). Everything else keeps the loud
+    `unimplemented!("Anvil: …")` stub, which the validator's non-functional-stub scan already errors on. The
+    **emitter is the single source of truth** — the dedicated IR-level refusal in `output-validator` was deleted
+    (a parallel predicate would only drift).
+  - **Verified** — new `differential-typed-result-return` (self-contained, committed `anchor-cpi-test.rs`,
+    **both Pinocchio + Native**, `compareReturnData`) is byte-equal across all four value shapes: `u64` literal,
+    in-mod `StructReturn`, length-prefixed `Vec<u8>`, deserialized `account.value`. `fixture-result-alias-typed`
+    flipped to lock the wiring at parse+emit. **test:fast 2013/0.**
+
+  - **Post-commit gate over the existing fixtures in the class** (`test:fast` excludes all `differential-*`):
+    `differential-coral-callee` (clones LIVE coral-xyz/anchor, builds the real callee with these exact readers —
+    previously stubbed, now wired) is **GREEN**; `differential-simple-staking` **GREEN** (grep match was
+    incidental). `differential-coral-cpi-returns-malicious-spoof` is **RED but PRE-EXISTING** — proven by
+    reverting the emit files to HEAD~1 and reproducing the identical Anchor-side `DeclaredProgramIdMismatch`
+    (4100); it uses explicit `set_return_data` (not typed-`Result`) and the failure is the Anchor *reference*
+    program rejecting itself, which the emit change cannot touch. Logged as task #18.
+
+**Session tally: 20 fixes.** Remaining: F8 (#16, deferred), token_program-identity (#17, new),
+malicious-spoof differential pre-existing-red (#18, separate investigation).

@@ -110,6 +110,7 @@ import {
 } from "./emitter-base-utils.js";
 import { getParserSync, type SyntaxNode } from "../parser/ts-init.js";
 import { MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
+import { extractResultInnerType } from "./output-validator.js";
 // #13 — carried-code / Anchor-wrapper text transforms extracted to their own
 // module (god-file split, emitter-base 6961 → ~5480 LOC). Imported for the
 // class methods that call them; re-exported so external callers
@@ -183,6 +184,39 @@ function firstUnitVariantName(variants: string[], rawCode: string): string | nul
     if (!m || (m[1] !== "{" && m[1] !== "(")) return v;
   }
   return null;
+}
+
+/**
+ * A non-unit `Result<T>` handler is wireable (emit real `set_return_data`
+ * instead of a loud stub) only when its body is a plain single-tail
+ * `Ok(<expr>)` getter/view — no alternate return paths to diverge from the one
+ * captured value. Conservative by design: the wired emit is byte-identical to
+ * Anchor's macro by *delegation* (same value, same `borsh::to_vec`), so the
+ * residual risk lives entirely in faithful body emit — exactly the risk a unit
+ * handler already takes. Anything outside this shape keeps the safe stub.
+ */
+function isWireableTypedResult(instr: Instruction): boolean {
+  const body = instr.body;
+  if (body.length === 0) return false;
+  const last = body[body.length - 1]!;
+  if (last.kind !== "return_ok" || !last.value || last.value === "()") return false;
+  // The emit pins the serialized type with a turbofish
+  // (`borsh::to_vec::<T>(…)`) so an untyped literal infers the same type Anchor
+  // would (else `10` defaults to i32, not the declared u64). T must be
+  // resolvable and free of lifetimes/trait-objects, which don't render in a
+  // turbofish — refuse those loudly instead.
+  const innerT = extractResultInnerType((instr as { returnType?: string }).returnType ?? "");
+  if (!innerT || innerT === "()" || /'|\bdyn\b|\bimpl\b/.test(innerT)) return false;
+  // Reject any earlier statement that is itself an Ok-return or textually
+  // contains an `Ok(` — a second success path would carry a value the single
+  // terminal capture doesn't represent (silent divergence risk).
+  for (let i = 0; i < body.length - 1; i++) {
+    const s = body[i]!;
+    if (s.kind === "return_ok") return false;
+    const code = "code" in s ? s.code : "value" in s ? String(s.value ?? "") : "";
+    if (/\bOk\s*\(/.test(code)) return false;
+  }
+  return true;
 }
 
 function stripGenericBounds(generics: string): string {
@@ -3106,7 +3140,15 @@ impl ZeroCopy for ${accName} {}`;
       || /^\s*\(\s*\)\s*$/.test(returnType)
       || /^\s*(?:anchor_lang::)?Result\s*<\s*\(\s*\)\s*>\s*$/.test(returnType)
       || /^\s*(?:anchor_lang::solana_program::entrypoint::)?ProgramResult\s*$/.test(returnType);
-    if (!isUnitResult) {
+    // A non-unit `Result<T>` handler is WIREABLE when its body is a plain
+    // single-tail `Ok(<expr>)` getter/view (no alternate return paths). For
+    // those we fall through to normal body emit; the terminal `return_ok`
+    // carries the value and the visitor wires
+    // `set_return_data(&borsh::to_vec(&(<expr>))?)` before `Ok(())` — byte-
+    // identical to Anchor's macro expansion (same value, same Borsh path).
+    // Anything else still gets the loud unimplemented!() stub (the marker is
+    // caught by the validator), so an unrecognised shape never silently ships.
+    if (!isUnitResult && !isWireableTypedResult(instr)) {
       return this.emitTypedResultStubFunction(instr, returnType!);
     }
     // #4 Slice 1 — control-flow early-exit safety guard. Both targets hoist

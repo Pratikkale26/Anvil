@@ -3,20 +3,15 @@
  *
  * Surfaced by the 2026-05-12 real-world sweep (anchor-cpi-test / callee):
  * source declares `pub fn return_u64(_ctx) -> Result<u64>` with `Ok(10)`
- * tail. Emit drops the typed-T (no set_return_data wiring) and appends
- * its own `Ok(())` tail, producing:
+ * tail. Anchor's #[program] macro expands this to
+ * `set_return_data(&borsh::to_vec(&10)?); Ok(())`.
  *
- *   Ok(10);    // discarded statement — E cannot be inferred
- *   Ok(())     // unit return tail
- *
- * which cargo refuses with E0282 "type annotations needed: cannot infer
- * type of the type parameter E declared on the enum Result".
- *
- * The validator marked this CLEAN. This test locks the new shape:
- * either the emit becomes cargo-green (with set_return_data wiring), OR
- * the validator refuses with a specific error pointing the user toward
- * explicit set_return_data (the supported path per
- * api/src/demo-programs/return-data.rs:8-12).
+ * Earlier Anvil refused these loudly (uniform `-> ProgramResult` router can't
+ * carry T). Now a single-tail `Ok(<expr>)` getter is WIRED: the emit publishes
+ * the value via set_return_data — byte-identical to the macro by delegation
+ * (same value, same Borsh path). This test locks the wiring at the parse+emit
+ * layer; differential-typed-result-return.test.ts proves byte-equality end-to-
+ * end against a real Anchor reference build.
  */
 import { describe, test, expect } from "bun:test";
 import { parseAnchor } from "../src/parser/anchor-parser.js";
@@ -52,44 +47,49 @@ pub struct NoAccounts<'info> {
 }
 `;
 
-describe("Result<T> typed-return regression (#20)", () => {
-  test("validator surfaces an error for typed Result<T> instruction (pinocchio)", async () => {
-    const parsed = await parseAnchor(SOURCE);
-    if (!parsed.ok) throw new Error(`parse failed: ${parsed.error}`);
+function isTypedReturnError(message: string): boolean {
+  return (
+    /typed Result<.+>/i.test(message)
+    || /unsupported return type/i.test(message)
+    || /non-unit Result/i.test(message)
+  );
+}
 
-    const emit = emitPinocchioFull(parsed.ir);
-    const issues = validateEmitterOutput(parsed.ir, emit);
-    const errors = issues.filter((i) => i.severity === "error");
+// emit*Full returns { singleFile, files, warnings, ... }; the single-file
+// rendering carries every instruction body for string assertions.
+function code(out: unknown): string {
+  return typeof out === "string" ? out : (out as { singleFile: string }).singleFile;
+}
 
-    const typedReturnError = errors.find(
-      (e) =>
-        /typed Result<.+>/i.test(e.message)
-        || /set_return_data/i.test(e.message)
-        || /unsupported return type/i.test(e.message),
-    );
-    expect(typedReturnError).toBeDefined();
-    // Should flag the specific non-unit instructions, not return_unit.
-    expect(typedReturnError!.message).toMatch(/return_u64|return_vec/);
-  });
+describe("Result<T> typed-return wiring (#20)", () => {
+  for (const [target, emit] of [
+    ["pinocchio", emitPinocchioFull],
+    ["native", emitNativeFull],
+  ] as const) {
+    test(`typed Result<T> getter is wired to set_return_data, not refused (${target})`, async () => {
+      const parsed = await parseAnchor(SOURCE);
+      if (!parsed.ok) throw new Error(`parse failed: ${parsed.error}`);
 
-  test("validator surfaces an error for typed Result<T> instruction (native)", async () => {
-    const parsed = await parseAnchor(SOURCE);
-    if (!parsed.ok) throw new Error(`parse failed: ${parsed.error}`);
+      const out = emit(parsed.ir);
+      const issues = validateEmitterOutput(parsed.ir, out);
+      const errors = issues.filter((i) => i.severity === "error");
+      const src = code(out);
 
-    const emit = emitNativeFull(parsed.ir);
-    const issues = validateEmitterOutput(parsed.ir, emit);
-    const errors = issues.filter((i) => i.severity === "error");
+      // No longer a loud refusal — the getters are wired.
+      expect(errors.find((e) => isTypedReturnError(e.message))).toBeUndefined();
+      // And no stale unimplemented!() stub for the now-supported shape.
+      expect(src).not.toMatch(/unimplemented!\("[Aa]nvil: non-unit Result/);
 
-    const typedReturnError = errors.find(
-      (e) =>
-        /typed Result<.+>/i.test(e.message)
-        || /set_return_data/i.test(e.message)
-        || /unsupported return type/i.test(e.message),
-    );
-    expect(typedReturnError).toBeDefined();
-  });
+      // Both non-unit getters publish their value via set_return_data, with the
+      // value delegated to borsh::to_vec under a turbofish that pins the type to
+      // the declared inner T (byte-identical to Anchor's macro — without the
+      // turbofish, `10` would default to i32 / the vec to Vec<i32>).
+      expect(src).toMatch(/set_return_data\(&borsh::to_vec::<u64>\(&\(10\)\)\.map_err\([^)]*\)\?\)/);
+      expect(src).toMatch(/set_return_data\(&borsh::to_vec::<Vec<u8>>\(&\(vec!\[1, 2, 3\]\)\)\.map_err\([^)]*\)\?\)/);
+    });
+  }
 
-  test("Result<()> instruction does NOT trigger the error", async () => {
+  test("Result<()> (unit) instruction emits no set_return_data", async () => {
     const unitOnly = `
 use anchor_lang::prelude::*;
 declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
@@ -107,15 +107,9 @@ pub struct NoAccounts<'info> {
 `;
     const parsed = await parseAnchor(unitOnly);
     if (!parsed.ok) throw new Error(`parse failed: ${parsed.error}`);
-    const emit = emitPinocchioFull(parsed.ir);
-    const issues = validateEmitterOutput(parsed.ir, emit);
-    const errors = issues.filter((i) => i.severity === "error");
-    const typedReturnError = errors.find(
-      (e) =>
-        /typed Result<.+>/i.test(e.message)
-        || /set_return_data/i.test(e.message)
-        || /unsupported return type/i.test(e.message),
-    );
-    expect(typedReturnError).toBeUndefined();
+    const out = emitPinocchioFull(parsed.ir);
+    const issues = validateEmitterOutput(parsed.ir, out);
+    expect(issues.filter((i) => i.severity === "error").find((e) => isTypedReturnError(e.message))).toBeUndefined();
+    expect(code(out)).not.toMatch(/set_return_data/);
   });
 });

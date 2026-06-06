@@ -637,6 +637,7 @@ import {
 } from "../body-emitter/cpi-helpers.js";
 import { handlePassThrough } from "../body-emitter/pass-through-emit.js";
 import { MARKER_ANVIL_PREFIX } from "../markers.js";
+import { extractResultInnerType } from "../output-validator.js";
 import { emitPdaSignerSeedsPrelude } from "../body-emitter/pda-signer-seeds-emit.js";
 /**
  * Inline zero-copy helpers (formerly in body-emitter/handlers/zero-copy.ts;
@@ -697,6 +698,7 @@ type StateRead = Extract<BodyStatement, { kind: "state_read" }>;
 type StateFieldAssign = Extract<BodyStatement, { kind: "state_field_assign" }>;
 type BumpsAccess = Extract<BodyStatement, { kind: "bumps_access" }>;
 type ReturnErr = Extract<BodyStatement, { kind: "return_err" }>;
+type ReturnOk = Extract<BodyStatement, { kind: "return_ok" }>;
 type MsgStmt = Extract<BodyStatement, { kind: "msg" }>;
 type RequireStmt = Extract<BodyStatement, { kind: "require" }>;
 type EmitStmt = Extract<BodyStatement, { kind: "emit" }>;
@@ -928,7 +930,7 @@ export class AstVisitorBase {
       case "require":              return this.visitRequire(stmt);
       case "msg":                  return this.visitMsg(stmt);
       case "emit":                 return this.visitEmit(stmt);
-      case "return_ok":            return this.visitReturnOk();
+      case "return_ok":            return this.visitReturnOk(stmt);
       case "return_err":           return this.visitReturnErr(stmt);
       case "sysvar_clock":         return this.visitSysvarClock(stmt);
       case "sysvar_rent":          return this.visitSysvarRent(stmt);
@@ -1544,7 +1546,7 @@ export class AstVisitorBase {
    * are a separate port — same incrementalism approach as the other
    * runHandlerCapture-using kinds.
    */
-  visitReturnOk(): RustStmt[] {
+  visitReturnOk(stmt: ReturnOk): RustStmt[] {
     const w = this.walker;
     const before = w.lines.length;
     w.emitAutoCloseAccounts();
@@ -1563,6 +1565,31 @@ export class AstVisitorBase {
       const structural = tryStructuralizeMultiLine(entry);
       if (structural !== null) out.push(...structural);
       else out.push(convertPassThroughLine(entry));
+    }
+    // Non-unit typed return: `Ok(<expr>)` on a `-> Result<T>` getter. Anvil's
+    // router uses a uniform `-> ProgramResult`, so we can't return T directly;
+    // instead we publish the value via set_return_data — exactly what Anchor's
+    // `#[program]` macro expands `Ok(value)` to. Byte-identical by delegation:
+    // both serialize the same value through Borsh (`borsh::to_vec` here vs
+    // `AnchorSerialize` = Borsh in the macro). The `?` propagates a serialize
+    // failure as ProgramError, mirroring the macro's error path.
+    //
+    // The turbofish `::<T>` is load-bearing: detached from the `-> Result<T>`
+    // annotation, an untyped literal would default to i32 (`10` -> 4 bytes, not
+    // the declared u64's 8; `vec![..]` -> Vec<i32>, not Vec<u8>). Pinning T to
+    // the declared inner type reproduces Anchor's exact serialization context.
+    // `.map_err(...)?` not bare `?`: pinocchio's ProgramError has no
+    // From<borsh::io::Error>, so the bare `?` fails E0277 there (native has the
+    // impl, so it's harmless on that target). The error arm is dead for an
+    // in-memory value, so the mapped variant is never observed — byte-equal
+    // either way. Mirrors the event-emit path's borsh-serialize convention.
+    if (stmt.value && stmt.value !== "()") {
+      const innerT = extractResultInnerType(this.walker.instr.returnType ?? "");
+      const tf = innerT ? `::<${innerT}>` : "";
+      out.push(rawLine(
+        `set_return_data(&borsh::to_vec${tf}(&(${stmt.value}))`
+        + `.map_err(|_| ProgramError::InvalidInstructionData)?);`,
+      ));
     }
     // `Ok(())` is a tail expression (no trailing `;`). The handler
     // emits `    Ok(())` verbatim because the function's return type
