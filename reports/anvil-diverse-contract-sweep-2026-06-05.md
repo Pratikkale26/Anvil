@@ -398,3 +398,25 @@ F8/F11, typed-`Result`, F14.
 
 **Session tally: 17 fixes across 14 commits (`d6259e4`→`aacfb7d`).** Remaining: F8/F11 (nested has_one +
 seeds::program), typed-`Result`, F14 (fanout `format!`), token_program-identity.
+
+---
+
+## Implementation status — update 6: F11 + F14 LANDED; F8 deferred
+
+- **F11 (`45b8936`)** — `seeds::program` override in `bump_seed`: a bare in-struct account now resolves to its
+  `.key()`; any unresolvable override (const, `System::id()`, arg, function-call) **loud-refuses** instead of
+  silently deriving the PDA against the current program. FP firewall: only locally-`bump_seed`-verified accounts;
+  the Metaplex `.key()` path is unchanged (create-token differential byte-equal). coral_pda_derivation now
+  loud-refuses its arg/const/call cases (was silently clean). test:fast 2012/0.
+- **F14 (`0b48658`)** — DataV2 scalar field extractor is now brace/paren-depth-aware, so
+  `name: format!("Staked {}", x)` is captured intact (was truncated to `format!("Staked {` → unbalanced,
+  non-compiling). New `parser-mpl-datav2-format-arg` unit test; create-token differential byte-equal; test:fast
+  2012/0. (Unblocks the residual flagged when F10 landed.)
+- **F8 DEFERRED** (task #16) — nested composite `has_one` resolves to the top-level account, not the nested-local
+  binding; the safe walker-side prefixed-lookup fix needs a composite revert-parity teeth fixture to prove
+  (the existing coral-relations-derivation differential can't distinguish — shared seed) + 05-27-revert care.
+- **New finding logged** (task #17) — `Program<'info, T>` identity isn't verified (a fake program could be passed
+  where Anchor's `Program<T>` checks the id); surfaced via F2's runtime `token_program.key()` read.
+
+**Session tally: 19 fixes across ~17 commits (`d6259e4`→`0b48658`).** Remaining: typed-`Result` (#13, in progress),
+F8 (#16, deferred), token_program-identity (#17, new).
