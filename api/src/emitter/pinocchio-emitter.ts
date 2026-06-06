@@ -405,8 +405,14 @@ export class PinocchioEmitter extends BaseEmitter {
       }
     }
     const accountNames = instr.accounts.map((a) => snakeCase(a.name));
+    // Only a REAL SPL Mint has decimals at byte 44; a custom #[account] struct
+    // field named `decimals` lives at its own offset, so substituting byte 44
+    // silently corrupts money math. Fire only for Mint-typed accounts.
+    const userShadowsMint = ir.accounts.some((d) => d.name === "Mint");
     const mintsHit: string[] = [];
     for (const name of accountNames) {
+      const acc = instr.accounts.find((a) => snakeCase(a.name) === name);
+      if (!acc || acc.accountType !== "Mint" || userShadowsMint) continue;
       const re = new RegExp(`(?<![A-Za-z0-9_])${name}\\.decimals\\b`);
       if (re.test(bodyCode)) mintsHit.push(name);
     }

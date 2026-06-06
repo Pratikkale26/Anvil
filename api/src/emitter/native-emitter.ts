@@ -147,8 +147,16 @@ export class NativeEmitter extends BaseEmitter {
       matchDataBorrow: false,
     });
     const accountNames = instr.accounts.map((a) => snakeCase(a.name));
+    // Only a REAL SPL Mint has decimals at byte 44. A custom #[account] struct
+    // with a field NAMED `decimals` lives at its own struct offset — blindly
+    // substituting byte 44 silently corrupts money math (e.g. pow(decimals)).
+    // Fire only for Mint-typed accounts; the `!ir.accounts.some` guard skips a
+    // pathological user struct shadowing the SPL Mint type name.
+    const userShadowsMint = ir.accounts.some((d) => d.name === "Mint");
     const mintsHit: string[] = [];
     for (const name of accountNames) {
+      const acc = instr.accounts.find((a) => snakeCase(a.name) === name);
+      if (!acc || acc.accountType !== "Mint" || userShadowsMint) continue;
       // \b name . decimals \b, with negative lookbehind for identifier chars.
       const re = new RegExp(`(?<![A-Za-z0-9_])${name}\\.decimals\\b`);
       if (re.test(bodyCode)) mintsHit.push(name);
