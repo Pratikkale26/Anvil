@@ -20,6 +20,7 @@ import {
   snakeCase,
   toPascalCase,
   isProgramAccount,
+  knownTokenProgramIdLiteral,
   emitRequireGuard,
 } from "./emitter-utils.js";
 import {
@@ -586,6 +587,19 @@ use solana_program::{
 
   override emitOwnerCheck(name: string): string {
     return `    if ${name}.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }`;
+  }
+
+  override emitProgramIdentityCheck(name: string, accountType: string): string {
+    // #17 — Program<'info, T> for a well-known token program must carry that
+    // program's id (Anchor's Program<T> key check). Native AccountInfo.key is a
+    // `&Pubkey` field; solana_program's Pubkey is a STRUCT (not a [u8; 32] alias
+    // like pinocchio's), so the id literal must be wrapped in
+    // Pubkey::new_from_array to type-match the deref'd key.
+    const id = knownTokenProgramIdLiteral(accountType);
+    if (!id) return "";
+    return `    if *${name}.key != Pubkey::new_from_array(${id}) {
         return Err(ProgramError::IncorrectProgramId);
     }`;
   }

@@ -56,13 +56,16 @@ pub fn do_burn(
     let mint = &accounts[0];
     let from = &accounts[1];
     let authority = &accounts[2];
-    let _token_program = &accounts[3];
+    let token_program = &accounts[3];
 
     if !authority.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
     }
     if !mint.is_writable() || !from.is_writable() {
         return Err(ProgramError::InvalidAccountData);
+    }
+    if token_program.key() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
     }
 
     // Args

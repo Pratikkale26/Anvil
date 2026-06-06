@@ -20,6 +20,7 @@ import {
   snakeCase,
   toPascalCase,
   isProgramAccount,
+  knownTokenProgramIdLiteral,
   emitRequireGuard,
 } from "./emitter-utils.js";
 import {
@@ -809,6 +810,17 @@ export class PinocchioEmitter extends BaseEmitter {
     // Pinocchio). Anchor: AccountNotSystemOwned (3011).
     return `    if ${name}.owner() != &[0u8; 32] {
         return Err(ProgramError::Custom(3011u32));
+    }`;
+  }
+
+  override emitProgramIdentityCheck(name: string, accountType: string): string {
+    // #17 — Program<'info, T> for a well-known token program must carry that
+    // program's id (Anchor's Program<T> key check). key() returns &Pubkey, so
+    // compare against &<id literal>.
+    const id = knownTokenProgramIdLiteral(accountType);
+    if (!id) return "";
+    return `    if ${name}.key() != &${id} {
+        return Err(ProgramError::IncorrectProgramId);
     }`;
   }
 

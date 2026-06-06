@@ -79,6 +79,7 @@ import {
   snakeCase,
   toPascalCase,
   isProgramAccount,
+  knownTokenProgramIdLiteral,
   cleanInlineExpr,
   stripAnchorConstraintError,
   emitRequireGuard,
@@ -311,6 +312,13 @@ export abstract class BaseEmitter {
   // F7 — SystemAccount owner check (owner == system_program::ID). Base no-op;
   // Pinocchio overrides (Native deferred, no differential gate).
   emitSystemAccountOwnerCheck(_accountName: string): string {
+    return "";
+  }
+  // #17 — Program<'info, T> identity check (key == T::id()) for well-known
+  // token programs. Base no-op; both targets override (the per-target key-access
+  // idiom differs). Gated by knownTokenProgramIdLiteral, which returns null for
+  // System / Interface / user programs (see emitter-utils).
+  emitProgramIdentityCheck(_accountName: string, _accountType: string): string {
     return "";
   }
   abstract emitAccountKeyExpr(accountName: string): string;
@@ -3214,6 +3222,16 @@ impl ZeroCopy for ${accName} {}`;
       .filter(Boolean)
       .join("\n");
 
+    // #17 — Program<'info, T> identity: verify a well-known token program's
+    // account key == T::id() (Anchor's Program<T> constraint). Gated on
+    // knownTokenProgramIdLiteral (non-null only for Token/Token2022/ATA), so
+    // System, Interface<TokenInterface>, and user programs emit nothing.
+    const programIdentityChecks = instr.accounts
+      .filter((a) => !a.isOptional && !a.isInit && knownTokenProgramIdLiteral(a.accountType) !== null)
+      .map((a) => this.emitProgramIdentityCheck(snakeCase(a.name), a.accountType))
+      .filter(Boolean)
+      .join("\n");
+
     // F2 — a NON-init `associated_token::mint + authority` account carries a
     // canonical-ATA address pin Anchor verifies. Emit a runtime
     // find_program_address([authority, token_program, mint], ATA_PROGRAM) compare.
@@ -3451,7 +3469,7 @@ impl ZeroCopy for ${accName} {}`;
     const renderedHasOkTail = /\bOk\s*\(\s*\(\s*\)\s*\)\s*;?\s*$/.test(bodyCode.trimEnd());
     const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough && !renderedHasOkTail;
 
-    const preChecks = [signerChecks, writableCheck, ownerChecks, systemAccountChecks, ataAddressChecks].filter(Boolean).join("\n");
+    const preChecks = [signerChecks, writableCheck, ownerChecks, systemAccountChecks, programIdentityChecks, ataAddressChecks].filter(Boolean).join("\n");
 
     // `pub fn` so the multi-file layout's `pub use X::X;` re-export in
     // instructions/mod.rs resolves (CLI emits project-layout by default;

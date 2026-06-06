@@ -120,6 +120,9 @@ pub fn initialize_pool(
     if !pool.is_writable || !vault_a.is_writable || !vault_b.is_writable || !lp_mint.is_writable || !admin.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
+    if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
 
     // Args
     let mut remaining: &[u8] = __ix_data;
@@ -282,7 +285,7 @@ pub fn add_liquidity(
     let vault_b = &accounts[5];
     let lp_mint = &accounts[6];
     let user_lp_token = &accounts[7];
-    let _token_program = &accounts[8];
+    let token_program = &accounts[8];
     let _system_program = &accounts[9];
 
     if !user.is_signer {
@@ -292,6 +295,9 @@ pub fn add_liquidity(
         return Err(ProgramError::InvalidAccountData);
     }
     if pool.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -477,7 +483,7 @@ pub fn remove_liquidity(
     let vault_b = &accounts[5];
     let lp_mint = &accounts[6];
     let user_lp_token = &accounts[7];
-    let _token_program = &accounts[8];
+    let token_program = &accounts[8];
 
     if !user.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -486,6 +492,9 @@ pub fn remove_liquidity(
         return Err(ProgramError::InvalidAccountData);
     }
     if pool.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -640,7 +649,7 @@ pub fn swap(
     let user_token_out = &accounts[3];
     let vault_a = &accounts[4];
     let vault_b = &accounts[5];
-    let _token_program = &accounts[6];
+    let token_program = &accounts[6];
 
     if !user.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -649,6 +658,9 @@ pub fn swap(
         return Err(ProgramError::InvalidAccountData);
     }
     if pool.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -966,7 +978,7 @@ pub fn withdraw_protocol_fees(
     let admin_token_a = &accounts[3];
     let admin_token_b = &accounts[4];
     let admin = &accounts[5];
-    let _token_program = &accounts[6];
+    let token_program = &accounts[6];
 
     if !admin.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -975,6 +987,9 @@ pub fn withdraw_protocol_fees(
         return Err(ProgramError::InvalidAccountData);
     }
     if pool.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
 

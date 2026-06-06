@@ -179,6 +179,38 @@ export function isProgramAccount(accountType: string): boolean {
 }
 
 /**
+ * #17 — Rust array literal for a well-known token-program's id, keyed by the
+ * Anchor inner type of a `Program<'info, T>` field. Anchor's `Program<T>`
+ * constraint verifies `info.key == &T::id()`; Anvil otherwise emits no such
+ * check, so a substituted program account can redirect a CPI on the emit paths
+ * that read the passed account (e.g. `AccountMeta::new(token_program.key()…)`).
+ *
+ * Scoped to the token programs — the CPI-redirect vector. Returns null for:
+ *  - `System` ([0u8;32]) — runtime-mitigated, lowest value, highest churn;
+ *  - `Interface<'info, TokenInterface>` (accountType "TokenInterface") — it
+ *    legitimately accepts EITHER Tokenkeg OR Token-2022, so it must stay
+ *    unchecked (a hardcoded id would wrongly reject the other program);
+ *  - arbitrary user programs — `T::id()` isn't resolvable at emit time.
+ *
+ * Gate the per-account emit on this returning non-null, NOT on
+ * isProgramAccount() (which returns false for "Token2022").
+ */
+export function knownTokenProgramIdLiteral(accountType: string): string | null {
+  switch (accountType) {
+    case "Token":
+    case "TokenProgram":
+      return "[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]";
+    case "Token2022":
+      return "[6, 221, 246, 225, 238, 117, 143, 222, 24, 66, 93, 188, 228, 108, 205, 218, 182, 26, 252, 77, 131, 185, 13, 39, 254, 189, 249, 40, 216, 161, 139, 252]";
+    case "AssociatedToken":
+    case "AssociatedTokenProgram":
+      return "[140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89]";
+    default:
+      return null;
+  }
+}
+
+/**
  * Returns true if the type should use checked arithmetic (checked_add, checked_sub)
  * to prevent silent overflow in release mode. Applies to 64-bit and wider integer
  * types that are commonly used for financial values (lamports, token amounts, etc.).

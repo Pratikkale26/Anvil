@@ -86,6 +86,9 @@ pub fn create_vesting(
     if !grantor.is_writable() || !vesting.is_writable() || !vault.is_writable() || !grantor_token_account.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
+    if token_program.key() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
 
     // Args
     let mut remaining: &[u8] = __ix_data;
@@ -270,7 +273,7 @@ pub fn release(
     let vesting = &accounts[1];
     let vault = &accounts[2];
     let beneficiary_token_account = &accounts[3];
-    let _token_program = &accounts[4];
+    let token_program = &accounts[4];
 
     if !beneficiary.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -279,6 +282,9 @@ pub fn release(
         return Err(ProgramError::InvalidAccountData);
     }
     if vesting.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if token_program.key() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -361,7 +367,7 @@ pub fn revoke(
     let vesting = &accounts[1];
     let vault = &accounts[2];
     let grantor_token_account = &accounts[3];
-    let _token_program = &accounts[4];
+    let token_program = &accounts[4];
 
     if !grantor.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -370,6 +376,9 @@ pub fn revoke(
         return Err(ProgramError::InvalidAccountData);
     }
     if vesting.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if token_program.key() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -445,7 +454,7 @@ pub fn close(
     let vesting = &accounts[1];
     let vault = &accounts[2];
     let grantor_token_account = &accounts[3];
-    let _token_program = &accounts[4];
+    let token_program = &accounts[4];
 
     if !grantor.is_signer() {
         return Err(ProgramError::MissingRequiredSignature);
@@ -454,6 +463,9 @@ pub fn close(
         return Err(ProgramError::InvalidAccountData);
     }
     if vesting.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if token_program.key() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
         return Err(ProgramError::IncorrectProgramId);
     }
 

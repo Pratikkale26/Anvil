@@ -138,7 +138,7 @@ pub fn list(
     let marketplace = &accounts[4];
     let vault = &accounts[5];
     let token_program = &accounts[6];
-    let _associated_token_program = &accounts[7];
+    let associated_token_program = &accounts[7];
     let _system_program = &accounts[8];
 
     if !seller.is_signer() {
@@ -148,6 +148,12 @@ pub fn list(
         return Err(ProgramError::InvalidAccountData);
     }
     if marketplace.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if token_program.key() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if associated_token_program.key() != &[140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89] {
         return Err(ProgramError::IncorrectProgramId);
     }
     // anvil: ATA address check: seller_ata
@@ -269,7 +275,7 @@ pub fn delist(
     let marketplace = &accounts[4];
     let vault = &accounts[5];
     let token_program = &accounts[6];
-    let _associated_token_program = &accounts[7];
+    let associated_token_program = &accounts[7];
     let _system_program = &accounts[8];
 
     if !seller.is_signer() {
@@ -282,6 +288,12 @@ pub fn delist(
         return Err(ProgramError::IncorrectProgramId);
     }
     if marketplace.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if token_program.key() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if associated_token_program.key() != &[140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89] {
         return Err(ProgramError::IncorrectProgramId);
     }
     // anvil: ATA address check: seller_ata
@@ -360,7 +372,7 @@ pub fn purchase(
     let treasury = &accounts[6];
     let vault = &accounts[7];
     let token_program = &accounts[8];
-    let _associated_token_program = &accounts[9];
+    let associated_token_program = &accounts[9];
     let system_program = &accounts[10];
 
     if !buyer.is_signer() {
@@ -373,6 +385,12 @@ pub fn purchase(
         return Err(ProgramError::IncorrectProgramId);
     }
     if marketplace.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if token_program.key() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if associated_token_program.key() != &[140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89] {
         return Err(ProgramError::IncorrectProgramId);
     }
 

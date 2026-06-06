@@ -506,3 +506,25 @@ substitutable `Program<T>`, so the guard would ship unexercised without one.
    That attack fixture is the value demonstration + the teeth.
 6. Separate follow-up (the high-value half): extract the source's `declare_id!` (and any imported program ids)
    into the IR so arbitrary user `Program<T>` can be checked against `T::id()`.
+
+### #17 — IMPLEMENTED (well-known-program subset), byte-equal + revert-parity, both targets
+
+The plan above shipped exactly as written. `emitProgramIdentityCheck` (base no-op + both-target overrides) +
+`knownTokenProgramIdLiteral` (Token/Token2022/AssociatedToken; gate the per-account emit on this, NOT
+`isProgramAccount` — which returns false for `Token2022`). Wired into `preChecks`.
+- Pinocchio: `if X.key() != &[id] { Err(IncorrectProgramId) }`. Native: `if *X.key != Pubkey::new_from_array([id])
+  { … }` — the differential **caught a real Native bug** the string-only unit test missed: solana_program's
+  `Pubkey` is a struct (not pinocchio's `[u8;32]` alias), so the deref'd key needs `new_from_array` to type-match
+  (E0308 pre-fix). Exactly the value of building the attack fixture.
+- Exclusions verified (the correctness boundary): `system_program` (System), `Interface<TokenInterface>` (accepts
+  either token program), and user programs all emit NO check. Locked by `program-identity-check.test.ts`.
+- Byte-equal + revert-parity proven by `differential-program-identity.test.ts` (both Pinocchio + Native,
+  `compareTxOutcomes`): happy path (real SPL Token program) → both OK; attack (System program in the
+  `token_program` slot — real, executable, wrong key) → both REVERT (Anchor `InvalidProgramId`, Anvil #17 check).
+- Churn: 24 snapshots (6 `Program<Token>` fixtures — amm/escrow/marketplace/staking/vesting/set-authority/
+  spl-burn/spl-transfer across emitter-output + binary-parity); every diff audited = only the identity check (+
+  `_token_program`→`token_program` un-prefix, now that the binding is used). test:fast green.
+- Still open (the high-value half): step 6 above — arbitrary user `Program<T>` needs `declare_id!` → IR extraction.
+
+**Session tally: 21 fixes.** Open: F8 (#16, deferred), #17-user-programs (declare_id-extraction follow-up),
+malicious-spoof differential pre-existing-red (#18).

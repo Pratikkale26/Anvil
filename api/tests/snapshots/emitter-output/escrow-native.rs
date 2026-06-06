@@ -70,7 +70,7 @@ pub fn create_escrow(
     let vault = &accounts[5];
     let _system_program = &accounts[6];
     let token_program = &accounts[7];
-    let _associated_token_program = &accounts[8];
+    let associated_token_program = &accounts[8];
     let _rent = &accounts[9];
 
     if !maker.is_signer {
@@ -78,6 +78,12 @@ pub fn create_escrow(
     }
     if !maker.is_writable || !maker_ata_a.is_writable || !escrow.is_writable || !vault.is_writable {
         return Err(ProgramError::InvalidAccountData);
+    }
+    if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *associated_token_program.key != Pubkey::new_from_array([140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89]) {
+        return Err(ProgramError::IncorrectProgramId);
     }
 
     // Args
@@ -210,7 +216,7 @@ pub fn accept_escrow(
     let vault = &accounts[8];
     let _system_program = &accounts[9];
     let token_program = &accounts[10];
-    let _associated_token_program = &accounts[11];
+    let associated_token_program = &accounts[11];
 
     if !taker.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -219,6 +225,12 @@ pub fn accept_escrow(
         return Err(ProgramError::InvalidAccountData);
     }
     if escrow.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *associated_token_program.key != Pubkey::new_from_array([140, 151, 37, 143, 78, 36, 137, 241, 187, 61, 16, 41, 20, 142, 13, 131, 11, 90, 19, 153, 218, 255, 16, 132, 4, 142, 123, 216, 219, 233, 248, 89]) {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -350,7 +362,7 @@ pub fn cancel_escrow(
     let maker_ata_a = &accounts[2];
     let escrow = &accounts[3];
     let vault = &accounts[4];
-    let _token_program = &accounts[5];
+    let token_program = &accounts[5];
 
     if !maker.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
@@ -359,6 +371,9 @@ pub fn cancel_escrow(
         return Err(ProgramError::InvalidAccountData);
     }
     if escrow.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
 
