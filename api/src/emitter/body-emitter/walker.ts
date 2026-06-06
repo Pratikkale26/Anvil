@@ -382,6 +382,31 @@ export class BodyWalker {
     return this.accountInfoVars.get(account) ?? account;
   }
 
+  /**
+   * F8 — resolve a `has_one = <field>` target to the correct account BINDING
+   * name. When the has_one account was flattened out of a composite
+   * `#[derive(Accounts)]` field, its target lives in the SAME group
+   * (`<compositePrefix><field>`) — Anchor resolves composite has_one within the
+   * field's own struct, so binding to that nested-local slot avoids
+   * first-matching a same-named TOP-LEVEL account (the F8 silent mis-target).
+   * Falls back to the bare field name for non-composite (top-level) accounts,
+   * and whenever the scoped binding doesn't exist. Note: only the BINDING is
+   * scoped — the deserialized struct's FIELD name stays the bare `<field>`.
+   */
+  resolveHasOneTargetBinding(
+    account: { compositePrefix?: string } | undefined,
+    targetField: string,
+  ): string {
+    const prefix = account?.compositePrefix;
+    if (prefix) {
+      const scoped = snakeCase(`${prefix}${targetField}`);
+      if (this.instr.accounts.some((a) => snakeCase(a.name) === scoped)) {
+        return scoped;
+      }
+    }
+    return targetField;
+  }
+
   canonicalAccountName(name: string): string {
     const normalized = snakeCase(name);
     // Local aliases (e.g. `let pool = &mut ctx.accounts.stake_pool;` → IR
@@ -570,7 +595,9 @@ export class BodyWalker {
         (constraint) => constraint.kind === "has_one" && constraint.value,
       ) ?? [];
     for (const constraint of hasOneConstraints) {
-      const targetAccount = snakeCase(stripAnchorConstraintError(constraint.value!));
+      const targetField = snakeCase(stripAnchorConstraintError(constraint.value!));
+      // F8 — bind the target to the same composite group, not first-match.
+      const targetAccount = this.resolveHasOneTargetBinding(accountRef, targetField);
       const targetRef = this.instr.accounts.find(
         (acc) => snakeCase(acc.name) === targetAccount,
       );
@@ -2139,8 +2166,11 @@ export class BodyWalker {
           // `X` (so ensureStateRead never runs for X) yet has_one was
           // declared — without the top-level emit the check never lands.
           const targetField = snakeCase(stripAnchorConstraintError(constraint.value));
+          // F8 — the BINDING (key source) resolves to the same composite group;
+          // targetField (the deserialized struct FIELD name) stays bare.
+          const targetBinding = this.resolveHasOneTargetBinding(account, targetField);
           const targetRef = this.instr.accounts.find(
-            (acc) => snakeCase(acc.name) === targetField,
+            (acc) => snakeCase(acc.name) === targetBinding,
           );
           if (!targetRef) continue;
           const accountName = snakeCase(account.name);
@@ -2187,7 +2217,7 @@ export class BodyWalker {
               : new Set(["mint_authority", "freeze_authority"]);
             if (!validFields.has(targetField)) continue;
             const localVar = `__ha_${accountName}`;
-            const targetKeyExpr = this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(targetField));
+            const targetKeyExpr = this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(targetBinding));
             // Pinocchio's pinocchio_token state structs expose fields via
             // method calls (`.mint()` returning `&Pubkey`), Native via
             // bare field access (`.mint` of type Pubkey).
@@ -2226,7 +2256,7 @@ export class BodyWalker {
           // Push the deserialize prelude + comparison as a single
           // multi-line lines.push so dedup tracks the whole block by
           // its condition text.
-          const targetKeyExpr = this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(targetField));
+          const targetKeyExpr = this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(targetBinding));
           condition = this.normalizeKeyValueUsages(`${localVar}.${targetField} != ${targetKeyExpr}`);
           if (this.bodyRequireConditions.has(normalizeConditionKey(condition))) {
             continue;

@@ -687,9 +687,12 @@ function emitZeroCopyHasOneChecks(w: BodyWalker, accountName: string, localVar: 
     (c) => c.kind === "has_one" && c.value,
   );
   for (const c of hasOnes) {
-    const targetAccount = snakeCase(c.value!);
+    const targetField = snakeCase(c.value!);
+    // F8 — the BINDING (key source) resolves within the same composite group;
+    // the deserialized struct FIELD name (`localVar.targetField`) stays bare.
+    const targetBinding = w.resolveHasOneTargetBinding(accountRef, targetField);
     lines.push(
-      `    if ${localVar}.${targetAccount} != ${w.emitter.emitAccountKeyExpr(w.resolveAccountInfoVar(targetAccount))} {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
+      `    if ${localVar}.${targetField} != ${w.emitter.emitAccountKeyExpr(w.resolveAccountInfoVar(targetBinding))} {\n        return Err(ProgramError::InvalidAccountData);\n    }`,
     );
   }
 }
@@ -1232,7 +1235,10 @@ export class AstVisitorBase {
     const hasOneConstraints =
       accountRef?.constraints.filter((c) => c.kind === "has_one" && c.value) ?? [];
     for (const c of hasOneConstraints) {
-      const targetAccount = snakeCase(stripAnchorConstraintError(c.value!));
+      const targetField = snakeCase(stripAnchorConstraintError(c.value!));
+      // F8 — the BINDING resolves within the same composite group; the FIELD
+      // access (`localVar.<field>`) stays bare.
+      const targetAccount = w.resolveHasOneTargetBinding(accountRef, targetField);
       const targetRef = w.instr.accounts.find((acc) => snakeCase(acc.name) === targetAccount);
       if (!targetRef) continue;
       const targetKey = w.emitter.emitAccountKeyExpr(w.resolveAccountInfoVar(targetAccount));

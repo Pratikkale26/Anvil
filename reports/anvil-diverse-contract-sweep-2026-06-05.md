@@ -582,3 +582,27 @@ files) + `Program<'info, Memo>` (SPL Memo) — fixed-id programs #17 missed. Add
 **Session tally: 23 fixes.** Open: F8 (#16, deferred); malicious-spoof (#18). The token + Metadata + Memo
 program-identity gap is now closed for every well-known program in the corpus; only arbitrary user `Program<T>`
 (#19, corpus-absent) remains, deferred.
+
+### #16 / F8 — nested composite `has_one` resolved to the wrong (top-level) account, revert-parity, both targets
+
+A nested composite `has_one = <field>` first-matched a same-named TOP-LEVEL account instead of the nested-struct-
+local binding (Anchor resolves composite has_one within the field's own struct). Silent when both share a key/seed
+(coral-relations-derivation's case — why cargo + that differential both missed it); a SILENT mis-validation when
+they differ. The 2026-05-27 attempt (`7b574e0` revert) prefixed the constraint value and broke STATE-FIELD ACCESS
+(the struct field is `my_account`, not `nested_my_account`).
+- Correct, deterministic fix (no name heuristic): the composite flattener already knows each leaf's
+  `<outer>_<inner>_…` prefix (`_flattenPrefix`) — now recorded as `AccountRef.compositePrefix` in the IR. A walker
+  helper `resolveHasOneTargetBinding(account, field)` scopes the BINDING (key source) to `<compositePrefix><field>`
+  when that account exists, else the bare name. The deserialized struct FIELD name stays bare — only the binding
+  is scoped, so the 05-27 field-access regression can't recur.
+- Applied at ALL FOUR has_one emit sites (wider than the single site the report flagged): walker ensureStateRead +
+  constraint-loop, and visitor zero-copy + structural paths.
+- Verified: new `differential-composite-has-one` (both targets, compareTxOutcomes, top-level ≠ nested DISTINCT
+  keys) — happy (`related.my_account` = nested key) OK, attack (`related.my_account` = TOP-LEVEL key) reverts on
+  both (pre-fix Anvil silently ACCEPTED it). New `composite-has-one-target` unit test locks the binding/field split
+  + the recorded compositePrefix. No-regression: has_one unit suite green, coral-relations-derivation byte-equal,
+  ZERO snapshot churn (non-composite has_one emit is byte-identical). tsc clean.
+
+**Session tally: 24 fixes.** Open: malicious-spoof differential pre-existing-red (#18); user-`Program<T>` (#19,
+corpus-absent). The sweep's F1–F11 + typed-Result + the program-identity arc (#17/#20/#21) + F8 (#16) are now all
+landed or deferred-with-cause.

@@ -236,7 +236,13 @@ export function parseAccountsStructFields(
         // slot list carries unique `<outer>_<inner>...` identifiers + record
         // each leaf's source path so the body classifier can resolve chains.
         const flatName = (opts?._flattenPrefix ?? "") + account.name;
-        if (flatName !== account.name) account.name = flatName;
+        if (flatName !== account.name) {
+          account.name = flatName;
+          // F8 — record the composite prefix so the emitter can resolve a
+          // nested `has_one = <field>` to the SAME group's binding
+          // (`<prefix><field>`) instead of first-matching a top-level account.
+          account.compositePrefix = opts?._flattenPrefix;
+        }
         if (opts?.compositeFieldPathMap && opts._sourcePathPrefix) {
           opts.compositeFieldPathMap.set(
             `${opts._sourcePathPrefix}${nameNodeRaw?.text ?? account.name}`,

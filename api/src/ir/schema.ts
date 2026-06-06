@@ -187,6 +187,15 @@ export const AccountRefSchema = z.object({
    * (task #19) instead of mis-emitting a Pod cast that fails E0277.
    */
   isLazy: z.boolean().optional(),
+  /**
+   * F8 — for an account flattened out of a composite `#[derive(Accounts)]`
+   * field, the `<outer>_<inner>_…` prefix that was prepended to its name. Lets
+   * the emitter resolve a nested `has_one = <field>` to the SAME composite
+   * group's binding (`<compositePrefix><field>`) rather than first-matching a
+   * same-named top-level account (Anchor resolves composite has_one within the
+   * field's own struct). Absent for non-composite (top-level) accounts.
+   */
+  compositePrefix: z.string().optional(),
 });
 
 export type AccountRef = z.infer<typeof AccountRefSchema>;
