@@ -23,8 +23,20 @@ Each finding: parses + validator-CLEAN (0 errors) yet semantically wrong vs Anch
   other-account `.key()` seed to the signing PDA's own key (self-referential, unsignable → funds locked); Native
   is correct from the same IR. Sites: pinocchio-emitter.ts:2722 + body-emitter/pda-signer-seeds-emit.ts:72-92.
   Pinocchio-specific; needs careful stateVar-attribution narrowing + a revert-parity teeth fixture.
-- **F3 (checked→unchecked CPI downgrade) — CONFIRMED, DEFERRED.** `transfer_checked`/`mint_to_checked`/
-  `burn_checked` silently emit the UNCHECKED instruction (drops the decimals/mint validation).
+- **F3 (checked→unchecked CPI downgrade) — `transfer_checked` FIXED; `mint_to_checked`/`burn_checked` still
+  open (#25).** Legacy `Program<Token>` `transfer_checked` silently emitted the UNCHECKED instruction (dropped
+  the mint account + the `mint.decimals == decimals` assertion). The IR captured `mint`+`decimals` all along;
+  the bug was purely in emit. Fix is at the AST-visitor emit layer (the live path — `native-emitter.ts:680`
+  `emitSplTransfer` cited in the deep-dive below is vestigial, only the Pinocchio branch calls it): the dispatch
+  in `visitCpiSplTransfer` now routes legacy checked transfers (decimals **and** mint resolved) to
+  `visitT22Transfer`, which parameterizes the crate (`spl_token` vs `spl_token_2022`) for Native and gained a
+  legacy-checked branch (`SPL_TOKEN_PROGRAM_ID`) for Pinocchio. The `&& stmt.mint` guard keeps unresolved-mint
+  helper-CPI transfers on HEAD's working unchecked path (the Native no-mint branch is a comment-only stub — would
+  otherwise turn a working transfer into a silent no-op). Teeth-verified both targets:
+  `differential-spl-transfer-checked-qualified` (correct-decimals tx ok + wrong-decimals tx reverts) FAILS on
+  HEAD at `from_ata` byte 64 (balance leak: HEAD moves funds the checked variant rejects) and PASSES on the fix;
+  regression-clean against `spl-transfer-checked-legacy` + `spl-transfer` + `t22-transfer`. `mint_to_checked` /
+  `burn_checked` have the identical dispatch bug (`visitCpiSplMintTo` etc.) and remain silently downgraded — #25.
 - **F4 (token_interface hardcodes Token-2022 id), F5 (`close` drops owner-reassign + realloc(0)), F8
   (discriminator check dropped for key()-only Account<T>) — CONFIRMED, DEFERRED (MED).**
 - **1 REFUTED** (false alarm — conservative-but-correct emit).

@@ -113,6 +113,9 @@ function resolveT22DecimalsPinocchio(
  */
 const TOKEN_2022_PROGRAM_ID_CONST = `        const TOKEN_2022_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 238, 117, 143, 222, 24, 66, 93, 188, 228, 108, 205, 218, 182, 26, 252, 77, 131, 185, 13, 39, 254, 189, 249, 40, 216, 161, 139, 252];`;
 
+/** Legacy SPL Token program id — base58 "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA". */
+const SPL_TOKEN_PROGRAM_ID_CONST = `        const SPL_TOKEN_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169];`;
+
 /**
  * Strip the `Some(...)` wrapper from an Option<&Pubkey> expression and
  * the leading `&` if present. Used by extension-init emit (MCA close-
@@ -1054,6 +1057,45 @@ ${invokeCall}
         ? `${opts!.tokenProgramArg}.key()`
         : `&TOKEN_2022_PROGRAM_ID`;
       return `    // Token-2022 transfer_checked — ${from} → ${to}
+${prelude}    {
+${programIdConstBlock}        let __t22_amount = ((${amount}) as u64).to_le_bytes();
+        let __t22_data: [u8; 10] = [
+            12,
+            __t22_amount[0], __t22_amount[1], __t22_amount[2], __t22_amount[3],
+            __t22_amount[4], __t22_amount[5], __t22_amount[6], __t22_amount[7],
+            ${decimalsExpr},
+        ];
+        let __t22_metas = [
+            pinocchio::instruction::AccountMeta::writable(${from}.key()),
+            pinocchio::instruction::AccountMeta::readonly(${mint}.key()),
+            pinocchio::instruction::AccountMeta::writable(${to}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${authority}.key()),
+        ];
+        let __t22_ix = pinocchio::instruction::Instruction {
+            program_id: ${programIdRef},
+            accounts: &__t22_metas,
+            data: &__t22_data,
+        };
+${invokeCall}
+    }`;
+    }
+    // Legacy SPL Token transfer_checked — reached only when the source used
+    // `transfer_checked` (decimals captured) and the mint resolved. Mirrors
+    // the Token-2022 checked block above: the instruction layout is identical
+    // (disc 12, accounts [from, mint, to, authority], data [12, amount_le,
+    // decimals_u8]) — only the program id differs (legacy SPL Token here).
+    // A plain `transfer` (decimals undefined) falls through to the unchecked
+    // helper below, preserving its byte-equal emit.
+    if (opts?.decimals !== undefined && opts?.mint) {
+      const mint = opts.mint;
+      const { decimalsExpr, prelude } = resolveT22DecimalsPinocchio(mint, opts?.decimals);
+      const invokeCall = emitT22Invoke(`${from}, ${mint}, ${to}, ${authority}`, signerSeeds);
+      const useRuntimeDispatch = !!opts?.tokenProgramArg;
+      const programIdConstBlock = useRuntimeDispatch ? "" : `${SPL_TOKEN_PROGRAM_ID_CONST}\n`;
+      const programIdRef = useRuntimeDispatch
+        ? `${opts!.tokenProgramArg}.key()`
+        : `&SPL_TOKEN_PROGRAM_ID`;
+      return `    // SPL Token transfer_checked — ${from} → ${to}
 ${prelude}    {
 ${programIdConstBlock}        let __t22_amount = ((${amount}) as u64).to_le_bytes();
         let __t22_data: [u8; 10] = [

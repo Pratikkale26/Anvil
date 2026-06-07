@@ -2170,7 +2170,21 @@ export class AstVisitorBase {
    */
   visitCpiSplTransfer(stmt: CpiSplTransfer): RustStmt[] {
     const w = this.walker;
-    if (stmt.tokenProgram === "token_2022") {
+    // Token-2022 always routes to the checked-aware emit. Legacy SPL Token
+    // ALSO routes there when the source used `transfer_checked` (decimals
+    // captured) AND the mint account resolved — otherwise the legacy
+    // fall-through below silently downgrades it to an unchecked `transfer`,
+    // dropping the mint+decimals validation the developer explicitly opted
+    // into. The instruction layout (disc 12, accounts [from, mint, to,
+    // authority]) is identical across both program ids; only the program id
+    // itself differs (handled in visitT22Transfer).
+    //
+    // The `stmt.mint` guard matters: visitT22Transfer's Native no-mint branch
+    // emits a comment-only stub (no transfer), so routing a legacy checked
+    // transfer whose mint couldn't be resolved (literal-decimals helper-method
+    // CPI) would turn HEAD's working unchecked transfer into a silent no-op.
+    // Keep those on the unchecked path below until the mint resolves.
+    if (stmt.tokenProgram === "token_2022" || (stmt.decimals !== undefined && !!stmt.mint)) {
       return this.visitT22Transfer(stmt);
     }
     w.ctx.transformedCount++;
@@ -2272,12 +2286,19 @@ export class AstVisitorBase {
     const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
     const isPinocchio = w.emitter.frameworkName === "Pinocchio";
     const checked = stmt.decimals !== undefined;
+    // Legacy SPL Token reaches here only for checked transfers (see the
+    // dispatch in visitCpiSplTransfer). The instruction layout is identical
+    // across SPL Token and Token-2022 — only the crate (instruction builder +
+    // Mint::unpack) and program id differ.
+    const isT22 = stmt.tokenProgram === "token_2022";
+    const splCrate = isT22 ? "spl_token_2022" : "spl_token";
+    const programLabel = isT22 ? "Token-2022" : "SPL Token";
 
     if (!isPinocchio) {
       // Native — comment + (optional decimals prelude block) + multi-line
       // transfer_ix let + multi-line invoke.
       const checkedTitle = checked ? "transfer_checked" : "transfer (unchecked)";
-      out.push(comment(`Token-2022 ${checkedTitle} — ${stmt.from} → ${stmt.to}`));
+      out.push(comment(`${programLabel} ${checkedTitle} — ${stmt.from} → ${stmt.to}`));
 
       let decimalsArg: RustExpr | undefined;
       if (checked && stmt.mint && stmt.decimals !== undefined) {
@@ -2289,7 +2310,7 @@ export class AstVisitorBase {
           out.push(letStmt(`${mintVar}_decimals`, rawExpr(
             `{
         use solana_program::program_pack::Pack;
-        spl_token_2022::state::Mint::unpack(&${mintVar}.data.borrow())?.decimals
+        ${splCrate}::state::Mint::unpack(&${mintVar}.data.borrow())?.decimals
     }`,
           )));
           decimalsArg = ident(`${mintVar}_decimals`);
@@ -2302,12 +2323,12 @@ export class AstVisitorBase {
         return out;
       }
 
-      const callPath = path(["spl_token_2022", "instruction", checked ? "transfer_checked" : "transfer"]);
+      const callPath = path([splCrate, "instruction", checked ? "transfer_checked" : "transfer"]);
       // Path 2 v1 runtime dispatch — when tokenProgramArg is set, use the
-      // AccountInfo's key (runtime) instead of &spl_token_2022::id() (const).
+      // AccountInfo's key (runtime) instead of &<crate>::id() (const).
       const programIdExpr: RustExpr = stmt.tokenProgramArg
         ? field(ident(snakeCase(stmt.tokenProgramArg)), "key")
-        : ref(call(path(["spl_token_2022", "id"]), []));
+        : ref(call(path([splCrate, "id"]), []));
       const callArgs: RustExpr[] = [
         programIdExpr,
         field(ident(fromVar), "key"),
@@ -2360,7 +2381,7 @@ export class AstVisitorBase {
     const emitted = w.emitter.emitSplTransfer(
       fromVar, toVar, authorityName, amountExpr, signerSeedsResolved,
       {
-        tokenProgram: "token_2022",
+        tokenProgram: stmt.tokenProgram === "token_2022" ? "token_2022" : "token",
         decimals: stmt.decimals,
         mint: stmt.mint ? snakeCase(stmt.mint) : undefined,
         tokenProgramArg: stmt.tokenProgramArg ? snakeCase(stmt.tokenProgramArg) : undefined,
