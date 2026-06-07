@@ -637,14 +637,13 @@ pub fn close_program_account(
         let account_lamports = unsafe { account.borrow_mut_lamports_unchecked() };
         *account_lamports = 0;
     }
-    {
-        // data doesn't need 'mut' on the binding — iter_mut() reborrows the
-        // underlying &mut [u8] without needing the binding itself mutable.
-        let data = unsafe { account.borrow_mut_data_unchecked() };
-        for byte in data.iter_mut() {
-            *byte = 0;
-        }
-    }
+    // F5 — mirror Anchor's close: close() zeroes the account's data length,
+    // lamports (already 0 above) and owner (→ System Program), so the account
+    // becomes a fresh System-owned, empty account. The old behavior zeroed the
+    // data in place but left it program-owned at full length, letting a closed
+    // account be revived / re-deserialized as its old type. close() requires
+    // no active borrow — the lamport blocks above are scoped and dropped.
+    account.close()?;
     Ok(())
 }
 

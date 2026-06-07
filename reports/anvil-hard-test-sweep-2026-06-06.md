@@ -79,11 +79,24 @@ Each finding: parses + validator-CLEAN (0 errors) yet semantically wrong vs Anch
   legacy Tokenkeg): both Anvil targets FAIL on HEAD (`to` byte 64 = 0, invoke reverted) vs Anchor mints 100; both
   pass on the fix. Runtime-equivalent for T22 (`differential-t22-transfer` green; the t22-transfer binary-parity
   snapshots re-baselined to the runtime-dispatch emit); test:fast 2022/0 + the 2 intended snapshots.
-- **F5 (`close` drops owner-reassign + realloc(0)), F8 (discriminator check dropped for key()-only Account<T>) —
-  TRIAGED REAL (2026-06-07), DEFERRED to a fresh session (MED).** Both confirmed reachable + compiles + silently
-  mishandled (NOT #25-style). Fix sites + teeth in task #24: F5 patches both `close_program_account` helper bodies
-  (add `assign(System)` + `realloc(0)`/`close()`); F8 adds an `emitDiscriminatorCheck` prologue mirroring the
-  owner-check (watch raw-`setAccount` fixtures). F7 (`.amount`, #22) likewise triaged REAL with a multi-site plan.
+- **F5 (`close` drops owner-reassign + realloc(0)) — FIXED.** `#[account(close = dest)]` left the closed account
+  program-owned at full data length (Anvil's `close_program_account` drained lamports + zeroed data IN PLACE but
+  never reassigned the owner to System nor shrank data_len to 0), where Anchor leaves it System-owned + empty
+  (`is_closed`). A program-owned, intact closed account can be revived / re-deserialized as its old type. Fix:
+  both `close_program_account` helper bodies now mirror `anchor_lang::common::close` — Native
+  `assign(&system_program::ID)` + `realloc(0, false)`; Pinocchio `account.close()` (zeroes owner+lamports+data_len).
+  Teeth `differential-close-reassign` (close-then-refund so the account survives GC): both targets FAIL on HEAD
+  (vault data_len 40 vs Anchor 0, account present on both) and pass on the fix. The Native `realloc`-after-`assign`
+  sequence is runtime-valid (the native fixture executes the close to a byte-equal match). Regression-clean vs
+  escrow/anchor-escrow/coral-escrow/vesting close differentials; 18 snapshots (close-using fixtures, 2 suites)
+  re-baselined to the close-helper change; test:fast green.
+- **F8 (discriminator check dropped for key()-only Account<T>) — TRIAGED REAL, implemented + REVERTED (deferred,
+  MED).** Reachable + silently mishandled, but the fix (`emitDiscriminatorCheck` mirroring the owner-check) is a
+  WHOLE-CORPUS 44-snapshot blast (the disc check is missing for EVERY custom-state account — Native's `[8..]`
+  slice skips it, not just key()-only) whose regression gate is the FULL differential suite. Emit-verified + 0
+  logic fails + 4/4 over-rejection spot-checks, but reverted rather than land a corpus-wide change on partial
+  evidence in a single session. Fix + design question (emit-for-all vs key()-only-scope) banked in task #24.
+  F7 (`.amount`, #22) likewise triaged REAL with a multi-site plan.
 - **1 REFUTED** (false alarm — conservative-but-correct emit).
 
 All deferred findings are documented below with minimal repro + the exact wrong emit + a suggested fix, ready for
@@ -370,6 +383,11 @@ _confidence: high_
 ---
 
 ## F5 [account-lifecycle] — MED — #[account(close = dest)] drops Anchor's owner-reassign (assign system_program) and realloc(0) — closed account stays program-owned with full-length data
+
+> **UPDATE (2026-06-07) — FIXED (see triage above).** Both `close_program_account` helper bodies now mirror
+> `common::close`: Native `assign(&system_program::ID)` + `realloc(0, false)`; Pinocchio `account.close()`. Teeth
+> `differential-close-reassign` (close-then-refund; both targets fail HEAD at vault data_len 40 vs 0, pass on fix);
+> the close-then-observe scope (b) in the analysis below is exactly what the teeth exercises.
 
 **Why wrong:** Ground-truthed against vendored anchor-lang src/common.rs `pub fn close` (identical in 0.29.0 / 0.30.1 / 0.31.1): Anchor's close does THREE things — (1) move all lamports to sol_destination, (2) info.assign(&system_program::ID) reassign owner to System Program, (3) info.realloc(0, false) shrink data to zero length. Anvil's close_program_account does only (1) plus zeroes data IN PLACE at full length, leaving owner = program_id and data_len unchanged. Post-close STATE diverges: Anchor = system-owned, zero-length; Anvil = program-owned, full-length (zeroed). Anchor's own is_closed(info) = (info.owner == &System::id() && info.data_is_empty()) returns FALSE for the Anvil-closed account — any same-tx code or CPI partner using is_closed / system-ownership / empty-data as the close signal sees it as still alive. SILENT because validateEmitterOutput=0 errors, auditPassthrough (default --strict gate)=0 findings, and there is no `// ⚠️ Anvil` marker or unimplemented!() stub — the wrong helper is stamped fully clean. Honest scope: a single-ix close-and-done is masked by end-of-tx runtime GC (0-lamport accounts reaped regardless of owner), and the full-data-zeroing wipes the discriminator so a typed re-read fails closed (classic stale-data revival NOT trivially exploitable). The MED bite is multi-step: (a) a later ix in the SAME tx reading the just-closed PDA sees program-owned non-empty data under Anvil vs system-owned empty under Anchor; (b) close-then-reinit in the same tx — Anchor's subsequent init/create_account succeeds against a system-owned empty account, Anvil leaves it program-owned with non-zero length so the system create_account path diverges; (c) raw-AccountInfo owner-only checks on a re-funded closed account.
 
