@@ -2737,6 +2737,7 @@ ${constLine}        // 1. Allocate + assign to token program (rent-exempt for 82
     _bumpField?: string,
     stateVar?: string,
     typeName?: string,
+    stateVarMap?: ReadonlyMap<string, string>,
   ): string {
     const dataVar = stateVar || `${account}_data`;
     const rewritePrefix = stateVar ? account : undefined;
@@ -2788,9 +2789,19 @@ ${constLine}        // 1. Allocate + assign to token program (rent-exempt for 82
       if (rewritePrefix && seed.startsWith("&[")) {
         return seed.replace(new RegExp(`&\\[${rewritePrefix}\\.`), `&[${dataVar}.`);
       }
-      // account.field.method() → data_var.field.method()
-      if (rewritePrefix) {
-        return seed.replace(new RegExp(`^${rewritePrefix}\\.`), `${dataVar}.`);
+      // <acct>.field.method() → <acct's own state var>.field.method().
+      // Per-account: a seed reading a FIELD of an account OTHER than the bump
+      // owner must read THAT account's deserialized state, not the bump
+      // owner's (F6). stateVarMap carries each field-referenced account's var;
+      // fall back to the single rewritePrefix/dataVar pair for the bump owner
+      // so same-account seeds emit byte-identically to the prior behavior.
+      const fieldAcct = seed.match(/^(\w+)\./)?.[1];
+      if (fieldAcct) {
+        const mapped = stateVarMap?.get(fieldAcct)
+          ?? (fieldAcct === rewritePrefix ? dataVar : undefined);
+        if (mapped) {
+          return seed.replace(new RegExp(`^${fieldAcct}\\.`), `${mapped}.`);
+        }
       }
       return seed;
     });

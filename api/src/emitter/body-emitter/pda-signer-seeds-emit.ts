@@ -126,6 +126,23 @@ export function emitPdaSignerSeedsPrelude(w: BodyWalker, stmt: PdaSignerSeedsStm
   const seedStateType = seedStateAccount
     ? w.instr.accounts.find((a) => snakeCase(a.name) === seedStateAccount)?.accountType
     : accRef?.accountType;
+  // F6: a seed reading a FIELD of an account OTHER than the bump owner must
+  // read THAT account's deserialized state, not the bump owner's. Build a
+  // per-account state-var map for every field-referenced state account in the
+  // seeds. ensureStateRead is idempotent — for accounts already read (incl.
+  // the bump owner) it returns the existing var and emits nothing, so
+  // same-account seeds stay byte-identical; it also resolves optional /
+  // zero-copy / SPL accounts to their correct binding. `.key()` exprs, `&[…]`
+  // bump exprs and byte literals are skipped (handled by other branches).
+  const fieldStateVarMap = new Map<string, string>();
+  for (const seed of emittedSeeds) {
+    const fieldAcct = seed.match(/^([a-z_][a-z0-9_]*)\.(?!key\b|key\()/i)?.[1];
+    if (!fieldAcct) continue;
+    const acct = snakeCase(fieldAcct);
+    if (fieldStateVarMap.has(acct)) continue;
+    if (!w.instr.accounts.some((a) => snakeCase(a.name) === acct)) continue;
+    fieldStateVarMap.set(acct, w.ensureStateRead(acct));
+  }
   w.lines.push(
     w.emitter.emitPdaSignerSeeds(
       accountName,
@@ -134,6 +151,7 @@ export function emitPdaSignerSeedsPrelude(w: BodyWalker, stmt: PdaSignerSeedsStm
       stmt.bumpField,
       seedStateVar,
       seedStateType,
+      fieldStateVarMap.size > 0 ? fieldStateVarMap : undefined,
     ),
   );
   w.accountsWithSignerSeeds.add(accountName);

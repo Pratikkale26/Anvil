@@ -1704,7 +1704,11 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     _bumpField?: string,
     stateVar?: string,
     typeName?: string,
+    _stateVarMap?: ReadonlyMap<string, string>,
   ): string {
+    // _stateVarMap is unused on Native: bare Account<T> names already deref to
+    // the deserialized struct, so a cross-account `config.authority` seed is
+    // valid as-is (no per-account rewrite needed — see Pinocchio F6 fix).
     const dataVar = stateVar || `${account}_data`;
     const resolvedTypeName = typeName || account.charAt(0).toUpperCase() + account.slice(1).replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 

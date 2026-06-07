@@ -19,10 +19,26 @@ Each finding: parses + validator-CLEAN (0 errors) yet semantically wrong vs Anch
   so a clean fix needs the same `tokenLike` gate applied at ALL of them in one pass (the gated sibling logic
   already exists at expr-transform.ts:501-517 / 494-525 — extend it to the ungated `ctx.accounts.X.amount` and
   `resolveAmountExpr` paths). Deferred to avoid a half-applied multi-site fix.
-- **F2 / F6 (Pinocchio PDA signer-seed misattribution) — CONFIRMED, DEFERRED.** Pinocchio rewrites an
-  other-account `.key()` seed to the signing PDA's own key (self-referential, unsignable → funds locked); Native
-  is correct from the same IR. Sites: pinocchio-emitter.ts:2722 + body-emitter/pda-signer-seeds-emit.ts:72-92.
-  Pinocchio-specific; needs careful stateVar-attribution narrowing + a revert-parity teeth fixture.
+- **F2 (Pinocchio PDA signer-seed cross-account FIELD) — FIXED.** A PDA signer seed that reads a stored FIELD of
+  an account OTHER than the bump owner (e.g. `seeds = [b"pool", config.authority.as_ref(), &[ctx.bumps.pool]]`)
+  was rewritten to the bump owner's own field (`pool.authority`) — a single shared state var for the whole seed
+  list. When the two accounts' fields differ this derives the WRONG PDA → invoke_signed grants no signature → the
+  signed CPI reverts (Anchor-correct, silently broken on Pinocchio; Native always correct because bare
+  `Account<T>` names deref to the struct). Fix: `emitPdaSignerSeeds` rewrites each field seed against its OWN
+  account's deserialized state var via a per-account `{account → stateVar}` map (built in the caller with the
+  idempotent `ensureStateRead`); same-account seeds stay byte-identical, only the cross-account case changes.
+  Teeth fixture `differential-pda-seed-cross-account-field` (config.authority ≠ pool.authority): Pinocchio FAILS
+  on HEAD at `pool_ta` byte 64 (transfer reverts), Native passes (control), both pass on the fix. Byte-diff of all
+  existing PDA-seed fixtures identical HEAD vs fixed + escrow cargo spot-check green.
+- **F6 (Pinocchio PDA signer-seed cross-account `.key()`) — DISTINCT bug, STILL OPEN.** A different branch from
+  F2: a seed `<other>.key().as_ref()` (e.g. a vault PDA derived from `owner.key()`, withdrawn via
+  `system_program::transfer` with a `let bump = ctx.bumps.vault` binding) is rewritten to the PDA's OWN key
+  (`vault.key()`) → unsignable → funds locked. Root cause is the `.key()` branch line `if (stateVar && name ===
+  stateVar) return ${accountInfoVar}.key()` misfiring because pass-2 of `emitPdaSignerSeedsPrelude` mis-sets
+  `seedStateAccount` to the seed-SOURCE account (`owner`) when the bump is a let-bound `ctx.bumps.<pda>` (so
+  `&[bump]`, not `ctx.bumps.<pda>`, appears in the seed list and pass-1 misses it). Confirmed still-broken on the
+  F2-fixed code (probe: emits `vault.key().as_ref()` where Native emits `owner.key`). Reachable + common
+  (vault-payout-from-PDA). Fix separately (own byte-diff + teeth).
 - **F3 (checked→unchecked CPI downgrade) — `transfer_checked` FIXED; `mint_to_checked`/`burn_checked` DISPROVEN
   (unreachable, #25 closed).** Legacy `Program<Token>` `transfer_checked` silently emitted the UNCHECKED instruction (dropped
   the mint account + the `mint.decimals == decimals` assertion). The IR captured `mint`+`decimals` all along;
@@ -110,6 +126,10 @@ _confidence: high_
 ---
 
 ## F2 [pda-seeds] — MED — Pinocchio PDA signer seeds read a stored field from the WRONG account (bump-owner) when a seed references ctx.accounts.OTHER.field
+
+> **UPDATE (2026-06-07) — FIXED (see triage above).** `emitPdaSignerSeeds` now resolves each FIELD seed against
+> its own account's state var (per-account map). Teeth: `differential-pda-seed-cross-account-field`. The closely
+> related `.key()` variant is filed separately as **F6 (still open)** below — a distinct branch.
 
 **Why wrong:** Anchor's signer seeds are [b"pool", config.authority, bump] — the second seed is the 32-byte Pubkey STORED in the `authority` field of the `config` account. Pinocchio's emitPdaSignerSeeds silently rewrites the seed-account prefix from `config` to `pool`, emitting `pool.authority.as_ref()` — reading the authority field of a DIFFERENT account (the bump-owner PDA `pool`). Root cause: in pinocchio-emitter.ts emitPdaSignerSeeds, `rewritePrefix = account` (the detected seed account = config from detectSeedAccount's first ctx.accounts ref) but `dataVar = stateVar` is the state var of the bump-owner (pool, from ctx.bumps.pool). The line `seed.replace(new RegExp(`^${rewritePrefix}\.`), `${dataVar}.`)` rewrites `config.` -> `pool.` because rewritePrefix and dataVar point at different accounts. CONSEQUENCE: at runtime invoke_signed derives a signer from `pool.authority` while the PDA address (bump_pool) was derived from `config.authority`; whenever `pool.authority != config.authority` (the normal case for two independent accounts) the derived signer != pool.key(), so the PDA is not granted signing and the SPL transfer FAILS every time with a missing-signature/privilege error — a program that works under Anchor is silently broken on the Pinocchio target. This is NOT a money-misroute (it's denial-of-function / silent breakage). SILENT: validator reports 0 errors and the code compiles cleanly, because the bump-owner type `Pool` happens to carry a same-named `authority: Pubkey` field (precondition for the silent variant — when the field name differs, e.g. a bare AccountInfo, `pool.authority` is a loud cargo error instead). The Native emitter does NOT have this bug (correct `config.authority` in both the address check and the signer seeds). DISTINCT from the already-fixed F4 (variable-bound PDA signer seeds, which was about variable-binding opacity / dropped seeds): this is a different root cause — a prefix/dataVar account-IDENTITY mismatch that survives into compiling output. Reproduced with both the `&[ctx.bumps.pool]` canonical form and the `&[pool.bump]` stored-bump form.
 

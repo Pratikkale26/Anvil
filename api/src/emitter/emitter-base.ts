@@ -709,6 +709,11 @@ export abstract class BaseEmitter {
     bumpField?: string,
     stateVar?: string,
     typeName?: string,
+    // Maps each seed-referenced account name → its deserialized state var.
+    // Lets a seed that reads a FIELD of a DIFFERENT account than the bump
+    // owner resolve to THAT account's state (Pinocchio F6). Native ignores
+    // it (bare Account<T> names already deref to the struct).
+    stateVarMap?: ReadonlyMap<string, string>,
   ): string;
 
   // ── Macro transforms ──
