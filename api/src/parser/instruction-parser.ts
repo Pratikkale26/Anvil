@@ -224,12 +224,29 @@ function parseInstructionFn(
       if (attrName !== handlerName) renameMap.set(attrName, handlerName);
     }
     if (renameMap.size > 0) {
-      const rewrite = (text: string): string => {
-        let out = text;
+      // Rename only the text *between* string/byte-string/char literals: a
+      // `\b${from}\b` replace over the full seed otherwise fires inside
+      // b"id" (the `"` is a non-word char, so a word boundary sits between the
+      // quote and `i`), producing b"_id" -- a corrupted seed prefix and thus a
+      // different derived PDA.
+      const literalRe = /b?"(?:[^"\\]|\\.)*"|b?'(?:[^'\\]|\\.)*'/g;
+      const renameIdents = (s: string): string => {
+        let out = s;
         for (const [from, to] of renameMap) {
           out = out.replace(new RegExp(`\\b${from}\\b`, "g"), to);
         }
         return out;
+      };
+      const rewrite = (text: string): string => {
+        let result = "";
+        let lastIndex = 0;
+        literalRe.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = literalRe.exec(text)) !== null) {
+          result += renameIdents(text.slice(lastIndex, m.index)) + m[0];
+          lastIndex = m.index + m[0].length;
+        }
+        return result + renameIdents(text.slice(lastIndex));
       };
       for (const account of accounts) {
         if (account.pdaSeeds && account.pdaSeeds.length > 0) {
