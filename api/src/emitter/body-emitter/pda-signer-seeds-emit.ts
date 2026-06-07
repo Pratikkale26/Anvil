@@ -73,12 +73,17 @@ export function emitPdaSignerSeedsPrelude(w: BodyWalker, stmt: PdaSignerSeedsStm
     for (const seed of stmt.seeds) {
       const ctxBumpMatch = seed.match(/ctx\.bumps\.(\w+)/)?.[1];
       if (ctxBumpMatch) continue;
-      const ctxDirectMatch = seed.match(/ctx\.accounts\.(\w+)\.\w+/)?.[1];
+      // `.key()` / `.key` refs are seed SOURCES (an account's pubkey), NOT the
+      // PDA bump owner — excluding them stops a seed like `owner.key()` from
+      // being mistaken for the bump owner when the bump is let-bound (so it
+      // reaches pass 2 instead of pass 1). Misattributing it routes the
+      // `.key()` rewrite to the PDA's own key (self-referential → unsignable).
+      const ctxDirectMatch = seed.match(/ctx\.accounts\.(\w+)\.(?!key\b|key\()\w/)?.[1];
       if (ctxDirectMatch) {
         seedStateAccount = snakeCase(ctxDirectMatch);
         break;
       }
-      const directMatch = seed.match(/^(\w+)\.\w+/)?.[1];
+      const directMatch = seed.match(/^(\w+)\.(?!key\b|key\()\w/)?.[1];
       if (directMatch && w.stateVars.has(directMatch)) {
         seedStateAccount = directMatch;
         break;

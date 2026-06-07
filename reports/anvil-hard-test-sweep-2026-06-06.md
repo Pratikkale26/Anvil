@@ -30,15 +30,18 @@ Each finding: parses + validator-CLEAN (0 errors) yet semantically wrong vs Anch
   Teeth fixture `differential-pda-seed-cross-account-field` (config.authority ≠ pool.authority): Pinocchio FAILS
   on HEAD at `pool_ta` byte 64 (transfer reverts), Native passes (control), both pass on the fix. Byte-diff of all
   existing PDA-seed fixtures identical HEAD vs fixed + escrow cargo spot-check green.
-- **F6 (Pinocchio PDA signer-seed cross-account `.key()`) — DISTINCT bug, STILL OPEN.** A different branch from
-  F2: a seed `<other>.key().as_ref()` (e.g. a vault PDA derived from `owner.key()`, withdrawn via
-  `system_program::transfer` with a `let bump = ctx.bumps.vault` binding) is rewritten to the PDA's OWN key
-  (`vault.key()`) → unsignable → funds locked. Root cause is the `.key()` branch line `if (stateVar && name ===
-  stateVar) return ${accountInfoVar}.key()` misfiring because pass-2 of `emitPdaSignerSeedsPrelude` mis-sets
-  `seedStateAccount` to the seed-SOURCE account (`owner`) when the bump is a let-bound `ctx.bumps.<pda>` (so
-  `&[bump]`, not `ctx.bumps.<pda>`, appears in the seed list and pass-1 misses it). Confirmed still-broken on the
-  F2-fixed code (probe: emits `vault.key().as_ref()` where Native emits `owner.key`). Reachable + common
-  (vault-payout-from-PDA). Fix separately (own byte-diff + teeth).
+- **F6 (Pinocchio PDA signer-seed cross-account `.key()`) — FIXED (distinct bug, found while closing F2).** A
+  seed `<other>.key().as_ref()` (e.g. a vault PDA derived from `owner.key()`, withdrawn via
+  `system_program::transfer` with a `let bump = ctx.bumps.vault` binding) was rewritten to the PDA's OWN key
+  (`vault.key()`) → unsignable → funds locked. Root cause: pass-2 of `emitPdaSignerSeedsPrelude` mis-set
+  `seedStateAccount` to the seed-SOURCE account (`owner`) via its `ctx.accounts.(\w+).\w+` heuristic when the bump
+  is a let-bound `ctx.bumps.<pda>` (so `&[bump]`, not `ctx.bumps.<pda>`, appears in the seed list and pass-1 misses
+  it); the `.key()` rewrite branch then turned `owner.key()` into `vault.key()`. Fix: exclude `.key`/`.key()` refs
+  from pass-2's seedStateAccount heuristics (a `.key()` ref is a seed SOURCE, not the bump owner) — minimal,
+  byte-diff-clean vs all existing PDA-seed fixtures. Teeth `differential-pda-seed-keyref-letbump`: Pinocchio FAILS
+  on HEAD (vault_pda 1.0 SOL — transfer reverted) vs Anchor 0.7 SOL, Native passes (control), both pass on the fix.
+  (The `.key()` branch's `name === stateVar` clause is now a latent footgun only if a future path mis-sets
+  stateVar; left as-is since the root fix is in pass-2.)
 - **F3 (checked→unchecked CPI downgrade) — `transfer_checked` FIXED; `mint_to_checked`/`burn_checked` DISPROVEN
   (unreachable, #25 closed).** Legacy `Program<Token>` `transfer_checked` silently emitted the UNCHECKED instruction (dropped
   the mint account + the `mint.decimals == decimals` assertion). The IR captured `mint`+`decimals` all along;
@@ -401,6 +404,12 @@ _confidence: high_
 ---
 
 ## F6 [cpi-patterns] — HIGH — Pinocchio mis-derives PDA signer seeds: a `<other_account>.key()` seed is silently rewritten to the signing PDA's OWN key (self-referential, unsignable) on the system_program-transfer-from-PDA path; Native emits it correctly
+
+> **UPDATE (2026-06-07) — FIXED (see triage above).** Root fix in pass-2 of `emitPdaSignerSeedsPrelude`: exclude
+> `.key`/`.key()` refs from the seedStateAccount heuristic (a `.key()` is a seed SOURCE, not the bump owner), so
+> `owner.key()` is no longer mistaken for the bump owner and the `.key()` rewrite no longer fires. Teeth:
+> `differential-pda-seed-keyref-letbump` (vault_pda 1.0 SOL on HEAD-Pinocchio / 0.7 on Anchor+fix). The root-cause
+> analysis below is accurate as the pre-fix diagnosis.
 
 **Why wrong:** Anchor signs the CPI with the seeds the user supplied: [b"vault", owner.key(), bump], which derive the `vault` PDA. The Pinocchio emitter silently substitutes the second seed `owner.key().as_ref()` with `vault.key().as_ref()` (the PDA's own pubkey). A PDA can never be derived from a seed list that contains its own key, so `create_program_address`/`invoke_signed` produces a different address than `vault` and fails at runtime with InvalidSeeds — the lamport transfer out of the vault PDA silently never executes (funds locked / withdrawal broken). It is SILENT because the emit compiles (every referenced var is bound), validateEmitterOutput returns 0 errors / 0 warnings, and there is no unimplemented!()/⚠️ marker. The bug is self-evidently inconsistent: the bump-derivation line one line above correctly uses `owner.key()` while the signing seeds use `vault.key()`. The Native emitter handles the identical IR correctly, proving it is a Pinocchio-specific emit defect, not an IR/parse gap. Root cause: pinocchio-emitter.ts:2722 `if (stateVar && name === stateVar) return \`${accountInfoVar}.key().as_ref()\`` rewrites any seed referencing `stateVar` to the PDA's own AccountInfo key; `stateVar` is wrongly set to the seed-SOURCE account (`owner`) by pass-2 of body-emitter/pda-signer-seeds-emit.ts:72-92 (the loose `ctx.accounts.(\w+).key` heuristic), which fires whenever the PDA's bump comes from a separate `ctx.bumps.<pda>` binding instead of an inline-in-seeds bump. Trigger conditions (all silent): (1) a PDA used as invoke_signed signer whose seeds reference another in-struct account's .key(); (2) the bump bound via `let bump = ctx.bumps.<pda>;`; (3) the signer-seeds passed via a `let seeds = ...` IR pda_signer_seeds statement (the `&[seeds]` inline-arg form, no leftover `let signer` binding so no masking E0425). Note: the `let signer = &[seeds];` user-binding variant additionally emits a use-before-declaration (E0425) that would be caught by cargo, partially masking the wrong seed there; the `&[seeds]` inline-arg form removes that mask and the wrong seed compiles cleanly — the repro above.
 
