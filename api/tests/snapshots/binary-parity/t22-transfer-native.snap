@@ -99,7 +99,7 @@ pub fn do_transfer(
         spl_token_2022::state::Mint::unpack(&mint.data.borrow())?.decimals
     };
     let transfer_ix = spl_token_2022::instruction::transfer_checked(
-        &spl_token_2022::id(),
+        token_program.key,
         from.key,
         mint.key,
         to.key,

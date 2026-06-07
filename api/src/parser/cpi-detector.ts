@@ -242,6 +242,29 @@ export function detectCpi(
     return extractT22TokenMetadataUpdateAuthority(callNode, collector);
   }
 
+  // CpiContext program-arg account (the runtime token program). Shared by the
+  // qualified `token_2022::`/`token_interface::` block immediately below AND the
+  // unqualified `*_checked` block further down. The emit reads `<arg>.key()` at
+  // call time so an Interface<TokenInterface> / Program<Token> CPI routes to
+  // whatever token program the caller actually passes (legacy Tokenkeg,
+  // Token-2022, …) instead of a hardcoded Token-2022 const. F4: the qualified
+  // UNCHECKED token_interface::{transfer,mint_to,burn,close} ops previously
+  // dropped this and silently pinned the CPI to Token-2022 — so an
+  // Interface<TokenInterface> caller passing legacy Tokenkeg (which the account
+  // guard accepts) reverted on the Pinocchio/Native target while Anchor routed
+  // to Tokenkeg and succeeded.
+  const cpiCtxProgramArg = (() => {
+    const argsNode = callNode.childForFieldName("arguments");
+    const args = argsNode ? getArguments(argsNode) : [];
+    const firstArgText = args[0]?.text ?? "";
+    const inline = firstArgText.match(
+      /CpiContext\s*::\s*new(?:_with_signer)?\s*\(\s*ctx\s*\.\s*accounts\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)/,
+    );
+    if (inline?.[1]) return inline[1];
+    const varName = firstArgText.trim().replace(/^&\s*/, "");
+    return typeof cpiCtxLookup === "function" ? cpiCtxLookup(varName)?.program : undefined;
+  })();
+
   // ── Token-2022 / token_interface CPI patterns (generic SPL fns through
   // the Token-2022 program). Falls below the T22-extension dispatch so a
   // qualified `token_2022::transfer_fee_initialize(...)` doesn't get
@@ -251,28 +274,28 @@ export function detectCpi(
     if (funcText.includes("transfer_checked") || funcText.includes("transfer")) {
       const result = extractSplTransfer(callNode, collector, cpiCtxLookup);
       if (result.kind === "cpi_spl_transfer") {
-        return { ...result, tokenProgram: "token_2022" as const };
+        return { ...result, tokenProgram: "token_2022" as const, ...(cpiCtxProgramArg ? { tokenProgramArg: cpiCtxProgramArg } : {}) };
       }
       return result;
     }
     if (funcText.includes("mint_to")) {
       const result = extractSplMintTo(callNode, collector, cpiCtxLookup);
       if (result.kind === "cpi_spl_mint_to") {
-        return { ...result, tokenProgram: "token_2022" as const };
+        return { ...result, tokenProgram: "token_2022" as const, ...(cpiCtxProgramArg ? { tokenProgramArg: cpiCtxProgramArg } : {}) };
       }
       return result;
     }
     if (funcText.includes("burn")) {
       const result = extractSplBurn(callNode, collector, cpiCtxLookup);
       if (result.kind === "cpi_spl_burn") {
-        return { ...result, tokenProgram: "token_2022" as const };
+        return { ...result, tokenProgram: "token_2022" as const, ...(cpiCtxProgramArg ? { tokenProgramArg: cpiCtxProgramArg } : {}) };
       }
       return result;
     }
     if (funcText.includes("close_account") || funcText.includes("CloseAccount")) {
       const result = extractSplCloseAccount(callNode, collector);
       if (result.kind === "cpi_spl_close_account") {
-        return { ...result, tokenProgram: "token_2022" as const };
+        return { ...result, tokenProgram: "token_2022" as const, ...(cpiCtxProgramArg ? { tokenProgramArg: cpiCtxProgramArg } : {}) };
       }
       return result;
     }
@@ -346,24 +369,10 @@ export function detectCpi(
   // time: correct for legacy Tokenkeg, Token-2022, and Interface alike.
   // `tokenProgram: "token_2022"` still selects the *_checked variant (the data
   // shape works for both runtimes); a bare const T22 ID with NO runtime read
-  // was the silent misroute for `Program<Token>`.
-  const checkedTokenProgramArg = (() => {
-    const argsNode = callNode.childForFieldName("arguments");
-    const args = argsNode ? getArguments(argsNode) : [];
-    const firstArgText = args[0]?.text ?? "";
-    // Inline form: transfer_checked(CpiContext::new(ctx.accounts.X.., ..), ..).
-    const inline = firstArgText.match(
-      /CpiContext\s*::\s*new(?:_with_signer)?\s*\(\s*ctx\s*\.\s*accounts\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)/,
-    );
-    if (inline?.[1]) return inline[1];
-    // Let-bound form (post-consolidation, the common shape): the call's first
-    // arg is the bound var; recover the program account from the tracked
-    // CpiContext binding. Guard the call: some callers (the conditional-
-    // system-transfer path) pass a raw Map here, not a function — invoking it
-    // would throw. A non-function lookup just means "no binding info" → const.
-    const varName = firstArgText.trim().replace(/^&\s*/, "");
-    return typeof cpiCtxLookup === "function" ? cpiCtxLookup(varName)?.program : undefined;
-  })();
+  // was the silent misroute for `Program<Token>`. Reuses the same extraction
+  // lifted above for the qualified block (F4) — identical inline + let-bound
+  // CpiContext handling.
+  const checkedTokenProgramArg = cpiCtxProgramArg;
   if (/^transfer_checked$|::transfer_checked$/.test(funcText)) {
     const result = extractSplTransfer(callNode, collector, cpiCtxLookup);
     if (result.kind === "cpi_spl_transfer") {

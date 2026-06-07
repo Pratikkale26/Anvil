@@ -68,15 +68,22 @@ Each finding: parses + validator-CLEAN (0 errors) yet semantically wrong vs Anch
   IR shape the downgrade would require. An emit-layer fix was written + reverted (the differential's Anchor reference
   failed to compile, surfacing the unreachability); the lesson is the recurring one — verify the API/corpus before
   building. #25 closed as disproven.
-- **F4 (token_interface hardcodes Token-2022 id), F5 (`close` drops owner-reassign + realloc(0)), F8
-  (discriminator check dropped for key()-only Account<T>) — all TRIAGED REAL (2026-06-07), DEFERRED to a fresh
-  session (MED).** A 4-agent reachability triage confirmed each is reachable + compiles as valid Anchor + silently
-  mishandled on HEAD (NOT #25-style non-bugs). Concrete fix sites + teeth strategies captured in task #24: F4 is
-  PARSER-only (cpi-detector.ts unchecked token_interface branch must capture `tokenProgramArg`, mirroring the
-  checked IIFE — emitters already consume it; teeth must drive the legacy-Tokenkeg path); F5 patches both
-  `close_program_account` helper bodies (add `assign(System)` + `realloc(0)`/`close()`); F8 adds an
-  `emitDiscriminatorCheck` prologue mirroring the owner-check (watch raw-`setAccount` fixtures). F7 (`.amount`,
-  #22) likewise triaged REAL with a multi-site plan. Banked rather than stacked into this session's marathon.
+- **F4 (token_interface hardcodes Token-2022 id) — FIXED.** Unchecked `token_interface::{mint_to,burn,transfer,
+  close}` (Interface<TokenInterface>) hardcoded the Token-2022 program id for the CPI invoke and never read the
+  runtime `token_program` — so an Interface caller passing legacy Tokenkeg (which the account guard accepts) had
+  the invoke revert on Anvil while Anchor routed to Tokenkeg. Root cause was PARSER-side: the qualified
+  `token_2022::`/`token_interface::` unchecked branch (cpi-detector.ts) returned `tokenProgram:"token_2022"` with
+  NO `tokenProgramArg`. Fix: lift the CpiContext program-arg extraction above both blocks and capture
+  `tokenProgramArg` on the unchecked transfer/mint_to/burn/close returns (the emitters already consume it for
+  runtime `<arg>.key()` dispatch — no emitter change). Teeth `differential-interface-legacy-mintto` (Interface +
+  legacy Tokenkeg): both Anvil targets FAIL on HEAD (`to` byte 64 = 0, invoke reverted) vs Anchor mints 100; both
+  pass on the fix. Runtime-equivalent for T22 (`differential-t22-transfer` green; the t22-transfer binary-parity
+  snapshots re-baselined to the runtime-dispatch emit); test:fast 2022/0 + the 2 intended snapshots.
+- **F5 (`close` drops owner-reassign + realloc(0)), F8 (discriminator check dropped for key()-only Account<T>) —
+  TRIAGED REAL (2026-06-07), DEFERRED to a fresh session (MED).** Both confirmed reachable + compiles + silently
+  mishandled (NOT #25-style). Fix sites + teeth in task #24: F5 patches both `close_program_account` helper bodies
+  (add `assign(System)` + `realloc(0)`/`close()`); F8 adds an `emitDiscriminatorCheck` prologue mirroring the
+  owner-check (watch raw-`setAccount` fixtures). F7 (`.amount`, #22) likewise triaged REAL with a multi-site plan.
 - **1 REFUTED** (false alarm — conservative-but-correct emit).
 
 All deferred findings are documented below with minimal repro + the exact wrong emit + a suggested fix, ready for
@@ -281,6 +288,12 @@ _confidence: high_
 ---
 
 ## F4 [token-spl] — MED — Unchecked `token_interface::{mint_to, burn, transfer}` (Interface<TokenInterface>) hardcodes the Token-2022 program ID for the CPI — loses runtime program dispatch, so every legacy-SPL-Token interaction reverts
+
+> **UPDATE (2026-06-07) — FIXED (see triage above).** The CpiContext program-arg extraction (the
+> `checkedTokenProgramArg` IIFE) is lifted above both the qualified `token_2022::`/`token_interface::` block and
+> the unqualified `*_checked` block in cpi-detector.ts, and the unchecked transfer/mint_to/burn/close returns now
+> merge `tokenProgramArg` — so the emit reads `<arg>.key()` at runtime. Emitters unchanged (they already consume
+> it). Teeth `differential-interface-legacy-mintto`; t22-transfer binary-parity snapshots re-baselined.
 
 **Why wrong:** The contract uses `Interface<'info, TokenInterface>` + `token_interface::{mint_to,burn,transfer}` with `CpiContext::new(ctx.accounts.token_program.to_account_info(), ...)`. Anchor's TokenInterface dispatches the CPI to WHICHEVER token program owns the passed `token_program` AccountInfo at runtime — legacy SPL Token (Tokenkeg) OR Token-2022. Anvil emits the correct permissive account guard (accepts both program IDs), but then hardcodes the CPI program ID to Token-2022 (`&spl_token_2022::id()` native / `&TOKEN_2022_PROGRAM_ID` pinocchio) with NO runtime `.key`/`.key()` read. The parser's token_interface branch (cpi-detector.ts:250-271) tags these unchecked ops with only `tokenProgram:"token_2022"` and never sets `tokenProgramArg`. The proof this is an INCOMPLETE fix rather than intended design: the SAME emitter applies `tokenProgramArg` (runtime program-ID read) for `transfer_checked` (checkedTokenProgramArg, :350-387) and `set_authority` (extractSplSetAuthority :2024-2027) — but the unchecked `token_interface::{mint_to,burn,transfer}` paths are skipped. Consequence: when a caller legitimately passes the LEGACY SPL Token program (which the guard accepts), Anchor would route the CPI to Tokenkeg and succeed, but Anvil's hardcoded-Token-2022 `invoke` reverts (Token-2022 does not own those legacy accounts). Silent loss of Interface<TokenInterface> polymorphism: every legacy-SPL-Token interaction reverts; validator reports 0 errors. mint_to and burn are the load-bearing cases (non-deprecated, ubiquitous in DeFi); the unchecked `transfer` form is also affected (emit stamps `#[allow(deprecated)]`).
 

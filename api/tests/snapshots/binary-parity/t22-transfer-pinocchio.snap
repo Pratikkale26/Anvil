@@ -115,7 +115,6 @@ pub fn do_transfer(
         __mint_data[44]
     };
     {
-        const TOKEN_2022_PROGRAM_ID: pinocchio::pubkey::Pubkey = [6, 221, 246, 225, 238, 117, 143, 222, 24, 66, 93, 188, 228, 108, 205, 218, 182, 26, 252, 77, 131, 185, 13, 39, 254, 189, 249, 40, 216, 161, 139, 252];
         let __t22_amount = ((amount) as u64).to_le_bytes();
         let __t22_data: [u8; 10] = [
             12,
@@ -130,7 +129,7 @@ pub fn do_transfer(
             pinocchio::instruction::AccountMeta::readonly_signer(authority.key()),
         ];
         let __t22_ix = pinocchio::instruction::Instruction {
-            program_id: &TOKEN_2022_PROGRAM_ID,
+            program_id: token_program.key(),
             accounts: &__t22_metas,
             data: &__t22_data,
         };
