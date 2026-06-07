@@ -69,7 +69,14 @@ Each finding: parses + validator-CLEAN (0 errors) yet semantically wrong vs Anch
   failed to compile, surfacing the unreachability); the lesson is the recurring one — verify the API/corpus before
   building. #25 closed as disproven.
 - **F4 (token_interface hardcodes Token-2022 id), F5 (`close` drops owner-reassign + realloc(0)), F8
-  (discriminator check dropped for key()-only Account<T>) — CONFIRMED, DEFERRED (MED).**
+  (discriminator check dropped for key()-only Account<T>) — all TRIAGED REAL (2026-06-07), DEFERRED to a fresh
+  session (MED).** A 4-agent reachability triage confirmed each is reachable + compiles as valid Anchor + silently
+  mishandled on HEAD (NOT #25-style non-bugs). Concrete fix sites + teeth strategies captured in task #24: F4 is
+  PARSER-only (cpi-detector.ts unchecked token_interface branch must capture `tokenProgramArg`, mirroring the
+  checked IIFE — emitters already consume it; teeth must drive the legacy-Tokenkeg path); F5 patches both
+  `close_program_account` helper bodies (add `assign(System)` + `realloc(0)`/`close()`); F8 adds an
+  `emitDiscriminatorCheck` prologue mirroring the owner-check (watch raw-`setAccount` fixtures). F7 (`.amount`,
+  #22) likewise triaged REAL with a multi-site plan. Banked rather than stacked into this session's marathon.
 - **1 REFUTED** (false alarm — conservative-but-correct emit).
 
 All deferred findings are documented below with minimal repro + the exact wrong emit + a suggested fix, ready for
