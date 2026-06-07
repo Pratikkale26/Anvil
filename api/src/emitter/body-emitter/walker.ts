@@ -41,6 +41,7 @@ import {
   simplifyPassThroughCode,
   indentBlock,
   replaceInCodeRegions,
+  knownProgramIdLiteral,
 } from "../emitter-utils.js";
 import type { BodyEmitterCallbacks, BodyEmitterContext } from "./types.js";
 // H1 Session G (2026-05-13) — all per-kind handlers retired. The visitor
@@ -67,6 +68,28 @@ import { MARKER_ANVIL_PREFIX } from "../markers.js";
 import { tryStructuralizeExpr } from "../ast-visitor/rust-stmt-from-text.js";
 import { resolveAccountExprAstPipeline } from "../ast-visitor/expr-transform.js";
 import { printExpr } from "../ast-visitor/printer.js";
+
+/**
+ * #29 / G7 — map an `#[account(owner = X)]` value to a known program-id
+ * byte-literal when X is a recognized SPL / MPL program-id constant path
+ * (`anchor_spl::token::ID`, `spl_token::ID`, `…token_2022::ID`,
+ * `…associated_token::ID`, `…metadata::ID`, `…memo::ID`, with or without the
+ * `anchor_spl::` / `spl_` prefix). Returns the `[u8; 32]` literal so the
+ * owner check references a self-contained value that survives the
+ * anchor_spl-strip / residual-anchor-leak comment-out passes. Returns null
+ * for any other expression (account ref, in-program const, unknown path).
+ */
+function ownerProgramIdLiteral(value: string): string | null {
+  const v = value.replace(/\s+/g, "");
+  if (!/(?:::ID|::id\(\))$/.test(v)) return null;
+  // Order matters: token_2022 / associated_token both contain "token".
+  if (/token_2022|token2022/i.test(v)) return knownProgramIdLiteral("Token2022");
+  if (/associated_token/i.test(v)) return knownProgramIdLiteral("AssociatedToken");
+  if (/(?:^|::)(?:spl_)?token(?:::|$)/i.test(v)) return knownProgramIdLiteral("Token");
+  if (/metadata/i.test(v)) return knownProgramIdLiteral("Metadata");
+  if (/memo/i.test(v)) return knownProgramIdLiteral("Memo");
+  return null;
+}
 
 const mintFieldRules: Array<{
   field: string;
@@ -2152,6 +2175,51 @@ export class BodyWalker {
           condition = `${this.emitter.emitAccountKeyExpr(this.resolveAccountInfoVar(snakeCase(account.name)))} == ${this.transformAccountReferences(
             this.transformCtxAccountsReferences(stripAnchorConstraintError(constraint.value)),
           )}`;
+        } else if (constraint.kind === "owner") {
+          // #29 / G7 — `#[account(owner = X)]` asserts the account is owned by
+          // the program X (Anchor's ConstraintOwner). The generic owner check
+          // (emitOwnerCheck) pins `owner == program_id`, which is wrong for an
+          // explicit override; without a dedicated branch the constraint was
+          // dropped entirely (no check, confused-deputy). Emit a comparison
+          // against the override value. AccountInfo exposes the owner as a
+          // `&Pubkey` (field `.owner` on Native, method `.owner()` on
+          // Pinocchio); deref both sides to compare Pubkey values.
+          const isInitOrInitIfNeeded = account.constraints.some(
+            (c) => c.kind === "init" || c.kind === "init_if_needed",
+          );
+          if (isInitOrInitIfNeeded) continue;
+          const infoVar = this.resolveAccountInfoVar(snakeCase(account.name));
+          const isPino = this.emitter.frameworkName === "Pinocchio";
+          const ownerValue = isPino ? `*${infoVar}.owner()` : `*${infoVar}.owner`;
+          const rawVal = stripAnchorConstraintError(constraint.value);
+          // The override value must reference a symbol that SURVIVES the
+          // anchor_spl-strip / residual-anchor-leak comment-out passes — an
+          // `anchor_spl::token::ID`-style external-crate path would otherwise
+          // be silently commented out (re-dropping the check). Resolve the
+          // recognized forms to a self-contained Pubkey value.
+          const idLit = ownerProgramIdLiteral(rawVal);
+          let expected: string;
+          if (idLit) {
+            // solana_program's Pubkey is a struct → wrap the [u8; 32] literal;
+            // pinocchio's Pubkey IS [u8; 32] → the literal is already a value.
+            expected = isPino ? idLit : `Pubkey::new_from_array(${idLit})`;
+          } else if (/^(?:crate::)?(?:ID|id\(\))$/.test(rawVal.replace(/\s+/g, ""))) {
+            // `owner = crate::ID` — owned by THIS program. program_id (the
+            // entrypoint param) is the deref-able &Pubkey both targets expose.
+            expected = "*program_id";
+          } else {
+            // account-ref (`token_program.key()`) or in-program const — reuse
+            // the address-branch transform; it survives as-is.
+            const t = this.transformAccountReferences(
+              this.transformCtxAccountsReferences(rawVal),
+            );
+            expected = t.startsWith("&") ? t.slice(1) : t;
+          }
+          const ownerCond = this.normalizeKeyValueUsages(`${ownerValue} == ${expected}`);
+          if (this.bodyRequireConditions.has(normalizeConditionKey(ownerCond))) continue;
+          this.bodyRequireConditions.add(normalizeConditionKey(ownerCond));
+          this.lines.push(this.emitter.emitRequire(ownerCond, "ProgramError::IllegalOwner"));
+          continue;
         } else if (constraint.kind === "has_one") {
           // `#[account(has_one = <target>)]` — assert the deserialized
           // account's `<target>` field equals the `<target>` AccountInfo
