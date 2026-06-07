@@ -23,8 +23,8 @@ Each finding: parses + validator-CLEAN (0 errors) yet semantically wrong vs Anch
   other-account `.key()` seed to the signing PDA's own key (self-referential, unsignable → funds locked); Native
   is correct from the same IR. Sites: pinocchio-emitter.ts:2722 + body-emitter/pda-signer-seeds-emit.ts:72-92.
   Pinocchio-specific; needs careful stateVar-attribution narrowing + a revert-parity teeth fixture.
-- **F3 (checked→unchecked CPI downgrade) — `transfer_checked` FIXED; `mint_to_checked`/`burn_checked` still
-  open (#25).** Legacy `Program<Token>` `transfer_checked` silently emitted the UNCHECKED instruction (dropped
+- **F3 (checked→unchecked CPI downgrade) — `transfer_checked` FIXED; `mint_to_checked`/`burn_checked` DISPROVEN
+  (unreachable, #25 closed).** Legacy `Program<Token>` `transfer_checked` silently emitted the UNCHECKED instruction (dropped
   the mint account + the `mint.decimals == decimals` assertion). The IR captured `mint`+`decimals` all along;
   the bug was purely in emit. Fix is at the AST-visitor emit layer (the live path — `native-emitter.ts:680`
   `emitSplTransfer` cited in the deep-dive below is vestigial, only the Pinocchio branch calls it): the dispatch
@@ -35,8 +35,20 @@ Each finding: parses + validator-CLEAN (0 errors) yet semantically wrong vs Anch
   otherwise turn a working transfer into a silent no-op). Teeth-verified both targets:
   `differential-spl-transfer-checked-qualified` (correct-decimals tx ok + wrong-decimals tx reverts) FAILS on
   HEAD at `from_ata` byte 64 (balance leak: HEAD moves funds the checked variant rejects) and PASSES on the fix;
-  regression-clean against `spl-transfer-checked-legacy` + `spl-transfer` + `t22-transfer`. `mint_to_checked` /
-  `burn_checked` have the identical dispatch bug (`visitCpiSplMintTo` etc.) and remain silently downgraded — #25.
+  regression-clean against `spl-transfer-checked-legacy` + `spl-transfer` + `t22-transfer`.
+
+  **The `mint_to_checked`/`burn_checked` half of this finding is DISPROVEN — not a reachable bug.** The hunter's
+  repro (`token::mint_to_checked` / `token::burn_checked` on `Program<Token>`) does NOT compile: `anchor_spl::token`
+  0.31.1 exports only `transfer`, `transfer_checked`, `mint_to`, `burn` — there is no `mint_to_checked`/`burn_checked`
+  function or `MintToChecked`/`BurnChecked` struct in the legacy module (that's why `transfer_checked` is reachable
+  but the mint/burn checked variants are not). The checked mint/burn API lives only in `anchor_spl::token_2022` /
+  `token_interface`, and every compilable form of it — qualified `token_2022::mint_to_checked` AND the bare
+  `use anchor_spl::token_2022::mint_to_checked; mint_to_checked(...)` import — tags `tokenProgram:"token_2022"` +
+  `tokenProgramArg`, which already routes to the captured checked emit (`spl_token_2022::instruction::mint_to_checked`
+  with runtime program-id dispatch — verified). So no valid Anchor program can produce the legacy `"token"`+decimals
+  IR shape the downgrade would require. An emit-layer fix was written + reverted (the differential's Anchor reference
+  failed to compile, surfacing the unreachability); the lesson is the recurring one — verify the API/corpus before
+  building. #25 closed as disproven.
 - **F4 (token_interface hardcodes Token-2022 id), F5 (`close` drops owner-reassign + realloc(0)), F8
   (discriminator check dropped for key()-only Account<T>) — CONFIRMED, DEFERRED (MED).**
 - **1 REFUTED** (false alarm — conservative-but-correct emit).
@@ -159,6 +171,15 @@ _confidence: high_
 ---
 
 ## F3 [token-spl] — HIGH — Legacy `token::transfer_checked` / `mint_to_checked` / `burn_checked` (Program<Token>) silently downgraded to the UNCHECKED instruction — mint account dropped from the CPI account list + decimals assertion dropped
+
+> **UPDATE (2026-06-07) — read the triage entry above, it supersedes the analysis below.** Only the
+> `transfer_checked` part of this finding was real, and it is FIXED at the EMIT layer (commit `2bed585`) — NOT a
+> parser-dispatch bug (`tokenProgram="token"` is *correct* for legacy Token; the emit ignored the captured
+> `decimals`). The `mint_to_checked` / `burn_checked` part is **DISPROVEN / unreachable** (#25 closed):
+> `anchor_spl::token` 0.31.1 has no `mint_to_checked`/`burn_checked` fn or `MintToChecked`/`BurnChecked` struct, so
+> `token::mint_to_checked` on `Program<Token>` does not compile; every compilable checked mint/burn (token_2022 /
+> token_interface) tags `tokenProgram="token_2022"` and already emits checked. The repro and "suggested fix" below
+> were authored before that was known (parse-only Tier-A) — do NOT build the mint/burn fix.
 
 **Why wrong:** Source calls `token::transfer_checked` (and `mint_to_checked` / `burn_checked`). Anchor lowers these to `spl_token::instruction::transfer_checked` / `mint_to_checked` / `burn_checked`, which pass the MINT account plus a `decimals` argument; the SPL Token program then asserts `mint.decimals == decimals` AND that `from`/`to` are token accounts of exactly that mint before moving funds — the entire reason the *_checked variants exist (defense against mint-substitution / decimals-confusion). Anvil's parser dispatch hits `funcText.includes("token::transfer")` (cpi-detector.ts:289), `token::mint_to` (:294), `token::burn` (:299) FIRST — these match the `_checked` suffix and return the extractor result directly, never reaching the `::transfer_checked`/`::mint_to_checked`/`::burn_checked` re-tagging at lines 367-387. So `tokenProgram` stays default `"token"` while the extractor still records `mint` + `decimals` (isChecked=true). The legacy emit branch (native-emitter.ts:753 transfer, :811 mint_to, :868 burn) then unconditionally emits the UNCHECKED `spl_token::instruction::{transfer,mint_to,burn}`, never reads `decimals`, and OMITS the mint account from both the instruction and the `&[...]` accounts array. Net: amount/from/to/authority are preserved, but the mint-match check and the decimals assertion Anchor performs are SILENTLY removed and the mint AccountInfo is dropped from the CPI. Validator reports 0 errors on both targets; reproduces on current HEAD for both inline and let-bound CpiContext forms. (Distinct from the prior f65415a transfer_checked→Token-2022 fix, which was about T22 routing; this is a checked→unchecked downgrade for legacy Program<Token>.)
 
