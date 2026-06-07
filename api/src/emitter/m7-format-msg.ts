@@ -135,7 +135,10 @@ export function lookupArgKind(expr: string, instr: Instruction, localLets?: Map<
   if (numericMatch) {
     const suffix = numericMatch[1];
     if (suffix && isFormatArgKind(suffix)) return suffix;
-    return "u64";
+    // A leading `-` makes the literal unambiguously signed; default an
+    // unsuffixed negative to i64 so it formats through i64_to_ascii rather
+    // than printing as its 2^64 wrap via the u64 fallback.
+    return t.startsWith("-") ? "i64" : "u64";
   }
   // ctx.bumps.<name> → u8.
   if (/^ctx\.bumps\.[A-Za-z_]\w*$/.test(t)) return "u8";
@@ -171,18 +174,26 @@ export function lookupArgKind(expr: string, instr: Instruction, localLets?: Map<
  */
 export function inferLocalLetTypes(instr: Instruction): Map<string, FormatArgKind> {
   const out = new Map<string, FormatArgKind>();
-  const lets: { name: string; value: string }[] = [];
+  const lets: { name: string; annotation?: string; value: string }[] = [];
   for (const stmt of instr.body) {
     if (stmt.kind !== "pass_through") continue;
-    const m = /^\s*let\s+(?:mut\s+)?(\w+)(?:\s*:\s*[^=]+)?\s*=\s*([\s\S]+);\s*$/.exec(stmt.code);
-    if (!m?.[1] || !m[2]) continue;
-    lets.push({ name: m[1], value: m[2].trim() });
+    const m = /^\s*let\s+(?:mut\s+)?(\w+)(?:\s*:\s*([^=]+))?\s*=\s*([\s\S]+);\s*$/.exec(stmt.code);
+    if (!m?.[1] || !m[3]) continue;
+    lets.push({ name: m[1], annotation: m[2]?.trim(), value: m[3].trim() });
   }
   // Two passes — the second picks up `let Y = X;` aliases where X was
   // inferred in pass 1.
   for (let pass = 0; pass < 2; pass++) {
-    for (const { name, value } of lets) {
+    for (const { name, annotation, value } of lets) {
       if (out.has(name)) continue;
+      // An explicit type annotation is the highest-confidence signal and,
+      // crucially, preserves the SIGN: `let delta: i64 = a.checked_sub(b)?`
+      // must format through i64_to_ascii, not the u64 fallback that would
+      // print a negative as its 2^64 wrap.
+      if (annotation) {
+        const annKind = mapTypeToArgKind(annotation);
+        if (annKind) { out.set(name, annKind); continue; }
+      }
       const k = inferValueType(value, instr, out);
       if (k !== null) out.set(name, k);
     }
@@ -218,15 +229,14 @@ function inferValueType(value: string, instr: Instruction, knownLets: Map<string
     if (headKind) return headKind;
     return "u64";
   }
-  // Function-call return — heuristic that fn-call results are u64
-  // when the call is the entire let-value. Covers `let X = compute(...);`
-  // patterns common in Solana programs (vested_amount, some_calc, etc.).
-  // Wrong for fns that return Pubkey / bool / structs — caller's strict
-  // type-resolve gate catches those at the msg!() arg boundary by
-  // refusing to produce a segment when the inferred type doesn't
-  // match what the format string semantically expects.
+  // Function-call return — the return type is genuinely unknown (it could be
+  // Pubkey / bool / a SIGNED int / a struct). A blanket u64 guess prints a
+  // negative iN return as its 2^64 wrap (H10). Return null so the caller
+  // falls back to the legacy literal-only collapse (a marked, value-omitted
+  // log) rather than emit a silently-wrong value. (No demo program logs a
+  // bare fn-call result, so this drops no working formatted output.)
   if (/^[A-Za-z_]\w*\s*\(/.test(v) && v.endsWith(")")) {
-    return "u64";
+    return null;
   }
   return null;
 }
