@@ -2396,6 +2396,13 @@ export class BodyWalker {
       const accRef = this.instr.accounts.find((a) => snakeCase(a.name) === snakeCase(accName));
       const typeName = accRef?.accountType || "Unknown";
       if (accRef?.isOptional) continue;
+      // I3/#40 — an account closed THIS instruction has already had its data
+      // realloc'd to 0 + reassigned to System by emitAutoCloseAccounts (which
+      // runs before this). A trailing State::write would borrow the now
+      // 0-length buffer and revert. Anchor discards the in-memory mutation for
+      // a closed account, so skipping the save is byte-equal (the account ends
+      // 0-length + system-owned either way).
+      if (accRef?.constraints.some((c) => c.kind === "close")) continue;
       // Zero-copy AccountLoader writes go directly into the buffer through
       // bytemuck — no end-of-fn save. The struct doesn't even have ::write,
       // so emitting one would compile-fail.
