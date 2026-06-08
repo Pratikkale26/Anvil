@@ -75,6 +75,9 @@ export interface PassContext {
   /** Number of non-optional named accounts on the instruction — used as
    *  the slice index for the `ctx.remaining_accounts` rewrite. */
   namedAccountCount?: number;
+  /** G3/#28 — true when the instruction has an optional account; a
+   *  remaining_accounts slice offset is then ambiguous, so loud-refuse. */
+  hasOptionalAccount?: boolean;
   /** Local-alias map (e.g. `pool` → `stake_pool` from a source binding
    *  `let pool = &mut ctx.accounts.stake_pool;`). Used by
    *  rewriteLocalAliasesStructural to rename references to the alias
@@ -879,6 +882,23 @@ export function transformCtxAccountsStructural(code: string, ctx: PassContext): 
             return false;
           }
           if (fld.text === "remaining_accounts" && ctx.namedAccountCount !== undefined) {
+            const start0 = n.startIndex - parsed.bodyOffset;
+            const end0 = n.endIndex - parsed.bodyOffset;
+            // G3/#28 — an optional account still occupies a positional slot
+            // (program_id sentinel for None), but namedAccountCount counts only
+            // the NON-optional named accounts, so the slice starts one slot
+            // early and double-counts the optional. Slot semantics (sentinel vs
+            // omitted) make a static offset unsafe → loud-refuse instead of
+            // shipping a wrong cursor. (The prior warning-severity note claimed
+            // an unimplemented! stub it never emitted, slipping past --strict.)
+            if (ctx.hasOptionalAccount) {
+              edits.push({
+                start: start0,
+                end: end0,
+                replacement: `{ unimplemented!("anvil: ctx.remaining_accounts alongside an optional account is unsupported — the optional account's positional slot makes the remaining-accounts offset ambiguous; split into per-Some/None instructions or drop the Option wrapper") }`,
+              });
+              return false;
+            }
             // task #42 — when the parent is a method/field chain (`.iter()`,
             // `.len()`, `.is_empty()`, etc.) the leading `&` binds to the
             // CHAIN RESULT, not the slice. `&accounts[N..].iter()` parses as

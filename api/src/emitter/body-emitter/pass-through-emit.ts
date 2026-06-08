@@ -685,6 +685,7 @@ function buildPassContext(w: BodyWalker): PassContext {
     accountInfoVars: buildAccountInfoVarsMap(w),
     accountLamportsExprs: buildAccountLamportsExprsMap(w),
     namedAccountCount: w.instr.accounts.filter((a) => !a.isOptional).length,
+    hasOptionalAccount: w.instr.accounts.some((a) => a.isOptional),
     localAliases: w.localAliases,
     stateBoundAccounts: buildStateBoundAccountsSet(w),
     onStateRead: (acc: string) => w.ensureStateRead(acc),

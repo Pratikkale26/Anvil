@@ -1453,11 +1453,27 @@ export class BodyWalker {
       (_full, name: string) => `bump_${snakeCase(name)}`,
     );
     {
-      const namedAccountCount = this.instr.accounts.filter((a) => !a.isOptional).length;
-      transformed = transformed.replace(
-        /\bctx\.remaining_accounts\b/g,
-        `&accounts[${namedAccountCount}..]`,
-      );
+      const hasOptional = this.instr.accounts.some((a) => a.isOptional);
+      if (hasOptional && /\bctx\.remaining_accounts\b/.test(transformed)) {
+        // G3/#28 — an optional account still occupies a positional slot (the
+        // caller passes a program_id sentinel for None), but the
+        // remaining-accounts offset below counts only the NON-optional named
+        // accounts, so the loop starts one slot early and double-counts the
+        // optional. The exact slot semantics (sentinel vs omitted) make a
+        // static offset unsafe, so loud-refuse instead of shipping a wrong
+        // cursor — the prior `warning`-severity note promised an
+        // unimplemented! stub it never emitted, slipping past /emit + --strict.
+        transformed = transformed.replace(
+          /\bctx\.remaining_accounts\b/g,
+          `{ unimplemented!("anvil: ctx.remaining_accounts alongside an optional account is unsupported — the optional account's positional slot makes the remaining-accounts offset ambiguous; split into per-Some/None instructions or drop the Option wrapper") }`,
+        );
+      } else {
+        const namedAccountCount = this.instr.accounts.filter((a) => !a.isOptional).length;
+        transformed = transformed.replace(
+          /\bctx\.remaining_accounts\b/g,
+          `&accounts[${namedAccountCount}..]`,
+        );
+      }
     }
     // H7 Phase 4c — consolidate ctx.accounts.X reference forms in one
     // ordered table. Each entry maps a borrow prefix to a wrapper for
