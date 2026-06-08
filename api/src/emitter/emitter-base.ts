@@ -3417,6 +3417,29 @@ impl ZeroCopy for ${accName} {}`;
       .filter(Boolean)
       .join("\n");
 
+    // I1/#41 — Anchor reverts (AccountDuplicateReallocs, 3017) if two
+    // `realloc` fields resolve to the SAME account, BEFORE any work, to prevent
+    // accidental account overwrites. Anvil reallocs each realloc account
+    // independently, so a caller aliasing two realloc fields to one pubkey gets
+    // a silent last-write-wins success where Anchor reverts. Emit a pairwise
+    // key-distinctness guard (no collection needed — N realloc fields is tiny,
+    // and no_std-friendly). Only when 2+ realloc accounts exist.
+    const reallocAccountNames = instr.accounts
+      .filter((a) => a.constraints.some((c) => c.kind === "realloc"))
+      .map((a) => snakeCase(a.name));
+    let reallocDupGuard = "";
+    if (reallocAccountNames.length >= 2) {
+      const pairs: string[] = [];
+      for (let i = 0; i < reallocAccountNames.length; i++) {
+        for (let j = i + 1; j < reallocAccountNames.length; j++) {
+          pairs.push(`${this.emitAccountKeyExpr(reallocAccountNames[i]!)} == ${this.emitAccountKeyExpr(reallocAccountNames[j]!)}`);
+        }
+      }
+      reallocDupGuard = `    if ${pairs.join(" || ")} {
+        return Err(ProgramError::InvalidArgument);
+    }`;
+    }
+
     // Body emission — the main event
     let rawBodyCode = this.emitBodyStatements(instr.body, instr, ir, preEmittedBumps);
     // #37 — apply destructure-rename mappings from emitArgDeserialize.
@@ -3472,7 +3495,7 @@ impl ZeroCopy for ${accName} {}`;
     // strip unresolvable references inside size expressions like
     // `space = ExtraAccountMetaList::size_of(...)`. Without this, prelude-
     // emitted lines bypassed the commentout pass and surfaced cargo errors.
-    const preBodyContent = [initPreludes, zeroPreludes, reallocPreludes, rawBodyCode]
+    const preBodyContent = [initPreludes, zeroPreludes, reallocDupGuard, reallocPreludes, rawBodyCode]
       .filter((s) => s && s.length > 0)
       .join("\n");
     const processedContent = this.postProcessInstructionBody(preBodyContent, instr, ir);
