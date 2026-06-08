@@ -410,8 +410,8 @@ pub fn purchase(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    // Create Associated Token Account: buyer_ata
-    let create_ata_ix = spl_create_ata_ix(
+    // Create Associated Token Account: buyer_ata (idempotent)
+    let create_ata_ix = spl_associated_token_account::instruction::create_associated_token_account_idempotent(
         buyer.key,
         buyer.key,
         nft_mint.key,

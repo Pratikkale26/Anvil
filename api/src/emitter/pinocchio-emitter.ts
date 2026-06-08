@@ -2540,7 +2540,7 @@ ${invokeCall}
     }`;
   }
 
-  override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string, tokenProgram?: string): string {
+  override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string, tokenProgram?: string, idempotent?: boolean): string {
     // pinocchio_associated_token_account 0.4 takes &AccountView, but pinocchio
     // 0.9's account slice gives us &AccountInfo. Different types, no automatic
     // conversion. So we hand-roll the CPI against the SPL ATA program ID
@@ -2562,7 +2562,9 @@ ${invokeCall}
         let __ata_ix = pinocchio::instruction::Instruction {
             program_id: &ATA_PROGRAM_ID,
             accounts: &__ata_metas,
-            data: &[],
+            // H5/H6 — &[1] = CreateIdempotent (no-op when the ATA exists);
+            // &[] = the plain Create that reverts IllegalOwner on re-call.
+            data: ${idempotent ? "&[1]" : "&[]"},
         };
         pinocchio::cpi::invoke(
             &__ata_ix,

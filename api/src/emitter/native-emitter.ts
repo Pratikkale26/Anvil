@@ -1593,10 +1593,16 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     }`;
   }
 
-  override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string, tokenProgram?: string): string {
+  override emitCreateAta(ata: string, payer: string, mint: string, authority: string, _signerSeeds?: string, tokenProgram?: string, idempotent?: boolean): string {
     const tpKey = tokenProgram ? `${tokenProgram}.key` : "&spl_token::id()";
-    return `    // Create Associated Token Account: ${ata}
-    let create_ata_ix = spl_create_ata_ix(
+    // H5/H6 — init_if_needed / create_idempotent ATA uses the idempotent SPL
+    // instruction (no-ops when the ATA already exists) instead of a plain
+    // create that reverts IllegalOwner on the second call.
+    const builder = idempotent
+      ? "spl_associated_token_account::instruction::create_associated_token_account_idempotent"
+      : "spl_create_ata_ix";
+    return `    // Create Associated Token Account: ${ata}${idempotent ? " (idempotent)" : ""}
+    let create_ata_ix = ${builder}(
         ${payer}.key,
         ${authority}.key,
         ${mint}.key,

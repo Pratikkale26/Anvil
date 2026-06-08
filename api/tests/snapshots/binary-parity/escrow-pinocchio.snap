@@ -241,7 +241,9 @@ pub fn accept_escrow(
         let __ata_ix = pinocchio::instruction::Instruction {
             program_id: &ATA_PROGRAM_ID,
             accounts: &__ata_metas,
-            data: &[],
+            // H5/H6 — &[1] = CreateIdempotent (no-op when the ATA exists);
+            // &[] = the plain Create that reverts IllegalOwner on re-call.
+            data: &[1],
         };
         pinocchio::cpi::invoke(
             &__ata_ix,
@@ -262,7 +264,9 @@ pub fn accept_escrow(
         let __ata_ix = pinocchio::instruction::Instruction {
             program_id: &ATA_PROGRAM_ID,
             accounts: &__ata_metas,
-            data: &[],
+            // H5/H6 — &[1] = CreateIdempotent (no-op when the ATA exists);
+            // &[] = the plain Create that reverts IllegalOwner on re-call.
+            data: &[1],
         };
         pinocchio::cpi::invoke(
             &__ata_ix,

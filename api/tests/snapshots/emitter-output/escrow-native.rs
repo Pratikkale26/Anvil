@@ -238,8 +238,8 @@ pub fn accept_escrow(
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    // Create Associated Token Account: taker_ata_a
-    let create_ata_ix = spl_create_ata_ix(
+    // Create Associated Token Account: taker_ata_a (idempotent)
+    let create_ata_ix = spl_associated_token_account::instruction::create_associated_token_account_idempotent(
         taker.key,
         taker.key,
         mint_a.key,
@@ -249,8 +249,8 @@ pub fn accept_escrow(
         &create_ata_ix,
         &[taker.clone(), taker_ata_a.clone(), taker.clone(), mint_a.clone()],
     )?;
-    // Create Associated Token Account: maker_ata_b
-    let create_ata_ix = spl_create_ata_ix(
+    // Create Associated Token Account: maker_ata_b (idempotent)
+    let create_ata_ix = spl_associated_token_account::instruction::create_associated_token_account_idempotent(
         taker.key,
         maker.key,
         mint_b.key,

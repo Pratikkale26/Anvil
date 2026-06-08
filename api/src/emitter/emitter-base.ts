@@ -675,6 +675,7 @@ export abstract class BaseEmitter {
     authority: string,
     signerSeeds?: string,
     tokenProgram?: string,
+    idempotent?: boolean,
   ): string;
 
   /**
@@ -4873,7 +4874,11 @@ ${allFields}
       const tokenProgram = ataTokenProgramConstraint?.value
         ? snakeCase(ataTokenProgramConstraint.value)
         : "token_program";
-      return this.emitCreateAta(accountName, payer, mint, authority, undefined, tokenProgram);
+      // H5/H6 — `init_if_needed` makes the ATA create idempotent (succeed when
+      // it already exists). A plain create reverts IllegalOwner on re-call,
+      // breaking the multi-call contract.
+      const idempotent = accountRef.constraints.some((c) => c.kind === "init_if_needed");
+      return this.emitCreateAta(accountName, payer, mint, authority, undefined, tokenProgram, idempotent);
     }
 
     // ── `init mint::*` (Mint creation): SystemProgram::CreateAccount
