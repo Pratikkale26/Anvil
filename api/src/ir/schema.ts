@@ -2080,6 +2080,8 @@ export const ParserWarningCodeSchema = z.enum([
   "cpi_custom_emitted",
   /** signer_seeds dropped because CpiContext was variable-bound and we didn't trace it back. */
   "signer_seeds_lost_variable_binding",
+  /** G8/#30 — inline CpiContext::new(prog, X) referenced a hoisted accounts struct X that wasn't tracked; from/to/authority fell back to defaults (possible wrong transfer direction). */
+  "cpi_accounts_lost_hoisted_binding",
   /** Pass-through statement detected as containing Anchor patterns that won't carry. */
   "anchor_pattern_in_passthrough",
   /** #[derive(Accounts)] struct field whose type is another Accounts struct (composite shape). */

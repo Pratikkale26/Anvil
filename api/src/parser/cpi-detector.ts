@@ -49,6 +49,55 @@ export interface CpiContextLookup {
 }
 
 /**
+ * G8 / #30 — resolves the variable name of a HOISTED SPL-accounts struct
+ * (`let X = Transfer { from, to, authority };`) to its captured field
+ * bindings. Used by the extractors when an inline `CpiContext::new(prog, X)`
+ * carries the accounts struct by reference rather than inline — without this
+ * the from/to/authority fall back to literal `"from"/"to"/"authority"`
+ * defaults, silently reversing a crosswise transfer. Populated by the
+ * body-classifier's `cpiAccountsByVar` pre-pass.
+ */
+export interface CpiAccountsLookup {
+  (varName: string): {
+    from?: string;
+    to?: string;
+    authority?: string;
+    mint?: string;
+  } | undefined;
+}
+
+/**
+ * Extract the accounts-struct argument (2nd positional) of an inline
+ * `CpiContext::new(prog, X)` / `CpiContext::new_with_signer(prog, X, seeds)`.
+ * Returns the bare identifier `X` (a hoisted-struct reference) or undefined
+ * when the 2nd arg is not a bare ident (e.g. an inline struct, which the
+ * struct_expression descendant path already handles). Depth-aware so nested
+ * parens in the program arg (`ctx.accounts.tp.to_account_info()`) don't split.
+ */
+export function extractCpiContextAccountsVar(text: string): string | undefined {
+  const m = text.match(/CpiContext::new(?:_with_signer)?\s*\(/);
+  if (!m || m.index === undefined) return undefined;
+  const open = m.index + m[0].length - 1; // index of the '('
+  let depth = 0;
+  let start = open + 1;
+  const parts: string[] = [];
+  for (let i = open; i < text.length; i++) {
+    const c = text[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") {
+      depth--;
+      if (depth === 0) { parts.push(text.slice(start, i)); break; }
+    } else if (c === "," && depth === 1) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  const accountsArg = parts[1]?.trim();
+  if (!accountsArg) return undefined;
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(accountsArg) ? accountsArg : undefined;
+}
+
+/**
  * Resolves a variable bound to a `system_instruction::transfer(from, to, amount)`
  * call (#20 let-bound form) to its extracted args, so a downstream
  * `invoke[_signed](&var, …)` can normalize into cpi_system_transfer. Populated
@@ -123,6 +172,7 @@ export function detectCpi(
   collector?: WarningCollector,
   cpiCtxLookup?: CpiContextLookup,
   systemTransferLookup?: SystemTransferLookup,
+  cpiAccountsLookup?: CpiAccountsLookup,
 ): BodyStatement | null {
   // Unwrap try_expression (expr?) to get the inner call
   let callNode = node;
@@ -272,21 +322,21 @@ export function detectCpi(
   // substring match.
   if (funcText.includes("token_2022::") || funcText.includes("token_interface::")) {
     if (funcText.includes("transfer_checked") || funcText.includes("transfer")) {
-      const result = extractSplTransfer(callNode, collector, cpiCtxLookup);
+      const result = extractSplTransfer(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
       if (result.kind === "cpi_spl_transfer") {
         return { ...result, tokenProgram: "token_2022" as const, ...(cpiCtxProgramArg ? { tokenProgramArg: cpiCtxProgramArg } : {}) };
       }
       return result;
     }
     if (funcText.includes("mint_to")) {
-      const result = extractSplMintTo(callNode, collector, cpiCtxLookup);
+      const result = extractSplMintTo(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
       if (result.kind === "cpi_spl_mint_to") {
         return { ...result, tokenProgram: "token_2022" as const, ...(cpiCtxProgramArg ? { tokenProgramArg: cpiCtxProgramArg } : {}) };
       }
       return result;
     }
     if (funcText.includes("burn")) {
-      const result = extractSplBurn(callNode, collector, cpiCtxLookup);
+      const result = extractSplBurn(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
       if (result.kind === "cpi_spl_burn") {
         return { ...result, tokenProgram: "token_2022" as const, ...(cpiCtxProgramArg ? { tokenProgramArg: cpiCtxProgramArg } : {}) };
       }
@@ -310,17 +360,17 @@ export function detectCpi(
 
   // ── SPL Token transfer ──
   if (funcText.includes("token::transfer") || funcText.includes("token::Transfer")) {
-    return extractSplTransfer(callNode, collector, cpiCtxLookup);
+    return extractSplTransfer(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
   }
 
   // ── SPL Token mint_to ──
   if (funcText.includes("token::mint_to") || funcText.includes("token::MintTo")) {
-    return extractSplMintTo(callNode, collector, cpiCtxLookup);
+    return extractSplMintTo(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
   }
 
   // ── SPL Token burn ──
   if (funcText.includes("token::burn") || funcText.includes("token::Burn")) {
-    return extractSplBurn(callNode, collector, cpiCtxLookup);
+    return extractSplBurn(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
   }
 
   // ── Unqualified legacy SPL Token CPI calls (post-consolidation) ──
@@ -338,7 +388,7 @@ export function detectCpi(
       !!firstArg &&
       firstArg.text.includes("Transfer") &&
       /\bauthority\s*:/.test(firstArg.text);
-    if (isSplShape) return extractSplTransfer(callNode, collector, cpiCtxLookup);
+    if (isSplShape) return extractSplTransfer(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
     // Fall through — likely system_program::transfer; the system branch
     // below handles namespaced forms.
   }
@@ -347,8 +397,8 @@ export function detectCpi(
     const args = argsNode ? getArguments(argsNode) : [];
     const firstArg = args[0];
     if (firstArg && firstArg.text.includes("CpiContext::")) {
-      if (funcText === "mint_to") return extractSplMintTo(callNode, collector, cpiCtxLookup);
-      if (funcText === "burn") return extractSplBurn(callNode, collector, cpiCtxLookup);
+      if (funcText === "mint_to") return extractSplMintTo(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
+      if (funcText === "burn") return extractSplBurn(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
       if (funcText === "close_account") return extractSplCloseAccount(callNode, collector);
       if (funcText === "set_authority") return extractSplSetAuthority(callNode, collector);
     }
@@ -374,21 +424,21 @@ export function detectCpi(
   // CpiContext handling.
   const checkedTokenProgramArg = cpiCtxProgramArg;
   if (/^transfer_checked$|::transfer_checked$/.test(funcText)) {
-    const result = extractSplTransfer(callNode, collector, cpiCtxLookup);
+    const result = extractSplTransfer(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
     if (result.kind === "cpi_spl_transfer") {
       return { ...result, tokenProgram: "token_2022" as const, ...(checkedTokenProgramArg ? { tokenProgramArg: checkedTokenProgramArg } : {}) };
     }
     return result;
   }
   if (/^mint_to_checked$|::mint_to_checked$/.test(funcText)) {
-    const result = extractSplMintTo(callNode, collector, cpiCtxLookup);
+    const result = extractSplMintTo(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
     if (result.kind === "cpi_spl_mint_to") {
       return { ...result, tokenProgram: "token_2022" as const, ...(checkedTokenProgramArg ? { tokenProgramArg: checkedTokenProgramArg } : {}) };
     }
     return result;
   }
   if (/^burn_checked$|::burn_checked$/.test(funcText)) {
-    const result = extractSplBurn(callNode, collector, cpiCtxLookup);
+    const result = extractSplBurn(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
     if (result.kind === "cpi_spl_burn") {
       return { ...result, tokenProgram: "token_2022" as const, ...(checkedTokenProgramArg ? { tokenProgramArg: checkedTokenProgramArg } : {}) };
     }
@@ -1751,7 +1801,7 @@ function extractMemoCpi(callNode: SyntaxNode, collector?: WarningCollector): Bod
 
 // ─── SPL Token Transfer ─────────────────────────────────────────────────────
 
-function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector, cpiCtxLookup?: CpiContextLookup): BodyStatement {
+function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector, cpiCtxLookup?: CpiContextLookup, cpiAccountsLookup?: CpiAccountsLookup): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
   if (!argsNode) {
     warnClassificationLost(collector, "SPL token::transfer", callNode);
@@ -1786,6 +1836,27 @@ function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector, 
       authority = extractStructField(transferStruct, "authority") ?? "authority";
       const maybeMint = extractStructField(transferStruct, "mint");
       if (maybeMint) mint = cleanAccountRef(maybeMint);
+    } else {
+      // G8 / #30 — the accounts struct was hoisted to `let X = Transfer {…}`,
+      // so CpiContext::new(prog, X) carries only the var name and the
+      // struct_expression descendant search finds nothing. Recover the field
+      // bindings via cpiAccountsByVar; without it from/to/authority keep the
+      // literal defaults and a crosswise transfer silently reverses direction.
+      const accVar = extractCpiContextAccountsVar(firstArg.text);
+      const acc = accVar ? cpiAccountsLookup?.(accVar) : undefined;
+      if (acc) {
+        if (acc.from) from = acc.from;
+        if (acc.to) to = acc.to;
+        if (acc.authority) authority = acc.authority;
+        if (acc.mint) mint = acc.mint;
+      } else if (accVar) {
+        collector?.add({
+          code: "cpi_accounts_lost_hoisted_binding",
+          message: `SPL transfer's CpiContext referenced a hoisted accounts struct '${accVar}' that wasn't tracked; from/to/authority fall back to defaults and the transfer direction may be wrong.`,
+          snippet: callNode.text,
+          loc: locFromNode(callNode),
+        });
+      }
     }
     signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
   } else if (firstArg) {
@@ -1837,7 +1908,7 @@ function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector, 
 
 // ─── SPL Token Mint To ──────────────────────────────────────────────────────
 
-function extractSplMintTo(callNode: SyntaxNode, collector?: WarningCollector, cpiCtxLookup?: CpiContextLookup): BodyStatement {
+function extractSplMintTo(callNode: SyntaxNode, collector?: WarningCollector, cpiCtxLookup?: CpiContextLookup, cpiAccountsLookup?: CpiAccountsLookup): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
   if (!argsNode) {
     warnClassificationLost(collector, "SPL token::mint_to", callNode);
@@ -1864,6 +1935,16 @@ function extractSplMintTo(callNode: SyntaxNode, collector?: WarningCollector, cp
       mint = extractStructField(mintStruct, "mint") ?? "mint";
       to = extractStructField(mintStruct, "to") ?? "to";
       authority = extractStructField(mintStruct, "authority") ?? "authority";
+    } else {
+      // G8 / #30 — hoisted `let X = MintTo {…}` accounts struct (mirror
+      // extractSplTransfer). Without the lookup mint/to/authority default.
+      const accVar = extractCpiContextAccountsVar(firstArg.text);
+      const acc = accVar ? cpiAccountsLookup?.(accVar) : undefined;
+      if (acc) {
+        if (acc.mint) mint = acc.mint;
+        if (acc.to) to = acc.to;
+        if (acc.authority) authority = acc.authority;
+      }
     }
     signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
   } else if (firstArg) {
@@ -1908,7 +1989,7 @@ function extractSplMintTo(callNode: SyntaxNode, collector?: WarningCollector, cp
 
 // ─── SPL Token Burn ─────────────────────────────────────────────────────────
 
-function extractSplBurn(callNode: SyntaxNode, collector?: WarningCollector, cpiCtxLookup?: CpiContextLookup): BodyStatement {
+function extractSplBurn(callNode: SyntaxNode, collector?: WarningCollector, cpiCtxLookup?: CpiContextLookup, cpiAccountsLookup?: CpiAccountsLookup): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
   if (!argsNode) {
     warnClassificationLost(collector, "SPL token::burn", callNode);
@@ -1936,6 +2017,15 @@ function extractSplBurn(callNode: SyntaxNode, collector?: WarningCollector, cpiC
       from = extractStructField(burnStruct, "from") ?? extractStructField(burnStruct, "to") ?? "from";
       mint = extractStructField(burnStruct, "mint") ?? "mint";
       authority = extractStructField(burnStruct, "authority") ?? "authority";
+    } else {
+      // G8 / #30 — hoisted `let X = Burn {…}` accounts struct.
+      const accVar = extractCpiContextAccountsVar(firstArg.text);
+      const acc = accVar ? cpiAccountsLookup?.(accVar) : undefined;
+      if (acc) {
+        if (acc.from) from = acc.from;
+        if (acc.mint) mint = acc.mint;
+        if (acc.authority) authority = acc.authority;
+      }
     }
     signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
   } else if (firstArg) {

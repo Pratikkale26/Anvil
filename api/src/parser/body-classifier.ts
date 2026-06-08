@@ -695,7 +695,7 @@ function classifyStatement(
       return classifyLetDeclaration(node, pendingSeeds, cpiAccountsByVar, hasUserSeedsManagement, pendingPythLoad, constStringMap, pendingSwitchboardLoad);
 
     case "expression_statement":
-      return classifyExpressionStatement(node, cpiContexts, collector, helperCpiCatalog, systemTransferByVar);
+      return classifyExpressionStatement(node, cpiContexts, collector, helperCpiCatalog, systemTransferByVar, cpiAccountsByVar);
 
     case "macro_invocation":
       return { stmt: classifyMacroInvocation(node) };
@@ -1406,6 +1406,7 @@ function classifyExpressionStatement(
   collector?: WarningCollector,
   helperCpiCatalog?: ReadonlyArray<HelperCpiCatalogEntry>,
   systemTransferByVar?: Map<string, { from: string; to: string; amount: string }>,
+  cpiAccountsByVar?: Map<string, CpiAccountsBinding>,
 ): ClassifyResult {
   // Lookup callback passed into the CPI detector so the variable-bound
   // CpiContext branch can recover signer_seeds (and unresolved struct
@@ -1413,6 +1414,12 @@ function classifyExpressionStatement(
   const cpiCtxLookup = (name: string) => cpiContexts.get(name);
   const systemTransferLookup = systemTransferByVar
     ? (name: string) => systemTransferByVar.get(name)
+    : undefined;
+  // G8 / #30 — lookup for HOISTED SPL-accounts structs (`let X = Transfer{…}`)
+  // referenced by an inline `CpiContext::new(prog, X)`, so the extractors can
+  // recover from/to/authority instead of falling back to literal defaults.
+  const cpiAccountsLookup = cpiAccountsByVar
+    ? (name: string) => cpiAccountsByVar.get(name)
     : undefined;
   const text = node.text;
   const expr = node.namedChild(0);
@@ -1453,7 +1460,7 @@ function classifyExpressionStatement(
 
   // ── Try expression: something()? ──
   if (expr.type === "try_expression") {
-    const cpi = detectCpi(expr, collector, cpiCtxLookup, systemTransferLookup);
+    const cpi = detectCpi(expr, collector, cpiCtxLookup, systemTransferLookup, cpiAccountsLookup);
     if (cpi) {
       // Resolve from/to using CPI context if they're unresolved
       return { stmt: resolveCpiFields(cpi, cpiContexts) };
@@ -1470,7 +1477,7 @@ function classifyExpressionStatement(
 
   // ── Direct call expression ──
   if (expr.type === "call_expression") {
-    const cpi = detectCpi(expr, collector, cpiCtxLookup, systemTransferLookup);
+    const cpi = detectCpi(expr, collector, cpiCtxLookup, systemTransferLookup, cpiAccountsLookup);
     if (cpi) {
       return { stmt: resolveCpiFields(cpi, cpiContexts) };
     }
