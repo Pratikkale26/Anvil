@@ -198,27 +198,61 @@ export function parseAccountsStructFields(
             }
           }
           if (origToFlat.size > 0) {
-            const rewriteRefs = (text: string): string => {
+            // H1c — DOTTED sibling field access (`state.key()`): rewrite the
+            // dotted reference to the prefixed binding. This is the original
+            // behavior; it must NOT touch a bare identifier, because `has_one`
+            // carries its target as a BARE struct-field name whose binding is
+            // resolved separately downstream (resolveHasOneTargetBinding).
+            const rewriteDotted = (text: string): string => {
               let rewritten = text;
               for (const [orig, flat] of origToFlat) {
-                rewritten = rewritten.replace(
-                  new RegExp(`\\b${orig}\\.`, "g"),
-                  `${flat}.`,
-                );
+                rewritten = rewritten.replace(new RegExp(`\\b${orig}\\.`, "g"), `${flat}.`);
               }
               return rewritten;
             };
+            // H9/H8 — token/ATA init binding constraints (`token::mint = mint`)
+            // and the dedicated `initPayer` field carry a BARE inner-sibling
+            // account ref. Pre-fix only the dotted form was rewritten, so a
+            // bare ref that collided with a same-named TOP-LEVEL account
+            // first-matched the WRONG account (silent). Rewrite bare idents
+            // too — negative lookbehind so a trailing field access isn't
+            // clobbered, literal-masking so a byte-string seed stays intact.
+            const literalRe = /b?"(?:[^"\\]|\\.)*"|b?'(?:[^'\\]|\\.)*'/g;
+            const renameBareSeg = (s: string): string => {
+              let out = s;
+              for (const [orig, flat] of origToFlat) {
+                out = out.replace(new RegExp(`(?<![.\\w])${orig}\\b`, "g"), flat);
+              }
+              return out;
+            };
+            const rewriteBare = (text: string): string => {
+              let result = "";
+              let last = 0;
+              literalRe.lastIndex = 0;
+              let m: RegExpExecArray | null;
+              while ((m = literalRe.exec(text)) !== null) {
+                result += renameBareSeg(text.slice(last, m.index)) + m[0];
+                last = m.index + m[0].length;
+              }
+              return result + renameBareSeg(text.slice(last));
+            };
+            const BARE_BINDING_KINDS = new Set([
+              "token::mint", "token::authority",
+              "associated_token::mint", "associated_token::authority",
+              "associated_token::token_program",
+              "mint::authority", "mint::freeze_authority", "mint::token_program",
+            ]);
             for (const acct of innerAccounts) {
               if (acct.pdaSeeds && acct.pdaSeeds.length > 0) {
-                acct.pdaSeeds = acct.pdaSeeds.map(rewriteRefs);
+                acct.pdaSeeds = acct.pdaSeeds.map(rewriteDotted);
               }
-              // H1c — composite struct's constraints reference sibling fields
-              // of the SAME inner struct (e.g. `vault.owner == spt.owner`).
-              // After flatten, those siblings have prefixed binding names.
-              // Rewrite the constraint values so emit emits the right names.
               for (const c of acct.constraints) {
-                if (c.value) c.value = rewriteRefs(c.value);
+                if (!c.value) continue;
+                c.value = BARE_BINDING_KINDS.has(c.kind)
+                  ? rewriteBare(c.value)
+                  : rewriteDotted(c.value);
               }
+              if (acct.initPayer) acct.initPayer = rewriteBare(acct.initPayer);
             }
           }
         }
