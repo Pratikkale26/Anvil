@@ -44,6 +44,29 @@ import {
 
 type PassThrough = Extract<BodyStatement, { kind: "pass_through" }>;
 
+/**
+ * I2/#42 — split a comma-separated arg list on TOP-LEVEL commas only, so a
+ * nested call like `std::cmp::max(rent, floor)` in the lamports/space position
+ * isn't split at its inner comma (which mis-assigns every later create_account
+ * arg). Depth-aware over (), [], {}.
+ */
+function splitTopLevelArgs(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out;
+}
+
 export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
   w.ctx.passedThroughCount++;
   const rawCode = stmt.code.trim();
@@ -529,7 +552,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
         const fromVar = fromMatch?.[1] ?? "payer";
         const toVar = toMatch?.[1] ?? "new_account";
         const rawArgs = caMatch[2].replace(/\/\/[^\n]*/g, "").trim();
-        const argParts = rawArgs.split(",").map((a) => a.trim()).filter((a) => a.length > 0);
+        const argParts = splitTopLevelArgs(rawArgs).map((a) => a.trim()).filter((a) => a.length > 0);
         const lamports = argParts[0] ?? "0";
         const space = argParts[1] ?? "0";
         const owner = argParts[2] ?? "program_id";

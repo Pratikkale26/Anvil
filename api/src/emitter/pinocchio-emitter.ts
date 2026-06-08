@@ -3407,7 +3407,14 @@ ${writeLines}
     // covers post-normalization output where `&IDENT.key` was rewritten
     // to `&*IDENT.key()` by the walker's per-target key collapse.
     const OWNER_RE = "(program_id|&\\*?\\w+\\.key(?:\\(\\))?)";
-    const CREATE_ACCT_BODY = `&system_instruction::create_account\\(\\s*${KEY_RE},\\s*${KEY_RE},\\s*([\\s\\S]+?),\\s*([\\s\\S]+?),\\s*${OWNER_RE},?\\s*\\)`;
+    // I2/#42 — the lamports + space captures must balance NESTED parens so a
+    // top-level arg like `std::cmp::max(Rent::get()?.minimum_balance(165), n)`
+    // isn't split at a comma INSIDE the call (which shifted every later capture
+    // and produced a structurally corrupt CreateAccount struct). `[^,()]`
+    // matches bare arg chars; the paren alternative balances up to two levels
+    // of nesting (a call whose own args contain calls — the realistic shape).
+    const ARG_RE = "((?:[^,()]|\\((?:[^()]|\\([^()]*\\))*\\))+?)";
+    const CREATE_ACCT_BODY = `&system_instruction::create_account\\(\\s*${KEY_RE},\\s*${KEY_RE},\\s*${ARG_RE},\\s*${ARG_RE},\\s*${OWNER_RE},?\\s*\\)`;
     // Unsigned form
     out = out.replace(
       new RegExp(`invoke\\(\\s*${CREATE_ACCT_BODY},\\s*&\\[[^\\]]*\\],?\\s*\\)\\?;`, "g"),
