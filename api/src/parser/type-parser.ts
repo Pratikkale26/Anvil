@@ -14,12 +14,24 @@ import { parseStructFields } from "./account-parser.js";
 
 // ─── Error enum parsing ─────────────────────────────────────────────────────
 
-export function parseErrorEnum(enumNode: SyntaxNode, _attrs: SyntaxNode[]): SolanaIR["errors"] {
+export function parseErrorEnum(enumNode: SyntaxNode, attrs: SyntaxNode[]): SolanaIR["errors"] {
   const errors: SolanaIR["errors"] = [];
   const bodyNode = enumNode.childForFieldName("body");
   if (!bodyNode) return errors;
 
-  let code = 6000;
+  // H2 (#35) — Anchor's on-chain error code is `discriminant + offset`, where
+  // offset defaults to ERROR_CODE_OFFSET (6000) but is overridden by
+  // `#[error_code(offset = N)]` (anchor-syn codegen/error.rs). Read the
+  // override from the enum's attributes.
+  let base = 6000;
+  for (const attr of attrs) {
+    const m = attr.text.match(/error_code\s*\(\s*offset\s*=\s*(\d[\d_]*)\s*\)/);
+    if (m?.[1]) { base = parseInt(m[1].replace(/_/g, ""), 10); break; }
+  }
+  // H1 (#35) — discriminants follow Rust enum rules: a variant's value is its
+  // explicit `= N` if present, else previous + 1 (starting at 0). The error
+  // code is then `base + discriminant`, so `Frozen = 10` → 6010, not 6001.
+  let lastDisc = 0;
   let currentAttrs: SyntaxNode[] = [];
 
   for (let i = 0; i < bodyNode.namedChildCount; i++) {
@@ -63,7 +75,14 @@ export function parseErrorEnum(enumNode: SyntaxNode, _attrs: SyntaxNode[]): Sola
       }
     }
 
-    errors.push({ code: code++, name: variantName, msg });
+    const valueText = child.childForFieldName("value")?.text?.trim().replace(/_/g, "");
+    let disc = lastDisc;
+    if (valueText !== undefined) {
+      if (/^-?\d+$/.test(valueText)) disc = parseInt(valueText, 10);
+      else if (/^0x[0-9a-fA-F]+$/.test(valueText)) disc = parseInt(valueText, 16);
+    }
+    errors.push({ code: base + disc, name: variantName, msg });
+    lastDisc = disc + 1;
     currentAttrs = [];
   }
 

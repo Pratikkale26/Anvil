@@ -1978,6 +1978,18 @@ function classifyMacroInvocation(node: SyntaxNode): BodyStatement {
     require_gt: ">",
     require_gte: ">=",
   };
+  // H3 (#35) — without a custom-error arg, each require_*! reverts with its
+  // built-in Anchor code (anchor-lang error.rs: RequireViolated = 2500, then
+  // Eq/KeysEq/Neq/KeysNeq/Gt/Gte in declaration order), NOT Custom(0).
+  const requireBuiltinCode: Record<string, number> = {
+    require: 2500,
+    require_eq: 2501,
+    require_keys_eq: 2502,
+    require_neq: 2503,
+    require_keys_neq: 2504,
+    require_gt: 2505,
+    require_gte: 2506,
+  };
   if (macroName in requireCmpOp) {
     const op = requireCmpOp[macroName]!;
     // Args shape: `lhs, rhs` or `lhs, rhs, ErrorCode::X`.
@@ -1992,7 +2004,7 @@ function classifyMacroInvocation(node: SyntaxNode): BodyStatement {
     const secondComma = findTopLevelComma(restAfterFirst);
     const rhs = (secondComma === -1 ? restAfterFirst : restAfterFirst.slice(0, secondComma)).trim();
     const error = secondComma === -1
-      ? "ProgramError::Custom(0)"
+      ? `ProgramError::Custom(${requireBuiltinCode[macroName] ?? 0})`
       : restAfterFirst.slice(secondComma + 1).trim();
     return { kind: "require", condition: `${lhs} ${op} ${rhs}`, error };
   }
@@ -2005,7 +2017,7 @@ function classifyMacroInvocation(node: SyntaxNode): BodyStatement {
         const error = argsText.slice(commaIdx + 1).trim();
         return { kind: "require", condition, error };
       }
-      return { kind: "require", condition: argsText, error: "ProgramError::Custom(0)" };
+      return { kind: "require", condition: argsText, error: `ProgramError::Custom(${requireBuiltinCode.require})` };
     }
 
     case "msg":

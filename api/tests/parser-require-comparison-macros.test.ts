@@ -92,11 +92,17 @@ describe("task #38 — require_* comparison macros desugar to require", () => {
     }
   });
 
-  test("2-arg form: error defaults to ProgramError::Custom(0)", async () => {
+  test("2-arg form: error defaults to the built-in RequireEqViolated code (2501)", async () => {
+    // H3 (#35) — Anchor uses RequireEqViolated (2501) for a require_eq! with no
+    // custom error, not Custom(0). require_gte! → RequireGteViolated (2506).
     const stmt = await classifyFirstStmt(`require_eq!(1u64, 2u64);`);
     expect(stmt?.kind).toBe("require");
     if (stmt?.kind === "require") {
-      expect(stmt.error).toBe("ProgramError::Custom(0)");
+      expect(stmt.error).toBe("ProgramError::Custom(2501)");
+    }
+    const gte = await classifyFirstStmt(`require_gte!(1u64, 2u64);`);
+    if (gte?.kind === "require") {
+      expect(gte.error).toBe("ProgramError::Custom(2506)");
     }
   });
 

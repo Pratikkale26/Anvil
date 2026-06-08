@@ -637,6 +637,22 @@ const WELL_KNOWN_PROGRAM_IDS: Record<string, string> = {
  * Exported so per-target emitters can apply it to acc/typeDef.implItems
  * before emitting.
  */
+// H3 (#35) — built-in Anchor revert code for a require_*! with no custom-error
+// arg (anchor-lang error.rs: RequireViolated = 2500, then Eq/KeysEq/Neq/
+// KeysNeq/Gt/Gte in declaration order). Custom(0) was wrong. require_lt!/
+// require_lte! aren't real Anchor macros, so they fall back to 0.
+const REQUIRE_BUILTIN_CODE: Record<string, number> = {
+  "require!": 2500,
+  "require_eq!": 2501,
+  "require_keys_eq!": 2502,
+  "require_neq!": 2503,
+  "require_keys_neq!": 2504,
+  "require_gt!": 2505,
+  "require_gte!": 2506,
+};
+const requireDefaultErr = (name: string): string =>
+  `ProgramError::Custom(${REQUIRE_BUILTIN_CODE[name] ?? 0})`;
+
 export function rewriteRequireVariantsInCode(source: string): string {
   const variants: Record<string, string> = {
     "require_eq!": "==",
@@ -656,7 +672,7 @@ export function rewriteRequireVariantsInCode(source: string): string {
       const lhs = parts[0]!.trim();
       const rhs = parts[1]!.trim();
       const cond = `(${lhs}) ${op} (${rhs})`;
-      const err = parts.length >= 3 ? parts.slice(2).join(",").trim() : "ProgramError::Custom(0)";
+      const err = parts.length >= 3 ? parts.slice(2).join(",").trim() : requireDefaultErr(name);
       return `if !(${cond}) { return Err((${err}).into()); }`;
     });
   }
@@ -734,14 +750,14 @@ export function rewriteAnchorRequireMacros(source: string): string {
       if (op === null) {
         // require!(cond, err?) → if !(cond) { ... }
         cond = stripInlineLineComments(parts[0]!.trim());
-        err = parts.length >= 2 ? stripInlineLineComments(parts.slice(1).join(",").trim()) : "ProgramError::Custom(0)";
+        err = parts.length >= 2 ? stripInlineLineComments(parts.slice(1).join(",").trim()) : requireDefaultErr(name);
       } else {
         // require_X!(a, b, err?) → if !(a op b) { ... }
         if (parts.length < 2) return null;
         const lhs = stripInlineLineComments(parts[0]!.trim());
         const rhs = stripInlineLineComments(parts[1]!.trim());
         cond = `(${lhs}) ${op} (${rhs})`;
-        err = parts.length >= 3 ? stripInlineLineComments(parts.slice(2).join(",").trim()) : "ProgramError::Custom(0)";
+        err = parts.length >= 3 ? stripInlineLineComments(parts.slice(2).join(",").trim()) : requireDefaultErr(name);
       }
       return `if !(${cond}) { return Err((${err}).into()); }`;
     });

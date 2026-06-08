@@ -547,7 +547,18 @@ export async function parseAnchor(
       seenNames.add(e.name);
       dedupedErrors.push(e);
     }
-    const errors = dedupedErrors.map((e, i) => ({ ...e, code: 6000 + i }));
+    // H1/H2 (#35) — PRESERVE each error's parser-computed code (base +
+    // discriminant, honoring an explicit `= N` and `#[error_code(offset = N)]`)
+    // instead of blindly re-numbering 6000 + index, which dropped both. Only
+    // bump a code that COLLIDES with an already-assigned one — the multi-enum
+    // E0081 case the old re-number was guarding against (G27c).
+    const usedCodes = new Set<number>();
+    const errors = dedupedErrors.map((e) => {
+      let code = e.code;
+      while (usedCodes.has(code)) code++;
+      usedCodes.add(code);
+      return { ...e, code };
+    });
 
     // ── Parse #[event] structs ──
     // Reuse parseAccountDataStruct's field walker since #[event] structs are
