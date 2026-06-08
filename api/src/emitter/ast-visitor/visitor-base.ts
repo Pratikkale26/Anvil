@@ -4477,8 +4477,14 @@ function applyClockRentRewrites(value: string, w: BodyWalker): string {
   const rentNames = new Set<string>();
   for (const acc of w.instr.accounts) {
     const ty = acc.accountType;
-    if (/\bSysvar\b/.test(ty) && /\bClock\b/.test(ty)) clockNames.add(snakeCase(acc.name));
-    else if (/\bSysvar\b/.test(ty) && /\bRent\b/.test(ty)) rentNames.add(snakeCase(acc.name));
+    const name = snakeCase(acc.name);
+    // G6 (#32) — a local `let <name> = …` shadows the Sysvar<Clock/Rent>
+    // account (tracked in localAliases). A subsequent `<name>.epoch` then
+    // targets the LOCAL, not the sysvar, so it must NOT be rewritten to the
+    // Clock/Rent::get() syscall. Skip any shadowed name.
+    if (w.localAliases.has(name)) continue;
+    if (/\bSysvar\b/.test(ty) && /\bClock\b/.test(ty)) clockNames.add(name);
+    else if (/\bSysvar\b/.test(ty) && /\bRent\b/.test(ty)) rentNames.add(name);
   }
   if (clockNames.size > 0) {
     const clockGet = w.qualifiedClockGetExpr();
