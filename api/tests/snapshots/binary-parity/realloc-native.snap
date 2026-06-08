@@ -74,26 +74,37 @@ pub fn append(
     {
         let __state_for_realloc = LogState::from_account_info(state)?;
         let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 1) as usize;
-        let __rent = solana_program::sysvar::rent::Rent::get()?;
-        let __new_lamports = __rent.minimum_balance(__new_size);
-        let __cur_lamports = state.lamports();
-        if __new_lamports > __cur_lamports {
-            let __delta = __new_lamports - __cur_lamports;
-            let __ix = solana_program::system_instruction::transfer(
-                owner.key,
-                state.key,
-                __delta,
-            );
-            solana_program::program::invoke(
-                &__ix,
-                &[owner.clone(), state.clone()],
-            )?;
-        } else if __new_lamports < __cur_lamports {
-            let __refund = __cur_lamports - __new_lamports;
-            **state.lamports.borrow_mut() = __cur_lamports - __refund;
-            **owner.lamports.borrow_mut() = owner.lamports() + __refund;
+        let __cur_size = state.data_len();
+        // Anchor branches on the BYTE-length delta, NOT the lamports delta
+        // (anchor-syn constraints.rs): a GROW only tops up rent and never
+        // refunds, so an over-funded account keeps its excess; a SHRINK
+        // refunds the freed rent down to the new rent-minimum; an equal-size
+        // realloc is a no-op. Branching on the lamports delta silently drains
+        // an over-funded account on grow.
+        if __new_size != __cur_size {
+            let __rent = solana_program::sysvar::rent::Rent::get()?;
+            let __new_rent_minimum = __rent.minimum_balance(__new_size);
+            let __cur_lamports = state.lamports();
+            if __new_size > __cur_size {
+                if __new_rent_minimum > __cur_lamports {
+                    let __delta = __new_rent_minimum - __cur_lamports;
+                    let __ix = solana_program::system_instruction::transfer(
+                        owner.key,
+                        state.key,
+                        __delta,
+                    );
+                    solana_program::program::invoke(
+                        &__ix,
+                        &[owner.clone(), state.clone()],
+                    )?;
+                }
+            } else {
+                let __refund = __cur_lamports - __new_rent_minimum;
+                **state.lamports.borrow_mut() = __cur_lamports - __refund;
+                **owner.lamports.borrow_mut() = owner.lamports() + __refund;
+            }
+            state.realloc(__new_size, false)?;
         }
-        state.realloc(__new_size, false)?;
     }
     let (expected_key, _bump_state) = Pubkey::find_program_address(&[b"realloc-st", owner.key.as_ref()], program_id);
     if expected_key != *state.key {

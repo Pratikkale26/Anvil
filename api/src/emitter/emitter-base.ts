@@ -5343,26 +5343,37 @@ ${indented}
       return `    // realloc — resize ${accountName} to ${sizeExpr} (zero=${zeroFlag})
     {
 ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
-        let __rent = solana_program::sysvar::rent::Rent::get()?;
-        let __new_lamports = __rent.minimum_balance(__new_size);
-        let __cur_lamports = ${accountName}.lamports();
-        if __new_lamports > __cur_lamports {
-            let __delta = __new_lamports - __cur_lamports;
-            let __ix = solana_program::system_instruction::transfer(
-                ${payer}.key,
-                ${accountName}.key,
-                __delta,
-            );
-            solana_program::program::invoke(
-                &__ix,
-                &[${payer}.clone(), ${accountName}.clone()],
-            )?;
-        } else if __new_lamports < __cur_lamports {
-            let __refund = __cur_lamports - __new_lamports;
-            **${accountName}.lamports.borrow_mut() = __cur_lamports - __refund;
-            **${payer}.lamports.borrow_mut() = ${payer}.lamports() + __refund;
+        let __cur_size = ${accountName}.data_len();
+        // Anchor branches on the BYTE-length delta, NOT the lamports delta
+        // (anchor-syn constraints.rs): a GROW only tops up rent and never
+        // refunds, so an over-funded account keeps its excess; a SHRINK
+        // refunds the freed rent down to the new rent-minimum; an equal-size
+        // realloc is a no-op. Branching on the lamports delta silently drains
+        // an over-funded account on grow.
+        if __new_size != __cur_size {
+            let __rent = solana_program::sysvar::rent::Rent::get()?;
+            let __new_rent_minimum = __rent.minimum_balance(__new_size);
+            let __cur_lamports = ${accountName}.lamports();
+            if __new_size > __cur_size {
+                if __new_rent_minimum > __cur_lamports {
+                    let __delta = __new_rent_minimum - __cur_lamports;
+                    let __ix = solana_program::system_instruction::transfer(
+                        ${payer}.key,
+                        ${accountName}.key,
+                        __delta,
+                    );
+                    solana_program::program::invoke(
+                        &__ix,
+                        &[${payer}.clone(), ${accountName}.clone()],
+                    )?;
+                }
+            } else {
+                let __refund = __cur_lamports - __new_rent_minimum;
+                **${accountName}.lamports.borrow_mut() = __cur_lamports - __refund;
+                **${payer}.lamports.borrow_mut() = ${payer}.lamports() + __refund;
+            }
+            ${accountName}.realloc(__new_size, ${zeroFlag})?;
         }
-        ${accountName}.realloc(__new_size, ${zeroFlag})?;
     }`;
     }
 
@@ -5383,22 +5394,31 @@ ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
       return `    // realloc — resize ${accountName} to ${sizeExpr} (zero=${zeroFlag})
     {
 ${predeserialize}        let __new_size = (${resolvedSizeExpr}) as usize;
-        let __rent = pinocchio::sysvars::rent::Rent::get()?;
-        let __new_lamports = __rent.minimum_balance(__new_size);
-        let __cur_lamports = ${accountName}.lamports();
-        if __new_lamports > __cur_lamports {
-            let __delta = __new_lamports - __cur_lamports;
-            pinocchio_system::instructions::Transfer {
-                from: ${payer},
-                to: ${accountName},
-                lamports: __delta,
-            }.invoke()?;
-        } else if __new_lamports < __cur_lamports {
-            let __refund = __cur_lamports - __new_lamports;
-            *${accountName}.try_borrow_mut_lamports()? = __cur_lamports - __refund;
-            *${payer}.try_borrow_mut_lamports()? = ${payer}.lamports() + __refund;
+        let __cur_size = ${accountName}.data_len();
+        // Branch on the BYTE-length delta to mirror Anchor: grow tops up rent
+        // only (never refunds an over-funded account), shrink refunds the freed
+        // rent down to the new rent-minimum, equal size is a no-op. (Branching
+        // on the lamports delta silently drains an over-funded account on grow.)
+        if __new_size != __cur_size {
+            let __rent = pinocchio::sysvars::rent::Rent::get()?;
+            let __new_rent_minimum = __rent.minimum_balance(__new_size);
+            let __cur_lamports = ${accountName}.lamports();
+            if __new_size > __cur_size {
+                if __new_rent_minimum > __cur_lamports {
+                    let __delta = __new_rent_minimum - __cur_lamports;
+                    pinocchio_system::instructions::Transfer {
+                        from: ${payer},
+                        to: ${accountName},
+                        lamports: __delta,
+                    }.invoke()?;
+                }
+            } else {
+                let __refund = __cur_lamports - __new_rent_minimum;
+                *${accountName}.try_borrow_mut_lamports()? = __cur_lamports - __refund;
+                *${payer}.try_borrow_mut_lamports()? = ${payer}.lamports() + __refund;
+            }
+            ${accountName}.realloc(__new_size, ${zeroFlag})?;
         }
-        ${accountName}.realloc(__new_size, ${zeroFlag})?;
     }`;
     }
 

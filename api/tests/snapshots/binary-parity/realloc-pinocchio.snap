@@ -101,22 +101,31 @@ pub fn append(
     {
         let __state_for_realloc = LogState::from_account_info(state)?;
         let __new_size = (8 + 1 + 4 + __state_for_realloc.log.len() + 1) as usize;
-        let __rent = pinocchio::sysvars::rent::Rent::get()?;
-        let __new_lamports = __rent.minimum_balance(__new_size);
-        let __cur_lamports = state.lamports();
-        if __new_lamports > __cur_lamports {
-            let __delta = __new_lamports - __cur_lamports;
-            pinocchio_system::instructions::Transfer {
-                from: owner,
-                to: state,
-                lamports: __delta,
-            }.invoke()?;
-        } else if __new_lamports < __cur_lamports {
-            let __refund = __cur_lamports - __new_lamports;
-            *state.try_borrow_mut_lamports()? = __cur_lamports - __refund;
-            *owner.try_borrow_mut_lamports()? = owner.lamports() + __refund;
+        let __cur_size = state.data_len();
+        // Branch on the BYTE-length delta to mirror Anchor: grow tops up rent
+        // only (never refunds an over-funded account), shrink refunds the freed
+        // rent down to the new rent-minimum, equal size is a no-op. (Branching
+        // on the lamports delta silently drains an over-funded account on grow.)
+        if __new_size != __cur_size {
+            let __rent = pinocchio::sysvars::rent::Rent::get()?;
+            let __new_rent_minimum = __rent.minimum_balance(__new_size);
+            let __cur_lamports = state.lamports();
+            if __new_size > __cur_size {
+                if __new_rent_minimum > __cur_lamports {
+                    let __delta = __new_rent_minimum - __cur_lamports;
+                    pinocchio_system::instructions::Transfer {
+                        from: owner,
+                        to: state,
+                        lamports: __delta,
+                    }.invoke()?;
+                }
+            } else {
+                let __refund = __cur_lamports - __new_rent_minimum;
+                *state.try_borrow_mut_lamports()? = __cur_lamports - __refund;
+                *owner.try_borrow_mut_lamports()? = owner.lamports() + __refund;
+            }
+            state.realloc(__new_size, false)?;
         }
-        state.realloc(__new_size, false)?;
     }
     let _bump_state = bump_seed(program_id, &[b"realloc-st", owner.key().as_ref()], state.key())?;
     let mut s = LogState::from_account_info(state)?;
