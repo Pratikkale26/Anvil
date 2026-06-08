@@ -177,6 +177,28 @@ export const FRAMEWORK_SHADOW_TYPES = new Set([
  * path is E0533). Falls back to the variant name when the shape can't be read
  * from rawCode (preserves the old bare-path behaviour).
  */
+/**
+ * Split `text` on top-level commas only — commas nested inside (), [], {}, <>
+ * are not split points. Used to walk enum variants and variant payload fields
+ * (`Buy { price: u64 }, Move(u8, u8), Sell`) for InitSpace sizing.
+ */
+function splitTopLevelCommas(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "(" || c === "[" || c === "{" || c === "<") depth++;
+    else if (c === ")" || c === "]" || c === "}" || c === ">") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out;
+}
+
 function firstUnitVariantName(variants: string[], rawCode: string): string | null {
   for (const v of variants) {
     if (!v) continue;
@@ -3933,13 +3955,29 @@ ${originalLines}
       }
     }
 
+    // G2/G5 — `Option<T>` allocates 1 (discriminant) + size(T) (the Some(..)
+    // max). Resolve the inner via resolveTypeSize so a custom-struct inner is
+    // sized too; a 0 (unsizeable inner) propagates as 0.
+    const optionMatch = typeName.match(/^Option<\s*([\s\S]+?)\s*>$/);
+    if (optionMatch?.[1]) {
+      const inner = this.resolveTypeSize(optionMatch[1], maxLen, visited);
+      return inner > 0 ? 1 + inner : 0;
+    }
+
     if (visited.has(typeName)) return 0;
     const typeDef = this.customTypeDef(typeName);
     if (!typeDef) {
       return typeSize(typeName, maxLen);
     }
 
-    if (typeDef.kind === "enum") return 1;
+    if (typeDef.kind === "enum") {
+      // G1 — 1 (discriminant) + max(variant payload), mirroring Anchor's
+      // InitSpace; a flat 1 under-allocated any data-carrying variant.
+      visited.add(typeName);
+      const size = this.resolveEnumSize(typeDef.rawCode, visited);
+      visited.delete(typeName);
+      return size;
+    }
     if (!typeDef.fields) return typeSize(typeName, maxLen);
 
     visited.add(typeName);
@@ -3980,6 +4018,41 @@ ${originalLines}
     const result = typeDef.fields.some((f) => this.isVariableLengthType(f.type, visited));
     visited.delete(typeName);
     return result;
+  }
+
+  /**
+   * G1 — size a data-carrying enum the way Anchor's InitSpace derive does:
+   * `1 (discriminant) + max(variant payload size)`. Variant payloads are
+   * parsed from `rawCode` (the IR's `variants` array carries only names).
+   * A unit-only enum yields 1 (max payload 0). Returns 0 if any variant
+   * payload contains an unsizeable type (resolveTypeSize → 0) so the caller's
+   * `total > 0` guard suppresses the constant rather than under-size it.
+   */
+  protected resolveEnumSize(rawCode: string | undefined, visited: Set<string>): number {
+    if (!rawCode) return 1; // no body to parse → conservative unit fallback
+    const body = rawCode.match(/enum\s+\w+(?:<[^>]*>)?\s*\{([\s\S]*)\}/)?.[1];
+    if (body === undefined) return 1;
+    let maxPayload = 0;
+    for (const variant of splitTopLevelCommas(body)) {
+      const v = variant.trim();
+      if (!v) continue;
+      let payload = 0;
+      const structM = v.match(/^\w+\s*\{([\s\S]*)\}$/);
+      const tupleM = v.match(/^\w+\s*\(([\s\S]*)\)$/);
+      if (structM) {
+        for (const fld of splitTopLevelCommas(structM[1] ?? "")) {
+          const t = fld.split(":").slice(1).join(":").trim();
+          if (t) payload += this.resolveTypeSize(t, undefined, visited);
+        }
+      } else if (tupleM) {
+        for (const t of splitTopLevelCommas(tupleM[1] ?? "")) {
+          if (t.trim()) payload += this.resolveTypeSize(t.trim(), undefined, visited);
+        }
+      }
+      // else: unit variant → payload stays 0
+      if (payload > maxPayload) maxPayload = payload;
+    }
+    return 1 + maxPayload;
   }
 
   /**

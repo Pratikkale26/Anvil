@@ -352,8 +352,8 @@ pub struct OptVault {
 
 impl OptVault {
     pub const DISCRIMINATOR: [u8; 8] = [173, 207, 19, 244, 188, 200, 151, 114];
-    pub const INIT_SPACE: usize = 105;
-    pub const LEN: usize = 105;
+    pub const INIT_SPACE: usize = 83;
+    pub const LEN: usize = 83;
     pub const TOTAL_LEN: usize = 8 + Self::LEN;
     pub const SPACE: usize = Self::TOTAL_LEN;
     pub const SIZE: usize = Self::TOTAL_LEN;

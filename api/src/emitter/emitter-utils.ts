@@ -301,6 +301,14 @@ export function typeSize(typeName: string, maxLen?: number[]): number {
       return elementSize * len;
     }
   }
+  // G2/G5 — Anchor's InitSpace sizes `Option<T>` as 1 (discriminant) +
+  // T::INIT_SPACE (it allocates the max, the Some(..) case). Without this
+  // branch `Option<[u8; 64]>` fell through to the 32-byte default, silently
+  // under-allocating a Some([u8; 64]) → OOB write.
+  const optionMatch = typeName.match(/^Option<\s*([\s\S]+?)\s*>$/);
+  if (optionMatch?.[1]) {
+    return 1 + typeSize(optionMatch[1], maxLen);
+  }
   return sizes[typeName] ?? 32;
 }
 
