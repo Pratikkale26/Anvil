@@ -24,7 +24,7 @@ import type { SolanaIR, EmitterFile } from "../ir/schema.js";
 
 type Target = "pinocchio" | "native";
 
-const ANVIL_VERSION = "0.3.0";
+const ANVIL_VERSION = "0.4.0";
 
 /** Sanitize the program name into a valid Rust crate name. */
 function crateName(ir: SolanaIR): string {
