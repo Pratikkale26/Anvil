@@ -26,8 +26,18 @@ RUN apt-get update \
 ENV RUSTUP_HOME=/root/.rustup \
     CARGO_HOME=/root/.cargo \
     PATH=/root/.cargo/bin:$PATH
+# PIN the host toolchain to the SAME rustc the Anza platform-tools cargo bundles
+# (v3.1.14 / platform-tools v1.52 = rustc 1.89.0). This is load-bearing for the
+# byte-equal /build/differential path: the warm-fetch + Docker pre-fetch run the
+# HOST cargo, while the offline build runs cargo-build-sbf's BUNDLED cargo.
+# Cargo's `registry/index/index.crates.io-<hash>` dir name flipped at cargo 1.85;
+# a FLOATING `stable` host cargo on one side of that flip and a pinned
+# platform-tools cargo on the other populate/read DIFFERENT index dirs → the
+# offline build resolves an empty registry → "no matching package named
+# anchor-spl ... offline mode". Pinning both to 1.89.0 makes them share one
+# index dir. Bump this in lockstep with the Anza pin below.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --default-toolchain stable --profile minimal \
+      | sh -s -- -y --default-toolchain 1.89.0 --profile minimal \
       --no-modify-path \
   && rustc --version && cargo --version
 
@@ -39,9 +49,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # build-sbf' which we now intercept with an actionable install hint —
 # but baking the toolchain into the image is the actual fix.
 #
-# v3.1.13 matches the version cited in error messages, the README, and
-# SECURITY.md. Bump in lockstep across all four if Anza's release
-# stream moves.
+# v3.1.14 (platform-tools v1.52 / rustc 1.89.0) — matches the host rustup pin
+# above so the warm-fetch cargo and the offline cargo-build-sbf cargo compute
+# the IDENTICAL registry index-dir hash (the byte-equal offline-build fix).
+# This is the version verified working locally end-to-end. Bump in lockstep
+# with the rustup --default-toolchain pin above.
 #
 # The installer drops binaries in
 # ~/.local/share/solana/install/active_release/bin and writes a path
@@ -54,7 +66,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # inside the same RUN layer so the first runtime /build request
 # doesn't pay for the download cold.
 ENV PATH=/root/.local/share/solana/install/active_release/bin:$PATH
-RUN sh -c "$(curl --proto '=https' --tlsv1.2 -sSf https://release.anza.xyz/v3.1.13/install)" \
+RUN sh -c "$(curl --proto '=https' --tlsv1.2 -sSf https://release.anza.xyz/v3.1.14/install)" \
   && cargo-build-sbf --version
 
 # Anchor CLI — used by the workbench's byte-equal differential endpoint
@@ -104,7 +116,16 @@ RUN set -e; \
     mkdir -p /root/.anvil-build/anvil-build-anchor/src; \
     printf '[package]\nname = "anvil-build-anchor"\nversion = "0.1.0"\nedition = "2021"\n[lib]\ncrate-type = ["cdylib", "lib"]\n[dependencies]\nanchor-lang = { version = "0.31", features = ["init-if-needed"] }\nanchor-spl = { version = "0.31", features = ["associated_token", "memo", "metadata", "token_2022"] }\n' > /root/.anvil-build/anvil-build-anchor/Cargo.toml; \
     echo 'pub fn x() {}' > /root/.anvil-build/anvil-build-anchor/src/lib.rs; \
-    (cd /root/.anvil-build/anvil-build-anchor && cargo fetch) || true
+    (cd /root/.anvil-build/anvil-build-anchor && cargo fetch); \
+    # FAIL-LOUD (no `|| true`): unlike the pinocchio/native pre-fetch, the
+    # offline Anchor reference build (cargo-build-sbf --offline, firejail
+    # --net=none) has NO runtime network fallback on DO — a missing anchor-spl
+    # here permanently breaks /build/differential. Verify the crate actually
+    # landed in BOTH the sparse index .cache blob (what offline resolution reads)
+    # AND registry/src (extracted), and fail the image build otherwise.
+    ls /root/.cargo/registry/index/index.crates.io-*/.cache/an/ch/anchor-spl >/dev/null 2>&1 \
+      && ls -d /root/.cargo/registry/src/index.crates.io-*/anchor-spl-* >/dev/null 2>&1 \
+      || (echo "FATAL: anchor-spl not resolvable in the offline registry after pre-fetch (index blob or src missing)" >&2; exit 1)
 
 # Install dependencies
 COPY package.json bun.lock ./

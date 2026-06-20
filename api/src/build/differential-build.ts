@@ -16,7 +16,7 @@
  * these spawns too. The build.rs threat model is documented in
  * SECURITY.md.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -885,7 +885,7 @@ function runSandboxedSbf(cwd: string, opts: DifferentialBuildOptions): Promise<v
         .join("\n");
       reject(
         new Error(
-          `cargo-build-sbf exited with code ${code} (cwd=${cwd})\n--- last build output ---\n${trimmed || "(no output captured)"}`,
+          `cargo-build-sbf exited with code ${code} (cwd=${cwd})\n--- last build output ---\n${trimmed || "(no output captured)"}${diagnoseOfflineRegistry(trimmed)}`,
         ),
       );
     });
@@ -894,6 +894,64 @@ function runSandboxedSbf(cwd: string, opts: DifferentialBuildOptions): Promise<v
       reject(err);
     });
   });
+}
+
+/**
+ * Self-diagnostic for the "no matching package ... offline mode" byte-equal
+ * failure (the host-cargo vs platform-tools-cargo registry-index-hash split).
+ * Cargo's `registry/index/index.crates.io-<hash>` dir name flips across cargo
+ * versions; if the warm-fetch (host `cargo`) and the offline build
+ * (`cargo-build-sbf`'s bundled platform-tools cargo) land on different sides of
+ * that flip, the warm-fetch populates one index dir while the offline build
+ * reads another (empty) → exactly this error, even though the crate IS on disk.
+ *
+ * Runs ONLY on that failure signature (cheap, bounded shell-outs) and appends a
+ * readout to the error so a prod deploy is self-diagnosing: both cargo versions,
+ * and per index dir whether the anchor-spl sparse-index blob is present —
+ * flagging a MULTI-DIR split (the smoking gun) vs a single populated dir (which
+ * instead points at sandbox/firejail visibility).
+ */
+function diagnoseOfflineRegistry(tail: string): string {
+  if (!/no matching package|offline mode|using offline/i.test(tail)) return "";
+  const cargoHome = sandboxedEnv().CARGO_HOME
+    ?? process.env.CARGO_HOME
+    ?? `${process.env.HOME ?? ""}/.cargo`;
+  const out: string[] = ["--- anvil byte-equal offline-registry diagnostic ---"];
+  const ver = (label: string, cmd: string) => {
+    try {
+      const r = spawnSync(cmd, ["--version"], { encoding: "utf-8", timeout: 8000 });
+      out.push(`${label}: ${((r.stdout || r.stderr || "").trim().split("\n")[0]) || "(no output)"}`);
+    } catch (e) {
+      out.push(`${label}: <error ${(e as Error).message}>`);
+    }
+  };
+  ver("host cargo (warm-fetch)", "cargo");
+  ver("cargo-build-sbf (offline build)", "cargo-build-sbf");
+  try {
+    const idxRoot = join(cargoHome, "registry", "index");
+    const dirs = existsSync(idxRoot)
+      ? readdirSync(idxRoot).filter((d) => d.startsWith("index.crates.io-"))
+      : [];
+    out.push(`CARGO_HOME=${cargoHome}`);
+    out.push(`registry index dirs: ${dirs.join(", ") || "(none)"}`);
+    for (const d of dirs) {
+      // sparse-index blob path: <index>/.cache/<a>/<b>/<crate>
+      const blob = join(idxRoot, d, ".cache", "an", "ch", "anchor-spl");
+      out.push(`  ${d}: anchor-spl index blob ${existsSync(blob) ? "PRESENT" : "ABSENT"}`);
+    }
+    if (dirs.length > 1) {
+      out.push(
+        "  >>> MULTIPLE index dirs = host vs platform-tools cargo registry-hash SPLIT — the byte-equal offline bug. Pin the host rustup toolchain (Dockerfile --default-toolchain) to the platform-tools cargo version and keep the Anza pin in lockstep.",
+      );
+    } else if (dirs.length === 1) {
+      out.push(
+        "  >>> SINGLE index dir — if its anchor-spl blob is PRESENT yet the build can't see it, suspect sandbox (firejail) registry visibility, NOT a hash split.",
+      );
+    }
+  } catch (e) {
+    out.push(`registry index scan: <error ${(e as Error).message}>`);
+  }
+  return "\n" + out.join("\n");
 }
 
 function copySoFromTarget(scratch: string, outPath: string): void {
