@@ -52,4 +52,17 @@ describe("I1 — duplicate-realloc guard", () => {
     expect(/\.key.*==.*\.key/.test(native)).toBe(false);
     expect(/\.key\(\).*==.*\.key\(\)/.test(pino)).toBe(false);
   });
+
+  // J1 / #48 — Anchor's `dup` annotation EXPLICITLY allows a realloc account to
+  // alias another; AccountDuplicateReallocs fires only for UN-annotated
+  // collisions. The guard must NOT fire for a `dup` pair, else Anvil reverts a
+  // program Anchor accepts (byte-equal DIVERGED on realloc-array.rs).
+  test("two realloc accounts, one marked `dup` → NO guard (Anchor allows the alias)", async () => {
+    const { native, pino } = await emit(SRC(
+      `#[account(mut, realloc = 80, realloc::payer = payer, realloc::zero = false, dup)] pub b: Account<'info, St>,`,
+      `ctx.accounts.a.val = 1; ctx.accounts.b.val = 2;`,
+    ));
+    expect(/\*a\.key == \*b\.key/.test(native)).toBe(false);
+    expect(/\*a\.key\(\) == \*b\.key\(\)/.test(pino)).toBe(false);
+  });
 });

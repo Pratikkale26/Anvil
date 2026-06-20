@@ -3457,20 +3457,35 @@ impl ZeroCopy for ${accName} {}`;
     // a silent last-write-wins success where Anchor reverts. Emit a pairwise
     // key-distinctness guard (no collection needed — N realloc fields is tiny,
     // and no_std-friendly). Only when 2+ realloc accounts exist.
-    const reallocAccountNames = instr.accounts
+    // J1/#48 — skip the guard for any pair where either account carries Anchor's
+    // `dup` annotation. Anchor allows a `dup` account to alias another (it raises
+    // AccountDuplicateReallocs ONLY for UN-annotated collisions), so guarding it
+    // over-rejects a program Anchor accepts (byte-equal DIVERGED on
+    // realloc-array.rs: Anvil reverted realloc2 where Anchor ran [ok,ok,ok]).
+    // KNOWN LIMIT: bare `dup` carries no target in the IR, so a `dup` account is
+    // exempted from ALL its pairs, not just its declared alias — a conservative
+    // over-permission for the rare 3+-realloc mixed-dup case. Shared base, so this
+    // covers Native too (byte-tested on Pinocchio; logic is target-agnostic).
+    const reallocAccts = instr.accounts
       .filter((a) => a.constraints.some((c) => c.kind === "realloc"))
-      .map((a) => snakeCase(a.name));
+      .map((a) => ({
+        name: snakeCase(a.name),
+        isDup: a.constraints.some((c) => c.kind === "dup"),
+      }));
     let reallocDupGuard = "";
-    if (reallocAccountNames.length >= 2) {
+    if (reallocAccts.length >= 2) {
       const pairs: string[] = [];
-      for (let i = 0; i < reallocAccountNames.length; i++) {
-        for (let j = i + 1; j < reallocAccountNames.length; j++) {
-          pairs.push(`${this.emitAccountKeyExpr(reallocAccountNames[i]!)} == ${this.emitAccountKeyExpr(reallocAccountNames[j]!)}`);
+      for (let i = 0; i < reallocAccts.length; i++) {
+        for (let j = i + 1; j < reallocAccts.length; j++) {
+          if (reallocAccts[i]!.isDup || reallocAccts[j]!.isDup) continue;
+          pairs.push(`${this.emitAccountKeyExpr(reallocAccts[i]!.name)} == ${this.emitAccountKeyExpr(reallocAccts[j]!.name)}`);
         }
       }
-      reallocDupGuard = `    if ${pairs.join(" || ")} {
+      if (pairs.length > 0) {
+        reallocDupGuard = `    if ${pairs.join(" || ")} {
         return Err(ProgramError::InvalidArgument);
     }`;
+      }
     }
 
     // Body emission — the main event
