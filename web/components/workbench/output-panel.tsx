@@ -157,24 +157,11 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
     }
     return probe(singleFileCode);
   }, [outputFiles, singleFileCode]);
-  const [stubAck, setStubAck] = useState(false);
-  // Reset ack whenever the underlying emit changes — a new pipeline run
-  // produces a fresh outputFiles identity, so this fires. Uses React's
-  // canonical "adjust state when a prop changes during render" pattern
-  // (track the previous value in state, not a ref) — React processes the
-  // setState during render before committing, so there's no extra paint.
-  // (#16 — the prior `useRef().current` form tripped react-hooks/refs:
-  // refs must not be read or written during render.)
-  const [prevOutputFiles, setPrevOutputFiles] = useState(outputFiles);
-  if (prevOutputFiles !== outputFiles) {
-    setPrevOutputFiles(outputFiles);
-    if (stubAck) setStubAck(false);
-  }
-  const gateActive = stubsPresentInEmit && !stubAck;
-  const guardedClick = (action: () => void) => () => {
-    if (gateActive) return; // disabled state should prevent this anyway
-    action();
-  };
+  // P5.1 → warn-only: stub-bearing emit no longer BLOCKS extract. Copy /
+  // Download .rs / Download bundle stay enabled regardless; `stubsPresentInEmit`
+  // drives only a persistent informational banner below (an explore-mode signal,
+  // not a gate). The CLI's safe-by-default `--strict` gate is unchanged and
+  // remains the refusing path for deploy artifacts.
 
   // File-tree filter. Shown above the list once the project has enough files
   // that scrolling is annoying (real-world Anchor programs with 20-50 files).
@@ -360,31 +347,29 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
           {/* Icon actions */}
           <div className="flex items-center gap-1">
             <IconBtn
-              title={gateActive ? "Acknowledge stub markers below before copying" : copied ? "Copied!" : "Copy"}
-              onClick={guardedClick(copyActiveContent)}
-              disabled={!activeContent || gateActive}
-              active={copied && !gateActive}
+              title={copied ? "Copied!" : "Copy"}
+              onClick={copyActiveContent}
+              disabled={!activeContent}
+              active={copied}
             >
-              {copied && !gateActive ? (
+              {copied ? (
                 <CheckCircle2 size={14} />
               ) : (
                 <Copy size={14} />
               )}
             </IconBtn>
             <IconBtn
-              title={gateActive ? "Acknowledge stub markers below before downloading" : "Download .rs"}
-              onClick={guardedClick(downloadSingleFile)}
-              disabled={!singleFileCode || gateActive}
+              title="Download .rs"
+              onClick={downloadSingleFile}
+              disabled={!singleFileCode}
             >
               <Download size={14} />
             </IconBtn>
             <IconBtn
-              title={gateActive
-                ? "Acknowledge stub markers below before downloading the bundle"
-                : "Download buildable project (.tar) — includes Cargo.toml + README + src/"}
-              onClick={guardedClick(downloadProjectBundle)}
-              disabled={!outputFiles.length || gateActive}
-              primary={!gateActive}
+              title="Download buildable project (.tar) — includes Cargo.toml + README + src/"
+              onClick={downloadProjectBundle}
+              disabled={!outputFiles.length}
+              primary
             >
               <FileArchive size={14} />
             </IconBtn>
@@ -495,60 +480,31 @@ export function OutputPanel({ state }: { state: AnvilPipelineState }) {
         );
       })()}
 
-      {/* P5.1 — stub-marker acknowledgement strip. Shown ONLY when the
-          emit contains stub markers AND the user hasn't acked this run.
-          Disables Copy / Download .rs / Download .tar in the header
-          until the checkbox is ticked. Mirrors the CLI's safe-by-default
-          --strict polarity: you can't extract the artifact without an
-          explicit opt-out gesture. Hidden once acked OR once the next
-          pipeline run produces fresh output. */}
+      {/* P5.1 → warn-only — stub-marker banner. Shown when the emit contains
+          stub markers, but it does NOT block extract (Copy / Download stay
+          enabled). It's a persistent explore-mode signal; the CLI's
+          safe-by-default --strict gate remains the refusing path for deploy
+          artifacts. Hidden once the next pipeline run produces fresh output. */}
       {stubsPresentInEmit && (
         <div
           className="px-5 py-2.5 border-b text-[12px] flex items-start gap-2.5"
           style={{
-            background: stubAck
-              ? "rgba(245,166,35,0.04)"
-              : "rgba(224,90,90,0.07)",
-            borderColor: stubAck
-              ? "rgba(245,166,35,0.20)"
-              : "rgba(224,90,90,0.30)",
-            color: stubAck ? "#e8d68a" : "#ffb0b0",
+            background: "rgba(245,166,35,0.07)",
+            borderColor: "rgba(245,166,35,0.28)",
+            color: "#e8d68a",
           }}
-          role={stubAck ? "status" : "alert"}
+          role="status"
         >
-          <span aria-hidden="true" className="font-bold leading-snug">
-            {stubAck ? "✓" : "!"}
-          </span>
+          <span aria-hidden="true" className="font-bold leading-snug">!</span>
           <div className="leading-snug flex-1 min-w-0">
-            <span className="font-semibold">
-              {stubAck
-                ? "Stub markers acknowledged — extract enabled."
-                : "Emit contains stub markers — extract disabled."}
-            </span>{" "}
-            {!stubAck && (
-              <>
-                The emit has at least one <code className="font-mono text-[11px]">⚠️ Anvil</code> /
-                {" "}<code className="font-mono text-[11px]">TODO(manual)</code> /
-                {" "}<code className="font-mono text-[11px]">0u8 /* TODO: decimals</code> placeholder
-                that compiles but does not implement the original Anchor behavior. The CLI&apos;s
-                safe-by-default <code className="font-mono text-[11px]">--strict</code> gate
-                refuses this. Tick the box to extract anyway (explore mode only —
-                <strong> never deploy stub-bearing emit to mainnet</strong>).
-              </>
-            )}
+            <span className="font-semibold">Contains stub markers — explore only.</span>{" "}
+            The emit has at least one <code className="font-mono text-[11px]">⚠️ Anvil</code> /
+            {" "}<code className="font-mono text-[11px]">TODO(manual)</code> /
+            {" "}<code className="font-mono text-[11px]">0u8 /* TODO: decimals</code> placeholder
+            that compiles but does not implement the original Anchor behavior.
+            <strong> Don&apos;t deploy stub-bearing emit to mainnet</strong> — the CLI&apos;s
+            {" "}<code className="font-mono text-[11px]">--strict</code> gate still refuses it.
           </div>
-          {!stubAck && (
-            <label className="flex items-center gap-2 text-[11px] font-semibold whitespace-nowrap cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={stubAck}
-                onChange={(e) => setStubAck(e.target.checked)}
-                className="cursor-pointer"
-                style={{ accentColor: "#e05a5a" }}
-              />
-              I&apos;ll audit, not deploy
-            </label>
-          )}
         </div>
       )}
 
