@@ -70,8 +70,20 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # inside the same RUN layer so the first runtime /build request
 # doesn't pay for the download cold.
 ENV PATH=/root/.local/share/solana/install/active_release/bin:$PATH
+# NOTE: the trailing version assertion is also a deliberate Docker cache-bust.
+# DO App Platform served this layer from STALE build cache — a fresh deploy
+# carried the new app code yet kept an old platform-tools (cargo-build-sbf
+# 2.1.0, cargo < 1.85), which splits the byte-equal registry index hash from the
+# host cargo's (>= 1.85). Comments don't change a RUN's cache key, but the
+# command text below does — appending the `grep` forces this layer to re-run, so
+# the next deploy genuinely reinstalls v3.1.14 (verify via
+# /health.toolchain.cargoBuildSbfVersion, which must read 3.1.14). NON-FATAL on
+# mismatch: a hard fail would make DO serve the last-good (stale) image again.
 RUN sh -c "$(curl --proto '=https' --tlsv1.2 -sSf https://release.anza.xyz/v3.1.14/install)" \
-  && cargo-build-sbf --version
+  && cargo-build-sbf --version \
+  && ( cargo-build-sbf --version | grep -q "3.1.14" \
+       && echo "OK: cargo-build-sbf 3.1.14 installed (byte-equal cargo on the same index-hash side as the host cargo)" \
+       || echo "WARN: cargo-build-sbf is NOT 3.1.14 after install — byte-equal registry-hash split risk; check /health.toolchain.cargoBuildSbfVersion and force a no-cache rebuild" )
 
 # Anchor CLI — used by the workbench's byte-equal differential endpoint
 # (POST /build/differential) to build the Anchor reference .so. Without
