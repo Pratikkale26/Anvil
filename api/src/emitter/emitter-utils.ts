@@ -179,6 +179,32 @@ export function isProgramAccount(accountType: string): boolean {
 }
 
 /**
+ * F7 — an account whose `.amount` / `.mint` / `.delegate` / `.close_authority`
+ * field reads lower to the SPL token-account byte accessors
+ * (`token_account_amount`, `TokenAccount::from_account_info`) rather than a
+ * custom-state struct field read. True for `Account<TokenAccount>` /
+ * `InterfaceAccount<TokenAccount>` and any account carrying a `token::` /
+ * `associated_token::` constraint.
+ *
+ * THE single source of truth for the `.amount` type-gate: every site that picks
+ * token-accessor-vs-state-read MUST use this. A split predicate (one path gating
+ * on accountType alone, another also on constraints) was the prior
+ * inconsistent-emit revert — a constraint-only token account would get
+ * `token_account_amount` on one path and `stateVar.amount` on another.
+ */
+export function isTokenLikeAccount(acc: {
+  accountType: string;
+  constraints: ReadonlyArray<{ kind: string }>;
+}): boolean {
+  return (
+    acc.accountType.includes("TokenAccount") ||
+    acc.constraints.some(
+      (c) => c.kind.startsWith("token::") || c.kind.startsWith("associated_token::"),
+    )
+  );
+}
+
+/**
  * #17/#21 — Rust array literal for a well-known program's id, keyed by the
  * Anchor inner type of a `Program<'info, T>` field. Anchor's `Program<T>`
  * constraint verifies `info.key == &T::id()`; Anvil otherwise emits no such

@@ -326,6 +326,10 @@ describe("M5d Session 5a — transformCtxAccountsStructural", () => {
         ["payer", "*payer.lamports.borrow()"],
         ["counter", "*counter.lamports.borrow()"],
       ]),
+      // F7 — `.amount` → token_account_amount is now gated on tokenLike; mark
+      // `authority` token-like so the dotted-`.amount` case below still asserts
+      // the token-account read (the gate itself is covered in Session 6b).
+      tokenLikeAccounts: new Set(["authority"]),
       namedAccountCount: 3,
     };
   }
@@ -683,12 +687,17 @@ describe("M5d Session 6c — rewriteStateBoundFieldsStructural", () => {
     expect(calls).toEqual([]);
   });
 
-  test("SKIP `.amount` field (handled by tokenLike branch / S5a)", () => {
+  test("handles `.amount` field (F7 — custom-state amount is a struct field)", () => {
     const { ctx, calls } = buildCtx(["counter"]);
+    // F7 — `.amount` is no longer skipped: a custom #[account] state account's
+    // `.amount` deserializes and reads the struct field (the token-account
+    // `.amount` path is tokenLike-gated, and a token account is never
+    // state-bound, so the two are mutually exclusive). localVar == account here,
+    // so the text is byte-identical, but the state-read side effect FIRES.
     expect(rewriteStateBoundFieldsStructural(`do(counter.amount);`, ctx)).toBe(
       `do(counter.amount);`,
     );
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(["counter"]);
   });
 
   test("SKIP non-state-bound account (not in stateBoundAccounts)", () => {
@@ -835,15 +844,28 @@ describe("M5d Session 6b — bare-receiver `.lamports()` / `.amount` extension",
     ).toBe(`let l = *counter.lamports.borrow();`);
   });
 
-  test("ctx.accounts.X.amount still rewrites unconditionally (S5a path preserved)", () => {
-    // Unlike bare receiver, the ctx.accounts path doesn't gate on tokenLike
-    // (mirroring the regex panel's behavior).
+  test("ctx.accounts.X.amount (tokenLike) → token_account_amount(infoVar)?", () => {
+    const ctx = buildCtx({
+      info: [["pool_a", "pool_a"]],
+      tokenLike: ["pool_a"],
+    });
+    expect(transformCtxAccountsStructural(`let v = ctx.accounts.pool_a.amount;`, ctx)).toBe(
+      `let v = token_account_amount(pool_a)?;`,
+    );
+  });
+
+  test("ctx.accounts.X.amount (NOT tokenLike) — gated, no token_account_amount (F7)", () => {
+    // F7 — the ctx.accounts path now gates on tokenLike symmetrically with the
+    // bare-receiver path. A non-token account's `.amount` is NOT byte-64, so
+    // this pass leaves it untouched for the downstream state-bound rewrite
+    // (rewriteStateBoundFieldsStructural → `<localVar>.amount`); the end-to-end
+    // result is covered by differential-amount-field-gate.
     const ctx = buildCtx({
       info: [["counter", "counter"]],
-      tokenLike: [], // counter NOT tokenLike — but ctx.accounts.X path doesn't gate
+      tokenLike: [],
     });
     expect(transformCtxAccountsStructural(`let v = ctx.accounts.counter.amount;`, ctx)).toBe(
-      `let v = token_account_amount(counter)?;`,
+      `let v = ctx.accounts.counter.amount;`,
     );
   });
 });

@@ -42,6 +42,7 @@ import {
   indentBlock,
   replaceInCodeRegions,
   knownProgramIdLiteral,
+  isTokenLikeAccount,
 } from "../emitter-utils.js";
 import type { BodyEmitterCallbacks, BodyEmitterContext } from "./types.js";
 // H1 Session G (2026-05-13) — all per-kind handlers retired. The visitor
@@ -482,11 +483,19 @@ export class BodyWalker {
       }
       // Only wrap with token_account_amount if the name is a known account.
       // `args.amount` is an instruction arg, not a token account.
-      const isKnownAccount = this.instr.accounts.some(
+      const knownAcc = this.instr.accounts.find(
         (a) => snakeCase(a.name) === accountName,
       );
-      if (isKnownAccount) {
-        return `token_account_amount(${this.resolveAccountInfoVar(accountName)})?`;
+      if (knownAcc) {
+        // F7 — only a token-like account's `.amount` is the SPL byte-64 read.
+        if (isTokenLikeAccount(knownAcc)) {
+          return `token_account_amount(${this.resolveAccountInfoVar(accountName)})?`;
+        }
+        // A custom #[account] state account with an `amount` field: deserialize
+        // and read the struct field (not SPL byte-64 of unrelated state).
+        if (this.isGeneratedStateType(knownAcc.accountType)) {
+          return `${this.ensureStateRead(accountName)}.amount`;
+        }
       }
       return amount;
     }
@@ -1180,13 +1189,7 @@ export class BodyWalker {
           (_full, args?: string) => build(accountInfoVar, args ?? ""),
         );
       }
-      const tokenLike =
-        account.accountType.includes("TokenAccount") ||
-        account.constraints.some(
-          (constraint) =>
-            constraint.kind.startsWith("token::") ||
-            constraint.kind.startsWith("associated_token::"),
-        );
+      const tokenLike = isTokenLikeAccount(account);
       const mintLike =
         account.accountType.includes("Mint") ||
         account.constraints.some((c) => c.kind.startsWith("mint::"));
@@ -1433,8 +1436,19 @@ export class BodyWalker {
     );
     transformed = transformed.replace(
       /ctx\.accounts\.(\w+)\.amount\b/g,
-      (_full, name: string) =>
-        `token_account_amount(${this.resolveAccountInfoVar(snakeCase(name))})?`,
+      (_full, name: string) => {
+        const acc = this.instr.accounts.find((a) => snakeCase(a.name) === snakeCase(name));
+        // F7 — only a token-like account's `.amount` is the SPL byte-64 read.
+        if (acc && isTokenLikeAccount(acc)) {
+          return `token_account_amount(${this.resolveAccountInfoVar(snakeCase(name))})?`;
+        }
+        // A custom #[account] state account with a field NAMED `amount`:
+        // deserialize and read the struct field, not SPL byte-64.
+        if (acc && this.isGeneratedStateType(acc.accountType)) {
+          return `${this.ensureStateRead(snakeCase(name))}.amount`;
+        }
+        return _full;
+      },
     );
     transformed = transformed.replace(/\bctx\.program_id\b/g, "program_id");
     // G112c — HashMap-style `.get("X").unwrap()` must fire BEFORE the bare

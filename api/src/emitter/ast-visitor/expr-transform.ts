@@ -13,7 +13,7 @@
 import type { RustExpr } from "./nodes.js";
 import { deref, field, ident, methodCall, rawExpr, ref, call, tryPostfix, indexExpr } from "./nodes.js";
 import { parseSimpleExpr } from "./parse-simple-expr.js";
-import { snakeCase } from "../emitter-utils.js";
+import { snakeCase, isTokenLikeAccount } from "../emitter-utils.js";
 
 // ─── Transform context ────────────────────────────────────────────────
 
@@ -396,11 +396,19 @@ export function transformCtxAccountsRefsAst(
       return terminal(parseSimpleExpr(ctx.emitAccountKeyExpr(ai).replace(/\.key\b.*/, ".lamports()")));
     }
 
-    // ctx.accounts.X.amount → token_account_amount(ai)?
+    // ctx.accounts.X.amount → token_account_amount(ai)? — ONLY for token-like
+    // accounts (F7). A custom #[account] struct with a field NAMED `amount`
+    // falls through to the generated-state field rewrite below (line ~430:
+    // ensureStateRead + localVar.amount), instead of silently reading SPL
+    // byte-64 of unrelated state.
     if (e.kind === "field" && e.field === "amount"
         && e.obj.kind === "field" && isCtxAccounts(e.obj.obj)) {
-      const ai = ctx.resolveAccountInfoVar(snakeCase(e.obj.field));
-      return terminal(parseSimpleExpr(`token_account_amount(${ai})?`));
+      const objField = e.obj.field;
+      const acc = ctx.accounts.find((a) => snakeCase(a.name) === snakeCase(objField));
+      if (acc && isTokenLikeAccount(acc)) {
+        const ai = ctx.resolveAccountInfoVar(snakeCase(objField));
+        return terminal(parseSimpleExpr(`token_account_amount(${ai})?`));
+      }
     }
 
     // &*ctx.accounts.X → &snakeCase(X)
@@ -498,8 +506,7 @@ export function transformAccountRefsAst(
       const acc = ctx.accounts.find((a) => a.name === recv);
       if (!acc) return e;
 
-      const tokenLike = acc.accountType.includes("TokenAccount")
-        || acc.constraints.some((c) => c.kind.startsWith("token::") || c.kind.startsWith("associated_token::"));
+      const tokenLike = isTokenLikeAccount(acc);
       const mintLike = acc.accountType.includes("Mint")
         || acc.constraints.some((c) => c.kind.startsWith("mint::"));
 

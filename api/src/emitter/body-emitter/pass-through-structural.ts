@@ -937,7 +937,15 @@ export function transformCtxAccountsStructural(code: string, ctx: PassContext): 
               accountName = snake;
             }
           } else {
-            accountName = asCtxAccountsField(recv);
+            // F7 — only a token-like account's dotted `ctx.accounts.X.amount`
+            // is the SPL byte-64 read. A custom #[account] state account with a
+            // field NAMED `amount` falls through (accountName stays null) to the
+            // state-bound field rewrite (rewriteStateBoundFieldsStructural),
+            // which deserializes the struct and reads localVar.amount.
+            const X = asCtxAccountsField(recv);
+            if (X !== null && ctx.tokenLikeAccounts?.has(snakeCase(X))) {
+              accountName = X;
+            }
           }
           if (accountName !== null) {
             const infoVar = ctx.accountInfoVars.get(accountName);
@@ -1210,7 +1218,11 @@ function isInsideStringLiteral(code: string, offset: number): boolean {
 const STATE_FIELD_SKIP = new Set([
   "key",
   "lamports",
-  "amount",
+  // F7 — `amount` is NOT skipped: a custom #[account] state account with a
+  // field NAMED `amount` must read the struct field here (localVar.amount), not
+  // SPL byte-64. The token-account `.amount` path (transformCtxAccountsStructural
+  // Pass 5) is now tokenLike-gated, so a real token account never reaches this
+  // pass (it's not in stateBoundAccounts either) — the two are mutually exclusive.
   // `to_account_info` is an Anchor wrapper-method, not a state-struct
   // field. Without skipping it, the state-bound rewrite turns
   // `ctx.accounts.X.to_account_info()` into

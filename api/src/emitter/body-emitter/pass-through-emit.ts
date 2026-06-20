@@ -18,6 +18,7 @@ import {
   simplifyPassThroughCode,
   maskLiteralsAndComments,
   replaceInCodeRegions,
+  isTokenLikeAccount,
 } from "../emitter-utils.js";
 import { hasResidualAnchorPatterns } from "../emitter-helpers.js";
 import { MARKER_ANVIL_PREFIX, MARKER_ANVIL_REVIEW_PREFIX } from "../markers.js";
@@ -204,9 +205,7 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     // account (already handled above for supply/decimals).
     const tokenLikeAccounts = new Set<string>();
     for (const acc of w.instr.accounts) {
-      const isToken = acc.accountType.includes("TokenAccount") ||
-        acc.constraints.some((c) => c.kind.startsWith("token::") || c.kind.startsWith("associated_token::"));
-      if (isToken) tokenLikeAccounts.add(snakeCase(acc.name));
+      if (isTokenLikeAccount(acc)) tokenLikeAccounts.add(snakeCase(acc.name));
     }
     if (tokenLikeAccounts.size > 0) {
       lamportRewritten = replaceInCodeRegions(
@@ -705,12 +704,7 @@ function buildPassContext(w: BodyWalker): PassContext {
 function buildTokenLikeAccountsSet(w: BodyWalker): Set<string> {
   const out = new Set<string>();
   for (const acc of w.instr.accounts) {
-    const tokenLike =
-      acc.accountType.includes("TokenAccount") ||
-      acc.constraints.some(
-        (c) => c.kind.startsWith("token::") || c.kind.startsWith("associated_token::"),
-      );
-    if (tokenLike) out.add(snakeCase(acc.name));
+    if (isTokenLikeAccount(acc)) out.add(snakeCase(acc.name));
   }
   return out;
 }
