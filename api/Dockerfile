@@ -156,6 +156,33 @@ RUN bun install --frozen-lockfile --production
 COPY src/ src/
 COPY tsconfig.json ./
 
+# ── Force the byte-equal toolchain to v3.1.14, AFTER `COPY src` ────────────────
+# DO App Platform serves the Anza install layer (far above) from a STALE build
+# cache: a fresh deploy keeps cargo-build-sbf 2.1.0 no matter what that upper RUN
+# pins (observed: /health.toolchain.cargoBuildSbfVersion stuck at 2.1.0 across
+# many rebuilds). cargo 1.79 (the 2.1.0 platform-tools) CANNOT build the modern
+# dep tree — `blake3 1.8.5` etc. now require the `edition2024` cargo feature,
+# stabilised only in cargo 1.85. The registry hash-mirror got resolution past the
+# 1.85 index split, but the COMPILER is still too old, so byte-equal needs a real
+# >= 1.85 toolchain.
+#
+# This step sits AFTER `COPY src` — the one region DO's cache always rebuilds
+# (the new /health fields prove src layers redeploy) — so a stale upper layer
+# can't cache-skip it. It re-runs the Anza v3.1.14 installer when the toolchain
+# is stale, then `--install-only` bakes the matching platform-tools (cargo
+# >= 1.85) so the sandboxed (--net=none) runtime build needs no network.
+# NON-FATAL (trailing `; true`): a failed install must never strand prod on the
+# last-good image. Confirm via /health.toolchain.cargoBuildSbfVersion → 3.1.14.
+RUN ( cargo-build-sbf --version 2>/dev/null | grep -qE 'cargo-build-sbf 3\.' \
+        && echo "OK: cargo-build-sbf already 3.x ($(cargo-build-sbf --version 2>&1 | head -1))" \
+        || ( echo "WARN: stale toolchain ($(cargo-build-sbf --version 2>&1 | head -1)); reinstalling Anza v3.1.14 after COPY src" ; \
+             sh -c "$(curl --proto '=https' --tlsv1.2 -sSf https://release.anza.xyz/v3.1.14/install)" ) ) ; \
+    cargo-build-sbf --version || true ; \
+    cargo-build-sbf --install-only 2>/dev/null \
+      && echo "OK: platform-tools (cargo >= 1.85) baked for the offline build" \
+      || echo "WARN: platform-tools pre-bake skipped — runtime build may need to lazy-download tools" ; \
+    true
+
 # Expose port
 ENV PORT=8080
 # Sandbox selection: bwrap has the strongest FS isolation but requires
