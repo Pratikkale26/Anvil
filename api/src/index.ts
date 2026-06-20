@@ -348,6 +348,11 @@ const healthHandler: express.RequestHandler = async (_req, res) => {
      *  not resolvable in the offline registry); null when ready. Makes a
      *  degraded deploy self-explanatory instead of failing only at click-time. */
     differentialReason: differentialReason(),
+    /** Deploy marker: presence of this field (and === true) proves the registry
+     *  hash-dir mirror code (4cb7b90+) is live — so byte-equal resolves even when
+     *  the baked cargo-build-sbf is < 1.85. If a `/health` paste lacks this, the
+     *  running image predates the mirror fix regardless of what was pushed. */
+    differentialMirror: true,
     /** Maximum source-bytes the /parse endpoint will accept. Operators can
      *  see the limit without inspecting code; users can size-check before
      *  POSTing 5MB+ flattened multi-file Anchor sources. */

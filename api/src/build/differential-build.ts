@@ -25,6 +25,8 @@ import {
   readFileSync,
   readdirSync,
   statSync,
+  linkSync,
+  copyFileSync,
 } from "node:fs";
 import { join, dirname as nodeDirname } from "node:path";
 import { createHash } from "node:crypto";
@@ -843,39 +845,76 @@ function rewriteDeclareId(source: string, programIdBase58?: string): string {
  * Best-effort — any failure just leaves the offline build's own error +
  * diagnoseOfflineRegistry() to fire.
  */
+/** crates.io sparse-index dir hashes either side of the cargo-1.85 flip. */
+const CRATES_IO_INDEX_HASHES = ["1949cf8c6b5b557f", "6f17d22bba15001f"];
+const cratesIoDirName = (h: string) => `index.crates.io-${h}`;
+
+/**
+ * Recursively hardlink every file under srcDir into dstDir. Node-native (no
+ * dependency on the container's `cp` or its flag portability — the prod image's
+ * coreutils warned `-n` is non-portable). Hardlinks share inodes → near-zero
+ * disk; falls back to a copy only on EXDEV (cross-device, shouldn't happen
+ * within one CARGO_HOME). `overwrite` refreshes existing files (used for the
+ * tiny index .cache blobs so a newly-locked version is always current); when
+ * false, existing files are left as-is (immutable crate tarballs/sources — only
+ * ADD what's missing). Returns the number of files linked/copied.
+ */
+function hardlinkTree(srcDir: string, dstDir: string, overwrite: boolean): number {
+  let n = 0;
+  for (const e of readdirSync(srcDir, { withFileTypes: true })) {
+    const s = join(srcDir, e.name);
+    const d = join(dstDir, e.name);
+    if (e.isDirectory()) {
+      mkdirSync(d, { recursive: true });
+      n += hardlinkTree(s, d, overwrite);
+    } else if (e.isFile()) {
+      try {
+        if (existsSync(d)) {
+          if (!overwrite) continue;
+          rmSync(d, { force: true });
+        }
+        linkSync(s, d);
+        n++;
+      } catch {
+        try {
+          copyFileSync(s, d);
+          n++;
+        } catch {
+          /* skip a single unreadable entry — the rest still mirror */
+        }
+      }
+    }
+    /* symlinks: the cargo registry has none meaningful — skip */
+  }
+  return n;
+}
+
 function mirrorRegistryHashDirs(cargoHome: string, onLog?: (l: string) => void): void {
-  // crates.io sparse-index dir hashes either side of the cargo-1.85 flip.
-  const HASHES = ["1949cf8c6b5b557f", "6f17d22bba15001f"];
-  const dirName = (h: string) => `index.crates.io-${h}`;
   try {
     for (const sub of ["index", "cache", "src"]) {
       const base = join(cargoHome, "registry", sub);
       if (!existsSync(base)) continue;
-      const present = HASHES.filter((h) => existsSync(join(base, dirName(h))));
+      const present = CRATES_IO_INDEX_HASHES.filter((h) =>
+        existsSync(join(base, cratesIoDirName(h))),
+      );
       if (present.length === 0) continue;
       for (const srcH of present) {
-        for (const dstH of HASHES) {
+        for (const dstH of CRATES_IO_INDEX_HASHES) {
           if (dstH === srcH) continue;
-          const from = join(base, dirName(srcH));
-          const to = join(base, dirName(dstH));
+          const from = join(base, cratesIoDirName(srcH));
+          const to = join(base, cratesIoDirName(dstH));
           mkdirSync(to, { recursive: true });
-          // -a archive, -l hardlink. index: -f so a newly-locked crate version
-          // is always refreshed (the .cache blobs are tiny). cache/src: -n
-          // (no-clobber) — crate-version files are immutable, only ADD what the
-          // other dir is missing, which keeps the per-build cost near zero.
-          const flags = sub === "index" ? "-alf" : "-aln";
-          const r = spawnSync("cp", [flags, `${from}/.`, `${to}/`], {
-            encoding: "utf-8",
-            timeout: 60_000,
-          });
-          if (r.status === 0) {
-            onLog?.(`[anvil] mirrored registry/${sub}: ${dirName(srcH)} → ${dirName(dstH)}`);
-          }
+          const n = hardlinkTree(from, to, /* overwrite index .cache */ sub === "index");
+          onLog?.(
+            `[anvil] registry mirror: ${sub} ${cratesIoDirName(srcH)} → ${cratesIoDirName(dstH)} (${n} files)`,
+          );
         }
       }
     }
-  } catch {
-    /* best-effort: the offline build error + diagnostic still surface the split */
+  } catch (e) {
+    // Loud (not silent): a failed mirror is the difference between byte-equal
+    // working and the "no matching package ... offline" error, so surface it.
+    onLog?.(`[anvil] registry mirror FAILED: ${(e as Error).message}`);
   }
 }
 
@@ -1008,24 +1047,29 @@ function diagnoseOfflineRegistry(tail: string): string {
       const blob = join(idxRoot, d, ".cache", "an", "ch", "anchor-spl");
       out.push(`  ${d}: anchor-spl index blob ${existsSync(blob) ? "PRESENT" : "ABSENT"}`);
     }
-    if (dirs.length > 1) {
-      out.push(
-        "  >>> MULTIPLE index dirs = host vs platform-tools cargo registry-hash SPLIT — the byte-equal offline bug. Bump the Anza pin so cargo-build-sbf's cargo is ≥ 1.85 (same side of the index-hash flip as the host cargo).",
+    // anvil mirror state: report BOTH known crates.io hashes (index blob + src
+    // extraction) so this readout alone says whether mirrorRegistryHashDirs ran.
+    // If only ONE hash has the blob, the mirror did NOT run → the deployed image
+    // predates the mirror commit (4cb7b90). If BOTH have it yet the build still
+    // failed, the offline cargo wants a THIRD location (e.g. the legacy git index
+    // github.com-1ecc6299db9ec823) — which the cargo versions above will explain.
+    const srcRootDiag = join(cargoHome, "registry", "src");
+    let blobsPresent = 0;
+    for (const h of CRATES_IO_INDEX_HASHES) {
+      const idxBlob = existsSync(
+        join(idxRoot, cratesIoDirName(h), ".cache", "an", "ch", "anchor-spl"),
       );
-    } else if (dirs.length === 1) {
-      // CAUTION: a single dir does NOT rule out the split. cargo only creates an
-      // index dir when it FETCHES; the offline cargo-build-sbf never fetches, so
-      // a < 1.85 platform-tools cargo leaves its 6f17… dir uncreated while the
-      // host cargo's 1949… dir is the only one on disk — looking exactly like
-      // "single dir present". Compare the two cargo versions printed above: if
-      // they straddle cargo 1.85, it IS a split (rebuild the image so the
-      // platform-tools cargo is ≥ 1.85). Only when BOTH cargos are ≥ 1.85 (same
-      // hash) AND the blob is present yet unreadable does sandbox/firejail
-      // visibility become the suspect.
-      out.push(
-        "  >>> SINGLE index dir present. This does NOT rule out a hash split: the offline cargo-build-sbf never fetches, so a < 1.85 platform-tools cargo leaves ITS index dir uncreated. Compare the host vs cargo-build-sbf versions above — if they straddle cargo 1.85, rebuild the image with a ≥ 1.85 Anza pin. Only if BOTH are ≥ 1.85 does firejail visibility become the suspect.",
-      );
+      const srcH = join(srcRootDiag, cratesIoDirName(h));
+      const srcOk =
+        existsSync(srcH) && readdirSync(srcH).some((c) => c.startsWith("anchor-spl-"));
+      if (idxBlob) blobsPresent++;
+      out.push(`  hash ${h} (${h === "1949cf8c6b5b557f" ? ">=1.85" : "<1.85"}): index-blob ${idxBlob ? "Y" : "n"} / src ${srcOk ? "Y" : "n"}`);
     }
+    out.push(
+      blobsPresent >= 2
+        ? "  >>> anvil mirror RAN (both hash dirs populated). If the build still failed, the offline cargo wants a different registry than crates.io-sparse — check the legacy git index github.com-1ecc6299db9ec823 and the cargo versions above."
+        : "  >>> anvil mirror DID NOT RUN (only one hash dir populated). The deployed image predates commit 4cb7b90 / mirrorRegistryHashDirs — redeploy and confirm /health.differentialMirror === true.",
+    );
   } catch (e) {
     out.push(`registry index scan: <error ${(e as Error).message}>`);
   }
