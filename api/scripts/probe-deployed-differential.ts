@@ -4,7 +4,7 @@
  * auto-scenario -> /build/differential. Prints status at each step + final
  * verdict (or the exact failure).
  */
-const BASE = process.env.ANVIL_API ?? "https://anvil-prod-api-wff8f.ondigitalocean.app";
+const BASE = process.env.ANVIL_API ?? "https://anvil-app-nrjdl.ondigitalocean.app";
 const demo = process.argv[2] ?? "counter";
 
 async function j(method: string, path: string, body?: unknown, timeoutMs = 360_000) {

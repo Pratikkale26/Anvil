@@ -253,7 +253,7 @@ docs/   Architecture, differential testing, feature matrix, migration guide
 
 ## Status
 
-v0.4.0 — **safe-by-default** (`--strict` is the new CLI default; `--permissive` is the opt-out). See [CHANGELOG.md](CHANGELOG.md) for the BREAKING-change migration notes. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-prod-api-wff8f.ondigitalocean.app`](https://anvil-prod-api-wff8f.ondigitalocean.app). **64/64 demo programs produce deployable `.so` via `cargo build-sbf`** on Pinocchio. 150 byte-equal differential test files + 193 realworld cargo-green MUST_PASS entries + 100+ IR body statement kinds. **Top DeFi: klend (63 instructions, `cargo build-sbf` GREEN)**. **First multi-file real-world byte-equal: Helium circuit-breaker** — Anchor and Pinocchio produce identical on-chain state. 1,255 commits, single developer.
+v0.4.0 — **safe-by-default** (`--strict` is the new CLI default; `--permissive` is the opt-out). See [CHANGELOG.md](CHANGELOG.md) for the BREAKING-change migration notes. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-app-nrjdl.ondigitalocean.app`](https://anvil-app-nrjdl.ondigitalocean.app). **64/64 demo programs produce deployable `.so` via `cargo build-sbf`** on Pinocchio. 150 byte-equal differential test files + 193 realworld cargo-green MUST_PASS entries + 100+ IR body statement kinds. **Top DeFi: klend (63 instructions, `cargo build-sbf` GREEN)**. **First multi-file real-world byte-equal: Helium circuit-breaker** — Anchor and Pinocchio produce identical on-chain state. 1,255 commits, single developer.
 
 Working notes for grant + migration: [docs/migration-guide.md](docs/migration-guide.md).
 

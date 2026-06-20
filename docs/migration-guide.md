@@ -148,4 +148,4 @@ Standard Solana deploy. Generated programs use the same `declare_id!()` as the A
 
 - Parser/emit divergence: open an issue with a minimal reproduction (single Anchor file + the divergent scenario).
 - Differential gate output mismatch: include the byte offset and your scenario.json.
-- Workbench / API hiccups: `https://anvil-prod-api-wff8f.ondigitalocean.app/health` returns the running release SHA + sandbox kind; include that in the issue.
+- Workbench / API hiccups: `https://anvil-app-nrjdl.ondigitalocean.app/health` returns the running release SHA + sandbox kind; include that in the issue.
