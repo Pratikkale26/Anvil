@@ -9,7 +9,7 @@ import { lintRoute } from "./routes/lint.js";
 import { buildRoute } from "./routes/build.js";
 import { differentialRoute } from "./routes/differential.js";
 import { evidenceRoute } from "./routes/evidence.js";
-import { differentialAvailable } from "./build/differential-build.js";
+import { differentialAvailable, differentialReason } from "./build/differential-build.js";
 import { liteSvmContract } from "./build/scenario-runner.js";
 import { metricsDashboardHandler } from "./routes/metrics-dashboard.js";
 import { AnvilError, ErrorCode } from "./errors.js";
@@ -278,9 +278,22 @@ const TOOLCHAIN = (() => {
       return true;
     } catch { return false; }
   };
+  // First line of `cargo-build-sbf --version`, e.g. "solana-cargo-build-sbf 3.1.14".
+  // Baked into the binary (no platform-tools download needed), so cheap at boot.
+  // Surfaced so a `curl /health` confirms a deploy actually rebuilt the toolchain
+  // layer: a STALE image reports an old build-sbf version (the byte-equal registry
+  // index-hash split only bites when this cargo is on the opposite side of the
+  // cargo-1.85 flip from the host `cargo` that warms the registry).
+  const cargoBuildSbfVersion = (() => {
+    try {
+      return execSync("cargo-build-sbf --version", { encoding: "utf-8" })
+        .split("\n")[0]!.trim();
+    } catch { return null; }
+  })();
   return {
     cargo: probe("cargo"),
     cargoBuildSbf: probe("cargo-build-sbf"),
+    cargoBuildSbfVersion,
     anchor: probe("anchor"),
   };
 })();
@@ -331,6 +344,10 @@ const healthHandler: express.RequestHandler = async (_req, res) => {
      *  request time so a toolchain install after startup is reflected
      *  without restart. */
     differentialAvailable: differentialAvailable(),
+    /** When byte-equal is NOT runnable, WHY (toolchain missing vs anchor-spl
+     *  not resolvable in the offline registry); null when ready. Makes a
+     *  degraded deploy self-explanatory instead of failing only at click-time. */
+    differentialReason: differentialReason(),
     /** Maximum source-bytes the /parse endpoint will accept. Operators can
      *  see the limit without inspecting code; users can size-check before
      *  POSTing 5MB+ flattened multi-file Anchor sources. */

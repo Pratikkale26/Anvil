@@ -116,20 +116,25 @@ RUN set -e; \
 # locked-down container network. Mirrors the pinocchio/native pre-fetch above;
 # pinned to 0.31 (= avm pin + the reference build's sniff default). Feature
 # union covers the common anchor-spl shapes (sniffAnchorExtraDeps).
-RUN set -e; \
-    mkdir -p /root/.anvil-build/anvil-build-anchor/src; \
+#
+# NON-FATAL by design (this RUN can never fail the image build). An earlier
+# revision did `exit 1` when the post-fetch verify missed anchor-spl, reasoning
+# "a broken offline registry must not ship". The opposite is true on DO App
+# Platform: a failed image build makes DO keep serving the LAST-GOOD image, so a
+# single transient fetch hiccup silently strands prod on a stale image (old emit
+# bugs AND old toolchain) with no signal. Far better to always deploy the fresh
+# image and surface the degraded byte-equal at RUNTIME — `/health.differentialReason`
+# reports exactly this anchor-spl-resolvable check, and the build log below prints
+# OK/WARN so a real pre-fetch failure is still visible in the deploy output.
+RUN mkdir -p /root/.anvil-build/anvil-build-anchor/src; \
     printf '[package]\nname = "anvil-build-anchor"\nversion = "0.1.0"\nedition = "2021"\n[lib]\ncrate-type = ["cdylib", "lib"]\n[dependencies]\nanchor-lang = { version = "0.31", features = ["init-if-needed"] }\nanchor-spl = { version = "0.31", features = ["associated_token", "memo", "metadata", "token_2022"] }\n' > /root/.anvil-build/anvil-build-anchor/Cargo.toml; \
     echo 'pub fn x() {}' > /root/.anvil-build/anvil-build-anchor/src/lib.rs; \
-    (cd /root/.anvil-build/anvil-build-anchor && cargo fetch); \
-    # FAIL-LOUD (no `|| true`): unlike the pinocchio/native pre-fetch, the
-    # offline Anchor reference build (cargo-build-sbf --offline, firejail
-    # --net=none) has NO runtime network fallback on DO — a missing anchor-spl
-    # here permanently breaks /build/differential. Verify the crate actually
-    # landed in BOTH the sparse index .cache blob (what offline resolution reads)
-    # AND registry/src (extracted), and fail the image build otherwise.
-    ls /root/.cargo/registry/index/index.crates.io-*/.cache/an/ch/anchor-spl >/dev/null 2>&1 \
-      && ls -d /root/.cargo/registry/src/index.crates.io-*/anchor-spl-* >/dev/null 2>&1 \
-      || (echo "FATAL: anchor-spl not resolvable in the offline registry after pre-fetch (index blob or src missing)" >&2; exit 1)
+    (cd /root/.anvil-build/anvil-build-anchor && cargo fetch) \
+      || echo "WARN: anchor dep pre-fetch failed — byte-equal degraded until a runtime warm-fetch repopulates the registry (see /health.differentialReason)"; \
+    ( ls /root/.cargo/registry/index/index.crates.io-*/.cache/an/ch/anchor-spl >/dev/null 2>&1 \
+        && ls -d /root/.cargo/registry/src/index.crates.io-*/anchor-spl-* >/dev/null 2>&1 \
+        && echo "OK: anchor-spl resolvable in the offline registry (index blob + src present)" ) \
+      || echo "WARN: anchor-spl NOT resolvable in the offline registry after pre-fetch — /health.differentialReason will report byte-equal degraded"
 
 # Install dependencies
 COPY package.json bun.lock ./

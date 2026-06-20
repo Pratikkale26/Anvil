@@ -941,11 +941,20 @@ function diagnoseOfflineRegistry(tail: string): string {
     }
     if (dirs.length > 1) {
       out.push(
-        "  >>> MULTIPLE index dirs = host vs platform-tools cargo registry-hash SPLIT — the byte-equal offline bug. Pin the host rustup toolchain (Dockerfile --default-toolchain) to the platform-tools cargo version and keep the Anza pin in lockstep.",
+        "  >>> MULTIPLE index dirs = host vs platform-tools cargo registry-hash SPLIT — the byte-equal offline bug. Bump the Anza pin so cargo-build-sbf's cargo is ≥ 1.85 (same side of the index-hash flip as the host cargo).",
       );
     } else if (dirs.length === 1) {
+      // CAUTION: a single dir does NOT rule out the split. cargo only creates an
+      // index dir when it FETCHES; the offline cargo-build-sbf never fetches, so
+      // a < 1.85 platform-tools cargo leaves its 6f17… dir uncreated while the
+      // host cargo's 1949… dir is the only one on disk — looking exactly like
+      // "single dir present". Compare the two cargo versions printed above: if
+      // they straddle cargo 1.85, it IS a split (rebuild the image so the
+      // platform-tools cargo is ≥ 1.85). Only when BOTH cargos are ≥ 1.85 (same
+      // hash) AND the blob is present yet unreadable does sandbox/firejail
+      // visibility become the suspect.
       out.push(
-        "  >>> SINGLE index dir — if its anchor-spl blob is PRESENT yet the build can't see it, suspect sandbox (firejail) registry visibility, NOT a hash split.",
+        "  >>> SINGLE index dir present. This does NOT rule out a hash split: the offline cargo-build-sbf never fetches, so a < 1.85 platform-tools cargo leaves ITS index dir uncreated. Compare the host vs cargo-build-sbf versions above — if they straddle cargo 1.85, rebuild the image with a ≥ 1.85 Anza pin. Only if BOTH are ≥ 1.85 does firejail visibility become the suspect.",
       );
     }
   } catch (e) {
@@ -985,4 +994,54 @@ export function differentialAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Is anchor-spl actually resolvable by the OFFLINE reference build? The Docker
+ * pre-fetch is now non-fatal (a failed image build would strand prod on a stale
+ * image), so a fresh deploy can boot with byte-equal degraded. This cheap disk
+ * check (existsSync only) mirrors what the build-time pre-fetch verifies — the
+ * sparse-index .cache blob AND the extracted registry/src — so the degraded
+ * state is VISIBLE at /health.differentialReason instead of only surfacing as a
+ * cryptic "no matching package ... offline mode" the first time a user clicks
+ * "Verify byte-equal".
+ */
+function anchorSplOfflineResolvable(): boolean {
+  const cargoHome = process.env.CARGO_HOME ?? `${process.env.HOME ?? ""}/.cargo`;
+  try {
+    const idxRoot = join(cargoHome, "registry", "index");
+    const idxDirs = existsSync(idxRoot)
+      ? readdirSync(idxRoot).filter((d) => d.startsWith("index.crates.io-"))
+      : [];
+    const blobPresent = idxDirs.some((d) =>
+      existsSync(join(idxRoot, d, ".cache", "an", "ch", "anchor-spl")),
+    );
+    const srcRoot = join(cargoHome, "registry", "src");
+    const srcPresent = existsSync(srcRoot)
+      ? readdirSync(srcRoot).some(
+          (d) =>
+            d.startsWith("index.crates.io-") &&
+            readdirSync(join(srcRoot, d)).some((c) => c.startsWith("anchor-spl-")),
+        )
+      : false;
+    return blobPresent && srcPresent;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Human-readable reason byte-equal is unavailable, or null when it's ready.
+ * Surfaced at /health.differentialReason so a degraded deploy explains itself
+ * (toolchain missing vs anchor-spl not pre-fetched) rather than serving a stale
+ * image or failing only at click-time.
+ */
+export function differentialReason(): string | null {
+  if (!differentialAvailable()) {
+    return "cargo-build-sbf or anchor CLI not on PATH";
+  }
+  if (!anchorSplOfflineResolvable()) {
+    return "anchor-spl not resolvable in the offline cargo registry (pre-fetch missing/incomplete) — byte-equal degraded until a runtime warm-fetch repopulates it";
+  }
+  return null;
 }
