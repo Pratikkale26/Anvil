@@ -819,9 +819,78 @@ function rewriteDeclareId(source: string, programIdBase58?: string): string {
   return out;
 }
 
+/**
+ * Make the warmed cargo registry resolvable by BOTH cargos regardless of which
+ * side of the cargo-1.85 index-hash flip each lands on.
+ *
+ * Cargo's registry/{index,cache,src}/index.crates.io-<hash> dir name flipped at
+ * cargo 1.85 (6f17… for < 1.85, 1949… for >= 1.85). The byte-equal warm-fetch
+ * runs the HOST cargo (>= 1.91 for avm → 1949…), while the offline
+ * cargo-build-sbf runs its bundled platform-tools cargo — which on a
+ * stale-but-immovable prod image is < 1.85 (cargo-build-sbf 2.1.0 → 6f17…). The
+ * offline build then reads an EMPTY index dir → "no matching package named
+ * anchor-spl ... offline mode", even though the crate is on disk under the
+ * host's hash dir.
+ *
+ * We can't reliably force prod off the < 1.85 toolchain (DO App Platform caches
+ * the Dockerfile toolchain layers — a fresh deploy carries new app code yet
+ * keeps cargo-build-sbf 2.1.0), and the sandboxed offline build (--net=none)
+ * can't fetch into its own hash dir. So after the warm-fetch we HARDLINK-MIRROR
+ * the populated hash dir to the other known hash dir. Hardlinks → near-zero disk
+ * + no re-download; the sparse-index .cache blob format is identical across the
+ * flip (verified locally cargo 1.79 ↔ 1.96), so the older cargo reads the mirror
+ * fine. Version-agnostic + self-healing: works whatever cargo DO ends up baking.
+ * Best-effort — any failure just leaves the offline build's own error +
+ * diagnoseOfflineRegistry() to fire.
+ */
+function mirrorRegistryHashDirs(cargoHome: string, onLog?: (l: string) => void): void {
+  // crates.io sparse-index dir hashes either side of the cargo-1.85 flip.
+  const HASHES = ["1949cf8c6b5b557f", "6f17d22bba15001f"];
+  const dirName = (h: string) => `index.crates.io-${h}`;
+  try {
+    for (const sub of ["index", "cache", "src"]) {
+      const base = join(cargoHome, "registry", sub);
+      if (!existsSync(base)) continue;
+      const present = HASHES.filter((h) => existsSync(join(base, dirName(h))));
+      if (present.length === 0) continue;
+      for (const srcH of present) {
+        for (const dstH of HASHES) {
+          if (dstH === srcH) continue;
+          const from = join(base, dirName(srcH));
+          const to = join(base, dirName(dstH));
+          mkdirSync(to, { recursive: true });
+          // -a archive, -l hardlink. index: -f so a newly-locked crate version
+          // is always refreshed (the .cache blobs are tiny). cache/src: -n
+          // (no-clobber) — crate-version files are immutable, only ADD what the
+          // other dir is missing, which keeps the per-build cost near zero.
+          const flags = sub === "index" ? "-alf" : "-aln";
+          const r = spawnSync("cp", [flags, `${from}/.`, `${to}/`], {
+            encoding: "utf-8",
+            timeout: 60_000,
+          });
+          if (r.status === 0) {
+            onLog?.(`[anvil] mirrored registry/${sub}: ${dirName(srcH)} → ${dirName(dstH)}`);
+          }
+        }
+      }
+    }
+  } catch {
+    /* best-effort: the offline build error + diagnostic still surface the split */
+  }
+}
+
+export { mirrorRegistryHashDirs as mirrorRegistryHashDirsForTest };
+
 function runSandboxedSbf(cwd: string, opts: DifferentialBuildOptions): Promise<void> {
   return new Promise((resolve, reject) => {
     const env = sandboxedEnv();
+    // Bridge the cargo-1.85 registry index-hash split: the offline build's cargo
+    // may compute a different index.crates.io-<hash> dir than the host cargo that
+    // warmed the registry. Mirror across both before the sandboxed (--net=none)
+    // build, which has no chance to fetch into its own dir.
+    const cargoHome =
+      env.CARGO_HOME ?? process.env.CARGO_HOME ?? `${process.env.HOME ?? ""}/.cargo`;
+    mirrorRegistryHashDirs(cargoHome, opts.onLog);
     // Cap cargo's parallel job count. cargo-build-sbf spawns rustc + cc +
     // rust-lld concurrently across crates -- on WSL2 (and small VMs) the
     // host fork()s start returning EAGAIN once thread/process slots fill,
