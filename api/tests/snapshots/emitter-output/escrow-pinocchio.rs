@@ -81,6 +81,15 @@ pub fn create_escrow(
     if !maker.is_writable() || !maker_ata_a.is_writable() || !escrow.is_writable() || !vault.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }
+    if mint_a.owner() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if mint_b.owner() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if maker_ata_a.owner() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if token_program.key() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -241,6 +250,18 @@ pub fn accept_escrow(
     if escrow.owner() != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
+    if mint_a.owner() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if mint_b.owner() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if taker_ata_b.owner() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if vault.owner() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if maker.owner() != &[0u8; 32] {
         return Err(ProgramError::Custom(3011u32));
     }
@@ -374,6 +395,15 @@ pub fn cancel_escrow(
         return Err(ProgramError::InvalidAccountData);
     }
     if escrow.owner() != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if mint_a.owner() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if maker_ata_a.owner() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if vault.owner() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {
         return Err(ProgramError::IncorrectProgramId);
     }
     if token_program.key() != &[6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169] {

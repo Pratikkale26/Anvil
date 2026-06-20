@@ -615,6 +615,19 @@ use solana_program::{
     }`;
   }
 
+  override emitSplOwnerCheck(name: string, ids: string[]): string {
+    // I4 — token/mint account program-owner check. `.owner` is a `&Pubkey`
+    // (solana_program's Pubkey is a struct, not a [u8;32] alias), so deref and
+    // compare to a Pubkey value built from the id literal — same idiom as the
+    // key-based programIdentityCheck. One id (legacy `Account`) or two
+    // (`InterfaceAccount` → spl_token | token_2022).
+    if (ids.length === 0) return "";
+    const cond = ids.map((id) => `*${name}.owner != Pubkey::new_from_array(${id})`).join(" && ");
+    return `    if ${cond} {
+        return Err(ProgramError::IncorrectProgramId);
+    }`;
+  }
+
   override emitWritableCheck(names: string[]): string {
     const checks = names.map((n) => `!${n}.is_writable`).join(" || ");
     return `    if ${checks} {

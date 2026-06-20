@@ -116,6 +116,12 @@ pub fn initialize_pool(
     if !pool.is_writable || !stake_vault.is_writable || !reward_vault.is_writable || !admin.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
+    if *stake_mint.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *reward_mint.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -275,6 +281,12 @@ pub fn stake(
     if pool.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
+    if *user_stake_ata.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *stake_vault.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -399,6 +411,12 @@ pub fn claim_rewards(
     if pool.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
+    if *reward_mint.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *user_reward_ata.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -506,6 +524,18 @@ pub fn unstake(
         return Err(ProgramError::IncorrectProgramId);
     }
     if pool.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *reward_mint.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *user_stake_ata.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *stake_vault.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *user_reward_ata.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {

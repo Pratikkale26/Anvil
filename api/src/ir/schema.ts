@@ -188,6 +188,16 @@ export const AccountRefSchema = z.object({
    */
   isLazy: z.boolean().optional(),
   /**
+   * I4 — set when the field wrapper is `InterfaceAccount<'info, T>` (Anchor's
+   * `Owners`-trait wrapper) rather than `Account<'info, T>` (the single-`Owner`
+   * trait). Only consumed for SPL token/mint accounts: it selects the
+   * program-owner id-set the emitted owner check pins — legacy
+   * `Account<TokenAccount|Mint>` is spl_token-only, `InterfaceAccount<…>`
+   * accepts {spl_token, token_2022} (verified vs anchor-spl 0.31 token.rs
+   * `Owner` → spl_token::ID vs token_interface.rs `Owners` → IDS).
+   */
+  isInterface: z.boolean().optional(),
+  /**
    * F8 — for an account flattened out of a composite `#[derive(Accounts)]`
    * field, the `<outer>_<inner>_…` prefix that was prepended to its name. Lets
    * the emitter resolve a nested `has_one = <field>` to the SAME composite

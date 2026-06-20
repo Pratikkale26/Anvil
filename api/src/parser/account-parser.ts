@@ -373,6 +373,11 @@ function parseAccountField(
   const accountType = extractAccountType(rawType);
   const isZeroCopy = /\bAccountLoader\s*<\s*'/.test(rawType);
   const isLazy = /\bLazyAccount\s*<\s*'/.test(rawType);
+  // I4 — `InterfaceAccount<'info, T>` (Owners trait) vs `Account<'info, T>`
+  // (Owner trait). `\b` matches through `Box<…>` / `Option<…>` wrapping so a
+  // boxed/optional interface account keeps the flag. Consumed only for SPL
+  // token/mint accounts, to pick the {spl_token, token_2022} owner id-set.
+  const isInterface = /\bInterfaceAccount\s*<\s*'/.test(rawType);
 
   // Parse all #[account(...)] attributes for this field (there may be multiple)
   const accountAttrParts: string[] = [];
@@ -435,6 +440,7 @@ function parseAccountField(
   };
   if (isZeroCopy) ref.isZeroCopy = true;
   if (isLazy) ref.isLazy = true;
+  if (isInterface) ref.isInterface = true;
   return ref;
 }
 

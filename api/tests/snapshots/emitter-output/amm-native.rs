@@ -120,6 +120,12 @@ pub fn initialize_pool(
     if !pool.is_writable || !vault_a.is_writable || !vault_b.is_writable || !lp_mint.is_writable || !admin.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
+    if *token_mint_a.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *token_mint_b.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -295,6 +301,24 @@ pub fn add_liquidity(
         return Err(ProgramError::InvalidAccountData);
     }
     if pool.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *user_token_a.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *user_token_b.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *vault_a.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *vault_b.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *lp_mint.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *user_lp_token.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
@@ -494,6 +518,24 @@ pub fn remove_liquidity(
     if pool.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
+    if *user_token_a.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *user_token_b.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *vault_a.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *vault_b.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *lp_mint.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *user_lp_token.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -658,6 +700,18 @@ pub fn swap(
         return Err(ProgramError::InvalidAccountData);
     }
     if pool.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *user_token_in.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *user_token_out.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *vault_a.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *vault_b.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
@@ -987,6 +1041,18 @@ pub fn withdraw_protocol_fees(
         return Err(ProgramError::InvalidAccountData);
     }
     if pool.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *vault_a.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *vault_b.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *admin_token_a.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *admin_token_b.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {

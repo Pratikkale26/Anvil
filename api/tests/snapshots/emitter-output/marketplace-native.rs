@@ -150,6 +150,12 @@ pub fn list(
     if marketplace.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
+    if *nft_mint.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *seller_ata.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -265,7 +271,7 @@ pub fn delist(
     let __ix_data: &[u8] = data;
 
     let seller = &accounts[0];
-    let _nft_mint = &accounts[1];
+    let nft_mint = &accounts[1];
     let seller_ata = &accounts[2];
     let listing = &accounts[3];
     let marketplace = &accounts[4];
@@ -284,6 +290,15 @@ pub fn delist(
         return Err(ProgramError::IncorrectProgramId);
     }
     if marketplace.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *nft_mint.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *seller_ata.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *vault.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
@@ -397,6 +412,12 @@ pub fn purchase(
         return Err(ProgramError::IncorrectProgramId);
     }
     if marketplace.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *nft_mint.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *vault.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {

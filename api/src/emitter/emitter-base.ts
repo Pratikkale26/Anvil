@@ -344,6 +344,14 @@ export abstract class BaseEmitter {
   emitProgramIdentityCheck(_accountName: string, _accountType: string): string {
     return "";
   }
+  // I4 — SPL token/mint account owner check (owner ∈ the token-program id-set).
+  // Base no-op; both targets override (the per-target owner-access idiom + Pubkey
+  // literal wrapping differ). The id-set is selected by the caller from the
+  // account wrapper (legacy `Account` → spl_token only; `InterfaceAccount` →
+  // {spl_token, token_2022}).
+  emitSplOwnerCheck(_accountName: string, _ids: string[]): string {
+    return "";
+  }
   abstract emitAccountKeyExpr(accountName: string): string;
   abstract emitAccountKeyAsRefExpr(accountName: string): string;
   abstract emitAccountLamportsExpr(accountName: string): string;
@@ -3271,6 +3279,31 @@ impl ZeroCopy for ${accName} {}`;
       .filter(Boolean)
       .join("\n");
 
+    // I4 — a non-init SPL `Account<'info, TokenAccount|Mint>` /
+    // `InterfaceAccount<…>` carries an intrinsic program-owner check Anchor
+    // enforces before any field read: `Account<token::TokenAccount>` (the single
+    // `Owner` trait) → owner == spl_token::ID; `InterfaceAccount<token_interface::
+    // TokenAccount>` (the `Owners` trait) → owner ∈ {spl_token::ID,
+    // spl_token_2022::ID}. `isCustomState` correctly excludes SPL types from the
+    // program_id ownerChecks (they're token-program-owned), but nothing
+    // substituted the token-program owner check → a confused-deputy gap: an
+    // account with a TokenAccount-shaped byte layout owned by ANOTHER program
+    // (e.g. an attacker's) deserialized via `Pack::unpack` (which checks
+    // length/state but NOT ownership) and was accepted. The wrapper flag
+    // (`isInterface`) selects the id-set; verified vs anchor-spl 0.31 token.rs
+    // (`Owner` → spl_token::ID) + token_interface.rs (`Owners` → IDS =
+    // [spl_token::ID, spl_token_2022::ID]). Excludes init (account being created)
+    // and optional (the bare-optional path is owner-checked in the body walker).
+    const splOwnerChecks = instr.accounts
+      .filter((a) => !a.isOptional && !a.isInit
+        && (a.accountType === "TokenAccount" || a.accountType === "Mint"))
+      .map((a) => this.emitSplOwnerCheck(
+        snakeCase(a.name),
+        programIdentityMembers(a.isInterface ? "TokenInterface" : "Token"),
+      ))
+      .filter(Boolean)
+      .join("\n");
+
     // F2 — a NON-init `associated_token::mint + authority` account carries a
     // canonical-ATA address pin Anchor verifies. Emit a runtime
     // find_program_address([authority, token_program, mint], ATA_PROGRAM) compare.
@@ -3531,7 +3564,7 @@ impl ZeroCopy for ${accName} {}`;
     const renderedHasOkTail = /\bOk\s*\(\s*\(\s*\)\s*\)\s*;?\s*$/.test(bodyCode.trimEnd());
     const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough && !renderedHasOkTail;
 
-    const preChecks = [signerChecks, writableCheck, ownerChecks, systemAccountChecks, programIdentityChecks, ataAddressChecks].filter(Boolean).join("\n");
+    const preChecks = [signerChecks, writableCheck, ownerChecks, splOwnerChecks, systemAccountChecks, programIdentityChecks, ataAddressChecks].filter(Boolean).join("\n");
 
     // `pub fn` so the multi-file layout's `pub use X::X;` re-export in
     // instructions/mod.rs resolves (CLI emits project-layout by default;

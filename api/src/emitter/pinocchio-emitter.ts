@@ -835,6 +835,18 @@ export class PinocchioEmitter extends BaseEmitter {
     }`;
   }
 
+  override emitSplOwnerCheck(name: string, ids: string[]): string {
+    // I4 — token/mint account program-owner check. pinocchio's `owner()` returns
+    // a `&Pubkey` ([u8;32] alias), so compare against `&<id literal>` — same
+    // idiom as the key-based programIdentityCheck. One id (legacy `Account`) or
+    // two (`InterfaceAccount` → spl_token | token_2022).
+    if (ids.length === 0) return "";
+    const cond = ids.map((id) => `${name}.owner() != &${id}`).join(" && ");
+    return `    if ${cond} {
+        return Err(ProgramError::IncorrectProgramId);
+    }`;
+  }
+
   override emitWritableCheck(names: string[]): string {
     const checks = names.map((n) => `!${n}.is_writable()`).join(" || ");
     return `    if ${checks} {

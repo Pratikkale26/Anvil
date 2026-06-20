@@ -85,6 +85,12 @@ pub fn create_vesting(
     if !grantor.is_writable || !vesting.is_writable || !vault.is_writable || !grantor_token_account.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
+    if *grantor_token_account.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *mint.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -264,6 +270,12 @@ pub fn release(
     if vesting.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
+    if *vault.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *beneficiary_token_account.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -361,6 +373,12 @@ pub fn revoke(
     if vesting.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
+    if *vault.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *grantor_token_account.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -437,6 +455,12 @@ pub fn close(
         return Err(ProgramError::InvalidAccountData);
     }
     if vesting.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *vault.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if *grantor_token_account.owner != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
         return Err(ProgramError::IncorrectProgramId);
     }
     if *token_program.key != Pubkey::new_from_array([6, 221, 246, 225, 215, 101, 161, 147, 217, 203, 225, 70, 206, 235, 121, 172, 28, 180, 133, 237, 95, 91, 55, 145, 58, 140, 245, 133, 126, 255, 0, 169]) {
