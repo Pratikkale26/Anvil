@@ -124,6 +124,52 @@ ${ACCOUNTS}
     expect(r.ok).toBe(true);
   });
 
+  // J2 / #49 — the program-examples shape: the #[program] fn delegates to a
+  // sibling whose MODULE name differs from the FN name (`create::create_token`,
+  // not `create::create`/`x::handler`), and that sibling co-locates the handler,
+  // its #[derive(Accounts)] struct, AND the #[account] state — exactly what
+  // project-source flattening nests into `pub mod create { … }`. Resolution must
+  // (a) inline the real body, (b) bind the nested Accounts struct to the
+  // instruction (NOT 0 accounts → that's the wrapper-shell refuse the sweep hit
+  // when fed single-file lib.rs with the sibling absent).
+  test("mod-name != fn-name + co-located nested Accounts struct resolves with its accounts", async () => {
+    const src = `${HEADER}
+pub mod create {
+    use super::*;
+    #[account] pub struct MyData { pub name: String }
+    #[derive(Accounts)]
+    pub struct CreateToken<'info> {
+        #[account(mut)] pub data: Account<'info, MyData>,
+        #[account(mut)] pub authority: Signer<'info>,
+        pub system_program: Program<'info, System>,
+    }
+    pub fn create_token(ctx: Context<CreateToken>, name: String) -> Result<()> {
+        ctx.accounts.data.name = name;
+        Ok(())
+    }
+}
+use create::*;
+
+#[program]
+pub mod prog {
+    use super::*;
+    pub fn create_token(ctx: Context<CreateToken>, name: String) -> Result<()> {
+        create::create_token(ctx, name)
+    }
+}
+`;
+    const r = await parseAnchor(src);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const ix = r.ir.instructions.find((i) => i.name === "create_token")!;
+    expect(ix).toBeDefined();
+    // Nested Accounts struct bound (3 accounts), not the 0-account wrapper-shell.
+    expect((ix.accounts ?? []).map((a) => a.name)).toEqual(["data", "authority", "system_program"]);
+    // Real handler body inlined; delegating call not carried verbatim.
+    expect(JSON.stringify(ix.body)).not.toContain("create::create_token");
+    expect(JSON.stringify(ix.body)).toContain("state_field_assign");
+  });
+
   test("non-delegating handler doesn't trigger wrapper resolution", async () => {
     const src = `${HEADER}
 #[program]
