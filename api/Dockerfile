@@ -26,18 +26,21 @@ RUN apt-get update \
 ENV RUSTUP_HOME=/root/.rustup \
     CARGO_HOME=/root/.cargo \
     PATH=/root/.cargo/bin:$PATH
-# PIN the host toolchain to the SAME rustc the Anza platform-tools cargo bundles
-# (v3.1.14 / platform-tools v1.52 = rustc 1.89.0). This is load-bearing for the
-# byte-equal /build/differential path: the warm-fetch + Docker pre-fetch run the
-# HOST cargo, while the offline build runs cargo-build-sbf's BUNDLED cargo.
-# Cargo's `registry/index/index.crates.io-<hash>` dir name flipped at cargo 1.85;
-# a FLOATING `stable` host cargo on one side of that flip and a pinned
-# platform-tools cargo on the other populate/read DIFFERENT index dirs → the
-# offline build resolves an empty registry → "no matching package named
-# anchor-spl ... offline mode". Pinning both to 1.89.0 makes them share one
-# index dir. Bump this in lockstep with the Anza pin below.
+# Host toolchain = `stable`. This is load-bearing for the byte-equal
+# /build/differential path: the warm-fetch + Docker pre-fetch run the HOST cargo,
+# while the offline reference build runs cargo-build-sbf's BUNDLED platform-tools
+# cargo (the Anza pin below). Cargo's `registry/index/index.crates.io-<hash>` dir
+# name flipped ONCE at cargo 1.85 (6f17… → 1949…). The prod break was an OLD
+# platform-tools cargo (Anza v3.1.13, < 1.85 → 6f17…) reading a registry the
+# host `stable` cargo (≥ 1.85 → 1949…) filled in a DIFFERENT dir → "no matching
+# package named anchor-spl ... offline mode". The fix is to keep BOTH on the
+# SAME side of the 1.85 flip: `stable` is ≥ 1.85 (and also the rustc avm needs —
+# avm's cargo-platform dep requires ≥ 1.91, so do NOT pin host below that), and
+# the Anza bump below moves platform-tools to ≥ 1.85 (v3.1.14 = rustc 1.89.0).
+# Both land in index.crates.io-1949…. (Don't re-pin host to 1.89: it breaks the
+# avm install.)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --default-toolchain 1.89.0 --profile minimal \
+      | sh -s -- -y --default-toolchain stable --profile minimal \
       --no-modify-path \
   && rustc --version && cargo --version
 
@@ -49,11 +52,12 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # build-sbf' which we now intercept with an actionable install hint —
 # but baking the toolchain into the image is the actual fix.
 #
-# v3.1.14 (platform-tools v1.52 / rustc 1.89.0) — matches the host rustup pin
-# above so the warm-fetch cargo and the offline cargo-build-sbf cargo compute
-# the IDENTICAL registry index-dir hash (the byte-equal offline-build fix).
-# This is the version verified working locally end-to-end. Bump in lockstep
-# with the rustup --default-toolchain pin above.
+# v3.1.14 (platform-tools v1.52 / rustc 1.89.0) — its bundled cargo is ≥ 1.85
+# (same side of the registry index-dir hash flip as the host `stable` cargo
+# above), so the warm-fetch cargo and the offline cargo-build-sbf cargo compute
+# the IDENTICAL index.crates.io-<hash> dir (the byte-equal offline-build fix).
+# This is the version verified working locally end-to-end. Keep it ≥ v3.1.14
+# (platform-tools rustc ≥ 1.85) whenever the Anza release stream moves.
 #
 # The installer drops binaries in
 # ~/.local/share/solana/install/active_release/bin and writes a path
