@@ -462,7 +462,22 @@ function parseInstructionFn(
   // Pinocchio/native function-parameter names that the body or synth-seed
   // exprs read. A user arg matching one of these shadows the param before
   // the body runs, breaking PDA-validation calls + raw pubkey use.
-  const synthParamNames = new Set(["program_id", "accounts"]);
+  //
+  // Also the arg-decode loop's own locals (emitArgsDeserialize / emitArgDeserialize
+  // in emitter-base.ts): `remaining` is the persistent cursor (`let mut remaining
+  // = __ix_data`), `arg_bytes`/`rest` are the per-arg split temps, `__ix_data` is
+  // the raw slice. An arg named after any of these shadows the cursor/temp and
+  // emits non-compiling Rust (e.g. `u16.split_at(..)` → E0599) that Anvil's
+  // validator would stamp clean. (`data` itself is safe — the `let __ix_data =
+  // data` copy captures it before any arg binding.)
+  const synthParamNames = new Set([
+    "program_id",
+    "accounts",
+    "remaining",
+    "arg_bytes",
+    "rest",
+    "__ix_data",
+  ]);
   const collidingArgs = new Map<string, string>();
   for (const arg of args) {
     if (accountNamesSet.has(arg.name) || synthParamNames.has(arg.name)) {
