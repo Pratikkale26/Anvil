@@ -1372,10 +1372,18 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     //     feature; the parser warning carries the predicate text so they
     //     can confirm. Strict-mode CLI's existing marker scan promotes if
     //     needed.
+    //   - instruction_discriminator_override_unsupported (#13): a
+    //     #[instruction(discriminator = <opaque>)] override the parser could
+    //     not resolve to bytes. Anvil's router falls back to the default
+    //     sha256 discriminator, so the on-chain dispatch byte SILENTLY
+    //     misroutes vs the Anchor original. Resolvable overrides (int /
+    //     byte-array / byte-string / const-byte-array) are honored and never
+    //     warn, so escalating this is narrow and won't over-refuse.
     const severity: ValidationSeverity =
       w.code === "anchor_pattern_in_passthrough" ||
       w.code === "composite_accounts_field" ||
-      w.code === "cpi_unrecognized_dropped"
+      w.code === "cpi_unrecognized_dropped" ||
+      w.code === "instruction_discriminator_override_unsupported"
         ? "error"
         : "warning";
     issues.push({
