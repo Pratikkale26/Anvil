@@ -605,7 +605,7 @@ function analyzeCustomTypes(ir: SolanaIR, findings: LintFinding[]): void {
         level: "ready",
         category: "Custom types",
         title: `enum ${t.name} uses explicit discriminants`,
-        detail: "Anvil adds #[borsh(use_discriminant = true)] so borsh stays consistent with declared values.",
+        detail: "Anvil emits #[borsh(use_discriminant = false)] so the on-chain enum tag is the ordinal position (0, 1, …), matching anchor-lang's borsh-0.10 encoding. The declared values still apply to Rust-level `as` casts.",
         where: t.name,
       });
     }

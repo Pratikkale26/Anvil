@@ -4331,11 +4331,22 @@ ${originalLines}
             decl = decl.replace(/(#\[derive\([^)]*?),\s*Copy\b/g, "$1");
             decl = decl.replace(/#\[derive\(\s*Copy\s*\)\]/g, "");
           }
-          // G24 — borsh-derive 1.x requires explicit `#[borsh(use_discriminant
+          // G24 — borsh-derive 1.x requires an explicit `#[borsh(use_discriminant
           // = true/false)]` on enums with explicit discriminator values when
           // the BorshSerialize/Deserialize derive is present. Inject the attr
           // after the existing derive line when the enum has `= N` variants
           // and no `#[borsh(...)]` attr already present.
+          //
+          // The value MUST be `false`: anchor-lang pins borsh 0.10, which
+          // IGNORES explicit discriminants and serializes enum tags by ORDINAL
+          // position (A→0, B→1, …). Emitting `= true` makes borsh-1.x honor the
+          // declared value, silently diverging the stored tag byte from the
+          // Anchor original (e.g. `B = 20` → on-chain byte 20 vs Anchor's
+          // ordinal byte 1) — a clean-but-wrong on-chain state corruption.
+          // `= false` keeps Rust-level `as u8` casts reading the declared value
+          // while serializing ordinal, matching Anchor exactly. The synthesized
+          // path below (4377) is correct as-is: it renumbers variants to ordinal,
+          // so `use_discriminant = true` there is self-consistent with Anchor.
           const hasBorshDerive = /\bBorsh(?:Serialize|Deserialize)\b/.test(decl);
           // G27d — discriminator patterns: decimal (= 0), binary (= 0b001),
           // hex (= 0x1A), and underscore-separated literals (1_000). Drift's
@@ -4347,7 +4358,7 @@ ${originalLines}
             // spans up through its matching `)]`.
             decl = decl.replace(
               /^(#\[derive\([^\]]*\)\])\s*\n/m,
-              `$1\n#[borsh(use_discriminant = true)]\n`,
+              `$1\n#[borsh(use_discriminant = false)]\n`,
             );
           }
         } else {
@@ -4355,7 +4366,9 @@ ${originalLines}
           // raw enum body has `&mut` references (NodeRefMut pattern).
           const hasMutRef = /&\s*(?:'\w+\s+)?mut\b/.test(rawCode);
           const effectiveCopy = hasMutRef ? "" : copyDerive;
-          decl = `#[derive(Clone, ${effectiveCopy}Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = true)]\n${rawCode}`;
+          // use_discriminant = false → ordinal borsh tag, matching anchor's
+          // borsh-0.10 (see G24 note above).
+          decl = `#[derive(Clone, ${effectiveCopy}Debug, PartialEq, BorshSerialize, BorshDeserialize)]\n#[borsh(use_discriminant = false)]\n${rawCode}`;
         }
         return `${decl}${this.emitTypeInherentImpl(typeDef)}`;
       }
