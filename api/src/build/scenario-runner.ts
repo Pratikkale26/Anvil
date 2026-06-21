@@ -762,6 +762,8 @@ export interface ScenarioRunResult {
   snapshots: Map<string, AccountSnapshot>;
   /** Concatenated log lines across all steps. */
   allLogs: string[];
+  /** set_return_data() bytes per step (base64, null when none / on failure). */
+  returnData: (string | null)[];
 }
 
 // ─── LiteSVM contract probe (A5) ────────────────────────────────────────────
@@ -994,6 +996,7 @@ export function runScenarioOnSo(
 
   const stepOutcomes: StepOutcome[] = [];
   const allLogs: string[] = [];
+  const returnData: (string | null)[] = [];
   let executionAborted = false;
 
   for (let i = 0; i < scenario.steps.length; i++) {
@@ -1104,6 +1107,7 @@ export function runScenarioOnSo(
         logs,
         expectedFail: step.expectFail,
       });
+      returnData.push(null); // failed tx — no return data to compare
       // expectFail: don't abort the rest; otherwise abort.
       if (!step.expectFail) executionAborted = true;
     } else {
@@ -1117,6 +1121,11 @@ export function runScenarioOnSo(
         logs,
         expectedFail: step.expectFail,
       });
+      // Capture set_return_data() bytes (base64) for returnData parity. Empty
+      // (no return data set) normalizes to null so both sides compare equal.
+      const rd = (r as unknown as { returnData?: () => { data: () => Uint8Array } | null }).returnData?.();
+      const rdBytes = rd ? Buffer.from(rd.data()) : null;
+      returnData.push(rdBytes && rdBytes.length > 0 ? rdBytes.toString("base64") : null);
     }
   }
 
@@ -1152,7 +1161,7 @@ export function runScenarioOnSo(
     }
   }
 
-  return { steps: stepOutcomes, snapshots, allLogs };
+  return { steps: stepOutcomes, snapshots, allLogs, returnData };
 }
 
 // ─── Verdict assembly ───────────────────────────────────────────────────────
@@ -1280,6 +1289,9 @@ export interface ScenarioVerdict {
   sanityWarnings: SanityWarning[];
   eventLogDiff?: { anchor: string[]; anvil: string[]; diverged: boolean };
   msgLogDiff?: { anchor: string[]; anvil: string[]; diverged: boolean };
+  /** Per-step set_return_data() bytes (base64, null when none) when
+   *  scenario.compare.returnData is set. */
+  returnDataDiff?: { anchor: (string | null)[]; anvil: (string | null)[]; diverged: boolean };
 }
 
 export function compareScenarioRuns(
@@ -1436,7 +1448,7 @@ export function compareScenarioRuns(
     });
   }
   if (scenario.compare.accounts.length === 0 && scenario.assertions.length === 0
-    && !scenario.compare.eventLogs && !scenario.compare.msgLogs) {
+    && !scenario.compare.eventLogs && !scenario.compare.msgLogs && !scenario.compare.returnData) {
     sanityWarnings.push({
       kind: "no_compare_targets",
       message: "No accounts to compare, no assertions, no event/msg/return-data comparison. Verdict is trivially 'equal' but proves nothing.",
@@ -1546,18 +1558,27 @@ export function compareScenarioRuns(
     const v = anvilRun.allLogs.filter((l) => l.startsWith("Program log:") && !l.startsWith("Program log: Instruction:"));
     msgLogDiff = { anchor: a, anvil: v, diverged: !arrayEqual(a, v) };
   }
+  // set_return_data() parity. Per-step base64 (null when none) — compared
+  // positionally so a divergence in WHICH step returns data is caught too.
+  let returnDataDiff: ScenarioVerdict["returnDataDiff"];
+  if (scenario.compare.returnData) {
+    const a = anchorRun.returnData;
+    const v = anvilRun.returnData;
+    returnDataDiff = { anchor: a, anvil: v, diverged: !arrayEqual(a, v) };
+  }
 
-  // Verdict logic: any divergence (account / event / msg / failed assertion) → DIVERGED.
-  // All clean → BYTE_EQUAL. Setup error (e.g. step build failed) → SCENARIO_FAILED.
+  // Verdict logic: any divergence (account / event / msg / returnData / failed
+  // assertion) → DIVERGED. All clean → BYTE_EQUAL. Setup error → SCENARIO_FAILED.
   const anyAccountDiverged = accountDiffs.some((d) => d.status !== "equal");
   const anyEventDiverged = eventLogDiff?.diverged ?? false;
   const anyMsgDiverged = msgLogDiff?.diverged ?? false;
+  const anyReturnDataDiverged = returnDataDiff?.diverged ?? false;
   const anyAssertionFailed = assertions.some((a) => !a.passed);
   const anyScenarioFailure = anvilRun.steps.some((s) => !s.ok && !s.expectedFail && s.error?.includes("build-instruction failed"));
 
   let verdict: ScenarioVerdict["verdict"];
   if (anyScenarioFailure) verdict = "SCENARIO_FAILED";
-  else if (anyAccountDiverged || anyEventDiverged || anyMsgDiverged || anyAssertionFailed) verdict = "DIVERGED";
+  else if (anyAccountDiverged || anyEventDiverged || anyMsgDiverged || anyReturnDataDiverged || anyAssertionFailed) verdict = "DIVERGED";
   else verdict = "BYTE_EQUAL";
 
   // Partial-compare-scope sanity warning (M2). A green BYTE_EQUAL verdict
@@ -1651,6 +1672,7 @@ export function compareScenarioRuns(
     sanityWarnings,
     eventLogDiff,
     msgLogDiff,
+    returnDataDiff,
   };
 }
 
@@ -1663,7 +1685,7 @@ function hexPreview(buf: Buffer, around: number, span = 32): string {
   return Array.from(slice).map((b) => b.toString(16).padStart(2, "0")).join(" ");
 }
 
-function arrayEqual(a: string[], b: string[]): boolean {
+function arrayEqual<T>(a: T[], b: T[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;

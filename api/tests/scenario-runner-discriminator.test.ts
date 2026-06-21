@@ -66,7 +66,7 @@ function makeScenario(): Scenario {
 }
 
 function emptyRun(): ScenarioRunResult {
-  return { steps: [{ index: 0, ix: "noop", ok: true, logs: [], expectedFail: false }], snapshots: new Map(), allLogs: [] };
+  return { steps: [{ index: 0, ix: "noop", ok: true, logs: [], expectedFail: false }], snapshots: new Map(), allLogs: [], returnData: [] };
 }
 
 describe("compareScenarioRuns: discriminator-aware stripping (A4)", () => {
