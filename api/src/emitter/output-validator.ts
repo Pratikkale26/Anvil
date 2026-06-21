@@ -373,6 +373,43 @@ function checkDuplicateSeedBindings(content: string, path: string): ValidationIs
 }
 
 /**
+ * #16 — a PDA-signed CPI whose signer-seeds variable is NOT the canonical
+ * `signer_seeds` (e.g. a pass-through `invoke_signed(.., signer_a)` carried from
+ * source) can reference a `signer_*` variable the emitter never binds → E0425,
+ * which the fast validator otherwise stamps clean. Flag a `signer_*` identifier
+ * that is USED but never `let`-bound (and isn't a field access) in the same
+ * function, so --strict loudly refuses instead of shipping non-compiling emit.
+ */
+function checkUnboundSignerSeeds(content: string, path: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  // Mask strings/comments so a `signer_*` token inside them can't trip the scan.
+  const masked = maskLiteralsAndComments(content);
+  const fnBodies = masked.split(/\nfn\s+/);
+  for (const body of fnBodies) {
+    const fnName = body.match(/^(\w+)\s*\(/)?.[1] ?? "unknown";
+    // Bound: `let (mut) signer_x = …` and a fn param `signer_x: T`.
+    const bound = new Set<string>();
+    for (const m of body.matchAll(/\blet\s+(?:mut\s+)?(signer\w+)\b/g)) bound.add(m[1]);
+    for (const m of body.matchAll(/\b(signer\w+)\s*:/g)) bound.add(m[1]);
+    const flagged = new Set<string>();
+    // Used: a `signer_*` ident not preceded by `.`/word-char (excludes field
+    // accesses like `pool.signer_authority`) and not the binding LHS (those are
+    // already in `bound`).
+    for (const m of body.matchAll(/(?<![.\w])(signer\w+)\b/g)) {
+      const name = m[1];
+      if (bound.has(name) || flagged.has(name)) continue;
+      flagged.add(name);
+      issues.push({
+        severity: "error",
+        message: `Function '${fnName}': signer-seeds variable '${name}' is referenced but never bound (no 'let ${name} = …'). A PDA-signed CPI with a non-canonical signer variable is emitted without its binding (Anvil #16) — rename the source signer to 'signer_seeds' or hand-port the invoke_signed.`,
+        path,
+      });
+    }
+  }
+  return issues;
+}
+
+/**
  * Verify that the account count guard `accounts.len() < N` matches the actual
  * number of non-program accounts the instruction uses.
  */
@@ -1403,6 +1440,7 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     issues.push(...checkManualTodos(file.content, file.path));
     issues.push(...checkUnsafeMarkers(file.content, file.path));
     issues.push(...checkDuplicateSeedBindings(file.content, file.path));
+    issues.push(...checkUnboundSignerSeeds(file.content, file.path));
     issues.push(...checkAccountCountGuards(file.content, ir, file.path));
     issues.push(...checkOwnerChecks(file.content, ir, file.path));
     issues.push(...checkAllInstructionsEmitted(file.content, ir, file.path));
