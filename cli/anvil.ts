@@ -1118,6 +1118,15 @@ function printVerificationTier(
   console.log(`    ${na} byte-equal (runtime equivalence vs Anchor) ${c.dim}— NOT proven by compile${c.reset}`);
   console.log();
   console.log(`  ${c.bold}Highest tier reached: ${c.cyan}${highest}${c.reset}`);
+  // When the cargo gate did NOT run clean, "emit validator-clean" is a STATIC
+  // check only — it scans emit SHAPE (markers, dropped constraints), not whether
+  // rustc accepts the code. Saying "clean" without a compile over-claims: the
+  // emit can still fail to build (e.g. a shadowed binding, an undefined ident).
+  if (emitClean && !cargoClean) {
+    console.log(`    ${c.yellow}⚠ "emit validator-clean" is a STATIC check — it does NOT mean the code${c.reset}`);
+    console.log(`    ${c.yellow}  compiles.${c.reset} ${c.dim}The validator scans emit shape, not the Rust compiler. Run${c.reset}`);
+    console.log(`    ${c.dim}  cargo check (drop --no-cargo-check) or build-sbf to verify it builds.${c.reset}`);
+  }
   console.log(`    ${c.dim}A clean compile is NOT proof of on-chain equivalence. To prove runtime${c.reset}`);
   console.log(`    ${c.dim}behavior matches the Anchor original, run:${c.reset}`);
   console.log(`      ${c.cyan}anvil differential <src.rs> --anchor-so <anchor.so> --anvil-so <anvil.so> --scenario <s.json>${c.reset}`);
@@ -1560,6 +1569,10 @@ async function cmdValidate(args: CliArgs): Promise<void> {
         ok: errors.length === 0,
         errors: errors.length,
         warnings: warnings.length,
+        // STATIC checks only — `ok` means the validator found no error-severity
+        // shape issues, NOT that the emit compiles. Consumers must not treat
+        // ok:true as "builds". Run cargo check / build-sbf to verify compilation.
+        staticOnly: true,
         issues,
       }, null, 2),
     );
@@ -1596,6 +1609,15 @@ async function cmdValidate(args: CliArgs): Promise<void> {
   }
 
   console.log();
+
+  // Honesty: validate never invokes rustc. A clean result is NOT a compile
+  // guarantee — the validator scans emit shape (markers, dropped constraints),
+  // so emit can still fail to build. Point the user at the gates that do build.
+  if (errors.length === 0) {
+    console.log(`  ${c.dim}Note: validate runs STATIC checks only — it does NOT compile the output.${c.reset}`);
+    console.log(`  ${c.dim}Run \`anvil compile\` (cargo check) or \`anvil differential\` to verify it builds + matches Anchor.${c.reset}`);
+    console.log();
+  }
 
   if (errors.length > 0) {
     process.exit(1);
