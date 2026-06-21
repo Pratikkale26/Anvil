@@ -170,12 +170,15 @@ aiRoute.post("/refine", async (req, res) => {
     const accepted = result.patches.filter((p) => p.accepted).length;
     log("done", `Completed AI refine: ${accepted}/${result.patches.length} patches accepted.`);
 
+    // /ai/refine accepts on the validator+cargo error-delta gate and never runs
+    // a byte-equal differential, so an accepted patch is NOT runtime-verified.
+    // /build/auto-fix is the runtime-verified refine path.
     if (stream) {
-      writeStreamChunk(res, { type: "result", requestId, data: { ...result, reviewReport } });
+      writeStreamChunk(res, { type: "result", requestId, data: { ...result, reviewReport, runtimeVerified: false } });
       res.end();
       return;
     }
-    res.json({ ...result, reviewReport });
+    res.json({ ...result, reviewReport, runtimeVerified: false });
   } catch (error) {
     log("error", error instanceof Error ? error.message : String(error));
     // Categorized AIError → stable HTTP status. Pre-fix every error landed

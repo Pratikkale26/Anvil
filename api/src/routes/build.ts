@@ -24,6 +24,7 @@ import { checkSpendCap, recordSpend, shouldRefuseDueToSpendBackend } from "../ai
 import type { ValidationIssue } from "../emitter/output-validator.js";
 import { ScenarioSchema, lintScenario, type Scenario } from "../ir/scenario.js";
 import { buildBothSos, differentialAvailable, validateAnchorExtraDeps } from "../build/differential-build.js";
+import { isRuntimeVerified } from "../ai/runtime-verified.js";
 import { buildProjectScaffold } from "../emitter/project-scaffold.js";
 import {
   resolveScenarioContext,
@@ -711,6 +712,14 @@ buildRoute.post("/auto-fix", async (req, res) => {
     differentialVerdict: differentialCfg
       ? lastIter?.differential?.verdict ?? "NOT_RUN"
       : undefined,
+    // Explicit deploy-safety signal: true ONLY when a byte-equal differential
+    // actually ran and passed. A cargo-green run with no differential gate is
+    // NOT runtime-verified — consumers must not show it as "verified".
+    runtimeVerified: isRuntimeVerified({
+      cargoGreen,
+      differentialRan: !!differentialCfg,
+      verdict: lastIter?.differential?.verdict,
+    }),
   };
 
   if (wantsStream) {

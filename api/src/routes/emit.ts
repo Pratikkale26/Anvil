@@ -331,6 +331,10 @@ emitRoute.post("/", async (req, res) => {
       refined,
       refineResult: refineResult ?? undefined,
       refineError,
+      // /emit?refine accepts on the validator+cargo error-delta gate and never
+      // runs a byte-equal differential, so an accepted patch is NOT runtime-
+      // verified. Declare it explicitly; /build/auto-fix is the verified path.
+      runtimeVerified: false,
     };
 
     // Include multi-file output if requested.
