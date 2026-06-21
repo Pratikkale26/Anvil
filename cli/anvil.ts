@@ -22,6 +22,7 @@ import { emitPinocchioFull } from "../api/src/emitter/pinocchio-emitter.js";
 import { emitNativeFull } from "../api/src/emitter/native-emitter.js";
 import { validateEmitterOutput } from "../api/src/emitter/output-validator.js";
 import { auditPassthrough } from "../api/src/emitter/passthrough-audit.js";
+import { CLI_STUB_MARKER_PATTERNS } from "./stub-markers.js";
 import { analyzeCU } from "../api/src/emitter/cu-analyzer.js";
 import { buildProjectScaffold } from "../api/src/emitter/project-scaffold.js";
 import { resolveLocalSource } from "../api/src/parser/local-source.js";
@@ -1252,20 +1253,12 @@ async function cmdCompile(args: CliArgs): Promise<void> {
   }
   if (args.strict) {
     const allText = (output.files.length > 0 ? output.files.map((f) => f.content) : [output.singleFile]).join("\n");
-    // Stub-marker patterns. Sourced from api/src/emitter/markers.ts via the
-    // CLI's api-src bundle — keeping this list in sync with the emit-side
-    // constants closes the marker drift class. The linkage test
-    // (api/tests/marker-validator-linkage.test.ts) defends the validator
-    // side; this list is the CLI's parallel cargo-not-needed guard.
-    const stubMarkers = [
-      /TODO\(manual\)/,
-      /FIXME\(anvil\)/,
-      /⚠️\s*Anvil[^\n]*manual rebuild required/i,
-      /⚠️\s*Anvil[^\n]*not yet supported/i,
-      /⚠️\s*Anvil\s+TODO:/,
-      /\b0u8\s*\/\*\s*TODO:\s*decimals\b/,
-    ];
-    const stubHits = stubMarkers.filter((re) => re.test(allText));
+    // Stub-marker patterns sourced from cli/stub-markers.ts, kept at parity
+    // with the ERROR-severity entries of api/src/emitter/markers.ts by
+    // cli/stub-marker-linkage.test.ts. Defense-in-depth alongside the
+    // validator's own linkage (api/tests/marker-validator-linkage.test.ts);
+    // this list is the CLI's cargo-not-needed guard.
+    const stubHits = CLI_STUB_MARKER_PATTERNS.filter((re) => re.test(allText));
     const passthroughFindings = auditPassthrough(ir);
     const passthroughErrors = passthroughFindings.filter((f) => f.severity === "error");
     if (errors.length > 0 || stubHits.length > 0 || passthroughErrors.length > 0) {
