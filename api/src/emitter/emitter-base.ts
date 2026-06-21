@@ -108,6 +108,8 @@ import {
   prefixUnusedProphylacticBindings,
   promoteFreeFnVisibility,
   promoteImplFnVisibility,
+  firstUnitVariantName,
+  stripGenericBounds,
 } from "./emitter-base-utils.js";
 import { getParserSync, type SyntaxNode } from "../parser/ts-init.js";
 import { MARKER_ANVIL_TODO_PREFIX, MARKER_ANVIL_PREFIX } from "./markers.js";
@@ -199,16 +201,6 @@ function splitTopLevelCommas(text: string): string[] {
   return out;
 }
 
-function firstUnitVariantName(variants: string[], rawCode: string): string | null {
-  for (const v of variants) {
-    if (!v) continue;
-    const re = new RegExp(`\\b${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*([({,}]|$)`, "m");
-    const m = re.exec(rawCode);
-    if (!m || (m[1] !== "{" && m[1] !== "(")) return v;
-  }
-  return null;
-}
-
 /**
  * A non-unit `Result<T>` handler is wireable (emit real `set_return_data`
  * instead of a loud stub) only when its body is a plain single-tail
@@ -240,43 +232,6 @@ function isWireableTypedResult(instr: Instruction): boolean {
     if (/\bOk\s*\(/.test(code)) return false;
   }
   return true;
-}
-
-function stripGenericBounds(generics: string): string {
-  const trimmed = generics.trim();
-  if (trimmed.length === 0) return "";
-  // Strip leading `<` and trailing `>` so we can split the inside.
-  let inside = trimmed;
-  if (inside.startsWith("<") && inside.endsWith(">")) {
-    inside = inside.slice(1, -1);
-  }
-  if (inside.length === 0) return generics; // empty inside — preserve
-  const parts: string[] = [];
-  let depth = 0;
-  let start = 0;
-  for (let i = 0; i < inside.length; i++) {
-    const c = inside[i];
-    if (c === "<") depth++;
-    else if (c === ">") depth--;
-    else if (c === "," && depth === 0) {
-      parts.push(inside.slice(start, i));
-      start = i + 1;
-    }
-  }
-  parts.push(inside.slice(start));
-  const bareParts = parts.map((p) => {
-    const t = p.trim();
-    // Cut at first `:` at depth 0.
-    let d = 0;
-    for (let i = 0; i < t.length; i++) {
-      const c = t[i];
-      if (c === "<") d++;
-      else if (c === ">") d--;
-      else if (c === ":" && d === 0) return t.slice(0, i).trim();
-    }
-    return t;
-  });
-  return `<${bareParts.join(", ")}>`;
 }
 
 // ─── Abstract Emitter Interface ──────────────────────────────────────────────

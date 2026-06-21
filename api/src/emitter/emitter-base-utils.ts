@@ -649,3 +649,60 @@ export function commentOutResidualAnchorLeaks(text: string): string {
   );
   return cleaned;
 }
+
+/**
+ * First variant name that is a UNIT variant (no `{}` struct body, no `()` tuple
+ * payload) in `rawCode`, or null if every variant carries a payload. `this`-free
+ * helper relocated from emitter-base.ts (#15 god-file split). No behaviour change.
+ */
+export function firstUnitVariantName(variants: string[], rawCode: string): string | null {
+  for (const v of variants) {
+    if (!v) continue;
+    const re = new RegExp(`\\b${v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*([({,}]|$)`, "m");
+    const m = re.exec(rawCode);
+    if (!m || (m[1] !== "{" && m[1] !== "(")) return v;
+  }
+  return null;
+}
+
+/**
+ * Reduce a generic parameter list to its bare type/lifetime names, dropping
+ * trait bounds (`<T: Foo + Bar, 'a>` → `<T, 'a>`). `this`-free helper relocated
+ * from emitter-base.ts (#15 god-file split). No behaviour change.
+ */
+export function stripGenericBounds(generics: string): string {
+  const trimmed = generics.trim();
+  if (trimmed.length === 0) return "";
+  // Strip leading `<` and trailing `>` so we can split the inside.
+  let inside = trimmed;
+  if (inside.startsWith("<") && inside.endsWith(">")) {
+    inside = inside.slice(1, -1);
+  }
+  if (inside.length === 0) return generics; // empty inside — preserve
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < inside.length; i++) {
+    const c = inside[i];
+    if (c === "<") depth++;
+    else if (c === ">") depth--;
+    else if (c === "," && depth === 0) {
+      parts.push(inside.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(inside.slice(start));
+  const bareParts = parts.map((p) => {
+    const t = p.trim();
+    // Cut at first `:` at depth 0.
+    let d = 0;
+    for (let i = 0; i < t.length; i++) {
+      const c = t[i];
+      if (c === "<") d++;
+      else if (c === ">") d--;
+      else if (c === ":" && d === 0) return t.slice(0, i).trim();
+    }
+    return t;
+  });
+  return `<${bareParts.join(", ")}>`;
+}
