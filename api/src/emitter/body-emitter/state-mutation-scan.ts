@@ -42,6 +42,17 @@ export function detectPassThroughStateMutations(code: string, stateAccountNames:
     "sort", "sort_by", "sort_by_key", "sort_unstable", "sort_unstable_by",
     "reverse", "swap", "fill", "fill_with",
     "set", "replace",
+    // Slice/array in-place mutators — `copy_from_slice` is the common idiom for
+    // writing a [u8; N] field; without these a `state.blob.copy_from_slice(..)`
+    // mutated a local that was never written back (silent state loss).
+    "copy_from_slice", "clone_from_slice", "copy_within",
+    "rotate_left", "rotate_right",
+    "make_ascii_uppercase", "make_ascii_lowercase",
+    // `*_mut` accessors hand out a mutable view; their presence implies a
+    // subsequent in-place mutation. The receiver must be a writable (`mut`)
+    // account for these to compile, so a hoisted writeback is byte-equal-safe.
+    "iter_mut", "as_mut_slice", "as_mut", "get_mut",
+    "first_mut", "last_mut", "split_at_mut", "chunks_mut", "chunks_exact_mut",
   ];
   const mutMethodAlt = MUT_METHODS.join("|");
   // Normalize whitespace + strip spaces around `.` so multi-line method chains
@@ -50,6 +61,11 @@ export function detectPassThroughStateMutations(code: string, stateAccountNames:
   return stateAccountNames.filter((accountName) => {
     if (new RegExp(`\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\s*[+\\-*/]?=(?!=)`).test(flat)) return true;
     if (new RegExp(`\\b${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*\\.(?:${mutMethodAlt})\\s*\\(`).test(flat)) return true;
+    // A mutable borrow of a state field (`&mut state.field`) is a mutation
+    // signal even when the write happens later through the reference
+    // (`let r = &mut s.x; *r = …`) or inside a function (`mem::swap(&mut s.a,
+    // &mut s.b)`). `&mut` only compiles on a writable account → writeback safe.
+    if (new RegExp(`&\\s*mut\\s+${accountName}\\.\\w+(?:\\.\\w+|\\[[^\\]]*\\])*`).test(flat)) return true;
     return false;
   });
 }
