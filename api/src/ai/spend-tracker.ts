@@ -17,6 +17,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getRedis, isRedisEnabled } from "../redis-store.js";
+import { maskIp } from "../ip-mask.js";
 
 const DEFAULT_CAP_USD = 2.0;
 const FLUSH_DEBOUNCE_MS = 1000;
@@ -225,7 +226,10 @@ export interface SpendCheck {
  * counter at `anvil:spend:<day>:<ip>` and divide by 1e6. Falls back to
  * in-memory if Redis is unreachable.
  */
-export async function checkSpendCap(ip: string): Promise<SpendCheck> {
+export async function checkSpendCap(rawIp: string): Promise<SpendCheck> {
+  // Mask to the cap granularity (/24 v4, /64 v6) so an IPv6 /64 rotation can't
+  // mint a fresh per-IP counter per request and bypass the daily cap.
+  const ip = maskIp(rawIp);
   ensureInit();
   const cap = capUsd();
   const day = todayKey();
@@ -290,7 +294,9 @@ export function checkSpendCapSync(ip: string): SpendCheck {
  * stores when Redis is enabled — the in-memory copy stays useful as a
  * read-side fast path AND survives Redis flakes.
  */
-export function recordSpend(ip: string, usd: number): void {
+export function recordSpend(rawIp: string, usd: number): void {
+  // Mask to match checkSpendCap's key granularity (see note there).
+  const ip = maskIp(rawIp);
   ensureInit();
   const day = todayKey();
   const dayMap = memStore.days[day] ?? (memStore.days[day] = {});
@@ -440,28 +446,6 @@ export async function spendSnapshotAsync(top = 10): ReturnType<typeof spendSnaps
     todayCallCount: totalCalls,
     topSpendersToday: topSpenders,
   } as Awaited<ReturnType<typeof spendSnapshot>>;
-}
-
-function maskIp(ip: string): string {
-  // IPv4-mapped IPv6 (Express behind a reverse proxy serves these as
-  // ::ffff:a.b.c.d). Match BEFORE plain IPv6 / IPv4 branches — otherwise
-  // the colons send it into the IPv6 branch and the ::ffff: prefix +
-  // dotted-quad render as `::ffff:a.b.c::/64`, leaking the full v4.
-  const v4mapped = ip.match(/^::ffff:(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.\d{1,3}$/i);
-  if (v4mapped) {
-    return `${v4mapped[1]}.${v4mapped[2]}.${v4mapped[3]}.0/24`;
-  }
-  // Plain IPv4: a.b.c.d -> a.b.c.0/24.
-  if (ip.includes(".") && !ip.includes(":")) {
-    const parts = ip.split(".");
-    if (parts.length === 4) return `${parts[0]}.${parts[1]}.${parts[2]}.0/24`;
-  }
-  // Plain IPv6: prefix to first 4 hex groups + ::/64.
-  if (ip.includes(":")) {
-    const parts = ip.split(":");
-    return `${parts.slice(0, 4).join(":")}::/64`;
-  }
-  return ip;
 }
 
 function round(n: number, dp: number): number {

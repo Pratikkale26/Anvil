@@ -36,6 +36,7 @@ import { spawn } from "node:child_process";
 import { mkdir, rm, writeFile, readFile, stat } from "node:fs/promises";
 import { dirname, join, isAbsolute, normalize } from "node:path";
 import { spawnSandboxed, sandboxedEnv } from "./sandbox.js";
+import { maskIp } from "../ip-mask.js";
 
 export type BuildTarget = "pinocchio" | "native";
 
@@ -455,8 +456,9 @@ function enqueue<T>(
 
   // Per-IP cap — applies only to build-sbf where each run is 30s-2min.
   // Without this a single IP pipelining 5 SBF builds blocks every other
-  // user on the same target for 10 minutes.
-  const ip = opts.callerIp;
+  // user on the same target for 10 minutes. Mask to /24 (v4) / /64 (v6) so an
+  // IPv6 /64 rotation can't mint a fresh inflight counter per request.
+  const ip = opts.callerIp ? maskIp(opts.callerIp) : opts.callerIp;
   const isSbf = opts.mode === "build-sbf";
   if (isSbf && ip) {
     const inflight = sbfPerIpInflight.get(ip) ?? 0;

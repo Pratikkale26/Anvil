@@ -34,6 +34,7 @@
  */
 
 import { getRedis, isRedisEnabled } from "./redis-store.js";
+import { maskIp } from "./ip-mask.js";
 
 export interface RateLimitDecision {
   /** True if the request is allowed under the bucket's current state. */
@@ -183,10 +184,13 @@ export async function consume(
   now: number,
   opts?: RateLimitOptions,
 ): Promise<RateLimitDecision> {
+  // Mask to /24 (v4) / /64 (v6) so the bucket key can't be rotated per-request
+  // within an IPv6 /64 to bypass the limit. Both backends key on this value.
+  const masked = maskIp(ip);
   if (isRedisEnabled()) {
-    return consumeRedis(ip, now, opts);
+    return consumeRedis(masked, now, opts);
   }
-  return consumeInMemory(ip, now, opts);
+  return consumeInMemory(masked, now, opts);
 }
 
 /**
