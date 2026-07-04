@@ -73,3 +73,6 @@ cli/src/
 # into this dir (offline-repeatable after that). The test file holds the
 # pointer + sha; committing the source verbatim would mirror upstream.
 api/tests/fixtures/realworld/
+
+# CLI differential/compile build output
+anvil-output/
