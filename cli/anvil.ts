@@ -901,6 +901,7 @@ function printCommandHelp(command: string): void {
     case "compile":      printCompileHelp();    return;
     case "parse":        printParseHelp();      return;
     case "validate":     printValidateHelp();   return;
+    case "advise":       void cmdAdvise({ ...({} as CliArgs), help: true } as CliArgs); return;
     case "lint":         printLintHelp();       return;
     case "bench":        printBenchHelp();      return;
     case "snapshot":     printSnapshotHelp();   return;
@@ -1708,6 +1709,112 @@ async function cmdLint(args: CliArgs): Promise<void> {
  * emit (subject) is cheaper than the Anchor build (reference). Both .so must
  * share the --source ABI; an ABI mismatch fails loudly via the scenario run.
  */
+/**
+ * #27 — recommend a transpile target from the parsed IR. Anvil emits BOTH
+ * targets byte-equal, so this is a DEPLOY preference (compute-units / binary
+ * size vs. std familiarity for complex integrations), not a correctness call.
+ * Pure + exported so it's unit-testable without the CLI plumbing.
+ */
+export function adviseTarget(
+  ir: import("../api/src/ir/schema.js").SolanaIR,
+  source: string,
+): {
+  lean: "pinocchio" | "native" | "either";
+  nativeScore: number;
+  pinocchioScore: number;
+  reasons: string[];
+  signals: { ixCount: number; typeCount: number; accountCount: number; cpiCount: number; customCpiCount: number; usesMetaplex: boolean };
+} {
+  const ixCount = ir.instructions.length;
+  const typeCount = (ir.types ?? []).length;
+  const accountNames = new Set<string>();
+  let cpiCount = 0;
+  let customCpiCount = 0;
+  for (const ix of ir.instructions) {
+    for (const a of ix.accounts) accountNames.add(a.name);
+    for (const s of ix.body) {
+      if (s.kind.startsWith("cpi_")) cpiCount++;
+      if (s.kind === "cpi_custom") customCpiCount++;
+    }
+  }
+  const importsText = (ir.imports ?? []).join(" ");
+  const usesMetaplex = /\bmpl[_-]|metaplex/i.test(importsText) || /\bmpl_[a-z]|metaplex/i.test(source);
+
+  let nativeScore = 0;
+  let pinocchioScore = 0;
+  const reasons: string[] = [];
+  if (usesMetaplex) {
+    nativeScore += 2;
+    reasons.push("Metaplex/mpl usage detected → Native's fuller std smooths these integrations.");
+  }
+  if (customCpiCount > 0) {
+    nativeScore += 1;
+    reasons.push(`${customCpiCount} custom/hand-ported CPI call(s) → Native is more forgiving to review + tweak.`);
+  }
+  if (ixCount > 8 || typeCount > 5) {
+    nativeScore += 1;
+    reasons.push(`larger surface (${ixCount} instructions, ${typeCount} custom types) → Native for maintainability.`);
+  }
+  if (!usesMetaplex && cpiCount === 0 && ixCount <= 4 && typeCount <= 3) {
+    pinocchioScore += 2;
+    reasons.push("small, CPI-free program → Pinocchio wins clearly on compute units + binary size.");
+  }
+  if (!usesMetaplex && cpiCount <= 2) {
+    pinocchioScore += 1;
+    reasons.push("light CPI surface → Pinocchio's minimal runtime keeps CU low.");
+  }
+
+  const lean = nativeScore > pinocchioScore ? "native" : pinocchioScore > nativeScore ? "pinocchio" : "either";
+  return { lean, nativeScore, pinocchioScore, reasons, signals: { ixCount, typeCount, accountCount: accountNames.size, cpiCount, customCpiCount, usesMetaplex } };
+}
+
+async function cmdAdvise(args: CliArgs): Promise<void> {
+  if (args.help) {
+    console.log(`
+  ${c.bold}anvil advise${c.reset} — Recommend a transpile target (Pinocchio vs Native).
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil advise <input>
+
+  ${c.bold}ARGUMENTS${c.reset}
+
+    <input>     Rust source file (.rs) or project directory
+
+  Anvil emits BOTH targets byte-equal, so this is a deploy preference
+  (compute-unit / binary size vs. std familiarity for complex integrations),
+  not a correctness choice. Try either: ${c.cyan}anvil compile <input> --target pinocchio|native${c.reset}
+`);
+    return;
+  }
+  if (!args.input) {
+    fatal("Missing input file or directory.\n\n  Usage: anvil advise <input>");
+  }
+  banner();
+  progress(`Analyzing ${args.input}...`);
+  const source = resolveSource(args.input);
+  const parseResult = await parseAnchor(source);
+  if (!parseResult.ok) {
+    error(`Parse failed: ${parseResult.error}`);
+    if (parseResult.details) console.log(`    ${c.dim}${parseResult.details}${c.reset}`);
+    process.exit(1);
+  }
+  const a = adviseTarget(parseResult.ir, source);
+  console.log();
+  const pick = a.lean === "either"
+    ? `${c.bold}Either works${c.reset} — the signals are balanced.`
+    : `Lean ${c.bold}${c.cyan}${a.lean}${c.reset}.`;
+  console.log(`  ${c.bold}Recommendation:${c.reset} ${pick}`);
+  console.log();
+  console.log(`  ${c.dim}Signals: ${a.signals.ixCount} ix · ${a.signals.accountCount} accounts · ${a.signals.typeCount} types · ${a.signals.cpiCount} CPI (${a.signals.customCpiCount} custom)${a.signals.usesMetaplex ? " · Metaplex" : ""}${c.reset}`);
+  for (const r of a.reasons) console.log(`    ${c.dim}•${c.reset} ${r}`);
+  if (a.reasons.length === 0) console.log(`    ${c.dim}• No strong signal either way — pick by team preference.${c.reset}`);
+  console.log();
+  console.log(`  ${c.dim}Both targets are emitted byte-equal; this is a deploy preference, not correctness.`);
+  console.log(`  Run ${c.cyan}anvil compile ${args.input} --target ${a.lean === "either" ? "pinocchio" : a.lean}${c.reset}${c.dim} to generate it.${c.reset}`);
+  console.log();
+}
+
 async function cmdBenchAgainst(args: CliArgs): Promise<void> {
   const subjectPath = args.input;
   const referencePath = args.against!;
@@ -2505,6 +2612,9 @@ async function main(): Promise<void> {
     case "validate":
       await cmdValidate(args);
       break;
+    case "advise":
+      await cmdAdvise(args);
+      break;
     case "lint":
       await cmdLint(args);
       break;
@@ -3246,7 +3356,11 @@ function printMigrateHelp(): void {
 `);
 }
 
-main().catch((err: unknown) => {
-  error(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
-});
+// Only run the CLI when executed directly — guarding this lets test/tooling
+// import pure helpers (e.g. adviseTarget) without triggering an argv parse.
+if (import.meta.main) {
+  main().catch((err: unknown) => {
+    error(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  });
+}
