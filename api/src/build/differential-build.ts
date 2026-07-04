@@ -608,16 +608,68 @@ const ANCHOR_EXTRA_DEPS_ALLOWLIST = new Set<string>([
  *  - `package=` — package-rename lets `cute-name = { package = "evil" }`
  *    smuggle an off-allowlist crate under an allowed alias.
  */
-const ANCHOR_EXTRA_DEPS_BANNED_KEYS = [
-  "git",
-  "path",
-  "branch",
-  "tag",
-  "rev",
-  "registry",
-  "registry-index",
-  "package",
-];
+/**
+ * Fail-closed allowlist of dependency-table keys. A dep may only pin a
+ * crates.io version + select features — NEVER its source. Everything else
+ * (git / path / branch / tag / rev / registry / package-rename / workspace / …)
+ * is refused. An allowlist beats the previous banned-key denylist because the
+ * denylist regex `\bgit\s*=` was BYPASSED by quoting the key: `{ "git" = "…" }`
+ * — the closing quote breaks the git→= adjacency, yet cargo honors the quoted
+ * key and normalizes it to a `git+https://…` source, so the out-of-sandbox
+ * `cargo fetch` cloned an attacker URL (SSRF) and pulled an off-allowlist crate
+ * under an allowed alias.
+ */
+const ANCHOR_EXTRA_DEPS_ALLOWED_TABLE_KEYS = new Set([
+  "version",
+  "features",
+  "optional",
+  "default-features",
+]);
+
+/**
+ * Extract the KEYS of a single-line TOML inline table RHS
+ * (`{ version = "1", "git" = "url", features = ["x"] }`). Handles bare,
+ * "double"- and 'single'-quoted keys, string values (so `=`/`,` inside a value
+ * is ignored), and nested [] / {}. Lowercased. This is what defeats the quoted-
+ * key bypass a `\bKEY\s*=` regex could not see.
+ */
+function extractInlineTableKeys(rhs: string): string[] {
+  const inner = rhs.trim().replace(/^\{/, "").replace(/\}$/, "");
+  const keys: string[] = [];
+  let i = 0;
+  const n = inner.length;
+  while (i < n) {
+    while (i < n && /[\s,]/.test(inner[i]!)) i++; // skip separators
+    if (i >= n) break;
+    let key = "";
+    if (inner[i] === '"' || inner[i] === "'" || inner[i] === "`") {
+      const q = inner[i]!; i++;
+      while (i < n && inner[i] !== q) { key += inner[i]; i++; }
+      i++; // closing quote
+    } else {
+      while (i < n && !/[\s=]/.test(inner[i]!)) { key += inner[i]; i++; }
+    }
+    keys.push(key.trim().toLowerCase());
+    while (i < n && inner[i] !== "=") i++; // advance to '='
+    i++; // past '='
+    // Skip the VALUE, respecting quoted strings and nested [] / {} so a comma
+    // or '=' inside a value never starts a phantom key.
+    let depth = 0;
+    while (i < n) {
+      const c = inner[i]!;
+      if (c === '"' || c === "'" || c === "`") {
+        const q = c; i++;
+        while (i < n && inner[i] !== q) { if (inner[i] === "\\") i++; i++; }
+        i++; continue;
+      }
+      if (c === "[" || c === "{") { depth++; i++; continue; }
+      if (c === "]" || c === "}") { depth--; i++; continue; }
+      if (c === "," && depth === 0) { break; }
+      i++;
+    }
+  }
+  return keys.filter((k) => k.length > 0);
+}
 
 /**
  * Validate user-supplied `[dependencies]` snippet before it lands in the
@@ -668,18 +720,18 @@ export function validateAnchorExtraDeps(extraDeps: string): string {
       );
     }
     const rhs = line.slice(eqIdx + 1).trim();
-    // If RHS is a table-shape value, scan it for banned keys. Use a
-    // simple token regex (`\bKEY\s*=`) — tolerates whitespace, doesn't
-    // need a full TOML parser since the surface is one line per dep.
+    // If RHS is a table-shape value, allowlist its keys. Parsing the KEYS
+    // (rather than regex-scanning for banned tokens) is what closes the quoted-
+    // key bypass: `{ "git" = "…" }` is extracted as key `git` and refused.
     if (rhs.startsWith("{")) {
-      for (const banned of ANCHOR_EXTRA_DEPS_BANNED_KEYS) {
-        const tokenRe = new RegExp(`\\b${banned.replace(/[-]/g, "[-]")}\\s*=`, "i");
-        if (tokenRe.test(rhs)) {
+      for (const key of extractInlineTableKeys(rhs)) {
+        if (!ANCHOR_EXTRA_DEPS_ALLOWED_TABLE_KEYS.has(key)) {
           throw new AnvilError(
             ErrorCode.VALIDATION_FAILED,
-            `anchorExtraDeps: source-override key "${banned}" is not permitted on dependency "${name}"`,
-            "Only registry-resolved version pins are accepted (crates.io). " +
-              "git / path / branch / tag / rev / registry / package-rename are blocked.",
+            `anchorExtraDeps: dependency-table key "${key}" is not permitted on "${name}"`,
+            "Only registry version pins are accepted: version, features, optional, default-features. " +
+              "Source overrides (git / path / branch / tag / rev / registry / package-rename) are " +
+              "blocked — a quoted key like `\"git\" =` does NOT bypass this.",
             400,
           );
         }
