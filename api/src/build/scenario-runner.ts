@@ -1218,9 +1218,10 @@ export interface SanityWarning {
  * Sanity-warning kinds that WEAKEN a byte-equal claim → downgrade BYTE_EQUAL
  * to BYTE_EQUAL_WITH_WARNINGS (amber, not green). Single source of truth for
  * the B4 downgrade decision in compareScenarioRuns (exported so the gate test
- * verifies the REAL set, not a drifting mirror). The other kinds
- * (all_steps_reverted / no_compare_targets / discriminator_mismatch) already
- * fail loudly via other paths, so they're not in this set.
+ * verifies the REAL set, not a drifting mirror). all_steps_reverted and
+ * no_compare_targets are handled MORE strictly — the vacuous-run guard forces
+ * SCENARIO_FAILED (nothing was proven), not a mere amber downgrade — so they're
+ * deliberately not in this set. discriminator_mismatch is a degraded-UI signal.
  */
 export const WEAKENING_SANITY_KINDS: ReadonlySet<SanityWarning["kind"]> = new Set([
   "partial_compare_scope",
@@ -1580,6 +1581,24 @@ export function compareScenarioRuns(
   if (anyScenarioFailure) verdict = "SCENARIO_FAILED";
   else if (anyAccountDiverged || anyEventDiverged || anyMsgDiverged || anyReturnDataDiverged || anyAssertionFailed) verdict = "DIVERGED";
   else verdict = "BYTE_EQUAL";
+
+  // Vacuous-run guard (#4). A run where EVERY step reverted, or that had
+  // NOTHING to compare, proves nothing — byte-equal trivially "holds" because
+  // no transpiled logic executed or no state was inspected. These two sanity
+  // warnings previously fired but did NOT downgrade the verdict, so an
+  // all-reverted scenario that compared a single pre-installed non-empty
+  // account returned a green BYTE_EQUAL (and runtimeVerified=true) having
+  // executed zero program logic. Map to SCENARIO_FAILED — its contract is
+  // exactly "no meaningful comparison was possible" — so both the verdict and
+  // the runtimeVerified boolean reflect that nothing was proven.
+  if (
+    verdict === "BYTE_EQUAL" &&
+    sanityWarnings.some(
+      (w) => w.kind === "all_steps_reverted" || w.kind === "no_compare_targets",
+    )
+  ) {
+    verdict = "SCENARIO_FAILED";
+  }
 
   // Partial-compare-scope sanity warning (M2). A green BYTE_EQUAL verdict
   // when scenario.compare.accounts lists fewer accounts than the executed

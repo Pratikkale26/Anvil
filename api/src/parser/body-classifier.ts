@@ -772,7 +772,12 @@ function tryConditionalSystemTransfer(
   const last = inner[inner.length - 1]!;
   const lastExpr = last.type === "expression_statement" ? last.namedChild(0) : last;
   if (!lastExpr) return null;
-  const cpi = detectCpi(lastExpr, collector, cpiContexts, systemTransferByVar);
+  const cpi = detectCpi(
+    lastExpr,
+    collector,
+    (varName) => cpiContexts.get(varName),
+    systemTransferByVar ? (varName) => systemTransferByVar.get(varName) : undefined,
+  );
   if (!cpi || cpi.kind !== "cpi_system_transfer") return null;
   const preludeNodes = inner.slice(0, inner.length - 1);
   if (!preludeNodes.every((n) => n.type === "let_declaration")) return null;
