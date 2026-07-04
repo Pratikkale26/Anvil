@@ -1259,6 +1259,21 @@ async function cmdCompile(args: CliArgs): Promise<void> {
     // validator's own linkage (api/tests/marker-validator-linkage.test.ts);
     // this list is the CLI's cargo-not-needed guard.
     const stubHits = CLI_STUB_MARKER_PATTERNS.filter((re) => re.test(allText));
+    // #17 — enumerate the actual file:line SITES of each stub marker (not just a
+    // pattern count) so the user knows exactly where to hand-port. Patterns are
+    // non-global, so per-line .test() is safe.
+    const stubScanFiles = output.files.length > 0
+      ? output.files
+      : [{ path: `${inputName}.rs`, content: output.singleFile }];
+    const stubSites: Array<{ path: string; line: number; text: string }> = [];
+    for (const f of stubScanFiles) {
+      const fileLines = f.content.split("\n");
+      for (let i = 0; i < fileLines.length; i++) {
+        if (CLI_STUB_MARKER_PATTERNS.some((re) => re.test(fileLines[i]!))) {
+          stubSites.push({ path: f.path, line: i + 1, text: fileLines[i]!.trim() });
+        }
+      }
+    }
     const passthroughFindings = auditPassthrough(ir);
     const passthroughErrors = passthroughFindings.filter((f) => f.severity === "error");
     if (errors.length > 0 || stubHits.length > 0 || passthroughErrors.length > 0) {
@@ -1267,10 +1282,16 @@ async function cmdCompile(args: CliArgs): Promise<void> {
       if (errors.length > 0) {
         console.log(`    ${c.dim}validator errors: ${errors.length}${c.reset}`);
       }
-      if (stubHits.length > 0) {
+      if (stubSites.length > 0) {
         console.log(
-          `    ${c.dim}stub markers detected (${stubHits.length} pattern${stubHits.length !== 1 ? "s" : ""}); the emit contains compile-clean placeholders that no-op the original behavior.${c.reset}`,
+          `    ${c.dim}stub markers (${stubSites.length} site${stubSites.length !== 1 ? "s" : ""}) — compile-clean placeholders that no-op the original behavior. Hand-port each:${c.reset}`,
         );
+        for (const s of stubSites.slice(0, 10)) {
+          console.log(`      ${c.red}✗${c.reset} ${c.cyan}${s.path}:${s.line}${c.reset} ${c.dim}${s.text.slice(0, 100)}${c.reset}`);
+        }
+        if (stubSites.length > 10) {
+          console.log(`      ${c.dim}… and ${stubSites.length - 10} more${c.reset}`);
+        }
       }
       if (passthroughErrors.length > 0) {
         console.log(
