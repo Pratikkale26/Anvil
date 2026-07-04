@@ -331,6 +331,49 @@ describe("fuzz mutation infra", () => {
     expect(otherEntries.length).toBeGreaterThanOrEqual(1);
   });
 
+  // #14 — full-range integer fuzz. The old path masked u64/i64/u128/i128 to
+  // 2^53 ("JS-safe"), so overflow bugs between 2^53 and the true max — exactly
+  // where a u64 lamports / token amount overflows — were never exercised.
+
+  test("#14 u64 boundary fuzz reaches the true u64::MAX (past 2^53) as a decimal string", () => {
+    const stubRng = {
+      nextU64: () => 0n,
+      nextRange: (max: number) => (max === 5 ? 4 : 0), // 5 boundary choices → pick the max
+      oneIn: () => true, // useBoundary
+    };
+    const fuzzed = fuzzScenarioArgs(baseScenario, fakeIr, stubRng as never);
+    const amount = fuzzed.instructions[0]!.args!.amount;
+    expect(typeof amount).toBe("string");
+    expect(BigInt(amount as string)).toBe((1n << 64n) - 1n); // 18446744073709551615
+    expect(BigInt(amount as string) > BigInt(Number.MAX_SAFE_INTEGER)).toBe(true);
+  });
+
+  test("#14 u64 uniform fuzz can exceed 2^53 without precision loss", () => {
+    const stubRng = {
+      nextU64: () => 0xdeadbeefdeadbeefn, // > 2^53
+      nextRange: () => 0,
+      oneIn: () => false, // uniform path
+    };
+    const fuzzed = fuzzScenarioArgs(baseScenario, fakeIr, stubRng as never);
+    const amount = fuzzed.instructions[0]!.args!.amount;
+    expect(typeof amount).toBe("string");
+    expect(BigInt(amount as string)).toBe(0xdeadbeefdeadbeefn); // exact, not rounded
+  });
+
+  test("#14 i64 boundary fuzz reaches i64::MIN (negative)", () => {
+    const i64Ir = makeIrWithIxs([
+      { name: "initialize", args: [{ name: "amount", type: "i64" }], accounts: [], body: [], bodyLocs: [] },
+    ]);
+    const stubRng = {
+      nextU64: () => 0n,
+      nextRange: (_max: number) => 0, // 7 boundary choices → index 0 = MIN
+      oneIn: () => true,
+    };
+    const fuzzed = fuzzScenarioArgs(baseScenario, i64Ir, stubRng as never);
+    const amount = fuzzed.instructions[0]!.args!.amount;
+    expect(BigInt(amount as string)).toBe(-(1n << 63n)); // i64::MIN
+  });
+
   test("fuzzScenarioArgs still throws on unknown arg types (no silent dropping)", () => {
     const irWithCustomType = makeIrWithIxs([
       {

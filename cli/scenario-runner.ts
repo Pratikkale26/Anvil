@@ -812,17 +812,17 @@ function fuzzArgValue(
     case "u8":   return useBoundary ? pickBoundary(rng, [0, 1, 255]) : rng.nextRange(256);
     case "u16":  return useBoundary ? pickBoundary(rng, [0, 1, 65535]) : rng.nextRange(65536);
     case "u32":  return useBoundary ? pickBoundary(rng, [0, 1, 4294967295]) : rng.nextRange(4294967296);
-    case "u64":  return useBoundary
-      ? pickBoundary(rng, [0, 1, Number.MAX_SAFE_INTEGER])
-      : Number(rng.nextU64() & 0x1fffffffffffffn);  // u53 to stay JS-safe
-    case "u128": return useBoundary ? 0 : Number(rng.nextU64() & 0x1fffffffffffffn);
+    // #14 — u64/u128/i64/i128 fuzz the FULL range as a decimal string. The old
+    // path masked to 2^53 ("JS-safe") so overflow bugs between 2^53 and the true
+    // max — exactly where a u64 lamports / token amount overflows — were never
+    // exercised. Strings round-trip losslessly through the encoder's BigInt().
+    case "u64":  return fuzzBigUnsigned(rng, useBoundary, 64);
+    case "u128": return fuzzBigUnsigned(rng, useBoundary, 128);
     case "i8":   return useBoundary ? pickBoundary(rng, [-128, -1, 0, 1, 127]) : rng.nextRange(256) - 128;
     case "i16":  return useBoundary ? pickBoundary(rng, [-32768, 0, 32767]) : rng.nextRange(65536) - 32768;
     case "i32":  return useBoundary ? pickBoundary(rng, [-2147483648, 0, 2147483647]) : rng.nextRange(4294967296) - 2147483648;
-    case "i64":  return useBoundary
-      ? pickBoundary(rng, [-Number.MAX_SAFE_INTEGER, 0, Number.MAX_SAFE_INTEGER])
-      : Number(rng.nextU64() & 0x1fffffffffffffn);
-    case "i128": return useBoundary ? 0 : Number(rng.nextU64() & 0x1fffffffffffffn);
+    case "i64":  return fuzzBigSigned(rng, useBoundary, 64);
+    case "i128": return fuzzBigSigned(rng, useBoundary, 128);
     case "bool": return rng.oneIn(2);
     // P3.1 — String + Vec<u8> mutation. Both biased toward boundary
     // lengths (empty, 1-byte, ~max) and otherwise uniformly random.
@@ -880,6 +880,45 @@ function fuzzArgValue(
 
 function pickBoundary(rng: FuzzRng, choices: number[]): number {
   return choices[rng.nextRange(choices.length)] ?? 0;
+}
+
+/** A random `bits`-wide (64 or 128) unsigned BigInt, from one or two u64 draws. */
+function randUnsigned(rng: FuzzRng, bits: number): bigint {
+  let v = rng.nextU64();
+  if (bits > 64) v = (v << 64n) | rng.nextU64();
+  return v & ((1n << BigInt(bits)) - 1n);
+}
+
+/**
+ * #14 — fuzz a u64/u128 across its FULL range, returned as a decimal string so
+ * it survives JSON + the borsh encoder's BigInt(value) without the 2^53
+ * precision loss a JS number would incur. Boundaries include the 2^53 seam and
+ * the true max (max-1, max) where wrap-around / off-by-one live.
+ */
+function fuzzBigUnsigned(rng: FuzzRng, useBoundary: boolean, bits: number): string {
+  if (useBoundary) {
+    const max = (1n << BigInt(bits)) - 1n;
+    const choices = [0n, 1n, 1n << 53n, max - 1n, max];
+    return (choices[rng.nextRange(choices.length)] ?? 0n).toString();
+  }
+  return randUnsigned(rng, bits).toString();
+}
+
+/**
+ * #14 — fuzz an i64/i128 across its full signed range as a decimal string.
+ * Boundaries include MIN, MIN+1, -1, 0, 1, MAX-1, MAX; the uniform draw
+ * reinterprets a full-width unsigned value as two's-complement.
+ */
+function fuzzBigSigned(rng: FuzzRng, useBoundary: boolean, bits: number): string {
+  const min = -(1n << BigInt(bits - 1));
+  const max = (1n << BigInt(bits - 1)) - 1n;
+  if (useBoundary) {
+    const choices = [min, min + 1n, -1n, 0n, 1n, max - 1n, max];
+    return (choices[rng.nextRange(choices.length)] ?? 0n).toString();
+  }
+  const u = randUnsigned(rng, bits);
+  const signed = u >= 1n << BigInt(bits - 1) ? u - (1n << BigInt(bits)) : u;
+  return signed.toString();
 }
 
 /**
