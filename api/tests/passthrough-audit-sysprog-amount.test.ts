@@ -23,6 +23,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
 import { auditPassthrough } from "../src/emitter/passthrough-audit.ts";
+import { loadAnchorSource } from "./fixtures/program-examples-create-account-fixture.ts";
 
 const auditErrs = async (src: string) => {
   const r = await parseAnchor(src);
@@ -32,7 +33,9 @@ const auditErrs = async (src: string) => {
 
 describe("passthrough-audit: emitter-lowered system-program CPI + token .amount are NOT classification-gap errors", () => {
   test("create-account (system_program::create_account via CpiContext) → no audit errors", async () => {
-    const src = readFileSync(join(import.meta.dir, "fixtures", "realworld", "create-account.rs"), "utf-8");
+    // Use the committed program-examples fixture (loadAnchorSource) rather than
+    // a gitignored realworld/*.rs that never existed in a fresh clone / CI.
+    const src = loadAnchorSource();
     expect(await auditErrs(src)).toEqual([]);
   });
 
