@@ -2793,7 +2793,8 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
   // Auto-scenario: synthesize from IR when --auto-scenario and no --scenario file
   if (args.autoScenario && !args.scenario) {
     progress("Synthesizing scenario from IR (--auto-scenario)...");
-    const { synthesizeAutoScenario } = await import("./api-src/cli/auto-scenario.js");
+    // NB: dev path is ../api/src; prepack rewrites it to ./api-src for publish.
+    const { synthesizeAutoScenario } = await import("../api/src/cli/auto-scenario.js");
     const autoResult = synthesizeAutoScenario(ir);
     if ("blockers" in autoResult) {
       error(`auto-scenario synthesis blocked:`);
@@ -2802,7 +2803,7 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     }
     args.scenario = "__auto__";
     (args as any).__synthesizedScenario = autoResult.scenario;
-    progress(`Auto-scenario synthesized: ${autoResult.scenario.instructions.length} instruction(s), ${autoResult.scenario.compare.length} account(s) to compare`);
+    progress(`Auto-scenario synthesized: ${autoResult.scenario.steps.length} step(s), ${autoResult.scenario.compare.accounts.length} account(s) to compare`);
   }
 
   // Build-only mode — print the next-steps and exit. User opted out of the
@@ -2843,15 +2844,20 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
       process.exit(1);
     }
   }
-  // Minimal shape check — defensive, the runner will surface other issues
-  // with an actionable message.
-  if (typeof scenario.programId !== "string" || !Array.isArray(scenario.signers) ||
-      !Array.isArray(scenario.instructions) || !Array.isArray(scenario.compare)) {
-    error(`scenario is missing required keys: programId / signers / instructions / compare`);
+  // Accept EITHER the workbench/auto shape (steps + compare{}) OR the legacy
+  // CLI shape (instructions + compare[]). The unified engine normalizes both.
+  const scenarioIsWorkbench = Array.isArray(scenario?.steps);
+  const scenarioIsLegacyCli = Array.isArray(scenario?.instructions);
+  if (!scenarioIsWorkbench && !scenarioIsLegacyCli) {
+    error(`scenario is missing an instruction list — need "steps" (workbench shape) or "instructions" (legacy CLI shape)`);
     console.log(`\n  Run 'anvil differential --help' for the schema.\n`);
     process.exit(1);
   }
-  success(`Scenario: ${scenario.signers.length} signer(s), ${scenario.instructions.length} instruction(s), ${scenario.compare.length} compare target(s)`);
+  const scenarioStepCount = scenarioIsWorkbench ? scenario.steps.length : scenario.instructions.length;
+  const scenarioCompareCount = scenarioIsWorkbench
+    ? (scenario.compare?.accounts?.length ?? 0)
+    : (scenario.compare?.length ?? 0);
+  success(`Scenario: ${(scenario.signers ?? []).length} signer(s), ${scenarioStepCount} step(s), ${scenarioCompareCount} compare target(s)`);
   console.log();
 
   // Build (or load) the Anchor reference .so.
@@ -2930,6 +2936,14 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     fatal(`--fuzz-flags requires --fuzz <N>. Pass both to enable account-flag mutation iterations.`);
   }
 
+  // The fuzz runner still consumes the legacy CLI scenario shape. The
+  // workbench/auto shape runs on the unified engine, which doesn't fuzz yet
+  // (tracked as the coverage-floor work). Guard rather than crash mid-run.
+  if (args.fuzz && args.fuzz > 0 && scenarioIsWorkbench) {
+    error(`--fuzz isn't supported yet with the workbench/auto scenario shape (including --auto-scenario). Run without --fuzz for a single byte-equal pass, or hand-write a legacy CLI-shape scenario JSON to fuzz.`);
+    process.exit(1);
+  }
+
   if (args.fuzz && args.fuzz > 0) {
     // ── Fuzz path: run N iterations with randomized scalar args.
     progress(`Fuzzing scenario in LiteSVM — ${args.fuzz} iterations${args.fuzzSeed ? ` (seed=${args.fuzzSeed})` : ""}${args.fuzzFlags ? ", flag-mutation enabled" : ""}...`);
@@ -2992,48 +3006,108 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     process.exit(2);
   }
 
-  // ── Default path: single run.
+  // ── Default path: single run on the unified workbench engine.
+  //    (Same engine the hosted workbench uses → SPL mint/ATA support, the
+  //    anti-vacuous verdict guard, and every future workbench improvement.)
   progress("Running scenario in LiteSVM (Anchor + Anvil)...");
-  let runResult;
+  let verdict;
   try {
-    const { runScenarioDifferential } = await import("./scenario-runner.js");
-    runResult = await runScenarioDifferential({
-      scenario,
+    const { runUnifiedDifferential } = await import("./differential-engine.js");
+    const res = await runUnifiedDifferential({
+      ir,
+      rawScenario: scenario,
       anchorSo: anchorSoBytes,
       anvilSo: anvilSoBytes,
-      ir,
       compareEventLogs: args.compareEvents,
       compareReturnData: args.compareReturnData,
       compareMsgLogs: args.compareMsgLogs,
     });
+    verdict = res.verdict;
   } catch (err) {
     error(`scenario run failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
   console.log();
+  printDifferentialVerdict(verdict);
+}
 
-  // Report.
-  if (runResult.ok) {
-    success(`${c.bold}BYTE-EQUAL${c.reset} — all ${runResult.results.length} compared account(s) match. (${runResult.durationMs}ms)`);
-    for (const r of runResult.results) {
-      console.log(`    ${c.green}✓${c.reset} ${r.name}`);
+/**
+ * Render a workbench ScenarioVerdict for the CLI, honestly surfacing all four
+ * outcomes plus the anti-vacuous sanity warnings. Exits the process.
+ */
+function printDifferentialVerdict(verdict: {
+  verdict: "BYTE_EQUAL" | "BYTE_EQUAL_WITH_WARNINGS" | "DIVERGED" | "SCENARIO_FAILED";
+  durationMs: number;
+  accountDiffs: Array<{
+    name: string;
+    status: "equal" | "diverged" | "missing";
+    firstDiffByte?: number;
+    lamportsDiff?: { anchor: string; anvil: string };
+    ownerDiff?: { anchor: string; anvil: string };
+  }>;
+  sanityWarnings: Array<{ kind: string; message: string }>;
+  eventLogDiff?: { diverged: boolean };
+  msgLogDiff?: { diverged: boolean };
+  returnDataDiff?: { diverged: boolean };
+}): void {
+  const divergeDetail = (d: (typeof verdict.accountDiffs)[number]): string => {
+    const parts: string[] = [];
+    if (d.status === "missing") parts.push("account missing on one target");
+    if (d.firstDiffByte !== undefined) parts.push(`data diverges @ byte ${d.firstDiffByte}`);
+    if (d.lamportsDiff) parts.push(`lamports ${d.lamportsDiff.anchor}≠${d.lamportsDiff.anvil}`);
+    if (d.ownerDiff) parts.push(`owner ${d.ownerDiff.anchor}≠${d.ownerDiff.anvil}`);
+    return parts.length ? parts.join(", ") : "";
+  };
+  const matched = verdict.accountDiffs.filter((d) => d.status === "equal");
+  const diverged = verdict.accountDiffs.filter((d) => d.status !== "equal");
+  const showWarnings = () => {
+    for (const w of verdict.sanityWarnings) {
+      console.log(`    ${c.yellow}⚠${c.reset} [${w.kind}] ${w.message}`);
     }
+  };
+
+  if (verdict.verdict === "SCENARIO_FAILED") {
+    error(`${c.bold}SCENARIO FAILED${c.reset} — the run proved nothing. (${verdict.durationMs}ms)`);
+    console.log();
+    showWarnings();
+    console.log();
+    console.log(`  ${c.dim}A byte-equal verdict is only meaningful if the scenario actually`);
+    console.log(`  exercises the program AND compares real post-state. Fix the scenario`);
+    console.log(`  (args/ordering so steps don't all revert, and add compare targets).${c.reset}`);
+    console.log();
+    process.exit(2);
+  }
+
+  if (verdict.verdict === "DIVERGED") {
+    error(`${c.bold}BYTE-EQUAL FAILED${c.reset} — Anvil emit diverges from Anchor reference. (${verdict.durationMs}ms)`);
+    for (const d of matched) console.log(`    ${c.green}✓${c.reset} ${d.name}`);
+    for (const d of diverged) console.log(`    ${c.red}✗${c.reset} ${d.name} [${d.status}] ${divergeDetail(d)}`);
+    if (verdict.eventLogDiff?.diverged) console.log(`    ${c.red}✗${c.reset} event logs (emit!) diverged`);
+    if (verdict.msgLogDiff?.diverged) console.log(`    ${c.red}✗${c.reset} msg!() logs diverged`);
+    if (verdict.returnDataDiff?.diverged) console.log(`    ${c.red}✗${c.reset} set_return_data() diverged`);
+    if (verdict.sanityWarnings.length) { console.log(); showWarnings(); }
+    console.log();
+    console.log(`  ${c.dim}File an issue with the diff details at https://github.com/Pratikkale26/Anvil/issues${c.reset}`);
+    console.log();
+    process.exit(2);
+  }
+
+  if (verdict.verdict === "BYTE_EQUAL_WITH_WARNINGS") {
+    warn(`${c.bold}BYTE-EQUAL WITH WARNINGS${c.reset} — bytes match, but the verdict is scoped. (${verdict.durationMs}ms)`);
+    for (const d of matched) console.log(`    ${c.green}✓${c.reset} ${d.name}`);
+    console.log();
+    showWarnings();
+    console.log();
+    console.log(`  ${c.dim}The compare is honest but doesn't fully cover the program. Widen`);
+    console.log(`  compare targets / add assertions before treating this as deploy-safe.${c.reset}`);
     console.log();
     return;
   }
 
-  error(`${c.bold}BYTE-EQUAL FAILED${c.reset} — Anvil emit diverges from Anchor reference. (${runResult.durationMs}ms)`);
-  for (const r of runResult.results) {
-    if (r.ok) {
-      console.log(`    ${c.green}✓${c.reset} ${r.name}`);
-    } else {
-      console.log(`    ${c.red}✗${c.reset} ${r.name} [${r.kind}] ${r.details}`);
-    }
-  }
+  // BYTE_EQUAL
+  success(`${c.bold}BYTE-EQUAL${c.reset} — all ${matched.length} compared account(s) match. (${verdict.durationMs}ms)`);
+  for (const d of matched) console.log(`    ${c.green}✓${c.reset} ${d.name}`);
   console.log();
-  console.log(`  ${c.dim}File an issue with the diff details at https://github.com/Pratikkale26/Anvil/issues${c.reset}`);
-  console.log();
-  process.exit(2);
 }
 
 // ─── migrate ─────────────────────────────────────────────────────────────────

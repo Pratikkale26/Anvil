@@ -1695,6 +1695,27 @@ export function compareScenarioRuns(
   };
 }
 
+/**
+ * One-call differential from pre-built `.so` buffers. Takes the deploy program
+ * id as a base58 STRING and constructs the PublicKey here, so callers (the CLI)
+ * can drive this engine without importing @solana/web3.js themselves — the CLI
+ * treats web3/litesvm as lazy peer deps that only resolve on the api side.
+ */
+export function runDifferentialFromSoBuffers(opts: {
+  scenario: Scenario;
+  ir: SolanaIR;
+  programIdBase58: string;
+  anchorSo: Buffer;
+  anvilSo: Buffer;
+  durationMs?: number;
+}): ScenarioVerdict {
+  const programId = new PublicKey(opts.programIdBase58);
+  const ctx = resolveScenarioContext(opts.scenario, programId);
+  const anchorRun = runScenarioOnSo(opts.scenario, opts.ir, opts.anchorSo, ctx);
+  const anvilRun = runScenarioOnSo(opts.scenario, opts.ir, opts.anvilSo, ctx);
+  return compareScenarioRuns(opts.scenario, opts.ir, anchorRun, anvilRun, opts.durationMs ?? 0);
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function hexPreview(buf: Buffer, around: number, span = 32): string {
