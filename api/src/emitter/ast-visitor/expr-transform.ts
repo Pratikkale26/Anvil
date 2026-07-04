@@ -53,6 +53,21 @@ function isIdent(e: RustExpr, name: string): boolean {
   return e.kind === "ident" && e.name === name;
 }
 
+/**
+ * #15 — does a closure's `|...|` param text bind `name`, thereby shadowing an
+ * outer alias of the same name? paramsText is captured verbatim from
+ * tree-sitter (e.g. `|mint|`, `|x: u32|`, `|a, b|`, `|_|`), so extract its
+ * identifier tokens and test membership. Over-approximation (matching a type
+ * annotation like `u32`) at worst SKIPS a substitution — which fails loud at
+ * build time — rather than silently rewriting a shadowed binding. Account-name
+ * aliases are snake_case idents, never Rust type keywords, so that case is
+ * academic in practice.
+ */
+function closureBindsName(paramsText: string, name: string): boolean {
+  const ids = paramsText.match(/[A-Za-z_][A-Za-z0-9_]*/g);
+  return ids !== null && ids.includes(name);
+}
+
 function isKeyMethod(e: RustExpr): boolean {
   return e.kind === "method_call" && e.method === "key" && e.args.length === 0;
 }
@@ -471,9 +486,19 @@ export function transformAccountRefsAst(
 ): RustExpr {
   let result = expr;
 
-  // Alias resolution: replace ident(alias) → ident(canonical)
+  // Alias resolution: replace ident(alias) → ident(canonical).
+  //
+  // #15 — respect closure-param shadowing. A closure like `|mint| mint.owner`
+  // binds its OWN `mint`, so an outer `mint → token_mint` alias must NOT reach
+  // into the body. Pre-fix, the blind walk rewrote the shadowed ident and
+  // emitted `|mint| token_mint.owner == x` — reading the aliased account's
+  // field instead of the iterator element, a silent miscompile that COMPILES.
+  // Returning terminal() at a shadowing closure stops the walk before its body
+  // (block_expr is already opaque to walkExpr, so closures are the only
+  // recursing scope that can rebind a name here).
   for (const [alias, canonical] of Array.from(ctx.localAliases.entries())) {
     result = walkExpr(result, (e) => {
+      if (e.kind === "closure" && closureBindsName(e.paramsText, alias)) return terminal(e);
       if (isIdent(e, alias)) return ident(canonical);
       return e;
     });
