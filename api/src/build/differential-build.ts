@@ -741,6 +741,62 @@ export function validateAnchorExtraDeps(extraDeps: string): string {
   return extraDeps;
 }
 
+/**
+ * #11 / R5 — the /build/differential route accepts a CLIENT-supplied
+ * `anvilScaffoldFiles` scaffold (Cargo.toml included) that is written verbatim
+ * and resolved by the SAME out-of-sandbox `cargo fetch`. validateAnchorExtraDeps
+ * only guards the Anchor reference side; this guards the client scaffold. It
+ * refuses any dependency-table SOURCE-OVERRIDE key (git / path / branch / tag /
+ * rev / registry / package / workspace) in any `[*dependencies*]` section —
+ * both the flat `foo = { git = "…" }` form and the per-crate
+ * `[dependencies.foo]` + `git = "…"` form.
+ *
+ * A crate-name allowlist is intentionally NOT enforced here (the Anvil scaffold
+ * legitimately uses pinocchio / borsh / five8 / bytemuck, off the Anchor
+ * allowlist); blocking source overrides closes the SSRF/supply-chain vector,
+ * which is the R5 concern. Clients can omit anvilScaffoldFiles to use the
+ * server-synthesized scaffold.
+ */
+export function assertScaffoldDepsSafe(
+  files: ReadonlyArray<{ path: string; content: string }>,
+): void {
+  for (const f of files) {
+    if (!/(^|\/)Cargo\.toml$/i.test(f.path)) continue;
+    let section = "";
+    for (const rawLine of f.content.split(/\r?\n/)) {
+      const line = rawLine.replace(/#.*$/, "").trim();
+      if (line === "") continue;
+      const hdr = line.match(/^\[\s*([^\]]+?)\s*\]$/);
+      if (hdr) { section = hdr[1]!.toLowerCase(); continue; }
+      // A dependency section's dotted path contains a `(dev-|build-)?dependencies`
+      // segment (e.g. `dependencies`, `dev-dependencies`,
+      // `target.'cfg(unix)'.dependencies`, `dependencies.foo`).
+      if (!/(^|\.)(?:dev-|build-)?dependencies(\.|$)/.test(section)) continue;
+      const eq = line.indexOf("=");
+      if (eq === -1) continue;
+      const lhs = line.slice(0, eq).trim().replace(/^["'`]|["'`]$/g, "").toLowerCase();
+      const rhs = line.slice(eq + 1).trim();
+      // Per-crate table (`[dependencies.foo]`): the line's LHS IS a table key.
+      // Flat section (`[dependencies]`): keys live in the inline `{ … }` RHS.
+      const perCrate = /(^|\.)(?:dev-|build-)?dependencies\.[^.]/.test(section);
+      const keys = perCrate ? [lhs] : (rhs.startsWith("{") ? extractInlineTableKeys(rhs) : []);
+      for (const key of keys) {
+        if (!ANCHOR_EXTRA_DEPS_ALLOWED_TABLE_KEYS.has(key)) {
+          throw new AnvilError(
+            ErrorCode.VALIDATION_FAILED,
+            `anvilScaffoldFiles: '${f.path}' uses source-override key "${key}" in [${section}]`,
+            "A client-supplied Cargo.toml may only pin registry versions " +
+              "(version / features / optional / default-features). git / path / branch / " +
+              "tag / rev / registry / package / workspace are blocked because the differential " +
+              "warm-fetch has network access. Omit anvilScaffoldFiles to use the server scaffold.",
+            400,
+          );
+        }
+      }
+    }
+  }
+}
+
 function sniffAnchorExtraDeps(source: string): string {
   const deps: string[] = [];
   // anchor-spl with feature flags
