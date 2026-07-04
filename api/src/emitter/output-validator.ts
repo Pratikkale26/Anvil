@@ -389,15 +389,15 @@ function checkUnboundSignerSeeds(content: string, path: string): ValidationIssue
     const fnName = body.match(/^(\w+)\s*\(/)?.[1] ?? "unknown";
     // Bound: `let (mut) signer_x = …` and a fn param `signer_x: T`.
     const bound = new Set<string>();
-    for (const m of body.matchAll(/\blet\s+(?:mut\s+)?(signer\w+)\b/g)) bound.add(m[1]);
-    for (const m of body.matchAll(/\b(signer\w+)\s*:/g)) bound.add(m[1]);
+    for (const m of body.matchAll(/\blet\s+(?:mut\s+)?(signer\w+)\b/g)) { if (m[1]) bound.add(m[1]); }
+    for (const m of body.matchAll(/\b(signer\w+)\s*:/g)) { if (m[1]) bound.add(m[1]); }
     const flagged = new Set<string>();
     // Used: a `signer_*` ident not preceded by `.`/word-char (excludes field
     // accesses like `pool.signer_authority`) and not the binding LHS (those are
     // already in `bound`).
     for (const m of body.matchAll(/(?<![.\w])(signer\w+)\b/g)) {
       const name = m[1];
-      if (bound.has(name) || flagged.has(name)) continue;
+      if (!name || bound.has(name) || flagged.has(name)) continue;
       flagged.add(name);
       issues.push({
         severity: "error",

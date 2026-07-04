@@ -266,7 +266,7 @@ export function rewriteRentSysvarMethods(body: string): string {
   const rentLocals = new Set<string>();
   const bindRe = /\blet\s+(?:mut\s+)?(\w+)\s*(?::[^=;]+)?=\s*[^;]*\bRent::get\s*\(\s*\)/g;
   let m: RegExpExecArray | null;
-  while ((m = bindRe.exec(body)) !== null) rentLocals.add(m[1]);
+  while ((m = bindRe.exec(body)) !== null) { if (m[1]) rentLocals.add(m[1]); }
   return body.replace(
     /\b(\w+)\.(minimum_balance|exempt_minimum|burn_percent)\s*\(/g,
     (full, recv: string, method: string) =>

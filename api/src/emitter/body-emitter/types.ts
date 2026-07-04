@@ -63,6 +63,7 @@ export interface BodyEmitterCallbacks {
   emitStateSave(accountName: string, typeName: string, localVar: string): string;
   emitStateInit(typeName: string, localVar: string): string;
   emitBumpSeed(programId: string, seeds: string[], expectedKey: string): string;
+  emitOwnerCheck(name: string): string;
   emitPdaSignerSeeds(
     account: string,
     accountInfoVar: string,
@@ -70,6 +71,9 @@ export interface BodyEmitterCallbacks {
     bumpField?: string,
     stateVar?: string,
     typeName?: string,
+    // Maps each seed-referenced account name → its deserialized state var
+    // (Pinocchio F6). Kept in sync with BaseEmitter.emitPdaSignerSeeds.
+    stateVarMap?: ReadonlyMap<string, string>,
   ): string;
   emitRequire(condition: string, error: string): string;
   emitMsg(message: string): string;

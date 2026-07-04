@@ -3299,7 +3299,9 @@ export class AstVisitorBase {
     // `*<n>.key` (solana_program Pubkey) / `<n>.key()` (pinocchio &Pubkey).
     if (stmt.canonical?.instruction) {
       const c = stmt.canonical;
-      const def = c.instruction;
+      // Guarded by `if (stmt.canonical?.instruction)` above — c.instruction is
+      // present here; the alias breaks TS's narrowing so assert it.
+      const def = c.instruction!;
       const isPin = w.emitter.frameworkName === "Pinocchio";
       const xform = (e: string): string =>
         w.normalizeKeyValueUsages(w.transformAccountReferences(w.transformCtxAccountsReferences(e)));
