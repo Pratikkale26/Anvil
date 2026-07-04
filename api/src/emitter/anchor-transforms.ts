@@ -45,10 +45,49 @@
  *
  * Exported for unit testing.
  */
+/**
+ * #9 — crate roots EXTERNAL to the user's program. A `::`-path rooted in one of
+ * these is a real cross-crate reference (`solana_program::system_program::ID`,
+ * `anchor_spl::token::Transfer`), never a flattened user submodule — so its
+ * trailing segment must NOT be collapsed onto a colliding local symbol. The
+ * classic silent miscompile: `solana_program::system_program::ID` → `ID` when
+ * the user's `declare_id!` created a top-level `pub const ID`, swapping the
+ * System Program's id for the user's own in an owner / authority / CPI-auth
+ * check — validator-clean, security-relevant.
+ *
+ * `crate` / `self` / `super` are the user's OWN roots and are intentionally
+ * absent: `crate::ID` SHOULD still collapse to `ID`.
+ */
+export const EXTERNAL_CRATE_ROOTS: ReadonlySet<string> = new Set([
+  "solana_program", "solana_sdk", "solana_zk_token_sdk",
+  "anchor_lang", "anchor_spl",
+  "spl_token", "spl_token_2022", "spl_associated_token_account",
+  "spl_memo", "spl_pod", "spl_math", "spl_discriminator", "spl_tlv_account_resolution",
+  "mpl_token_metadata", "mpl_core", "mpl_bubblegum", "mpl_utils", "mpl_candy_machine_core",
+  "pinocchio", "pinocchio_token", "pinocchio_system", "pinocchio_pubkey",
+  "pinocchio_associated_token_account", "pinocchio_log",
+  "borsh", "bytemuck", "arrayref", "num_traits", "num_derive", "num_enum",
+  "std", "core", "alloc",
+]);
+
 export function collapseModulePaths(source: string, knownNames: Set<string>): string {
   if (knownNames.size === 0) return source;
   return source.replace(/\b(?:\w+::)+\w+\b/g, (full: string) => {
     const segs = full.split("::");
+    const root = segs[0] ?? "";
+    // #9 — a path rooted in a known external crate is a real cross-crate
+    // reference, not a flattened user submodule; never collapse it.
+    if (EXTERNAL_CRATE_ROOTS.has(root)) return full;
+    // #9 — universal `::ID` guard for external crates NOT in the allowlist
+    // above (the list can't be exhaustive). A trailing `::ID` is always some
+    // external program's id — the user's own id is `crate::ID` or bare `ID`,
+    // never `some_module::ID`. Leaving it uncollapsed is safe: if it were a
+    // user submodule const it would collide with the flattened `ID` anyway, so
+    // any resulting error is a LOUD compile failure, not a silent id swap.
+    if (segs.length >= 2 && segs[segs.length - 1] === "ID"
+        && root !== "crate" && root !== "self" && root !== "super") {
+      return full;
+    }
     // Walk segments left-to-right; emit everything from the FIRST known
     // segment onward. `lending_operations::utils::is_allowed_signer` ->
     // `is_allowed_signer` (last seg known). `m1::ErrorCode::Variant` ->
