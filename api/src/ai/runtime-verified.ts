@@ -25,7 +25,10 @@ export function isRuntimeVerified(opts: {
   verdict?: DifferentialVerdict;
 }): boolean {
   if (!opts.cargoGreen || !opts.differentialRan) return false;
-  return (
-    opts.verdict === "BYTE_EQUAL" || opts.verdict === "BYTE_EQUAL_WITH_WARNINGS"
-  );
+  // STRICT: only a clean BYTE_EQUAL is runtime-verified. BYTE_EQUAL_WITH_WARNINGS
+  // carries a claim-weakening caveat (partial compare scope, trivial zero-mutation
+  // equality, or an unhonored clock pin) — the bytes matched but the verdict does
+  // NOT fully cover the program, so it must not read as deploy-safe through this
+  // one boolean. Consumers wanting the nuanced view read `verdict` directly.
+  return opts.verdict === "BYTE_EQUAL";
 }

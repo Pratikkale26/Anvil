@@ -11,9 +11,14 @@ import { describe, test, expect } from "bun:test";
 import { isRuntimeVerified } from "../src/ai/runtime-verified.ts";
 
 describe("isRuntimeVerified", () => {
-  test("byte-equal after a differential gate ran on a green build → true", () => {
+  test("clean byte-equal after a differential gate ran on a green build → true", () => {
     expect(isRuntimeVerified({ cargoGreen: true, differentialRan: true, verdict: "BYTE_EQUAL" })).toBe(true);
-    expect(isRuntimeVerified({ cargoGreen: true, differentialRan: true, verdict: "BYTE_EQUAL_WITH_WARNINGS" })).toBe(true);
+  });
+
+  test("byte-equal-WITH-WARNINGS is NOT runtime-verified — the caveat means the verdict doesn't fully cover the program", () => {
+    // Was previously true; that let a partial/trivial/unpinned-clock pass read as
+    // deploy-safe through the one boolean consumers trust. Now strict.
+    expect(isRuntimeVerified({ cargoGreen: true, differentialRan: true, verdict: "BYTE_EQUAL_WITH_WARNINGS" })).toBe(false);
   });
 
   test("diverged / scenario-failed → false even when cargo-green", () => {
