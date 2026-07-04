@@ -333,9 +333,28 @@ export function typeSize(typeName: string, maxLen?: number[]): number {
   // under-allocating a Some([u8; 64]) → OOB write.
   const optionMatch = typeName.match(/^Option<\s*([\s\S]+?)\s*>$/);
   if (optionMatch?.[1]) {
-    return 1 + typeSize(optionMatch[1], maxLen);
+    // Propagate the unsizeable sentinel (0) rather than emitting 1 + 0 = 1,
+    // which would under-size an `Option<UnknownType>`.
+    const inner = typeSize(optionMatch[1], maxLen);
+    return inner > 0 ? 1 + inner : 0;
   }
-  return sizes[typeName] ?? 32;
+  // A variable-length container that reached here without a `#[max_len]`
+  // (e.g. `Vec<Pubkey>`, `Option<T>` already handled above) keeps its legacy
+  // fixed estimate. Its real on-disk length is content-dependent and is handled
+  // by the variable-length read/write path + the struct's MIN_LEN guard, NOT by
+  // this constant — so the estimate never desyncs the borsh cursor. Scoping the
+  // 0-sentinel out of this case keeps unbounded-Vec output byte-identical.
+  if (typeName === "String" || /^Vec<.+>$/.test(typeName)) {
+    return sizes[typeName] ?? 32;
+  }
+  // #8 — 0 (NOT a guessed 32) is the "unregistered / unsizeable" sentinel for a
+  // genuinely-unknown FIXED type: a bare name that is neither a primitive, a
+  // container, a custom struct/enum (sized by resolveTypeSize via its IR
+  // typeDef), nor a resolvable `type X = Y` alias (resolved to its canonical
+  // type BEFORE we get here). Returning a hardcoded 32 silently desynced the
+  // borsh cursor + INIT_SPACE for any such field; returning 0 lets
+  // buildReadLine/buildWriteLine loud-refuse instead of emitting a wrong layout.
+  return sizes[typeName] ?? 0;
 }
 
 export function parseFixedArrayType(typeName: string): { elementType: string; lenExpr: string } | null {
