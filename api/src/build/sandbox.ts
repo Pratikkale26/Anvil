@@ -109,6 +109,21 @@ function detectSandbox(): SandboxConfig {
   return noneSandbox();
 }
 
+/**
+ * #16 — SBF-build CPU rlimit (seconds). The old hardcoded 60s SIGKILLed
+ * legitimately-large targets: a 2k–10k line Anchor program's cargo-build-sbf
+ * can exceed a minute of CPU, surfacing as a spurious "build failed" on valid
+ * input. Raise the default to 300s — still a hard DoS bound (combined with the
+ * build-queue concurrency cap + per-IP rate limit + the global AI ceiling) but
+ * enough for real programs — and make it tunable per host.
+ */
+function sandboxCpuSecs(): number {
+  const raw = process.env.ANVIL_SANDBOX_CPU_SECS;
+  if (!raw) return 300;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 300;
+}
+
 export function firejailSandbox(): SandboxConfig {
   return {
     kind: "firejail",
@@ -123,7 +138,7 @@ export function firejailSandbox(): SandboxConfig {
         "--caps.drop=all",
         "--seccomp",
         "--rlimit-as=2147483648",
-        "--rlimit-cpu=60",
+        `--rlimit-cpu=${sandboxCpuSecs()}`,
         "--rlimit-fsize=268435456",
         "--rlimit-nproc=128",
         `--whitelist=${cwd}`,
@@ -185,7 +200,7 @@ function unshareSandbox(): SandboxConfig {
         // Mount tmpfs over the scratch-write paths an attacker would target.
         // Failures are non-fatal (e.g. /var/tmp may not exist on minimal
         // images) — the rest of the isolation still applies.
-        'mount -t tmpfs tmpfs /tmp 2>/dev/null; mount -t tmpfs tmpfs /var/tmp 2>/dev/null; exec prlimit --as=2147483648 --cpu=60 --fsize=268435456 --nproc=128 -- "$@"',
+        `mount -t tmpfs tmpfs /tmp 2>/dev/null; mount -t tmpfs tmpfs /var/tmp 2>/dev/null; exec prlimit --as=2147483648 --cpu=${sandboxCpuSecs()} --fsize=268435456 --nproc=128 -- "$@"`,
         "anvil-sandbox-shim",
       ],
     }),
@@ -200,7 +215,7 @@ function noneSandbox(): SandboxConfig {
       cmd: "prlimit",
       args: [
         "--as=2147483648",
-        "--cpu=60",
+        `--cpu=${sandboxCpuSecs()}`,
         "--fsize=268435456",
         "--nproc=128",
         "--",

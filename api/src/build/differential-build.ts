@@ -328,8 +328,22 @@ async function buildBothSosImpl(opts: DifferentialBuildOptions): Promise<BuildAr
   };
 }
 
+// #16 — per-invocation scratch suffix. The scratch build dirs were keyed by
+// program-name ONLY (`_workbench_build_escrow_anchor`), so two concurrent
+// hosted builds of the same program (common names: escrow / counter / amm)
+// raced on the same rmSync + writeFileSync + cargo target dir → half-written
+// Cargo.toml, "No such file or directory" mid-compile, corrupt .so. The output
+// .so is content-addressed (workbench-<name>/<name>_<side>_<hash>.so), so the
+// scratch is disposable: give each build its own dir (pid isolates replicas,
+// the counter isolates intra-process concurrency) and remove it after the .so
+// is copied out.
+let scratchSeq = 0;
+function uniqueScratch(programName: string, side: "anchor" | "anvil"): string {
+  return join(CACHE_ROOT, `_workbench_build_${programName}_p${process.pid}_${++scratchSeq}_${side}`);
+}
+
 async function buildAnchor(opts: DifferentialBuildOptions, outPath: string): Promise<void> {
-  const scratch = join(CACHE_ROOT, `_workbench_build_${opts.programName}_anchor`);
+  const scratch = uniqueScratch(opts.programName, "anchor");
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(join(scratch, "src"), { recursive: true });
   opts.onLog?.(`[anchor] scratch=${scratch}`);
@@ -408,6 +422,9 @@ overflow-checks = true
   await warmDifferentialDependencies(scratch, opts);
   await runSandboxedSbf(scratch, opts);
   copySoFromTarget(scratch, outPath);
+  // #16 — remove the per-invocation scratch now the .so is cached at outPath.
+  // On error we intentionally leave it for the CACHE_TTL sweep to inspect/evict.
+  rmSync(scratch, { recursive: true, force: true });
 }
 
 /**
@@ -861,6 +878,9 @@ async function buildAnvil(opts: DifferentialBuildOptions, outPath: string): Prom
   await warmDifferentialDependencies(scratch, opts);
   await runSandboxedSbf(scratch, opts);
   copySoFromTarget(scratch, outPath);
+  // #16 — remove the per-invocation scratch now the .so is cached at outPath.
+  // On error we intentionally leave it for the CACHE_TTL sweep to inspect/evict.
+  rmSync(scratch, { recursive: true, force: true });
 }
 
 /**
