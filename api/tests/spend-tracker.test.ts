@@ -12,13 +12,17 @@ import { join } from "node:path";
 let tmp: string;
 let originalDataDir: string | undefined;
 let originalCap: string | undefined;
+let originalGlobal: string | undefined;
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "anvil-spend-test-"));
   originalDataDir = process.env.ANVIL_DATA_DIR;
   originalCap = process.env.ANVIL_DAILY_AI_USD_PER_IP;
+  originalGlobal = process.env.ANVIL_DAILY_AI_USD_GLOBAL;
   process.env.ANVIL_DATA_DIR = tmp;
   process.env.ANVIL_DAILY_AI_USD_PER_IP = "2";
+  // Leave the global cap at its $50 default unless a test sets it, so the
+  // per-IP cases (all tiny totals) are unaffected.
   // Force a fresh module load so the env-var-derived cap re-reads.
   // bun's module cache persists across tests; __resetForTest clears in-memory.
 });
@@ -31,6 +35,8 @@ afterEach(async () => {
   else process.env.ANVIL_DATA_DIR = originalDataDir;
   if (originalCap === undefined) delete process.env.ANVIL_DAILY_AI_USD_PER_IP;
   else process.env.ANVIL_DAILY_AI_USD_PER_IP = originalCap;
+  if (originalGlobal === undefined) delete process.env.ANVIL_DAILY_AI_USD_GLOBAL;
+  else process.env.ANVIL_DAILY_AI_USD_GLOBAL = originalGlobal;
   rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -128,5 +134,60 @@ describe("spend-tracker", () => {
     expect(snap.capUsd).toBe(2);
     expect(snap.todayTotalUsd).toBeCloseTo(0.75, 4);
     expect(snap.todayCallCount).toBe(2);
+  });
+});
+
+describe("spend-tracker — global daily ceiling (#12, IP-rotation stop)", () => {
+  it("blocks a brand-new IP once aggregate spend crosses the global cap", async () => {
+    process.env.ANVIL_DAILY_AI_USD_GLOBAL = "3";
+    const { checkSpendCap, recordSpend, __resetForTest } = await import("../src/ai/spend-tracker.js");
+    __resetForTest();
+    // Two different /24s, each UNDER the $2 per-IP cap, together $3.6 > global $3.
+    recordSpend("1.2.3.4", 1.8);
+    recordSpend("5.6.7.8", 1.8);
+    // A fresh IP that has spent $0 is still refused — the global budget is drained.
+    const r = await checkSpendCap("9.9.9.9");
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain("Global daily AI budget");
+    expect(r.globalTodayUsd).toBeGreaterThanOrEqual(3);
+    expect(r.globalCapUsd).toBe(3);
+    expect(r.retryAfterSec).toBeGreaterThan(0);
+  });
+
+  it("global reason takes precedence over per-IP when both are exceeded", async () => {
+    process.env.ANVIL_DAILY_AI_USD_GLOBAL = "1";
+    const { checkSpendCap, recordSpend, __resetForTest } = await import("../src/ai/spend-tracker.js");
+    __resetForTest();
+    recordSpend("1.2.3.4", 2.5); // over BOTH per-IP ($2) and global ($1)
+    const r = await checkSpendCap("1.2.3.4");
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain("Global daily AI budget");
+  });
+
+  it("under a generous global cap, per-IP isolation is unchanged", async () => {
+    process.env.ANVIL_DAILY_AI_USD_GLOBAL = "100";
+    const { checkSpendCap, recordSpend, __resetForTest } = await import("../src/ai/spend-tracker.js");
+    __resetForTest();
+    recordSpend("1.2.3.4", 5.0); // over per-IP
+    expect((await checkSpendCap("1.2.3.4")).allowed).toBe(false); // per-IP block
+    expect((await checkSpendCap("5.6.7.8")).allowed).toBe(true);  // other IP fine
+  });
+
+  it("the sync check honors the global cap too", async () => {
+    process.env.ANVIL_DAILY_AI_USD_GLOBAL = "2";
+    const { checkSpendCapSync, recordSpend, __resetForTest } = await import("../src/ai/spend-tracker.js");
+    __resetForTest();
+    recordSpend("1.2.3.4", 1.2);
+    recordSpend("5.6.7.8", 1.2); // global 2.4 >= 2
+    const r = checkSpendCapSync("9.9.9.9");
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toContain("Global daily AI budget");
+  });
+
+  it("snapshot reports the global cap", async () => {
+    process.env.ANVIL_DAILY_AI_USD_GLOBAL = "42";
+    const { spendSnapshot, __resetForTest } = await import("../src/ai/spend-tracker.js");
+    __resetForTest();
+    expect(spendSnapshot().globalCapUsd).toBe(42);
   });
 });

@@ -131,6 +131,31 @@ function capUsd(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CAP_USD;
 }
 
+// #12 — GLOBAL daily ceiling across ALL IPs. The per-IP cap alone does not
+// bound aggregate spend: an attacker rotating source IPs (many /24s, cheap on
+// IPv6) mints a fresh $2 bucket per network and drains the Anthropic key with
+// no upper bound. This is the hard stop on total daily AI exposure regardless
+// of how the traffic is distributed. Default $50/day; tune via env.
+const DEFAULT_GLOBAL_CAP_USD = 50.0;
+const GLOBAL_KEY = "__global__";
+
+function globalCapUsd(): number {
+  const raw = process.env.ANVIL_DAILY_AI_USD_GLOBAL;
+  if (!raw) return DEFAULT_GLOBAL_CAP_USD;
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_GLOBAL_CAP_USD;
+}
+
+/** In-memory sum of today's spend across every IP bucket (excludes the derived
+ *  global marker key, which is never stored in-memory). O(#IPs today). */
+function inMemGlobalUsd(day: string): number {
+  const dayMap = memStore.days[day];
+  if (!dayMap) return 0;
+  let sum = 0;
+  for (const b of Object.values(dayMap)) sum += b.usd;
+  return sum;
+}
+
 function todayKey(now: number = Date.now()): string {
   // UTC date — avoids local-timezone resets that would surprise operators.
   return new Date(now).toISOString().slice(0, 10);
@@ -210,6 +235,9 @@ export interface SpendCheck {
   allowed: boolean;
   todayUsd: number;
   capUsd: number;
+  /** #12 — aggregate spend today across all IPs, and the global ceiling. */
+  globalTodayUsd: number;
+  globalCapUsd: number;
   retryAfterSec: number;
   reason?: string;
 }
@@ -232,15 +260,22 @@ export async function checkSpendCap(rawIp: string): Promise<SpendCheck> {
   const ip = maskIp(rawIp);
   ensureInit();
   const cap = capUsd();
+  const gCap = globalCapUsd();
   const day = todayKey();
   let todayUsd = memStore.days[day]?.[ip]?.usd ?? 0;
+  let globalTodayUsd = inMemGlobalUsd(day);
 
   if (isRedisEnabled()) {
     const redis = getRedis();
     if (redis) {
       try {
-        const microStr = await redis.get(`anvil:spend:${day}:${ip}`);
+        // One round trip for both the per-IP and the global counter.
+        const [microStr, globalMicroStr] = await redis.mget(
+          `anvil:spend:${day}:${ip}`,
+          `anvil:spend:${day}:${GLOBAL_KEY}`,
+        );
         if (microStr) todayUsd = Math.max(todayUsd, Number(microStr) / 1_000_000);
+        if (globalMicroStr) globalTodayUsd = Math.max(globalTodayUsd, Number(globalMicroStr) / 1_000_000);
         // Successful read — clear any prior unhealthy marker. The recovery
         // signal is per-op so an intermittent failure recovers fast.
         markRedisHealthy();
@@ -248,20 +283,28 @@ export async function checkSpendCap(rawIp: string): Promise<SpendCheck> {
         // Fall through to in-memory value AND mark the backend unhealthy
         // so the next checkSpendCap can refuse if loud-fail is configured.
         const reason = err instanceof Error ? err.message : String(err);
-        markRedisUnhealthy(`checkSpendCap GET failed: ${reason}`);
+        markRedisUnhealthy(`checkSpendCap MGET failed: ${reason}`);
       }
     }
   }
 
-  const allowed = todayUsd < cap;
+  // Global ceiling takes precedence — a drained global budget refuses everyone,
+  // including IPs under their own per-IP cap. This is the IP-rotation stop.
+  const globalExceeded = globalTodayUsd >= gCap;
+  const perIpExceeded = todayUsd >= cap;
+  const allowed = !globalExceeded && !perIpExceeded;
   return {
     allowed,
     todayUsd,
     capUsd: cap,
+    globalTodayUsd,
+    globalCapUsd: gCap,
     retryAfterSec: allowed ? 0 : secondsUntilUtcMidnight(),
     reason: allowed
       ? undefined
-      : `Daily AI spend cap of $${cap.toFixed(2)} per IP reached. Resets at 00:00 UTC.`,
+      : globalExceeded
+        ? `Global daily AI budget of $${gCap.toFixed(2)} reached (all users). Resets at 00:00 UTC.`
+        : `Daily AI spend cap of $${cap.toFixed(2)} per IP reached. Resets at 00:00 UTC.`,
   };
 }
 
@@ -270,21 +313,30 @@ export async function checkSpendCap(rawIp: string): Promise<SpendCheck> {
  * Reads only from the in-memory store; the Redis-backed checkSpendCap is
  * preferred when the caller is already in async context.
  */
-export function checkSpendCapSync(ip: string): SpendCheck {
+export function checkSpendCapSync(rawIp: string): SpendCheck {
   ensureInit();
+  const ip = maskIp(rawIp);
   const cap = capUsd();
+  const gCap = globalCapUsd();
   const day = todayKey();
   const bucket = memStore.days[day]?.[ip];
   const todayUsd = bucket?.usd ?? 0;
-  const allowed = todayUsd < cap;
+  const globalTodayUsd = inMemGlobalUsd(day);
+  const globalExceeded = globalTodayUsd >= gCap;
+  const perIpExceeded = todayUsd >= cap;
+  const allowed = !globalExceeded && !perIpExceeded;
   return {
     allowed,
     todayUsd,
     capUsd: cap,
+    globalTodayUsd,
+    globalCapUsd: gCap,
     retryAfterSec: allowed ? 0 : secondsUntilUtcMidnight(),
     reason: allowed
       ? undefined
-      : `Daily AI spend cap of $${cap.toFixed(2)} per IP reached. Resets at 00:00 UTC.`,
+      : globalExceeded
+        ? `Global daily AI budget of $${gCap.toFixed(2)} reached (all users). Resets at 00:00 UTC.`
+        : `Daily AI spend cap of $${cap.toFixed(2)} per IP reached. Resets at 00:00 UTC.`,
   };
 }
 
@@ -315,10 +367,15 @@ export function recordSpend(rawIp: string, usd: number): void {
     if (redis && sanitized > 0) {
       const micro = Math.round(sanitized * 1_000_000);
       const key = `anvil:spend:${day}:${ip}`;
+      const globalKey = `anvil:spend:${day}:${GLOBAL_KEY}`;
+      // INCRBY both the per-IP and the global counter in one atomic pipeline so
+      // the global ceiling (#12) sees cross-IP spend without an O(n) sum.
       redis
         .multi()
         .incrby(key, micro)
         .expire(key, 48 * 60 * 60, "NX")
+        .incrby(globalKey, micro)
+        .expire(globalKey, 48 * 60 * 60, "NX")
         .exec()
         .then(() => {
           // Successful write — recover health if degraded.
@@ -347,6 +404,7 @@ export function recordSpend(rawIp: string, usd: number): void {
  */
 export function spendSnapshot(top = 10): {
   capUsd: number;
+  globalCapUsd: number;
   todayTotalUsd: number;
   todayCallCount: number;
   topSpendersToday: Array<{ ipPrefix: string; usd: number; calls: number }>;
@@ -364,6 +422,7 @@ export function spendSnapshot(top = 10): {
     .map((e) => ({ ipPrefix: maskIp(e.ip), usd: round(e.usd, 4), calls: e.calls }));
   return {
     capUsd: cap,
+    globalCapUsd: globalCapUsd(),
     todayTotalUsd: round(totalUsd, 4),
     todayCallCount: totalCalls,
     topSpendersToday: topSpenders,
@@ -420,6 +479,7 @@ export async function spendSnapshotAsync(top = 10): ReturnType<typeof spendSnaps
             const microStr = values[i];
             if (!microStr) continue;
             const ip = key.slice(`anvil:spend:${day}:`.length);
+            if (ip === GLOBAL_KEY) continue; // derived aggregate, not a spender
             const usd = Number(microStr) / 1_000_000;
             const cur = merged.get(ip) ?? { usd: 0, calls: 0 };
             // Redis is the cross-instance source of truth — take the max
@@ -442,6 +502,7 @@ export async function spendSnapshotAsync(top = 10): ReturnType<typeof spendSnaps
     .map((e) => ({ ipPrefix: maskIp(e.ip), usd: round(e.usd, 4), calls: e.calls }));
   return {
     capUsd: cap,
+    globalCapUsd: globalCapUsd(),
     todayTotalUsd: round(totalUsd, 4),
     todayCallCount: totalCalls,
     topSpendersToday: topSpenders,
