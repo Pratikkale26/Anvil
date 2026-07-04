@@ -478,7 +478,7 @@ export function detectCpi(
 
   // ── System program transfer ──
   if (funcText.includes("system_program::transfer") || funcText.includes("system_instruction::transfer")) {
-    return extractSystemTransfer(callNode, collector);
+    return extractSystemTransfer(callNode, collector, cpiCtxLookup);
   }
 
   // ── Free-function `transfer(cpi_ctx, amount)` ──
@@ -495,7 +495,7 @@ export function detectCpi(
       /\bsystem_program\b/.test(firstArgText) &&
       /\bTransfer\s*\{/.test(firstArgText) &&
       !/\bauthority\s*:/.test(firstArgText);
-    if (looksSystem) return extractSystemTransfer(callNode, collector);
+    if (looksSystem) return extractSystemTransfer(callNode, collector, cpiCtxLookup);
   }
 
   // ── SPL Memo CPI ──
@@ -3536,7 +3536,7 @@ function extractAtaCreate(callNode: SyntaxNode, collector?: WarningCollector): B
 
 // ─── System Program Transfer ────────────────────────────────────────────────
 
-function extractSystemTransfer(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+function extractSystemTransfer(callNode: SyntaxNode, collector?: WarningCollector, cpiCtxLookup?: CpiContextLookup): BodyStatement {
   const argsNode = callNode.childForFieldName("arguments");
   if (!argsNode) {
     warnClassificationLost(collector, "system_program::transfer", callNode);
@@ -3559,8 +3559,29 @@ function extractSystemTransfer(callNode: SyntaxNode, collector?: WarningCollecto
       to = extractStructField(transferStruct, "to") ?? "to";
     }
     signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
-  } else if (args.length >= 2) {
-    // system_program::transfer(cpi_ctx, amount) — ctx is first, amount is second
+  } else if (firstArg) {
+    // #10 — variable-bound CpiContext: `let cpi = CpiContext::new(sys_prog,
+    // Transfer { from, to }); system_program::transfer(cpi, amount)?;`. Resolve
+    // the SPECIFIC binding by its variable name (mirroring the SPL transfer
+    // path). The pre-fix code left this branch empty, so from/to kept the
+    // literal "from"/"to" placeholders and relied on resolveCpiFields — which
+    // blindly took the FIRST tracked context. A fee-split with two transfer
+    // contexts therefore routed BOTH transfers to the first binding, silently
+    // misdirecting lamports with no marker.
+    const varName = firstArg.text.trim().replace(/^&\s*/, "");
+    const ctx = cpiCtxLookup?.(varName);
+    if (ctx) {
+      if (ctx.from) from = ctx.from;
+      if (ctx.to) to = ctx.to;
+      if (ctx.signerSeeds) signerSeeds = ctx.signerSeeds;
+    } else if (/^[A-Za-z_]\w*$/.test(varName)) {
+      collector?.add({
+        code: "cpi_accounts_lost_hoisted_binding",
+        message: `system_program::transfer's CpiContext was variable-bound to '${varName}' and the binding wasn't tracked; from/to fall back to placeholders and the transfer may be misrouted or fail to build.`,
+        snippet: callNode.text,
+        loc: locFromNode(callNode),
+      });
+    }
   }
 
   if (lastArg && lastArg !== firstArg) {

@@ -2355,6 +2355,17 @@ function resolveCpiFields(
   stmt: BodyStatement,
   cpiContexts: Map<string, { from: string; to: string; authority?: string; signerSeeds?: string; mint?: string }>,
 ): BodyStatement {
+  // #10 — only auto-fill unresolved from/to/authority placeholders when there
+  // is exactly ONE tracked CpiContext, so the mapping is unambiguous. This
+  // function used to iterate `for (const [, ctx] of cpiContexts)` and take the
+  // FIRST context, discarding the map key — so a fee-split (or any multi-hop
+  // body) with two transfer contexts routed EVERY unresolved statement to the
+  // first binding, silently misdirecting funds. Variable-bound system/SPL
+  // transfers now resolve their SPECIFIC context inline in the extractor (by
+  // var name); a statement still carrying "from"/"to" here in a multi-context
+  // body is genuinely ambiguous, so leave it — a loud build failure — rather
+  // than guess wrong.
+  if (cpiContexts.size !== 1) return stmt;
   if (stmt.kind === "cpi_system_transfer" || stmt.kind === "cpi_spl_transfer") {
     if (stmt.from === "from" || stmt.to === "to") {
       for (const [, ctx] of cpiContexts) {
