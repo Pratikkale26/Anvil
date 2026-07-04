@@ -1293,6 +1293,13 @@ export interface ScenarioVerdict {
   /** Per-step set_return_data() bytes (base64, null when none) when
    *  scenario.compare.returnData is set. */
   returnDataDiff?: { anchor: (string | null)[]; anvil: (string | null)[]; diverged: boolean };
+  /** B5 revert-parity — the FIRST step where Anchor and Anvil disagreed on
+   *  success-vs-revert (undefined when every step's outcome matched). This is
+   *  independent of the byte compare: an emit that DROPPED an access-control
+   *  guard accepts a caller Anchor rejects, so the compared account keeps its
+   *  identical pre-revert bytes (accountDiffs stay 'equal') while the outcomes
+   *  diverge here. Presence forces verdict=DIVERGED. */
+  outcomeDivergence?: { step: number; ix: string; anchorOk: boolean; anvilOk: boolean };
 }
 
 export function compareScenarioRuns(
@@ -1577,9 +1584,37 @@ export function compareScenarioRuns(
   const anyAssertionFailed = assertions.some((a) => !a.passed);
   const anyScenarioFailure = anvilRun.steps.some((s) => !s.ok && !s.expectedFail && s.error?.includes("build-instruction failed"));
 
+  // B5 — revert-parity. Anchor and Anvil must agree, step-for-step, on
+  // success-vs-revert. Both runs execute every scenario.step in order (an
+  // aborted run records the remaining steps as ok:false), so the two step
+  // arrays are index-aligned. A step where one runtime SUCCEEDED and the other
+  // REVERTED is a behavioral divergence the byte-compare CANNOT see: an emit
+  // that dropped a body-level `require!` / access-control guard ACCEPTS a
+  // caller Anchor REJECTS, and the compared account keeps its identical
+  // pre-revert bytes — so accountDiffs stay 'equal' and (pre-fix) the run
+  // certified BYTE_EQUAL + runtimeVerified=true for a program that silently
+  // removed a guard. The compareTxOutcomes gate existed only in the test
+  // harness; this wires it into the served comparator. Skip steps where BOTH
+  // sides errored on build-instruction construction (that's SCENARIO_FAILED
+  // territory, handled above — not a runtime outcome divergence).
+  let outcomeDivergence: ScenarioVerdict["outcomeDivergence"];
+  for (let i = 0; i < anchorRun.steps.length; i++) {
+    const a = anchorRun.steps[i];
+    const v = anvilRun.steps[i];
+    if (!a || !v) continue;
+    const aBuildFail = !a.ok && a.error?.includes("build-instruction failed");
+    const vBuildFail = !v.ok && v.error?.includes("build-instruction failed");
+    if (aBuildFail || vBuildFail) continue;
+    if (Boolean(a.ok) !== Boolean(v.ok)) {
+      outcomeDivergence = { step: i, ix: a.ix, anchorOk: Boolean(a.ok), anvilOk: Boolean(v.ok) };
+      break;
+    }
+  }
+  const anyOutcomeDiverged = outcomeDivergence !== undefined;
+
   let verdict: ScenarioVerdict["verdict"];
   if (anyScenarioFailure) verdict = "SCENARIO_FAILED";
-  else if (anyAccountDiverged || anyEventDiverged || anyMsgDiverged || anyReturnDataDiverged || anyAssertionFailed) verdict = "DIVERGED";
+  else if (anyAccountDiverged || anyEventDiverged || anyMsgDiverged || anyReturnDataDiverged || anyAssertionFailed || anyOutcomeDiverged) verdict = "DIVERGED";
   else verdict = "BYTE_EQUAL";
 
   // Vacuous-run guard (#4). A run where EVERY step reverted, or that had
@@ -1692,6 +1727,7 @@ export function compareScenarioRuns(
     eventLogDiff,
     msgLogDiff,
     returnDataDiff,
+    outcomeDivergence,
   };
 }
 
