@@ -52,6 +52,9 @@ pub fn raw_cpi(
     let to = &accounts[1];
     let target_program = &accounts[2];
 
+    if !from.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
     if !from.is_writable() || !to.is_writable() {
         return Err(ProgramError::InvalidAccountData);
     }

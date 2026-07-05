@@ -129,8 +129,8 @@ export const CASES: readonly RealworldCase[] = [
   {
     id: "anchor-cpi-test",
     url: "https://raw.githubusercontent.com/coral-xyz/anchor/master/tests/cpi-returns/programs/callee/src/lib.rs",
-    expected: "validator-refuse",
-    description: "Result<u64> typed return — validator refuses per #20",
+    expected: "cargo-clean",
+    description: "Result<u64> typed return — refused per #20 until typed-return/set_return_data emit shipped; now expected to compile",
   },
   {
     id: "spl-token-minter",
