@@ -9,7 +9,7 @@ export function Hero({ overallSavings }: { overallSavings: string }) {
   const stats: Stat[] = [
     { value: overallSavings, label: "Avg CU vs Anchor", tone: "amber" },
     { value: "0", label: "Byte divergences", tone: "teal" },
-    { value: "6", label: "Real-world programs", tone: "indigo" },
+    { value: "14", label: "Real-world programs byte-equal", tone: "indigo" },
   ];
 
   return (
@@ -37,8 +37,9 @@ export function Hero({ overallSavings }: { overallSavings: string }) {
 
       <p className="text-lead mx-auto max-w-[600px] mt-6">
         Anvil parses Anchor into a typed IR and emits idiomatic Pinocchio or
-        Native Rust — with a <span className="text-anvil-text">byte-equal</span> gate that checks
-        the output against the Anchor reference under LiteSVM, so you know when a port is deploy-safe.
+        Native Rust — with a <span className="text-anvil-text">byte-equal</span> gate that runs
+        both binaries against the Anchor reference under LiteSVM, so you prove each port
+        instead of trusting it.
       </p>
 
       <div className="mt-10 flex items-center justify-center gap-3 flex-wrap">
@@ -59,9 +60,14 @@ export function Hero({ overallSavings }: { overallSavings: string }) {
         </Link>
       </div>
 
-      <div className="mt-6 inline-flex items-center gap-1.5 text-[12px] text-anvil-text-muted">
-        <ShieldCheck size={13} className="text-anvil-teal" />
-        Differential-tested. AI patches gated by byte-equal.
+      <div className="mt-6 flex items-center justify-center gap-4 flex-wrap">
+        <code className="px-4 py-1.5 rounded-full text-[12.5px] font-semibold border border-anvil-card-border bg-white/[0.02] text-anvil-text-sub tracking-tight">
+          npm install -g anvil-sol
+        </code>
+        <span className="inline-flex items-center gap-1.5 text-[12px] text-anvil-text-muted">
+          <ShieldCheck size={13} className="text-anvil-teal" />
+          Runs fully local — <code className="text-anvil-text-sub">anvil verify</code> proves byte-equal on your machine.
+        </span>
       </div>
 
       {/* Pipeline visual */}

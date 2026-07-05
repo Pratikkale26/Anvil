@@ -6,7 +6,31 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ---
 
-## Unreleased
+## 0.5.0 — 2026-07-05
+
+### Fixed — the published CLI now actually runs on plain Node
+
+- **npm-hoisted install was dead on arrival** (0.4.0): the published `bin` pointed at raw TypeScript and the tree-sitter WASM probe used a fixed `../`-depth list that never landed on the hoisted `node_modules`, so `compile`/`parse` failed with "Could not find web-tree-sitter package" on every `npm install -g anvil-sol`. The probe now walks every ancestor (npm, pnpm, and dev layouts all covered), and prepack transpiles `.ts → .js` — the CLI runs on Node ≥ 20.19 / ≥ 22.12, Bun no longer required at runtime.
+- **Toolchain-missing errors are actionable**: a missing `cargo-build-sbf` prints the Agave install one-liner instead of blaming the emitted code; `compile`'s default-strict cargo gate explains where the requirement comes from and offers `--no-cargo-check`.
+- LICENSE (Apache-2.0) now ships in the npm tarball; prepack hard-fails if the CLI's `--version` banner drifts from `package.json`.
+
+### Added — prove-it front door + gate integrity
+
+- **`anvil verify <program>`** — one-shot byte-equal proof: builds the Anchor reference and the Anvil emit as real `.so`, synthesizes a scenario from the IR including **negative probes** (unauthorized `has_one` caller + missing signer — both must revert on BOTH binaries), runs both under LiteSVM, byte-compares `data + lamports + owner`, and exits with the verdict.
+- **`anvil advise <program>`** — Pinocchio vs Native target recommendation.
+- Per-step transaction-outcome (revert) parity in the production comparator; vacuous runs (all-steps-reverted / nothing-compared) fail instead of certifying; `runtimeVerified` requires strict `BYTE_EQUAL`.
+- `--fuzz` upgraded to full-range integers (`u64/i64/u128/i128`, past 2^53).
+
+### Fixed — silent-miscompile hardening (each with a fixture-first regression test)
+
+- Unsizeable field types loud-refuse instead of a silent 32-byte size guess.
+- External-crate path collapse is root-gated by declared-module tracking (the `solana_program::system_program::ID` → user-`ID` authority-swap class, closed in carried code too).
+- SPL CPI dispatch is token-namespace-scoped (`vault_program::cpi::close_account` no longer routes as SPL).
+- Let-bound `system_program::transfer` folding bails when an argument is mutated between binding and invoke.
+- Ambiguous `self.<field>` Deref chains emit a loud placeholder instead of guessing an account.
+- `#[account(signer)]` on AccountInfo/UncheckedAccount back-fills `isSigner` (was a silently dropped signer check).
+
+### Also in 0.5.0 — everything below landed on main between 0.4.0 (2026-05-27) and this release
 
 ### Added — First multi-file real-world byte-equal milestone (2026-05-27/28)
 

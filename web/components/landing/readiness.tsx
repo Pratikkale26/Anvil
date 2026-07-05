@@ -33,7 +33,7 @@ const SHIPPED: Cluster[] = [
       { emphasis: "Anchor 0.29–1.0 parser", text: "Token-2022 (25 ext), InterfaceAccount runtime dispatch, zero_copy, literal discriminator override" },
       { emphasis: "Multi-file output", text: "lib.rs, state.rs, instructions/, helpers" },
       { emphasis: "GitHub ingestion", text: "paste any public repo URL and compile" },
-      { emphasis: "AI refinement", text: "Sonnet 4.6 — cost-capped, validation-error gated" },
+      { emphasis: "AI refinement", text: "cost-capped, validation-error gated, byte-equal verified when a scenario is supplied" },
     ],
   },
 ];

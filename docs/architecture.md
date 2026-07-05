@@ -89,10 +89,12 @@ See [`api/src/ai/refine.ts`](api/src/ai/refine.ts).
 | Layer | Tests | What it gates |
 |------|-------|---------------|
 | Unit (parser / emitter / validator / API / spend-tracker) | ~200+ | Code correctness |
-| Binary-parity snapshot ([api/tests/binary-parity-snapshot.test.ts](../api/tests/binary-parity-snapshot.test.ts)) | 117 fixture×target snapshots | Locks `output.files` against on-disk snapshots; any visitor / post-emit change surfaces as a single-file diff. |
-| Cargo MUST_PASS (program-examples + escrow2025 + coral cohort + t22-transfer-fee) | 181 fixtures × {pinocchio,native} | Emitted code compiles |
+| Binary-parity snapshot ([api/tests/binary-parity-snapshot.test.ts](../api/tests/binary-parity-snapshot.test.ts)) | 65 fixture×target snapshots | Locks `output.files` against on-disk snapshots; any visitor / post-emit change surfaces as a single-file diff. |
+| Cargo MUST_PASS (demo corpus + program-examples + escrow2025 + coral cohort + t22-transfer-fee) | 193-entry ledger × {pinocchio,native} | Emitted code compiles |
 | Cargo tracking ceilings (coral-swap, t22-transfer-hook, …) | ~9 fixtures | Emitted code regression-guard (errors ≤ ceiling) |
-| **Differential** ([api/tests/differential-*.test.ts](../api/tests/)) | 143 byte-equal test files | **Anchor ↔ Anvil-Pinocchio runtime equality (LiteSVM byte-equal: data + lamports + owner)** |
+| **Differential** ([api/tests/differential-*.test.ts](../api/tests/)) | 196 byte-equal test files | **Anchor ↔ Anvil-Pinocchio runtime equality (LiteSVM byte-equal: data + lamports + owner, plus per-step revert-outcome parity)** |
+
+Counts as of v0.5.0 (2026-07). Per-push CI gates typecheck; the cargo + differential layers are a local pre-release run (the SBF builds are disk-bound and outgrew hosted CI runners — see `.github/workflows/ci.yml` for how to restore a full lane on adequate hardware).
 | **Realworld large** | marginfi-v2 (1 err), raydium-clmm (0 err), klend (0 err) | Top DeFi protocol parse+emit ceiling tracking |
 
 The differential layer is the load-bearing correctness signal — cargo-green is necessary but not sufficient. `differential-harness.ts` provides a per-fixture API: caller supplies setup + callScript + accountsToCompare, the harness handles building, running both .so files in LiteSVM with the same keypairs, and byte-comparing post-scenario state + lamports.

@@ -620,6 +620,7 @@ export async function parseAnchor(
       userTraits: topLevel.userTraits,
       userTraitImpls,
       userModules: topLevel.userModules,
+      userModuleRoots: collectUserModuleRoots(source),
       warnings: warningCollector.drain(),
       metadata: {
         sourceFramework: "anchor",
@@ -1063,6 +1064,26 @@ function classifyTopLevel(root: SyntaxNode): TopLevelItems {
 }
 
 // ─── Utility functions ──────────────────────────────────────────────────────
+
+/**
+ * P6-A (#33) — harvest every module name DECLARED in the source: `mod x;`
+ * decls and `mod x { ... }` blocks, any visibility, any nesting depth,
+ * program module included. Regex over the raw text rather than the syntax
+ * tree so the collection is independent of which normalization stage
+ * consumed the declaration (project-source strips `mod x;` file decls,
+ * Finding #67 round-trips top-level mods verbatim, program-inner mods are
+ * flattened — all of them are legitimate user roots for path collapse).
+ * Over-approximation by design: a false positive (e.g. `mod` in a comment)
+ * only re-enables a collapse that was previously unconditional, and can
+ * never resurrect an EXTERNAL_CRATE_ROOTS path — that guard runs first.
+ */
+function collectUserModuleRoots(source: string): string[] {
+  const roots = new Set<string>();
+  const re = /\bmod\s+([A-Za-z_][A-Za-z0-9_]*)\s*[;{]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source)) !== null) roots.add(m[1]!);
+  return [...roots].sort();
+}
 
 function extractModuleName(modNode: SyntaxNode): string {
   const nameNode = modNode.childForFieldName("name");

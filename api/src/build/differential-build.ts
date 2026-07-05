@@ -31,7 +31,7 @@ import {
 import { join, dirname as nodeDirname } from "node:path";
 import { createHash } from "node:crypto";
 import type { SolanaIR } from "../ir/schema.js";
-import { spawnSandboxed, sandboxedEnv } from "./sandbox.js";
+import { spawnSandboxed, sandboxedEnv, assertManifestFetchSafe } from "./sandbox.js";
 import { AnvilError, ErrorCode } from "../errors.js";
 
 const CACHE_ROOT =
@@ -437,11 +437,17 @@ function warmDifferentialDependencies(
   scratchDir: string,
   opts: DifferentialBuildOptions,
 ): Promise<void> {
+  // #32 — this is the one network-enabled cargo invocation (the build itself
+  // runs offline in the sandbox). Re-validate the manifest that actually hit
+  // disk before granting it egress, and bound its runtime.
+  assertManifestFetchSafe(join(scratchDir, "Cargo.toml"));
   return new Promise((resolve, reject) => {
     const child = spawn("cargo", ["fetch", "--quiet"], {
       cwd: scratchDir,
       env: { ...sandboxedEnv(), CARGO_NET_OFFLINE: "false" },
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: 300_000,
+      killSignal: "SIGKILL",
     });
     let stderr = "";
     child.stderr?.on("data", (c: Buffer) => {

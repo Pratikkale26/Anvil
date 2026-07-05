@@ -35,7 +35,7 @@
 import { spawn, execSync } from "node:child_process";
 import { mkdir, rm, writeFile, readFile, stat } from "node:fs/promises";
 import { dirname, join, isAbsolute, normalize } from "node:path";
-import { spawnSandboxed, sandboxedEnv } from "./sandbox.js";
+import { spawnSandboxed, sandboxedEnv, assertManifestFetchSafe } from "./sandbox.js";
 import { maskIp } from "../ip-mask.js";
 
 export type BuildTarget = "pinocchio" | "native";
@@ -613,11 +613,16 @@ async function ensureScratchProject(target: BuildTarget, scratchDir: string): Pr
 }
 
 function warmDependencies(scratchDir: string): Promise<void> {
+  // #32 — same final-artifact guard + runtime bound as the differential
+  // warm-fetch: this cargo invocation has network, everything else is offline.
+  assertManifestFetchSafe(join(scratchDir, "Cargo.toml"));
   return new Promise((resolve, reject) => {
     const child = spawn("cargo", ["fetch", "--quiet"], {
       cwd: scratchDir,
       env: { ...sandboxedEnv(), CARGO_NET_OFFLINE: "false" },
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: 300_000,
+      killSignal: "SIGKILL",
     });
     let stderr = "";
     child.stderr?.on("data", (c: Buffer) => { stderr += c.toString("utf-8"); });

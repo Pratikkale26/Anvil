@@ -2237,6 +2237,19 @@ export const SolanaIRSchema = z.object({
   accounts: z.array(AccountDefSchema),
   types: z.array(TypeDefSchema).default([]),
   constants: z.array(z.string()).default([]),
+  /**
+   * P6-A (#33) — every module name DECLARED in the source (`mod x;` or
+   * `mod x { ... }`, any nesting, program mod included). The emitter's
+   * collapseModulePaths uses this as the set of roots that may legally be
+   * a flattened user submodule: a `::`-path rooted anywhere else (an
+   * external crate not in the EXTERNAL_CRATE_ROOTS allowlist) is never
+   * collapsed onto a colliding top-level symbol — the #9/Inc-7 silent
+   * authority-swap class, now guarded in carried code too. Deliberately an
+   * over-approximation (names harvested by regex, comments included):
+   * over-collection merely re-enables a collapse that was always legal for
+   * user-declared modules; under-collection would break legit collapses.
+   */
+  userModuleRoots: z.array(z.string()).default([]),
   errors: z.array(ErrorDefSchema).default([]),
   /** Helper functions defined outside #[program] mod (carried to output) */
   helperFns: z.array(HelperFnSchema).default([]),

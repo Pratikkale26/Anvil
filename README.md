@@ -9,15 +9,21 @@
 The reason most Anchor programs stay on Anchor isn't that anyone prefers it for production — it's that hand-rewriting 2,000–10,000 lines of Rust to a leaner runtime carries unacceptable correctness risk. Anvil removes that risk:
 
 ```bash
-# 1. Migrate
-anvil-sol compile ./my-anchor-program --target pinocchio -o ./my-pinocchio
+npm install -g anvil-sol
 
-# 2. Prove it
-anvil-sol differential ./my-anchor-program --scenario scenario.json
+# 1. Migrate
+anvil compile ./my-anchor-program --target pinocchio -o ./my-pinocchio
+
+# 2. Prove it — one shot: builds BOTH .so, synthesizes a scenario from the IR
+#    (happy path + unauthorized-caller + missing-signer probes), byte-compares.
+anvil verify ./my-anchor-program
 #   ✓ BYTE-EQUAL — all N compared account(s) match.
+
+# Or drive the gate with your own scenario:
+anvil differential ./my-anchor-program --scenario scenario.json
 ```
 
-Step 2 is the part nobody else ships. It builds your Anchor source AND the Anvil-emitted Pinocchio version into separate `.so` files, runs the same instruction sequence against both inside [LiteSVM](https://github.com/litesvm/litesvm), and asserts every account's `data`, `lamports`, AND `owner` byte-equal at the end. Anything else — wrong CPI account order, missing bump, off-by-one Borsh layout, account left assigned to the wrong program — fails the gate loudly. Event log payloads (`emit!`) are NOT compared today; the CLI refuses to run on `emit!()`-using sources unless you pass `--ignore-events` to acknowledge the gap. See [docs/audit-trust-model.md](docs/audit-trust-model.md).
+Step 2 is the part nobody else ships. It builds your Anchor source AND the Anvil-emitted Pinocchio version into separate `.so` files, runs the same instruction sequence against both inside [LiteSVM](https://github.com/litesvm/litesvm), and asserts every account's `data`, `lamports`, AND `owner` byte-equal at the end. Anything else — wrong CPI account order, missing bump, off-by-one Borsh layout, account left assigned to the wrong program, a dropped access-control check (revert outcomes are compared step-by-step) — fails the gate loudly. Event log payloads (`emit!`), `set_return_data`, and user `msg!()` text are opt-in comparison surfaces (`--compare-events` / `--compare-return-data` / `--compare-msg-logs`); the CLI refuses to run on `emit!()`-using sources unless you either enable the event surface or pass `--ignore-events` to acknowledge the gap. See [docs/audit-trust-model.md](docs/audit-trust-model.md).
 
 Cargo green is necessary but not sufficient. This is the actual correctness signal.
 
@@ -25,7 +31,7 @@ Cargo green is necessary but not sufficient. This is the actual correctness sign
 
 ## What's verified today
 
-**150 byte-equal differential test files** lock these emit shapes against the Anchor reference on every commit. **Data + lamports + owner all byte-compared in a real VM** — not just `cargo build` green, not just IDL match. The MPL Token Metadata + Pyth Receiver `.so` are bundled as test fixtures and loaded into LiteSVM via `svm.addProgram` so CPI shape correctness is also verified end-to-end. **First multi-file real-world byte-equal: Helium circuit-breaker** (8 instructions, 12 source files) — Anchor and Anvil-Pinocchio produce identical on-chain state under the same scenario. **MPL byte-equal coverage 11/12**: `create_metadata_v3` (with full DataV2 support — creators, collection, uses), `create_master_edition_v3`, `update_metadata_accounts_v2`, `set_and_verify_collection`, `freeze_delegated`, `thaw_delegated`, `approve_collection_authority`, `revoke_collection_authority`, `mint_new_edition_from_master_edition`, `sign_metadata`, `verify_collection`. **Full 12/12 MPL Core catalog**: CreateV2, UpdateV2, TransferV1, BurnV1, CreateCollectionV2, AddPluginV1, RemovePluginV1, UpdatePluginV1, ApprovePluginAuthorityV1, RevokePluginAuthorityV1. **Top DeFi cohort**: marginfi-v2 (91 instructions, 1 error), raydium-clmm (34 instructions, 0 errors), klend (63 instructions, `cargo build-sbf` GREEN — first top Solana lending protocol fully compilable to Pinocchio). **Composite `#[derive(Accounts)]` flatten** shipped end-to-end with BYTE_EQUAL.
+**196 byte-equal differential test files** lock these emit shapes against the Anchor reference (the full corpus is a local/on-demand run — the disk-heavy SBF builds outgrew hosted CI runners, so per-push CI gates typecheck and the corpus is run before releases). **Data + lamports + owner all byte-compared in a real VM** — not just `cargo build` green, not just IDL match. The MPL Token Metadata + Pyth Receiver `.so` are bundled as test fixtures and loaded into LiteSVM via `svm.addProgram` so CPI shape correctness is also verified end-to-end. **First multi-file real-world byte-equal: Helium circuit-breaker** (8 instructions, 12 source files) — Anchor and Anvil-Pinocchio produce identical on-chain state under the same scenario. **MPL byte-equal coverage 11/12**: `create_metadata_v3` (with full DataV2 support — creators, collection, uses), `create_master_edition_v3`, `update_metadata_accounts_v2`, `set_and_verify_collection`, `freeze_delegated`, `thaw_delegated`, `approve_collection_authority`, `revoke_collection_authority`, `mint_new_edition_from_master_edition`, `sign_metadata`, `verify_collection`. **Full 12/12 MPL Core catalog**: CreateV2, UpdateV2, TransferV1, BurnV1, CreateCollectionV2, AddPluginV1, RemovePluginV1, UpdatePluginV1, ApprovePluginAuthorityV1, RevokePluginAuthorityV1. **Top DeFi cohort**: marginfi-v2 (91 instructions, 1 error), raydium-clmm (34 instructions, 0 errors), klend (63 instructions, `cargo build-sbf` GREEN — first top Solana lending protocol fully compilable to Pinocchio). **Composite `#[derive(Accounts)]` flatten** shipped end-to-end with BYTE_EQUAL.
 
 ### 14+ real-world Anchor programs verified byte-equal
 
@@ -102,25 +108,36 @@ What we **don't** claim:
 
 ## Try it in 30 seconds
 
-**Requires [Bun](https://bun.sh) ≥ 1.0.0** as the runtime. The CLI is published as `anvil-sol` and runs under Bun (not Node) — `bun add -g anvil-sol` or invoke with `bunx anvil-sol …`. The full repo also runs under Bun for tests + the dev server.
+The published CLI runs on **Node ≥ 20.19** (or ≥ 22.12) — no Bun required (v0.5.0+):
+
+```bash
+npm install -g anvil-sol
+
+# Transpile any Anchor program. (v0.4+ is safe-by-default: output is written,
+# but success requires the validator + cargo gates; --permissive / --no-cargo-check
+# are the explicit opt-outs.)
+anvil compile program.rs --target pinocchio -o ./out
+
+# Prove it byte-equal vs Anchor (needs cargo-build-sbf + anchor on PATH):
+anvil verify program.rs
+```
+
+Working from the repo instead (dev runtime is [Bun](https://bun.sh)):
 
 ```bash
 git clone https://github.com/Pratikkale26/Anvil && cd Anvil
 bun install && cd cli && bun install && cd ..
 
-# Transpile a bundled demo and cargo-build it. (v0.4+ writes the project
-# only when the safe-by-default gate passes; pass --permissive to write
-# stub-bearing emit anyway — explore mode only.)
 bun cli/anvil.ts compile api/src/demo-programs/counter.rs --target native -o /tmp/counter-native
 cd /tmp/counter-native && cargo build
 
 # Or run the differential gate against a bundled scenario:
 bun cli/anvil.ts differential api/src/demo-programs/counter.rs \
     --scenario examples/differential/counter.json --fuzz 100
-# → 100/100 byte-equal on randomized scalar args
+# → 100/100 byte-equal on randomized args (full-range ints, not just safe values)
 ```
 
-Or use the public workbench: paste source at [anvilsol.xyz](https://anvilsol.xyz), pick a target, download the bundle.
+There's also a hosted workbench at [anvilsol.xyz](https://anvilsol.xyz) — paste source, pick a target, download the bundle. The CLI is the primary, fully-local interface.
 
 ## Anchor in, native out
 
@@ -196,29 +213,33 @@ Full matrix and known gaps: [docs/feature-matrix.md](docs/feature-matrix.md).
 ## CLI
 
 ```
-anvil-sol compile <input> --target <pinocchio|native> [-o <dir>] [--strict]
-anvil-sol differential <input> [--scenario s.json] [--anchor-so path.so]
-anvil-sol parse <input> [--json]
-anvil-sol validate <input> --target <target> [--json]
-anvil-sol lint <input> --target <target> [--markdown]
-anvil-sol bench <input> [--markdown]
-anvil-sol snapshot <input> --save | --check
-anvil-sol diff <before> <after> [--markdown]
+anvil compile <input> --target <pinocchio|native> [-o <dir>]
+anvil verify <input> [--target <target>]           # one-shot byte-equal proof
+anvil differential <input> [--scenario s.json] [--anchor-so path.so] [--fuzz N]
+anvil parse <input> [--json]
+anvil validate <input> --target <target> [--json]
+anvil advise <input>                               # Pinocchio vs Native recommendation
+anvil refine <input> --target <target>             # AI-patch validator errors (your ANTHROPIC_API_KEY)
+anvil lint <input> --target <target> [--markdown]
+anvil bench <input> [--markdown]
+anvil snapshot <input> --save | --check
+anvil diff <before> <after> [--markdown]
+anvil migrate diff|codegen <old.json> <new.json>
 ```
 
-`--strict` on `compile` refuses to write output when the validator finds errors or the emit contains `TODO(manual)` markers — gate this before deploy.
+Strict mode is the **default** since v0.4: `compile` refuses to declare success when the validator finds errors, the emit contains `TODO(manual)` markers, or (when `cargo` is available) `cargo check` rejects the output — `--permissive` / `--no-cargo-check` are the explicit opt-outs.
 
-`differential --scenario` runs the byte-equal correctness gate against your own program. See [docs/differential-testing.md](docs/differential-testing.md) for the JSON format.
+`verify` is the headline gate: it builds the Anchor reference and the Anvil emit as real `.so`, synthesizes a scenario from the IR — happy path plus **negative probes** (unauthorized `has_one` caller, missing signer) that must revert identically on both — and byte-compares post-state. `differential --scenario` drives the same gate with your own scenarios; see [docs/differential-testing.md](docs/differential-testing.md) for the JSON format.
 
 ---
 
 ## Workbench
 
-The web playground at [anvilsol.xyz](https://anvilsol.xyz):
+The CLI is the primary interface; the web playground at [anvilsol.xyz](https://anvilsol.xyz) offers:
 
 - Paste / file / folder / GitHub repo ingestion.
 - Live emit + CU heuristic per instruction.
-- AI refine with revert-on-regression (Sonnet 4.6, $0.50 per-request cap, $2/IP/day cap).
+- AI refine with revert-on-regression (per-request + per-IP daily + global daily spend caps).
 - **Verify Build** — segmented Check / Build / Deploy:
   - **Check** (`cargo check`, ~3s, runs automatically on every emit).
   - **Build** (`cargo build`, ~10–15s, catches linker + codegen).
@@ -253,7 +274,7 @@ docs/   Architecture, differential testing, feature matrix, migration guide
 
 ## Status
 
-v0.4.0 — **safe-by-default** (`--strict` is the new CLI default; `--permissive` is the opt-out). See [CHANGELOG.md](CHANGELOG.md) for the BREAKING-change migration notes. **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-app-nrjdl.ondigitalocean.app`](https://anvil-app-nrjdl.ondigitalocean.app). **64/64 demo programs produce deployable `.so` via `cargo build-sbf`** on Pinocchio. 150 byte-equal differential test files + 193 realworld cargo-green MUST_PASS entries + 100+ IR body statement kinds. **Top DeFi: klend (63 instructions, `cargo build-sbf` GREEN)**. **First multi-file real-world byte-equal: Helium circuit-breaker** — Anchor and Pinocchio produce identical on-chain state. 1,255 commits, single developer.
+v0.5.0 — the CLI runs on **plain Node** (`npm install -g anvil-sol`; Bun no longer required), ships `anvil verify` (one-shot byte-equal proof with negative probes: unauthorized-caller + missing-signer must revert identically on both binaries) and `anvil advise`, and lands a hardening pass over the silent-miscompile surface (external-const collapse guards, CPI dispatch scoping, mutation-aware transfer folding, ambiguity-refusing Deref resolution — each with a fixture-first regression test). v0.4 made **safe-by-default** the CLI posture (`--permissive` is the opt-out); see [CHANGELOG.md](CHANGELOG.md). **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-app-nrjdl.ondigitalocean.app`](https://anvil-app-nrjdl.ondigitalocean.app). 196 byte-equal differential test files + 193 realworld cargo-green MUST_PASS entries + 100+ IR body statement kinds, run as the pre-release corpus (per-push CI gates typecheck). **Top DeFi: klend (63 instructions, `cargo build-sbf` GREEN)**. **First multi-file real-world byte-equal: Helium circuit-breaker**. 1,500+ commits, single developer.
 
 Working notes for grant + migration: [docs/migration-guide.md](docs/migration-guide.md).
 
