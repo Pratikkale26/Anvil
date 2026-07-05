@@ -28,8 +28,6 @@ const CLI_ROOT = join(__dirname, "..");
 const REPO_ROOT = join(CLI_ROOT, "..");
 const API_SRC = join(REPO_ROOT, "api", "src");
 const OUT_API_SRC = join(CLI_ROOT, "src", "api-src");
-const OUT_ANVIL = join(CLI_ROOT, "src", "anvil.ts");
-const OUT_SCENARIO = join(CLI_ROOT, "src", "scenario-runner.ts");
 
 function rmrf(p: string): void {
   try { rmSync(p, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -76,6 +74,43 @@ function rewriteImports(file: string, fromPrefix: string, toPrefix: string): voi
   if (newTxt !== txt) writeFileSync(file, newTxt, "utf-8");
 }
 
+/**
+ * Transpile every .ts under `root` into a sibling .js and delete the .ts.
+ *
+ * The published package must run under plain Node, not just Bun. Node can't
+ * execute .ts directly, so we strip the types ahead of time. Import specifiers
+ * throughout the codebase already use `.js` extensions (NodeNext style), so
+ * once the files ARE .js the specifiers resolve with no rewrite. We transpile
+ * in place (same tree layout) rather than bundling because ts-init.js locates
+ * the tree-sitter WASM by walking node_modules relative to its own
+ * import.meta.url — bundling would collapse that layout and break the probe.
+ *
+ * Bun.Transpiler is per-file (no bundle), strips types, lowers `enum`, and
+ * leaves `import.meta.url` / import specifiers untouched — exactly what Node
+ * needs. Runs under Bun at pack time; the OUTPUT is runtime-neutral ESM.
+ */
+function transpileTreeToJs(root: string): number {
+  const transpiler = new Bun.Transpiler({ loader: "ts" });
+  let count = 0;
+  const stack: string[] = [root];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    const stats = statSync(cur);
+    if (stats.isDirectory()) {
+      for (const entry of readdirSync(cur)) stack.push(join(cur, entry));
+    } else if (cur.endsWith(".ts") && !cur.endsWith(".d.ts")) {
+      let js = transpiler.transformSync(readFileSync(cur, "utf-8"));
+      // Drop any leading shebang (e.g. `#!/usr/bin/env bun`). Only the bin
+      // entry keeps a shebang, and it's re-added as a Node one below.
+      if (js.startsWith("#!")) js = js.replace(/^#![^\n]*\r?\n/, "");
+      writeFileSync(cur.slice(0, -3) + ".js", js, "utf-8");
+      rmSync(cur, { force: true });
+      count++;
+    }
+  }
+  return count;
+}
+
 function main(): void {
   if (!existsSync(API_SRC)) {
     console.error(`[prepack] api/src not found at ${API_SRC} — are you running from outside the monorepo?`);
@@ -97,33 +132,41 @@ function main(): void {
     console.log(`[prepack]   copied ${m} migrate files`);
   }
 
-  console.log(`[prepack] writing anvil.ts entry with rewritten imports → ${OUT_ANVIL}`);
-  const original = readFileSync(join(CLI_ROOT, "anvil.ts"), "utf-8");
-  // Rewrite "../api/src/" → "./api-src/" — the published path layout.
-  // ./migrate/... already resolves correctly from cli/src/ (we just copied it).
-  const rewritten = original.replace(/(["'`])\.\.\/api\/src\//g, "$1./api-src/");
-  writeFileSync(OUT_ANVIL, rewritten, "utf-8");
-
-  // scenario-runner.ts is the JSON-scenario differential runner. It imports
-  // from `./api-src/...` once flattened into cli/src/, same rewrite as anvil.ts.
-  // Lives at cli/scenario-runner.ts in source so it sits next to anvil.ts
-  // and shares the same import-path semantics.
-  const scenarioSrc = join(CLI_ROOT, "scenario-runner.ts");
-  if (existsSync(scenarioSrc)) {
-    console.log(`[prepack] writing scenario-runner.ts with rewritten imports → ${OUT_SCENARIO}`);
-    const sRaw = readFileSync(scenarioSrc, "utf-8");
-    const sRewritten = sRaw.replace(/(["'`])\.\.\/api\/src\//g, "$1./api-src/");
-    writeFileSync(OUT_SCENARIO, sRewritten, "utf-8");
+  // Copy EVERY cli-root source module into cli/src/, rewriting `../api/src/`
+  // → `./api-src/` (the flattened publish layout). anvil.ts imports its
+  // siblings by relative path (`./stub-markers.js`, `./scenario-runner.js`,
+  // `./differential-engine.js`), so all of them must ship alongside it.
+  // Bundling only anvil.ts + scenario-runner.ts (the prior behavior) left
+  // stub-markers.js / differential-engine.js absent → the published entry
+  // threw `Cannot find module './stub-markers.js'` on the first command that
+  // touched them. Copying the whole cli-root set makes this drift-proof.
+  const cliRootModules = readdirSync(CLI_ROOT).filter(
+    (f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".d.ts"),
+  );
+  console.log(`[prepack] writing ${cliRootModules.length} cli-root modules → src/ (imports rewritten)`);
+  for (const mod of cliRootModules) {
+    const raw = readFileSync(join(CLI_ROOT, mod), "utf-8");
+    // ./migrate/... already resolves from cli/src/ (copied above); only the
+    // ../api/src/ prefix needs flattening.
+    const rewritten = raw.replace(/(["'`])\.\.\/api\/src\//g, "$1./api-src/");
+    writeFileSync(join(CLI_ROOT, "src", mod), rewritten, "utf-8");
+    console.log(`[prepack]   wrote src/${mod}`);
   }
 
-  console.log(`[prepack] verifying entry compiles (typecheck)…`);
-  // Caller should run `bun cli/src/anvil.ts --help` smoke test after this
-  // to confirm the published-shape entry works. We don't run it inline
-  // because it requires the deps in cli/node_modules to be installed
-  // against the published-shape paths, which only happens during publish.
+  console.log(`[prepack] transpiling cli/src/ .ts → .js (Node-runnable, no Bun required)…`);
+  const transpiled = transpileTreeToJs(join(CLI_ROOT, "src"));
+  console.log(`[prepack]   transpiled ${transpiled} files`);
 
-  console.log(`[prepack] done. Tarball will include cli/src/ + cli/anvil.ts.`);
-  console.log(`[prepack] After publish, the bin entry resolves cli/src/anvil.ts which imports ./api-src/...`);
+  // The bin entry needs a Node shebang — the source carried `#!/usr/bin/env bun`,
+  // stripped during transpile. Without this the shebang would be missing and a
+  // bare `./anvil` exec would fail.
+  const anvilJs = join(CLI_ROOT, "src", "anvil.js");
+  const anvilBody = readFileSync(anvilJs, "utf-8");
+  writeFileSync(anvilJs, `#!/usr/bin/env node\n${anvilBody}`, "utf-8");
+  console.log(`[prepack]   set Node shebang on src/anvil.js`);
+
+  console.log(`[prepack] done. Tarball will include cli/src/ (transpiled .js).`);
+  console.log(`[prepack] After publish, the bin entry runs cli/src/anvil.js under Node, importing ./api-src/*.js.`);
 }
 
 main();

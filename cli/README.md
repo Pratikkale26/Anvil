@@ -8,20 +8,24 @@ Anchor → Pinocchio / Native / Quasar transpiler. Pipe Anchor source through `a
 
 ## Install
 
-Requires [Bun](https://bun.sh) ≥ 1.0:
+Runs on **Node ≥ 20.19** (or ≥ 22.12) — no Bun required:
 
 ```bash
-# One-liner install for bun (skip if already installed)
-curl -fsSL https://bun.sh/install | bash
-
 # Install anvil-sol globally
-bun install -g anvil-sol
+npm install -g anvil-sol
 ```
 
 Or run without installing:
 
 ```bash
-bunx anvil-sol compile program.rs --target pinocchio
+npx anvil-sol compile program.rs --target pinocchio
+```
+
+Bun works too, if you prefer it:
+
+```bash
+bun install -g anvil-sol
+# or: bunx anvil-sol compile program.rs --target pinocchio
 ```
 
 ## Quickstart
