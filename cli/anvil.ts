@@ -13,8 +13,10 @@
  *   anvil --help
  */
 
-import { existsSync, readFileSync, mkdirSync, writeFileSync, statSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, statSync, realpathSync } from "fs";
 import { resolve, join, basename, dirname } from "path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 import type { DifferentialScenario } from "./scenario-runner.js";
 import { parseAnchor } from "../api/src/parser/anchor-parser.js";
@@ -2539,7 +2541,6 @@ function cmdUpgrade(args: CliArgs): void {
   }
   banner();
   process.stdout.write(`  Running: ${c.cyan}${cmd}${c.reset}\n\n`);
-  const { spawnSync } = require("child_process") as typeof import("child_process");
   const proc = spawnSync(cmd, { shell: true, stdio: "inherit" });
   process.exit(proc.status ?? 0);
 }
@@ -3356,9 +3357,24 @@ function printMigrateHelp(): void {
 `);
 }
 
+// Portable "am I the entrypoint?" check. Bun/Deno expose `import.meta.main`,
+// but Node only added it in v24, so on Node 20–23 that field is `undefined`
+// and the CLI would silently never run. Comparing the resolved module path to
+// argv[1] works on every runtime, and realpathSync collapses the npm `.bin/`
+// symlink so `anvil ...` (installed) matches `node .../anvil.js` (direct).
+function isEntrypoint(metaUrl: string): boolean {
+  try {
+    const self = realpathSync(fileURLToPath(metaUrl));
+    const invoked = process.argv[1] ? realpathSync(process.argv[1]) : "";
+    return self === invoked;
+  } catch {
+    return false;
+  }
+}
+
 // Only run the CLI when executed directly — guarding this lets test/tooling
 // import pure helpers (e.g. adviseTarget) without triggering an argv parse.
-if (import.meta.main) {
+if (isEntrypoint(import.meta.url)) {
   main().catch((err: unknown) => {
     error(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);

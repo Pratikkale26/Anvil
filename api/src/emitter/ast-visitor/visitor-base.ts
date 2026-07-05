@@ -36,6 +36,10 @@
  *     13.md`).
  */
 
+import { createRequire } from "node:module";
+// Node ESM provides no global `require`; this shim keeps the lazy
+// `require(...)` calls below working on Node as well as Bun.
+const require = createRequire(import.meta.url);
 import type { BodyStatement } from "../../ir/schema.js";
 import {
   snakeCase,

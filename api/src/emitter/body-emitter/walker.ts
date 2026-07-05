@@ -26,6 +26,10 @@
  *    on the joined output (`body-emitter/post-emit-cleanup.ts`).
  */
 
+import { createRequire } from "node:module";
+// Node ESM provides no global `require`; this shim keeps the lazy
+// cycle-breaking `require(...)` call below working on Node as well as Bun.
+const require = createRequire(import.meta.url);
 import type {
   SolanaIR,
   Instruction,

@@ -32,7 +32,7 @@
  * non-fatal.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { mkdir, rm, writeFile, readFile, stat } from "node:fs/promises";
 import { dirname, join, isAbsolute, normalize } from "node:path";
 import { spawnSandboxed, sandboxedEnv } from "./sandbox.js";
@@ -791,7 +791,6 @@ function cargoAvailable(): boolean {
   if (cargoAvailableCache !== null) return cargoAvailableCache;
   try {
     // execSync is fine — startup-time only.
-    const { execSync } = require("node:child_process") as typeof import("node:child_process");
     execSync("command -v cargo", { stdio: "ignore" });
     cargoAvailableCache = true;
   } catch {
@@ -810,7 +809,6 @@ let cargoBuildSbfAvailableCache: boolean | null = null;
 function cargoBuildSbfAvailable(): boolean {
   if (cargoBuildSbfAvailableCache !== null) return cargoBuildSbfAvailableCache;
   try {
-    const { execSync } = require("node:child_process") as typeof import("node:child_process");
     execSync("command -v cargo-build-sbf", { stdio: "ignore" });
     cargoBuildSbfAvailableCache = true;
   } catch {

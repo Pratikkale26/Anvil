@@ -6,6 +6,7 @@
  */
 
 import { Parser, Language, type Node, type Tree } from "web-tree-sitter";
+import * as fs from "node:fs";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 
@@ -50,8 +51,6 @@ export function getParser(): Promise<Parser> {
     for (const root of moduleRoots) {
       const candidate = resolve(root, "web-tree-sitter");
       try {
-        // statSync via dynamic import to keep this file ESM-clean.
-        const fs = require("node:fs") as typeof import("node:fs");
         if (fs.existsSync(resolve(candidate, "web-tree-sitter.wasm"))) {
           webTreeSitterRoot = candidate;
           break;
@@ -76,7 +75,6 @@ export function getParser(): Promise<Parser> {
     let wasmPath: string | null = null;
     for (const root of moduleRoots) {
       const candidate = resolve(root, "tree-sitter-rust", "tree-sitter-rust.wasm");
-      const fs = require("node:fs") as typeof import("node:fs");
       if (fs.existsSync(candidate)) { wasmPath = candidate; break; }
     }
     if (!wasmPath) {
