@@ -117,6 +117,16 @@ function main(): void {
     process.exit(1);
   }
 
+  // Version-drift guard: anvil.ts hardcodes VERSION for --version / banners;
+  // package.json is what npm publishes. 0.5.0 nearly shipped announcing
+  // itself as v0.4.0 — hard-fail the pack instead of trusting memory.
+  const pkgVersion = JSON.parse(readFileSync(join(CLI_ROOT, "package.json"), "utf-8")).version as string;
+  const versionMatch = readFileSync(join(CLI_ROOT, "anvil.ts"), "utf-8").match(/^const VERSION = "([^"]+)";$/m);
+  if (!versionMatch || versionMatch[1] !== pkgVersion) {
+    console.error(`[prepack] VERSION drift: anvil.ts says "${versionMatch?.[1] ?? "<not found>"}" but package.json says "${pkgVersion}". Sync them before packing.`);
+    process.exit(1);
+  }
+
   console.log(`[prepack] cleaning previous bundle…`);
   rmrf(join(CLI_ROOT, "src"));
 

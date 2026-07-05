@@ -45,7 +45,9 @@ import { codegenMigration } from "./migrate/codegen.js";
 
 // ─── Version ─────────────────────────────────────────────────────────────────
 
-const VERSION = "0.4.0";
+// Must match package.json "version" — scripts/prepack.ts hard-fails the
+// publish when they drift (0.5.0 nearly shipped reporting itself as 0.4.0).
+const VERSION = "0.5.0";
 
 // ─── ANSI Colors ─────────────────────────────────────────────────────────────
 
@@ -600,6 +602,7 @@ function printHelp(): void {
     parse        Parse only — output IR as JSON
     validate     Parse, emit, validate — show issues
     verify       Prove byte-equal vs Anchor (build both + auto-scenario + compare)
+    advise       Recommend a transpile target (Pinocchio vs Native)
     lint         Auto-port readiness report (ready / review / blocker findings)
     bench        Per-instruction CU estimate vs Anchor baseline
     snapshot     Save / check CU baseline — fails on regression
@@ -1349,7 +1352,15 @@ async function cmdCompile(args: CliArgs): Promise<void> {
     const cargoHere = cargoAvailable();
     if (!cargoHere) {
       if (args.cargoCheck === "force-on") {
-        error("--cargo-check requires `cargo` on PATH. Install rustup, then retry.");
+        // Reached either via an explicit --cargo-check or via the default
+        // strict mode implying it — a user who passed neither flag lands
+        // here too, so the message must explain where the requirement
+        // came from and how to opt out, not just name a flag they never
+        // typed. Output IS already on disk at this point; the gate only
+        // refuses to bless it.
+        error("cargo accept gate: `cargo` not on PATH, so the emit could not be verified against rustc (the gate is on by default; deploy-grade needs it).");
+        console.log(`    ${c.dim}Output was written to ${outputDir}/ but is NOT cargo-verified.${c.reset}`);
+        console.log(`    ${c.dim}Install rustup (https://rustup.rs) and re-run, or pass --no-cargo-check to accept unverified output.${c.reset}`);
         process.exit(3);
       }
       // auto + cargo-missing: loud warning, no fail. The validator already
@@ -2964,6 +2975,15 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
       timeout: 600_000,
       env: { ...process.env, RUSTFLAGS: "" },
     });
+    if (r.error && (r.error as NodeJS.ErrnoException).code === "ENOENT") {
+      // The binary isn't on PATH at all — a toolchain-install problem, not a
+      // problem with the user's program. Blaming the emitted code here (the
+      // old message) sends a new user down the wrong path entirely.
+      error(`cargo-build-sbf not found on PATH — the Solana (Agave) toolchain is not installed.`);
+      console.log(`    ${c.dim}Install: sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"${c.reset}`);
+      console.log(`    ${c.dim}Then re-run. See 'anvil verify --help' for all prerequisites.${c.reset}`);
+      process.exit(1);
+    }
     if (r.status !== 0) {
       error(`cargo-build-sbf failed (exit ${r.status}). The emitted code may have a target compatibility gap; run 'anvil compile' first to inspect.`);
       process.exit(1);
