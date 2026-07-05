@@ -206,7 +206,30 @@ const SUPPORTED_NON_PROGRAM_TYPES = new Set([
   "Signer", "SystemAccount", "UncheckedAccount", "AccountInfo",
 ]);
 
-export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
+/** Options controlling what the synthesiser emits beyond the happy path. */
+export interface AutoScenarioOptions {
+  /**
+   * #14 — interleave guard-violating `expectFail` steps ("negative probes")
+   * before each target instruction's happy step. Off by default so plain
+   * synthesis stays happy-path-only (stable for snapshots/regression); the
+   * differential verification entrypoints (CLI `--auto-scenario`, API
+   * `/build/differential`) turn it ON so a dropped access-control guard is
+   * actually exercised. See `buildHasOneNegativeProbe`.
+   */
+  negativeProbes?: boolean;
+}
+
+/** Signer name used for the unauthorized caller in has_one negative probes. */
+const NEGATIVE_PROBE_ATTACKER = "__unauthorized";
+/** Dedicated fee payer for missing-signer probes: it pays (and signs) the tx so
+ *  the de-signed account is NOT forced-signer via the fee-payer slot. Declared
+ *  as scenario.signers[0] so the runner's no-step-signer fallback lands on it. */
+const NEGATIVE_PROBE_PAYER = "__probe_payer";
+
+export function synthesizeAutoScenario(
+  ir: SolanaIR,
+  opts: AutoScenarioOptions = {},
+): AutoScenarioResult {
   const blockers: AutoScenarioBlocker[] = [];
   const notes: AutoScenarioNote[] = [];
 
@@ -817,6 +840,51 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
     return { ix: ix.name, args, accounts, expectFail: false };
   });
 
+  // ── (6b) Negative/expectFail probes (#14) ──
+  // Happy-path-only scenarios can't see a DROPPED access-control guard: a
+  // transpile that silently removed `has_one = owner` still passes every valid
+  // call. For each instruction with a violatable has_one guard we insert an
+  // `expectFail` step BEFORE its happy step that re-invokes it with an
+  // unauthorized signer. Both targets MUST revert (Anchor: ConstraintHasOne).
+  // If the transpile dropped the check, Anvil ACCEPTS the caller Anchor
+  // REJECTS → the served comparator's revert-parity (#13) flags DIVERGED.
+  // Inserted before (not after) the happy step so the guarded account is set
+  // up but not yet consumed, and a dropped-guard Anvil would genuinely succeed.
+  let effectiveSteps = steps;
+  let attackerNeeded = false;
+  let payerNeeded = false;
+  if (opts.negativeProbes) {
+    const interleaved: ScenarioStep[] = [];
+    for (const happy of steps) {
+      const ix = ir.instructions.find((i) => i.name === happy.ix);
+      if (ix) {
+        // (a) has_one guard — unauthorized (wrong) but SIGNING caller.
+        const hasOneProbe = buildHasOneNegativeProbe(ix, happy, NEGATIVE_PROBE_ATTACKER);
+        if (hasOneProbe) {
+          interleaved.push(hasOneProbe.step);
+          attackerNeeded = true;
+          notes.push({
+            message: `Negative probe before \`${happy.ix}\`: re-invokes it with an unauthorized \`${hasOneProbe.field}\` (has_one guard) and asserts BOTH targets revert. A transpile that dropped the check lets Anvil accept a caller Anchor rejects → DIVERGED.`,
+            context: { instruction: happy.ix },
+          });
+        }
+        // (b) signer guard — the RIGHT account, but it didn't sign. Catches the
+        // dropped-`Signer`/`#[account(signer)]` class (#30) that has_one misses.
+        const signerProbe = buildMissingSignerProbe(ix, happy);
+        if (signerProbe) {
+          interleaved.push(signerProbe.step);
+          payerNeeded = true;
+          notes.push({
+            message: `Negative probe before \`${happy.ix}\`: re-invokes it with \`${signerProbe.field}\` present but NOT signing, and asserts BOTH targets revert. A transpile that dropped the signer check lets Anvil accept an unsigned caller Anchor rejects → DIVERGED.`,
+            context: { instruction: happy.ix },
+          });
+        }
+      }
+      interleaved.push(happy);
+    }
+    effectiveSteps = interleaved;
+  }
+
   // ── (7) Comparison config ──
   // Compare every PDA + every program-managed account whose state can
   // diverge between targets:
@@ -850,6 +918,14 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   // so post-step lamport balance is deterministic. Adding them widens the
   // verifiable claim to the full account set the scenario touches.
   for (const name of signerNames) comparedAccounts.add(`$signer:${name}`);
+  // Compare the negative-probe attacker too. It only ever pays a reverted
+  // probe tx's base fee (deterministic, identical on both targets), so its
+  // post-run balance byte-equals — and comparing it keeps the scenario from
+  // tripping the partial_compare_scope sanity check (which would downgrade an
+  // otherwise-clean BYTE_EQUAL to WITH_WARNINGS just because the probe added a
+  // touched-but-uncompared signer).
+  if (attackerNeeded) comparedAccounts.add(`$signer:${NEGATIVE_PROBE_ATTACKER}`);
+  if (payerNeeded) comparedAccounts.add(`$signer:${NEGATIVE_PROBE_PAYER}`);
   // Detect emit/msg usage to suggest opt-in compares.
   let usesEmit = false;
   let usesEmitCpi = false;
@@ -902,6 +978,15 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
   // need someone to sign the outer transaction, otherwise the runner
   // refuses with "no signer available to pay fees".
   const allSigners = [...signerNames];
+  // Declare the unauthorized-caller keypair used by negative probes so the
+  // runner can generate + airdrop it. (It's also added to compare.accounts
+  // above — its reverted-tx fee is deterministic, so comparing it is safe.)
+  if (attackerNeeded) allSigners.push(NEGATIVE_PROBE_ATTACKER);
+  // The missing-signer probe's dedicated fee payer MUST be signers[0] so the
+  // runner's "no step signer → scenario.signers[0]" fallback pays the tx
+  // instead of the de-signed account (which would otherwise be forced-signer
+  // via the fee-payer slot, defeating the probe). unshift = index 0.
+  if (payerNeeded) allSigners.unshift(NEGATIVE_PROBE_PAYER);
   if (allSigners.length === 0) {
     allSigners.push("__fee_payer");
     notes.push({
@@ -958,7 +1043,7 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
       derived: spec.derived,
       programInits: spec.programInits,
     })),
-    steps,
+    steps: effectiveSteps,
     preOwnedKeypairs: [...preOwnedKeypairs],
     preZeroedAccounts,
     compare: {
@@ -977,6 +1062,103 @@ export function synthesizeAutoScenario(ir: SolanaIR): AutoScenarioResult {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * #14 — Build a negative/expectFail probe for a `has_one` access-control guard.
+ *
+ * Given an instruction with `#[account(has_one = X)]` where X is a Signer,
+ * clone its happy step but pass a fresh unauthorized signer (`attackerSigner`)
+ * in X's slot. Both targets MUST revert (Anchor: ConstraintHasOne). If the
+ * transpile silently dropped the has_one check, Anvil ACCEPTS the unauthorized
+ * caller while Anchor REJECTS it → the comparator's revert-parity (#13) flips
+ * the verdict to DIVERGED. Returns null when no safe probe can be built.
+ *
+ * Conservative on purpose — only emits when the swap is type-preserving and the
+ * revert is attributable to the guard, so a CORRECT transpile always reverts on
+ * BOTH sides (no false DIVERGED):
+ *   - init handlers are skipped (re-invoking reverts for already-initialized
+ *     reasons, not the guard — a dropped guard wouldn't diverge);
+ *   - only a `has_one` target that is itself a Signer is swapped (keeps a
+ *     Signer<'info> slot filled by a signer — only identity changes);
+ *   - the happy step must reference that slot cleanly as `$signer:<target>`.
+ */
+function buildHasOneNegativeProbe(
+  ix: SolanaIR["instructions"][number],
+  happyStep: ScenarioStep,
+  attackerSigner: string,
+): { step: ScenarioStep; field: string } | null {
+  if (ix.accounts.some((a) => a.isInit)) return null;
+
+  for (const acc of ix.accounts) {
+    for (const c of acc.constraints) {
+      if (c.kind !== "has_one" || !c.value) continue;
+      const targetName = c.value;
+      const targetIdx = ix.accounts.findIndex((a) => a.name === targetName);
+      if (targetIdx < 0) continue;
+      const target = ix.accounts[targetIdx]!;
+      if (!target.isSigner) continue;
+      if (happyStep.accounts[targetIdx] !== `$signer:${targetName}`) continue;
+
+      const accounts = [...happyStep.accounts];
+      accounts[targetIdx] = `$signer:${attackerSigner}`;
+      return {
+        field: targetName,
+        step: {
+          ix: ix.name,
+          args: happyStep.args,
+          accounts,
+          expectFail: true,
+          label: `unauthorized ${targetName} (has_one) on ${ix.name} — must revert`,
+        },
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * #14 — Build a negative/expectFail probe for a signer guard (`Signer<'info>`
+ * or `#[account(signer)]`).
+ *
+ * Given a non-init instruction with a signer account passed cleanly as
+ * `$signer:X`, clone the happy step but pass that slot as `$unsigned:X` — the
+ * SAME account, present and legitimate, but not signing. Anchor's signer check
+ * must reject it; a transpile that dropped the check (the #30 auth-bypass class,
+ * which the has_one probe does NOT cover) accepts an unsigned caller → the
+ * revert-parity comparator flags DIVERGED. Returns null when no safe probe can
+ * be built.
+ *
+ * De-signs the FIRST signer slot only (one probe per instruction). The runner
+ * pairs this with the `__probe_payer` fee payer so the de-signed account isn't
+ * forced-signer via the fee-payer slot. Init handlers are skipped (re-invoking
+ * reverts for already-initialized reasons, not the guard).
+ */
+function buildMissingSignerProbe(
+  ix: SolanaIR["instructions"][number],
+  happyStep: ScenarioStep,
+): { step: ScenarioStep; field: string } | null {
+  if (ix.accounts.some((a) => a.isInit)) return null;
+
+  for (let slot = 0; slot < ix.accounts.length; slot++) {
+    const acc = ix.accounts[slot]!;
+    if (!acc.isSigner) continue;
+    if (happyStep.accounts[slot] !== `$signer:${acc.name}`) continue;
+
+    const accounts = [...happyStep.accounts];
+    accounts[slot] = `$unsigned:${acc.name}`;
+    return {
+      field: acc.name,
+      step: {
+        ix: ix.name,
+        args: happyStep.args,
+        accounts,
+        expectFail: true,
+        label: `missing signature for ${acc.name} on ${ix.name} — must revert`,
+      },
+    };
+  }
+  return null;
+}
 
 function isPrimitiveType(t: string): boolean {
   if (DEFAULT_VALUES[t] !== undefined) return true;

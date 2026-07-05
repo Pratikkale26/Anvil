@@ -44,6 +44,12 @@ export interface AutoScenarioDiffOptions {
   /** Override the synthesizer's compare.accounts. Useful for demos with a known
    *  emit gap or scope-narrowing case. Default keeps the full synthesized set. */
   compareAccountsOverride?: string[];
+  /** #14 — synthesize with negative/expectFail probes and additionally assert
+   *  every probe step REVERTS on BOTH targets. A correct transpile rejects the
+   *  unauthorized caller on both .so; a dropped guard would let Anvil accept it
+   *  (ok=true) → the assertion fails, exactly the divergence the probe exists
+   *  to catch. */
+  negativeProbes?: boolean;
 }
 
 export async function runAutoScenarioDiff(opts: AutoScenarioDiffOptions): Promise<void> {
@@ -87,7 +93,7 @@ export async function runAutoScenarioDiff(opts: AutoScenarioDiffOptions): Promis
   expect(parsed.ok).toBe(true);
   if (!parsed.ok) return;
 
-  const out = synthesizeAutoScenario(parsed.ir);
+  const out = synthesizeAutoScenario(parsed.ir, { negativeProbes: opts.negativeProbes ?? false });
   expect(out.ok).toBe(true);
   if (!out.ok) return;
 
@@ -117,6 +123,28 @@ export async function runAutoScenarioDiff(opts: AutoScenarioDiffOptions): Promis
     for (const s of anvilRun.steps) console.error(`    step ${s.index} ${s.ix}: ok=${s.ok}${s.error ? ` err=${s.error.slice(0, 100)}` : ""}`);
   }
   expect(anyStepSucceededOnBoth).toBe(true);
+
+  // #14 — every negative/expectFail probe must REVERT on BOTH targets. A
+  // correct transpile rejects the unauthorized caller identically; a dropped
+  // guard lets Anvil ACCEPT (ok=true) → this fails loudly, which is the exact
+  // divergence the probe exists to surface.
+  if (opts.negativeProbes) {
+    const probeFailures: string[] = [];
+    scenario.steps.forEach((step, i) => {
+      if (!step.expectFail) return;
+      const a = anchorRun.steps[i];
+      const v = anvilRun.steps[i];
+      if (a?.ok) probeFailures.push(`step ${i} ${step.ix}: expected Anchor to REVERT the unauthorized caller but it succeeded`);
+      if (v?.ok) probeFailures.push(`step ${i} ${step.ix}: Anvil ACCEPTED an unauthorized caller Anchor rejects — dropped access-control guard`);
+    });
+    if (probeFailures.length > 0) {
+      console.error(`[${demo}] negative-probe divergence:`);
+      for (const f of probeFailures) console.error(`  - ${f}`);
+    }
+    expect(probeFailures).toEqual([]);
+    // Guard against a no-op test: at least one probe must have actually run.
+    expect(scenario.steps.some((s) => s.expectFail)).toBe(true);
+  }
 
   const mismatches: string[] = [];
   for (const accName of scenario.compare.accounts) {

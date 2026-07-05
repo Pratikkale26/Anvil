@@ -128,7 +128,9 @@ differentialRoute.post("/auto-scenario", (req, res) => {
     res.status(422).json(new AnvilError(ErrorCode.INVALID_IR, "Invalid IR", irParsed.error.message, 422).toJSON());
     return;
   }
-  const result = synthesizeAutoScenario(irParsed.data);
+  // #14 — negative/expectFail probes on for the verification path so a dropped
+  // has_one guard surfaces as a revert-parity DIVERGED rather than passing.
+  const result = synthesizeAutoScenario(irParsed.data, { negativeProbes: true });
   res.json(result);
 });
 

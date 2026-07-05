@@ -412,7 +412,7 @@ export function classifyBody(
     // (the raw invoke then stays cpi_custom — the conservative behavior).
     if (classified._systemTransferBinding) {
       const stb = classified._systemTransferBinding;
-      if (letBoundTransferIsClean(bodyText, stb.varName)) {
+      if (letBoundTransferIsClean(bodyText, stb.varName, [stb.from, stb.to, stb.amount])) {
         systemTransferByVar.set(stb.varName, { from: stb.from, to: stb.to, amount: stb.amount });
         continue;
       }
@@ -631,6 +631,18 @@ const SPL_CPI_STRUCT_NAMES = new Set([
   "Approve", "Revoke",
 ]);
 
+/** Count `ident =` / `ident += …` (assignment, not `==`) occurrences. */
+function reassignCount(bodyText: string, ident: string): number {
+  const esc = ident.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return (bodyText.match(new RegExp(`\\b${esc}\\b\\s*(?:[-+*/%&|^]\\s*)?=(?!=)`, "g")) ?? []).length;
+}
+
+/** Count `let [mut] ident` bindings. */
+function letCount(bodyText: string, ident: string): number {
+  const esc = ident.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return (bodyText.match(new RegExp(`\\blet\\s+(?:mut\\s+)?${esc}\\b`, "g")) ?? []).length;
+}
+
 /**
  * #20 dataflow guard for a let-bound `system_instruction::transfer`. The
  * binding is safe to fold into cpi_system_transfer only if `varName` is bound
@@ -638,8 +650,23 @@ const SPL_CPI_STRUCT_NAMES = new Set([
  * by design — ANY `varName.` access or extra `varName =` bails (the raw invoke
  * then stays cpi_custom). This keeps imperatively-built / mutated instructions
  * (e.g. `let mut ix = Instruction{…}; ix.accounts = …`) out of the fold.
+ *
+ * Phase 6 Inc 9 — also reject the fold when a variable used in the transfer's
+ * from/to/amount ARGUMENTS is reassigned after the binding. system_instruction::
+ * transfer snapshots its args EAGERLY into the built Instruction, but the fold
+ * re-reads them at the later `invoke(&ix)` site. So `let ix = transfer(.., amount);
+ * amount = amount * 2; invoke(&ix)` originally sends the ORIGINAL amount, while a
+ * naive fold would send the mutated one — a silent wrong-lamports miscompile
+ * (byte-compared, not a log). A reassignment BEYOND the arg's own binding
+ * (assigns > lets) bails, leaving the raw invoke as cpi_custom (loud) rather
+ * than folding wrong bytes. Field/method access of an arg (`from.key()`) is
+ * normal reads and does NOT bail.
  */
-function letBoundTransferIsClean(bodyText: string, varName: string): boolean {
+function letBoundTransferIsClean(
+  bodyText: string,
+  varName: string,
+  argExprs: readonly string[] = [],
+): boolean {
   const esc = varName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const lets = (bodyText.match(new RegExp(`\\blet\\s+(?:mut\\s+)?${esc}\\b`, "g")) ?? []).length;
   if (lets !== 1) return false;
@@ -648,6 +675,15 @@ function letBoundTransferIsClean(bodyText: string, varName: string): boolean {
   if (assigns !== 1) return false;
   // Any field access (`ix.lamports`, `ix.accounts = …`, `ix.field.push(…)`) bails.
   if (new RegExp(`\\b${esc}\\b\\s*\\.`).test(bodyText)) return false;
+  // Inc 9 — bail if any identifier in the transfer args is reassigned beyond its
+  // own binding(s). Field/method reads are fine; only `ident = …` mutation counts.
+  const argIdents = new Set(
+    argExprs.flatMap((e) => e.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? []),
+  );
+  for (const id of argIdents) {
+    if (id === varName) continue;
+    if (reassignCount(bodyText, id) > letCount(bodyText, id)) return false;
+  }
   return true;
 }
 

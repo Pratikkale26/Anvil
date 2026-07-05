@@ -1,26 +1,36 @@
 name: CI
 
-# Committed CI (task #3). The prior "no committed CI" state made the
-# README/trust-doc claim "locked on every commit / CI fails on regression"
-# false. This restores a real gate.
+# Committed CI (task #3, restructured #20-followup). The prior "no committed
+# CI" state made the README/trust-doc "locked on every commit / CI fails on
+# regression" claim false; this is a real gate.
 #
-# Shape: a fast `typecheck` lane for quick signal, plus a `test` lane that
-# installs the SBF + Anchor toolchain and runs the FULL suite (unit + byte-equal
-# differential corpus). The test suite is deliberately NOT split into a
-# "no-toolchain fast" lane: ~90 tests shell out to cargo-build-sbf / anchor
-# without a skip guard, so a toolchain-less run is meaningless-red. The point of
-# #3 is that the differential corpus actually RUNS — so the test lane HARD-FAILS
-# if the toolchain is missing rather than letting those tests skip to a false
-# green.
+# Two lanes, matched to cost:
+#   1. typecheck — api `tsc --noEmit`. Seconds. Runs on EVERYTHING. This is the
+#      per-push gate: it catches the most common regression (a type error) fast
+#      and reliably, with no toolchain.
+#   2. test-full — Agave + Anchor + the FULL suite incl. the byte-equal
+#      differential corpus. Tens of minutes + heavy disk/CPU. Runs ONLY on PRs
+#      to main, nightly, and manual dispatch — NOT on every harden/** push.
+#
+# Why no "fast test" lane: the suite is deeply coupled to the SBF/Anchor
+# toolchain — hundreds of tests build real programs, and the non-building subset
+# can't be isolated by any reliable filter (name- and content-based splits both
+# leak builders, so the lane flakes red for infra reasons). A flaky lane is
+# worse than none. Type safety is gated per-push here; run the suite locally
+# while iterating, and the corpus gates the merge to main + runs nightly, where
+# a red is worth stopping for.
 
 on:
   push:
     branches: [main, "harden/**"]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "0 7 * * *" # nightly ~07:00 UTC — full differential corpus
+  workflow_dispatch: {}
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -39,9 +49,12 @@ jobs:
         working-directory: api
         run: bun run typecheck
 
-  test:
-    name: Full test suite + differential corpus (SBF + Anchor required)
+  test-full:
+    name: Full suite + differential corpus (SBF + Anchor required)
     runs-on: ubuntu-latest
+    # Heavy: PRs to main, pushes to main, nightly, and manual only — never on a
+    # harden/** feature-branch push, where it was slow, resource-bound noise.
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

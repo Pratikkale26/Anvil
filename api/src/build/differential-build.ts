@@ -16,7 +16,7 @@
  * these spawns too. The build.rs threat model is documented in
  * SECURITY.md.
  */
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, execSync, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -1228,7 +1228,6 @@ function hashOf(s: string): string {
  */
 export function differentialAvailable(): boolean {
   try {
-    const { execSync } = require("node:child_process") as typeof import("node:child_process");
     execSync("command -v cargo-build-sbf", { stdio: "ignore" });
     execSync("command -v anchor", { stdio: "ignore" });
     return true;

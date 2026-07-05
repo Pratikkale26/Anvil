@@ -6,6 +6,10 @@
  * Business logic is now driven entirely by IR body statements.
  */
 
+import { createRequire } from "node:module";
+// Node ESM provides no global `require`; this shim keeps the lazy
+// `require(...)` calls below working on Node as well as Bun.
+const require = createRequire(import.meta.url);
 import type { SolanaIR, AccountDef, Instruction } from "../ir/schema.js";
 import type { Token2022Opts } from "./body-emitter/index.js";
 import { BaseEmitter, stubAnchorOnlyImplItem, rewriteTryIntoUnwrap, rewriteAnchorResultAlias, rewriteGetInstancePackedLen, stripAnchorLangPrefixes, stripAnchorWrappersInCode, commentOutSiblingTraitImpl, FRAMEWORK_SHADOW_TYPES } from "./emitter-base.js";

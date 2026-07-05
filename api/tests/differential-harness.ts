@@ -824,6 +824,11 @@ overflow-checks = true
     throw new Error(`expected .so not produced at ${builtSo}`);
   }
   writeFileSync(outPath, readFileSync(builtSo));
+  // The .so is now safely in the cache; drop the ~300MB build scratch (cargo
+  // target/). Without this the full corpus's per-fixture scratch accumulates
+  // and fills the CI runner's disk (~200 programs × 2 sides) → ENOSPC mid-run.
+  // Cache hits skip the build entirely, so removing scratch never costs a rebuild.
+  rmSync(scratch, { recursive: true, force: true });
 }
 
 async function buildAnvilSo<S extends DifferentialSetup>(
@@ -863,6 +868,9 @@ async function buildAnvilSo<S extends DifferentialSetup>(
   const targetDir = join(scratch, "target/deploy");
   const so = readSoFromDir(targetDir);
   writeFileSync(outPath, so);
+  // See buildAnchorSo: drop the build scratch once the .so is cached so the
+  // corpus doesn't exhaust the CI runner's disk.
+  rmSync(scratch, { recursive: true, force: true });
 }
 
 /**

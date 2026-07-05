@@ -70,22 +70,33 @@ export const EXTERNAL_CRATE_ROOTS: ReadonlySet<string> = new Set([
   "std", "core", "alloc",
 ]);
 
-export function collapseModulePaths(source: string, knownNames: Set<string>): string {
+export function collapseModulePaths(
+  source: string,
+  knownNames: Set<string>,
+  knownConstants: ReadonlySet<string> = new Set(),
+): string {
   if (knownNames.size === 0) return source;
   return source.replace(/\b(?:\w+::)+\w+\b/g, (full: string) => {
     const segs = full.split("::");
     const root = segs[0] ?? "";
+    const leaf = segs[segs.length - 1] ?? "";
+    const userRooted = root === "crate" || root === "self" || root === "super";
     // #9 — a path rooted in a known external crate is a real cross-crate
     // reference, not a flattened user submodule; never collapse it.
     if (EXTERNAL_CRATE_ROOTS.has(root)) return full;
-    // #9 — universal `::ID` guard for external crates NOT in the allowlist
-    // above (the list can't be exhaustive). A trailing `::ID` is always some
-    // external program's id — the user's own id is `crate::ID` or bare `ID`,
-    // never `some_module::ID`. Leaving it uncollapsed is safe: if it were a
-    // user submodule const it would collide with the flattened `ID` anyway, so
-    // any resulting error is a LOUD compile failure, not a silent id swap.
-    if (segs.length >= 2 && segs[segs.length - 1] === "ID"
-        && root !== "crate" && root !== "self" && root !== "super") {
+    // #9 / Phase 6 Inc 9 — universal trailing-CONSTANT guard for external crates
+    // NOT in the allowlist above (the list can't be exhaustive). A trailing
+    // segment that names some external crate's public CONSTANT — `::ID`, or any
+    // user-colliding const like `external_governance::state::AUTHORITY` — must
+    // not collapse onto the user's own top-level const of the same name (a
+    // silent id/authority swap in an owner/auth check, validator-clean). The
+    // user's own consts are reached via `crate::X` / `self::X` / bare `X`, never
+    // `some_external_module::X`. Leaving it uncollapsed is safe: if it were a
+    // genuine flattened user submodule const it would collide with the flat name
+    // anyway, so any resulting error is a LOUD compile failure, not a silent
+    // swap. fn/type/error flatten-collapses (is_allowed_signer, ErrorCode) are
+    // unaffected — those leaves are not constants.
+    if (segs.length >= 2 && !userRooted && (leaf === "ID" || knownConstants.has(leaf))) {
       return full;
     }
     // Walk segments left-to-right; emit everything from the FIRST known
@@ -241,15 +252,26 @@ export function rewriteSelfReferences(body: string, accountNames: Set<string>): 
     // UpdateCommon; fn deref = &self.common }` makes `self.state` resolve to
     // `self.common.state`. Parser flattens `common.state` to `common_state`,
     // so look for any account whose name ends with `_<suffix>` for the
-    // longest chain prefix that matches that pattern. Longest-first sort
-    // prevents `_state` from matching `msol_mint_state` over `common_state`
-    // when both are present.
+    // longest chain prefix that matches that pattern.
+    //
+    // Phase 6 Inc 10 — this is a suffix GUESS: `_state` matches BOTH
+    // `common_state` and `msol_mint_state`. There is no signal in `self.state`
+    // alone to say which Deref target was meant, so when 2+ accounts share the
+    // suffix we must NOT silently pick one (the old longest-first sort picked
+    // `msol_mint_state` — the wrong account — a silent wrong-account read).
+    // Emit the loud `__anvil_unported_self__` placeholder instead (unimplemented!
+    // at fn top + a validator marker that fails the strict gate) so an ambiguous
+    // self-chain surfaces for manual port rather than binding the wrong account.
     for (let n = parts.length; n >= 1; n--) {
       const suffix = "_" + parts.slice(0, n).join("_");
-      const found = sortedAccounts.find((a) => a.endsWith(suffix) && a.length > suffix.length);
-      if (found) {
+      const cands = sortedAccounts.filter((a) => a.endsWith(suffix) && a.length > suffix.length);
+      if (cands.length === 1) {
         const remaining = parts.slice(n);
-        return remaining.length === 0 ? found : `${found}.${remaining.join(".")}`;
+        return remaining.length === 0 ? cands[0]! : `${cands[0]}.${remaining.join(".")}`;
+      }
+      if (cands.length > 1) {
+        // Ambiguous — stop guessing; fall through to the loud lost-self path.
+        return `__anvil_unported_self__${chain}`;
       }
     }
     return match;

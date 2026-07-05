@@ -1954,6 +1954,7 @@ export abstract class BaseEmitter {
         accountNames,
       ),
       knownNames,
+      this.collectKnownConstantNames(ir),
     );
     // G112 — un-prefix prophylactic `_` on account bindings that became
     // referenced AFTER rewriteSelfReferences ran.
@@ -5880,6 +5881,21 @@ ${fields}
     return result;
   }
 
+  /**
+   * Phase 6 Inc 9 — the subset of top-level names that are CONSTANTS. Passed to
+   * collapseModulePaths so a trailing external-crate const segment (e.g.
+   * `external_governance::state::AUTHORITY`) never collapses onto a colliding
+   * user const — a silent authority/id swap. Parsed from the raw const decls.
+   */
+  protected collectKnownConstantNames(ir: SolanaIR): Set<string> {
+    const out = new Set<string>();
+    for (const c of ir.constants ?? []) {
+      const m = c.match(/(?:^|\s)(?:pub\s+)?const\s+(\w+)\s*:/);
+      if (m && m[1]) out.add(m[1]);
+    }
+    return out;
+  }
+
   private computeKnownTopLevelNames(ir: SolanaIR): Set<string> {
     const out = new Set<string>();
     for (const h of ir.helperFns ?? []) out.add(h.name);
@@ -5897,10 +5913,7 @@ ${fields}
     // ErrorCode in the known set to survive `mod::ErrorCode::X` collapse.
     out.add(this.sourceErrorEnumName(ir));
     // Constants are raw string declarations; parse out the names.
-    for (const c of ir.constants ?? []) {
-      const m = c.match(/(?:^|\s)(?:pub\s+)?const\s+(\w+)\s*:/);
-      if (m && m[1]) out.add(m[1]);
-    }
+    for (const c of this.collectKnownConstantNames(ir)) out.add(c);
     // G36 — attempted to add explicit-import names to known set so that
     // `external::types::X` collapses to `X`. Reverted: caused
     // cross-fixture cascading collapses because the imported names

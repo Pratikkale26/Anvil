@@ -138,6 +138,29 @@ function isExtCall(funcText: string, name: string): boolean {
 }
 
 /**
+ * Like isExtCall, but for GENERIC SPL instruction names — `close_account`,
+ * `set_authority` — that a foreign program can also expose
+ * (`vault_program::cpi::close_account`, `my_dao::cpi::set_authority`). For
+ * those, isExtCall's `endsWith("::" + name)` is NOT safe: it matches the
+ * foreign call and misroutes it into the SPL extractor, which then emits an
+ * SPL-token CPI with the WRONG program id — a silent wrong-program miscompile
+ * (see parser-cpi-dispatch-precedence.test.ts "token-scoped" block).
+ *
+ * A real anchor_spl call is either the bare post-consolidation form
+ * (`close_account`) or scoped to a token namespace
+ * (`anchor_spl::token::close_account`, `token::close_account`, and the
+ * token_2022/token_interface forms — those are also caught earlier in the
+ * namespace-guarded block). Requiring a token-namespace suffix excludes the
+ * foreign `program::cpi::name` shape while preserving every genuine SPL form.
+ */
+function isSplTokenCall(funcText: string, name: string): boolean {
+  return funcText === name
+    || funcText.endsWith(`token::${name}`)
+    || funcText.endsWith(`token_2022::${name}`)
+    || funcText.endsWith(`token_interface::${name}`);
+}
+
+/**
  * Add a `cpi_classification_lost` warning to the collector when a CPI was
  * recognised by name but the detector couldn't extract its struct fields.
  * `kind` describes the CPI surface (e.g. "SPL transfer", "set_authority"),
@@ -446,7 +469,9 @@ export function detectCpi(
   }
 
   // ── SPL Token close_account ──
-  if (funcText.includes("close_account") || funcText.includes("CloseAccount")) {
+  // Token-namespace-scoped: a foreign `program::cpi::close_account` must NOT
+  // misroute here (it would emit an SPL close with the wrong program id).
+  if (isSplTokenCall(funcText, "close_account")) {
     return extractSplCloseAccount(callNode, collector);
   }
 
@@ -456,11 +481,10 @@ export function detectCpi(
   // (when the user `use anchor_spl::token::set_authority;` brought it into scope)
   // and the `token_interface::set_authority(...)` Token-2022 form (handled
   // above in the token_interface branch).
-  if (
-    funcText === "set_authority" ||
-    funcText.includes("token::set_authority") ||
-    funcText.includes("::set_authority")
-  ) {
+  // Token-namespace-scoped (see close_account above): the previous
+  // `includes("::set_authority")` matched a foreign `my_dao::cpi::set_authority`
+  // and misrouted it to an SPL set_authority with the wrong program id.
+  if (isSplTokenCall(funcText, "set_authority")) {
     return extractSplSetAuthority(callNode, collector);
   }
 

@@ -378,6 +378,18 @@ export function resolveAccountRef(ref: string, ctx: ResolvedScenarioContext): Pu
     if (!kp) throw new Error(`account ref '${ref}' references undeclared signer '${name}'`);
     return kp.publicKey;
   }
+  if (ref.startsWith("$unsigned:")) {
+    // Negative-probe ref (#14): the SAME account as $signer:<name>, but the
+    // AccountMeta is built with isSigner=false (see the keys map) and the
+    // keypair is NOT added to the tx signer set — so a legitimate account is
+    // present but did NOT sign. Anchor's Signer<'info> / #[account(signer)]
+    // check must reject it; a transpile that dropped the check would accept it
+    // → the revert-parity comparator flags DIVERGED.
+    const name = ref.slice("$unsigned:".length).split(".")[0]!;
+    const kp = ctx.signers.get(name);
+    if (!kp) throw new Error(`account ref '${ref}' references undeclared signer '${name}'`);
+    return kp.publicKey;
+  }
   if (ref.startsWith("$pda:")) {
     const name = ref.slice("$pda:".length).split(".")[0]!;
     const p = ctx.pdas.get(name);
@@ -723,9 +735,13 @@ export function buildStepInstruction(
       const isProgramDerivedRef =
         ref.startsWith("$ata:") || ref.startsWith("$mint:") || ref.startsWith("$pda:");
       isSigner =
-        irAcc.isSigner ||
-        (irAcc.isInit && !irAcc.isPda && !isProgramDerivedRef) ||
-        ref.startsWith("$signer:");
+        // A $unsigned: negative-probe slot is deliberately NOT a signer, even
+        // when the IR marks the account as one — that's the whole point of the
+        // probe (see resolveAccountRef). This override must win over irAcc.isSigner.
+        !ref.startsWith("$unsigned:") &&
+        (irAcc.isSigner ||
+          (irAcc.isInit && !irAcc.isPda && !isProgramDerivedRef) ||
+          ref.startsWith("$signer:"));
     } else {
       // Step has more accounts than IR knows (extra remaining_accounts):
       // default to writable, defer signer to ref shape.
@@ -1658,7 +1674,10 @@ export function compareScenarioRuns(
     // would mismatch the bare lp_mint in touched and false-positive
     // as uncompared.
     const stripPrefix = (ref: string): string => {
-      for (const p of ["$signer:", "$pda:", "$keypair:", "$mint:", "$ata:"] as const) {
+      // $unsigned:X is the SAME account as $signer:X (a negative-probe slot,
+      // #14) — normalize it so a program compared as $signer:X isn't reported
+      // as "uncompared" just because the probe referenced it via $unsigned:.
+      for (const p of ["$signer:", "$unsigned:", "$pda:", "$keypair:", "$mint:", "$ata:"] as const) {
         if (ref.startsWith(p)) return ref.slice(p.length).split(".")[0]!;
       }
       return ref;
