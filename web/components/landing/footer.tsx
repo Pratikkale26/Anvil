@@ -3,6 +3,7 @@ import { ArrowUpRight } from "lucide-react";
 import { AnvilMark } from "./anvil-mark";
 
 const RESOURCE_LINKS = [
+  { href: "https://www.npmjs.com/package/anvil-sol", label: "CLI — npm i -g anvil-sol", external: true },
   { href: "/workbench", label: "Workbench" },
   { href: "https://github.com/pratikkale26/anvil", label: "GitHub", external: true },
   { href: "#how", label: "How it works" },
@@ -24,7 +25,7 @@ export function Footer() {
                   ANVIL
                 </span>
                 <span className="text-[11px] tracking-wider text-anvil-text-muted uppercase">
-                  Solana Compiler · v0.4.0
+                  Solana Compiler · v0.5.0
                 </span>
               </div>
             </div>

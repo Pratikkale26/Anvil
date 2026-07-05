@@ -728,7 +728,7 @@ function VerifyBuildBody(props: {
               icon: CheckCircle2,
               label:
                 selectedBuildMode === "build-sbf"
-                  ? `Deploy-ready · ${activeResult.durationMs}ms`
+                  ? `SBF build clean · ${activeResult.durationMs}ms`
                   : selectedBuildMode === "build"
                     ? `Build clean · ${activeResult.durationMs}ms`
                     : `Check clean · ${activeResult.durationMs}ms${activeResult.warnings.length ? ` · ${activeResult.warnings.length} warning${activeResult.warnings.length === 1 ? "" : "s"}` : ""}`,
