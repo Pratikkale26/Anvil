@@ -1384,6 +1384,23 @@ export class BodyWalker {
       /\bcontext\.(accounts|bumps|program_id|remaining_accounts)\b/g,
       "ctx.$1",
     );
+    // #34 (crowdfunding-solana) — route lamports READS through the
+    // AccountInfo binding BEFORE the universal `.to_account_info()` strip
+    // below. On a state-shadowed account (`let campaign_account = campaign;
+    // let mut campaign = Campaign::read(...)`) the naive strip leaves
+    // `**campaign.lamports.borrow()` — a field read on the STATE struct,
+    // E0609 on both targets. The mutating ± forms are rewritten by the
+    // pass-through pre-pass; this covers the read shape on the structural
+    // paths (if-conditions et al.) that don't flow through it.
+    transformed = transformed.replace(
+      /\*\*(?:ctx\.accounts\.)?(\w+)\.to_account_info\(\)\.lamports\.borrow\(\)/g,
+      (_m, acct: string) => {
+        const infoVar = this.resolveAccountInfoVar(snakeCase(acct));
+        return this.emitter.frameworkName === "Pinocchio"
+          ? `${infoVar}.lamports()`
+          : `**${infoVar}.lamports.borrow()`;
+      },
+    );
     // Strip `.to_account_info()` universally — Anchor's Account<'info, T>
     // method that's a noop on bare AccountInfo (native) and unresolvable
     // on pinocchio. Constraint-check emit + helper bodies + impl-

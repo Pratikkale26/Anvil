@@ -58,13 +58,37 @@ anchor-lang = "1.0.0"
 overflow-checks = true
 `;
 
+// The harness deploys the reference at HAND_ID, but the standalone-crate
+// build path compiles the crate dir AS-IS (no rewriteDeclareId like the
+// normal anchor-build path) — with the upstream declare_id! left in place,
+// every hand instruction reverts with AnchorError 4100
+// DeclaredProgramIdMismatch, which surfaced as a bogus data mismatch
+// (corpus take-3, #34). Rewrite the id ONCE here and use it for BOTH the
+// crate write and the anchorSource the harness hashes, so the source-hash
+// cache can't resurrect a pre-rewrite .so.
+function handSourceAtDeployId(): string {
+  return readFileSync(HAND_LIB_RS, "utf-8").replace(/declare_id!\("[^"]+"\)/, `declare_id!("${HAND_ID}")`);
+}
+
+// Same class of drift for the CALLEE: the upstream lever.json IDL says
+// `address: A6GUsa…` but the committed lever.so declares (and the test
+// deploys at) E64FVe…. Anchor's declare_program!-typed `power` account
+// owner-checks against the IDL address, so the reference reverted with
+// 3007 AccountOwnedByWrongProgram. Pin the IDL to the deploy id for both
+// the reference crate and the Anvil parse side.
+function leverIdlAtDeployId(): Record<string, unknown> {
+  const idl = JSON.parse(readFileSync(LEVER_IDL, "utf-8"));
+  idl.address = LEVER_ID;
+  return idl;
+}
+
 function prepareHandCrate(): string | null {
   if (!existsSync(HAND_LIB_RS) || !existsSync(LEVER_IDL)) return null;
   const dir = join(TEST_SCRATCH, "anvil-cpi-lever-hand");
   mkdirSync(join(dir, "src"), { recursive: true });
   mkdirSync(join(dir, "idls"), { recursive: true });
-  writeFileSync(join(dir, "src/lib.rs"), readFileSync(HAND_LIB_RS, "utf-8"));
-  writeFileSync(join(dir, "idls/lever.json"), readFileSync(LEVER_IDL, "utf-8"));
+  writeFileSync(join(dir, "src/lib.rs"), handSourceAtDeployId());
+  writeFileSync(join(dir, "idls/lever.json"), JSON.stringify(leverIdlAtDeployId()));
   writeFileSync(join(dir, "Cargo.toml"), HAND_CARGO);
   return dir;
 }
@@ -77,8 +101,8 @@ if (!existsSync(HAND_LIB_RS) || !existsSync(LEVER_IDL)) {
   );
 } else {
   const crateDir = prepareHandCrate()!;
-  const handSource = readFileSync(HAND_LIB_RS, "utf-8");
-  const leverIdl = JSON.parse(readFileSync(LEVER_IDL, "utf-8"));
+  const handSource = handSourceAtDeployId();
+  const leverIdl = leverIdlAtDeployId();
 
   function borshString(s: string): Uint8Array {
     const bytes = new TextEncoder().encode(s);
