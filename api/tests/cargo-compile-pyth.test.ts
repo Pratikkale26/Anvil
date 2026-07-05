@@ -1,3 +1,4 @@
+import { TEST_SCRATCH } from "./scratch-root.ts";
 /**
  * M2b / N5 — Pyth oracle emit cargo-compile regression test.
  *
@@ -23,7 +24,7 @@ import { emitNativeFull } from "../src/emitter/native-emitter.ts";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
 import { buildProjectScaffold } from "../src/emitter/project-scaffold.ts";
 
-const SCRATCH_BASE = "/tmp/anvil-cargo-check-pyth";
+const SCRATCH_BASE = join(TEST_SCRATCH, "anvil-cargo-check-pyth");
 
 // Same env-gate pattern as realworld-large / realworld-tracking — cargo
 // is slow and depends on network/cache state. Default ON locally where

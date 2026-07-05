@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for solana-developers/program-examples'
  * tokens/pda-mint-authority Anchor program.
@@ -56,7 +58,7 @@ import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 import { existsSync } from "node:fs";
 
 export const LIB_RS =
-  "/tmp/program-examples/tokens/pda-mint-authority/anchor/programs/token-minter/src/lib.rs";
+  join(TEST_SCRATCH, "program-examples", "tokens/pda-mint-authority/anchor/programs/token-minter/src/lib.rs");
 
 // Deterministic test program ID. Upstream declare_id! is
 // 3LFrPHqwk5jMrmiz48BFj6NV2k4NjobgTe1jChzx3JGD — sub our own so the

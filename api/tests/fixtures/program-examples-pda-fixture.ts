@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for solana-developers/program-examples'
  * basics/program-derived-addresses/anchor program.
@@ -55,7 +57,7 @@ import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
-export const REPO_PATH = "/tmp/program-examples";
+export const REPO_PATH = join(TEST_SCRATCH, "program-examples");
 export const LIB_RS =
   `${REPO_PATH}/basics/program-derived-addresses/anchor/programs/anchor-program-example/src/lib.rs`;
 

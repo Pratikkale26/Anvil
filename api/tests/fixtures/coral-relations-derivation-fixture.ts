@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for coral-xyz/anchor's `tests/relations-derivation`
  * program.
@@ -46,7 +48,7 @@ import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 // Use coral-xyz/anchor's tests/relations-derivation crate as the source of
 // truth for the upstream declare_id!() pubkey + the upstream Cargo.toml
 // (which path-deps anchor-lang from `../../../../lang`).
-export const REPO_PATH = "/tmp/coral-anchor";
+export const REPO_PATH = join(TEST_SCRATCH, "coral-anchor");
 export const LIB_RS = `${REPO_PATH}/tests/relations-derivation/programs/relations-derivation/src/lib.rs`;
 export const CRATE_DIR = `${REPO_PATH}/tests/relations-derivation/programs/relations-derivation`;
 // Matches the verbatim declare_id! in the source file. Both the reference

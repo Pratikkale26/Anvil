@@ -1,3 +1,4 @@
+import { TEST_SCRATCH } from "./scratch-root.ts";
 /**
  * task #48 S1 — MPL Core CreateV2 cargo-check across project scaffold.
  *
@@ -20,7 +21,7 @@ import { emitNativeFull } from "../src/emitter/native-emitter.ts";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
 import { buildProjectScaffold } from "../src/emitter/project-scaffold.ts";
 
-const SCRATCH_BASE = "/tmp/anvil-cargo-check-mpl-core";
+const SCRATCH_BASE = join(TEST_SCRATCH, "anvil-cargo-check-mpl-core");
 const STRICT_FIXTURES = process.env.ANVIL_TEST_STRICT_FIXTURES === "1";
 
 async function buildAndCheck(demo: string, target: "pinocchio" | "native"): Promise<{ ok: boolean; tail: string }> {

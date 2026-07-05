@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for solana-developers/program-examples'
  * tokens/token-fundraiser Anchor program.
@@ -76,7 +78,7 @@ import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 import { existsSync } from "node:fs";
 
 export const LIB_RS =
-  "/tmp/program-examples/tokens/token-fundraiser/anchor/programs/fundraiser/src/lib.rs";
+  join(TEST_SCRATCH, "program-examples", "tokens/token-fundraiser/anchor/programs/fundraiser/src/lib.rs");
 
 // Deterministic test program ID. Upstream declare_id! is
 // Eoiuq1dXvHxh6dLx3wh9gj8kSAUpga11krTrbfF5XYsC — sub our own so this

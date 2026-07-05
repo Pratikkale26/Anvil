@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for coral-anchor's `tests/realloc/programs/realloc`
  * — specifically the `initialize` instruction.
@@ -33,7 +35,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
-export const REPO_PATH = "/tmp/coral-anchor";
+export const REPO_PATH = join(TEST_SCRATCH, "coral-anchor");
 export const LIB_RS = `${REPO_PATH}/tests/realloc/programs/realloc/src/lib.rs`;
 export const CRATE_DIR = `${REPO_PATH}/tests/realloc/programs/realloc`;
 // Upstream declare_id! is the standard Anchor demo pubkey; the harness

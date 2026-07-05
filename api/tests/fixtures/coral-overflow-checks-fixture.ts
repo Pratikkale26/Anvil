@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for coral-anchor's overflow-checks/initialize.
  *
@@ -23,7 +25,7 @@ import {
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-export const REPO_PATH = "/tmp/coral-anchor";
+export const REPO_PATH = join(TEST_SCRATCH, "coral-anchor");
 export const LIB_RS = `${REPO_PATH}/tests/misc/programs/overflow-checks/src/lib.rs`;
 export const CRATE_DIR = `${REPO_PATH}/tests/misc/programs/overflow-checks`;
 export const PROGRAM_ID = "overf1owChecks11111111111111111111111111111";

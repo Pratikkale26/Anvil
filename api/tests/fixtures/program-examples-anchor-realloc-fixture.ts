@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for the `anchor_realloc` program from
  * solana-developers/program-examples (basics/realloc/anchor).
@@ -38,7 +40,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
-export const REPO_PATH = "/tmp/program-examples";
+export const REPO_PATH = join(TEST_SCRATCH, "program-examples");
 export const LIB_RS =
   `${REPO_PATH}/basics/realloc/anchor/programs/anchor-realloc/src/lib.rs`;
 // Fresh 32-byte base58 ID, unique across the fixture corpus. We rewrite

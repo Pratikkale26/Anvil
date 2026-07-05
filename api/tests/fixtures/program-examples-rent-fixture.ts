@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for solana-developers/program-examples'
  * basics/rent/anchor program. The `create_system_account` ix is the
@@ -30,7 +32,7 @@ import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 import { existsSync, readFileSync } from "node:fs";
 
 export const LIB_RS =
-  "/tmp/program-examples/basics/rent/anchor/programs/rent-example/src/lib.rs";
+  join(TEST_SCRATCH, "program-examples", "basics/rent/anchor/programs/rent-example/src/lib.rs");
 // declare_id! from upstream source. Match verbatim — Anchor 0.30+'s
 // DeclaredProgramIdMismatch check fires custom error 4100 otherwise.
 export const PROGRAM_ID = "ED6f4gweAE7hWPQPXMt4kWxzDJne8VQEm9zkb1tMpFNB";

@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for the `favorites` Anchor program from
  * solana-developers/program-examples (basics/favorites).
@@ -33,9 +35,9 @@ import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
  * existing clone rather than re-fetching to avoid /tmp/ bloat.
  */
 export const LIB_RS =
-  "/tmp/program-examples/basics/favorites/anchor/programs/favorites/src/lib.rs";
+  join(TEST_SCRATCH, "program-examples", "basics/favorites/anchor/programs/favorites/src/lib.rs");
 export const CRATE_DIR =
-  "/tmp/program-examples/basics/favorites/anchor/programs/favorites";
+  join(TEST_SCRATCH, "program-examples", "basics/favorites/anchor/programs/favorites");
 export const PROGRAM_ID = "ww9C83noARSQVBnqmCUmaVdbJjmiwcV9j2LkXYMoUCV";
 
 /**

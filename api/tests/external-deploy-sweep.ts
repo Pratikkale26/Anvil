@@ -1,3 +1,4 @@
+import { TEST_SCRATCH } from "./scratch-root.ts";
 /**
  * External-repos deploy sweep — for each external program that built cleanly
  * via /build, also build Anchor reference + Anvil-Pinocchio + Anvil-Native
@@ -15,22 +16,22 @@ import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 const API = process.env.ANVIL_API ?? "http://localhost:8080";
 const RPC = process.env.ANVIL_RPC ?? "http://localhost:8899";
 const PAYER_KP = process.env.ANVIL_PAYER_KP ?? `${process.env.HOME}/.config/solana/id.json`;
-const SCRATCH = "/tmp/anvil-external-deploy";
+const SCRATCH = join(TEST_SCRATCH, "anvil-external-deploy");
 
 const PROGRAMS = [
   {
     name: "arjun-counterapp",
-    libPath: "/tmp/anvil-external-repos/solana-programs-list/anchor-counterapp/programs/anchor-counterapp/src/lib.rs",
+    libPath: join(TEST_SCRATCH, "anvil-external-repos", "solana-programs-list/anchor-counterapp/programs/anchor-counterapp/src/lib.rs"),
     programName: "anchor_counterapp",
   },
   {
     name: "arjun-pda",
-    libPath: "/tmp/anvil-external-repos/solana-programs-list/anchor-pda/programs/anchor-pda/src/lib.rs",
+    libPath: join(TEST_SCRATCH, "anvil-external-repos", "solana-programs-list/anchor-pda/programs/anchor-pda/src/lib.rs"),
     programName: "anchor_pda",
   },
   {
     name: "arjun-p-nft",
-    libPath: "/tmp/anvil-external-repos/solana-programs-list/anchor-p-nft/programs/anchor-p-nft/src/lib.rs",
+    libPath: join(TEST_SCRATCH, "anvil-external-repos", "solana-programs-list/anchor-p-nft/programs/anchor-p-nft/src/lib.rs"),
     programName: "anchor_p_nft",
   },
 ];

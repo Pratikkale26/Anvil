@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * crowdfunding-solana differential fixture — create campaign instruction.
  *
@@ -22,7 +24,7 @@ import { spawnSync } from "node:child_process";
 import { buildProjectSource } from "../../src/parser/project-source.ts";
 import { collectProjectFilesFromEntry, getProjectEntryPath } from "../../src/parser/project-source.ts";
 
-export const REPO_PATH = "/tmp/crowdfunding-solana";
+export const REPO_PATH = join(TEST_SCRATCH, "crowdfunding-solana");
 export const LIB_RS = `${REPO_PATH}/programs/crowdfunding/src/lib.rs`;
 export const PROGRAM_ID = "4Mhozxxdm44cTcC22gpCpiQiHEtaaPCkdDG2ULrPrCVy";
 

@@ -1,3 +1,4 @@
+import { TEST_SCRATCH } from "./scratch-root.ts";
 /**
  * Regression for #22 — cargo as the accept gate.
  *
@@ -29,7 +30,7 @@ const CARGO_AVAILABLE = (() => {
   return r.status === 0;
 })();
 
-const SCRATCH = "/tmp/anvil-cargo-gate-tests";
+const SCRATCH = join(TEST_SCRATCH, "anvil-cargo-gate-tests");
 
 function scaffold(name: string, source: string): string {
   const dir = join(SCRATCH, name);

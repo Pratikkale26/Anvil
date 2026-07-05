@@ -1,3 +1,4 @@
+import { TEST_SCRATCH } from "./scratch-root.ts";
 /**
  * Localnet deploy sweep — picks the freshest Anvil-emitted .so per fixture
  * from ~/.anvil-diff-cache (populated by prior differential runs) and
@@ -70,7 +71,7 @@ async function deployAndInvoke(fixture: string, invoker: (conn: Connection, paye
 
   const programKp = Keypair.generate();
   const kpPath = `/tmp/anvil-localnet-deploy/${fixture}-${programKp.publicKey.toBase58().slice(0, 8)}.json`;
-  spawnSync("mkdir", ["-p", "/tmp/anvil-localnet-deploy"]);
+  spawnSync("mkdir", ["-p", join(TEST_SCRATCH, "anvil-localnet-deploy")]);
   writeFileSync(kpPath, JSON.stringify(Array.from(programKp.secretKey)));
 
   const t0 = Date.now();

@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for coral-xyz/anchor's `tests/pda-derivation` program.
  *
@@ -45,7 +47,7 @@ import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 // Use coral-xyz/anchor's tests/pda-derivation crate — single source of
 // truth for the modern declare_id!() pubkey + the upstream Cargo.toml that
 // already path-deps anchor-lang from `../../../../lang`.
-export const REPO_PATH = "/tmp/coral-anchor";
+export const REPO_PATH = join(TEST_SCRATCH, "coral-anchor");
 export const LIB_RS = `${REPO_PATH}/tests/pda-derivation/programs/pda-derivation/src/lib.rs`;
 export const CRATE_DIR = `${REPO_PATH}/tests/pda-derivation/programs/pda-derivation`;
 export const PROGRAM_ID = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS";

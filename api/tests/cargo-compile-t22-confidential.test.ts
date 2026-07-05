@@ -1,3 +1,4 @@
+import { TEST_SCRATCH } from "./scratch-root.ts";
 /**
  * task #49 — Confidential T22 init slots cargo-check across the project
  * scaffold. Verifies the emitted helper bodies + call sites compile
@@ -17,7 +18,7 @@ import { emitNativeFull } from "../src/emitter/native-emitter.ts";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
 import { buildProjectScaffold } from "../src/emitter/project-scaffold.ts";
 
-const SCRATCH_BASE = "/tmp/anvil-cargo-check-t22-confidential";
+const SCRATCH_BASE = join(TEST_SCRATCH, "anvil-cargo-check-t22-confidential");
 const STRICT_FIXTURES = process.env.ANVIL_TEST_STRICT_FIXTURES === "1";
 
 async function buildAndCheck(demo: string, target: "pinocchio" | "native") {

@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * solana-developers/program-examples tokens/token-2022/non-transferable —
  * `initialize` ix exercises the MANUAL T22 CPI chain (no constraint sugar
@@ -32,7 +34,7 @@ import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 import { existsSync, readFileSync } from "node:fs";
 
 export const LIB_RS =
-  "/tmp/program-examples/tokens/token-2022/non-transferable/anchor/programs/non-transferable/src/lib.rs";
+  join(TEST_SCRATCH, "program-examples", "tokens/token-2022/non-transferable/anchor/programs/non-transferable/src/lib.rs");
 
 // validated 32-byte base58.
 // 43 chars — decodes to exactly 32 bytes (validated by mkTestProgramId).

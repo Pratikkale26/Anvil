@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for the `counter_anchor` program from
  * solana-developers/program-examples (basics/counter/anchor).
@@ -29,7 +31,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
-export const REPO_PATH = "/tmp/program-examples";
+export const REPO_PATH = join(TEST_SCRATCH, "program-examples");
 export const LIB_RS =
   `${REPO_PATH}/basics/counter/anchor/programs/counter_anchor/src/lib.rs`;
 export const PROGRAM_ID = "BmDHboaj1kBUoinJKKSRqKfMeRKJqQqEbUj1VgzeQe4A";

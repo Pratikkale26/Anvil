@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for solana-developers/program-examples'
  * tokens/token-2022/group Anchor program.
@@ -56,7 +58,7 @@ import { existsSync, readFileSync } from "node:fs";
 // Upstream path. tokens/token-2022/group is the canonical "T22 group
 // extension" example in the solana-developers repo.
 export const LIB_RS =
-  "/tmp/program-examples/tokens/token-2022/group/anchor/programs/group/src/lib.rs";
+  join(TEST_SCRATCH, "program-examples", "tokens/token-2022/group/anchor/programs/group/src/lib.rs");
 
 // Deterministic 32-byte base58 test program ID. Upstream declare_id! is
 // 4XCDGMD8fsdjUzmYj6d9if8twFt1f23Ym52iDmWK8fFs — pin our own so the

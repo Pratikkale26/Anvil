@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for the `lever` program from
  * solana-developers/program-examples (basics/cross-program-invocation/anchor).
@@ -34,7 +36,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
-export const REPO_PATH = "/tmp/program-examples";
+export const REPO_PATH = join(TEST_SCRATCH, "program-examples");
 export const LIB_RS =
   `${REPO_PATH}/basics/cross-program-invocation/anchor/programs/lever/src/lib.rs`;
 // Upstream declare_id! — unique within the test suite (greppped, no

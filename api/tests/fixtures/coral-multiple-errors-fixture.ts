@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for coral-xyz/anchor's
  * `tests/errors/programs/multiple-errors` program.
@@ -57,7 +59,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
-export const REPO_PATH = "/tmp/coral-anchor";
+export const REPO_PATH = join(TEST_SCRATCH, "coral-anchor");
 export const LIB_RS = `${REPO_PATH}/tests/errors/programs/multiple-errors/src/lib.rs`;
 export const CRATE_DIR = `${REPO_PATH}/tests/errors/programs/multiple-errors`;
 

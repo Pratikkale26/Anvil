@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for solana-developers/program-examples'
  * tokens/nft-minter Anchor program.
@@ -62,7 +64,7 @@ import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 import { existsSync, readFileSync } from "node:fs";
 
 export const LIB_RS =
-  "/tmp/program-examples/tokens/nft-minter/anchor/programs/nft-minter/src/lib.rs";
+  join(TEST_SCRATCH, "program-examples", "tokens/nft-minter/anchor/programs/nft-minter/src/lib.rs");
 
 // Deterministic test program ID. Upstream declare_id! is
 // 52quezNUzc1Ej6Jh6L4bvtxPW8j6TEFHuLVAWiFvdnsc — sub our own so the

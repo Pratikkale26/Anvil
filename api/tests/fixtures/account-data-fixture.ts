@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for the `account-data` Anchor program from
  * solana-developers/program-examples (basics/account-data).
@@ -32,9 +34,9 @@ import { existsSync } from "node:fs";
 import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
 export const LIB_RS =
-  "/tmp/program-examples/basics/account-data/anchor/programs/anchor-program-example/src/lib.rs";
+  join(TEST_SCRATCH, "program-examples", "basics/account-data/anchor/programs/anchor-program-example/src/lib.rs");
 export const CRATE_DIR =
-  "/tmp/program-examples/basics/account-data/anchor/programs/anchor-program-example";
+  join(TEST_SCRATCH, "program-examples", "basics/account-data/anchor/programs/anchor-program-example");
 export const PROGRAM_ID = "GpVcgWdgVErgLqsn8VYUch6EqDerMgNqoLSmGyKrd6MR";
 
 export function isAvailable(): boolean {

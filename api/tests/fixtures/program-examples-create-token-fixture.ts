@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for solana-developers/program-examples'
  * tokens/create-token Anchor program.
@@ -40,7 +42,7 @@ import { existsSync, readFileSync } from "node:fs";
 // Upstream repo path. solana-developers/program-examples is the canonical
 // "official" examples repository; tokens/create-token is the first token
 // program a new Solana dev typically encounters.
-export const LIB_RS = "/tmp/program-examples/tokens/create-token/anchor/programs/create-token/src/lib.rs";
+export const LIB_RS = join(TEST_SCRATCH, "program-examples", "tokens/create-token/anchor/programs/create-token/src/lib.rs");
 
 // Replace the upstream-declared program ID with a deterministic test ID.
 // The upstream declare_id! uses GwvQ53QTu1xz3XXYfG5m5jEqwhMBvVBudPS8TUuFYnhT,

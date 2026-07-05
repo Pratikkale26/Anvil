@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for coral-multisig's `create_multisig` flow.
  *
@@ -37,7 +39,7 @@ import { spawnSync } from "node:child_process";
 // /tests/multisig/ copy in the main coral-xyz/anchor monorepo is the
 // up-to-date version (modern error syntax, no .clone() on bumps, uses
 // to_account_info().key for has_one constraints).
-export const REPO_PATH = "/tmp/coral-anchor";
+export const REPO_PATH = join(TEST_SCRATCH, "coral-anchor");
 export const LIB_RS = `${REPO_PATH}/tests/multisig/programs/multisig/src/lib.rs`;
 export const CRATE_DIR = `${REPO_PATH}/tests/multisig/programs/multisig`;
 export const PROGRAM_ID = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS";

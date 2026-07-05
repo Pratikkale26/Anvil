@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for anchor-escrow-2025's `make_offer` flow.
  *
@@ -46,7 +48,7 @@ import {
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-export const REPO_PATH = "/tmp/anchor-escrow-2025";
+export const REPO_PATH = join(TEST_SCRATCH, "anchor-escrow-2025");
 export const LIB_RS = `${REPO_PATH}/programs/escrow/src/lib.rs`;
 export const CRATE_DIR = `${REPO_PATH}/programs/escrow`;
 export const PROGRAM_ID = "8jR5GeNzeweq35Uo84kGP3v1NcBaZWH5u62k7PxN4T2y";

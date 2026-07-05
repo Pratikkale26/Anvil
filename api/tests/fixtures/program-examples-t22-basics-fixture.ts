@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for solana-developers/program-examples'
  * tokens/token-2022/basics Anchor program.
@@ -44,7 +46,7 @@ import { existsSync, readFileSync } from "node:fs";
 // Upstream path. tokens/token-2022/basics is the canonical "T22 first
 // program" example in the solana-developers repo.
 export const LIB_RS =
-  "/tmp/program-examples/tokens/token-2022/basics/anchor/programs/basics/src/lib.rs";
+  join(TEST_SCRATCH, "program-examples", "tokens/token-2022/basics/anchor/programs/basics/src/lib.rs");
 
 // Deterministic test program ID. Upstream declare_id! is
 // 6qNqxkRF791FXFeQwqYQLEzAbGiqDULC5SSHVsfRoG89 — pin our own so the fixture

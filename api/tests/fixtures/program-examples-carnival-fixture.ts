@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for the `carnival` program from
  * solana-developers/program-examples
@@ -66,7 +68,7 @@ import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 import { existsSync } from "node:fs";
 
 export const LIB_RS =
-  "/tmp/program-examples/basics/repository-layout/anchor/programs/carnival/src/lib.rs";
+  join(TEST_SCRATCH, "program-examples", "basics/repository-layout/anchor/programs/carnival/src/lib.rs");
 
 // Deterministic test program ID. Upstream declare_id! is
 // 8t94SEJh9jVjDwV7cbiuT6BvEsHo4YHP9x9a5rYH1NpP — sub our own to keep the

@@ -1,3 +1,4 @@
+import { TEST_SCRATCH } from "./scratch-root.ts";
 import { describe, test, expect } from "bun:test";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
@@ -40,7 +41,7 @@ thiserror = "2.0"
 bytemuck = { version = "1", features = ["derive"] }
 `;
 
-const BUILD_DIR = "/tmp/anvil-cargo-tests";
+const BUILD_DIR = join(TEST_SCRATCH, "anvil-cargo-tests");
 
 function buildProject(code: string, cargoToml: string, name: string): { success: boolean; errors: string[] } {
   const projDir = join(BUILD_DIR, name);

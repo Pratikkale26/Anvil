@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for solana-developers/program-examples'
  * tokens/spl-token-minter Anchor program.
@@ -57,7 +59,7 @@ import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 import { existsSync } from "node:fs";
 
 export const LIB_RS =
-  "/tmp/program-examples/tokens/spl-token-minter/anchor/programs/spl-token-minter/src/lib.rs";
+  join(TEST_SCRATCH, "program-examples", "tokens/spl-token-minter/anchor/programs/spl-token-minter/src/lib.rs");
 
 // Deterministic test program ID. Upstream declare_id! is
 // 3of89Z9jwek9zrFgpCWc9jZvQvitpVMxpZNsrAD2vQUD — sub our own to keep the

@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture for Helium's circuit-breaker program.
  *
@@ -29,7 +31,7 @@ import { spawnSync } from "node:child_process";
 import { collectProjectFilesFromEntry, buildProjectSource } from "../../src/parser/project-source.ts";
 
 const REPO_URL = "https://github.com/helium/helium-program-library";
-export const REPO_PATH = "/tmp/helium-program-library";
+export const REPO_PATH = join(TEST_SCRATCH, "helium-program-library");
 export const CRATE_DIR = `${REPO_PATH}/programs/circuit-breaker`;
 export const LIB_RS = `${CRATE_DIR}/src/lib.rs`;
 export const PROGRAM_ID = "circAbx64bbsscPbQzZAUvuXpHqrCe6fLMzc2uKXz9g";

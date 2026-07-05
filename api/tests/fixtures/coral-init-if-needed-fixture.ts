@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for coral-anchor's `init-if-needed` test program
  * (specifically the `second_initialize` instruction — plain
@@ -40,7 +42,7 @@ import { spawnSync } from "node:child_process";
 // `../../../../lang` (workspace anchor-lang), so the reference build MUST
 // go through anchorReferenceCrateDir — a scratch lib.rs wouldn't resolve
 // the path-dep.
-export const REPO_PATH = "/tmp/coral-anchor";
+export const REPO_PATH = join(TEST_SCRATCH, "coral-anchor");
 export const LIB_RS = `${REPO_PATH}/tests/misc/programs/init-if-needed/src/lib.rs`;
 export const CRATE_DIR = `${REPO_PATH}/tests/misc/programs/init-if-needed`;
 export const PROGRAM_ID = "BZoppwWi6jMnydnUBEJzotgEXHwLr3b3NramJgZtWeF2";

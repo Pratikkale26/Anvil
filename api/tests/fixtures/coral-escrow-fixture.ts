@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for coral-anchor's tests/escrow `initialize_escrow` flow.
  *
@@ -87,7 +89,7 @@ import { existsSync, readFileSync } from "node:fs";
 // deps on anchor-lang/anchor-spl under ../../../../lang and ../../../../spl,
 // so the reference build MUST use anchorReferenceCrateDir to cargo-build
 // the upstream crate verbatim.
-export const REPO_PATH = "/tmp/coral-anchor";
+export const REPO_PATH = join(TEST_SCRATCH, "coral-anchor");
 export const LIB_RS = `${REPO_PATH}/tests/escrow/programs/escrow/src/lib.rs`;
 export const CRATE_DIR = `${REPO_PATH}/tests/escrow/programs/escrow`;
 // PROGRAM_ID matches declare_id! in lib.rs verbatim. Validated as a 32-byte

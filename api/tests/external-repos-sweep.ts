@@ -1,3 +1,4 @@
+import { TEST_SCRATCH } from "./scratch-root.ts";
 /**
  * External-repos sweep — hits the live API (port 8080) for the 17 Arjun
  * (aarjn/solana-programs-list) demos + attempts the 3 big multi-file
@@ -10,7 +11,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const API = process.env.ANVIL_API ?? "http://localhost:8080";
-const REPO_ROOT = "/tmp/anvil-external-repos";
+const REPO_ROOT = join(TEST_SCRATCH, "anvil-external-repos");
 
 interface Fixture {
   name: string;

@@ -1,3 +1,5 @@
+import { TEST_SCRATCH } from "../scratch-root.ts";
+import { join } from "node:path";
 /**
  * Shared fixture pieces for solana-developers/program-examples'
  * basics/realloc/anchor program — the SHRINK path of Anchor's realloc
@@ -42,7 +44,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { isTxFailure, txFailureMessage } from "../litesvm-tx-error.ts";
 
-export const REPO_PATH = "/tmp/program-examples";
+export const REPO_PATH = join(TEST_SCRATCH, "program-examples");
 export const CRATE_DIR =
   `${REPO_PATH}/basics/realloc/anchor/programs/anchor-realloc`;
 export const LIB_RS = `${CRATE_DIR}/src/lib.rs`;
