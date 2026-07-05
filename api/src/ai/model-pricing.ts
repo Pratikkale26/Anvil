@@ -30,15 +30,18 @@ const DEFAULT: ModelPricing = {
 };
 
 const MODEL_PRICING: Record<string, ModelPricing> = {
-  // Anthropic — Sonnet family
+  // Anthropic — Sonnet family (Sonnet 5 is the current default repair model)
+  "claude-sonnet-5":          { inputPerM: 3, outputPerM: 15, cacheWritePerM: 3.75, cacheReadPerM: 0.3 },
   "claude-sonnet-4-20250514": { inputPerM: 3, outputPerM: 15, cacheWritePerM: 3.75, cacheReadPerM: 0.3 },
   "claude-sonnet-4-6":        { inputPerM: 3, outputPerM: 15, cacheWritePerM: 3.75, cacheReadPerM: 0.3 },
   "claude-sonnet-4-7":        { inputPerM: 3, outputPerM: 15, cacheWritePerM: 3.75, cacheReadPerM: 0.3 },
   // Anthropic — Opus family
+  "claude-opus-4-8":          { inputPerM: 15, outputPerM: 75, cacheWritePerM: 18.75, cacheReadPerM: 1.5 },
   "claude-opus-4-6":          { inputPerM: 15, outputPerM: 75, cacheWritePerM: 18.75, cacheReadPerM: 1.5 },
   "claude-opus-4-7":          { inputPerM: 15, outputPerM: 75, cacheWritePerM: 18.75, cacheReadPerM: 1.5 },
   // Anthropic — Haiku family
   "claude-haiku-4-5-20251001": { inputPerM: 1, outputPerM: 5, cacheWritePerM: 1.25, cacheReadPerM: 0.1 },
+  "claude-haiku-4-5":          { inputPerM: 1, outputPerM: 5, cacheWritePerM: 1.25, cacheReadPerM: 0.1 },
 };
 
 /**

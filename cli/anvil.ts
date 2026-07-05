@@ -901,6 +901,7 @@ function printCommandHelp(command: string): void {
     case "compile":      printCompileHelp();    return;
     case "parse":        printParseHelp();      return;
     case "validate":     printValidateHelp();   return;
+    case "advise":       void cmdAdvise({ ...({} as CliArgs), help: true } as CliArgs); return;
     case "lint":         printLintHelp();       return;
     case "bench":        printBenchHelp();      return;
     case "snapshot":     printSnapshotHelp();   return;
@@ -1259,6 +1260,21 @@ async function cmdCompile(args: CliArgs): Promise<void> {
     // validator's own linkage (api/tests/marker-validator-linkage.test.ts);
     // this list is the CLI's cargo-not-needed guard.
     const stubHits = CLI_STUB_MARKER_PATTERNS.filter((re) => re.test(allText));
+    // #17 — enumerate the actual file:line SITES of each stub marker (not just a
+    // pattern count) so the user knows exactly where to hand-port. Patterns are
+    // non-global, so per-line .test() is safe.
+    const stubScanFiles = output.files.length > 0
+      ? output.files
+      : [{ path: `${inputName}.rs`, content: output.singleFile }];
+    const stubSites: Array<{ path: string; line: number; text: string }> = [];
+    for (const f of stubScanFiles) {
+      const fileLines = f.content.split("\n");
+      for (let i = 0; i < fileLines.length; i++) {
+        if (CLI_STUB_MARKER_PATTERNS.some((re) => re.test(fileLines[i]!))) {
+          stubSites.push({ path: f.path, line: i + 1, text: fileLines[i]!.trim() });
+        }
+      }
+    }
     const passthroughFindings = auditPassthrough(ir);
     const passthroughErrors = passthroughFindings.filter((f) => f.severity === "error");
     if (errors.length > 0 || stubHits.length > 0 || passthroughErrors.length > 0) {
@@ -1267,10 +1283,16 @@ async function cmdCompile(args: CliArgs): Promise<void> {
       if (errors.length > 0) {
         console.log(`    ${c.dim}validator errors: ${errors.length}${c.reset}`);
       }
-      if (stubHits.length > 0) {
+      if (stubSites.length > 0) {
         console.log(
-          `    ${c.dim}stub markers detected (${stubHits.length} pattern${stubHits.length !== 1 ? "s" : ""}); the emit contains compile-clean placeholders that no-op the original behavior.${c.reset}`,
+          `    ${c.dim}stub markers (${stubSites.length} site${stubSites.length !== 1 ? "s" : ""}) — compile-clean placeholders that no-op the original behavior. Hand-port each:${c.reset}`,
         );
+        for (const s of stubSites.slice(0, 10)) {
+          console.log(`      ${c.red}✗${c.reset} ${c.cyan}${s.path}:${s.line}${c.reset} ${c.dim}${s.text.slice(0, 100)}${c.reset}`);
+        }
+        if (stubSites.length > 10) {
+          console.log(`      ${c.dim}… and ${stubSites.length - 10} more${c.reset}`);
+        }
       }
       if (passthroughErrors.length > 0) {
         console.log(
@@ -1687,6 +1709,112 @@ async function cmdLint(args: CliArgs): Promise<void> {
  * emit (subject) is cheaper than the Anchor build (reference). Both .so must
  * share the --source ABI; an ABI mismatch fails loudly via the scenario run.
  */
+/**
+ * #27 — recommend a transpile target from the parsed IR. Anvil emits BOTH
+ * targets byte-equal, so this is a DEPLOY preference (compute-units / binary
+ * size vs. std familiarity for complex integrations), not a correctness call.
+ * Pure + exported so it's unit-testable without the CLI plumbing.
+ */
+export function adviseTarget(
+  ir: import("../api/src/ir/schema.js").SolanaIR,
+  source: string,
+): {
+  lean: "pinocchio" | "native" | "either";
+  nativeScore: number;
+  pinocchioScore: number;
+  reasons: string[];
+  signals: { ixCount: number; typeCount: number; accountCount: number; cpiCount: number; customCpiCount: number; usesMetaplex: boolean };
+} {
+  const ixCount = ir.instructions.length;
+  const typeCount = (ir.types ?? []).length;
+  const accountNames = new Set<string>();
+  let cpiCount = 0;
+  let customCpiCount = 0;
+  for (const ix of ir.instructions) {
+    for (const a of ix.accounts) accountNames.add(a.name);
+    for (const s of ix.body) {
+      if (s.kind.startsWith("cpi_")) cpiCount++;
+      if (s.kind === "cpi_custom") customCpiCount++;
+    }
+  }
+  const importsText = (ir.imports ?? []).join(" ");
+  const usesMetaplex = /\bmpl[_-]|metaplex/i.test(importsText) || /\bmpl_[a-z]|metaplex/i.test(source);
+
+  let nativeScore = 0;
+  let pinocchioScore = 0;
+  const reasons: string[] = [];
+  if (usesMetaplex) {
+    nativeScore += 2;
+    reasons.push("Metaplex/mpl usage detected → Native's fuller std smooths these integrations.");
+  }
+  if (customCpiCount > 0) {
+    nativeScore += 1;
+    reasons.push(`${customCpiCount} custom/hand-ported CPI call(s) → Native is more forgiving to review + tweak.`);
+  }
+  if (ixCount > 8 || typeCount > 5) {
+    nativeScore += 1;
+    reasons.push(`larger surface (${ixCount} instructions, ${typeCount} custom types) → Native for maintainability.`);
+  }
+  if (!usesMetaplex && cpiCount === 0 && ixCount <= 4 && typeCount <= 3) {
+    pinocchioScore += 2;
+    reasons.push("small, CPI-free program → Pinocchio wins clearly on compute units + binary size.");
+  }
+  if (!usesMetaplex && cpiCount <= 2) {
+    pinocchioScore += 1;
+    reasons.push("light CPI surface → Pinocchio's minimal runtime keeps CU low.");
+  }
+
+  const lean = nativeScore > pinocchioScore ? "native" : pinocchioScore > nativeScore ? "pinocchio" : "either";
+  return { lean, nativeScore, pinocchioScore, reasons, signals: { ixCount, typeCount, accountCount: accountNames.size, cpiCount, customCpiCount, usesMetaplex } };
+}
+
+async function cmdAdvise(args: CliArgs): Promise<void> {
+  if (args.help) {
+    console.log(`
+  ${c.bold}anvil advise${c.reset} — Recommend a transpile target (Pinocchio vs Native).
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil advise <input>
+
+  ${c.bold}ARGUMENTS${c.reset}
+
+    <input>     Rust source file (.rs) or project directory
+
+  Anvil emits BOTH targets byte-equal, so this is a deploy preference
+  (compute-unit / binary size vs. std familiarity for complex integrations),
+  not a correctness choice. Try either: ${c.cyan}anvil compile <input> --target pinocchio|native${c.reset}
+`);
+    return;
+  }
+  if (!args.input) {
+    fatal("Missing input file or directory.\n\n  Usage: anvil advise <input>");
+  }
+  banner();
+  progress(`Analyzing ${args.input}...`);
+  const source = resolveSource(args.input);
+  const parseResult = await parseAnchor(source);
+  if (!parseResult.ok) {
+    error(`Parse failed: ${parseResult.error}`);
+    if (parseResult.details) console.log(`    ${c.dim}${parseResult.details}${c.reset}`);
+    process.exit(1);
+  }
+  const a = adviseTarget(parseResult.ir, source);
+  console.log();
+  const pick = a.lean === "either"
+    ? `${c.bold}Either works${c.reset} — the signals are balanced.`
+    : `Lean ${c.bold}${c.cyan}${a.lean}${c.reset}.`;
+  console.log(`  ${c.bold}Recommendation:${c.reset} ${pick}`);
+  console.log();
+  console.log(`  ${c.dim}Signals: ${a.signals.ixCount} ix · ${a.signals.accountCount} accounts · ${a.signals.typeCount} types · ${a.signals.cpiCount} CPI (${a.signals.customCpiCount} custom)${a.signals.usesMetaplex ? " · Metaplex" : ""}${c.reset}`);
+  for (const r of a.reasons) console.log(`    ${c.dim}•${c.reset} ${r}`);
+  if (a.reasons.length === 0) console.log(`    ${c.dim}• No strong signal either way — pick by team preference.${c.reset}`);
+  console.log();
+  console.log(`  ${c.dim}Both targets are emitted byte-equal; this is a deploy preference, not correctness.`);
+  console.log(`  Run ${c.cyan}anvil compile ${args.input} --target ${a.lean === "either" ? "pinocchio" : a.lean}${c.reset}${c.dim} to generate it.${c.reset}`);
+  console.log();
+}
+
 async function cmdBenchAgainst(args: CliArgs): Promise<void> {
   const subjectPath = args.input;
   const referencePath = args.against!;
@@ -2484,6 +2612,9 @@ async function main(): Promise<void> {
     case "validate":
       await cmdValidate(args);
       break;
+    case "advise":
+      await cmdAdvise(args);
+      break;
     case "lint":
       await cmdLint(args);
       break;
@@ -2793,7 +2924,8 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
   // Auto-scenario: synthesize from IR when --auto-scenario and no --scenario file
   if (args.autoScenario && !args.scenario) {
     progress("Synthesizing scenario from IR (--auto-scenario)...");
-    const { synthesizeAutoScenario } = await import("./api-src/cli/auto-scenario.js");
+    // NB: dev path is ../api/src; prepack rewrites it to ./api-src for publish.
+    const { synthesizeAutoScenario } = await import("../api/src/cli/auto-scenario.js");
     const autoResult = synthesizeAutoScenario(ir);
     if ("blockers" in autoResult) {
       error(`auto-scenario synthesis blocked:`);
@@ -2802,7 +2934,7 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     }
     args.scenario = "__auto__";
     (args as any).__synthesizedScenario = autoResult.scenario;
-    progress(`Auto-scenario synthesized: ${autoResult.scenario.instructions.length} instruction(s), ${autoResult.scenario.compare.length} account(s) to compare`);
+    progress(`Auto-scenario synthesized: ${autoResult.scenario.steps.length} step(s), ${autoResult.scenario.compare.accounts.length} account(s) to compare`);
   }
 
   // Build-only mode — print the next-steps and exit. User opted out of the
@@ -2843,15 +2975,20 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
       process.exit(1);
     }
   }
-  // Minimal shape check — defensive, the runner will surface other issues
-  // with an actionable message.
-  if (typeof scenario.programId !== "string" || !Array.isArray(scenario.signers) ||
-      !Array.isArray(scenario.instructions) || !Array.isArray(scenario.compare)) {
-    error(`scenario is missing required keys: programId / signers / instructions / compare`);
+  // Accept EITHER the workbench/auto shape (steps + compare{}) OR the legacy
+  // CLI shape (instructions + compare[]). The unified engine normalizes both.
+  const scenarioIsWorkbench = Array.isArray(scenario?.steps);
+  const scenarioIsLegacyCli = Array.isArray(scenario?.instructions);
+  if (!scenarioIsWorkbench && !scenarioIsLegacyCli) {
+    error(`scenario is missing an instruction list — need "steps" (workbench shape) or "instructions" (legacy CLI shape)`);
     console.log(`\n  Run 'anvil differential --help' for the schema.\n`);
     process.exit(1);
   }
-  success(`Scenario: ${scenario.signers.length} signer(s), ${scenario.instructions.length} instruction(s), ${scenario.compare.length} compare target(s)`);
+  const scenarioStepCount = scenarioIsWorkbench ? scenario.steps.length : scenario.instructions.length;
+  const scenarioCompareCount = scenarioIsWorkbench
+    ? (scenario.compare?.accounts?.length ?? 0)
+    : (scenario.compare?.length ?? 0);
+  success(`Scenario: ${(scenario.signers ?? []).length} signer(s), ${scenarioStepCount} step(s), ${scenarioCompareCount} compare target(s)`);
   console.log();
 
   // Build (or load) the Anchor reference .so.
@@ -2930,6 +3067,14 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     fatal(`--fuzz-flags requires --fuzz <N>. Pass both to enable account-flag mutation iterations.`);
   }
 
+  // The fuzz runner still consumes the legacy CLI scenario shape. The
+  // workbench/auto shape runs on the unified engine, which doesn't fuzz yet
+  // (tracked as the coverage-floor work). Guard rather than crash mid-run.
+  if (args.fuzz && args.fuzz > 0 && scenarioIsWorkbench) {
+    error(`--fuzz isn't supported yet with the workbench/auto scenario shape (including --auto-scenario). Run without --fuzz for a single byte-equal pass, or hand-write a legacy CLI-shape scenario JSON to fuzz.`);
+    process.exit(1);
+  }
+
   if (args.fuzz && args.fuzz > 0) {
     // ── Fuzz path: run N iterations with randomized scalar args.
     progress(`Fuzzing scenario in LiteSVM — ${args.fuzz} iterations${args.fuzzSeed ? ` (seed=${args.fuzzSeed})` : ""}${args.fuzzFlags ? ", flag-mutation enabled" : ""}...`);
@@ -2992,48 +3137,108 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     process.exit(2);
   }
 
-  // ── Default path: single run.
+  // ── Default path: single run on the unified workbench engine.
+  //    (Same engine the hosted workbench uses → SPL mint/ATA support, the
+  //    anti-vacuous verdict guard, and every future workbench improvement.)
   progress("Running scenario in LiteSVM (Anchor + Anvil)...");
-  let runResult;
+  let verdict;
   try {
-    const { runScenarioDifferential } = await import("./scenario-runner.js");
-    runResult = await runScenarioDifferential({
-      scenario,
+    const { runUnifiedDifferential } = await import("./differential-engine.js");
+    const res = await runUnifiedDifferential({
+      ir,
+      rawScenario: scenario,
       anchorSo: anchorSoBytes,
       anvilSo: anvilSoBytes,
-      ir,
       compareEventLogs: args.compareEvents,
       compareReturnData: args.compareReturnData,
       compareMsgLogs: args.compareMsgLogs,
     });
+    verdict = res.verdict;
   } catch (err) {
     error(`scenario run failed: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
   console.log();
+  printDifferentialVerdict(verdict);
+}
 
-  // Report.
-  if (runResult.ok) {
-    success(`${c.bold}BYTE-EQUAL${c.reset} — all ${runResult.results.length} compared account(s) match. (${runResult.durationMs}ms)`);
-    for (const r of runResult.results) {
-      console.log(`    ${c.green}✓${c.reset} ${r.name}`);
+/**
+ * Render a workbench ScenarioVerdict for the CLI, honestly surfacing all four
+ * outcomes plus the anti-vacuous sanity warnings. Exits the process.
+ */
+function printDifferentialVerdict(verdict: {
+  verdict: "BYTE_EQUAL" | "BYTE_EQUAL_WITH_WARNINGS" | "DIVERGED" | "SCENARIO_FAILED";
+  durationMs: number;
+  accountDiffs: Array<{
+    name: string;
+    status: "equal" | "diverged" | "missing";
+    firstDiffByte?: number;
+    lamportsDiff?: { anchor: string; anvil: string };
+    ownerDiff?: { anchor: string; anvil: string };
+  }>;
+  sanityWarnings: Array<{ kind: string; message: string }>;
+  eventLogDiff?: { diverged: boolean };
+  msgLogDiff?: { diverged: boolean };
+  returnDataDiff?: { diverged: boolean };
+}): void {
+  const divergeDetail = (d: (typeof verdict.accountDiffs)[number]): string => {
+    const parts: string[] = [];
+    if (d.status === "missing") parts.push("account missing on one target");
+    if (d.firstDiffByte !== undefined) parts.push(`data diverges @ byte ${d.firstDiffByte}`);
+    if (d.lamportsDiff) parts.push(`lamports ${d.lamportsDiff.anchor}≠${d.lamportsDiff.anvil}`);
+    if (d.ownerDiff) parts.push(`owner ${d.ownerDiff.anchor}≠${d.ownerDiff.anvil}`);
+    return parts.length ? parts.join(", ") : "";
+  };
+  const matched = verdict.accountDiffs.filter((d) => d.status === "equal");
+  const diverged = verdict.accountDiffs.filter((d) => d.status !== "equal");
+  const showWarnings = () => {
+    for (const w of verdict.sanityWarnings) {
+      console.log(`    ${c.yellow}⚠${c.reset} [${w.kind}] ${w.message}`);
     }
+  };
+
+  if (verdict.verdict === "SCENARIO_FAILED") {
+    error(`${c.bold}SCENARIO FAILED${c.reset} — the run proved nothing. (${verdict.durationMs}ms)`);
+    console.log();
+    showWarnings();
+    console.log();
+    console.log(`  ${c.dim}A byte-equal verdict is only meaningful if the scenario actually`);
+    console.log(`  exercises the program AND compares real post-state. Fix the scenario`);
+    console.log(`  (args/ordering so steps don't all revert, and add compare targets).${c.reset}`);
+    console.log();
+    process.exit(2);
+  }
+
+  if (verdict.verdict === "DIVERGED") {
+    error(`${c.bold}BYTE-EQUAL FAILED${c.reset} — Anvil emit diverges from Anchor reference. (${verdict.durationMs}ms)`);
+    for (const d of matched) console.log(`    ${c.green}✓${c.reset} ${d.name}`);
+    for (const d of diverged) console.log(`    ${c.red}✗${c.reset} ${d.name} [${d.status}] ${divergeDetail(d)}`);
+    if (verdict.eventLogDiff?.diverged) console.log(`    ${c.red}✗${c.reset} event logs (emit!) diverged`);
+    if (verdict.msgLogDiff?.diverged) console.log(`    ${c.red}✗${c.reset} msg!() logs diverged`);
+    if (verdict.returnDataDiff?.diverged) console.log(`    ${c.red}✗${c.reset} set_return_data() diverged`);
+    if (verdict.sanityWarnings.length) { console.log(); showWarnings(); }
+    console.log();
+    console.log(`  ${c.dim}File an issue with the diff details at https://github.com/Pratikkale26/Anvil/issues${c.reset}`);
+    console.log();
+    process.exit(2);
+  }
+
+  if (verdict.verdict === "BYTE_EQUAL_WITH_WARNINGS") {
+    warn(`${c.bold}BYTE-EQUAL WITH WARNINGS${c.reset} — bytes match, but the verdict is scoped. (${verdict.durationMs}ms)`);
+    for (const d of matched) console.log(`    ${c.green}✓${c.reset} ${d.name}`);
+    console.log();
+    showWarnings();
+    console.log();
+    console.log(`  ${c.dim}The compare is honest but doesn't fully cover the program. Widen`);
+    console.log(`  compare targets / add assertions before treating this as deploy-safe.${c.reset}`);
     console.log();
     return;
   }
 
-  error(`${c.bold}BYTE-EQUAL FAILED${c.reset} — Anvil emit diverges from Anchor reference. (${runResult.durationMs}ms)`);
-  for (const r of runResult.results) {
-    if (r.ok) {
-      console.log(`    ${c.green}✓${c.reset} ${r.name}`);
-    } else {
-      console.log(`    ${c.red}✗${c.reset} ${r.name} [${r.kind}] ${r.details}`);
-    }
-  }
+  // BYTE_EQUAL
+  success(`${c.bold}BYTE-EQUAL${c.reset} — all ${matched.length} compared account(s) match. (${verdict.durationMs}ms)`);
+  for (const d of matched) console.log(`    ${c.green}✓${c.reset} ${d.name}`);
   console.log();
-  console.log(`  ${c.dim}File an issue with the diff details at https://github.com/Pratikkale26/Anvil/issues${c.reset}`);
-  console.log();
-  process.exit(2);
 }
 
 // ─── migrate ─────────────────────────────────────────────────────────────────
@@ -3151,7 +3356,11 @@ function printMigrateHelp(): void {
 `);
 }
 
-main().catch((err: unknown) => {
-  error(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
-});
+// Only run the CLI when executed directly — guarding this lets test/tooling
+// import pure helpers (e.g. adviseTarget) without triggering an argv parse.
+if (import.meta.main) {
+  main().catch((err: unknown) => {
+    error(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  });
+}

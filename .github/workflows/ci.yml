@@ -1,0 +1,86 @@
+name: CI
+
+# Committed CI (task #3). The prior "no committed CI" state made the
+# README/trust-doc claim "locked on every commit / CI fails on regression"
+# false. This restores a real gate.
+#
+# Shape: a fast `typecheck` lane for quick signal, plus a `test` lane that
+# installs the SBF + Anchor toolchain and runs the FULL suite (unit + byte-equal
+# differential corpus). The test suite is deliberately NOT split into a
+# "no-toolchain fast" lane: ~90 tests shell out to cargo-build-sbf / anchor
+# without a skip guard, so a toolchain-less run is meaningless-red. The point of
+# #3 is that the differential corpus actually RUNS — so the test lane HARD-FAILS
+# if the toolchain is missing rather than letting those tests skip to a false
+# green.
+
+on:
+  push:
+    branches: [main, "harden/**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: Typecheck (api, tsc --noEmit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install api deps
+        working-directory: api
+        run: bun install --frozen-lockfile
+      - name: tsc --noEmit
+        working-directory: api
+        run: bun run typecheck
+
+  test:
+    name: Full test suite + differential corpus (SBF + Anchor required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Agave (provides cargo-build-sbf)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Install Anchor CLI via avm (the harness needs anchor + SBF)
+        # Pinned to the 0.31 line the fixtures target. Compiling avm + anchor is
+        # why this lane is slow; tune the version to match the corpus.
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          avm install 0.31.1
+          avm use 0.31.1
+      - name: HARD-FAIL if the SBF/anchor toolchain is missing
+        # differential-harness.ts skips silently when cargo-build-sbf OR anchor
+        # is absent, which turns a missing toolchain into a green "0 differential
+        # tests" — the exact false-confidence #3 removes. Fail loud instead.
+        run: |
+          fail=0
+          for tool in cargo-build-sbf anchor; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::$tool not on PATH — the differential corpus cannot run."
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] || exit 1
+          cargo-build-sbf --version
+          anchor --version
+      - name: Install api deps
+        working-directory: api
+        run: bun install --frozen-lockfile
+      - name: Full suite (unit + differential corpus)
+        working-directory: api
+        # /tmp is a small tmpfs on some runners; point cargo scratch at the
+        # workspace disk so large SBF builds don't hit ENOSPC.
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: bun test tests/

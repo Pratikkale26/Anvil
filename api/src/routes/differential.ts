@@ -31,7 +31,7 @@ import { readFileSync } from "node:fs";
 import { AnvilError, ErrorCode } from "../errors.js";
 import { ScenarioSchema, lintScenario } from "../ir/scenario.js";
 import { SolanaIRSchema } from "../ir/schema.js";
-import { buildBothSos, differentialAvailable, validateAnchorExtraDeps } from "../build/differential-build.js";
+import { buildBothSos, differentialAvailable, validateAnchorExtraDeps, assertScaffoldDepsSafe } from "../build/differential-build.js";
 import { buildProjectScaffold } from "../emitter/project-scaffold.js";
 
 type ScaffoldTarget = "pinocchio" | "native";
@@ -278,6 +278,18 @@ differentialRoute.post("/", async (req, res) => {
   // requested `target` (defaults to pinocchio, matching the workbench's
   // default emit target).
   const sentScaffold = parsed.data.anvilScaffoldFiles ?? [];
+  // #11 / R5 — a client-supplied scaffold Cargo.toml is written verbatim and
+  // resolved by the out-of-sandbox warm-fetch; refuse git/path/etc. source
+  // overrides before it can trigger an SSRF.
+  try {
+    assertScaffoldDepsSafe(sentScaffold);
+  } catch (err) {
+    if (err instanceof AnvilError) {
+      res.status(err.statusCode).json(err.toJSON());
+      return;
+    }
+    throw err;
+  }
   const scaffoldTarget: ScaffoldTarget = parsed.data.target ?? "pinocchio";
   const anvilScaffoldFiles =
     sentScaffold.length > 0

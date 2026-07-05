@@ -328,8 +328,22 @@ async function buildBothSosImpl(opts: DifferentialBuildOptions): Promise<BuildAr
   };
 }
 
+// #16 — per-invocation scratch suffix. The scratch build dirs were keyed by
+// program-name ONLY (`_workbench_build_escrow_anchor`), so two concurrent
+// hosted builds of the same program (common names: escrow / counter / amm)
+// raced on the same rmSync + writeFileSync + cargo target dir → half-written
+// Cargo.toml, "No such file or directory" mid-compile, corrupt .so. The output
+// .so is content-addressed (workbench-<name>/<name>_<side>_<hash>.so), so the
+// scratch is disposable: give each build its own dir (pid isolates replicas,
+// the counter isolates intra-process concurrency) and remove it after the .so
+// is copied out.
+let scratchSeq = 0;
+function uniqueScratch(programName: string, side: "anchor" | "anvil"): string {
+  return join(CACHE_ROOT, `_workbench_build_${programName}_p${process.pid}_${++scratchSeq}_${side}`);
+}
+
 async function buildAnchor(opts: DifferentialBuildOptions, outPath: string): Promise<void> {
-  const scratch = join(CACHE_ROOT, `_workbench_build_${opts.programName}_anchor`);
+  const scratch = uniqueScratch(opts.programName, "anchor");
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(join(scratch, "src"), { recursive: true });
   opts.onLog?.(`[anchor] scratch=${scratch}`);
@@ -408,6 +422,9 @@ overflow-checks = true
   await warmDifferentialDependencies(scratch, opts);
   await runSandboxedSbf(scratch, opts);
   copySoFromTarget(scratch, outPath);
+  // #16 — remove the per-invocation scratch now the .so is cached at outPath.
+  // On error we intentionally leave it for the CACHE_TTL sweep to inspect/evict.
+  rmSync(scratch, { recursive: true, force: true });
 }
 
 /**
@@ -608,16 +625,68 @@ const ANCHOR_EXTRA_DEPS_ALLOWLIST = new Set<string>([
  *  - `package=` — package-rename lets `cute-name = { package = "evil" }`
  *    smuggle an off-allowlist crate under an allowed alias.
  */
-const ANCHOR_EXTRA_DEPS_BANNED_KEYS = [
-  "git",
-  "path",
-  "branch",
-  "tag",
-  "rev",
-  "registry",
-  "registry-index",
-  "package",
-];
+/**
+ * Fail-closed allowlist of dependency-table keys. A dep may only pin a
+ * crates.io version + select features — NEVER its source. Everything else
+ * (git / path / branch / tag / rev / registry / package-rename / workspace / …)
+ * is refused. An allowlist beats the previous banned-key denylist because the
+ * denylist regex `\bgit\s*=` was BYPASSED by quoting the key: `{ "git" = "…" }`
+ * — the closing quote breaks the git→= adjacency, yet cargo honors the quoted
+ * key and normalizes it to a `git+https://…` source, so the out-of-sandbox
+ * `cargo fetch` cloned an attacker URL (SSRF) and pulled an off-allowlist crate
+ * under an allowed alias.
+ */
+const ANCHOR_EXTRA_DEPS_ALLOWED_TABLE_KEYS = new Set([
+  "version",
+  "features",
+  "optional",
+  "default-features",
+]);
+
+/**
+ * Extract the KEYS of a single-line TOML inline table RHS
+ * (`{ version = "1", "git" = "url", features = ["x"] }`). Handles bare,
+ * "double"- and 'single'-quoted keys, string values (so `=`/`,` inside a value
+ * is ignored), and nested [] / {}. Lowercased. This is what defeats the quoted-
+ * key bypass a `\bKEY\s*=` regex could not see.
+ */
+function extractInlineTableKeys(rhs: string): string[] {
+  const inner = rhs.trim().replace(/^\{/, "").replace(/\}$/, "");
+  const keys: string[] = [];
+  let i = 0;
+  const n = inner.length;
+  while (i < n) {
+    while (i < n && /[\s,]/.test(inner[i]!)) i++; // skip separators
+    if (i >= n) break;
+    let key = "";
+    if (inner[i] === '"' || inner[i] === "'" || inner[i] === "`") {
+      const q = inner[i]!; i++;
+      while (i < n && inner[i] !== q) { key += inner[i]; i++; }
+      i++; // closing quote
+    } else {
+      while (i < n && !/[\s=]/.test(inner[i]!)) { key += inner[i]; i++; }
+    }
+    keys.push(key.trim().toLowerCase());
+    while (i < n && inner[i] !== "=") i++; // advance to '='
+    i++; // past '='
+    // Skip the VALUE, respecting quoted strings and nested [] / {} so a comma
+    // or '=' inside a value never starts a phantom key.
+    let depth = 0;
+    while (i < n) {
+      const c = inner[i]!;
+      if (c === '"' || c === "'" || c === "`") {
+        const q = c; i++;
+        while (i < n && inner[i] !== q) { if (inner[i] === "\\") i++; i++; }
+        i++; continue;
+      }
+      if (c === "[" || c === "{") { depth++; i++; continue; }
+      if (c === "]" || c === "}") { depth--; i++; continue; }
+      if (c === "," && depth === 0) { break; }
+      i++;
+    }
+  }
+  return keys.filter((k) => k.length > 0);
+}
 
 /**
  * Validate user-supplied `[dependencies]` snippet before it lands in the
@@ -668,18 +737,18 @@ export function validateAnchorExtraDeps(extraDeps: string): string {
       );
     }
     const rhs = line.slice(eqIdx + 1).trim();
-    // If RHS is a table-shape value, scan it for banned keys. Use a
-    // simple token regex (`\bKEY\s*=`) — tolerates whitespace, doesn't
-    // need a full TOML parser since the surface is one line per dep.
+    // If RHS is a table-shape value, allowlist its keys. Parsing the KEYS
+    // (rather than regex-scanning for banned tokens) is what closes the quoted-
+    // key bypass: `{ "git" = "…" }` is extracted as key `git` and refused.
     if (rhs.startsWith("{")) {
-      for (const banned of ANCHOR_EXTRA_DEPS_BANNED_KEYS) {
-        const tokenRe = new RegExp(`\\b${banned.replace(/[-]/g, "[-]")}\\s*=`, "i");
-        if (tokenRe.test(rhs)) {
+      for (const key of extractInlineTableKeys(rhs)) {
+        if (!ANCHOR_EXTRA_DEPS_ALLOWED_TABLE_KEYS.has(key)) {
           throw new AnvilError(
             ErrorCode.VALIDATION_FAILED,
-            `anchorExtraDeps: source-override key "${banned}" is not permitted on dependency "${name}"`,
-            "Only registry-resolved version pins are accepted (crates.io). " +
-              "git / path / branch / tag / rev / registry / package-rename are blocked.",
+            `anchorExtraDeps: dependency-table key "${key}" is not permitted on "${name}"`,
+            "Only registry version pins are accepted: version, features, optional, default-features. " +
+              "Source overrides (git / path / branch / tag / rev / registry / package-rename) are " +
+              "blocked — a quoted key like `\"git\" =` does NOT bypass this.",
             400,
           );
         }
@@ -687,6 +756,62 @@ export function validateAnchorExtraDeps(extraDeps: string): string {
     }
   }
   return extraDeps;
+}
+
+/**
+ * #11 / R5 — the /build/differential route accepts a CLIENT-supplied
+ * `anvilScaffoldFiles` scaffold (Cargo.toml included) that is written verbatim
+ * and resolved by the SAME out-of-sandbox `cargo fetch`. validateAnchorExtraDeps
+ * only guards the Anchor reference side; this guards the client scaffold. It
+ * refuses any dependency-table SOURCE-OVERRIDE key (git / path / branch / tag /
+ * rev / registry / package / workspace) in any `[*dependencies*]` section —
+ * both the flat `foo = { git = "…" }` form and the per-crate
+ * `[dependencies.foo]` + `git = "…"` form.
+ *
+ * A crate-name allowlist is intentionally NOT enforced here (the Anvil scaffold
+ * legitimately uses pinocchio / borsh / five8 / bytemuck, off the Anchor
+ * allowlist); blocking source overrides closes the SSRF/supply-chain vector,
+ * which is the R5 concern. Clients can omit anvilScaffoldFiles to use the
+ * server-synthesized scaffold.
+ */
+export function assertScaffoldDepsSafe(
+  files: ReadonlyArray<{ path: string; content: string }>,
+): void {
+  for (const f of files) {
+    if (!/(^|\/)Cargo\.toml$/i.test(f.path)) continue;
+    let section = "";
+    for (const rawLine of f.content.split(/\r?\n/)) {
+      const line = rawLine.replace(/#.*$/, "").trim();
+      if (line === "") continue;
+      const hdr = line.match(/^\[\s*([^\]]+?)\s*\]$/);
+      if (hdr) { section = hdr[1]!.toLowerCase(); continue; }
+      // A dependency section's dotted path contains a `(dev-|build-)?dependencies`
+      // segment (e.g. `dependencies`, `dev-dependencies`,
+      // `target.'cfg(unix)'.dependencies`, `dependencies.foo`).
+      if (!/(^|\.)(?:dev-|build-)?dependencies(\.|$)/.test(section)) continue;
+      const eq = line.indexOf("=");
+      if (eq === -1) continue;
+      const lhs = line.slice(0, eq).trim().replace(/^["'`]|["'`]$/g, "").toLowerCase();
+      const rhs = line.slice(eq + 1).trim();
+      // Per-crate table (`[dependencies.foo]`): the line's LHS IS a table key.
+      // Flat section (`[dependencies]`): keys live in the inline `{ … }` RHS.
+      const perCrate = /(^|\.)(?:dev-|build-)?dependencies\.[^.]/.test(section);
+      const keys = perCrate ? [lhs] : (rhs.startsWith("{") ? extractInlineTableKeys(rhs) : []);
+      for (const key of keys) {
+        if (!ANCHOR_EXTRA_DEPS_ALLOWED_TABLE_KEYS.has(key)) {
+          throw new AnvilError(
+            ErrorCode.VALIDATION_FAILED,
+            `anvilScaffoldFiles: '${f.path}' uses source-override key "${key}" in [${section}]`,
+            "A client-supplied Cargo.toml may only pin registry versions " +
+              "(version / features / optional / default-features). git / path / branch / " +
+              "tag / rev / registry / package / workspace are blocked because the differential " +
+              "warm-fetch has network access. Omit anvilScaffoldFiles to use the server scaffold.",
+            400,
+          );
+        }
+      }
+    }
+  }
 }
 
 function sniffAnchorExtraDeps(source: string): string {
@@ -753,6 +878,9 @@ async function buildAnvil(opts: DifferentialBuildOptions, outPath: string): Prom
   await warmDifferentialDependencies(scratch, opts);
   await runSandboxedSbf(scratch, opts);
   copySoFromTarget(scratch, outPath);
+  // #16 — remove the per-invocation scratch now the .so is cached at outPath.
+  // On error we intentionally leave it for the CACHE_TTL sweep to inspect/evict.
+  rmSync(scratch, { recursive: true, force: true });
 }
 
 /**

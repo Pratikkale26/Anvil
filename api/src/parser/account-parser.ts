@@ -417,6 +417,13 @@ function parseAccountField(
       (c) => c.kind === "init" || c.kind === "init_if_needed",
     );
     isPda = constraints.some((c) => c.kind === "seeds");
+    // Auth-bypass fix — back-fill isSigner from an `#[account(signer)]`
+    // constraint. Anchor enforces the signature on ANY account type carrying
+    // this constraint (AccountInfo / UncheckedAccount / SystemAccount), not
+    // only `Signer<'info>`. Without this, isSigner stayed false (set at line
+    // 390 solely from the type wrapper) and emit dropped the is_signer() check
+    // entirely — a silent authorization bypass with no marker.
+    isSigner = isSigner || constraints.some((c) => c.kind === "signer");
 
     const seedsConstraint = constraints.find((c) => c.kind === "seeds");
     if (seedsConstraint?.value) {

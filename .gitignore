@@ -59,10 +59,10 @@ api/scratch-*.ts
 video.md
 posts/
 test-ledger/
-# CI workflow held back from commit until ready to enable — would burn
-# free-tier minutes prematurely. Drafted in the working tree at
-# .github/workflows/test.yml; staging it commits the workflow.
-.github/
+# Committed CI lives in .github/workflows/. Keep the rest of .github/ ignorable
+# for local drafts, but never ignore the workflows themselves (task #3).
+.github/*
+!.github/workflows/
 # Snapshot test failure leftovers — regenerated on mismatch, byte-identical
 # to .snap.rs once the snapshot updates, otherwise stale-but-harmless.
 api/tests/snapshots/emitter-output/*.actual.rs
@@ -73,3 +73,6 @@ cli/src/
 # into this dir (offline-repeatable after that). The test file holds the
 # pointer + sha; committing the source verbatim would mirror upstream.
 api/tests/fixtures/realworld/
+
+# CLI differential/compile build output
+anvil-output/
