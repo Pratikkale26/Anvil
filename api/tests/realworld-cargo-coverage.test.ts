@@ -20,6 +20,7 @@
  */
 import { describe, test, expect } from "bun:test";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { TEST_SCRATCH } from "./scratch-root.ts";
 import { join } from "node:path";
 import { parseAnchor } from "../src/parser/anchor-parser.js";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.js";
@@ -77,7 +78,9 @@ describe("real-world cargo coverage (H3 increment)", () => {
           return;
         }
 
-        const scratch = join("/tmp", "anvil-realworld-coverage", c.id);
+        // TEST_SCRATCH, not /tmp: ~200MB of cargo target/ per fixture × 34
+        // fixtures filled the 3.7G tmpfs (corpus take-3, 2026-07-05).
+        const scratch = join(TEST_SCRATCH, "anvil-realworld-coverage", c.id);
         rmSync(scratch, { recursive: true, force: true });
         mkdirSync(join(scratch, "src"), { recursive: true });
         for (const f of emit.files) {
@@ -93,6 +96,9 @@ describe("real-world cargo coverage (H3 increment)", () => {
         }
 
         const cargoResult = await runCargoCheckGate(scratch);
+        // Evict the ~200MB target/ as soon as the verdict is in — completed
+        // fixtures otherwise accumulate for the whole suite (the #16 class).
+        rmSync(scratch, { recursive: true, force: true });
         if (c.expected === "cargo-clean") {
           if (!cargoResult.ok) {
             console.log(`[${c.id}] unexpected cargo failure:\n` + cargoResult.errors.slice(0, 6).join("\n"));

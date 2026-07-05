@@ -70,7 +70,7 @@ async function deployAndInvoke(fixture: string, invoker: (conn: Connection, paye
   }
 
   const programKp = Keypair.generate();
-  const kpPath = `/tmp/anvil-localnet-deploy/${fixture}-${programKp.publicKey.toBase58().slice(0, 8)}.json`;
+  const kpPath = `${TEST_SCRATCH}/anvil-localnet-deploy/${fixture}-${programKp.publicKey.toBase58().slice(0, 8)}.json`;
   spawnSync("mkdir", ["-p", join(TEST_SCRATCH, "anvil-localnet-deploy")]);
   writeFileSync(kpPath, JSON.stringify(Array.from(programKp.secretKey)));
 

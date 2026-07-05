@@ -9,11 +9,12 @@
  * exercise the full code path. Default prod caps (10K entries / 1 GiB)
  * would require an unreasonable test setup.
  */
+import { TEST_SCRATCH } from "./scratch-root.ts";
 import { describe, test, expect, beforeEach, afterAll } from "bun:test";
 import { rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const SCRATCH = `/tmp/anvil-cache-evict-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const SCRATCH = `${TEST_SCRATCH}/anvil-cache-evict-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 process.env.ANVIL_AI_CACHE_DIR = SCRATCH;
 // Tight caps so 3 writes are enough to trigger eviction.
 process.env.ANVIL_AI_CACHE_MAX_ENTRIES = "2";
