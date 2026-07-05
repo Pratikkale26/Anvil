@@ -219,6 +219,7 @@ anvil differential <input> [--scenario s.json] [--anchor-so path.so] [--fuzz N]
 anvil parse <input> [--json]
 anvil validate <input> --target <target> [--json]
 anvil advise <input>                               # Pinocchio vs Native recommendation
+anvil refine <input> --target <target>             # AI-patch validator errors (your ANTHROPIC_API_KEY)
 anvil lint <input> --target <target> [--markdown]
 anvil bench <input> [--markdown]
 anvil snapshot <input> --save | --check

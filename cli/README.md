@@ -62,6 +62,7 @@ anvil verify     prove byte-equal vs Anchor (build both + auto-scenario + compar
 anvil parse      Anchor source → IR (pretty or --json)
 anvil validate   parse → emit → surface validator issues
 anvil advise     recommend a transpile target (Pinocchio vs Native)
+anvil refine     AI-patch validator errors (your ANTHROPIC_API_KEY, one call, re-validated)
 anvil lint       portability scorecard (ready / review / blocker)
 anvil bench      per-instruction CU comparison
 anvil snapshot   capture/compare CU snapshots for CI

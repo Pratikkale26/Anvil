@@ -603,6 +603,7 @@ function printHelp(): void {
     validate     Parse, emit, validate — show issues
     verify       Prove byte-equal vs Anchor (build both + auto-scenario + compare)
     advise       Recommend a transpile target (Pinocchio vs Native)
+    refine       AI-patch validator errors (your ANTHROPIC_API_KEY, your spend)
     lint         Auto-port readiness report (ready / review / blocker findings)
     bench        Per-instruction CU estimate vs Anchor baseline
     snapshot     Save / check CU baseline — fails on regression
@@ -909,6 +910,7 @@ function printCommandHelp(command: string): void {
     case "validate":     printValidateHelp();   return;
     case "verify":       printVerifyHelp();     return;
     case "advise":       void cmdAdvise({ ...({} as CliArgs), help: true } as CliArgs); return;
+    case "refine":       void cmdRefine({ ...({} as CliArgs), help: true } as CliArgs); return;
     case "lint":         printLintHelp();       return;
     case "bench":        printBenchHelp();      return;
     case "snapshot":     printSnapshotHelp();   return;
@@ -2283,7 +2285,7 @@ _anvil_completions() {
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
   cmd="\${COMP_WORDS[1]}"
 
-  local commands="compile parse validate verify lint bench snapshot diff differential migrate completion upgrade"
+  local commands="compile parse validate verify advise refine lint bench snapshot diff differential migrate completion upgrade"
   local global_flags="--help -h --version -v"
   local target_values="pinocchio native"
   local shell_values="bash zsh fish"
@@ -2369,6 +2371,8 @@ _anvil() {
     'parse:Parse only - output IR as JSON'
     'validate:Parse, emit, validate - show issues'
     'verify:Prove byte-equal vs Anchor (build both + auto-scenario)'
+    'advise:Recommend a transpile target (Pinocchio vs Native)'
+    'refine:AI-patch validator errors (your ANTHROPIC_API_KEY)'
     'lint:Auto-port readiness report'
     'bench:Per-instruction CU estimate vs Anchor baseline'
     'snapshot:Save / check CU baseline'
@@ -2487,6 +2491,8 @@ complete -c anvil -n '__fish_use_subcommand' -a 'compile' -d 'Parse, emit, valid
 complete -c anvil -n '__fish_use_subcommand' -a 'parse' -d 'Parse only — output IR as JSON'
 complete -c anvil -n '__fish_use_subcommand' -a 'validate' -d 'Run output validator on emit'
 complete -c anvil -n '__fish_use_subcommand' -a 'verify' -d 'Prove byte-equal vs Anchor (build both + auto-scenario)'
+complete -c anvil -n '__fish_use_subcommand' -a 'advise' -d 'Recommend a transpile target (Pinocchio vs Native)'
+complete -c anvil -n '__fish_use_subcommand' -a 'refine' -d 'AI-patch validator errors (your ANTHROPIC_API_KEY)'
 complete -c anvil -n '__fish_use_subcommand' -a 'lint' -d 'Portability lint analyzer'
 complete -c anvil -n '__fish_use_subcommand' -a 'bench' -d 'CU benchmark vs reference'
 complete -c anvil -n '__fish_use_subcommand' -a 'snapshot' -d 'Save / check IR snapshot'
@@ -2497,7 +2503,7 @@ complete -c anvil -n '__fish_use_subcommand' -a 'completion' -d 'Print shell com
 complete -c anvil -n '__fish_use_subcommand' -a 'upgrade' -d 'Update anvil-sol via npm'
 
 # --target / -t value completion (used by compile / validate / verify / lint).
-complete -c anvil -n '__anvil_using_command compile; or __anvil_using_command validate; or __anvil_using_command verify; or __anvil_using_command lint' \\
+complete -c anvil -n '__anvil_using_command compile; or __anvil_using_command validate; or __anvil_using_command verify; or __anvil_using_command refine; or __anvil_using_command lint' \\
   -l target -s t -x -a 'pinocchio native' -d 'Emitter target'
 
 # --output / -o expects a path.
@@ -2631,6 +2637,9 @@ async function main(): Promise<void> {
     case "advise":
       await cmdAdvise(args);
       break;
+    case "refine":
+      await cmdRefine(args);
+      break;
     case "lint":
       await cmdLint(args);
       break;
@@ -2669,6 +2678,126 @@ async function main(): Promise<void> {
       error(`Unknown command: ${args.command}`);
       console.log(`\n  Run ${c.cyan}anvil --help${c.reset} for usage.\n`);
       process.exit(1);
+  }
+}
+
+// ─── refine ──────────────────────────────────────────────────────────────────
+
+/**
+ * #25 — AI refine in the CLI (web→CLI parity). Same engine the workbench
+ * uses (api/src/ai/refine.ts: one LLM call, tree-sitter baseline pre-check,
+ * deterministic accept gates, error-delta scoring) but billed to the USER'S
+ * own ANTHROPIC_API_KEY — there is no server, nothing leaves the machine
+ * except the refine prompt to Anthropic.
+ */
+async function cmdRefine(args: CliArgs): Promise<void> {
+  if (args.help) {
+    console.log(`
+  ${c.bold}anvil refine${c.reset} — AI-patch validator errors in the emitted output.
+
+  Emits your program, runs the validator, and — only when it finds errors —
+  makes ONE call to the Anthropic API asking for targeted patches. Patches
+  are re-validated deterministically before acceptance (a patch that parses
+  wrong or worsens the error count is rejected), then the patched project is
+  written out.
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil refine <input> --target <pinocchio|native> [-o <dir>]
+
+  ${c.bold}REQUIREMENTS${c.reset}
+
+    ANTHROPIC_API_KEY   Your own key — the call spends YOUR credits, and the
+                        problematic code sections are sent to the Anthropic API.
+
+  ${c.bold}TRUST${c.reset} ${c.dim}(read this)${c.reset}
+
+    AI-patched output is NOT covered by any byte-equal claim until you prove
+    it: run ${c.cyan}anvil verify${c.reset} on the result. Exit codes: 0 = clean after
+    refine, 1 = setup/parse failure, 2 = errors remain after refine.
+`);
+    return;
+  }
+
+  if (!args.input) {
+    fatal("Missing input file or directory.\n\n  Usage: anvil refine <input> --target <target>");
+  }
+  const target = validateTarget(args.target);
+  banner();
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    error("anvil refine calls the Anthropic API with YOUR key and spends YOUR credits — no key found.");
+    console.log(`    ${c.dim}export ANTHROPIC_API_KEY=sk-ant-...   (https://console.anthropic.com/settings/keys)${c.reset}`);
+    process.exit(1);
+  }
+
+  progress(`Parsing ${args.input}...`);
+  const source = resolveSource(args.input);
+  const parseResult = await parseAnchor(source);
+  if (!parseResult.ok) {
+    error(`Parse failed: ${parseResult.error}`);
+    if (parseResult.details) console.log(`    ${c.dim}${parseResult.details}${c.reset}`);
+    process.exit(1);
+  }
+  const ir = parseResult.ir;
+  const inputName = basename(args.input, ".rs");
+
+  progress(`Emitting to ${target}...`);
+  const output = emitForTarget(ir, target);
+  const files = output.files.length > 0
+    ? output.files
+    : [{ path: "lib.rs", content: output.singleFile }];
+
+  progress("Validating output...");
+  const issues = validateEmitterOutput(ir, output);
+  const beforeErrors = issues.filter((i) => i.severity === "error");
+  if (beforeErrors.length === 0) {
+    success("Validator found 0 errors — nothing to refine. (No AI call made, nothing spent.)");
+    console.log(`    ${c.dim}Warnings don't gate refine; run 'anvil validate' to inspect them.${c.reset}`);
+    return;
+  }
+  warn(`${beforeErrors.length} validator error${beforeErrors.length === 1 ? "" : "s"} — requesting AI patches (one call, your key)...`);
+
+  // NB: dev path is ../api/src; prepack rewrites it to ./api-src for publish.
+  const { refineOutput } = await import("../api/src/ai/refine.js");
+  const res = await refineOutput(
+    { target, ir, files, validationIssues: issues },
+    (step: string, message: string) => progress(`${c.dim}[${step}]${c.reset} ${message}`),
+  );
+
+  console.log();
+  for (const p of res.patches) {
+    if (p.accepted) success(`${p.filePath} — patch accepted (${p.acceptanceReason})`);
+    else warn(`${p.filePath} — patch REJECTED: ${p.acceptanceReason}`);
+  }
+  if (res.usage) {
+    console.log(`    ${c.dim}tokens: ${res.usage.inputTokens ?? "?"} in / ${res.usage.outputTokens ?? "?"} out${res.cached ? " (cached — free)" : ""}${c.reset}`);
+  }
+
+  const accepted = res.patches.filter((p) => p.accepted);
+  const patchedFiles = files.map((f) => {
+    const p = accepted.find((x) => x.filePath === f.path);
+    return p ? { ...f, content: p.patchedContent } : f;
+  });
+  const patchedOutput: EmitterOutput = output.files.length > 0
+    ? { ...output, files: patchedFiles }
+    : { ...output, singleFile: patchedFiles[0]?.content ?? output.singleFile };
+
+  const afterIssues = validateEmitterOutput(ir, patchedOutput);
+  const afterErrors = afterIssues.filter((i) => i.severity === "error");
+  console.log();
+  progress(`Validator errors: ${beforeErrors.length} → ${afterErrors.length === 0 ? c.green : c.yellow}${afterErrors.length}${c.reset}`);
+
+  const outputDir = args.output ?? "./anvil-output";
+  writeOutputFiles(patchedOutput, outputDir, args.singleFile, inputName, ir, target);
+  console.log();
+  warn(
+    `AI-patched output. It is NOT byte-equal-verified until you prove it: ` +
+      `${c.cyan}anvil verify ${args.input}${c.reset}. ${c.red}Never ship unverified AI patches to mainnet.${c.reset}`,
+  );
+  if (afterErrors.length > 0) {
+    error(`${afterErrors.length} validator error${afterErrors.length === 1 ? "" : "s"} remain — inspect with 'anvil validate'.`);
+    process.exit(2);
   }
 }
 
