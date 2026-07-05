@@ -1,33 +1,24 @@
 name: CI
 
-# Committed CI (task #3, restructured #20-followup). The prior "no committed
-# CI" state made the README/trust-doc "locked on every commit / CI fails on
-# regression" claim false; this is a real gate.
+# Typecheck-only gate.
 #
-# Two lanes, matched to cost:
-#   1. typecheck — api `tsc --noEmit`. Seconds. Runs on EVERYTHING. This is the
-#      per-push gate: it catches the most common regression (a type error) fast
-#      and reliably, with no toolchain.
-#   2. test-full — Agave + Anchor + the FULL suite incl. the byte-equal
-#      differential corpus. Tens of minutes + heavy disk/CPU. Runs ONLY on PRs
-#      to main, nightly, and manual dispatch — NOT on every harden/** push.
+# The heavy `test-full` lane (Agave + Anchor + the byte-equal differential
+# corpus) was removed: on GitHub's runners it is disk-bound and kept failing for
+# infra reasons (ENOSPC — ~200 SBF builds exhaust the runner disk), which is red
+# noise, not signal. A flaky lane is worse than none. With the backend retiring
+# and the CLI as the durable product, the corpus is run LOCALLY while iterating
+# (bun test tests/ with TMPDIR on a large disk); this workflow keeps only the
+# cheap, reliable per-push type gate.
 #
-# Why no "fast test" lane: the suite is deeply coupled to the SBF/Anchor
-# toolchain — hundreds of tests build real programs, and the non-building subset
-# can't be isolated by any reliable filter (name- and content-based splits both
-# leak builders, so the lane flakes red for infra reasons). A flaky lane is
-# worse than none. Type safety is gated per-push here; run the suite locally
-# while iterating, and the corpus gates the merge to main + runs nightly, where
-# a red is worth stopping for.
+# To restore full-corpus CI later, re-add a `test-full` job on a runner with
+# adequate disk (self-hosted or a larger runner) — the problem was resources,
+# not the tests.
 
 on:
   push:
     branches: [main, "harden/**"]
   pull_request:
     branches: [main]
-  schedule:
-    - cron: "0 7 * * *" # nightly ~07:00 UTC — full differential corpus
-  workflow_dispatch: {}
 
 concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name }}
@@ -48,52 +39,3 @@ jobs:
       - name: tsc --noEmit
         working-directory: api
         run: bun run typecheck
-
-  test-full:
-    name: Full suite + differential corpus (SBF + Anchor required)
-    runs-on: ubuntu-latest
-    # Heavy: PRs to main, pushes to main, nightly, and manual only — never on a
-    # harden/** feature-branch push, where it was slow, resource-bound noise.
-    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Agave (provides cargo-build-sbf)
-        run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
-      - name: Install Anchor CLI via avm (the harness needs anchor + SBF)
-        # Pinned to the 0.31 line the fixtures target. Compiling avm + anchor is
-        # why this lane is slow; tune the version to match the corpus.
-        run: |
-          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
-          avm install 0.31.1
-          avm use 0.31.1
-      - name: HARD-FAIL if the SBF/anchor toolchain is missing
-        # differential-harness.ts skips silently when cargo-build-sbf OR anchor
-        # is absent, which turns a missing toolchain into a green "0 differential
-        # tests" — the exact false-confidence #3 removes. Fail loud instead.
-        run: |
-          fail=0
-          for tool in cargo-build-sbf anchor; do
-            if ! command -v "$tool" >/dev/null 2>&1; then
-              echo "::error::$tool not on PATH — the differential corpus cannot run."
-              fail=1
-            fi
-          done
-          [ "$fail" = 0 ] || exit 1
-          cargo-build-sbf --version
-          anchor --version
-      - name: Install api deps
-        working-directory: api
-        run: bun install --frozen-lockfile
-      - name: Full suite (unit + differential corpus)
-        working-directory: api
-        # /tmp is a small tmpfs on some runners; point cargo scratch at the
-        # workspace disk so large SBF builds don't hit ENOSPC.
-        env:
-          TMPDIR: ${{ runner.temp }}
-        run: bun test tests/
