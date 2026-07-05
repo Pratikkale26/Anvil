@@ -599,6 +599,7 @@ function printHelp(): void {
     compile      Parse, emit, validate, and write output files
     parse        Parse only — output IR as JSON
     validate     Parse, emit, validate — show issues
+    verify       Prove byte-equal vs Anchor (build both + auto-scenario + compare)
     lint         Auto-port readiness report (ready / review / blocker findings)
     bench        Per-instruction CU estimate vs Anchor baseline
     snapshot     Save / check CU baseline — fails on regression
@@ -903,6 +904,7 @@ function printCommandHelp(command: string): void {
     case "compile":      printCompileHelp();    return;
     case "parse":        printParseHelp();      return;
     case "validate":     printValidateHelp();   return;
+    case "verify":       printVerifyHelp();     return;
     case "advise":       void cmdAdvise({ ...({} as CliArgs), help: true } as CliArgs); return;
     case "lint":         printLintHelp();       return;
     case "bench":        printBenchHelp();      return;
@@ -2270,7 +2272,7 @@ _anvil_completions() {
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
   cmd="\${COMP_WORDS[1]}"
 
-  local commands="compile parse validate lint bench snapshot diff differential migrate completion upgrade"
+  local commands="compile parse validate verify lint bench snapshot diff differential migrate completion upgrade"
   local global_flags="--help -h --version -v"
   local target_values="pinocchio native"
   local shell_values="bash zsh fish"
@@ -2355,6 +2357,7 @@ _anvil() {
     'compile:Parse, emit, validate, and write output files'
     'parse:Parse only - output IR as JSON'
     'validate:Parse, emit, validate - show issues'
+    'verify:Prove byte-equal vs Anchor (build both + auto-scenario)'
     'lint:Auto-port readiness report'
     'bench:Per-instruction CU estimate vs Anchor baseline'
     'snapshot:Save / check CU baseline'
@@ -2472,6 +2475,7 @@ end
 complete -c anvil -n '__fish_use_subcommand' -a 'compile' -d 'Parse, emit, validate, and write output files'
 complete -c anvil -n '__fish_use_subcommand' -a 'parse' -d 'Parse only — output IR as JSON'
 complete -c anvil -n '__fish_use_subcommand' -a 'validate' -d 'Run output validator on emit'
+complete -c anvil -n '__fish_use_subcommand' -a 'verify' -d 'Prove byte-equal vs Anchor (build both + auto-scenario)'
 complete -c anvil -n '__fish_use_subcommand' -a 'lint' -d 'Portability lint analyzer'
 complete -c anvil -n '__fish_use_subcommand' -a 'bench' -d 'CU benchmark vs reference'
 complete -c anvil -n '__fish_use_subcommand' -a 'snapshot' -d 'Save / check IR snapshot'
@@ -2481,8 +2485,8 @@ complete -c anvil -n '__fish_use_subcommand' -a 'migrate' -d 'Account-layout mig
 complete -c anvil -n '__fish_use_subcommand' -a 'completion' -d 'Print shell completion script'
 complete -c anvil -n '__fish_use_subcommand' -a 'upgrade' -d 'Update anvil-sol via npm'
 
-# --target / -t value completion (used by compile / validate / lint).
-complete -c anvil -n '__anvil_using_command compile; or __anvil_using_command validate; or __anvil_using_command lint' \\
+# --target / -t value completion (used by compile / validate / verify / lint).
+complete -c anvil -n '__anvil_using_command compile; or __anvil_using_command validate; or __anvil_using_command verify; or __anvil_using_command lint' \\
   -l target -s t -x -a 'pinocchio native' -d 'Emitter target'
 
 # --output / -o expects a path.
@@ -2644,6 +2648,9 @@ async function main(): Promise<void> {
     case "migrate":
       await cmdMigrate(args);
       break;
+    case "verify":
+      await cmdVerify(args);
+      break;
     case "differential":
       await cmdDifferential(args);
       break;
@@ -2652,6 +2659,49 @@ async function main(): Promise<void> {
       console.log(`\n  Run ${c.cyan}anvil --help${c.reset} for usage.\n`);
       process.exit(1);
   }
+}
+
+// ─── verify ──────────────────────────────────────────────────────────────────
+
+function printVerifyHelp(): void {
+  console.log(`
+  ${c.bold}anvil verify${c.reset} — Prove your transpile is byte-equal to Anchor.
+
+  The one-shot correctness gate: builds the Anchor reference and the Anvil
+  output as real .so binaries, synthesizes a scenario from your program's IR
+  (happy path + unauthorized-caller probes), runs both under LiteSVM, and
+  compares account data, lamports, and owner. This is the CLI equivalent of the
+  workbench "Verify Byte-Equal" button.
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil verify <program.rs> [--target pinocchio|native]
+
+  ${c.bold}VERDICT${c.reset} ${c.dim}(also the exit code)${c.reset}
+
+    ${c.green}BYTE-EQUAL${c.reset}                every compared account matched — safe signal
+    ${c.yellow}BYTE-EQUAL (warnings)${c.reset}     matched, but a weakening caveat applies
+    ${c.red}DIVERGED${c.reset}                  the two produced different state — do NOT ship
+    ${c.red}SCENARIO_FAILED${c.reset}           nothing meaningful was compared (not a proof)
+
+  ${c.bold}NOTES${c.reset}
+
+    Requires the SBF toolchain (cargo-build-sbf) + anchor CLI on PATH — the
+    same tools \`anchor build\` needs. Without them, use \`anvil compile\` for a
+    static (non-runtime) check.
+
+    \`verify\` is the friendly front door to \`anvil differential --auto-scenario\`;
+    drop to \`differential\` directly for pre-built .so, custom scenarios, or
+    --fuzz. Run \`anvil differential --help\` for those.
+`);
+}
+
+async function cmdVerify(args: CliArgs): Promise<void> {
+  if (args.help) { printVerifyHelp(); return; }
+  // verify IS the one-shot auto-scenario byte-equal proof. Force auto-scenario
+  // on and delegate to the (tested) differential engine — no duplicate logic.
+  args.autoScenario = true;
+  await cmdDifferential(args);
 }
 
 // ─── differential ────────────────────────────────────────────────────────────
