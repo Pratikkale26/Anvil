@@ -6,6 +6,18 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ---
 
+## 0.6.0 — 2026-07-05
+
+### Added
+
+- **`anvil refine <input> --target <t>`** — AI-patch validator errors from the CLI, using YOUR `ANTHROPIC_API_KEY` (no server in the loop; the only egress is the refine prompt to the Anthropic API). Same engine as the workbench: one LLM call, tree-sitter baseline pre-check, deterministic accept gates, before→after error delta. Validator-error gated — a clean program makes no API call and spends nothing. Output carries a loud "not byte-equal-verified — run `anvil verify`" warning; exit 2 when errors remain.
+- `advise` and `refine` added to shell completions (bash/zsh/fish) and top-level help.
+
+### Changed
+
+- Emitter: module-path collapse is now root-gated by the declared-module set (`ir.userModuleRoots`) at all three collapse sites — closes the external-const authority-swap class in CARRIED code (impl items + helper fn blocks), which the 0.5.0 const-guard only covered in instruction bodies. Byte-neutral across the demo + realworld corpora.
+- Build service hardening: the network-enabled `cargo fetch` warm-up re-validates the on-disk manifest immediately before spawning (git/path/registry/package deps, `[patch]`/`[source]`/`replace-with` refused) and is bounded by a 300s timeout.
+
 ## 0.5.0 — 2026-07-05
 
 ### Fixed — the published CLI now actually runs on plain Node
