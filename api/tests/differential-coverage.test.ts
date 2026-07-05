@@ -156,6 +156,10 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   "arjun-pda-native": "external/arjun-pda.rs",
   "arjun-pda-pin": "external/arjun-pda.rs",
   "return-err-outcomes": "return-err.rs",
+  // Registered 2026-07-05 (corpus take-4 M3 coverage gap) — demo-backed
+  // differential fixtures that were added without a registry entry.
+  "enum-discriminant": "enum-discriminant.rs",
+  "passthrough-mutation": "passthrough-mutation.rs",
 };
 
 /**
@@ -257,6 +261,11 @@ const EXTERNAL_FIXTURES = new Set<string>([
   // Original #2 hand→lever declare_program! CPI + the read-only-owner reject.
   "program-examples-cpi-lever-hand",
   "option-account-owner-reject",
+  // Registered 2026-07-05 (corpus take-4 M3 coverage gap) — inline-source
+  // differential fixtures (anchorSource defined in the test file, no demo).
+  "amount-field-gate",
+  "ata-non-init-attack",
+  "spl-account-owner-reject",
 ]);
 
 /**
