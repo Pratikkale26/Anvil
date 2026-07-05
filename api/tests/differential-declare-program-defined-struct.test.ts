@@ -14,6 +14,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { TEST_SCRATCH } from "./scratch-root.ts";
 import { Transaction, TransactionInstruction, SystemProgram } from "@solana/web3.js";
 import {
   defineDifferential,
@@ -72,7 +73,7 @@ const idl = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "proc-prog
 const calleePresent = existsSync(join(import.meta.dir, "fixtures", "programs", "proc_program.so"));
 
 function prepareCallerCrate(): string {
-  const dir = "/tmp/anvil-proc-caller";
+  const dir = join(TEST_SCRATCH, "anvil-proc-caller");
   mkdirSync(join(dir, "src"), { recursive: true });
   mkdirSync(join(dir, "idls"), { recursive: true });
   writeFileSync(join(dir, "src/lib.rs"), CALLER_SRC);

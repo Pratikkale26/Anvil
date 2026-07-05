@@ -21,6 +21,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { TEST_SCRATCH } from "./scratch-root.ts";
 import { Transaction, TransactionInstruction, SystemProgram } from "@solana/web3.js";
 import {
   defineDifferential,
@@ -59,7 +60,7 @@ overflow-checks = true
 
 function prepareHandCrate(): string | null {
   if (!existsSync(HAND_LIB_RS) || !existsSync(LEVER_IDL)) return null;
-  const dir = "/tmp/anvil-cpi-lever-hand";
+  const dir = join(TEST_SCRATCH, "anvil-cpi-lever-hand");
   mkdirSync(join(dir, "src"), { recursive: true });
   mkdirSync(join(dir, "idls"), { recursive: true });
   writeFileSync(join(dir, "src/lib.rs"), readFileSync(HAND_LIB_RS, "utf-8"));

@@ -19,6 +19,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { TEST_SCRATCH } from "./scratch-root.ts";
 import { Transaction, TransactionInstruction, SystemProgram } from "@solana/web3.js";
 import {
   defineDifferential,
@@ -81,7 +82,7 @@ const externalSoPresent = existsSync(join(import.meta.dir, "fixtures", "programs
 // Prepare the standalone Anchor reference crate in /tmp (idls/external.json in
 // the crate root → declare_program!(external) resolves it).
 function prepareCallerCrate(): string {
-  const dir = "/tmp/anvil-declare-program-caller";
+  const dir = join(TEST_SCRATCH, "anvil-declare-program-caller");
   mkdirSync(join(dir, "src"), { recursive: true });
   mkdirSync(join(dir, "idls"), { recursive: true });
   writeFileSync(join(dir, "src/lib.rs"), CALLER_SRC);

@@ -18,6 +18,8 @@
  * self-CPI invoke and needs `compareReturnData` + a different account
  * setup; deferred to a separate fixture.
  */
+import { join } from "node:path";
+import { TEST_SCRATCH } from "./scratch-root.ts";
 import {
   Transaction,
   TransactionInstruction,
@@ -38,7 +40,7 @@ import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { isTxFailure, txFailureMessage } from "./litesvm-tx-error.ts";
 
-const REPO_PATH = "/tmp/coral-anchor";
+const REPO_PATH = join(TEST_SCRATCH, "coral-anchor");
 const LIB_RS = `${REPO_PATH}/tests/events/programs/events/src/lib.rs`;
 const CRATE_DIR = `${REPO_PATH}/tests/events/programs/events`;
 
