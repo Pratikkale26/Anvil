@@ -27,8 +27,9 @@ describe("has-one auto-scenario negative probe (#14)", () => {
       srcPath: join(import.meta.dir, "..", "src", "demo-programs", "has-one.rs"),
       programId: "Absfps8DboaQrCi71THcW4r1CuhrQLokx6DVufbnDmUZ",
       negativeProbes: true,
-      // initialize, bump_value(expectFail probe), bump_value(happy)
-      stepRange: [0, 3],
+      // initialize, bump_value(has_one probe), bump_value(missing-signer probe),
+      // bump_value(happy) — both probes must revert on BOTH targets.
+      stepRange: [0, 4],
     });
   });
 });

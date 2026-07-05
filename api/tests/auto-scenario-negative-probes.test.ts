@@ -44,30 +44,43 @@ describe("auto-scenario negative probes (#14)", () => {
     if (!r.ok) return;
 
     // counter's increment/decrement/reset share an Update ctx with
-    // `has_one = authority`; initialize (init) is skipped. → 3 probes.
+    // `has_one = authority` (+ a signing authority); initialize (init) is
+    // skipped. Each mutation gets TWO probes: a has_one probe (wrong signer)
+    // and a missing-signer probe (right signer, no signature). → 6 probes.
     const probes = r.scenario.steps.filter((s) => s.expectFail);
-    expect(probes.length).toBe(3);
-    expect(probes.map((p) => p.ix).sort()).toEqual(["decrement", "increment", "reset"]);
+    expect(probes.length).toBe(6);
 
-    // Each probe swaps the authority slot to the unauthorized signer, keeps the
-    // rest of the happy accounts, and is labeled.
-    for (const p of probes) {
-      expect(p.accounts).toContain(ATTACKER);
-      expect(p.label).toContain("has_one");
+    const hasOneProbes = probes.filter((p) => p.label?.includes("has_one"));
+    const signerProbes = probes.filter((p) => p.label?.includes("missing signature"));
+    expect(hasOneProbes.length).toBe(3);
+    expect(signerProbes.length).toBe(3);
+
+    // has_one probe: wrong-but-signing authority.
+    for (const p of hasOneProbes) expect(p.accounts).toContain(ATTACKER);
+    // missing-signer probe: the authority is present but passed via $unsigned:.
+    for (const p of signerProbes) {
+      expect(p.accounts.some((a) => a.startsWith("$unsigned:authority"))).toBe(true);
+      expect(p.accounts).not.toContain("$signer:authority");
     }
 
-    // The unauthorized signer is declared so the runner can fund + sign it.
+    // Both probe fixtures are declared as signers so the runner can fund them.
     expect(r.scenario.signers.some((s) => s.name === "__unauthorized")).toBe(true);
+    expect(r.scenario.signers.some((s) => s.name === "__probe_payer")).toBe(true);
+    // The dedicated fee payer MUST be first (fee-payer fallback lands on it).
+    expect(r.scenario.signers[0]!.name).toBe("__probe_payer");
 
-    // Each probe sits IMMEDIATELY before its happy twin (same ix, not expectFail)
-    // so the guarded account is set up but not yet consumed.
+    // Probes for an instruction are contiguous and sit right before its happy
+    // twin: each probe is followed by a step of the SAME ix (another probe or
+    // the happy step), and every probed ix has a non-expectFail happy step.
     const steps = r.scenario.steps;
     for (let i = 0; i < steps.length; i++) {
       if (!steps[i]!.expectFail) continue;
       const next = steps[i + 1];
       expect(next).toBeDefined();
       expect(next!.ix).toBe(steps[i]!.ix);
-      expect(next!.expectFail).toBe(false);
+    }
+    for (const ix of new Set(probes.map((p) => p.ix))) {
+      expect(steps.some((s) => s.ix === ix && !s.expectFail)).toBe(true);
     }
 
     // Still schema-valid + lint-clean with the probes interleaved.
@@ -77,17 +90,26 @@ describe("auto-scenario negative probes (#14)", () => {
     expect(lintScenario(parsed.data).filter((i) => i.severity === "error")).toEqual([]);
   });
 
-  test("has-one demo: single probe before bump_value with unauthorized owner", async () => {
+  test("has-one demo: has_one + missing-signer probes before bump_value", async () => {
     const ir = await parseDemo("has-one.rs");
     const r = synthesizeAutoScenario(ir, { negativeProbes: true });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const probes = r.scenario.steps.filter((s) => s.expectFail);
-    expect(probes.length).toBe(1);
-    expect(probes[0]!.ix).toBe("bump_value");
-    expect(probes[0]!.accounts).toContain(ATTACKER);
-    // The guarded `safe` account is preserved (only the owner slot is swapped).
-    expect(probes[0]!.accounts).toContain("$keypair:safe");
+    expect(probes.length).toBe(2);
+    for (const p of probes) expect(p.ix).toBe("bump_value");
+
+    const hasOne = probes.find((p) => p.label?.includes("has_one"))!;
+    const missingSig = probes.find((p) => p.label?.includes("missing signature"))!;
+    expect(hasOne).toBeDefined();
+    expect(missingSig).toBeDefined();
+    // has_one: swap owner to the unauthorized (still-signing) caller.
+    expect(hasOne.accounts).toContain(ATTACKER);
+    // missing-signer: the real owner, passed unsigned.
+    expect(missingSig.accounts).toContain("$unsigned:owner");
+    // Both keep the guarded `safe` account (only the owner slot changes).
+    expect(hasOne.accounts).toContain("$keypair:safe");
+    expect(missingSig.accounts).toContain("$keypair:safe");
   });
 
   test("init-only program gets no probe (re-invoking init reverts for the wrong reason)", async () => {

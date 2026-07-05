@@ -42,7 +42,7 @@ import { z } from "zod";
 // before the request fires.
 
 const AccountRefSchema = z.string().regex(
-  /^(?:\$signer:[a-zA-Z_][a-zA-Z0-9_]*|\$pda:[a-zA-Z_][a-zA-Z0-9_]*|\$program:(?:system|token|token_2022|associated_token|memo|rent|clock)|\$keypair:[a-zA-Z_][a-zA-Z0-9_]*|\$mint:[a-zA-Z_][a-zA-Z0-9_]*|\$ata:[a-zA-Z_][a-zA-Z0-9_]*|\$state:[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*|\$arg:[a-zA-Z_][a-zA-Z0-9_]*|[1-9A-HJ-NP-Za-km-z]{32,44})$/,
+  /^(?:\$signer:[a-zA-Z_][a-zA-Z0-9_]*|\$unsigned:[a-zA-Z_][a-zA-Z0-9_]*|\$pda:[a-zA-Z_][a-zA-Z0-9_]*|\$program:(?:system|token|token_2022|associated_token|memo|rent|clock)|\$keypair:[a-zA-Z_][a-zA-Z0-9_]*|\$mint:[a-zA-Z_][a-zA-Z0-9_]*|\$ata:[a-zA-Z_][a-zA-Z0-9_]*|\$state:[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*|\$arg:[a-zA-Z_][a-zA-Z0-9_]*|[1-9A-HJ-NP-Za-km-z]{32,44})$/,
 );
 
 // ─── Signer declaration ─────────────────────────────────────────────────────
@@ -345,6 +345,13 @@ export function lintScenario(scenario: Scenario): ScenarioLintIssue[] {
   const checkRef = (acc: string, location: { stepIndex?: number; pdaIndex?: number }) => {
     if (isRef(acc, "$signer")) {
       const name = refName(acc, "$signer");
+      if (!signerNames.has(name)) {
+        issues.push({ severity: "error", message: `Account reference '${acc}' points at signer '${name}' which isn't declared.`, ...location });
+      }
+    } else if (isRef(acc, "$unsigned")) {
+      // Negative-probe ref (#14): same identity as $signer:<name> but passed
+      // without its signature. Must still name a declared signer.
+      const name = refName(acc, "$unsigned");
       if (!signerNames.has(name)) {
         issues.push({ severity: "error", message: `Account reference '${acc}' points at signer '${name}' which isn't declared.`, ...location });
       }
