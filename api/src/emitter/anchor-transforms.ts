@@ -252,15 +252,26 @@ export function rewriteSelfReferences(body: string, accountNames: Set<string>): 
     // UpdateCommon; fn deref = &self.common }` makes `self.state` resolve to
     // `self.common.state`. Parser flattens `common.state` to `common_state`,
     // so look for any account whose name ends with `_<suffix>` for the
-    // longest chain prefix that matches that pattern. Longest-first sort
-    // prevents `_state` from matching `msol_mint_state` over `common_state`
-    // when both are present.
+    // longest chain prefix that matches that pattern.
+    //
+    // Phase 6 Inc 10 — this is a suffix GUESS: `_state` matches BOTH
+    // `common_state` and `msol_mint_state`. There is no signal in `self.state`
+    // alone to say which Deref target was meant, so when 2+ accounts share the
+    // suffix we must NOT silently pick one (the old longest-first sort picked
+    // `msol_mint_state` — the wrong account — a silent wrong-account read).
+    // Emit the loud `__anvil_unported_self__` placeholder instead (unimplemented!
+    // at fn top + a validator marker that fails the strict gate) so an ambiguous
+    // self-chain surfaces for manual port rather than binding the wrong account.
     for (let n = parts.length; n >= 1; n--) {
       const suffix = "_" + parts.slice(0, n).join("_");
-      const found = sortedAccounts.find((a) => a.endsWith(suffix) && a.length > suffix.length);
-      if (found) {
+      const cands = sortedAccounts.filter((a) => a.endsWith(suffix) && a.length > suffix.length);
+      if (cands.length === 1) {
         const remaining = parts.slice(n);
-        return remaining.length === 0 ? found : `${found}.${remaining.join(".")}`;
+        return remaining.length === 0 ? cands[0]! : `${cands[0]}.${remaining.join(".")}`;
+      }
+      if (cands.length > 1) {
+        // Ambiguous — stop guessing; fall through to the loud lost-self path.
+        return `__anvil_unported_self__${chain}`;
       }
     }
     return match;
