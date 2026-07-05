@@ -2927,10 +2927,13 @@ async function cmdDifferential(args: CliArgs): Promise<void> {
     progress("Synthesizing scenario from IR (--auto-scenario)...");
     // NB: dev path is ../api/src; prepack rewrites it to ./api-src for publish.
     const { synthesizeAutoScenario } = await import("../api/src/cli/auto-scenario.js");
-    const autoResult = synthesizeAutoScenario(ir);
+    // #14 — turn on negative/expectFail probes for the verification path: a
+    // dropped access-control guard (has_one) then reverts on Anchor but not on
+    // Anvil, which the revert-parity comparator catches as DIVERGED.
+    const autoResult = synthesizeAutoScenario(ir, { negativeProbes: true });
     if ("blockers" in autoResult) {
       error(`auto-scenario synthesis blocked:`);
-      for (const b of autoResult.blockers) console.log(`  - ${b.reason}`);
+      for (const b of autoResult.blockers) console.log(`  - ${b.message}`);
       process.exit(1);
     }
     args.scenario = "__auto__";
