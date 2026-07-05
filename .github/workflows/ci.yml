@@ -4,20 +4,21 @@ name: CI
 # CI" state made the README/trust-doc "locked on every commit / CI fails on
 # regression" claim false; this is a real gate.
 #
-# Three lanes, matched to cost:
-#   1. typecheck   — api `tsc --noEmit`. Seconds. Runs on everything.
-#   2. test-fast   — host Rust + the toolchain-free `test:fast` subset (unit +
-#                    parse/emit/validate). Minutes. Runs on everything. This is
-#                    the per-push gate.
-#   3. test-full   — Agave + Anchor + the FULL suite incl. the byte-equal
-#                    differential corpus. Tens of minutes + heavy disk/CPU.
-#                    Runs ONLY on PRs to main, nightly, and manual dispatch —
-#                    NOT on every harden/** push, where it was pure noise.
+# Two lanes, matched to cost:
+#   1. typecheck — api `tsc --noEmit`. Seconds. Runs on EVERYTHING. This is the
+#      per-push gate: it catches the most common regression (a type error) fast
+#      and reliably, with no toolchain.
+#   2. test-full — Agave + Anchor + the FULL suite incl. the byte-equal
+#      differential corpus. Tens of minutes + heavy disk/CPU. Runs ONLY on PRs
+#      to main, nightly, and manual dispatch — NOT on every harden/** push.
 #
-# Why not run the corpus on every push: it builds dozens of real SBF + Anchor
-# programs, which is too slow and too resource-bound to gate feature-branch
-# work. It belongs before a merge to main and on a nightly cadence, where a red
-# is worth stopping for.
+# Why no "fast test" lane: the suite is deeply coupled to the SBF/Anchor
+# toolchain — hundreds of tests build real programs, and the non-building subset
+# can't be isolated by any reliable filter (name- and content-based splits both
+# leak builders, so the lane flakes red for infra reasons). A flaky lane is
+# worse than none. Type safety is gated per-push here; run the suite locally
+# while iterating, and the corpus gates the merge to main + runs nightly, where
+# a red is worth stopping for.
 
 on:
   push:
@@ -48,32 +49,11 @@ jobs:
         working-directory: api
         run: bun run typecheck
 
-  test-fast:
-    name: Fast tests (unit + parse/emit/validate, no SBF/Anchor)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-      # Host Rust only — some emit tests run a plain `cargo check`. This is the
-      # cheap toolchain (~seconds), NOT the SBF/Anchor stack (minutes to build).
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install api deps
-        working-directory: api
-        run: bun install --frozen-lockfile
-      - name: test:fast (excludes differential / realworld / cargo-build-sbf)
-        working-directory: api
-        # Point scratch at the workspace disk — /tmp is a small tmpfs on some
-        # runners and the emit tests write cargo scratch there.
-        env:
-          TMPDIR: ${{ runner.temp }}
-        run: bun run test:fast
-
   test-full:
     name: Full suite + differential corpus (SBF + Anchor required)
     runs-on: ubuntu-latest
-    # Heavy: PRs to main, nightly, and manual only — never on a harden/** push.
+    # Heavy: PRs to main, pushes to main, nightly, and manual only — never on a
+    # harden/** feature-branch push, where it was slow, resource-bound noise.
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
