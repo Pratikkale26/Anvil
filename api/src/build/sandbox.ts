@@ -30,7 +30,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 export type SandboxKind = "firejail" | "bwrap" | "unshare" | "none";
 
@@ -256,6 +256,53 @@ export function sandboxedEnv(): NodeJS.ProcessEnv {
   // shared CARGO_HOME (warm scratch project handles this).
   env.CARGO_NET_OFFLINE = "true";
   return env;
+}
+
+/**
+ * #32 — final-artifact manifest guard for the network-enabled `cargo fetch`
+ * warm-up (the ONE cargo invocation that runs OUTSIDE the no-network
+ * sandbox). Input validation (validateAnchorExtraDeps, the client-scaffold
+ * source-override guard) already blocks injection at intake; this re-checks
+ * the Cargo.toml that was ACTUALLY WRITTEN to disk immediately before the
+ * fetch spawns, so a future call-path that skips intake validation — or a
+ * validator gap — still cannot point the fetch at an attacker host. A full
+ * egress allowlist (netns to crates.io only) isn't available in the DO
+ * container (no CAP_NET_ADMIN), so this is the enforceable boundary.
+ *
+ * Section-aware: `git = / path = / registry = / package =` are refused only
+ * inside dependency tables (a `[lib] path` or `[package] name` is normal);
+ * `[patch.*]` / `[source.*]` / `[registries.*]` sections and `replace-with`
+ * are refused anywhere (they redirect resolution wholesale).
+ */
+export function assertManifestFetchSafe(manifestPath: string): void {
+  const text = readFileSync(manifestPath, "utf-8");
+  const violations: string[] = [];
+  let section = "";
+  for (const rawLine of text.split("\n")) {
+    const line = rawLine.replace(/#.*$/, "").trim();
+    if (!line) continue;
+    const header = line.match(/^\[+([^\]]+)\]+/);
+    if (header) {
+      section = (header[1] ?? "").trim().toLowerCase();
+      if (/^(patch|source|registries)(\.|$)/.test(section)) {
+        violations.push(`[${section}] section`);
+      }
+      continue;
+    }
+    if (/\breplace-with\b/.test(line)) {
+      violations.push(`replace-with in [${section || "root"}]`);
+      continue;
+    }
+    const inDeps = /(^|\.)(dev-|build-|target\.[^.]+\.)?dependencies(\.|$)/.test(section);
+    if (inDeps && /(^|[,{\s])["']?(git|path|registry|package)["']?\s*=/.test(line)) {
+      violations.push(`\`${line.slice(0, 80)}\` in [${section}]`);
+    }
+  }
+  if (violations.length > 0) {
+    throw new Error(
+      `cargo-fetch manifest guard: refusing network warm-up — ${violations.join("; ")} (only plain crates.io version pins may reach the fetch)`,
+    );
+  }
 }
 
 /**
