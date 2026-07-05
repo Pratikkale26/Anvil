@@ -1082,6 +1082,9 @@
   ],
   "types": [],
   "constants": [],
+  "userModuleRoots": [
+    "escrow"
+  ],
   "errors": [
     {
       "code": 6000,

@@ -478,6 +478,9 @@
   ],
   "types": [],
   "constants": [],
+  "userModuleRoots": [
+    "counter"
+  ],
   "errors": [
     {
       "code": 6000,

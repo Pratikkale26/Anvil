@@ -647,6 +647,9 @@
   ],
   "types": [],
   "constants": [],
+  "userModuleRoots": [
+    "vault"
+  ],
   "errors": [
     {
       "code": 6000,
