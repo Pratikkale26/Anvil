@@ -1066,7 +1066,7 @@ pub struct InitializeMarket<'info> {
         seeds = [MARKET_SEED, authority.key().as_ref(), &market_index.to_le_bytes()],
         bump,
     )]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
 
     pub collateral_mint: Account<'info, Mint>,
 
@@ -1137,7 +1137,7 @@ pub struct DepositLiquidity<'info> {
     pub provider: Signer<'info>,
 
     #[account(mut)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
 
     #[account(mut, address = market.vault)]
     pub vault: Account<'info, TokenAccount>,
@@ -1168,7 +1168,7 @@ pub struct WithdrawLiquidity<'info> {
     pub provider: Signer<'info>,
 
     #[account(mut)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
 
     #[account(mut, address = market.vault)]
     pub vault: Account<'info, TokenAccount>,
@@ -1205,7 +1205,7 @@ pub struct OpenPosition<'info> {
     pub trader: Signer<'info>,
 
     #[account(mut)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
 
     #[account(mut, address = market.vault)]
     pub vault: Account<'info, TokenAccount>,
@@ -1247,7 +1247,7 @@ pub struct ClosePosition<'info> {
     pub trader: Signer<'info>,
 
     #[account(mut)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
 
     #[account(mut, address = market.vault)]
     pub vault: Account<'info, TokenAccount>,
@@ -1286,7 +1286,7 @@ pub struct ModifyCollateral<'info> {
     pub trader: Signer<'info>,
 
     #[account(mut)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
 
     #[account(mut, address = market.vault)]
     pub vault: Account<'info, TokenAccount>,
@@ -1322,7 +1322,7 @@ pub struct Liquidate<'info> {
     pub liquidator: Signer<'info>,
 
     #[account(mut)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
 
     #[account(mut, address = market.vault)]
     pub vault: Account<'info, TokenAccount>,
@@ -1357,7 +1357,7 @@ pub struct UpdateFundingRate<'info> {
     pub caller: Signer<'info>,
 
     #[account(mut)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
 }
 
 #[derive(Accounts)]
@@ -1366,7 +1366,7 @@ pub struct AuthorityOnly<'info> {
     pub authority: Signer<'info>,
 
     #[account(mut)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
 }
 
 #[derive(Accounts)]
@@ -1374,7 +1374,7 @@ pub struct ClaimFees<'info> {
     pub authority: Signer<'info>,
 
     #[account(mut)]
-    pub market: Account<'info, Market>,
+    pub market: Box<Account<'info, Market>>,
 
     #[account(mut, address = market.fee_vault)]
     pub fee_vault: Account<'info, TokenAccount>,
