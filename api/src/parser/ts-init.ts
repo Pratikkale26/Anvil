@@ -7,7 +7,7 @@
 
 import { Parser, Language, type Node, type Tree } from "web-tree-sitter";
 import * as fs from "node:fs";
-import { dirname, resolve } from "path";
+import { basename, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -35,17 +35,24 @@ export function getParser(): Promise<Parser> {
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
-    // Try multiple plausible node_modules roots — the layout varies by
-    // deploy shape:
-    //   - api dev:        api/src/parser/ts-init.ts  → ../../node_modules
-    //   - cli npm publish: cli/src/api-src/parser/ts-init.ts → ../../../node_modules
-    //   - bunx pnp / hoisted: deeper still
+    // Try every ancestor's node_modules — the layout varies by deploy shape:
+    //   - api dev:         api/src/parser/ts-init.ts → api/node_modules
+    //   - cli dev/publish:  cli/src/api-src/parser/ts-init.ts → cli/node_modules
+    //   - npm-installed:   <proj>/node_modules/anvil-sol/src/api-src/parser →
+    //                      deps HOISTED to <proj>/node_modules (an ancestor
+    //                      that IS node_modules is itself a root; a fixed
+    //                      ../-depth list walks straight through it — that
+    //                      shape shipped broken in 0.4.0)
+    //   - pnpm:            .pnpm/<pkg>/node_modules/anvil-sol/... → the
+    //                      .pnpm-level node_modules holds the deps
     // We probe each candidate; first one that resolves wins.
-    const moduleRoots = [
-      resolve(__dirname, "../../node_modules"),
-      resolve(__dirname, "../../../node_modules"),
-      resolve(__dirname, "../../../../node_modules"),
-    ];
+    const moduleRoots: string[] = [];
+    for (let dir = __dirname; ; ) {
+      moduleRoots.push(basename(dir) === "node_modules" ? dir : resolve(dir, "node_modules"));
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
 
     let webTreeSitterRoot: string | null = null;
     for (const root of moduleRoots) {
@@ -59,7 +66,7 @@ export function getParser(): Promise<Parser> {
     }
     if (!webTreeSitterRoot) {
       throw new Error(
-        `Could not find web-tree-sitter package. Tried roots:\n${moduleRoots.join("\n")}\nRun: bun add web-tree-sitter tree-sitter-rust`,
+        `Could not find web-tree-sitter package. Tried roots:\n${moduleRoots.join("\n")}\nRun: npm install web-tree-sitter tree-sitter-rust (or bun add)`,
       );
     }
 
@@ -79,7 +86,7 @@ export function getParser(): Promise<Parser> {
     }
     if (!wasmPath) {
       throw new Error(
-        `Could not find tree-sitter-rust.wasm. Tried roots:\n${moduleRoots.join("\n")}\nRun: bun add tree-sitter-rust`,
+        `Could not find tree-sitter-rust.wasm. Tried roots:\n${moduleRoots.join("\n")}\nRun: npm install tree-sitter-rust (or bun add)`,
       );
     }
     const Rust = await Language.load(wasmPath);
