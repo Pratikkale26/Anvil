@@ -40,21 +40,28 @@ What we deliberately DON'T compare:
 - **Compute units consumed**. Pinocchio uses fewer CUs than Anchor's runtime by design — equality here is exactly what we don't want. The migration's value comes from this divergence.
 - **Program invocation framing lines** (`Program <id> invoke [N]` / `consumed N of M compute units` / `success`). These contain the diverging CU numbers and the framing text differs between runtimes.
 
-Any divergence fails the gate loudly with the offset of the first differing byte (or the diverging field).
+Two structural comparisons run on top of the per-account byte compare:
+
+- **Per-step transaction outcome parity** — each scenario step's success/revert outcome must MATCH between the two binaries. A transpile that silently drops an access-control check (the Anchor side reverts, the Anvil side accepts) is caught here even when the attacker's transaction doesn't mutate the compared accounts.
+- **Vacuous-run defusal** — a run where every step reverted, or where nothing was actually compared, is a FAILED verification, not a green one. `runtimeVerified` is true only for strict `BYTE_EQUAL` (never `BYTE_EQUAL_WITH_WARNINGS`).
+
+And the auto-synthesized scenario (`anvil verify`, `--auto-scenario`) includes **negative probes**: an unauthorized-caller probe for each `has_one`-guarded instruction and a missing-signer probe for each signer-gated instruction — both must revert on BOTH binaries, so a dropped guard shows up as an outcome divergence, not a silent acceptance.
+
+Any divergence fails the gate loudly with the offset of the first differing byte (or the diverging field / step).
 
 - **What this proves**: for the **scenarios actually run**, the Anvil emit produces output state that's bit-for-bit identical to Anchor's on data + lamports + owner — and on the three opt-in surfaces when the fixture turns them on. The owner check catches a class of bug — emit forgets to assign the account back to the program after a CPI, or transfers ownership to the wrong program — that data + lamports comparison alone misses. The event-log check catches indexer parity divergence. The return-data check catches CPI return-value divergence (callers reading via `get_return_data` see different bytes). The msg!() check catches user-log divergence after stripping framing the two runtimes emit differently by design.
 - **What it doesn't prove**: that *all reachable inputs* produce identical output. A finite test suite is finite. Inputs your scenarios don't exercise are not gated by this. The JSON-scenario CLI now exposes all three opt-in surfaces via `--compare-events`, `--compare-return-data`, and `--compare-msg-logs` — pass them to enable byte-equal comparison on the corresponding surface; without them the CLI runs the 3 always-on surfaces only. The CLI refuses to run on `emit!()`-using sources without either `--compare-events` or `--ignore-events` to stop silent partial checks. See "What we don't claim" below.
 
 ### Real-world cargo regression layer
 
-44 (program, target) pairs from `solana-developers/program-examples` plus 10 external (escrow2025, coral cohort including coral-events / coral-sysvars, Token-2022 transfer-fee + transfer-hook) are gated to compile under both targets on every commit. The CI fails if any previously-green program breaks.
+A 193-entry cargo MUST_PASS ledger (demo corpus + `solana-developers/program-examples` + external cohort: escrow2025, coral programs including coral-events / coral-sysvars, Token-2022 transfer-fee + transfer-hook) gates both targets to compile. **Where it runs — stated honestly**: the SBF builds are disk-heavy and outgrew hosted CI runners, so per-push CI gates typecheck only; the full ledger + differential corpus run locally before releases, and the suite fails if any previously-green program breaks. If you need continuous re-verification, the suite is one command (`bun test api/tests/`) on any machine with the toolchain.
 
-- **What this proves**: the emitter doesn't regress on a diverse population of real programs. New emit bugs are caught here, not in your code.
+- **What this proves**: the emitter doesn't regress on a diverse population of real programs (as of the release you install). New emit bugs are caught here, not in your code.
 - **What it doesn't prove**: any of those programs is *runtime-correct* under their own scenarios — only that they cargo-build.
 
 ### Per-IR-kind fixture coverage
 
-**34 byte-equal differential fixtures** collectively exercise the IR kinds Anvil supports — 28 demos covering individual emit patterns + **6 externally-authored real-world Anchor programs** (anchor-escrow-2025, coral-events, favorites, account-data, pda-rent-payer, page-visits) cloned verbatim from public repos. Each fixture exists because an emit divergence on that pattern is caught here, not in user code.
+**196 byte-equal differential test files** collectively exercise the IR kinds Anvil supports — demo fixtures covering individual emit patterns + **14 externally-authored real-world Anchor programs** (anchor-escrow-2025, the coral cohort, favorites, account-data, pda-rent-payer, page-visits, Helium circuit-breaker, …) cloned verbatim from public repos. Each fixture exists because an emit divergence on that pattern is caught here, not in user code.
 
 The real-world fixtures matter for trust: they prove Anvil's emit produces byte-identical post-state to Anchor on programs it didn't author. `event-emit` and `staking` exercise opt-in event-log byte-equality (`compareEventLogs: true`); `staking` additionally exercises clock-pinned state math (Clock::get + reward accrual via saturating_mul + integer division) across multiple transactions, with 4 events emitted that must byte-equal Anchor's macro expansion.
 
@@ -99,7 +106,7 @@ Anvil's `--scenario` JSON makes coverage auditable. The auditor reads scenarios,
 
 Hand-written scenarios miss the long tail. Property-based / fuzz-style testing addresses this: auto-generate random valid inputs, malformed inputs, edge values; assert byte-equality at every iteration. Combined with Path A, scenarios cover named cases and the fuzzer covers the long tail.
 
-**Status**: a starter `anvil-sol differential --fuzz <N>` lands alongside this doc. Reuses the JSON scenario as a template; randomizes typed args (`u64`, `i64`, `Pubkey`-references-to-already-named-keys, `bool`); runs N iterations; reports the seed of any divergence so you can reproduce.
+**Status**: `anvil-sol differential --fuzz <N>` ships. Reuses the JSON scenario as a template; randomizes typed args (`u64`/`i64`/`u128`/`i128` over their FULL range — including values past 2^53 that catch narrowing bugs — plus `Pubkey`-references-to-already-named-keys and `bool`); runs N iterations; reports the seed of any divergence so you can reproduce. Negative probes (unauthorized has_one caller, missing signer) are synthesized automatically on the `verify`/auto-scenario path.
 
 **Limits today**: fuzzes scalar args only. Vec, custom struct args, account-ordering shuffling, and chosen-input adversarial patterns are not yet covered. Roadmap items.
 
@@ -117,7 +124,7 @@ This is the strongest claim — it reduces re-audit need to "verify the IR captu
 
 Defensible and shippable today:
 
-> Anvil emits Pinocchio code that's byte-equal to Anchor on every scenario in the differential gate. The 34-fixture corpus (28 demo + **6 real-world externally-authored Anchor programs**) + 50+ real-world cargo regressions cover the emit patterns; scenarios you bring via `anvil-sol differential --scenario` cover your specific program's reachable states. Bring the scenarios your audit cares about and run them through the gate.
+> Anvil emits Pinocchio code that's byte-equal to Anchor on every scenario in the differential gate. The 196-file differential corpus (demo fixtures + **14 real-world externally-authored Anchor programs**) + the 193-entry cargo MUST_PASS ledger cover the emit patterns; `anvil verify` synthesizes a scenario (happy path + negative probes) for your program, and scenarios you bring via `anvil-sol differential --scenario` cover your specific program's reachable states. Bring the scenarios your audit cares about and run them through the gate.
 >
 > What we don't ask you to take on faith: program semantics still need a source-level audit (Anvil consumes the same Rust your auditor reads). What we *do* ask you to skip: separate review of the translation step, on the conditions that (a) cargo-green, (b) byte-equal under your scenarios, and (c) you accept the published limits below.
 
@@ -125,7 +132,7 @@ Conditions, in plain terms:
 
 1. The differential gate runs scenarios you specify. Coverage is your responsibility.
 2. AI Refine output is gated only when the request opts in via `/build/auto-fix?with_differential=1` AND the verdict is `BYTE_EQUAL`. Without the gate, the workbench's persistent yellow banner reminds you to audit AI patches as if hand-written.
-3. The `--strict` flag refuses to write output when validator errors or `TODO(manual)` markers are present. Run with `--strict` for production deploy.
+3. Strict mode is the DEFAULT (v0.4+): `compile` refuses to declare success when validator errors or `TODO(manual)` markers are present, and (when `cargo` is available) when `cargo check` rejects the emit. `--permissive` / `--no-cargo-check` are the explicit opt-outs — never use them for production deploy.
 4. The published limits apply to **Pinocchio** target. Native is the reference (always under the differential gate alongside Pinocchio).
 
 ---
@@ -179,3 +186,4 @@ This document moves with the gate. Trust-relevant changes (new IR kinds, new fix
 | 2026-05-02 | Differential corpus 10 → 17 fixtures (added multisig, optional-state, init-if-needed, realloc, realloc-grow, event-emit, staking). Event log byte-equality added as opt-in **fourth comparison surface** via TS fixture harness (`compareEventLogs: true`); `emit!()` / `emit_cpi!()` lower to deterministic borsh + sha256-derived discriminator via `sol_log_data`. `staking` fixture exercises clock-pinned reward math + heterogeneous emit!() payload (Pubkey + u64 + i64) — both surfaces byte-equal to Anchor across 4 transactions. Cargo regression layer expanded to 44 program-examples pairs + 10 external (added coral-events, coral-sysvars, t22-transfer-hook/pinocchio promotions). |
 | 2026-05-03 | Two more opt-in comparison surfaces added: **set_return_data** (`compareReturnData: true`) and **user-emitted msg!() text** (`compareMsgLogs: true`, with Anchor framing stripped). Total surfaces: data + lamports + owner + (events ∣ returnData ∣ msgLogs) — the four persistent on-chain dimensions plus three opt-in per-tx surfaces. Compute-unit consumption + program-invocation framing remain explicitly NOT compared (Pinocchio is intentionally more efficient; equality there would defeat the migration's purpose). New `anvil differential --anvil-so <path>` CLI flag pairs with `--anchor-so` to skip both builds — use Anvil as a generic byte-equal gate on any two pre-built Solana programs, not just Anvil-emitted ones. |
 | 2026-05-03 (later) | JSON-scenario CLI now exposes the three opt-in surfaces: `--compare-events`, `--compare-return-data`, `--compare-msg-logs`. Closes the prior gap where users had to drop to the TS fixture harness for full 6-surface coverage. emit!()-using sources require `--compare-events` (or `--ignore-events` to skip) — the CLI refuses to run silent on partial checks. |
+| 2026-07-04/05 | **Gate-integrity hardening pass.** (1) Vacuous-green defused: all-steps-reverted and nothing-compared runs now FAIL instead of certifying; `runtimeVerified` requires strict `BYTE_EQUAL` (not `_WITH_WARNINGS`). (2) Per-step tx-outcome (revert) parity added to the production comparator — a dropped access-control check is an outcome divergence even when compared accounts don't change. (3) **Negative probes** synthesized on the verify/auto-scenario path: unauthorized-`has_one`-caller + missing-signer probes must revert on BOTH binaries. (4) `--fuzz` upgraded to full-range ints (u64/i64/u128/i128 past 2^53). (5) One-shot `anvil verify <program>` front door. (6) Emitter silent-miscompile hardening, each with a fixture-first regression test: unsizeable field types loud-refuse (no 32-byte guess), external-crate path collapse root-gated via declared-module tracking (id/authority-swap class, incl. carried code), token-namespace-scoped CPI dispatch, mutation-aware let-bound transfer folding, ambiguity-refusing self-Deref resolution, `#[account(signer)]` constraint back-fill. (7) CI stated honestly: per-push typecheck; the full corpus is a pre-release local run (disk-bound SBF builds outgrew hosted runners). |

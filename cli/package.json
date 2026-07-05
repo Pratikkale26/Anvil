@@ -1,7 +1,7 @@
 {
   "name": "anvil-sol",
   "version": "0.5.0",
-  "description": "Anvil — Anchor → Pinocchio/Native/Quasar transpiler. Drop-in CLI that converts Anchor source into a cargo-buildable project in three target Rust dialects, all from a single typed IR with deterministic emit + validator + portability lint.",
+  "description": "Anvil — Anchor → Pinocchio/Native transpiler with a byte-equal proof gate. Converts Anchor source into a cargo-buildable project from a single typed IR (deterministic emit + validator + portability lint), then proves the port: anvil verify builds both binaries and byte-compares on-chain state under LiteSVM.",
   "type": "module",
   "license": "Apache-2.0",
   "homepage": "https://anvilsol.xyz",

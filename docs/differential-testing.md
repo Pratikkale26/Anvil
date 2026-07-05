@@ -4,8 +4,9 @@ The differential layer is Anvil's correctness spine. It compares your Anvil-emit
 
 This document covers two ways to use it:
 
-1. **`anvil-sol differential <program> --scenario s.json`** — one-command CLI you run on your own Anchor program before / after migrating.
-2. **`api/tests/differential-harness.ts`** — TypeScript fixtures used internally to gate Anvil's emitter on every commit.
+0. **`anvil verify <program>`** — zero-config front door: synthesizes a scenario from your program's IR (happy path + unauthorized-caller and missing-signer negative probes) and runs the full gate. Start here.
+1. **`anvil-sol differential <program> --scenario s.json`** — one-command CLI you run on your own Anchor program before / after migrating, with your own scenario.
+2. **`api/tests/differential-harness.ts`** — TypeScript fixtures used internally to gate Anvil's emitter (run locally as the pre-release corpus; per-push CI gates typecheck).
 
 Most users want option 1. Option 2 is for cases where the JSON scenario can't express your inputs (Vec/struct args, custom multi-step state machines).
 
