@@ -1955,6 +1955,7 @@ export abstract class BaseEmitter {
       ),
       knownNames,
       this.collectKnownConstantNames(ir),
+      this.collectUserModuleRoots(ir),
     );
     // G112 — un-prefix prophylactic `_` on account bindings that became
     // referenced AFTER rewriteSelfReferences ran.
@@ -4603,9 +4604,12 @@ ${allFields}
       );
       // G68 — collapseModulePaths so refs like `tick_math::MIN_TICK`
       // (where MIN_TICK is a flattened constant at crate root) become
-      // bare `MIN_TICK`. Mirrors G45 for account impl items.
-      if (knownNamesG68.size > 0) {
-        stubbed = collapseModulePaths(stubbed, knownNamesG68);
+      // bare `MIN_TICK`. Mirrors G45 for account impl items. P6-A: the
+      // declared-module root gate keeps external-crate consts intact here
+      // (this carried site predates the Inc-9 const-guard for exactly the
+      // tick_math reason — the root gate serves both cases).
+      if (knownNamesG68.size > 0 && irForCollapse) {
+        stubbed = collapseModulePaths(stubbed, knownNamesG68, undefined, this.collectUserModuleRoots(irForCollapse));
       }
       items.push(`    ${stubbed}`);
     }
@@ -5896,6 +5900,20 @@ ${fields}
     return out;
   }
 
+  /**
+   * P6-A (#33) — the module names the parser saw DECLARED in the source
+   * (ir.userModuleRoots). Passed as collapseModulePaths' root gate at all
+   * three collapse sites (instruction bodies, G68 impl items, carried fn
+   * blocks): only a declared module can be a flattened user submodule, so
+   * paths rooted anywhere else are never collapsed onto colliding
+   * top-level symbols. Subsumes the Inc-9 const heuristic and finally
+   * guards the carried-code sites, which had to stay unguarded to keep
+   * `tick_math::MIN_TICK` collapsing.
+   */
+  protected collectUserModuleRoots(ir: SolanaIR): ReadonlySet<string> {
+    return new Set(ir.userModuleRoots ?? []);
+  }
+
   private computeKnownTopLevelNames(ir: SolanaIR): Set<string> {
     const out = new Set<string>();
     for (const h of ir.helperFns ?? []) out.add(h.name);
@@ -5932,7 +5950,10 @@ ${fields}
     // organizes helpers via `lending_operations::utils::is_allowed_signer(`.
     if (ir) {
       const knownNames = this.collectKnownTopLevelNames(ir);
-      transformed = collapseModulePaths(transformed, knownNames);
+      // P6-A: root-gated — carried helper bodies were the open half of the
+      // Inc-7 external-const swap (no const-guard here, to keep flattened-
+      // submodule consts collapsing; the declared-module gate handles both).
+      transformed = collapseModulePaths(transformed, knownNames, undefined, this.collectUserModuleRoots(ir));
     }
     // G40 — strip anchor_lang prefixes + rewrite `source!()` → `()` +
     // rewrite AnchorSerialize/AnchorDeserialize → Borsh equivalents in

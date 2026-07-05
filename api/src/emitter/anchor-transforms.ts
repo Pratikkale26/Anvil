@@ -74,6 +74,7 @@ export function collapseModulePaths(
   source: string,
   knownNames: Set<string>,
   knownConstants: ReadonlySet<string> = new Set(),
+  userModuleRoots?: ReadonlySet<string>,
 ): string {
   if (knownNames.size === 0) return source;
   return source.replace(/\b(?:\w+::)+\w+\b/g, (full: string) => {
@@ -82,21 +83,36 @@ export function collapseModulePaths(
     const leaf = segs[segs.length - 1] ?? "";
     const userRooted = root === "crate" || root === "self" || root === "super";
     // #9 — a path rooted in a known external crate is a real cross-crate
-    // reference, not a flattened user submodule; never collapse it.
+    // reference, not a flattened user submodule; never collapse it. Runs
+    // BEFORE the userModuleRoots gate so a user module that shadows an
+    // allowlisted crate name can't re-enable the collapse.
     if (EXTERNAL_CRATE_ROOTS.has(root)) return full;
-    // #9 / Phase 6 Inc 9 — universal trailing-CONSTANT guard for external crates
-    // NOT in the allowlist above (the list can't be exhaustive). A trailing
-    // segment that names some external crate's public CONSTANT — `::ID`, or any
-    // user-colliding const like `external_governance::state::AUTHORITY` — must
-    // not collapse onto the user's own top-level const of the same name (a
-    // silent id/authority swap in an owner/auth check, validator-clean). The
-    // user's own consts are reached via `crate::X` / `self::X` / bare `X`, never
-    // `some_external_module::X`. Leaving it uncollapsed is safe: if it were a
-    // genuine flattened user submodule const it would collide with the flat name
-    // anyway, so any resulting error is a LOUD compile failure, not a silent
-    // swap. fn/type/error flatten-collapses (is_allowed_signer, ErrorCode) are
-    // unaffected — those leaves are not constants.
-    if (segs.length >= 2 && !userRooted && (leaf === "ID" || knownConstants.has(leaf))) {
+    if (userModuleRoots !== undefined) {
+      // P6-A (#33) — root gate. The parser told us every module the user
+      // DECLARED; only those (plus crate/self/super) can be a flattened
+      // submodule, so any other root is an external crate and must never
+      // collapse onto a colliding top-level symbol — the #9 silent
+      // authority-swap class, closed for carried code too. This subsumes
+      // the Inc-9 trailing-constant heuristic below: a declared-module
+      // const (tick_math::MIN_TICK) legitimately collapses even though its
+      // leaf is a known constant, while external_governance::state::
+      // AUTHORITY stays intact (loud E0433 if truly unresolvable — never a
+      // silent swap).
+      if (!userRooted && !userModuleRoots.has(root)) return full;
+    } else if (segs.length >= 2 && !userRooted && (leaf === "ID" || knownConstants.has(leaf))) {
+      // #9 / Phase 6 Inc 9 — legacy trailing-CONSTANT guard, kept for call
+      // sites that can't supply the declared-module set (and for the exact
+      // pre-P6-A behavior of 2/3-arg callers). A trailing segment naming
+      // some external crate's public CONSTANT — `::ID`, or any user-
+      // colliding const like `external_governance::state::AUTHORITY` — must
+      // not collapse onto the user's own top-level const of the same name (a
+      // silent id/authority swap in an owner/auth check, validator-clean). The
+      // user's own consts are reached via `crate::X` / `self::X` / bare `X`, never
+      // `some_external_module::X`. Leaving it uncollapsed is safe: if it were a
+      // genuine flattened user submodule const it would collide with the flat name
+      // anyway, so any resulting error is a LOUD compile failure, not a silent
+      // swap. fn/type/error flatten-collapses (is_allowed_signer, ErrorCode) are
+      // unaffected — those leaves are not constants.
       return full;
     }
     // Walk segments left-to-right; emit everything from the FIRST known
