@@ -25,6 +25,9 @@
  * has to be cloned externally; if the path doesn't exist the case skips.
  */
 import { describe, test, expect } from "bun:test";
+import { join } from "node:path";
+import { TEST_SCRATCH } from "./scratch-root.ts";
+
 import { existsSync } from "fs";
 import { spawnSync } from "child_process";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
@@ -85,7 +88,7 @@ const TRACKED: TrackedCase[] = [
   {
     id: "coral-swap",
     target: "pinocchio",
-    path: "/tmp/coral-anchor/tests/swap/programs/swap/src/lib.rs",
+    path: join(TEST_SCRATCH, "coral-anchor", "tests/swap/programs/swap/src/lib.rs"),
     source: "https://github.com/coral-xyz/anchor (tests/swap)",
     maxErrors: 52,
     reason: "serum_dex sibling crate + bare-AccountInfo field accesses + undefined helpers. 'info typed-local strip closed the E0261.",
@@ -93,7 +96,7 @@ const TRACKED: TrackedCase[] = [
   {
     id: "coral-swap",
     target: "native",
-    path: "/tmp/coral-anchor/tests/swap/programs/swap/src/lib.rs",
+    path: join(TEST_SCRATCH, "coral-anchor", "tests/swap/programs/swap/src/lib.rs"),
     source: "https://github.com/coral-xyz/anchor (tests/swap)",
     maxErrors: 52,
     reason: "Same as pinocchio. 'info typed-local strip closed the E0261; rest is serum_dex. Drift 48 → 52 surfaced 2026-05-02 by the prelude+body postProcess concatenation change in the t22-transfer-hook fix; the additional errors are body-level cascade visibility increases, not new emit failures. Tracked as the new baseline.",
@@ -104,7 +107,7 @@ const TRACKED: TrackedCase[] = [
   {
     id: "t22-transfer-fee",
     target: "native",
-    path: "/tmp/program-examples/tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs",
+    path: join(TEST_SCRATCH, "program-examples", "tokens/token-2022/transfer-fee/anchor/programs/transfer-fee/src/lib.rs"),
     source: "solana-developers/program-examples (tokens/token-2022/transfer-fee/anchor)",
     maxErrors: 1,
     reason: "1-error ceiling (was 9, dropped via 2026-05-13 polish pass: solana_security_txt filter + Native T22 commentout port + spl_pod auto-import gating). The residual error is a stale data-borrow chain that the Pinocchio commentout would catch but Native intentionally skips (Native's AccountInfo legitimately uses .data.borrow_mut()).",
@@ -170,22 +173,22 @@ const TRACKED: TrackedCase[] = [
   {
     id: "futarchy-mint-governor",
     target: "pinocchio",
-    path: "/tmp/futarchy/programs/mint_governor/src/lib.rs",
+    path: join(TEST_SCRATCH, "futarchy", "programs/mint_governor/src/lib.rs"),
     source: "metaDAOproject/futarchy (programs/mint_governor)",
     maxErrors: 11,
     reason: "11-error ceiling (was 21 before 2026-05-13 polish pass — solana_security_txt import filter landed in commit ${tbd}). Residual gaps: state-struct `.key()` method access on emitted MintGovernor + Account.reload() with no Pinocchio equivalent + several E0308 type-mismatches in nested ctx.accounts chains. Each needs its own targeted fix.",
     repo: "https://github.com/metaDAOproject/futarchy",
-    cloneRoot: "/tmp/futarchy",
+    cloneRoot: join(TEST_SCRATCH, "futarchy"),
   },
   {
     id: "futarchy-mint-governor",
     target: "native",
-    path: "/tmp/futarchy/programs/mint_governor/src/lib.rs",
+    path: join(TEST_SCRATCH, "futarchy", "programs/mint_governor/src/lib.rs"),
     source: "metaDAOproject/futarchy (programs/mint_governor)",
     maxErrors: 15,
     reason: "15-error ceiling (was 47 before 2026-05-13 polish pass — solana_security_txt import filter landed). Residual: same state-struct/reload/type-mismatch shapes as pinocchio + native auto-import injector misses Pubkey in events.rs.",
     repo: "https://github.com/metaDAOproject/futarchy",
-    cloneRoot: "/tmp/futarchy",
+    cloneRoot: join(TEST_SCRATCH, "futarchy"),
   },
 ];
 
