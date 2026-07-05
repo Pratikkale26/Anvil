@@ -899,6 +899,13 @@ export function synthesizeAutoScenario(
   // so post-step lamport balance is deterministic. Adding them widens the
   // verifiable claim to the full account set the scenario touches.
   for (const name of signerNames) comparedAccounts.add(`$signer:${name}`);
+  // Compare the negative-probe attacker too. It only ever pays a reverted
+  // probe tx's base fee (deterministic, identical on both targets), so its
+  // post-run balance byte-equals — and comparing it keeps the scenario from
+  // tripping the partial_compare_scope sanity check (which would downgrade an
+  // otherwise-clean BYTE_EQUAL to WITH_WARNINGS just because the probe added a
+  // touched-but-uncompared signer).
+  if (attackerNeeded) comparedAccounts.add(`$signer:${NEGATIVE_PROBE_ATTACKER}`);
   // Detect emit/msg usage to suggest opt-in compares.
   let usesEmit = false;
   let usesEmitCpi = false;
@@ -952,8 +959,8 @@ export function synthesizeAutoScenario(
   // refuses with "no signer available to pay fees".
   const allSigners = [...signerNames];
   // Declare the unauthorized-caller keypair used by negative probes so the
-  // runner can generate + airdrop it. Not added to compare.accounts — it only
-  // ever pays a reverted tx's fee, identical on both targets.
+  // runner can generate + airdrop it. (It's also added to compare.accounts
+  // above — its reverted-tx fee is deterministic, so comparing it is safe.)
   if (attackerNeeded) allSigners.push(NEGATIVE_PROBE_ATTACKER);
   if (allSigners.length === 0) {
     allSigners.push("__fee_payer");
