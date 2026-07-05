@@ -329,3 +329,124 @@ pub struct T<'info> {
     expect(kinds).toContain("cpi_spl_transfer");
   });
 });
+
+describe("cpi-detector dispatch precedence — generic SPL names are token-scoped", () => {
+  // close_account and set_authority are GENERIC instruction names: any foreign
+  // program has a `program::cpi::close_account` / `::set_authority`. Unlike the
+  // globally-unique T22 ext names (isExtCall's endsWith("::"+name) is safe for
+  // those), these must be scoped to a token namespace (or the bare
+  // post-consolidation form). Pre-fix, the outer branch used an unscoped
+  // `funcText.includes("close_account")`, so a foreign CPI whose inline struct
+  // coincidentally matched CloseAccount{account,destination,authority} was
+  // silently classified as cpi_spl_close_account — and would have emitted with
+  // the SPL token program id instead of the foreign program's. Silent
+  // wrong-program CPI. isSplTokenCall closes that class.
+
+  test("foreign program's close_account CPI does NOT misroute to cpi_spl_close_account", async () => {
+    const src = `
+use anchor_lang::prelude::*;
+declare_id!("Counter111111111111111111111111111111111111");
+
+#[program]
+pub mod p {
+    use super::*;
+    pub fn handler(ctx: Context<I>) -> Result<()> {
+        // A DIFFERENT program's close_account instruction, called via CPI,
+        // with an inline struct that happens to look like SPL's CloseAccount.
+        vault_program::cpi::close_account(CpiContext::new(
+            ctx.accounts.vault_program.to_account_info(),
+            vault_program::cpi::accounts::CloseAccount {
+                account: ctx.accounts.account.to_account_info(),
+                destination: ctx.accounts.destination.to_account_info(),
+                authority: ctx.accounts.authority.to_account_info(),
+            },
+        ))?;
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct I<'info> {
+    /// CHECK: foreign program
+    pub vault_program: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub account: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub destination: UncheckedAccount<'info>,
+    pub authority: Signer<'info>,
+}
+`;
+    const kinds = await bodyKindsFor(src);
+    // Must NOT be silently classified as an SPL token close (wrong program id).
+    expect(kinds).not.toContain("cpi_spl_close_account");
+  });
+
+  test("foreign program's set_authority CPI does NOT misroute to cpi_spl_set_authority", async () => {
+    const src = `
+use anchor_lang::prelude::*;
+declare_id!("Counter111111111111111111111111111111111111");
+
+#[program]
+pub mod p {
+    use super::*;
+    pub fn handler(ctx: Context<I>) -> Result<()> {
+        my_dao::cpi::set_authority(CpiContext::new(
+            ctx.accounts.dao_program.to_account_info(),
+            my_dao::cpi::accounts::SetAuthority {
+                current_authority: ctx.accounts.authority.to_account_info(),
+                account_or_mint: ctx.accounts.account.to_account_info(),
+            },
+        ))?;
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct I<'info> {
+    /// CHECK: foreign program
+    pub dao_program: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub account: UncheckedAccount<'info>,
+    pub authority: Signer<'info>,
+}
+`;
+    const kinds = await bodyKindsFor(src);
+    expect(kinds).not.toContain("cpi_spl_set_authority");
+  });
+
+  test("genuine anchor_spl::token::close_account STILL routes to cpi_spl_close_account", async () => {
+    const src = `
+use anchor_lang::prelude::*;
+use anchor_spl::token;
+declare_id!("Counter111111111111111111111111111111111111");
+
+#[program]
+pub mod p {
+    use super::*;
+    pub fn handler(ctx: Context<I>) -> Result<()> {
+        anchor_spl::token::close_account(CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            anchor_spl::token::CloseAccount {
+                account: ctx.accounts.account.to_account_info(),
+                destination: ctx.accounts.destination.to_account_info(),
+                authority: ctx.accounts.authority.to_account_info(),
+            },
+        ))?;
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct I<'info> {
+    #[account(mut)]
+    pub account: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub destination: UncheckedAccount<'info>,
+    pub authority: Signer<'info>,
+    pub token_program: Program<'info, token::Token>,
+}
+`;
+    const kinds = await bodyKindsFor(src);
+    expect(kinds).toContain("cpi_spl_close_account");
+  });
+});
