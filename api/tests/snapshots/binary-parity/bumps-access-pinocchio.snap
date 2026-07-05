@@ -167,6 +167,10 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
+    if program_id != &ID {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
     if instruction_data.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }

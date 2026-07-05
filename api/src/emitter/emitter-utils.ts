@@ -90,6 +90,24 @@ export function hasNon8ByteDiscriminator(ir: SolanaIR): boolean {
  * prefix-matches each instruction's disc.
  */
 export function buildEntrypoint(ir: SolanaIR): string {
+  // #35 — declared-program-id entry check. Anchor's #[program] entry reverts
+  // (4100 DeclaredProgramIdMismatch) when the deploy address ≠ declare_id!.
+  // Emit the same guard so a misdeployed Anvil binary refuses exactly where
+  // Anchor does. Only when the IR carries a program id (declare_id! present) —
+  // `emitProgramIdConst` gates the `ID` const on the same condition, so this
+  // never references a missing symbol. Reverts via IncorrectProgramId; the
+  // byte-equal gate compares tx OUTCOMES (revert vs ok), not error codes/logs,
+  // so revert-for-revert is the parity that matters. In the differential
+  // harness the deploy id is rewritten to the declared id on BOTH sides, so
+  // the guard never fires there — runtime byte-equality is unchanged; only the
+  // emitted text grows (snapshots re-baselined).
+  const idGuard = ir.programId
+    ? `    if program_id != &ID {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+`
+    : "";
   if (hasNon8ByteDiscriminator(ir)) {
     return `entrypoint!(process_instruction);
 
@@ -98,7 +116,7 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    router(program_id, accounts, instruction_data)
+${idGuard}    router(program_id, accounts, instruction_data)
 }`;
   }
   return `entrypoint!(process_instruction);
@@ -108,7 +126,7 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> ProgramResult {
-    if instruction_data.len() < 8 {
+${idGuard}    if instruction_data.len() < 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
 
