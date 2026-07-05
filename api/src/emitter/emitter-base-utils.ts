@@ -8,6 +8,8 @@
  */
 
 import { MARKER_ANVIL_TODO_PREFIX } from "./markers.js";
+import type { Instruction } from "../ir/schema.js";
+import { extractResultInnerType } from "./output-validator.js";
 
 /**
  * Build the "this helper uses Anchor-only types — manual port required"
@@ -705,4 +707,63 @@ export function stripGenericBounds(generics: string): string {
     return t;
   });
   return `<${bareParts.join(", ")}>`;
+}
+
+/**
+ * Split `text` on top-level commas only — commas nested inside (), [], {}, <>
+ * are not split points. Used to walk enum variants and variant payload fields
+ * (`Buy { price: u64 }, Move(u8, u8), Sell`) for InitSpace sizing.
+ *
+ * Extracted from emitter-base.ts (#24 decomp) — pure, `this`-free.
+ */
+export function splitTopLevelCommas(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "(" || c === "[" || c === "{" || c === "<") depth++;
+    else if (c === ")" || c === "]" || c === "}" || c === ">") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out;
+}
+
+/**
+ * A non-unit `Result<T>` handler is wireable (emit real `set_return_data`
+ * instead of a loud stub) only when its body is a plain single-tail
+ * `Ok(<expr>)` getter/view — no alternate return paths to diverge from the one
+ * captured value. Conservative by design: the wired emit is byte-identical to
+ * Anchor's macro by *delegation* (same value, same `borsh::to_vec`), so the
+ * residual risk lives entirely in faithful body emit — exactly the risk a unit
+ * handler already takes. Anything outside this shape keeps the safe stub.
+ *
+ * Extracted from emitter-base.ts (#24 decomp) — pure, `this`-free.
+ */
+export function isWireableTypedResult(instr: Instruction): boolean {
+  const body = instr.body;
+  if (body.length === 0) return false;
+  const last = body[body.length - 1]!;
+  if (last.kind !== "return_ok" || !last.value || last.value === "()") return false;
+  // The emit pins the serialized type with a turbofish
+  // (`borsh::to_vec::<T>(…)`) so an untyped literal infers the same type Anchor
+  // would (else `10` defaults to i32, not the declared u64). T must be
+  // resolvable and free of lifetimes/trait-objects, which don't render in a
+  // turbofish — refuse those loudly instead.
+  const innerT = extractResultInnerType((instr as { returnType?: string }).returnType ?? "");
+  if (!innerT || innerT === "()" || /'|\bdyn\b|\bimpl\b/.test(innerT)) return false;
+  // Reject any earlier statement that is itself an Ok-return or textually
+  // contains an `Ok(` — a second success path would carry a value the single
+  // terminal capture doesn't represent (silent divergence risk).
+  for (let i = 0; i < body.length - 1; i++) {
+    const s = body[i]!;
+    if (s.kind === "return_ok") return false;
+    const code = "code" in s ? s.code : "value" in s ? String(s.value ?? "") : "";
+    if (/\bOk\s*\(/.test(code)) return false;
+  }
+  return true;
 }
