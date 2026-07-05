@@ -99,19 +99,6 @@ export function stopAstPipelineCompare(): Array<{ input: string; regex: string; 
   return log;
 }
 
-// Phase 6 Increment 1 — records every input for which resolveToAst had to
-// fall back to the scope-blind regex `resolveAccountExpr` (tryStructuralizeExpr
-// returned null). The invariant gate (phase6-ast-first-value-exprs.test.ts)
-// asserts this set contains ONLY msg!/log format-strings — i.e. no
-// byte-relevant value expression is ever resolved by the regex path.
-let _resolveFallbackLog: string[] | null = null;
-export function startResolveFallbackCapture(): void { _resolveFallbackLog = []; }
-export function stopResolveFallbackCapture(): string[] {
-  const log = _resolveFallbackLog ?? [];
-  _resolveFallbackLog = null;
-  return log;
-}
-
 /**
  * Parse the fields-text of an `emit!(Event { fields })` IR statement
  * into a structural field list for evtStructLiteral. Returns null on
@@ -910,7 +897,6 @@ export class AstVisitorBase {
       }
       return astResult;
     }
-    if (_resolveFallbackLog !== null) _resolveFallbackLog.push(text);
     const resolved = this.walker.resolveAccountExpr(text);
     return tryStructuralizeExpr(resolved) ?? parseSimpleExpr(resolved);
   }
@@ -1330,11 +1316,7 @@ export class AstVisitorBase {
     const compoundMatch = stmt.value.match(/^__compound_([+\-*\/])=__(.+)$/);
     if (compoundMatch?.[1] && compoundMatch[2] && fieldDef) {
       const op = compoundMatch[1];
-      // #15 / Phase 6 — AST-first resolution (scope-aware, closure-shadow
-      // safe). Falls back to the regex pipeline only when the RHS text
-      // won't structuralize; the parity gate proves the two are byte-equal
-      // on the corpus.
-      let rhs = this.resolveToText(compoundMatch[2]);
+      let rhs = w.resolveAccountExpr(compoundMatch[2]);
       rhs = w.transformHelperCalls(rhs);
       rhs = applyClockRentRewrites(rhs, w);
       if (isCheckedArithmeticType(fieldDef.type)) {
@@ -1371,8 +1353,7 @@ export class AstVisitorBase {
     }
 
     // Plain assign — value-side transforms mirror handler exactly.
-    // #15 / Phase 6 — AST-first resolution (see visitCompoundAssign note).
-    let value = this.resolveToText(stmt.value);
+    let value = w.resolveAccountExpr(stmt.value);
     if (fieldDef && (fieldDef.type === "Pubkey" || fieldDef.type === "[u8; 32]")) {
       const directCtxKeySource = stmt.value.match(/^ctx\.accounts\.(\w+)\.key\(\)$/)?.[1];
       const trimmedValue = cleanInlineExpr(value);
@@ -1753,10 +1734,7 @@ export class AstVisitorBase {
   visitMsg(stmt: MsgStmt): RustStmt[] {
     const w = this.walker;
     w.ctx.transformedCount++;
-    // #15 / Phase 6 — AST-first resolution. NOTE: byte-equal never compares
-    // logs, so this path is not corpus-provable; routed for scope-safety +
-    // consistency, guarded by the AST-vs-regex parity gate.
-    const msgText = this.resolveToText(stmt.message);
+    const msgText = w.resolveAccountExpr(stmt.message);
 
     if (w.emitter.frameworkName === "Pinocchio") {
       const literalMatch = msgText.match(/^"([^"\\]|\\.)*"/);
@@ -1846,8 +1824,7 @@ export class AstVisitorBase {
     const w = this.walker;
     w.ctx.transformedCount++;
     // Mirror handleRequire's pre-emit transforms on the condition.
-    // #15 / Phase 6 — AST-first resolution (revert-parity provable via #13).
-    const transformed = this.resolveToText(stmt.condition);
+    const transformed = w.resolveAccountExpr(stmt.condition);
 
     // Mirror emitRequireGuard's negation-stripping loop.
     let condText = trimOuterParens(stripAnchorConstraintError(cleanInlineExpr(transformed)));
