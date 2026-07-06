@@ -2195,16 +2195,14 @@ export const ParserWarningCodeSchema = z.enum([
    * BEFORE deploy. Strict-mode validator promotes to ERROR.
    */
   "cpi_unrecognized_dropped",
-  /**
-   * #44 — a compressed-NFT / state-compression CPI (mpl_bubblegum,
-   * spl_account_compression, spl_noop) was detected. Unlike a generic
-   * unrecognized CPI, this is a DELIBERATE, permanent refuse: the operation
-   * mutates a concurrent-Merkle-tree account whose correctness can only be
-   * proven byte-equal against the real spl_account_compression / spl_noop
-   * programs, which have no loadable reference in the differential harness.
-   * A distinct code (not `cpi_unrecognized_dropped`) so the message can say
-   * "keep this on Anchor" instead of "file a bug so we add an extractor".
-   * Strict-mode validator promotes to ERROR; the emit also refuses.
+   /**
+   * #44 — a RAW-CRATE compressed-NFT / state-compression CPI (mpl_bubblegum,
+   * spl_account_compression, spl_noop) with NO declare_program! IDL. The target
+   * instruction layout is unknown, so it's refused rather than emitted against a
+   * guess. A distinct code (not `cpi_unrecognized_dropped`) so the message can
+   * point the user at the working path — `declare_program!(<crate>)` + the IDL,
+   * which transpiles the CPI through the standard external-CPI machinery. Strict-
+   * mode validator promotes to ERROR; the emit also refuses.
    */
   "cnft_compression_unsupported",
   /**

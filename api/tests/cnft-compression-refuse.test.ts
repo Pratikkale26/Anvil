@@ -86,8 +86,8 @@ describe("cNFT program → named refuse warning + validator ERROR", () => {
     expect(cnftWarns.length).toBe(2);
     // The misleading "file a bug so we add an extractor" generic code must NOT fire.
     expect(r.ir.warnings.some((w) => w.code === "cpi_unrecognized_dropped")).toBe(false);
-    // Message names the family and states it's deliberate.
-    expect(cnftWarns[0]!.message).toMatch(/permanent, by-design refuse|keep these instructions on Anchor/);
+    // Message names the family and points to the actionable declare_program + IDL path.
+    expect(cnftWarns[0]!.message).toMatch(/declare_program!\(spl_account_compression\)|supply its IDL/);
   });
 
   for (const [target, emit] of [

@@ -43,12 +43,14 @@ import type { SourceLoc } from "../ir/schema.js";
 // identical, honest message: this is a DELIBERATE permanent refuse, not a
 // missing extractor we'll add on request.
 const CNFT_REFUSE_DETAIL =
-  `Anvil deliberately does not transpile cNFT / spl-account-compression operations: they mutate a ` +
-  `concurrent-Merkle-tree account whose byte-state can only be proven against the real ` +
-  `spl_account_compression / spl_noop / bubblegum programs, which have no loadable reference for the ` +
-  `differential byte-equal gate — so correctness is unverifiable by Anvil's trust standard. This is a ` +
-  `permanent, by-design refuse (not a missing extractor): keep these instructions on Anchor. The emit ` +
-  `also refuses (validator error) so it cannot deploy silently.`;
+  `This is a raw-crate cNFT / state-compression CPI with NO IDL, so Anvil can't resolve the target ` +
+  `program's instruction layout. To transpile it, declare the program and supply its IDL — ` +
+  `\`declare_program!(spl_account_compression)\` / \`declare_program!(mpl_bubblegum)\` with the ` +
+  `\`idls/<crate>.json\` file — and call it as \`<crate>::cpi::<fn>(CpiContext::new(prog, ` +
+  `<crate>::cpi::accounts::<Struct>{…}), args)\`; that routes through the same external-CPI machinery ` +
+  `that's byte-equal-gated for other declared programs. Without an IDL the CPI is refused (validator ` +
+  `error) rather than emitted against an unknown layout. (Note: a differential byte-equal test inside ` +
+  `Anvil's own suite additionally needs the program's .so as an auxiliaryProgram fixture.)`;
 
 // ─── Hardcoded pattern lists (extracted for property testing) ──────────────
 //
