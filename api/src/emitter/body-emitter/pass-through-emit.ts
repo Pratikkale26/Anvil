@@ -229,22 +229,30 @@ export function handlePassThrough(w: BodyWalker, stmt: PassThrough): void {
     // AccountInfo wrapper. Pinocchio AccountInfo lacks these; after state
     // rebinding the receiver may be the struct (no methods). Route every
     // call through the anvil_* helpers against the original AccountInfo.
+    // The optional `ctx.accounts.` prefix must be consumed by the match too:
+    // `ctx.accounts.bank.sub_lamports(n)` otherwise captures only `bank` and
+    // leaves a dangling `ctx.accounts.` in front of the helper call
+    // (`ctx.accounts.anvil_sub_lamports(...)`), which the untranspilable-
+    // `ctx.accounts.` guard then comments out — silently dropping a live SOL
+    // move. `sub_lamports`/`add_lamports` are the canonical modern-Anchor
+    // lamport-transfer idiom, so this must resolve to a real call.
+    const CTX_ACCTS = String.raw`(?:ctx\s*\.\s*accounts\s*\.\s*)?`;
     lamportRewritten = lamportRewritten.replace(
-      /\b(\w+)\.get_lamports\(\)/g,
+      new RegExp(String.raw`${CTX_ACCTS}\b(\w+)\.get_lamports\(\)`, "g"),
       (_m, acct) => {
         const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
         return `anvil_get_lamports(${infoVar})`;
       },
     );
     lamportRewritten = lamportRewritten.replace(
-      /\b(\w+)\.add_lamports\(([^)]*)\)/g,
+      new RegExp(String.raw`${CTX_ACCTS}\b(\w+)\.add_lamports\(([^)]*)\)`, "g"),
       (_m, acct, args) => {
         const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
         return `anvil_add_lamports(${infoVar}, ${args.trim()})`;
       },
     );
     lamportRewritten = lamportRewritten.replace(
-      /\b(\w+)\.sub_lamports\(([^)]*)\)/g,
+      new RegExp(String.raw`${CTX_ACCTS}\b(\w+)\.sub_lamports\(([^)]*)\)`, "g"),
       (_m, acct, args) => {
         const infoVar = w.accountInfoVars.get(acct) ?? w.resolveAccountInfoVar(snakeCase(acct));
         return `anvil_sub_lamports(${infoVar}, ${args.trim()})`;
