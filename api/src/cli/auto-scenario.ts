@@ -1260,6 +1260,15 @@ function synthesizeSeeds(
       out.push(trimmed);
       continue;
     }
+    // b"literal".as_ref() / b"literal".as_bytes() → the literal. The byte-slice
+    // view of a byte-string literal is the literal itself; idiomatic in seed
+    // arrays (`seeds = [b"poll".as_ref(), ...]`). Without this, any program
+    // that writes the .as_ref() form blocks auto-scenario byte-equal.
+    const byteLitChain = trimmed.match(/^(b"[^"]+")\.(?:as_ref|as_bytes)\(\)$/);
+    if (byteLitChain?.[1]) {
+      out.push(byteLitChain[1]);
+      continue;
+    }
     // Bare string literal → wrap as b""
     if (/^"[^"]+"$/.test(trimmed)) {
       out.push(`b${trimmed}`);
@@ -1428,10 +1437,12 @@ function synthesizeSeeds(
           out.push(`bytes:0x${"00".repeat(32)}`);
           continue;
         }
-        // String: <arg>.as_bytes() → bytes:0x<utf8 bytes of default string>.
-        // Auto-scenario defaults String args to "test" (4 bytes). t22-basics
-        // uses `_token_name.as_bytes()` in its mint PDA seed.
-        if (argType === "String" && chain === "as_bytes()") {
+        // String: <arg>.as_bytes() / <arg>.as_ref() → bytes:0x<utf8 bytes of
+        // default string>. Auto-scenario defaults String args to "test" (4
+        // bytes). t22-basics uses `_token_name.as_bytes()`; the voting-style
+        // `candidate.as_ref()` form is identical (String: AsRef<[u8]> yields
+        // the UTF-8 bytes), so both chains resolve the same way.
+        if (argType === "String" && (chain === "as_bytes()" || chain === "as_ref()")) {
           const defaultStr = "test";
           const hex = [...defaultStr].map((c) => c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
           out.push(`bytes:0x${hex}`);
