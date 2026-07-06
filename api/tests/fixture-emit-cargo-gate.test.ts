@@ -13,7 +13,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parseAnchor } from "../src/parser/anchor-parser.js";
 
 const CARGO_AVAILABLE = (() => {
@@ -32,7 +32,9 @@ async function startServer(): Promise<void> {
   // a server-out-of-test ensures we exercise the full stack.
   const { spawn } = await import("node:child_process");
   const proc = spawn("bun", ["src/index.ts"], {
-    cwd: "/home/pk/Anvil/api",
+    // api/ dir derived from this test file's location (api/tests/) — never a
+    // hardcoded absolute path, so the test boots the server on any checkout.
+    cwd: join(import.meta.dir, ".."),
     env: {
       ...process.env,
       PORT: String(PORT),
