@@ -15,10 +15,18 @@ test("same major.minor (different patch) is NOT a mismatch", () => {
   expect(detectProtocolVersionMismatches(`mpl-token-metadata = "5.1.9"`)).toEqual([]);
 });
 
-test("extended `{ version = ... }` form detected; anchor-spl 0.30 != 0.31", () => {
+test("extended `{ version = ... }` form detected; mpl-core 0.9 != 0.10", () => {
   expect(
-    detectProtocolVersionMismatches(`anchor-spl = { version = "0.30", features = ["metadata"] }`),
-  ).toEqual([{ crate: "anchor-spl", found: "0.30", pinned: "0.31" }]);
+    detectProtocolVersionMismatches(`mpl-core = { version = "0.9", features = ["anchor"] }`),
+  ).toEqual([{ crate: "mpl-core", found: "0.9", pinned: "0.10" }]);
+});
+
+test("F4 — anchor-spl is NOT pinned: wrapper version never affects emitted SPL bytes", () => {
+  // Anvil emits token-program instruction constants, invariant across the
+  // anchor-spl wrapper version, so a differing anchor-spl minor is NOT a
+  // wrong-bytes risk and must not warn.
+  expect(detectProtocolVersionMismatches(`anchor-spl = { version = "0.30", features = ["metadata"] }`)).toEqual([]);
+  expect(detectProtocolVersionMismatches(`anchor-spl = "1.0"`)).toEqual([]);
 });
 
 test("=/^ version prefixes are normalized before comparing", () => {

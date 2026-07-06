@@ -222,11 +222,23 @@ export function extractImports(root: SyntaxNode): string[] {
  * layouts, byte offsets) Anvil HARD-CODES. The pinned major.minor is the
  * version those constants were written against; a source declaring a different
  * major.minor risks wrong emitted bytes.
+ *
+ * F4 — `anchor-spl` is DELIBERATELY NOT pinned here. Anvil hard-codes zero
+ * anchor-spl constants: the SPL-Token / Token-2022 instruction encodings it
+ * emits (disc 3=Transfer, 7=MintTo, 30=MemoTransfer, …) are the *token
+ * program's* constants, invariant across the anchor-spl wrapper version. Anvil
+ * only *parses* anchor-spl call shapes, which are stable across 0.29–1.0; a
+ * genuinely unrecognized future shape degrades to `cpi_unrecognized_dropped`
+ * (a real signal), not wrong bytes. Pinning anchor-spl produced false-positive
+ * "risks wrong emitted bytes" warnings on 0.32/1.0 sources and eroded trust in
+ * the warning channel. The byte-level pin belongs on the *target* crates
+ * (spl-token / spl-token-2022 / pinocchio-token), never the source wrapper.
+ * The crates kept below are program SDKs whose emitted discriminators DO track
+ * the crate version across majors.
  */
 const PINNED_PROTOCOL_VERSIONS: Record<string, string> = {
   "mpl-token-metadata": "5.1",
   "mpl-core": "0.10",
-  "anchor-spl": "0.31",
   "pyth-sdk-solana": "0.10",
 };
 
