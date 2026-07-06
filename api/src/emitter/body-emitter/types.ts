@@ -95,6 +95,7 @@ export interface BodyEmitterCallbacks {
   emitT22TransferFeeInitialize(mint: string, tokenProgram: string, transferFeeConfigAuthority: string, withdrawWithheldAuthority: string, basisPoints: string, maximumFee: string, signerSeeds?: string): string;
   emitT22TransferFeeSetFee(mint: string, tokenProgram: string, authority: string, basisPoints: string, maximumFee: string, signerSeeds?: string): string;
   emitT22ImmutableOwnerInitialize(tokenAccount: string, tokenProgram: string, signerSeeds?: string): string;
+  emitT22MemoTransfer(account: string, owner: string, tokenProgram: string, enable: boolean, signerSeeds?: string): string;
   emitT22MintCloseAuthorityInitialize(mint: string, tokenProgram: string, closeAuthority: string, signerSeeds?: string): string;
   emitT22PermanentDelegateInitialize(mint: string, tokenProgram: string, delegate: string, signerSeeds?: string): string;
   emitT22TransferHookInitialize(mint: string, tokenProgram: string, authority: string, transferHookProgramId: string, signerSeeds?: string): string;

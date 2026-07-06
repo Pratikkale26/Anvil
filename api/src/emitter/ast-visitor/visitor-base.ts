@@ -726,6 +726,7 @@ type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non
 type CpiT22TransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_initialize" }>;
 type CpiT22TransferFeeSetFee = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_set_fee" }>;
 type CpiT22ImmutableOwnerInit = Extract<BodyStatement, { kind: "cpi_t22_immutable_owner_initialize" }>;
+type CpiT22MemoTransfer = Extract<BodyStatement, { kind: "cpi_t22_memo_transfer" }>;
 type CpiT22MintCloseAuthorityInit = Extract<BodyStatement, { kind: "cpi_t22_mint_close_authority_initialize" }>;
 type CpiT22PermanentDelegateInit = Extract<BodyStatement, { kind: "cpi_t22_permanent_delegate_initialize" }>;
 type CpiT22TransferHookInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_hook_initialize" }>;
@@ -828,6 +829,7 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_t22_transfer_fee_initialize",
   "cpi_t22_transfer_fee_set_fee",
   "cpi_t22_immutable_owner_initialize",
+  "cpi_t22_memo_transfer",
   "cpi_t22_mint_close_authority_initialize",
   "cpi_t22_permanent_delegate_initialize",
   "cpi_t22_transfer_hook_initialize",
@@ -964,6 +966,8 @@ export class AstVisitorBase {
         return this.visitCpiT22TransferFeeSetFee(stmt);
       case "cpi_t22_immutable_owner_initialize":
         return this.visitCpiT22ImmutableOwnerInit(stmt);
+      case "cpi_t22_memo_transfer":
+        return this.visitCpiT22MemoTransfer(stmt);
       case "cpi_t22_mint_close_authority_initialize":
         return this.visitCpiT22MintCloseAuthorityInit(stmt);
       case "cpi_t22_permanent_delegate_initialize":
@@ -2910,6 +2914,22 @@ export class AstVisitorBase {
     lines.push(w.emitter.emitT22ImmutableOwnerInitialize(
       snakeCase(stmt.tokenAccount),
       snakeCase(stmt.tokenProgram),
+      resolveSignerSeedsExpr(w, stmt.signerSeeds),
+    ));
+    return this.applyStructuralize(lines);
+  }
+
+  visitCpiT22MemoTransfer(stmt: CpiT22MemoTransfer): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    const fn = stmt.enable ? "memo_transfer_initialize" : "memo_transfer_disable";
+    w.ctx.details.push(`Transformed: ${fn}(${stmt.account})`);
+    const lines = this.cpiSignerSeedsPrelude(stmt.signerSeeds, stmt.account);
+    lines.push(w.emitter.emitT22MemoTransfer(
+      snakeCase(stmt.account),
+      snakeCase(stmt.owner),
+      snakeCase(stmt.tokenProgram),
+      stmt.enable,
       resolveSignerSeedsExpr(w, stmt.signerSeeds),
     ));
     return this.applyStructuralize(lines);

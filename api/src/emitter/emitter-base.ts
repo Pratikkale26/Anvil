@@ -329,6 +329,19 @@ export abstract class BaseEmitter {
     signerSeeds?: string,
   ): string;
 
+  // Toggle the RequiredMemoTransfers extension on a token account.
+  // Discriminator 30 (TokenInstruction::MemoTransferExtension) + 1 sub-byte
+  // (0 = Enable when `enable`, 1 = Disable); accounts = [account writable,
+  // owner signer]. `enable=true` is anchor-spl's memo_transfer_initialize,
+  // `enable=false` its memo_transfer_disable.
+  abstract emitT22MemoTransfer(
+    account: string,
+    owner: string,
+    tokenProgram: string,
+    enable: boolean,
+    signerSeeds?: string,
+  ): string;
+
   // Initialize the MintCloseAuthority extension on a mint. Single
   // instruction, no manage CPIs (close uses the regular close_account
   // CPI). Discriminator 25; payload = COption<Pubkey>;

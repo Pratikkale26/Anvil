@@ -1230,6 +1230,33 @@ ${prelude}    let burn_ix = ${crate}::instruction::burn_checked(
     )?;`;
   }
 
+  override emitT22MemoTransfer(
+    account: string,
+    owner: string,
+    tokenProgram: string,
+    enable: boolean,
+    signerSeeds?: string,
+  ): string {
+    // RequiredMemoTransfers toggle via spl_token_2022's extension builder.
+    // Native links spl_token_2022, so use the real instruction constructor.
+    const builder = enable
+      ? "enable_required_transfer_memos"
+      : "disable_required_transfer_memos";
+    const invokeType = signerSeeds ? "invoke_signed" : "invoke";
+    const signerArg = signerSeeds ? `\n        ${signerSeeds},` : "";
+    return `    // Token-2022 RequiredMemoTransfers ${enable ? "enable" : "disable"} — ${account}
+    let memo_transfer_ix = spl_token_2022::extension::memo_transfer::instruction::${builder}(
+        &spl_token_2022::id(),
+        ${account}.key,
+        ${owner}.key,
+        &[],
+    )?;
+    ${invokeType}(
+        &memo_transfer_ix,
+        &[${account}.clone(), ${owner}.clone(), ${tokenProgram}.clone()],${signerArg}
+    )?;`;
+  }
+
   override emitT22MintCloseAuthorityInitialize(
     mint: string,
     tokenProgram: string,

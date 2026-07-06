@@ -711,6 +711,28 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // anchor_spl::token_2022_extensions::memo_transfer::
+  // {memo_transfer_initialize, memo_transfer_disable}. Token-ACCOUNT-level
+  // extension (RequiredMemoTransfers). `memo_transfer_initialize` enables
+  // the require-incoming-memo flag; `memo_transfer_disable` clears it. Both
+  // anchor-spl helpers share the same `MemoTransfer { token_program_id,
+  // account, owner }` account struct, so a single IR kind carries an
+  // `enable` flag rather than two near-identical kinds. Wire format:
+  // discriminator 30 (TokenInstruction::MemoTransferExtension) + 1 sub-byte
+  // (0 = Enable, 1 = Disable); accounts = [account writable, owner signer].
+  z.object({
+    kind: z.literal("cpi_t22_memo_transfer"),
+    /** AccountInfo binding for the token account being updated. */
+    account: z.string(),
+    /** AccountInfo binding for the account owner (signs the toggle). */
+    owner: z.string(),
+    /** AccountInfo binding for the Token-2022 program account. */
+    tokenProgram: z.string(),
+    /** true = require memos (Enable / initialize); false = Disable. */
+    enable: z.boolean(),
+    signerSeeds: z.string().optional(),
+  }),
+
   // anchor_spl::token_2022_extensions::mint_close_authority::
   // mint_close_authority_initialize. Mint-level extension. The
   // close-authority is an Option<Pubkey>; when set, the holder can

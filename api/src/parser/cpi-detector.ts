@@ -249,6 +249,17 @@ export function detectCpi(
   if (isExtCall(funcText, "immutable_owner_initialize")) {
     return extractT22ImmutableOwnerInitialize(callNode, collector);
   }
+  // memo_transfer_initialize (Enable) / memo_transfer_disable (Disable) —
+  // same MemoTransfer account struct, one IR kind with an `enable` flag.
+  // Dispatched here (in the isExtCall chain, before the generic
+  // token_2022/token_interface block) so `memo_transfer_initialize`'s
+  // "transfer" substring can't misroute it to extractSplTransfer.
+  if (isExtCall(funcText, "memo_transfer_initialize")) {
+    return extractT22MemoTransfer(callNode, collector, true);
+  }
+  if (isExtCall(funcText, "memo_transfer_disable")) {
+    return extractT22MemoTransfer(callNode, collector, false);
+  }
   if (isExtCall(funcText, "mint_close_authority_initialize")) {
     return extractT22MintCloseAuthorityInitialize(callNode, collector);
   }
@@ -2608,6 +2619,65 @@ function extractT22ImmutableOwnerInitialize(
     kind: "cpi_t22_immutable_owner_initialize",
     tokenAccount: cleanAccountRef(tokenAccount),
     tokenProgram: cleanAccountRef(tokenProgram),
+    signerSeeds,
+  };
+}
+
+// ─── Token-2022 RequiredMemoTransfers extension toggle ─────────────────────
+//
+// Anchor source shape (both share the MemoTransfer account struct):
+//   memo_transfer_initialize(CpiContext::new(       // enable = true
+//       ctx.accounts.token_program.to_account_info(),
+//       MemoTransfer {
+//           token_program_id: ctx.accounts.token_program.to_account_info(),
+//           account: ctx.accounts.token_account.to_account_info(),
+//           owner: ctx.accounts.owner.to_account_info(),
+//       },
+//   ))?;
+//   memo_transfer_disable(CpiContext::new(...))?;    // enable = false
+//
+// Token-account-level extension. `enable` selects Enable vs Disable
+// sub-instruction; account shape is identical for both.
+function extractT22MemoTransfer(
+  callNode: SyntaxNode,
+  collector: WarningCollector | undefined,
+  enable: boolean,
+): BodyStatement {
+  const label = enable ? "memo_transfer_initialize" : "memo_transfer_disable";
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, `T22 ${label}`, callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(
+      collector,
+      `T22 ${label} (variable-bound CpiContext)`,
+      callNode,
+    );
+    return fallbackPassThrough(callNode);
+  }
+  const accountsStruct = findDescendant(firstArg, "struct_expression");
+  let account = "account";
+  let owner = "owner";
+  let tokenProgram = "token_program";
+  if (accountsStruct) {
+    account = extractStructField(accountsStruct, "account") ?? account;
+    owner = extractStructField(accountsStruct, "owner") ?? owner;
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+  }
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
+    ? extractSignerSeedsExpr(firstArg.text)
+    : undefined;
+  return {
+    kind: "cpi_t22_memo_transfer",
+    account: cleanAccountRef(account),
+    owner: cleanAccountRef(owner),
+    tokenProgram: cleanAccountRef(tokenProgram),
+    enable,
     signerSeeds,
   };
 }

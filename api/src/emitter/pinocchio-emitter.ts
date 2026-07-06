@@ -2084,6 +2084,47 @@ ${invokeCall}
     }`;
   }
 
+  override emitT22MemoTransfer(
+    account: string,
+    owner: string,
+    _tokenProgram: string,
+    enable: boolean,
+    signerSeeds?: string,
+  ): string {
+    // Token-2022 RequiredMemoTransfers toggle: discriminator 30
+    // (MemoTransferExtension) + 1 sub-byte (0 = Enable, 1 = Disable), no
+    // further payload. accounts = [account writable, owner signer].
+    // pinocchio_token has no helper for T22 extensions, so hand-roll the
+    // raw CPI against the const TOKEN_2022_PROGRAM_ID.
+    const subDisc = enable ? 0 : 1;
+    const invokeCall = signerSeeds
+      ? `        let __memo_seed_refs = ${signerSeeds}[0];
+        let mut __memo_pda_seeds: [pinocchio::instruction::Seed<'_>; 8] =
+            core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+        for (__memo_i, __memo_s) in __memo_seed_refs.iter().enumerate() {
+            if __memo_i >= __memo_pda_seeds.len() { return Err(ProgramError::InvalidSeeds); }
+            __memo_pda_seeds[__memo_i] = pinocchio::instruction::Seed::from(*__memo_s);
+        }
+        let __memo_signer = pinocchio::instruction::Signer::from(&__memo_pda_seeds[..__memo_seed_refs.len()]);
+        pinocchio::cpi::invoke_signed(&__memo_ix, &[${account}, ${owner}], &[__memo_signer])?;`
+      : `        pinocchio::cpi::invoke(&__memo_ix, &[${account}, ${owner}])?;`;
+    return `    // Token-2022 RequiredMemoTransfers ${enable ? "enable" : "disable"} — ${account}
+    {
+${TOKEN_2022_PROGRAM_ID_CONST}
+        let __memo_data = [30u8, ${subDisc}u8];
+        let __memo_metas = [
+            pinocchio::instruction::AccountMeta::writable(${account}.key()),
+            pinocchio::instruction::AccountMeta::readonly_signer(${owner}.key()),
+        ];
+        let __memo_ix = pinocchio::instruction::Instruction {
+            program_id: &TOKEN_2022_PROGRAM_ID,
+            accounts: &__memo_metas,
+            data: &__memo_data,
+        };
+${invokeCall}
+    }`;
+  }
+
   override emitT22MintCloseAuthorityInitialize(
     mint: string,
     _tokenProgram: string,
