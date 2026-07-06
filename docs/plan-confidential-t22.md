@@ -4,7 +4,7 @@
 
 **Scope:** 3 Token-2022 confidential extensions — `ConfidentialTransferMint`,
 `ConfidentialTransferFee`, `ConfidentialMintBurn`. These are fundamentally
-different from the 12 non-confidential T22 extensions that Anvil already
+different from the 13 non-confidential T22 extensions that Anvil already
 handles (byte-payload init + management, all byte-equal verified). The
 confidential family uses zero-knowledge proofs.
 

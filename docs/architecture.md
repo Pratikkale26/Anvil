@@ -135,7 +135,7 @@ Snapshot tests confirm "the emitter still emits the same string." Differential t
 - ~~MPL Core~~ **CLOSED** — full 12/12 catalog: CreateV2 through plugin family (2026-05-19).
 - ~~Pyth + Switchboard oracle CPIs~~ **CLOSED** — typed IR + hand-rolled byte deserialization on Pinocchio, byte-equal on Pyth (2026-05-19).
 - ~~Visitor as production default~~ **CLOSED** — handlers/ deleted, walker is sole emit path (2026-05-13).
-- ~~Token-2022 extension family~~ **CLOSED** — 12/12 non-confidential extensions supported (2026-05-13).
+- ~~Token-2022 extension family~~ **CLOSED** — 13/13 non-confidential extensions supported (RequiredMemoTransfers added 2026-07-06).
 
 ## Recommended next milestones
 
