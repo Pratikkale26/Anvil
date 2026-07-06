@@ -3498,16 +3498,29 @@ impl ZeroCopy for ${accName} {}`;
     let bodyCode = processedContent;
 
     // B1 — a `#[access_control(...)]` guard was stripped at parse and is NOT
-    // transpiled. Prepend a validator-error marker ("not yet supported" hits
-    // the unsafe-marker error branch in output-validator) so safe-by-default
-    // and both deploy gates refuse the output rather than silently shipping an
-    // unguarded handler. The marker is a comment — runtime behavior is intact.
+    // transpiled. This is a DELIBERATE refusal, not a temporary gap: the guard
+    // is an on-chain authorization check written as an arbitrary Rust function
+    // (typically against Anchor-typed `&Signer` / `&Account<T>` args), and
+    // Anvil's handler shape has neither a `Context` nor an Accounts struct.
+    // Mechanically rewriting an unbounded guard body would risk SILENTLY
+    // checking the wrong thing — a security downgrade that is strictly worse
+    // than refusing. So we prepend a validator-error marker (the `⚠️ Anvil:`
+    // prefix hits the unsafe-marker error branch in output-validator) and both
+    // deploy gates refuse the output rather than ship an unguarded handler. The
+    // marker is a comment — emitted runtime behavior is otherwise intact.
+    //
+    // The phrase "manual port required" is LOAD-BEARING: output-validator's
+    // isBroken check (output-validator.ts) keys the ERROR severity off it (and
+    // its siblings). Drop it and the marker downgrades to a warning and the
+    // deploy gates stop refusing. Keep it in the emitted text.
     if (instr.accessControl) {
       const guardOneLine = instr.accessControl.replace(/\s+/g, " ").trim();
       bodyCode =
-        `    // ${MARKER_ANVIL_PREFIX}: access_control guard not yet supported on this target — ` +
-        `original Anchor check \`${guardOneLine}\` is dropped, so this handler runs UNGUARDED. ` +
-        `Manual port required.\n` +
+        `    // ${MARKER_ANVIL_PREFIX}: access_control guard \`${guardOneLine}\` is an on-chain ` +
+        `authorization check Anvil does not transpile — faithfully translating an arbitrary guard ` +
+        `function is unbounded and a mis-translation would silently weaken the check, so this output ` +
+        `is refused rather than run UNGUARDED. Manual port required (re-express the guard against the ` +
+        `raw AccountInfo accounts, or keep this instruction on Anchor).\n` +
         bodyCode;
     }
 

@@ -7,9 +7,12 @@
  * guard away — so a guarded handler transpiled to a clean, compiling, UNGUARDED
  * handler that passes happy-path byte-equal. Auth-bypass / fund-loss class.
  *
- * The drop is now LOUD: a parser warning (access_control_dropped) bound to the
- * instruction + a `⚠️ Anvil … not yet supported` emit marker the output-validator
- * flags as an ERROR, so safe-by-default + both deploy gates refuse the output.
+ * The drop is now LOUD and DELIBERATE: transpiling an arbitrary security guard
+ * is an unbounded source rewrite that could silently check the wrong thing, so
+ * Anvil refuses by design (see emitter-base.ts). A parser warning
+ * (access_control_dropped) binds to the instruction + a `⚠️ Anvil:` emit marker
+ * the output-validator flags as an ERROR, so safe-by-default + both deploy gates
+ * refuse the output rather than ship an unguarded handler.
  */
 import { describe, test, expect } from "bun:test";
 import { parseAnchor } from "../src/parser/anchor-parser.ts";
@@ -90,7 +93,7 @@ describe("B1: dropped #[access_control] guard is LOUD (parser warning + validato
       const text = out.files.map((f) => f.content).join("\n");
 
       // (1) the guarded handlers carry the loud marker, naming the dropped check.
-      expect(text).toMatch(/⚠️ Anvil: access_control guard not yet supported/);
+      expect(text).toMatch(/⚠️ Anvil: access_control guard .* Anvil does not transpile/);
       expect(text).toMatch(/check_admin/);
       expect(text).toMatch(/valid_market/);
 
