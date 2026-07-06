@@ -37,6 +37,7 @@ import { parseAnchor } from "../src/parser/anchor-parser.ts";
 import { emitPinocchioFull } from "../src/emitter/pinocchio-emitter.ts";
 import { emitNativeFull } from "../src/emitter/native-emitter.ts";
 import { buildProjectScaffold } from "../src/emitter/project-scaffold.ts";
+import { rewriteDeclareIdForTest } from "../src/build/differential-build.ts";
 
 const CACHE_ROOT =
   process.env.ANVIL_DIFF_CACHE ??
@@ -810,7 +811,15 @@ ${fixture.anchorExtraDeps ?? ""}
 overflow-checks = true
 `;
   writeFileSync(join(scratch, "Cargo.toml"), cargoToml);
-  writeFileSync(join(scratch, "src/lib.rs"), fixture.anchorSource);
+  // Deploy the reference at fixture.programIdBase58 → its declare_id! must
+  // match, or Anchor's own entry check reverts 4100 DeclaredProgramIdMismatch
+  // on EVERY instruction. The production build path (differential-build.ts)
+  // already rewrites; this test harness path did not, so a fixture whose
+  // upstream declare_id! ≠ its deploy id (cpi-lever: source A6GUsa… vs deploy
+  // E64FVe…) reverted the reference init. buildAnvilSo mirrors this via
+  // rewriteDeclareId on the parsed source so both sides deploy at a matching
+  // id. Idempotent when they already agree (the common case).
+  writeFileSync(join(scratch, "src/lib.rs"), rewriteDeclareIdForTest(fixture.anchorSource, fixture.programIdBase58));
   const r = spawnSync(
     "cargo-build-sbf",
     ["--manifest-path", join(scratch, "Cargo.toml")],
@@ -835,8 +844,13 @@ async function buildAnvilSo<S extends DifferentialSetup>(
   fixture: DifferentialFixture<S>,
   outPath: string,
 ): Promise<void> {
+  // Rewrite declare_id! → deploy id BEFORE parse so the emitted ID const (and
+  // the #35 entry guard that checks it) matches the deploy address. Mirrors the
+  // Anchor-side rewrite in buildAnchorSo — without it, a fixture whose upstream
+  // declare_id! ≠ its deploy id makes the #35-guarded Anvil binary revert
+  // IncorrectProgramId (as Anchor reverts 4100), where the test expects success.
   const parsed = await parseAnchor(
-    fixture.anchorSource,
+    rewriteDeclareIdForTest(fixture.anchorSource, fixture.programIdBase58),
     fixture.externalIdls ? { externalIdls: fixture.externalIdls } : undefined,
   );
   if (!parsed.ok) {
