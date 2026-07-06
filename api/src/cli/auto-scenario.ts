@@ -70,6 +70,10 @@ export type AutoScenarioResult =
 const DEFAULT_VALUES: Record<string, unknown> = {
   u8: 1, u16: 1, u32: 1, u64: 1, u128: "1",
   i8: 1, i16: 1, i32: 1, i64: 1, i128: "1",
+  // f32/f64 — a non-trivial finite default (borsh rejects NaN). 1.5 is exactly
+  // representable in both IEEE-754 widths, so the encode/decode round-trips
+  // byte-identically across targets.
+  f32: 1.5, f64: 1.5,
   bool: true,
   String: "test",
   "Vec<u8>": [],

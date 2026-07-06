@@ -594,6 +594,18 @@ function serializeOne(value: unknown, type: string, fieldName: string, ir?: Sola
     }
     return buf;
   }
+  // IEEE-754 floats — borsh encodes f32/f64 as little-endian; NaN is rejected
+  // by borsh for determinism, so a synthesized default is always finite.
+  if (type === "f32" || type === "f64") {
+    const v = typeof value === "number" ? value
+      : typeof value === "string" ? parseFloat(value)
+      : NaN;
+    if (!Number.isFinite(v)) throw new Error(`arg '${fieldName}' is ${type} but value ${JSON.stringify(value)} isn't a finite number`);
+    const buf = Buffer.alloc(type === "f32" ? 4 : 8);
+    if (type === "f32") buf.writeFloatLE(v, 0);
+    else buf.writeDoubleLE(v, 0);
+    return buf;
+  }
   if (type === "bool") {
     if (typeof value !== "boolean") throw new Error(`arg '${fieldName}' is bool but value is ${typeof value}`);
     return Buffer.from([value ? 1 : 0]);
@@ -1946,6 +1958,15 @@ function readByType(
     if (signed && v >= 1n << BigInt(bits - 1)) v -= 1n << BigInt(bits);
     cursor.offset += byteLen;
     return bits <= 32 ? Number(v) : v.toString();
+  }
+  if (type === "f32" || type === "f64") {
+    const byteLen = type === "f32" ? 4 : 8;
+    if (cursor.offset + byteLen > data.length) return SHAPE_BAIL;
+    const v = type === "f32"
+      ? data.readFloatLE(cursor.offset)
+      : data.readDoubleLE(cursor.offset);
+    cursor.offset += byteLen;
+    return v;
   }
   if (type === "bool") {
     if (cursor.offset + 1 > data.length) return SHAPE_BAIL;
