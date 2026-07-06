@@ -39,6 +39,10 @@ import {
   irNeedsUnsignedSplMintToHelper,
   irNeedsSignedSplCloseAccountHelper,
   irNeedsUnsignedSplCloseAccountHelper,
+  irNeedsUnsignedSplApproveHelper,
+  irNeedsSignedSplApproveHelper,
+  irNeedsUnsignedSplRevokeHelper,
+  irNeedsSignedSplRevokeHelper,
   irNeedsInitAccountHelper,
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
@@ -498,7 +502,9 @@ export class PinocchioEmitter extends BaseEmitter {
       || irNeedsMplCoreRevokePluginAuthorityV1Helper(_ir)
       || irNeedsT22ConfidentialTransferInitMintHelper(_ir)
       || irNeedsT22ConfidentialTransferFeeInitHelper(_ir)
-      || irNeedsT22ConfidentialMintBurnInitMintHelper(_ir);
+      || irNeedsT22ConfidentialMintBurnInitMintHelper(_ir)
+      || irNeedsSignedSplApproveHelper(_ir)
+      || irNeedsSignedSplRevokeHelper(_ir);
     if (needsSeedSigner) {
       imports.push(`use pinocchio::instruction::{Seed, Signer};`);
     }
@@ -516,6 +522,12 @@ export class PinocchioEmitter extends BaseEmitter {
     }
     if (irNeedsHelper(_ir, "spl_close_account")) {
       imports.push(`use pinocchio_token::instructions::CloseAccount as TokenCloseAccount;`);
+    }
+    if (irNeedsHelper(_ir, "spl_approve")) {
+      imports.push(`use pinocchio_token::instructions::Approve as TokenApprove;`);
+    }
+    if (irNeedsHelper(_ir, "spl_revoke")) {
+      imports.push(`use pinocchio_token::instructions::Revoke as TokenRevoke;`);
     }
     if (irNeedsToken2022Helper(_ir)) {
       // Token-2022 CPIs are hand-rolled inline against the spl_token_2022
@@ -3832,6 +3844,84 @@ pub fn spl_token_transfer_signed(
     TokenCloseAccount {
         account,
         destination,
+        authority,
+    }
+    .invoke_signed(&[signer])
+}`);
+    }
+
+    // #38 — SPL Token approve / revoke (delegation). pinocchio_token exposes
+    // both; legacy SPL Token only (the detector excludes token_2022).
+    if (irNeedsUnsignedSplApproveHelper(ir)) {
+      helpers.push(`pub fn spl_token_approve(
+    source: &AccountInfo,
+    delegate: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+) -> ProgramResult {
+    TokenApprove {
+        source,
+        delegate,
+        authority,
+        amount,
+    }
+    .invoke()
+}`);
+    }
+
+    if (irNeedsSignedSplApproveHelper(ir)) {
+      helpers.push(`pub fn spl_token_approve_signed(
+    source: &AccountInfo,
+    delegate: &AccountInfo,
+    authority: &AccountInfo,
+    amount: u64,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let seed_group = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+    let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+    for (i, seed) in seed_group.iter().enumerate() {
+        if i >= seeds.len() { return Err(ProgramError::InvalidSeeds); }
+        seeds[i] = Seed::from(*seed);
+    }
+    let signer = Signer::from(&seeds[..seed_group.len()]);
+    TokenApprove {
+        source,
+        delegate,
+        authority,
+        amount,
+    }
+    .invoke_signed(&[signer])
+}`);
+    }
+
+    if (irNeedsUnsignedSplRevokeHelper(ir)) {
+      helpers.push(`pub fn spl_token_revoke(
+    source: &AccountInfo,
+    authority: &AccountInfo,
+) -> ProgramResult {
+    TokenRevoke {
+        source,
+        authority,
+    }
+    .invoke()
+}`);
+    }
+
+    if (irNeedsSignedSplRevokeHelper(ir)) {
+      helpers.push(`pub fn spl_token_revoke_signed(
+    source: &AccountInfo,
+    authority: &AccountInfo,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    let seed_group = signer_seeds.first().ok_or(ProgramError::InvalidSeeds)?;
+    let mut seeds: [Seed<'_>; 8] = core::array::from_fn(|_| Seed::from(&[][..]));
+    for (i, seed) in seed_group.iter().enumerate() {
+        if i >= seeds.len() { return Err(ProgramError::InvalidSeeds); }
+        seeds[i] = Seed::from(*seed);
+    }
+    let signer = Signer::from(&seeds[..seed_group.len()]);
+    TokenRevoke {
+        source,
         authority,
     }
     .invoke_signed(&[signer])

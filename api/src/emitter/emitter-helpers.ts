@@ -71,6 +71,12 @@ export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
             if (/token_2022::close_account\(/.test(code)) return true;
             if (/token_interface::close_account\(/.test(code)) return true;
             break;
+          case "spl_approve":
+            if (/token::approve\(/.test(code)) return true;
+            break;
+          case "spl_revoke":
+            if (/token::revoke\(/.test(code)) return true;
+            break;
         }
       }
       // Helpers are needed by pinocchio (whose emitter calls
@@ -94,6 +100,12 @@ export function irNeedsHelper(ir: SolanaIR, helperName: string): boolean {
           break;
         case "spl_close_account":
           if (stmt.kind === "cpi_spl_close_account") return true;
+          break;
+        case "spl_approve":
+          if (stmt.kind === "cpi_spl_approve") return true;
+          break;
+        case "spl_revoke":
+          if (stmt.kind === "cpi_spl_revoke") return true;
           break;
       }
     }
@@ -528,6 +540,33 @@ export function irNeedsUnsignedSplCloseAccountHelper(ir: SolanaIR): boolean {
     }
   }
   return false;
+}
+
+// #38 — approve/revoke only arise from explicit CPI statements (no constraint
+// path like close_account has), so the signed/unsigned split is a plain scan
+// over cpi_spl_approve / cpi_spl_revoke by presence of signerSeeds.
+export function irNeedsUnsignedSplApproveHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_spl_approve" && !stmt.signerSeeds)
+  );
+}
+
+export function irNeedsSignedSplApproveHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_spl_approve" && !!stmt.signerSeeds)
+  );
+}
+
+export function irNeedsUnsignedSplRevokeHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_spl_revoke" && !stmt.signerSeeds)
+  );
+}
+
+export function irNeedsSignedSplRevokeHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_spl_revoke" && !!stmt.signerSeeds)
+  );
 }
 
 export function irNeedsInitAccountHelper(ir: SolanaIR): boolean {

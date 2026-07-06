@@ -521,6 +521,36 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     tokenProgramArg: z.string().optional(),
   }),
 
+  // SPL Token approve CPI — delegate `amount` of a token account to `delegate`.
+  // Anchor: token::approve(CpiContext::new[_with_signer](tp, Approve { to, delegate, authority }[, seeds]), amount)
+  //   (Anchor's `to` is the source token account; pinocchio names it `source`.)
+  // Native:    spl_token::instruction::approve(...)
+  // Pinocchio: pinocchio_token::instructions::Approve { source, delegate, authority, amount }.invoke[_signed]
+  z.object({
+    kind: z.literal("cpi_spl_approve"),
+    /** Source token account (Anchor's `to` field). */
+    source: z.string(),
+    delegate: z.string(),
+    authority: z.string(),
+    amount: z.string(),
+    signerSeeds: z.string().optional(),
+    /** Only "token" (legacy SPL Token) is structurally emitted; token_2022 /
+     *  token_interface approve stays pass-through (safe refuse) for now. */
+    tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
+  }),
+
+  // SPL Token revoke CPI — clear the delegate on a token account.
+  // Anchor: token::revoke(CpiContext::new[_with_signer](tp, Revoke { source, authority }[, seeds]))
+  // Native:    spl_token::instruction::revoke(...)
+  // Pinocchio: pinocchio_token::instructions::Revoke { source, authority }.invoke[_signed]
+  z.object({
+    kind: z.literal("cpi_spl_revoke"),
+    source: z.string(),
+    authority: z.string(),
+    signerSeeds: z.string().optional(),
+    tokenProgram: z.enum(["token", "token_2022"]).default("token").optional(),
+  }),
+
   // Associated Token Account creation CPI
   // Anchor: anchor_spl::associated_token::create(...)
   // Native: spl_associated_token_account::instruction::create_associated_token_account(...)

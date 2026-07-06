@@ -719,6 +719,8 @@ type CpiSplMintTo = Extract<BodyStatement, { kind: "cpi_spl_mint_to" }>;
 type CpiSplBurn = Extract<BodyStatement, { kind: "cpi_spl_burn" }>;
 type CpiSplCloseAccount = Extract<BodyStatement, { kind: "cpi_spl_close_account" }>;
 type CpiSplSetAuthority = Extract<BodyStatement, { kind: "cpi_spl_set_authority" }>;
+type CpiSplApprove = Extract<BodyStatement, { kind: "cpi_spl_approve" }>;
+type CpiSplRevoke = Extract<BodyStatement, { kind: "cpi_spl_revoke" }>;
 type CpiT22InitializeMint2 = Extract<BodyStatement, { kind: "cpi_t22_initialize_mint2" }>;
 type CpiT22NonTransferableMintInit = Extract<BodyStatement, { kind: "cpi_t22_non_transferable_mint_initialize" }>;
 type CpiT22TransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_transfer_fee_initialize" }>;
@@ -819,6 +821,8 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_spl_burn",
   "cpi_spl_close_account",
   "cpi_spl_set_authority",
+  "cpi_spl_approve",
+  "cpi_spl_revoke",
   "cpi_t22_initialize_mint2",
   "cpi_t22_non_transferable_mint_initialize",
   "cpi_t22_transfer_fee_initialize",
@@ -948,6 +952,8 @@ export class AstVisitorBase {
       case "cpi_spl_burn":         return this.visitCpiSplBurn(stmt);
       case "cpi_spl_close_account":return this.visitCpiSplCloseAccount(stmt);
       case "cpi_spl_set_authority":return this.visitCpiSplSetAuthority(stmt);
+      case "cpi_spl_approve":      return this.visitCpiSplApprove(stmt);
+      case "cpi_spl_revoke":       return this.visitCpiSplRevoke(stmt);
       case "cpi_t22_initialize_mint2":
         return this.visitCpiT22InitializeMint2(stmt);
       case "cpi_t22_non_transferable_mint_initialize":
@@ -2562,6 +2568,124 @@ export class AstVisitorBase {
       ])),
     ];
     if (signerSeedsResolved) invokeArgs.push((tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved)));
+    out.push(exprStmt(tryPostfix(mlCall(
+      ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
+      invokeArgs,
+    ))));
+    return out;
+  }
+
+  /** #38 — token::approve. Legacy SPL Token only (the detector excludes
+   *  token_2022/token_interface). Pinocchio → spl_token_approve[_signed]
+   *  helper; Native → spl_token::instruction::approve + invoke[_signed].
+   *  Anchor's `Approve { to, delegate, authority }` → source=to. */
+  visitCpiSplApprove(stmt: CpiSplApprove): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: token::approve(${stmt.source} → delegate ${stmt.delegate})`);
+    const out: RustStmt[] = [];
+    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+      for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.authority)) {
+        out.push(rawLine(preludeLine));
+      }
+    }
+    const sourceVar = snakeCase(stmt.source);
+    const delegateVar = snakeCase(stmt.delegate);
+    const authorityName = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.authority))
+      : snakeCase(stmt.authority);
+    const amountExpr = w.resolveAmountExpr(stmt.amount);
+    const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
+    const amountStruct = tryStructuralizeExpr(amountExpr) ?? parseSimpleExpr(amountExpr);
+    const signerSeedsStruct = signerSeedsResolved
+      ? (tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved))
+      : null;
+    const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+    if (isPinocchio) {
+      const helperName = signerSeedsResolved ? "spl_token_approve_signed" : "spl_token_approve";
+      const args: RustExpr[] = [ident(sourceVar), ident(delegateVar), ident(authorityName), amountStruct];
+      if (signerSeedsStruct) args.push(signerSeedsStruct);
+      out.push(comment(`SPL Token approve — ${stmt.source} → delegate ${stmt.delegate}`));
+      out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+      return out;
+    }
+    // Native — let approve_ix = spl_token::instruction::approve(...) + invoke[_signed].
+    out.push(comment(`SPL Token approve — ${stmt.source} → delegate ${stmt.delegate}`));
+    out.push(letStmt(
+      "approve_ix",
+      tryPostfix(mlCall(path(["spl_token", "instruction", "approve"]), [
+        ref(call(path(["spl_token", "id"]), [])),
+        field(ident(sourceVar), "key"),
+        field(ident(delegateVar), "key"),
+        field(ident(authorityName), "key"),
+        ref(array([])),
+        amountStruct,
+      ])),
+    ));
+    const invokeArgs: RustExpr[] = [
+      ref(ident("approve_ix")),
+      ref(array([
+        methodCall(ident(sourceVar), "clone", []),
+        methodCall(ident(delegateVar), "clone", []),
+        methodCall(ident(authorityName), "clone", []),
+      ])),
+    ];
+    if (signerSeedsStruct) invokeArgs.push(signerSeedsStruct);
+    out.push(exprStmt(tryPostfix(mlCall(
+      ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
+      invokeArgs,
+    ))));
+    return out;
+  }
+
+  /** #38 — token::revoke. Legacy SPL Token only. Mirrors close_account minus
+   *  the destination/amount. Anchor's `Revoke { source, authority }`. */
+  visitCpiSplRevoke(stmt: CpiSplRevoke): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(`Transformed: token::revoke(${stmt.source})`);
+    const out: RustStmt[] = [];
+    if (shouldEmitSignerSeedsPrelude(w, stmt.signerSeeds)) {
+      for (const preludeLine of w.ensureSignerSeedsForAccount(stmt.authority)) {
+        out.push(rawLine(preludeLine));
+      }
+    }
+    const sourceVar = snakeCase(stmt.source);
+    const authorityName = stmt.signerSeeds
+      ? w.resolveAccountInfoVar(snakeCase(stmt.authority))
+      : snakeCase(stmt.authority);
+    const signerSeedsResolved = resolveSignerSeedsExpr(w, stmt.signerSeeds);
+    const signerSeedsStruct = signerSeedsResolved
+      ? (tryStructuralizeExpr(signerSeedsResolved) ?? parseSimpleExpr(signerSeedsResolved))
+      : null;
+    const isPinocchio = w.emitter.frameworkName === "Pinocchio";
+    if (isPinocchio) {
+      const helperName = signerSeedsResolved ? "spl_token_revoke_signed" : "spl_token_revoke";
+      const args: RustExpr[] = [ident(sourceVar), ident(authorityName)];
+      if (signerSeedsStruct) args.push(signerSeedsStruct);
+      out.push(comment(`SPL Token revoke — ${stmt.source}`));
+      out.push(exprStmt(tryPostfix(call(ident(helperName), args))));
+      return out;
+    }
+    // Native — let revoke_ix = spl_token::instruction::revoke(...) + invoke[_signed].
+    out.push(comment(`SPL Token revoke — ${stmt.source}`));
+    out.push(letStmt(
+      "revoke_ix",
+      tryPostfix(mlCall(path(["spl_token", "instruction", "revoke"]), [
+        ref(call(path(["spl_token", "id"]), [])),
+        field(ident(sourceVar), "key"),
+        field(ident(authorityName), "key"),
+        ref(array([])),
+      ])),
+    ));
+    const invokeArgs: RustExpr[] = [
+      ref(ident("revoke_ix")),
+      ref(array([
+        methodCall(ident(sourceVar), "clone", []),
+        methodCall(ident(authorityName), "clone", []),
+      ])),
+    ];
+    if (signerSeedsStruct) invokeArgs.push(signerSeedsStruct);
     out.push(exprStmt(tryPostfix(mlCall(
       ident(signerSeedsResolved ? "invoke_signed" : "invoke"),
       invokeArgs,

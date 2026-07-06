@@ -415,7 +415,7 @@ export function detectCpi(
     // Fall through — likely system_program::transfer; the system branch
     // below handles namespaced forms.
   }
-  if (funcText === "mint_to" || funcText === "burn" || funcText === "close_account" || funcText === "set_authority") {
+  if (funcText === "mint_to" || funcText === "burn" || funcText === "close_account" || funcText === "set_authority" || funcText === "approve" || funcText === "revoke") {
     const argsNode = callNode.childForFieldName("arguments");
     const args = argsNode ? getArguments(argsNode) : [];
     const firstArg = args[0];
@@ -424,6 +424,8 @@ export function detectCpi(
       if (funcText === "burn") return extractSplBurn(callNode, collector, cpiCtxLookup, cpiAccountsLookup);
       if (funcText === "close_account") return extractSplCloseAccount(callNode, collector);
       if (funcText === "set_authority") return extractSplSetAuthority(callNode, collector);
+      if (funcText === "approve") return extractSplApprove(callNode, collector);
+      if (funcText === "revoke") return extractSplRevoke(callNode, collector);
     }
   }
 
@@ -486,6 +488,25 @@ export function detectCpi(
   // and misrouted it to an SPL set_authority with the wrong program id.
   if (isSplTokenCall(funcText, "set_authority")) {
     return extractSplSetAuthority(callNode, collector);
+  }
+
+  // ── SPL Token approve / revoke (#38) — delegation pair ──
+  // Namespace-scoped like close_account/set_authority so a foreign
+  // `my_prog::cpi::approve` can't misroute to an SPL approve with the wrong
+  // program id. ONLY legacy `token::` is structurally emitted — token_2022 /
+  // token_interface approve|revoke are explicitly excluded (they'd need the
+  // 2022 program id / runtime dispatch) and fall through to pass_through
+  // (safe refuse), unlike close_account/set_authority which the token_2022
+  // branch above handles. isSplTokenCall matches the *_interface forms too,
+  // so the explicit exclusion below is what keeps a 2022 approve from being
+  // emitted against the legacy Tokenkeg program id (a silent miscompile).
+  const isT22OrInterface =
+    funcText.includes("token_2022::") || funcText.includes("token_interface::");
+  if (!isT22OrInterface && isSplTokenCall(funcText, "approve")) {
+    return extractSplApprove(callNode, collector);
+  }
+  if (!isT22OrInterface && isSplTokenCall(funcText, "revoke")) {
+    return extractSplRevoke(callNode, collector);
   }
 
   // ── Associated Token Account create ──
@@ -2207,6 +2228,86 @@ function extractSplCloseAccount(callNode: SyntaxNode, collector?: WarningCollect
     kind: "cpi_spl_close_account",
     account: cleanAccountRef(account),
     destination: cleanAccountRef(destination),
+    authority: cleanAccountRef(authority),
+    signerSeeds,
+  };
+}
+
+// ─── SPL Token approve (#38) ────────────────────────────────────────────────
+//
+// Anchor: token::approve(CpiContext::new[_with_signer](tp, Approve {
+//   to, delegate, authority }[, seeds]), amount)
+//   — Anchor's `to` is the source token account; pinocchio names it `source`.
+//
+// Inline-CpiContext only (same contract as close_account / set_authority): a
+// bare or variable-bound call can't yield the account struct without risking a
+// real token-approve CPI against fabricated accounts, so those fall back to
+// pass_through + a loud warning rather than a silent miscompile.
+function extractSplApprove(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "SPL token::approve", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(collector, "SPL token::approve (no inline CpiContext — bare call or variable-bound context)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const approveStruct = findDescendant(firstArg, "struct_expression");
+  if (!approveStruct) {
+    warnClassificationLost(collector, "SPL token::approve (no inline accounts struct)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const lastArg = args[args.length - 1];
+  if (!lastArg || lastArg === firstArg) {
+    warnClassificationLost(collector, "SPL token::approve (missing amount arg)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const source = extractStructField(approveStruct, "to") ?? "to";
+  const delegate = extractStructField(approveStruct, "delegate") ?? "delegate";
+  const authority = extractStructField(approveStruct, "authority") ?? "authority";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+
+  return {
+    kind: "cpi_spl_approve",
+    source: cleanAccountRef(source),
+    delegate: cleanAccountRef(delegate),
+    authority: cleanAccountRef(authority),
+    amount: cleanAmountExpr(lastArg.text),
+    signerSeeds,
+  };
+}
+
+// ─── SPL Token revoke (#38) ─────────────────────────────────────────────────
+//
+// Anchor: token::revoke(CpiContext::new[_with_signer](tp, Revoke {
+//   source, authority }[, seeds]))  — no amount. Inline-CpiContext only.
+function extractSplRevoke(callNode: SyntaxNode, collector?: WarningCollector): BodyStatement {
+  const argsNode = callNode.childForFieldName("arguments");
+  if (!argsNode) {
+    warnClassificationLost(collector, "SPL token::revoke", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const args = getArguments(argsNode);
+  const firstArg = args[0];
+  if (!firstArg || !firstArg.text.includes("CpiContext::")) {
+    warnClassificationLost(collector, "SPL token::revoke (no inline CpiContext — bare call or variable-bound context)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const revokeStruct = findDescendant(firstArg, "struct_expression");
+  if (!revokeStruct) {
+    warnClassificationLost(collector, "SPL token::revoke (no inline accounts struct)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const source = extractStructField(revokeStruct, "source") ?? "source";
+  const authority = extractStructField(revokeStruct, "authority") ?? "authority";
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+
+  return {
+    kind: "cpi_spl_revoke",
+    source: cleanAccountRef(source),
     authority: cleanAccountRef(authority),
     signerSeeds,
   };
