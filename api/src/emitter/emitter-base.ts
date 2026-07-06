@@ -3162,6 +3162,25 @@ impl ZeroCopy for ${accName} {}`;
       .map((a) => this.emitOwnerCheck(snakeCase(a.name)))
       .join("\n");
 
+    // #35 — an `Account<'info, T>` slot whose data type T comes from a
+    // `declare_program!`-imported external crate (`Account<'info,
+    // lever::accounts::PowerStatus>`, flagged `externalOwnerCrate` at parse).
+    // Anchor enforces the account's owner == that external program's id (3007
+    // AccountOwnedByWrongProgram) before any field read; Anvil can't resolve
+    // the external id without the crate's IDL address. Emit a loud review
+    // refusal (the validator classifies it error) rather than silently binding
+    // the account unchecked — the confused-deputy gap where an attacker passes
+    // an account owned by any program in this slot. Deliberately loud, not a
+    // guessed check: a wrong owner id would false-reject every valid call.
+    const externalOwnerRefusals = instr.accounts
+      .filter((a) => !a.isOptional && !a.isInit && a.externalOwnerCrate)
+      .map((a) =>
+        `    // ${MARKER_ANVIL_PREFIX}: account \`${snakeCase(a.name)}\` is typed ` +
+        `\`Account<'info, ${a.externalOwnerCrate}::…::${a.accountType}>\` from a declare_program!-imported ` +
+        `crate — Anchor enforces its external program-owner check (3007 AccountOwnedByWrongProgram) ` +
+        `which Anvil can't resolve without the \`${a.externalOwnerCrate}\` IDL address. Manual port required before deploy.`)
+      .join("\n");
+
     // F7 — a `SystemAccount<'info>` must be owned by the System Program (Anchor
     // err AccountNotSystemOwned). Anvil maps it to a bare &AccountInfo with no
     // check, so an attacker-owned account is accepted. Excludes init (the
@@ -3492,7 +3511,7 @@ impl ZeroCopy for ${accName} {}`;
     const renderedHasOkTail = /\bOk\s*\(\s*\(\s*\)\s*\)\s*;?\s*$/.test(bodyCode.trimEnd());
     const needsOkReturn = !bodyHasReturnOk && !bodyHasOkPassThrough && !renderedHasOkTail;
 
-    const preChecks = [signerChecks, writableCheck, ownerChecks, splOwnerChecks, systemAccountChecks, programIdentityChecks, ataAddressChecks].filter(Boolean).join("\n");
+    const preChecks = [signerChecks, writableCheck, ownerChecks, externalOwnerRefusals, splOwnerChecks, systemAccountChecks, programIdentityChecks, ataAddressChecks].filter(Boolean).join("\n");
 
     // `pub fn` so the multi-file layout's `pub use X::X;` re-export in
     // instructions/mod.rs resolves (CLI emits project-layout by default;

@@ -640,6 +640,24 @@ export async function parseAnchor(
       };
     }
 
+    // #35 — clear the external-owner-refusal flag for crates whose IDL was
+    // supplied: the declare_program CPI machinery already handles those
+    // accounts (passed to the external program via the rewritten invoke, which
+    // the callee owner-checks), so the local 3007 refusal would over-reject the
+    // SUPPORTED path. The refusal is reserved for genuinely-unknown external
+    // crates — no IDL means Anvil has zero knowledge of the program's id and
+    // can neither emit the real owner check nor let the CPI defend the account.
+    const knownExternalCrates = new Set(Object.keys(opts?.externalIdls ?? {}));
+    if (knownExternalCrates.size > 0) {
+      for (const instr of result.data.instructions) {
+        for (const acc of instr.accounts) {
+          if (acc.externalOwnerCrate && knownExternalCrates.has(acc.externalOwnerCrate)) {
+            delete acc.externalOwnerCrate;
+          }
+        }
+      }
+    }
+
       return { ok: true as const, ir: result.data };
     });
   } catch (e) {

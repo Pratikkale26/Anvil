@@ -448,6 +448,8 @@ function parseAccountField(
   if (isZeroCopy) ref.isZeroCopy = true;
   if (isLazy) ref.isLazy = true;
   if (isInterface) ref.isInterface = true;
+  const extOwner = externalOwnerCrate(rawType);
+  if (extOwner) ref.externalOwnerCrate = extOwner;
   return ref;
 }
 
@@ -786,6 +788,32 @@ function extractMaxLen(attrs: SyntaxNode[]): number[] | undefined {
 }
 
 // ─── Account type extraction ────────────────────────────────────────────────
+
+/**
+ * #35 — detect an `Account<'info, T>` / `InterfaceAccount<'info, T>` whose data
+ * type T is a qualified path from a `declare_program!`-imported external crate
+ * (`lever::accounts::PowerStatus`). Returns the leading crate segment
+ * (`"lever"`) so the emitter can loud-refuse the un-resolvable external
+ * owner check (3007). Returns null for:
+ *   - bare names (`Foo`)                → local state, normal owner check
+ *   - `crate::`/`self::`/`super::` paths → local, normal owner check
+ *   - `token_interface::`/`anchor_spl::` → SPL, handled by the SPL owner check
+ * Unwraps Option<…>/Box<…> so a boxed/optional external account is still caught.
+ */
+export function externalOwnerCrate(rawType: string): string | null {
+  let t = rawType.trim();
+  while ((t.startsWith("Option<") || t.startsWith("Box<")) && t.endsWith(">")) {
+    t = t.slice(t.indexOf("<") + 1, -1).trim();
+  }
+  const m = t.match(/^(?:Interface)?Account\s*<\s*'info\s*,\s*([\w:]+)\s*>/);
+  if (!m?.[1]) return null;
+  const path = m[1];
+  if (!path.includes("::")) return null;
+  const head = path.split("::")[0]!;
+  if (head === "crate" || head === "self" || head === "super") return null;
+  if (head === "token_interface" || head === "anchor_spl") return null;
+  return head;
+}
 
 export function extractAccountType(rawType: string): string {
   const t = rawType.trim();

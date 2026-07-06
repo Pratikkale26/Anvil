@@ -198,6 +198,18 @@ export const AccountRefSchema = z.object({
    */
   isInterface: z.boolean().optional(),
   /**
+   * #35 — set to the leading crate segment when the field is typed
+   * `Account<'info, T>` / `InterfaceAccount<'info, T>` where T is a qualified
+   * path from a `declare_program!`-imported EXTERNAL crate (e.g.
+   * `lever::accounts::PowerStatus` → `"lever"`). Anchor enforces the account's
+   * owner == that external program's id (3007 AccountOwnedByWrongProgram)
+   * before any field read; Anvil can't resolve the external id without the
+   * crate's IDL address, so the emitter loud-refuses rather than silently
+   * binding the account unchecked (a confused-deputy gap). Absent for local
+   * (`crate::`/bare-name) types, which take the normal program-id owner check.
+   */
+  externalOwnerCrate: z.string().optional(),
+  /**
    * F8 — for an account flattened out of a composite `#[derive(Accounts)]`
    * field, the `<outer>_<inner>_…` prefix that was prepended to its name. Lets
    * the emitter resolve a nested `has_one = <field>` to the SAME composite
