@@ -93,6 +93,7 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   // Token-2022 extension family fixtures (typed IR + structural emit).
   // Each demo exercises one extension's init + at least one manage CPI.
   "t22-default-account-state": "t22-default-account-state.rs",
+  "t22-confidential-transfer-init": "t22-confidential-transfer-init.rs",
   "t22-immutable-owner": "t22-immutable-owner.rs",
   "t22-memo-transfer": "t22-memo-transfer.rs",
   "t22-interest-bearing": "t22-interest-bearing.rs",
@@ -343,14 +344,13 @@ const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
   // (MPL Core slots S1-S10 ALL promoted out of deferred list 2026-05-19
   // — byte-equal differentials green against real mpl_core.so loaded into
   // LiteSVM. Tests at differential-mpl-core-*.test.ts.)
-  // Confidential T22 init slots (task #49) — IR + parser + emit + cargo-check
-  // shipped; byte-equal differential against spl_token_2022.so deferred
-  // because the setup needs an existing mint allocated with the
-  // ConfidentialTransferMint extension via the T22 extension-init flow,
-  // which is its own scenario harness work. cargo-check is the available
-  // signal until that wiring lands. Future arc: pair with a real auditor
-  // ElGamal pubkey + verify post-init mint extension state byte-equal.
-  "cpi_t22_confidential_transfer_initialize_mint",
+  // Confidential T22 init slots (task #49). ConfidentialTransferMint init is now
+  // byte-equal green (differential-t22-confidential-transfer-init.test.ts — the
+  // reference routes through anchor-spl's re-exported spl_token_2022 so it
+  // builds under SBF). The remaining two carry ElGamal / AeCiphertext crypto
+  // args (fee_init withdraw-withheld pubkey; mint_burn supply pubkey +
+  // decryptable supply), so their byte-equal harness is a follow-up; cargo-check
+  // + wire-format is the current signal.
   "cpi_t22_confidential_transfer_fee_init",
   "cpi_t22_confidential_mint_burn_initialize_mint",
   // (cpi_t22_initialize_mint2 promoted OUT of deferred 2026-05-31 — now has a

@@ -6,8 +6,13 @@
 //! v1 — they require a companion ProofInstruction CPI to the zk-program.
 
 use anchor_lang::prelude::*;
-use spl_token_2022::extension::confidential_transfer;
-use solana_program::program::invoke;
+// Route through anchor-spl's re-exported spl_token_2022 so the reference builds
+// with a solana version compatible with anchor-lang (a direct spl-token-2022
+// dep resolves an incompatible solana and fails the confidential processor
+// build). The detector matches the `confidential_transfer::instruction::
+// initialize_mint` suffix regardless of the crate prefix.
+use anchor_spl::token_2022::spl_token_2022::extension::confidential_transfer;
+use anchor_lang::solana_program::program::invoke;
 
 declare_id!("7EPEQWHoYysCt5PtVXVsi3jmgteWXScfnnRjLLCLZTYY");
 
