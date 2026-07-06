@@ -622,6 +622,45 @@ export function detectUnrecognizedCpiShape(text: string): string | null {
   return null;
 }
 
+/**
+ * #44 — recognize a compressed-NFT / state-compression CPI so the parser can
+ * raise a SPECIFIC, permanent refuse (`cnft_compression_unsupported`) instead
+ * of the generic `cpi_unrecognized_dropped`. These operations mutate a
+ * concurrent-Merkle-tree account whose byte-state can only be verified against
+ * the real spl_account_compression / spl_noop / bubblegum programs — none of
+ * which have a loadable `.so` in the differential harness, so byte-equal (the
+ * trust gate) is unbuildable and the refuse is by design.
+ *
+ * Detection keys on the crate namespaces (qualified calls — the common form
+ * in real cNFT code) and the three program-id constants. Comments and string
+ * literals are stripped by the caller-shared strip below so `// mpl_bubblegum`
+ * documentation doesn't false-positive. Returns a short family label for the
+ * warning detail, or null.
+ */
+export function detectCnftCompressionCpi(text: string): string | null {
+  const stripped = text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+
+  // Crate namespaces. `bubblegum` covers both `mpl_bubblegum::` and the older
+  // bare `bubblegum::`; account_compression covers `spl_account_compression::`
+  // and the bare `account_compression::` Anchor-cpi alias.
+  const bg = stripped.match(/\b((?:mpl_)?bubblegum)\s*::\s*(?:cpi\s*::\s*)?(\w+)\s*\(/);
+  if (bg) return `${bg[1]}::…::${bg[2]}(...)`;
+  const ac = stripped.match(/\b((?:spl_)?account_compression)\s*::\s*(?:cpi\s*::\s*)?(\w+)\s*\(/);
+  if (ac) return `${ac[1]}::…::${ac[2]}(...)`;
+  const noop = stripped.match(/\b(spl_noop|spl_account_compression\s*::\s*wrap_application_data_v1)\b/);
+  if (noop) return `spl_noop (log-wrapper)`;
+
+  // Program-id constants (rare in source, but a raw invoke may hardcode them).
+  if (/\bBGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY\b/.test(stripped)) return `bubblegum (by program id)`;
+  if (/\bcmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK\b/.test(stripped)) return `spl_account_compression (by program id)`;
+  if (/\bnoopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV\b/.test(stripped)) return `spl_noop (by program id)`;
+
+  return null;
+}
+
 // ─── Scope helpers ──────────────────────────────────────────────────────────
 
 /**

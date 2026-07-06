@@ -2196,6 +2196,18 @@ export const ParserWarningCodeSchema = z.enum([
    */
   "cpi_unrecognized_dropped",
   /**
+   * #44 — a compressed-NFT / state-compression CPI (mpl_bubblegum,
+   * spl_account_compression, spl_noop) was detected. Unlike a generic
+   * unrecognized CPI, this is a DELIBERATE, permanent refuse: the operation
+   * mutates a concurrent-Merkle-tree account whose correctness can only be
+   * proven byte-equal against the real spl_account_compression / spl_noop
+   * programs, which have no loadable reference in the differential harness.
+   * A distinct code (not `cpi_unrecognized_dropped`) so the message can say
+   * "keep this on Anchor" instead of "file a bug so we add an extractor".
+   * Strict-mode validator promotes to ERROR; the emit also refuses.
+   */
+  "cnft_compression_unsupported",
+  /**
    * P2 — parseConstraints saw a key in an `#[account(...)]` attribute body
    * that doesn't match any entry in KNOWN_CONSTRAINT_KEYS and isn't in
    * the explicit intentional-skip list (payer/space/realloc::*). Pre-fix

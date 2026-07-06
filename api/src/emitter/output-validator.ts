@@ -1398,10 +1398,17 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
     //     misroutes vs the Anchor original. Resolvable overrides (int /
     //     byte-array / byte-string / const-byte-array) are honored and never
     //     warn, so escalating this is narrow and won't over-refuse.
+    //   - cnft_compression_unsupported (#44): a compressed-NFT / state-
+    //     compression CPI (mpl_bubblegum / spl_account_compression / spl_noop)
+    //     landed in pass_through. Same silent-CPI-loss hazard as
+    //     cpi_unrecognized_dropped, but a permanent by-design refuse (no
+    //     loadable reference program → byte-equal unbuildable), so it must be
+    //     at least as strict.
     const severity: ValidationSeverity =
       w.code === "anchor_pattern_in_passthrough" ||
       w.code === "composite_accounts_field" ||
       w.code === "cpi_unrecognized_dropped" ||
+      w.code === "cnft_compression_unsupported" ||
       w.code === "instruction_discriminator_override_unsupported"
         ? "error"
         : "warning";

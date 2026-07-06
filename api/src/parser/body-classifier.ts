@@ -27,6 +27,7 @@ import {
   findLastTopLevelComma,
   containsAnchorPatterns,
   detectUnrecognizedCpiShape,
+  detectCnftCompressionCpi,
   getArguments,
   cleanAccountRef,
   cleanAmountExpr,
@@ -36,6 +37,18 @@ import { type WarningCollector, locFromNode } from "./warning-collector.js";
 import { type HelperCpiCatalogEntry, stripLeadingAmp } from "./helper-cpi-catalog.js";
 import { rewriteAnchorRequireMacros, rewriteRequireVariantsInCode } from "./project-source.js";
 import type { SourceLoc } from "../ir/schema.js";
+
+// #44 — shared detail for the compressed-NFT / state-compression refuse. Kept
+// as one constant so the control-flow and top-level classifier sites emit an
+// identical, honest message: this is a DELIBERATE permanent refuse, not a
+// missing extractor we'll add on request.
+const CNFT_REFUSE_DETAIL =
+  `Anvil deliberately does not transpile cNFT / spl-account-compression operations: they mutate a ` +
+  `concurrent-Merkle-tree account whose byte-state can only be proven against the real ` +
+  `spl_account_compression / spl_noop / bubblegum programs, which have no loadable reference for the ` +
+  `differential byte-equal gate — so correctness is unverifiable by Anvil's trust standard. This is a ` +
+  `permanent, by-design refuse (not a missing extractor): keep these instructions on Anchor. The emit ` +
+  `also refuses (validator error) so it cannot deploy silently.`;
 
 // ─── Hardcoded pattern lists (extracted for property testing) ──────────────
 //
@@ -870,16 +883,28 @@ function passThroughDefault(
   // anchor_spl::token::transfer(...) buried inside `if/for/match` would
   // otherwise pass through without any signal.
   if (collector) {
-    const cpiShape = detectUnrecognizedCpiShape(text);
-    if (cpiShape) {
+    const cnft = detectCnftCompressionCpi(text);
+    if (cnft) {
       collector.add({
-        code: "cpi_unrecognized_dropped",
+        code: "cnft_compression_unsupported",
         message:
-          `Unrecognized CPI shape "${cpiShape}" found inside control-flow pass-through. ` +
-          `Same hazard as a top-level miss: Pinocchio emit will strip it.`,
+          `Compressed-NFT / state-compression CPI "${cnft}" inside control-flow pass-through. ` +
+          CNFT_REFUSE_DETAIL,
         snippet: text.slice(0, 200),
         loc: locFromNode(node),
       });
+    } else {
+      const cpiShape = detectUnrecognizedCpiShape(text);
+      if (cpiShape) {
+        collector.add({
+          code: "cpi_unrecognized_dropped",
+          message:
+            `Unrecognized CPI shape "${cpiShape}" found inside control-flow pass-through. ` +
+            `Same hazard as a top-level miss: Pinocchio emit will strip it.`,
+          snippet: text.slice(0, 200),
+          loc: locFromNode(node),
+        });
+      }
     }
   }
   return {
@@ -1574,6 +1599,17 @@ function classifyExpressionStatement(
   // CPI loss class without this warning. Strict-mode validator promotes
   // the warning to ERROR via the parser-warnings surface.
   if (collector) {
+    const cnft = detectCnftCompressionCpi(text);
+    if (cnft) {
+      collector.add({
+        code: "cnft_compression_unsupported",
+        message:
+          `Compressed-NFT / state-compression CPI "${cnft}" fell into pass_through. ` +
+          CNFT_REFUSE_DETAIL,
+        snippet: text.slice(0, 200),
+        loc: locFromNode(node),
+      });
+    } else {
     const cpiShape = detectUnrecognizedCpiShape(text);
     if (cpiShape) {
       collector.add({
@@ -1588,6 +1624,7 @@ function classifyExpressionStatement(
         snippet: text.slice(0, 200),
         loc: locFromNode(node),
       });
+    }
     }
   }
 
