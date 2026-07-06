@@ -1884,7 +1884,11 @@ ${maybeRead}    let seeds: &[&[u8]] = &[
     // bytes for the discriminator + each fixed-size field + each variable-
     // length field's 4-byte length prefix (content can be 0).
     const isVariableLength = acc.fields.some(
-      (f) => f.type === "String" || /^Vec</.test(f.type),
+      (f) => f.type === "String" || /^Vec</.test(f.type)
+        // #41 — a custom struct/enum field that is transitively variable-length
+        // makes the whole account variable-length, so use the lenient MIN_LEN
+        // guard rather than TOTAL_LEN (which would reject valid shorter buffers).
+        || (!!this.customTypeDef(f.type) && this.isVariableLengthType(f.type)),
     );
     const guardConst = isVariableLength ? "MIN_LEN" : "TOTAL_LEN";
 

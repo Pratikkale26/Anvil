@@ -4139,14 +4139,31 @@ ${originalLines}
    * it's the lowest data-size that a syntactically valid account can have.
    */
   protected computeMinLen(acc: AccountDef): number {
-    const body = acc.fields.reduce((s, f) => {
-      if (f.type === "String" || /^Vec</.test(f.type)) return s + 4;
-      return s + this.resolveTypeSize(f.type, f.maxLen);
-    }, 0);
+    const body = acc.fields.reduce((s, f) => s + this.fieldMinLen(f.type, f.maxLen), 0);
     // #60 — disc length is variable when source carries
     // `#[account(discriminator = ...)]`. Default 8 bytes (sha256[..8]).
     const discLen = acc.customDiscriminator?.bytes.length ?? 8;
     return discLen + body;
+  }
+
+  /**
+   * Minimum on-disk byte contribution of a field for the MIN_LEN guard — the
+   * smallest a valid buffer can be (empty variable content). String / Vec each
+   * contribute their 4-byte length prefix; a nested variable-length struct (#41)
+   * recurses to the sum of its own fields' minimums (it has no discriminator).
+   * Fixed types keep their full resolveTypeSize. Option/top-level behavior is
+   * unchanged (falls through to resolveTypeSize) so existing byte-equal
+   * fixtures are unaffected — this only refines the nested-struct case, which
+   * previously used the MAX size and so over-rejected valid short buffers.
+   */
+  protected fieldMinLen(typeName: string, maxLen?: number[]): number {
+    const resolved = this.resolveTypeAlias(typeName);
+    if (resolved === "String" || /^Vec</.test(resolved)) return 4;
+    const typeDef = this.customTypeDef(resolved);
+    if (typeDef?.kind === "struct" && typeDef.fields && this.isVariableLengthType(resolved)) {
+      return typeDef.fields.reduce((s, f) => s + this.fieldMinLen(f.type), 0);
+    }
+    return this.resolveTypeSize(typeName, maxLen);
   }
 
   /**
@@ -4696,13 +4713,18 @@ ${allFields}
     }
     if (fixedArray || typeDef?.kind === "struct") {
       if (this.isVariableLengthType(typeName)) {
-        // #2 — this nested type transitively contains a String/Vec/Option (or a
-        // complex enum), so its on-disk length is content-dependent. The fixed
-        // `offset += ${size}` below would desync the cursor and silently corrupt
-        // every following field on Anchor interop. Loud-refuse rather than emit
-        // a wrong byte layout (a faithful variable-length nested read is a
-        // separate, larger change to the offset machinery).
-        return `        let ${fieldName}: ${typeName} = unimplemented!("anvil: account field '${fieldName}' has type '${typeName}', a nested variable-length type (String/Vec/Option/complex-enum member); reading it at a fixed byte offset would corrupt the fields after it — not supported");`;
+        // #41 — this nested type transitively contains a String/Vec/Option (or a
+        // complex enum), so its on-disk length is content-dependent. Read it via
+        // an open-ended slice + Borsh deserialize (the nested type derives
+        // BorshDeserialize) and advance `offset` by exactly the bytes consumed —
+        // the same technique the top-level String/Vec/Option branch below uses,
+        // and byte-identical to Anchor's borsh layout. A fixed `offset += size`
+        // would desync the cursor and corrupt every following field.
+        return `        let mut ${fieldName}_bytes: &[u8] = &__data_buf[offset..];
+        let __${fieldName}_before = ${fieldName}_bytes.len();
+        let ${fieldName}: ${typeName} = BorshDeserialize::deserialize(&mut ${fieldName}_bytes)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        offset += __${fieldName}_before - ${fieldName}_bytes.len();`;
       }
       return `        let mut ${fieldName}_bytes = &__data_buf[offset..offset + ${size}];
         let ${fieldName}: ${typeName} = BorshDeserialize::deserialize(&mut ${fieldName}_bytes)
@@ -4789,10 +4811,13 @@ ${allFields}
     }
     if (fixedArray || typeDef?.kind === "struct") {
       if (this.isVariableLengthType(typeName)) {
-        // #2 — mirror buildReadLine: a nested variable-length type written at a
-        // fixed offset desyncs the cursor and corrupts following fields. Loud-
-        // refuse instead of emitting a wrong byte layout.
-        return `        unimplemented!("anvil: account field '${fieldName}' has type '${typeName}', a nested variable-length type (String/Vec/Option/complex-enum member); writing it at a fixed byte offset would corrupt the fields after it — not supported");`;
+        // #41 — mirror buildReadLine: Borsh-serialize the nested variable-length
+        // value and advance the cursor by the actual byte count. Same technique
+        // as the top-level String/Vec/Option write branch below.
+        return `        let __${fieldName}_serialized = ::borsh::to_vec(&value.${fieldName})
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        __data_buf[offset..offset + __${fieldName}_serialized.len()].copy_from_slice(&__${fieldName}_serialized);
+        offset += __${fieldName}_serialized.len();`;
       }
       return `        {
             let mut ${fieldName}_bytes = &mut __data_buf[offset..offset + ${size}];

@@ -3098,7 +3098,11 @@ ${this.emitZeroCopyTraitImpls(acc.name)}`;
     // full rationale. When any field is String or Vec, the actual buffer
     // can be smaller than TOTAL_LEN — use MIN_LEN guard instead.
     const isVariableLength = acc.fields.some(
-      (f) => f.type === "String" || /^Vec</.test(f.type),
+      (f) => f.type === "String" || /^Vec</.test(f.type)
+        // #41 — a custom struct/enum field that is transitively variable-length
+        // makes the whole account variable-length, so use the lenient MIN_LEN
+        // guard rather than TOTAL_LEN (which would reject valid shorter buffers).
+        || (!!this.customTypeDef(f.type) && this.isVariableLengthType(f.type)),
     );
     const guardConst = isVariableLength ? "MIN_LEN" : "TOTAL_LEN";
     const { len: discLen, expr: discExpr } = this.accountDiscInfo(acc);
