@@ -284,7 +284,13 @@ function encodeArgStmt(
     const v = `__anvil_opt${depth}`;
     const innerStmt = encodeArgStmt(buf, v, (idlType as { option: unknown }).option, types, depth + 1);
     if (innerStmt === null) return null;
-    return `match ${argExpr} { Some(${v}) => { ${buf}.push(1u8); ${innerStmt} }, None => { ${buf}.push(0u8); } }`;
+    // Bind the scrutinee to a typed local first: a literal `None` arg (e.g.
+    // `create_tree(ctx, d, b, None)`) gives rustc no way to infer Option's T,
+    // so a bare `match None { … }` is E0282. The IDL knows the type, so annotate.
+    const optionRustType = rustTypeOf(idlType, new Set());
+    if (optionRustType === null) return null;
+    const scrut = `__anvil_optarg${depth}`;
+    return `{ let ${scrut}: ${optionRustType} = ${argExpr}; match ${scrut} { Some(${v}) => { ${buf}.push(1u8); ${innerStmt} }, None => { ${buf}.push(0u8); } } }`;
   }
   // Borsh Vec<T> = u32 LE length + each element in order. The IDL spells it
   // `{ vec: <T> }`. Iterate by value (the arg is consumed once); the element

@@ -141,7 +141,7 @@ describe("#2 (S4) — declare_program! CPI rewrite → cpi_custom.canonical", ()
     expect(data).toContain("extend_from_slice(&name)");          // raw bytes, not .as_bytes()
   });
 
-  test("Option<u64> arg → Borsh tag + inner (match encoding)", async () => {
+  test("Option<u64> arg → Borsh tag + inner (typed-binding match encoding)", async () => {
     const idl = {
       ...LEVER_IDL,
       instructions: [{ name: "switch_power", discriminator: [226, 238, 56, 172, 191, 45, 122, 87],
@@ -149,7 +149,10 @@ describe("#2 (S4) — declare_program! CPI rewrite → cpi_custom.canonical", ()
     };
     const ir = await irOf(HAND, { lever: idl });
     const data = cpiOf(ir)?.canonical?.instruction?.data ?? "";
-    expect(data).toContain("match name");
+    // Scrutinee bound to a typed local so a literal `None` arg has a known type
+    // (bare `match None` was E0282). See external-cpi.ts option-encoding note.
+    expect(data).toMatch(/let __anvil_optarg\d+: Option<u64> = name;/);
+    expect(data).toMatch(/match __anvil_optarg\d+/);
     expect(data).toContain("push(1u8)");                  // Some tag
     expect(data).toContain("push(0u8)");                  // None tag
     expect(data).toContain("as u64).to_le_bytes()");      // inner u64

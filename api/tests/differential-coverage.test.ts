@@ -261,6 +261,9 @@ const EXTERNAL_FIXTURES = new Set<string>([
   // #44 — state-compression (cNFT primitive) append via declare_program! + IDL,
   // byte-equal against the mainnet spl_account_compression + spl_noop .so's.
   "compression-append",
+  // #44 — Bubblegum create_tree via declare_program! + IDL, byte-equal against
+  // the mainnet bubblegum + spl_account_compression + spl_noop .so's.
+  "bubblegum-create-tree",
   // Legacy SPL transfer_checked misroute byte-equal gate (this fix).
   "spl-transfer-checked-legacy",
   // Original #2 hand→lever declare_program! CPI + the read-only-owner reject.

@@ -1,0 +1,71 @@
+{
+  "address": "BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY",
+  "metadata": {
+    "name": "mpl_bubblegum",
+    "version": "0.7.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "create_tree",
+      "discriminator": [
+        165,
+        83,
+        136,
+        142,
+        89,
+        202,
+        47,
+        220
+      ],
+      "accounts": [
+        {
+          "name": "tree_authority",
+          "writable": true
+        },
+        {
+          "name": "merkle_tree",
+          "writable": true
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "tree_creator",
+          "signer": true
+        },
+        {
+          "name": "log_wrapper"
+        },
+        {
+          "name": "compression_program"
+        },
+        {
+          "name": "system_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "max_depth",
+          "type": "u32"
+        },
+        {
+          "name": "max_buffer_size",
+          "type": "u32"
+        },
+        {
+          "name": "public",
+          "type": {
+            "option": "bool"
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [],
+  "events": [],
+  "errors": [],
+  "types": []
+}
