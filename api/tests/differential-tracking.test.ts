@@ -102,15 +102,19 @@ const TRACKED: Array<TrackedDifferential<MakeOfferCtx>> = [
 
 const anyExist = TRACKED.some((c) => existsSync(c.pathProbe));
 
+// STRICT_FIXTURES converts a missing tracked fixture into a throw so CI
+// surfaces it instead of reporting green. Hoisted above the anyExist branch so
+// BOTH the per-fixture path-missing case (inside) AND the whole-suite-absent
+// case (F6, the else branch) honor it — previously the else branch skipped
+// green even under strict mode, so the entire byte-equal gate could verify
+// NOTHING while showing green if the fixture repos never cloned in CI.
+const STRICT_FIXTURES = process.env.ANVIL_TEST_STRICT_FIXTURES === "1";
+
 if (anyExist) {
   // Auto-clone any tracked sources that aren't on disk yet — same affordance
   // as the binary fixtures so a fresh dev box doesn't silently skip.
   ensureEscrowCloned();
 
-  // STRICT_FIXTURES converts the path-missing silent-return into a
-  // throw so CI surfaces an unexpectedly-missing tracked fixture
-  // instead of reporting it as green.
-  const STRICT_FIXTURES = process.env.ANVIL_TEST_STRICT_FIXTURES === "1";
   describe("Differential tracking [non-blocking ceilings]", () => {
     for (const tc of TRACKED) {
       test(`${tc.id} (≤${tc.maxMismatches})`, async () => {
@@ -190,6 +194,20 @@ if (anyExist) {
         expect(mismatches.length).toBeLessThanOrEqual(tc.maxMismatches);
       }, 600_000);
     }
+  });
+} else if (STRICT_FIXTURES) {
+  // F6 — under strict mode (CI) a completely-absent fixture set is a HARD
+  // FAILURE, not a green skip: the byte-equal regression gate must actually
+  // run where it's relied upon. Locally (no strict flag) it still skips so a
+  // fresh dev box without the cloned repos isn't blocked.
+  describe("Differential tracking [STRICT — fixtures required]", () => {
+    test("tracked byte-equal fixtures must be present under ANVIL_TEST_STRICT_FIXTURES=1", () => {
+      throw new Error(
+        "No tracked differential sources present, but ANVIL_TEST_STRICT_FIXTURES=1 requires them. " +
+        "The byte-equal regression gate would otherwise skip green and verify nothing. " +
+        "Ensure the fixture repos cloned (see ensureRepoCloned helpers in fixtures/).",
+      );
+    });
   });
 } else {
   describe("Differential tracking [SKIPPED — no fixture sources cloned]", () => {
