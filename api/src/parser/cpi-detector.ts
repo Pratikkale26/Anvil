@@ -2430,7 +2430,17 @@ function extractT22InitializeMint2(
     : undefined;
 
   // The remaining args are: decimals, mint_authority, freeze_authority.
-  const decimals = args[1]?.text.trim() ?? "0";
+  // F1 — decimals is a REQUIRED positional arg; a missing one previously
+  // defaulted to "0" SILENTLY (no warning, no marker), which would emit a
+  // 0-decimal mint that compiles clean. Refuse instead — a guessed decimals
+  // is a correctness bug, and refuse > silent-wrong (matches this function's
+  // other unresolved-arg guards above).
+  const decimalsArg = args[1]?.text.trim();
+  if (decimalsArg === undefined) {
+    warnClassificationLost(collector, "T22 initialize_mint2 (decimals arg unresolved)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const decimals = decimalsArg;
   const mintAuthority = args[2]?.text.trim() ?? "&Pubkey::default()";
   const freezeAuthority = args[3]?.text.trim() ?? "None";
 
@@ -3269,9 +3279,18 @@ function extractT22TransferCheckedWithFee(
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
     ? extractSignerSeedsExpr(firstArg.text)
     : undefined;
-  const amount = cleanAmountExpr(args[1]?.text ?? "0u64");
-  const decimals = cleanAmountExpr(args[2]?.text ?? "0u8");
-  const fee = cleanAmountExpr(args[3]?.text ?? "0u64");
+  // F1 — amount, decimals, and fee are REQUIRED positional args. A missing
+  // one previously defaulted to 0 SILENTLY, emitting a transfer with the
+  // wrong (zero) amount/decimals/fee that compiles clean. The on-chain T22
+  // decimals check would then reject or (worse) a 0-fee transfer would move
+  // funds without the withheld fee. Refuse rather than guess.
+  if (args[1]?.text === undefined || args[2]?.text === undefined || args[3]?.text === undefined) {
+    warnClassificationLost(collector, "T22 transfer_checked_with_fee (amount/decimals/fee unresolved)", callNode);
+    return fallbackPassThrough(callNode);
+  }
+  const amount = cleanAmountExpr(args[1].text);
+  const decimals = cleanAmountExpr(args[2].text);
+  const fee = cleanAmountExpr(args[3].text);
   return {
     kind: "cpi_t22_transfer_checked_with_fee",
     source: cleanAccountRef(source),
