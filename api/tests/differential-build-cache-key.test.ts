@@ -12,6 +12,7 @@
  */
 import { describe, test, expect } from "bun:test";
 import { rewriteDeclareIdForTest } from "../src/build/differential-build.ts";
+import { decodeBase58 } from "../src/parser/project-source.ts";
 
 const SAMPLE_ANCHOR = `
 use anchor_lang::prelude::*;
@@ -31,6 +32,17 @@ use solana_program::pubkey;
 pub const ID: Pubkey = pubkey!("11111111111111111111111111111111");
 `;
 
+// The shapes Anvil's G19 emit ACTUALLY produces for the program-id const —
+// a raw byte-array literal, not a declare_id!/pubkey! string. Pinocchio emits
+// a bare `[u8; 32]`; Native wraps it in `Pubkey::new_from_array`. Before the
+// byte-array rewrite these slipped past rewriteDeclareId, so a deploy-id
+// override never reached the emit and the #35 entry guard reverted every init
+// on the Anvil side with IncorrectProgramId (spurious byte-divergence).
+const ID_BYTES_ORIG =
+  "1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1";
+const SAMPLE_PINOCCHIO_CONST = `pub const ID: Pubkey = [${ID_BYTES_ORIG}];`;
+const SAMPLE_NATIVE_CONST = `pub const ID: Pubkey = Pubkey::new_from_array([${ID_BYTES_ORIG}]);`;
+
 const NEW_ID = "Counter111111111111111111111111111111111111";
 
 describe("rewriteDeclareId: Anchor / Pinocchio / Native shapes", () => {
@@ -49,6 +61,28 @@ describe("rewriteDeclareId: Anchor / Pinocchio / Native shapes", () => {
     const out = rewriteDeclareIdForTest(SAMPLE_NATIVE, NEW_ID);
     expect(out).toContain(`pubkey!("${NEW_ID}")`);
     expect(out).not.toContain('pubkey!("11111111111111111111111111111111")');
+  });
+
+  test("Anvil G19 Pinocchio byte-array ID const rewritten to override bytes", () => {
+    const expected = `[${decodeBase58(NEW_ID)!.join(", ")}]`;
+    const out = rewriteDeclareIdForTest(SAMPLE_PINOCCHIO_CONST, NEW_ID);
+    expect(out).toContain(expected);
+    expect(out).not.toContain(ID_BYTES_ORIG);
+  });
+
+  test("Anvil G19 Native new_from_array byte-array ID const rewritten", () => {
+    const expected = `new_from_array([${decodeBase58(NEW_ID)!.join(", ")}])`;
+    const out = rewriteDeclareIdForTest(SAMPLE_NATIVE_CONST, NEW_ID);
+    expect(out).toContain(expected);
+    expect(out).not.toContain(ID_BYTES_ORIG);
+  });
+
+  test("byte-array rewrite does NOT touch a `[0u8; 32]` stub const", () => {
+    // emitter-base-utils emits zeroed Pubkey stubs like `[0u8; 32]`; the byte
+    // rewrite must only fire on a comma-separated numeric literal, never on a
+    // repeat-expression, or it would corrupt those stubs.
+    const stub = `pub const FEED: Pubkey = Pubkey::new_from_array([0u8; 32]);`;
+    expect(rewriteDeclareIdForTest(stub, NEW_ID)).toBe(stub);
   });
 
   test("undefined programIdBase58 is a no-op", () => {

@@ -31,6 +31,7 @@ import {
 import { join, dirname as nodeDirname } from "node:path";
 import { createHash } from "node:crypto";
 import type { SolanaIR } from "../ir/schema.js";
+import { decodeBase58 } from "../parser/project-source.js";
 import { spawnSandboxed, sandboxedEnv, assertManifestFetchSafe } from "./sandbox.js";
 import { AnvilError, ErrorCode } from "../errors.js";
 
@@ -1002,6 +1003,26 @@ function rewriteDeclareId(source: string, programIdBase58?: string): string {
     /(\bpubkey!\s*\(\s*")[1-9A-HJ-NP-Za-km-z]{32,44}("\s*\))/g,
     `$1${programIdBase58}$2`,
   );
+  // Anvil G19 emit shape: the program-id const is a raw byte-array literal,
+  // NOT a `declare_id!`/`pubkey!` string — `pub const ID: Pubkey = [n, …];`
+  // (Pinocchio) or `= Pubkey::new_from_array([n, …]);` (Native). The two
+  // string-form rewrites above never touch it, so before this an overridden
+  // `programIdBase58` reached the Anchor source's `declare_id!` but NOT the
+  // Anvil emit's `ID` const. Harmless until #35 added the entry guard
+  // (`if program_id != &ID { return Err(IncorrectProgramId) }`) — which made
+  // `ID` load-bearing for EVERY program: any differential that deploys at an
+  // id other than the source's declared id (the auto-scenario / auto-corpus
+  // path, which uses one shared deploy id) then reverted every init on the
+  // Anvil side with IncorrectProgramId while Anchor succeeded — a spurious
+  // byte-divergence masking correct emit. Rewrite the byte list with the SAME
+  // decoder the emitter used to produce it, so the bytes line up exactly.
+  const overrideBytes = decodeBase58(programIdBase58);
+  if (overrideBytes && overrideBytes.length === 32) {
+    out = out.replace(
+      /(pub const ID\s*:\s*Pubkey\s*=\s*(?:[\w:]*\bnew_from_array\s*\(\s*)?\[)[\s\d,]*(\])/,
+      `$1${overrideBytes.join(", ")}$2`,
+    );
+  }
   return out;
 }
 
