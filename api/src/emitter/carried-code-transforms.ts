@@ -275,22 +275,29 @@ export function rewriteRentSysvarMethods(body: string): string {
 }
 
 /**
- * Replace panic-able `.try_into().unwrap()` with the safe `?` form. Both
- * SBF targets must surface conversion errors as ProgramError::Invalid-
- * AccountData rather than panicking on-chain. Anchor source carries this
- * pattern frequently (squads-mpl, marinade, helium); the rewrite keeps
- * the emit's control flow sound without rewriting the user's source.
+ * Replace panic-able `.try_into().unwrap()` AND the bare `.try_into()?` form
+ * with the safe, compilable `.try_into().map_err(…)?`. Both SBF targets return
+ * `Result<_, ProgramError>`, and `ProgramError` implements neither
+ * `From<TryFromIntError>` (int downcasts — `let x: u64 = big_u128.try_into()?`,
+ * ubiquitous in DeFi math) nor `From<TryFromSliceError>` (`<[u8;32]>::try_from
+ * (slice)?`). So a bare `.try_into()?` — valid in Anchor, whose `Error` DOES
+ * carry those `From` impls — fails E0277 on the stripped targets. Anchor source
+ * carries both patterns frequently (squads-mpl, marinade, helium); the rewrite
+ * keeps the emit's control flow sound without touching the user's source.
  *
- * Targets the exact `.try_into().unwrap()` form. Plain `.unwrap()` after
- * other Result-producing calls is left alone (warning-only); we only
- * automatically rewrite when the upstream `.try_into()` makes the
- * intent unambiguous.
+ * `.try_into().map_err(…)?` (the already-safe form the internal emit produces)
+ * is untouched — after `.try_into()` it is `.map_err`, not `.unwrap()`/`?`.
  */
 export function rewriteTryIntoUnwrap(body: string): string {
-  return body.replace(
-    /\.try_into\(\)\.unwrap\(\)/g,
-    `.try_into().map_err(|_| ProgramError::InvalidAccountData)?`,
-  );
+  return body
+    .replace(
+      /\.try_into\(\)\.unwrap\(\)/g,
+      `.try_into().map_err(|_| ProgramError::InvalidAccountData)?`,
+    )
+    .replace(
+      /\.try_into\(\)\?/g,
+      `.try_into().map_err(|_| ProgramError::InvalidAccountData)?`,
+    );
 }
 
 /**
