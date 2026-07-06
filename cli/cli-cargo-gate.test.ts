@@ -5,8 +5,8 @@
  * This file spawns the CLI as a subprocess to lock the exit-code contract that
  * users see: default-on auto, --no-cargo-check escape, --cargo-check force.
  *
- * The fixtures share /home/pk/Anvil/api/src/demo-programs/counter.rs (known-
- * good) and the token-proxy if-let shape (known-broken at cargo).
+ * The fixtures share api/src/demo-programs/counter.rs (known-good) and the
+ * token-proxy if-let shape (known-broken at cargo).
  */
 import { describe, test, expect, beforeAll } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -18,7 +18,9 @@ const CARGO_AVAILABLE = (() => {
   return r.status === 0;
 })();
 
-const REPO_ROOT = "/home/pk/Anvil";
+// Repo root derived from this test file's location (cli/) so the suite
+// runs on any checkout, not just the original author's machine.
+const REPO_ROOT = join(import.meta.dir, "..");
 const CLI_ENTRY = join(REPO_ROOT, "cli", "anvil.ts");
 const SCRATCH = "/tmp/anvil-cli-gate-tests";
 

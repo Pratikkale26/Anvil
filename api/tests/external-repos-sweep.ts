@@ -174,5 +174,8 @@ for (let i = 0; i < ALL.length; i++) {
   if (i < ALL.length - 1) await new Promise(r => setTimeout(r, 2500));
 }
 
-writeFileSync("/home/pk/Anvil/reports/external-repos-sweep.json", JSON.stringify(results, null, 2));
-process.stderr.write(`[external] report → /home/pk/Anvil/reports/external-repos-sweep.json\n`);
+// Repo root derived from this file's location (api/tests/) so the report
+// lands under <checkout>/reports on any machine, not a hardcoded home dir.
+const outPath = join(import.meta.dir, "..", "..", "reports", "external-repos-sweep.json");
+writeFileSync(outPath, JSON.stringify(results, null, 2));
+process.stderr.write(`[external] report → ${outPath}\n`);

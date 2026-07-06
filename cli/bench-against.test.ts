@@ -9,9 +9,12 @@
 import { describe, test, expect } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { existsSync, readdirSync } from "node:fs";
 
-const REPO_ROOT = "/home/pk/Anvil";
+// Repo root derived from this test file's location (cli/) so the suite
+// runs on any checkout, not just the original author's machine.
+const REPO_ROOT = join(import.meta.dir, "..");
 const CLI_ENTRY = join(REPO_ROOT, "cli", "anvil.ts");
 
 function runCli(args: string[]): { code: number; out: string } {
@@ -45,7 +48,7 @@ describe("anvil bench --against — validation + routing", () => {
 });
 
 function findCounterSos(): { anchor: string; anvil: string } | null {
-  const cacheRoot = "/home/pk/.anvil-diff-cache";
+  const cacheRoot = join(homedir(), ".anvil-diff-cache");
   if (!existsSync(cacheRoot)) return null;
   for (const dir of readdirSync(cacheRoot)) {
     if (!/^counter-[0-9a-f]+$/.test(dir)) continue;

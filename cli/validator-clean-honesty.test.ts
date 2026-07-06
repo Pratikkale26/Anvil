@@ -11,7 +11,9 @@ import { describe, test, expect } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
-const REPO_ROOT = "/home/pk/Anvil";
+// Repo root derived from this test file's location (cli/) so the suite
+// runs on any checkout, not just the original author's machine.
+const REPO_ROOT = join(import.meta.dir, "..");
 const CLI_ENTRY = join(REPO_ROOT, "cli", "anvil.ts");
 const COUNTER = join(REPO_ROOT, "api", "src", "demo-programs", "counter.rs");
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");

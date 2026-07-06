@@ -7,8 +7,8 @@ import { metrics } from "../metrics.js";
  * Pure SSR: snapshot is rendered into the initial HTML so visitors see live
  * numbers immediately. A small inline script polls /metrics every 30 s and
  * mutates the DOM in place. No build step, no external libraries — colors and
- * layout come straight from /home/pk/Anvil/web/app/globals.css so the page
- * matches the workbench dark theme.
+ * layout come straight from web/app/globals.css so the page matches the
+ * workbench dark theme.
  */
 export const metricsDashboardHandler: RequestHandler = (_req, res) => {
   const snap = metrics.snapshot();

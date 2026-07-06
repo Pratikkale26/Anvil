@@ -240,6 +240,8 @@ for (const f of FIXTURES) {
   if (r.invoke && !r.invoke.ok) process.stderr.write(`  invoke err: ${r.invoke.error?.slice(0, 200)}\n`);
 }
 
-const outPath = "/home/pk/Anvil/reports/localnet-deploy-sweep.json";
+// Repo root derived from this file's location (api/tests/) so the report
+// lands under <checkout>/reports on any machine, not a hardcoded home dir.
+const outPath = join(import.meta.dir, "..", "..", "reports", "localnet-deploy-sweep.json");
 writeFileSync(outPath, JSON.stringify(results, null, 2));
 process.stderr.write(`[localnet] report → ${outPath}\n`);

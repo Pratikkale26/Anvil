@@ -187,5 +187,8 @@ for (const prog of PROGRAMS) {
   results.push(r);
 }
 
-writeFileSync("/home/pk/Anvil/reports/external-deploy-sweep.json", JSON.stringify(results, null, 2));
-process.stderr.write(`\n[external-deploy] report → /home/pk/Anvil/reports/external-deploy-sweep.json\n`);
+// Repo root derived from this file's location (api/tests/) so the report
+// lands under <checkout>/reports on any machine, not a hardcoded home dir.
+const outPath = join(import.meta.dir, "..", "..", "reports", "external-deploy-sweep.json");
+writeFileSync(outPath, JSON.stringify(results, null, 2));
+process.stderr.write(`\n[external-deploy] report → ${outPath}\n`);
