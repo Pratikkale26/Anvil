@@ -58,6 +58,7 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   "ata-mint": "ata-mint.rs",
   "set-authority": "set-authority.rs",
   "spl-transfer": "spl-transfer.rs",
+  "approve": "spl-approve-revoke.rs",
   "spl-burn": "spl-burn.rs",
   "t22-transfer": "t22-transfer.rs",
   "close-account": "close-account.rs",
@@ -93,6 +94,7 @@ const FIXTURE_REGISTRY: Record<string, string> = {
   // Each demo exercises one extension's init + at least one manage CPI.
   "t22-default-account-state": "t22-default-account-state.rs",
   "t22-immutable-owner": "t22-immutable-owner.rs",
+  "t22-memo-transfer": "t22-memo-transfer.rs",
   "t22-interest-bearing": "t22-interest-bearing.rs",
   "t22-non-transferable": "t22-non-transferable.rs",
   "t22-token-metadata": "t22-token-metadata.rs",
@@ -256,6 +258,9 @@ const EXTERNAL_FIXTURES = new Set<string>([
   "declare-program-external-update",
   "declare-program-option",
   "declare-program-vault-signed",
+  // #44 — state-compression (cNFT primitive) append via declare_program! + IDL,
+  // byte-equal against the mainnet spl_account_compression + spl_noop .so's.
+  "compression-append",
   // Legacy SPL transfer_checked misroute byte-equal gate (this fix).
   "spl-transfer-checked-legacy",
   // Original #2 hand→lever declare_program! CPI + the read-only-owner reject.
@@ -266,6 +271,9 @@ const EXTERNAL_FIXTURES = new Set<string>([
   "amount-field-gate",
   "ata-non-init-attack",
   "spl-account-owner-reject",
+  // #41 — nested variable-length struct deserialization; inline source, no new
+  // BodyStatement kind (it's an emit-layout change), covered kinds are in-tree.
+  "nested-varlen",
 ]);
 
 /**

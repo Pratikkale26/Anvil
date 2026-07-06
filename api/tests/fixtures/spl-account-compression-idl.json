@@ -1,0 +1,55 @@
+{
+  "address": "cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK",
+  "metadata": {
+    "name": "spl_account_compression",
+    "version": "0.3.1",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "append",
+      "discriminator": [
+        149,
+        120,
+        18,
+        222,
+        236,
+        225,
+        88,
+        203
+      ],
+      "accounts": [
+        {
+          "name": "merkle_tree",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "authority",
+          "writable": false,
+          "signer": true
+        },
+        {
+          "name": "noop",
+          "writable": false,
+          "signer": false
+        }
+      ],
+      "args": [
+        {
+          "name": "leaf",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": [],
+  "events": [],
+  "errors": [],
+  "types": []
+}

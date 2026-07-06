@@ -36,6 +36,7 @@ const demos = readdirSync(DEMO_DIR).filter((f) => f.endsWith(".rs")).sort();
 // Demos that legitimately refuse the strict gate (genuine unsupported shape or
 // B2-guarded unproven read). Keyed by file stem.
 const KNOWN_GATED: Record<string, string> = {
+  "compression-append": "declare_program! CPI to spl_account_compression — transpiles ONLY with the crate IDL (supplied by differential-compression-append.test.ts, byte-equal green); parsed here without the IDL, the #44 cnft_compression_unsupported refuse correctly fires",
   "control-flow": "for/while/match control-flow IR is corpus-absent/deferred — ctx.accounts inside a for-loop pass_through",
   "cpi-memo": "let-bound memo CpiContext not recognized into a typed cpi_memo kind (unhandled shape)",
   "marketplace": "user-struct field read `listing.price` — B2 silent-read guard, lowering unproven",
