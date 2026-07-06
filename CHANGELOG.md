@@ -6,6 +6,22 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ---
 
+## 0.7.0 — 2026-07-06
+
+### Fixed — silent-miscompile hardening
+
+- **Token-2022 `initialize_mint2` / `transfer_checked_with_fee` no longer default a missing `decimals`/`fee`/`amount` to `0` silently.** These are required instruction args; an unresolved one previously wrote a guessed `0` straight into the emit — a 0-decimal mint or a 0-amount/0-fee transfer that compiled clean and passed the happy path. They now refuse (loud, deploy-blocked), matching the `transfer_checked` decimals-fallback marker net.
+- **`anchor-spl` version differences no longer raise a false "risks wrong emitted bytes" warning.** Anvil hard-codes zero anchor-spl constants — the SPL-Token / Token-2022 instruction encodings it emits are the token *program's* constants, invariant across the wrapper version — so declaring anchor-spl `0.32`/`1.0` is fine and no longer trips the protocol-version drift check. The `mpl-*` / `pyth` pins (whose discriminators do track the SDK version) stay.
+
+### Added — named refusals and visible fallbacks
+
+- **Compressed-NFT / state-compression CPIs (`mpl_bubblegum`, `spl_account_compression`, `spl_noop`) now get a specific, named refuse** — `cnft_compression_unsupported`, promoted to a hard validator error — explaining that cNFT operations mutate a concurrent-Merkle-tree account with no loadable reference program for the byte-equal gate, so they're a permanent by-design refuse ("keep these on Anchor"), instead of the generic "file a bug so we add an extractor" stub.
+- **Two previously-silent parser fallbacks now warn:** a Token-2022 CPI whose accounts struct is missing a primary account field (`mint`/`source`/`destination`/`authority`/`account`/`owner`) — which could bind the wrong account — and an unresolvable PDA signer-seeds expression that would otherwise be silently synthesized.
+
+### Internal
+
+- Differential `anvil verify` version ladder keeps Anchor `1.x`/`2.x` sources out of the `0.x` reference-build line (separate ecosystem); the byte-equal regression gate hard-fails under `ANVIL_TEST_STRICT_FIXTURES=1` (CI) instead of skipping green when fixture sources are absent.
+
 ## 0.6.0 — 2026-07-05
 
 ### Added
