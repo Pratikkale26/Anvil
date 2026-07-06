@@ -394,8 +394,13 @@ function checkUnboundSignerSeeds(content: string, path: string): ValidationIssue
     const flagged = new Set<string>();
     // Used: a `signer_*` ident not preceded by `.`/word-char (excludes field
     // accesses like `pool.signer_authority`) and not the binding LHS (those are
-    // already in `bound`).
-    for (const m of body.matchAll(/(?<![.\w])(signer\w+)\b/g)) {
+    // already in `bound`). The trailing `(?!\s*\()` excludes function names and
+    // calls — an instruction handler named `signer_*` (e.g. `signer_error`) and
+    // the router's dispatch call `signer_error(program_id, …)` are NOT
+    // signer-seeds variables (seeds are `&[&[u8]]` values passed to
+    // invoke_signed, never *called*), so a `signer_*` token immediately
+    // followed by `(` is a fn def/call and must not trip this refusal.
+    for (const m of body.matchAll(/(?<![.\w])(signer\w+)\b(?!\s*\()/g)) {
       const name = m[1];
       if (!name || bound.has(name) || flagged.has(name)) continue;
       flagged.add(name);
