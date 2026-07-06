@@ -703,6 +703,20 @@ function checkHasOneConstraints(content: string, ir: SolanaIR, path: string): Va
         // the corpus before shipping. Bytes-level placement is still beyond a
         // text check; the differential gate remains the real correctness signal.
         const relatedAliases = extractStateAliases(fnBody, fieldName);
+        // Composite accounts (F8): Anchor resolves `has_one = X` within the
+        // field's own #[derive(Accounts)] struct, so the emitter binds the
+        // target to `<compositePrefix>X` (resolveHasOneTargetBinding), not the
+        // bare `X`. The emitted comparison reads `<state>.X != *<prefix>X.key()`,
+        // so the related operand's valid spellings must include that prefixed
+        // binding — otherwise this check false-refuses a correctly-emitted
+        // composite has_one (e.g. `inner_state.authority != *inner_authority.key()`).
+        if (acc.compositePrefix) {
+          const scoped = snakeCase(`${acc.compositePrefix}${fieldName}`);
+          if (!relatedAliases.includes(scoped)) relatedAliases.push(scoped);
+          for (const a of extractStateAliases(fnBody, scoped)) {
+            if (!relatedAliases.includes(a)) relatedAliases.push(a);
+          }
+        }
         const fieldTok = `(?:&\\s*)?(?:\\*\\s*)?(?:${aliases.map(escapeForRegex).join("|")})\\s*\\.\\s*${escapeForRegex(fieldName)}\\b`;
         const keyTok = `(?:&\\s*)?(?:\\*\\s*)?(?:${relatedAliases.map(escapeForRegex).join("|")})\\s*\\.\\s*key\\b\\s*(?:\\(\\s*\\))?`;
         const comparisons: RegExp[] = [
