@@ -475,7 +475,14 @@ export function anchorVersionLadder(primary: string): string[] {
     "0.30": ["0.30", "0.31", "0.29"],
     "0.29": ["0.29", "0.30", "0.31"],
   };
-  return order[primary] ?? ["0.31", "0.30", "0.29"];
+  if (order[primary]) return order[primary];
+  // F5 — an unrecognized version must not silently drop a 1.x/2.x program into
+  // the 0.x reference line (1.0+ is a separate ecosystem with breaking macro
+  // changes, per above). Only versions we can't place at all fall back to the
+  // 0.x default ladder; a major >= 1 primary builds against itself.
+  const major = Number(primary.replace(/^[=^~]\s*/, "").split(".")[0]);
+  if (Number.isFinite(major) && major >= 1) return [primary];
+  return ["0.31", "0.30", "0.29"];
 }
 
 /**
