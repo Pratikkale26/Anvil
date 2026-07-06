@@ -180,6 +180,38 @@ function warnClassificationLost(
 }
 
 /**
+ * F2 — resolve a Token-2022 CPI accounts-struct field to its account name,
+ * warning when it falls back to the placeholder. The extractors seed each
+ * local with a placeholder (`let mint = "mint"`) and overwrite it from the
+ * struct; when extractStructField misses (unusual field naming / shape) the
+ * placeholder was previously kept SILENTLY, which can bind the WRONG account
+ * (a coincidentally same-named but semantically-different account) and compile
+ * clean. Well-formed anchor-spl T22 structs carry every field the extractors
+ * read, so the miss path fires only on genuinely-unusual source — making this
+ * a real signal, not routine noise. Only reached inside an `if (accountsStruct)`
+ * guard, so `struct` is always present.
+ */
+function resolveStructAccount(
+  struct: SyntaxNode,
+  fieldName: string,
+  fallback: string,
+  collector?: WarningCollector,
+): string {
+  const found = extractStructField(struct, fieldName);
+  if (found !== null) return found;
+  collector?.add({
+    code: "cpi_classification_lost",
+    message:
+      `Token-2022 CPI accounts struct has no field '${fieldName}'; emitting placeholder ` +
+      `account '${fallback}', which may bind the WRONG account. Verify the emitted CPI ` +
+      `accounts before deploy (or rename the source account to '${fieldName}').`,
+    snippet: struct.text.slice(0, 200),
+    loc: locFromNode(struct),
+  });
+  return fallback;
+}
+
+/**
  * Try to detect a CPI call in an expression node.
  * Returns a classified BodyStatement if it's a known CPI, or null.
  *
@@ -850,7 +882,7 @@ function extractMplCreateMetadataV3(callNode: SyntaxNode, collector?: WarningCol
     uses: usesExpr,
     isMutable: args[2]?.text.trim() ?? "true",
     updateAuthorityIsSigner: args[3]?.text.trim() ?? "true",
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -979,7 +1011,7 @@ function extractMplUpdateMetadataAccountsV2(callNode: SyntaxNode, collector?: Wa
     uses: usesExpr,
     primarySaleHappened,
     isMutable,
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -1029,7 +1061,7 @@ function extractMplVerifyCollection(callNode: SyntaxNode, collector?: WarningCol
     collection: cleanAccountRef(grabAny(["collection_metadata", "collection"])),
     collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
     collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -1053,7 +1085,7 @@ function extractMplFreezeDelegated(callNode: SyntaxNode, collector?: WarningColl
     tokenAccount: cleanAccountRef(grab("token_account")),
     edition: cleanAccountRef(grab("edition")),
     mint: cleanAccountRef(grab("mint")),
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -1077,7 +1109,7 @@ function extractMplThawDelegated(callNode: SyntaxNode, collector?: WarningCollec
     tokenAccount: cleanAccountRef(grab("token_account")),
     edition: cleanAccountRef(grab("edition")),
     mint: cleanAccountRef(grab("mint")),
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -1114,7 +1146,7 @@ function extractMplMintNewEditionFromMaster(callNode: SyntaxNode, collector?: Wa
     newMetadataUpdateAuthority: cleanAccountRef(grab("new_metadata_update_authority")),
     metadata: cleanAccountRef(grab("metadata")),
     edition: args[1]?.text.trim() ?? "0",
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -1143,7 +1175,7 @@ function extractMplRevokeCollectionAuthority(callNode: SyntaxNode, collector?: W
     revokeAuthority: cleanAccountRef(grab("revoke_authority")),
     metadata: cleanAccountRef(grab("metadata")),
     mint: cleanAccountRef(grab("mint")),
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -1175,7 +1207,7 @@ function extractMplApproveCollectionAuthority(callNode: SyntaxNode, collector?: 
     payer: cleanAccountRef(grab("payer")),
     metadata: cleanAccountRef(grab("metadata")),
     mint: cleanAccountRef(grab("mint")),
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -1217,7 +1249,7 @@ function extractMplSetAndVerifyCollection(callNode: SyntaxNode, collector?: Warn
     collection: cleanAccountRef(grabAny(["collection_metadata", "collection"])),
     collectionMasterEdition: cleanAccountRef(grab("collection_master_edition")),
     collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -1256,7 +1288,7 @@ function extractMplUnverifyCollection(callNode: SyntaxNode, collector?: WarningC
     collection: cleanAccountRef(grab("collection")),
     collectionMasterEdition: cleanAccountRef(grabAny(["collection_master_edition_account", "collection_master_edition"])),
     collectionAuthorityRecord: args[1]?.text.trim() ?? "None",
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -1288,7 +1320,7 @@ function extractMplSignMetadata(callNode: SyntaxNode, collector?: WarningCollect
     kind: "cpi_mpl_sign_metadata",
     metadata: cleanAccountRef(grab("metadata")),
     creator: cleanAccountRef(grab("creator")),
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -1325,7 +1357,7 @@ function extractMplCreateMasterEditionV3(callNode: SyntaxNode, collector?: Warni
     metadata: cleanAccountRef(grab("metadata")),
     updateAuthority: cleanAccountRef(grab("update_authority")),
     maxSupply: args[1]?.text.trim() ?? "None",
-    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined,
+    signerSeeds: (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined,
   };
 }
 
@@ -1914,7 +1946,7 @@ function extractSplTransfer(callNode: SyntaxNode, collector?: WarningCollector, 
         });
       }
     }
-    signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   } else if (firstArg) {
     // Variable-bound CpiContext (`let cpi_ctx = CpiContext::new(...);
     // transfer(cpi_ctx, amount)?;`). Look up the binding via the
@@ -2002,7 +2034,7 @@ function extractSplMintTo(callNode: SyntaxNode, collector?: WarningCollector, cp
         if (acc.authority) authority = acc.authority;
       }
     }
-    signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   } else if (firstArg) {
     // F4 — variable-bound CpiContext (`let cpi_ctx = CpiContext::new_with_signer(...);
     // mint_to(cpi_ctx, amount)?;`). Mirror extractSplTransfer: recover the signer
@@ -2083,7 +2115,7 @@ function extractSplBurn(callNode: SyntaxNode, collector?: WarningCollector, cpiC
         if (acc.authority) authority = acc.authority;
       }
     }
-    signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   } else if (firstArg) {
     // F4 — variable-bound CpiContext, mirror extractSplTransfer/extractSplMintTo.
     const varName = firstArg.text.trim().replace(/^&\s*/, "");
@@ -2163,7 +2195,7 @@ function extractSplSetAuthority(callNode: SyntaxNode, collector?: WarningCollect
   }
 
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
 
   // Finding #54 — extract the token_program AccountInfo binding from the
@@ -2233,7 +2265,7 @@ function extractSplCloseAccount(callNode: SyntaxNode, collector?: WarningCollect
   const account = extractStructField(closeStruct, "account") ?? "account";
   const destination = extractStructField(closeStruct, "destination") ?? "destination";
   const authority = extractStructField(closeStruct, "authority") ?? "authority";
-  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
 
   return {
     kind: "cpi_spl_close_account",
@@ -2279,7 +2311,7 @@ function extractSplApprove(callNode: SyntaxNode, collector?: WarningCollector): 
   const source = extractStructField(approveStruct, "to") ?? "to";
   const delegate = extractStructField(approveStruct, "delegate") ?? "delegate";
   const authority = extractStructField(approveStruct, "authority") ?? "authority";
-  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
 
   return {
     kind: "cpi_spl_approve",
@@ -2314,7 +2346,7 @@ function extractSplRevoke(callNode: SyntaxNode, collector?: WarningCollector): B
   }
   const source = extractStructField(revokeStruct, "source") ?? "source";
   const authority = extractStructField(revokeStruct, "authority") ?? "authority";
-  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+  const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
 
   return {
     kind: "cpi_spl_revoke",
@@ -2362,12 +2394,12 @@ function extractT22NonTransferableMintInitialize(
   let mint = "mint";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_non_transferable_mint_initialize",
@@ -2416,7 +2448,7 @@ function extractT22InitializeMint2(
   const accountsStruct = findDescendant(firstArg, "struct_expression");
   let mint = "mint";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
   }
   // Extract token_program binding name from CpiContext::new's first arg.
   // Same shape as the set_authority dispatch fix (#54).
@@ -2426,7 +2458,7 @@ function extractT22InitializeMint2(
   const tokenProgram = tokenProgramArgMatch?.[1] ?? "token_program";
 
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
 
   // The remaining args are: decimals, mint_authority, freeze_authority.
@@ -2494,12 +2526,12 @@ function extractT22TransferFeeInitialize(
   let mint = "mint";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   // Trailing args after the CpiContext: 4 positional values. Carry
   // them as raw text — values may be Anchor expressions
@@ -2560,13 +2592,13 @@ function extractT22TransferFeeSet(
   let tokenProgram = "token_program";
   let authority = "authority";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
-    authority = extractStructField(accountsStruct, "authority") ?? authority;
+    authority = resolveStructAccount(accountsStruct, "authority", authority, collector);
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   const basisPoints = cleanAmountExpr(args[1]?.text ?? "0u16");
   const maximumFee = cleanAmountExpr(args[2]?.text ?? "0u64");
@@ -2623,7 +2655,7 @@ function extractT22ImmutableOwnerInitialize(
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_immutable_owner_initialize",
@@ -2674,13 +2706,13 @@ function extractT22MemoTransfer(
   let owner = "owner";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    account = extractStructField(accountsStruct, "account") ?? account;
-    owner = extractStructField(accountsStruct, "owner") ?? owner;
+    account = resolveStructAccount(accountsStruct, "account", account, collector);
+    owner = resolveStructAccount(accountsStruct, "owner", owner, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_memo_transfer",
@@ -2730,13 +2762,13 @@ function extractT22MintCloseAuthorityInitialize(
   let mint = "mint";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const closeAuthority = args[1]?.text.trim() ?? "None";
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_mint_close_authority_initialize",
@@ -2785,13 +2817,13 @@ function extractT22PermanentDelegateInitialize(
   let mint = "mint";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const delegate = args[1]?.text.trim() ?? "&Pubkey::default()";
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_permanent_delegate_initialize",
@@ -2843,14 +2875,14 @@ function extractT22TransferHookInitialize(
   let mint = "mint";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const authority = args[1]?.text.trim() ?? "None";
   const transferHookProgramId = args[2]?.text.trim() ?? "None";
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_transfer_hook_initialize",
@@ -2903,15 +2935,14 @@ function extractT22TransferHookUpdate(
   let tokenProgram = "token_program";
   let authority = "authority";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
-    authority =
-      extractStructField(accountsStruct, "authority") ?? authority;
+    authority = resolveStructAccount(accountsStruct, "authority", authority, collector);
   }
   const transferHookProgramId = args[1]?.text.trim() ?? "None";
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_transfer_hook_update",
@@ -2968,14 +2999,14 @@ function extractT22MetadataPointerInitialize(
   let mint = "mint";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const authority = args[1]?.text.trim() ?? "None";
   const metadataAddress = args[2]?.text.trim() ?? "None";
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_metadata_pointer_initialize",
@@ -3031,14 +3062,14 @@ function extractT22GroupPointerInitialize(
   let mint = "mint";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const authority = args[1]?.text.trim() ?? "None";
   const groupAddress = args[2]?.text.trim() ?? "None";
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_group_pointer_initialize",
@@ -3080,15 +3111,14 @@ function extractT22MetadataPointerUpdate(
   let tokenProgram = "token_program";
   let authority = "authority";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
-    authority =
-      extractStructField(accountsStruct, "authority") ?? authority;
+    authority = resolveStructAccount(accountsStruct, "authority", authority, collector);
   }
   const metadataAddress = args[1]?.text.trim() ?? "None";
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_metadata_pointer_update",
@@ -3124,15 +3154,14 @@ function extractT22GroupPointerUpdate(
   let tokenProgram = "token_program";
   let authority = "authority";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
-    authority =
-      extractStructField(accountsStruct, "authority") ?? authority;
+    authority = resolveStructAccount(accountsStruct, "authority", authority, collector);
   }
   const groupAddress = args[1]?.text.trim() ?? "None";
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_group_pointer_update",
@@ -3171,14 +3200,14 @@ function extractT22GroupMemberPointerInitialize(
   let mint = "mint";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const authority = args[1]?.text.trim() ?? "None";
   const memberAddress = args[2]?.text.trim() ?? "None";
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_group_member_pointer_initialize",
@@ -3214,15 +3243,14 @@ function extractT22GroupMemberPointerUpdate(
   let tokenProgram = "token_program";
   let authority = "authority";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
-    authority =
-      extractStructField(accountsStruct, "authority") ?? authority;
+    authority = resolveStructAccount(accountsStruct, "authority", authority, collector);
   }
   const memberAddress = args[1]?.text.trim() ?? "None";
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_group_member_pointer_update",
@@ -3269,15 +3297,15 @@ function extractT22TransferCheckedWithFee(
   let authority = "authority";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    source = extractStructField(accountsStruct, "source") ?? source;
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
-    destination = extractStructField(accountsStruct, "destination") ?? destination;
-    authority = extractStructField(accountsStruct, "authority") ?? authority;
+    source = resolveStructAccount(accountsStruct, "source", source, collector);
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
+    destination = resolveStructAccount(accountsStruct, "destination", destination, collector);
+    authority = resolveStructAccount(accountsStruct, "authority", authority, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   // F1 — amount, decimals, and fee are REQUIRED positional args. A missing
   // one previously defaulted to 0 SILENTLY, emitting a transfer with the
@@ -3331,14 +3359,14 @@ function extractT22WithdrawWithheldFromMint(
   let authority = "authority";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
-    destination = extractStructField(accountsStruct, "destination") ?? destination;
-    authority = extractStructField(accountsStruct, "authority") ?? authority;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
+    destination = resolveStructAccount(accountsStruct, "destination", destination, collector);
+    authority = resolveStructAccount(accountsStruct, "authority", authority, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   return {
     kind: "cpi_t22_withdraw_withheld_tokens_from_mint",
@@ -3374,12 +3402,12 @@ function extractT22HarvestWithheldToMint(
   let mint = "mint";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
     tokenProgram =
       extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text)
+    ? extractSignerSeedsExpr(firstArg.text, collector)
     : undefined;
   // Second arg = sources expression. Keep raw for the emit to consume
   // at runtime (Vec<AccountInfo> length isn't known at compile time).
@@ -3413,11 +3441,12 @@ function extractT22DefaultAccountStateInit(
   let mint = "mint";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
-    tokenProgram = extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   const state = args[1]?.text.trim() ?? "&AccountState::Initialized";
   return {
     kind: "cpi_t22_default_account_state_initialize",
@@ -3448,12 +3477,13 @@ function extractT22DefaultAccountStateUpdate(
   let tokenProgram = "token_program";
   let freezeAuthority = "freeze_authority";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
-    tokenProgram = extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
-    freezeAuthority = extractStructField(accountsStruct, "freeze_authority") ?? freezeAuthority;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+    freezeAuthority = resolveStructAccount(accountsStruct, "freeze_authority", freezeAuthority, collector);
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   const state = args[1]?.text.trim() ?? "&AccountState::Initialized";
   return {
     kind: "cpi_t22_default_account_state_update",
@@ -3485,11 +3515,12 @@ function extractT22InterestBearingMintInit(
   let mint = "mint";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
-    tokenProgram = extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   const rateAuthority = args[1]?.text.trim() ?? "None";
   const rate = cleanAmountExpr(args[2]?.text ?? "0i16");
   return {
@@ -3522,12 +3553,13 @@ function extractT22InterestBearingMintUpdateRate(
   let tokenProgram = "token_program";
   let rateAuthority = "rate_authority";
   if (accountsStruct) {
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
-    tokenProgram = extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
-    rateAuthority = extractStructField(accountsStruct, "rate_authority") ?? rateAuthority;
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
+    tokenProgram =
+      extractStructField(accountsStruct, "token_program_id") ?? tokenProgram;
+    rateAuthority = resolveStructAccount(accountsStruct, "rate_authority", rateAuthority, collector);
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   const rate = cleanAmountExpr(args[1]?.text ?? "0i16");
   return {
     kind: "cpi_t22_interest_bearing_mint_update_rate",
@@ -3571,10 +3603,10 @@ function extractT22TokenMetadataInitialize(
   let updateAuthority = "update_authority";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    metadata = extractStructField(accountsStruct, "metadata") ?? metadata;
-    mint = extractStructField(accountsStruct, "mint") ?? mint;
-    mintAuthority = extractStructField(accountsStruct, "mint_authority") ?? mintAuthority;
-    updateAuthority = extractStructField(accountsStruct, "update_authority") ?? updateAuthority;
+    metadata = resolveStructAccount(accountsStruct, "metadata", metadata, collector);
+    mint = resolveStructAccount(accountsStruct, "mint", mint, collector);
+    mintAuthority = resolveStructAccount(accountsStruct, "mint_authority", mintAuthority, collector);
+    updateAuthority = resolveStructAccount(accountsStruct, "update_authority", updateAuthority, collector);
     // anchor-spl 0.31 uses `program_id`; older versions used
     // `token_program_id`. Try both.
     tokenProgram =
@@ -3583,7 +3615,7 @@ function extractT22TokenMetadataInitialize(
       tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   const name = args[1]?.text.trim() ?? `String::new()`;
   const symbol = args[2]?.text.trim() ?? `String::new()`;
   const uri = args[3]?.text.trim() ?? `String::new()`;
@@ -3628,15 +3660,15 @@ function extractT22TokenMetadataUpdateField(
   let updateAuthority = "update_authority";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    metadata = extractStructField(accountsStruct, "metadata") ?? metadata;
-    updateAuthority = extractStructField(accountsStruct, "update_authority") ?? updateAuthority;
+    metadata = resolveStructAccount(accountsStruct, "metadata", metadata, collector);
+    updateAuthority = resolveStructAccount(accountsStruct, "update_authority", updateAuthority, collector);
     tokenProgram =
       extractStructField(accountsStruct, "program_id") ??
       extractStructField(accountsStruct, "token_program_id") ??
       tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   const field = args[1]?.text.trim() ?? "";
   const value = args[2]?.text.trim() ?? "String::new()";
   return {
@@ -3683,15 +3715,15 @@ function extractT22TokenMetadataUpdateAuthority(
   let currentAuthority = "current_authority";
   let tokenProgram = "token_program";
   if (accountsStruct) {
-    metadata = extractStructField(accountsStruct, "metadata") ?? metadata;
-    currentAuthority = extractStructField(accountsStruct, "current_authority") ?? currentAuthority;
+    metadata = resolveStructAccount(accountsStruct, "metadata", metadata, collector);
+    currentAuthority = resolveStructAccount(accountsStruct, "current_authority", currentAuthority, collector);
     tokenProgram =
       extractStructField(accountsStruct, "program_id") ??
       extractStructField(accountsStruct, "token_program_id") ??
       tokenProgram;
   }
   const signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer("))
-    ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   const newAuthority = args[1]?.text.trim() ?? "OptionalNonZeroPubkey::try_from(None)?";
   return {
     kind: "cpi_t22_token_metadata_update_authority",
@@ -3729,7 +3761,7 @@ function extractAtaCreate(callNode: SyntaxNode, collector?: WarningCollector): B
       mint = extractStructField(createStruct, "mint") ?? mint;
       authority = extractStructField(createStruct, "authority") ?? authority;
     }
-    signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   } else {
     // Raw native call: create_associated_token_account(payer, owner, mint, token_program)
     // — positional args, no Create struct to extract from. Bail to pass-through so
@@ -3772,7 +3804,7 @@ function extractSystemTransfer(callNode: SyntaxNode, collector?: WarningCollecto
       from = extractStructField(transferStruct, "from") ?? "from";
       to = extractStructField(transferStruct, "to") ?? "to";
     }
-    signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text) : undefined;
+    signerSeeds = (firstArg.text.includes("new_with_signer") || firstArg.text.includes(".with_signer(")) ? extractSignerSeedsExpr(firstArg.text, collector) : undefined;
   } else if (firstArg) {
     // #10 — variable-bound CpiContext: `let cpi = CpiContext::new(sys_prog,
     // Transfer { from, to }); system_program::transfer(cpi, amount)?;`. Resolve
@@ -3962,7 +3994,28 @@ function extractCanonicalInvoke(
  * the anchor-escrow PDA-signed pattern). When the third arg can't be
  * isolated cleanly, fall back to the legacy default.
  */
-export function extractSignerSeedsExpr(firstArgText: string): string {
+export function extractSignerSeedsExpr(
+  firstArgText: string,
+  collector?: WarningCollector,
+): string {
+  // F3 — when the seeds expression can't be isolated we fall back to the
+  // literal "signer_seeds" and the emitter synthesizes its own seeds prelude,
+  // which may diverge from the source's actual seeds (PDA signs with the wrong
+  // seeds → CPI reverts at runtime). Warn so the drop is visible instead of
+  // silent. Only the FAILURE paths call this; a successful extraction of a user
+  // variable literally named `signer_seeds` returns via the expr path below and
+  // does NOT warn.
+  const lostSeeds = (): string => {
+    collector?.add({
+      code: "signer_seeds_lost_variable_binding",
+      message:
+        "A signed CpiContext's seeds expression couldn't be isolated from the call; " +
+        "falling back to a synthesized signer_seeds prelude that may not match the source's " +
+        "actual seeds. PDA-signed CPI may revert at runtime — verify the emitted seeds.",
+      snippet: firstArgText.slice(0, 200),
+    });
+    return "signer_seeds";
+  };
   // Fluent form: `CpiContext::new(prog, accs).with_signer(seeds)`.
   // Detect first since it's the simpler shape and the more common
   // pattern in real Anchor source (pda-mint-authority and most
@@ -3982,12 +4035,12 @@ export function extractSignerSeedsExpr(firstArgText: string): string {
     }
     if (end > start) {
       const expr = firstArgText.slice(start, end).trim().replace(/,\s*$/, "");
-      return expr.length > 0 ? expr : "signer_seeds";
+      return expr.length > 0 ? expr : lostSeeds();
     }
   }
   // Legacy form: `CpiContext::new_with_signer(prog, accs, seeds)`.
   const idx = firstArgText.indexOf("new_with_signer(");
-  if (idx === -1) return "signer_seeds";
+  if (idx === -1) return lostSeeds();
   let depth = 0;
   const start = idx + "new_with_signer(".length;
   const args: number[] = [start];
@@ -4004,7 +4057,7 @@ export function extractSignerSeedsExpr(firstArgText: string): string {
       args.push(i + 1);
     }
   }
-  if (args.length < 4) return "signer_seeds";
+  if (args.length < 4) return lostSeeds();
   const expr = firstArgText.slice(args[2]!, args[3]!).trim().replace(/,\s*$/, "");
   // Do NOT strip a leading `&` here — preserving it is critical for the
   // case where the user's binding shape is a value array
