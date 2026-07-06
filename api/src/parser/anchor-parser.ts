@@ -647,6 +647,15 @@ export async function parseAnchor(
     // SUPPORTED path. The refusal is reserved for genuinely-unknown external
     // crates — no IDL means Anvil has zero knowledge of the program's id and
     // can neither emit the real owner check nor let the CPI defend the account.
+    //
+    // #42 (DECIDED, not a TODO): the roadmap once tracked also emitting a
+    // CALLER-SIDE owner check from the IDL `address` field here. It's not worth
+    // it — on the IDL-supplied path the account is only ever CPI'd to the
+    // external program (callee-checked) or read at AccountInfo level (.key /
+    // .owner / .lamports, no data trust); Anvil cannot emit a deserialized field
+    // read of an external type at all (no layout), so there is no confused-deputy
+    // data path a caller-side check would close. It would be pure defense-in-depth
+    // redundant with the callee, on a niche path, unverifiable by byte-equal.
     const knownExternalCrates = new Set(Object.keys(opts?.externalIdls ?? {}));
     if (knownExternalCrates.size > 0) {
       for (const instr of result.data.instructions) {
