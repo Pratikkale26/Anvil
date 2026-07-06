@@ -705,6 +705,46 @@ function concatBytes(parts: Uint8Array[]): Uint8Array {
  * caller hasn't supplied --anchor-so: we wrap the source in a minimal
  * Cargo.toml and run cargo-build-sbf in a scratch dir.
  */
+/**
+ * Multi-version reference ladder (kept in sync with api/src/build/
+ * differential-build.ts `anchorVersionLadder`; duplicated to keep the CLI
+ * reference build free of the served-sandbox module graph). Try the sniffed/
+ * default version first, then adjacent 0.x versions — older-first, since
+ * real-world drift is usually an older program built against the newer default.
+ * Anchor 1.0 is a separate ecosystem and never falls back into the 0.x line.
+ */
+function anchorVersionLadder(primary: string): string[] {
+  if (primary === "1.0") return ["1.0"];
+  const order: Record<string, string[]> = {
+    "0.32": ["0.32", "0.31", "0.30"],
+    "0.31": ["0.31", "0.30", "0.29"],
+    "0.30": ["0.30", "0.31", "0.29"],
+    "0.29": ["0.29", "0.30", "0.31"],
+  };
+  return order[primary] ?? ["0.31", "0.30", "0.29"];
+}
+
+/** Best-effort anchor-lang version sniff from an explicit version string in
+ *  source; defaults to 0.31 (the ladder handles the fallback when wrong). */
+function sniffAnchorVersion(source: string): string {
+  const m = source.match(/anchor[-_]lang\s*[=:]?\s*['"`]?(0\.(?:29|30|31|32)(?:\.\d+)?)/);
+  if (m?.[1]) return m[1].split(".").slice(0, 2).join(".");
+  return "0.31";
+}
+
+/** Anchor cargo features the reference build must enable, sniffed from source.
+ *  `init_if_needed` is the big one — without the feature, #[derive(Accounts)]
+ *  silently skips the Bumps impl and the reference fails with a cryptic
+ *  "trait Bumps not satisfied". Mirrors sniffAnchorLangFeatures in
+ *  api/src/build/differential-build.ts. */
+function sniffAnchorFeatures(source: string): string[] {
+  const features: string[] = [];
+  if (/\binit_if_needed\b/.test(source)) features.push("init-if-needed");
+  if (/#\[event_cpi\]|\bemit_cpi!/.test(source)) features.push("event-cpi");
+  if (/\bidl_build\b/.test(source)) features.push("idl-build");
+  return features;
+}
+
 export function buildAnchorReferenceSo(args: {
   anchorSource: string;
   packageName: string;
@@ -712,9 +752,11 @@ export function buildAnchorReferenceSo(args: {
   extraDeps?: string;
 }): Buffer {
   const { anchorSource, packageName, scratchDir, extraDeps } = args;
-  rmSync(scratchDir, { recursive: true, force: true });
-  mkdirSync(join(scratchDir, "src"), { recursive: true });
-  const cargoToml = `[package]
+  const features = sniffAnchorFeatures(anchorSource);
+  const anchorLangDep = features.length > 0
+    ? `anchor-lang = { version = "VERSION", features = ["${features.join('", "')}"] }`
+    : `anchor-lang = "VERSION"`;
+  const makeCargoToml = (version: string): string => `[package]
 name = "${packageName}"
 version = "0.1.0"
 edition = "2021"
@@ -728,24 +770,48 @@ no-log-ix-name = []
 cpi = ["no-entrypoint"]
 default = []
 [dependencies]
-anchor-lang = "0.31"
-${extraDeps ?? ""}
+${anchorLangDep.replace("VERSION", version)}
+${(extraDeps ?? "").replace(/version = "0\.31"/g, `version = "${version}"`).replace(/anchor-spl = "0\.31"/g, `anchor-spl = "${version}"`)}
 `;
-  writeFileSync(join(scratchDir, "Cargo.toml"), cargoToml);
-  writeFileSync(join(scratchDir, "src/lib.rs"), anchorSource);
-  const r = spawnSync(
-    "cargo-build-sbf",
-    ["--manifest-path", join(scratchDir, "Cargo.toml")],
-    { stdio: "inherit", timeout: 600_000, env: { ...process.env, RUSTFLAGS: "" } },
+  // Multi-version reference build. Fetched real-world programs span anchor
+  // versions and rarely declare one in a single lib.rs, so a hard pin fails the
+  // REFERENCE build (deprecated APIs, Bumps trait drift, dep resolution) even
+  // though the source is valid Anchor for ITS version. Try the sniffed version
+  // first, then walk a small ladder, using the first that COMPILES as the
+  // reference. Output is piped and only surfaced on total failure so a
+  // recovered fallback stays quiet.
+  const ladder = anchorVersionLadder(sniffAnchorVersion(anchorSource));
+  let lastStatus: number | null = null;
+  let lastOutput = "";
+  for (let i = 0; i < ladder.length; i++) {
+    const version = ladder[i]!;
+    rmSync(scratchDir, { recursive: true, force: true });
+    mkdirSync(join(scratchDir, "src"), { recursive: true });
+    writeFileSync(join(scratchDir, "Cargo.toml"), makeCargoToml(version));
+    writeFileSync(join(scratchDir, "src/lib.rs"), anchorSource);
+    const r = spawnSync(
+      "cargo-build-sbf",
+      ["--manifest-path", join(scratchDir, "Cargo.toml")],
+      { encoding: "utf-8", timeout: 600_000, env: { ...process.env, RUSTFLAGS: "" } },
+    );
+    const builtSo = join(scratchDir, "target/deploy", `${packageName}.so`);
+    if (r.status === 0 && existsSync(builtSo)) {
+      if (i > 0) {
+        console.error(`  ↳ Anchor reference compiled against anchor-lang ${version} (fallback from ${ladder[0]})`);
+      }
+      return readFileSync(builtSo);
+    }
+    lastStatus = r.status;
+    lastOutput = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+    if (i < ladder.length - 1) {
+      console.error(`  ↳ Anchor reference build failed on anchor-lang ${version}; retrying against ${ladder[i + 1]}…`);
+    }
+  }
+  // Every ladder version failed — surface the last build's diagnostics.
+  process.stderr.write(lastOutput.split("\n").slice(-40).join("\n") + "\n");
+  throw new Error(
+    `cargo-build-sbf (Anchor reference) failed with exit ${lastStatus} (tried anchor-lang ${ladder.join(", ")})`,
   );
-  if (r.status !== 0) {
-    throw new Error(`cargo-build-sbf (Anchor reference) failed with exit ${r.status}`);
-  }
-  const builtSo = join(scratchDir, "target/deploy", `${packageName}.so`);
-  if (!existsSync(builtSo)) {
-    throw new Error(`expected Anchor reference .so not produced at ${builtSo}`);
-  }
-  return readFileSync(builtSo);
 }
 
 /**

@@ -367,7 +367,7 @@ async function buildAnchor(opts: DifferentialBuildOptions, outPath: string): Pro
   // 0.30` style comment OR an actual version string in source. Fall
   // back to 0.31 (current) if not found. We use the same version for
   // both anchor-lang and anchor-spl so they resolve consistently.
-  const anchorLangVersion = sniffAnchorLangVersion(opts.anchorSource);
+  const primaryVersion = sniffAnchorLangVersion(opts.anchorSource);
   // B1 — strict allowlist of anchorExtraDeps. The warmup at line ~252
   // runs `cargo fetch` OUTSIDE the sandbox with network access (it
   // needs the network to populate $CARGO_HOME). The body content of
@@ -380,7 +380,9 @@ async function buildAnchor(opts: DifferentialBuildOptions, outPath: string): Pro
   // allowlist is the actual cut. Throws a typed Error that the route
   // layer maps to a 400 — never reaches warmup.
   const validatedExtraDeps = validateAnchorExtraDeps(extraDeps);
-  const cargoToml = `[package]
+  // Cargo.toml as a pure function of the anchor version, so the multi-version
+  // ladder below can regenerate it per attempt without re-sniffing deps/features.
+  const makeCargoToml = (version: string): string => `[package]
 name = "${opts.programName}"
 version = "0.1.0"
 edition = "2021"
@@ -395,9 +397,9 @@ cpi = ["no-entrypoint"]
 default = []
 [dependencies]
 ${langFeatures.length > 0
-  ? `anchor-lang = { version = "${anchorLangVersion}", features = ["${langFeatures.join('", "')}"] }`
-  : `anchor-lang = "${anchorLangVersion}"`}
-${validatedExtraDeps.replace(/version = "0\.31"/g, `version = "${anchorLangVersion}"`).replace(/anchor-spl = "0\.31"/g, `anchor-spl = "${anchorLangVersion}"`)}
+  ? `anchor-lang = { version = "${version}", features = ["${langFeatures.join('", "')}"] }`
+  : `anchor-lang = "${version}"`}
+${validatedExtraDeps.replace(/version = "0\.31"/g, `version = "${version}"`).replace(/anchor-spl = "0\.31"/g, `anchor-spl = "${version}"`)}
 
 # Real Anchor's generated [profile.release] enables overflow-checks. The Anvil
 # side of this byte-equal build gets it via the scaffold (project-scaffold.ts),
@@ -407,24 +409,72 @@ ${validatedExtraDeps.replace(/version = "0\.31"/g, `version = "${anchorLangVersi
 [profile.release]
 overflow-checks = true
 `;
-  writeFileSync(join(scratch, "Cargo.toml"), cargoToml);
-  writeFileSync(
-    join(scratch, "src/lib.rs"),
-    patchAnchorSourceCompat(rewriteDeclareId(opts.anchorSource, opts.programIdBase58)),
+  const patchedSource = patchAnchorSourceCompat(
+    rewriteDeclareId(opts.anchorSource, opts.programIdBase58),
   );
-  // Warm the cargo registry BEFORE the sandboxed offline cargo-build-sbf
-  // run. Without this, fresh deployments (DigitalOcean / Docker images
-  // with no prior cargo cache) fail with "no matching package named
-  // anchor-lang found ... using offline mode (--offline)" when cargo
-  // metadata can't resolve anchor-lang from the empty registry.
-  // build-runner.ts already does this for non-differential builds; the
-  // workbench differential path needs the same treatment.
-  await warmDifferentialDependencies(scratch, opts);
-  await runSandboxedSbf(scratch, opts);
-  copySoFromTarget(scratch, outPath);
-  // #16 — remove the per-invocation scratch now the .so is cached at outPath.
-  // On error we intentionally leave it for the CACHE_TTL sweep to inspect/evict.
-  rmSync(scratch, { recursive: true, force: true });
+  // Multi-version reference build. Fetched real-world programs span anchor
+  // versions and rarely declare one in a single lib.rs, so a hard pin to the
+  // sniffed/default version fails the REFERENCE build (deprecated APIs, Bumps
+  // trait drift, dep resolution) even though the source is valid Anchor for
+  // ITS version. Try the sniffed version first (existing fixtures compile on
+  // attempt 1 — zero behaviour change), then walk a small ladder of adjacent
+  // versions, using the first that COMPILES as the reference. Only compile
+  // failures trigger a fallback, so a version that builds is never second-
+  // guessed. The ladder is capped to bound the cost of a genuinely-unbuildable
+  // source.
+  const ladder = anchorVersionLadder(primaryVersion);
+  let lastErr: unknown;
+  for (let i = 0; i < ladder.length; i++) {
+    const version = ladder[i]!;
+    rmSync(scratch, { recursive: true, force: true });
+    mkdirSync(join(scratch, "src"), { recursive: true });
+    writeFileSync(join(scratch, "Cargo.toml"), makeCargoToml(version));
+    writeFileSync(join(scratch, "src/lib.rs"), patchedSource);
+    try {
+      // Warm the cargo registry BEFORE the sandboxed offline cargo-build-sbf
+      // run. Without this, fresh deployments (no prior cargo cache) fail with
+      // "no matching package named anchor-lang found ... using offline mode".
+      await warmDifferentialDependencies(scratch, opts);
+      await runSandboxedSbf(scratch, opts);
+      copySoFromTarget(scratch, outPath);
+      // #16 — drop the scratch now the .so is cached at outPath.
+      rmSync(scratch, { recursive: true, force: true });
+      if (i > 0) {
+        opts.onLog?.(
+          `[anchor] reference compiled against anchor-lang ${version} (fallback from ${primaryVersion})`,
+        );
+      }
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (i < ladder.length - 1) {
+        opts.onLog?.(
+          `[anchor] anchor-lang ${version} reference build failed; retrying against ${ladder[i + 1]}`,
+        );
+      }
+    }
+  }
+  // All ladder versions failed. Leave the last scratch for the CACHE_TTL sweep
+  // to inspect/evict, and surface the final error.
+  throw lastErr ?? new Error("anchor reference build failed (all versions)");
+}
+
+/**
+ * Multi-version reference ladder. Try the sniffed/default version first, then
+ * adjacent 0.x versions — older-first, since real-world drift is usually an
+ * older program built against the newer default. Capped at 3 attempts to bound
+ * the build cost of a hopeless source. Anchor 1.0 is a separate ecosystem
+ * (breaking macro changes), so it never falls back into the 0.x line.
+ */
+export function anchorVersionLadder(primary: string): string[] {
+  if (primary === "1.0") return ["1.0"];
+  const order: Record<string, string[]> = {
+    "0.32": ["0.32", "0.31", "0.30"],
+    "0.31": ["0.31", "0.30", "0.29"],
+    "0.30": ["0.30", "0.31", "0.29"],
+    "0.29": ["0.29", "0.30", "0.31"],
+  };
+  return order[primary] ?? ["0.31", "0.30", "0.29"];
 }
 
 /**
