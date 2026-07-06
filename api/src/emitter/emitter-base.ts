@@ -2973,6 +2973,16 @@ impl ZeroCopy for ${accName} {}`;
         .trim();
       if (eventsContent) sections.push(eventsContent);
     }
+    // G19 / #35 — emit `pub const ID` + `id()` BEFORE the entrypoint so both
+    // the #35 declared-id guard (`program_id != &ID`) and any carried
+    // `crate::id()` / `crate::ID` reference resolve. emitLibFile (multi-file)
+    // already emits this; single-file omitted it, so the guard referenced an
+    // undefined `ID` → E0425 on every single-file cargo build. (Pre-#35 this
+    // was a latent gap: carried code with crate::id() also broke here.)
+    const singleFileProgramIdConst = this.emitProgramIdConst(ir);
+    if (singleFileProgramIdConst) {
+      sections.push(singleFileProgramIdConst);
+    }
     sections.push(this.emitEntrypoint(ir));
     sections.push(this.emitRouter(ir));
 

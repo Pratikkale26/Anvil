@@ -29,6 +29,12 @@ pub const VAULT_SEED: &[u8] = b"vault";
 
 pub const MAX_SCHEDULES: usize = 10;
 
+// G19 — Anchor's declare_id!() expands to these two items at crate root.
+// Carried code may reference `crate::ID` or `crate::id()` for ownership
+// checks and PDA derivations — stub them so emit stays compilable.
+pub const ID: Pubkey = [7, 87, 23, 47, 219, 236, 238, 33, 137, 188, 215, 141, 32, 229, 155, 195, 133, 124, 23, 232, 113, 153, 252, 252, 111, 5, 187, 128, 0, 0, 0, 0];
+pub fn id() -> Pubkey { ID }
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(

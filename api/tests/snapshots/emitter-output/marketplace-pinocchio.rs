@@ -24,6 +24,12 @@ use pinocchio_associated_token_account::instructions::Create as CreateAssociated
 use pinocchio::sysvars::rent::Rent;
 use pinocchio::sysvars::Sysvar;
 
+// G19 — Anchor's declare_id!() expands to these two items at crate root.
+// Carried code may reference `crate::ID` or `crate::id()` for ownership
+// checks and PDA derivations — stub them so emit stays compilable.
+pub const ID: Pubkey = [5, 81, 60, 242, 104, 117, 240, 29, 21, 111, 218, 142, 52, 148, 81, 164, 40, 220, 125, 165, 225, 84, 185, 102, 118, 171, 190, 152, 0, 0, 0, 0];
+pub fn id() -> Pubkey { ID }
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(

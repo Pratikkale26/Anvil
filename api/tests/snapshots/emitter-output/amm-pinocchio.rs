@@ -60,6 +60,12 @@ impl Swapped {
     pub const DISCRIMINATOR: [u8; 8] = [217, 52, 52, 83, 147, 135, 96, 109];
 }
 
+// G19 — Anchor's declare_id!() expands to these two items at crate root.
+// Carried code may reference `crate::ID` or `crate::id()` for ownership
+// checks and PDA derivations — stub them so emit stays compilable.
+pub const ID: Pubkey = [138, 239, 105, 159, 140, 107, 22, 93, 205, 254, 167, 213, 67, 245, 67, 101, 138, 109, 100, 225, 112, 225, 230, 115, 245, 110, 192, 0, 0, 0, 0, 0];
+pub fn id() -> Pubkey { ID }
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(

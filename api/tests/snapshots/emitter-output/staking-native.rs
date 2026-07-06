@@ -56,6 +56,12 @@ impl UnstakeEvent {
     pub const DISCRIMINATOR: [u8; 8] = [162, 104, 137, 228, 81, 3, 79, 197];
 }
 
+// G19 — Anchor's declare_id!() expands to these two items at crate root.
+// Carried code may reference `crate::ID` or `crate::id()` for ownership
+// checks and PDA derivations — stub them so emit stays compilable.
+pub const ID: Pubkey = Pubkey::new_from_array([6, 161, 216, 9, 208, 101, 151, 51, 102, 179, 111, 61, 159, 224, 233, 101, 123, 142, 191, 103, 14, 134, 36, 95, 181, 177, 41, 16, 0, 0, 0, 0]);
+pub fn id() -> Pubkey { ID }
+
 entrypoint!(process_instruction);
 
 pub fn process_instruction(
