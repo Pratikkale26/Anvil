@@ -124,6 +124,25 @@ function sandboxCpuSecs(): number {
   return Number.isFinite(n) && n > 0 ? n : 300;
 }
 
+/**
+ * Process/thread cap (`RLIMIT_NPROC`) for the sandboxed build. rustc +
+ * cargo-build-sbf fan out to many threads, all of which count against this
+ * limit — and `RLIMIT_NPROC` is per-real-uid, so it also counts every OTHER
+ * process the invoking user already has running. On a busy dev box (an IDE,
+ * a browser, background test runners) the user's baseline can already exceed
+ * the old hardcoded 128, so the build's first `fork`/thread-spawn failed with
+ * `EAGAIN` ("Resource temporarily unavailable") — a spurious build-fail on
+ * valid input. Keep 128 as the production default (a real fork-bomb bound on
+ * a container with a near-empty process table) but make it tunable per host
+ * so developers can raise it above their baseline. Mirrors sandboxCpuSecs().
+ */
+function sandboxNproc(): number {
+  const raw = process.env.ANVIL_SANDBOX_NPROC;
+  if (!raw) return 128;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : 128;
+}
+
 export function firejailSandbox(): SandboxConfig {
   return {
     kind: "firejail",
@@ -140,7 +159,7 @@ export function firejailSandbox(): SandboxConfig {
         "--rlimit-as=2147483648",
         `--rlimit-cpu=${sandboxCpuSecs()}`,
         "--rlimit-fsize=268435456",
-        "--rlimit-nproc=128",
+        `--rlimit-nproc=${sandboxNproc()}`,
         `--whitelist=${cwd}`,
         // Expose the warmed cargo registry / toolchain READ-ONLY so the offline
         // build can resolve deps (see readonlyDepPaths). --whitelist makes them
@@ -200,7 +219,7 @@ function unshareSandbox(): SandboxConfig {
         // Mount tmpfs over the scratch-write paths an attacker would target.
         // Failures are non-fatal (e.g. /var/tmp may not exist on minimal
         // images) — the rest of the isolation still applies.
-        `mount -t tmpfs tmpfs /tmp 2>/dev/null; mount -t tmpfs tmpfs /var/tmp 2>/dev/null; exec prlimit --as=2147483648 --cpu=${sandboxCpuSecs()} --fsize=268435456 --nproc=128 -- "$@"`,
+        `mount -t tmpfs tmpfs /tmp 2>/dev/null; mount -t tmpfs tmpfs /var/tmp 2>/dev/null; exec prlimit --as=2147483648 --cpu=${sandboxCpuSecs()} --fsize=268435456 --nproc=${sandboxNproc()} -- "$@"`,
         "anvil-sandbox-shim",
       ],
     }),
@@ -217,7 +236,7 @@ function noneSandbox(): SandboxConfig {
         "--as=2147483648",
         `--cpu=${sandboxCpuSecs()}`,
         "--fsize=268435456",
-        "--nproc=128",
+        `--nproc=${sandboxNproc()}`,
         "--",
       ],
     }),
