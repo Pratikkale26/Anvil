@@ -1,15 +1,24 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowRight, Layers3, ShieldCheck } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight, CheckCircle2, Copy, ShieldCheck } from "lucide-react";
 
 type Stat = { value: string; label: string; tone: "amber" | "teal" | "indigo" };
 
 export function Hero({ overallSavings }: { overallSavings: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function copyInstall() {
+    navigator.clipboard.writeText("npm install -g anvil-sol").then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
   const stats: Stat[] = [
     { value: overallSavings, label: "Avg CU vs Anchor", tone: "amber" },
     { value: "0", label: "Byte divergences", tone: "teal" },
-    { value: "14", label: "Real-world programs byte-equal", tone: "indigo" },
+    { value: "14+", label: "Real-world programs byte-equal", tone: "indigo" },
   ];
 
   return (
@@ -42,32 +51,35 @@ export function Hero({ overallSavings }: { overallSavings: string }) {
         instead of trusting it.
       </p>
 
+      {/* Primary CTA — npm install */}
       <div className="mt-10 flex items-center justify-center gap-3 flex-wrap">
         <button
-          onClick={() =>
-            document.getElementById("playground")?.scrollIntoView({ behavior: "smooth" })
-          }
-          className="group inline-flex items-center gap-2 px-7 py-3 rounded-full text-[14px] font-bold cursor-pointer border-0 bg-linear-to-br from-[#f5a623] to-[#e8820a] text-[#0a0600] hover:opacity-95 transition-all shadow-[0_8px_24px_-12px_rgba(245,166,35,0.6)] hover:shadow-[0_10px_32px_-12px_rgba(245,166,35,0.7)]"
-        >
-          Try the compiler
-          <ArrowRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
+          id="hero-npm-copy-btn"
+          onClick={copyInstall}
+          className="group inline-flex items-center gap-2.5 px-6 py-3 rounded-full text-[14px] font-bold cursor-pointer border-0 bg-linear-to-br from-[#f5a623] to-[#e8820a] text-[#0a0600] hover:opacity-95 transition-all shadow-[0_8px_24px_-12px_rgba(245,166,35,0.6)] hover:shadow-[0_10px_32px_-12px_rgba(245,166,35,0.7)]">
+          <code className="font-mono text-[13px] tracking-tight">
+            npm install -g anvil-sol
+          </code>
+          <span className="transition-transform">
+            {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+          </span>
         </button>
-        <Link
-          href="/workbench"
-          className="inline-flex items-center gap-2 px-7 py-3 rounded-full text-[14px] font-bold no-underline border border-anvil-card-border text-anvil-text-sub hover:text-anvil-text hover:border-white/15 hover:bg-white/[0.03] transition-colors"
-        >
-          Open Workbench <Layers3 size={14} />
-        </Link>
       </div>
 
-      <div className="mt-6 flex items-center justify-center gap-4 flex-wrap">
-        <code className="px-4 py-1.5 rounded-full text-[12.5px] font-semibold border border-anvil-card-border bg-white/[0.02] text-anvil-text-sub tracking-tight">
-          npm install -g anvil-sol
-        </code>
+      {/* Sub-row: verified local note */}
+      <div className="mt-5 flex items-center justify-center gap-4 flex-wrap">
         <span className="inline-flex items-center gap-1.5 text-[12px] text-anvil-text-muted">
           <ShieldCheck size={13} className="text-anvil-teal" />
           Runs fully local — <code className="text-anvil-text-sub">anvil verify</code> proves byte-equal on your machine.
         </span>
+        <button
+          onClick={() =>
+            document.getElementById("playground")?.scrollIntoView({ behavior: "smooth" })
+          }
+          className="inline-flex items-center gap-1.5 text-[12px] text-anvil-text-muted hover:text-anvil-text-sub transition-colors cursor-pointer border-0 bg-transparent"
+        >
+          Try playground <ArrowRight size={11} />
+        </button>
       </div>
 
       {/* Pipeline visual */}

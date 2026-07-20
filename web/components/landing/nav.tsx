@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { AnvilMarkBadge } from "./anvil-mark";
 
 const SECTION_LINKS = [
@@ -50,12 +50,18 @@ export function Nav({ apiOk }: { apiOk: boolean }) {
           >
             <GitHubGlyph />
           </a>
-          <Link
-            href="/workbench"
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-bold no-underline bg-gradient-to-br from-[#f5a623] to-[#e8820a] text-[#0a0600] hover:opacity-95 transition-opacity"
+
+          {/* npm package redirect — primary action */}
+          <a
+            id="nav-npm-link-btn"
+            href="https://www.npmjs.com/package/anvil-sol"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[13px] font-bold no-underline bg-linear-to-br from-[#f5a623] to-[#e8820a] text-[#0a0600] hover:opacity-95 transition-opacity shadow-[0_4px_16px_-6px_rgba(245,166,35,0.5)]"
           >
-            Workbench <ArrowRight size={13} />
-          </Link>
+            anvil-sol
+            <ArrowUpRight size={13} />
+          </a>
         </div>
       </div>
     </nav>
