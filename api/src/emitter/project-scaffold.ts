@@ -83,6 +83,10 @@ export const NATIVE_OPTIONAL_DEPS: Record<string, string> = {
   // `use mpl_core::*` source line is dropped by filteredSourceImports for
   // CreateV2 — other MPL Core CPIs are still lint-flagged.
   mpl_token_metadata:        `mpl-token-metadata = "5.1"`,
+  // MagicBlock Ephemeral Rollups. backward-compat keeps the sdk's solana
+  // types on the <3.0 line so it resolves against this scaffold's
+  // solana-program 2.x pin (default sdk features target solana 3.0).
+  ephemeral_rollups_sdk:     `ephemeral-rollups-sdk = { version = "0.16", features = ["backward-compat"] }`,
   // G5 — switchboard-on-demand 0.4.x transitively pulls borsh 0.10 (vs
   // our 1.6) AND references solana_program::address_lookup_table (absent
   // in 2.2). Adding the crate as a dep cascades unresolvable trait-bound
@@ -213,6 +217,19 @@ function extractUsedCrates(ir: SolanaIR): Set<string> {
         stmt.kind === "cpi_t22_token_metadata_update_authority"
       ) {
         seen.add("spl_token_metadata_interface");
+      }
+      // MagicBlock kinds: the Native emit wraps ephemeral-rollups-sdk via
+      // fully-qualified helper calls; no textual crate ref exists in the
+      // source-side IR fields. Pinocchio is unaffected — its optional-dep
+      // map has no entry for this key (the emit vendors a pinocchio-0.9
+      // port instead, because the upstream pinocchio flavor is built on
+      // pinocchio 0.10's renamed types).
+      if (
+        stmt.kind === "cpi_magicblock_delegate" ||
+        stmt.kind === "cpi_magicblock_commit" ||
+        stmt.kind === "cpi_magicblock_undelegate"
+      ) {
+        seen.add("ephemeral_rollups_sdk");
       }
       // Zero-copy load handlers + struct emit reference `bytemuck::*`
       // for the unsafe Pod / Zeroable impls and from_bytes_mut casts.

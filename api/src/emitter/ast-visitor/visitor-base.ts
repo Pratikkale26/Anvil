@@ -772,6 +772,9 @@ type CpiMplCoreRemovePluginV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_rem
 type CpiMplCoreUpdatePluginV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_update_plugin_v1" }>;
 type CpiMplCoreApprovePluginAuthorityV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_approve_plugin_authority_v1" }>;
 type CpiMplCoreRevokePluginAuthorityV1 = Extract<BodyStatement, { kind: "cpi_mpl_core_revoke_plugin_authority_v1" }>;
+type CpiMagicBlockDelegate = Extract<BodyStatement, { kind: "cpi_magicblock_delegate" }>;
+type CpiMagicBlockCommit = Extract<BodyStatement, { kind: "cpi_magicblock_commit" }>;
+type CpiMagicBlockUndelegate = Extract<BodyStatement, { kind: "cpi_magicblock_undelegate" }>;
 type CpiT22ConfidentialTransferInitMint = Extract<BodyStatement, { kind: "cpi_t22_confidential_transfer_initialize_mint" }>;
 type CpiT22ConfidentialTransferFeeInit = Extract<BodyStatement, { kind: "cpi_t22_confidential_transfer_fee_init" }>;
 type CpiT22ConfidentialMintBurnInitMint = Extract<BodyStatement, { kind: "cpi_t22_confidential_mint_burn_initialize_mint" }>;
@@ -878,6 +881,9 @@ export const VISITOR_SUPPORTED_KINDS: ReadonlySet<BodyStatement["kind"]> = new S
   "cpi_t22_confidential_transfer_initialize_mint",
   "cpi_t22_confidential_transfer_fee_init",
   "cpi_t22_confidential_mint_burn_initialize_mint",
+  "cpi_magicblock_delegate",
+  "cpi_magicblock_commit",
+  "cpi_magicblock_undelegate",
   "zero_copy_load_init",
   "zero_copy_load_mut",
   "zero_copy_load",
@@ -1061,6 +1067,12 @@ export class AstVisitorBase {
         return this.visitCpiT22ConfidentialTransferFeeInit(stmt);
       case "cpi_t22_confidential_mint_burn_initialize_mint":
         return this.visitCpiT22ConfidentialMintBurnInitMint(stmt);
+      case "cpi_magicblock_delegate":
+        return this.visitCpiMagicBlockDelegate(stmt);
+      case "cpi_magicblock_commit":
+        return this.visitCpiMagicBlockCommit(stmt);
+      case "cpi_magicblock_undelegate":
+        return this.visitCpiMagicBlockUndelegate(stmt);
       case "zero_copy_load_init":
         return this.visitZeroCopyLoadInit(stmt);
       case "zero_copy_load_mut":
@@ -4205,6 +4217,97 @@ export class AstVisitorBase {
       parseSimpleExpr(stmt.decryptableSupply),
       seedsArg,
     ])))];
+  }
+
+  /**
+   * MagicBlock Ephemeral Rollups — delegate a PDA to the delegation
+   * program (DELeGG…). Emits a typed call site; each target defines
+   * `magicblock_delegate_account` (Pinocchio: vendored port of
+   * ephemeral-rollups-pinocchio 0.16.2 against pinocchio 0.9; Native:
+   * thin wrapper over the ephemeral-rollups-sdk crate).
+   */
+  visitCpiMagicBlockDelegate(stmt: CpiMagicBlockDelegate): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push("Transformed: magicblock delegate_account");
+    const resolveRaw = (e: string) => w.normalizeKeyValueUsages(
+      w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
+    );
+    const lines: string[] = [
+      `    // MagicBlock: delegate '${stmt.pda}' to the delegation program`,
+      `    magicblock_delegate_account(`,
+      `        ${this.resolveToText(stmt.payer)},`,
+      `        ${this.resolveToText(stmt.pda)},`,
+      `        ${this.resolveToText(stmt.ownerProgram)},`,
+      `        ${this.resolveToText(stmt.buffer)},`,
+      `        ${this.resolveToText(stmt.delegationRecord)},`,
+      `        ${this.resolveToText(stmt.delegationMetadata)},`,
+      `        ${this.resolveToText(stmt.systemProgram)},`,
+      `        ${this.resolveToText(stmt.delegationProgram)},`,
+      `        ${resolveRaw(stmt.seedsExpr)},`,
+      `        ${stmt.commitFrequencyMs ? resolveRaw(stmt.commitFrequencyMs) : "u32::MAX"},`,
+      `        ${stmt.validator ? resolveRaw(stmt.validator) : "None"},`,
+      `        ${stmt.anyValidator ? "true" : "false"},`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * MagicBlock commit / commit-and-undelegate CPI to the magic program
+   * (Magic111…). One helper covers both (allow_undelegation flag) and
+   * both source APIs (ephem::commit_accounts and simple
+   * MagicIntentBundleBuilder chains).
+   */
+  visitCpiMagicBlockCommit(stmt: CpiMagicBlockCommit): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push(
+      `Transformed: magicblock ${stmt.undelegate ? "commit_and_undelegate" : "commit"}${stmt.viaIntentBundle ? " (intent bundle)" : ""}`,
+    );
+    const committed = stmt.accounts.map((a) => this.resolveToText(a)).join(", ");
+    const feeVault = stmt.magicFeeVault
+      ? `Some(${this.resolveToText(stmt.magicFeeVault)})`
+      : "None";
+    const lines: string[] = [
+      `    // MagicBlock: schedule ${stmt.undelegate ? "commit + undelegate" : "commit"} in the ephemeral rollup`,
+      `    magicblock_schedule_commit(`,
+      `        ${this.resolveToText(stmt.payer)},`,
+      `        ${this.resolveToText(stmt.magicContext)},`,
+      `        ${this.resolveToText(stmt.magicProgram)},`,
+      `        &[${committed}],`,
+      `        ${feeVault},`,
+      `        ${stmt.undelegate ? "true" : "false"},`,
+      `        ${stmt.viaIntentBundle ? "true" : "false"},`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
+  }
+
+  /**
+   * MagicBlock undelegation callback body (process_undelegation). The
+   * helper validates the buffer (signer + delegation-program-owned +
+   * canonical undelegate-buffer PDA), re-creates the PDA signed with the
+   * decoded seeds + bump, and copies the buffer data in. `account_seeds`
+   * is the borsh-decoded Vec<Vec<u8>> instruction arg.
+   */
+  visitCpiMagicBlockUndelegate(stmt: CpiMagicBlockUndelegate): RustStmt[] {
+    const w = this.walker;
+    w.ctx.transformedCount++;
+    w.ctx.details.push("Transformed: magicblock undelegate_account");
+    const seedsVar = stmt.seedsArg.replace(/[^A-Za-z0-9_]/g, "") || "account_seeds";
+    const lines: string[] = [
+      `    // MagicBlock: restore the delegated PDA from the undelegate buffer`,
+      `    magicblock_undelegate_account(`,
+      `        ${this.resolveToText(stmt.baseAccount)},`,
+      `        ${this.resolveToText(stmt.buffer)},`,
+      `        ${this.resolveToText(stmt.payer)},`,
+      `        ${this.resolveToText(stmt.systemProgram)},`,
+      `        program_id,`,
+      `        &${seedsVar},`,
+      `    )?;`,
+    ];
+    return this.applyStructuralize(lines);
   }
 
   /**

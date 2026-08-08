@@ -637,6 +637,45 @@ export function detectUnrecognizedCpiShape(text: string): string | null {
  * documentation doesn't false-positive. Returns a short family label for the
  * warning detail, or null.
  */
+/**
+ * MagicBlock Ephemeral Rollups constructs that reached pass_through — i.e.
+ * everything the typed extractors in cpi-detector.ts did NOT lower
+ * (let-bound builder chains, the deprecated pre-0.7 MagicInstructionBuilder
+ * API, raw sdk module paths, vrf/session-keys). Same refuse philosophy as
+ * detectCnftCompressionCpi: a silently dropped delegation/commit changes
+ * on-chain behavior, so surface it loudly (strict mode escalates to ERROR).
+ *
+ * Returns a short human label for the matched construct, or null.
+ */
+export function detectMagicBlockResidualCpi(text: string): string | null {
+  const stripped = text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""');
+
+  if (/\bMagicInstructionBuilder\b/.test(stripped)) return "MagicInstructionBuilder (deprecated pre-0.7 API)";
+  if (/\bMagicIntentBundleBuilder\b/.test(stripped)) return "MagicIntentBundleBuilder (non-canonical chain)";
+  if (/\bMagicAction\b|\bCommitAndUndelegate\s*\{|\bCallHandler\b|\bActionCallback\b/.test(stripped)) {
+    return "magic actions / callbacks";
+  }
+  if (/\bephemeral_rollups_sdk\s*::\s*vrf\b|\binvoke_signed_vrf\b|\bcreate_request_scoped_randomness_ix\b/.test(stripped)) {
+    return "ephemeral vrf (randomness request/callback)";
+  }
+  // Raw task-scheduling / magic-program instruction construction (crank
+  // programs bincode-serialize MagicBlockInstruction::ScheduleTask themselves).
+  if (/\bMagicBlockInstruction\b|\bScheduleTaskArgs\b|\bmagicblock_magic_program_api\b/.test(stripped)) {
+    return "magic-program raw instruction (ScheduleTask / crank API)";
+  }
+  if (/\bephemeral_rollups_sdk\s*::/.test(stripped)) return "ephemeral_rollups_sdk (raw module path)";
+  if (/\b(?:delegate_account_with_actions|delegate_account_with_any_validator|delegate_account|create_schedule_commit_ix|commit_accounts|commit_and_undelegate_accounts|undelegate_account)\s*\(/.test(stripped)) {
+    return "MagicBlock SDK call (unlowered)";
+  }
+  // Delegation / magic program id literals in raw invokes.
+  if (/\bDELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh\b/.test(stripped)) return "delegation program (by program id)";
+  if (/\bMagic11111111111111111111111111111111111111\b/.test(stripped)) return "magic program (by program id)";
+  return null;
+}
+
 export function detectCnftCompressionCpi(text: string): string | null {
   const stripped = text
     .replace(/\/\*[\s\S]*?\*\//g, "")

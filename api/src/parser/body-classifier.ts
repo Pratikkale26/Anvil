@@ -28,6 +28,7 @@ import {
   containsAnchorPatterns,
   detectUnrecognizedCpiShape,
   detectCnftCompressionCpi,
+  detectMagicBlockResidualCpi,
   getArguments,
   cleanAccountRef,
   cleanAmountExpr,
@@ -886,12 +887,24 @@ function passThroughDefault(
   // otherwise pass through without any signal.
   if (collector) {
     const cnft = detectCnftCompressionCpi(text);
+    const magicblock = cnft ? null : detectMagicBlockResidualCpi(text);
     if (cnft) {
       collector.add({
         code: "cnft_compression_unsupported",
         message:
           `Compressed-NFT / state-compression CPI "${cnft}" inside control-flow pass-through. ` +
           CNFT_REFUSE_DETAIL,
+        snippet: text.slice(0, 200),
+        loc: locFromNode(node),
+      });
+    } else if (magicblock) {
+      collector.add({
+        code: "magicblock_unsupported",
+        message:
+          `MagicBlock construct "${magicblock}" inside control-flow pass-through — ` +
+          `outside the supported catalog (delegate_<field>() / commit_accounts / ` +
+          `commit_and_undelegate_accounts / MagicIntentBundleBuilder commit chains / ` +
+          `process_undelegation). Deploy is blocked until it's hand-ported.`,
         snippet: text.slice(0, 200),
         loc: locFromNode(node),
       });
@@ -1602,12 +1615,24 @@ function classifyExpressionStatement(
   // the warning to ERROR via the parser-warnings surface.
   if (collector) {
     const cnft = detectCnftCompressionCpi(text);
+    const magicblock = cnft ? null : detectMagicBlockResidualCpi(text);
     if (cnft) {
       collector.add({
         code: "cnft_compression_unsupported",
         message:
           `Compressed-NFT / state-compression CPI "${cnft}" fell into pass_through. ` +
           CNFT_REFUSE_DETAIL,
+        snippet: text.slice(0, 200),
+        loc: locFromNode(node),
+      });
+    } else if (magicblock) {
+      collector.add({
+        code: "magicblock_unsupported",
+        message:
+          `MagicBlock construct "${magicblock}" fell into pass_through — outside the ` +
+          `supported catalog (delegate_<field>() / commit_accounts / ` +
+          `commit_and_undelegate_accounts / MagicIntentBundleBuilder commit chains / ` +
+          `process_undelegation). Deploy is blocked until it's hand-ported.`,
         snippet: text.slice(0, 200),
         loc: locFromNode(node),
       });

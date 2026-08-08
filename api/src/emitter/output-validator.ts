@@ -1409,6 +1409,12 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
       w.code === "composite_accounts_field" ||
       w.code === "cpi_unrecognized_dropped" ||
       w.code === "cnft_compression_unsupported" ||
+      // MagicBlock constructs outside the supported catalog — a silently
+      // dropped delegation action / commit changes on-chain behavior, so
+      // deploy is blocked until hand-ported. The companion
+      // magicblock_intent_bundle_downgraded stays a warning (semantically
+      // equivalent wire, disclosed).
+      w.code === "magicblock_unsupported" ||
       w.code === "instruction_discriminator_override_unsupported"
         ? "error"
         : "warning";

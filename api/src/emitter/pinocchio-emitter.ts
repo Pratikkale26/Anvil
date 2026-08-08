@@ -44,6 +44,10 @@ import {
   irNeedsUnsignedSplRevokeHelper,
   irNeedsSignedSplRevokeHelper,
   irNeedsInitAccountHelper,
+  irNeedsMagicBlockHelper,
+  irNeedsMagicBlockDelegateHelper,
+  irNeedsMagicBlockCommitHelper,
+  irNeedsMagicBlockUndelegateHelper,
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
   irNeedsTokenAccountInitHelper,
@@ -3726,6 +3730,267 @@ pub fn anvil_sub_lamports(account: &AccountInfo, amount: u64) -> ProgramResult {
     };
 
     signer_slice
+}`);
+    }
+
+    // ── MagicBlock Ephemeral Rollups ─────────────────────────────────────
+    // Vendored port of ephemeral-rollups-pinocchio 0.16.2 (MIT) to the
+    // pinocchio 0.9 API this scaffold pins — the upstream crate is built on
+    // pinocchio 0.10's renamed types (AccountView/Address) and cannot share
+    // a dependency graph with pinocchio 0.9. Wire formats:
+    //   delegate → dlp u64-LE discriminator 0 (19 = any-validator) + borsh
+    //              DelegateAccountArgs { commit_frequency_ms: u32,
+    //              seeds: Vec<Vec<u8>>, validator: Option<Pubkey> }
+    //   commit   → magic program bincode enum tag [1,0,0,0] (ScheduleCommit)
+    //              / [2,0,0,0] (ScheduleCommitAndUndelegate)
+    if (irNeedsMagicBlockHelper(ir)) {
+      helpers.push(`pub const MAGICBLOCK_DLP_ID: Pubkey = [181, 183, 0, 225, 242, 87, 58, 192, 204, 6, 34, 1, 52, 74, 207, 151, 184, 53, 6, 235, 140, 229, 25, 152, 204, 98, 126, 24, 147, 128, 167, 62];`);
+    }
+
+    if (irNeedsMagicBlockDelegateHelper(ir)) {
+      helpers.push(`#[allow(clippy::too_many_arguments)]
+pub fn magicblock_delegate_account(
+    payer: &AccountInfo,
+    pda_acc: &AccountInfo,
+    owner_program: &AccountInfo,
+    buffer_acc: &AccountInfo,
+    delegation_record: &AccountInfo,
+    delegation_metadata: &AccountInfo,
+    system_program: &AccountInfo,
+    delegation_program: &AccountInfo,
+    pda_seeds: &[&[u8]],
+    commit_frequency_ms: u32,
+    validator: Option<Pubkey>,
+    any_validator: bool,
+) -> ProgramResult {
+    if !payer.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !delegation_program.key().eq(&MAGICBLOCK_DLP_ID) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if pda_seeds.len() > 15 {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    const SYSTEM_PROGRAM_ID: Pubkey = [0u8; 32];
+    let owner_key = owner_program.key();
+    let pda_key = *pda_acc.key();
+
+    let (_, pda_bump) = pinocchio::pubkey::find_program_address(pda_seeds, owner_key);
+    let (_, buffer_bump) = pinocchio::pubkey::find_program_address(&[b"buffer", pda_key.as_ref()], owner_key);
+
+    // 1) Create the buffer PDA (owned by this program), snapshot the
+    //    delegated PDA's data into it, then zero the PDA.
+    let buffer_bump_arr = [buffer_bump];
+    let buffer_seeds = [
+        pinocchio::instruction::Seed::from(&b"buffer"[..]),
+        pinocchio::instruction::Seed::from(pda_key.as_ref()),
+        pinocchio::instruction::Seed::from(&buffer_bump_arr[..]),
+    ];
+    let data_len = pda_acc.data_len();
+    pinocchio_system::instructions::CreateAccount {
+        from: payer,
+        to: buffer_acc,
+        lamports: 0,
+        space: data_len as u64,
+        owner: owner_key,
+    }
+    .invoke_signed(&[pinocchio::instruction::Signer::from(&buffer_seeds[..])])?;
+    {
+        let pda_ro = pda_acc.try_borrow_data()?;
+        let mut buf = buffer_acc.try_borrow_mut_data()?;
+        buf.copy_from_slice(&pda_ro);
+    }
+    {
+        let mut pda_mut = pda_acc.try_borrow_mut_data()?;
+        for b in pda_mut.iter_mut() {
+            *b = 0;
+        }
+    }
+
+    // 2) Move PDA ownership to the delegation program (PDA-signed assign).
+    let pda_bump_arr = [pda_bump];
+    let mut pda_seed_arr: [pinocchio::instruction::Seed<'_>; 16] =
+        core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+    for (i, s) in pda_seeds.iter().enumerate() {
+        pda_seed_arr[i] = pinocchio::instruction::Seed::from(*s);
+    }
+    pda_seed_arr[pda_seeds.len()] = pinocchio::instruction::Seed::from(&pda_bump_arr[..]);
+    let pda_signer = pinocchio::instruction::Signer::from(&pda_seed_arr[..pda_seeds.len() + 1]);
+
+    if pda_acc.owner() != &SYSTEM_PROGRAM_ID {
+        unsafe { pda_acc.assign(&SYSTEM_PROGRAM_ID) };
+    }
+    if pda_acc.owner() != &MAGICBLOCK_DLP_ID {
+        pinocchio_system::instructions::Assign {
+            account: pda_acc,
+            owner: &MAGICBLOCK_DLP_ID,
+        }
+        .invoke_signed(&[pda_signer.clone()])?;
+    }
+
+    // 3) dlp Delegate CPI. Max payload: 8 + 4 + 4 + 15*(4+32) + 1 + 32 = 589.
+    let mut data = [0u8; 600];
+    let disc: u64 = if any_validator { 19 } else { 0 };
+    data[..8].copy_from_slice(&disc.to_le_bytes());
+    let mut off = 8usize;
+    data[off..off + 4].copy_from_slice(&commit_frequency_ms.to_le_bytes());
+    off += 4;
+    data[off..off + 4].copy_from_slice(&(pda_seeds.len() as u32).to_le_bytes());
+    off += 4;
+    for seed in pda_seeds {
+        if seed.len() > 32 {
+            return Err(ProgramError::InvalidSeeds);
+        }
+        data[off..off + 4].copy_from_slice(&(seed.len() as u32).to_le_bytes());
+        off += 4;
+        data[off..off + seed.len()].copy_from_slice(seed);
+        off += seed.len();
+    }
+    match validator {
+        Some(v) => {
+            data[off] = 1;
+            off += 1;
+            data[off..off + 32].copy_from_slice(v.as_ref());
+            off += 32;
+        }
+        None => {
+            data[off] = 0;
+            off += 1;
+        }
+    }
+    let metas = [
+        pinocchio::instruction::AccountMeta::writable_signer(payer.key()),
+        pinocchio::instruction::AccountMeta::writable_signer(pda_acc.key()),
+        pinocchio::instruction::AccountMeta::readonly(owner_key),
+        pinocchio::instruction::AccountMeta::writable(buffer_acc.key()),
+        pinocchio::instruction::AccountMeta::writable(delegation_record.key()),
+        pinocchio::instruction::AccountMeta::writable(delegation_metadata.key()),
+        pinocchio::instruction::AccountMeta::readonly(&SYSTEM_PROGRAM_ID),
+    ];
+    let ix = pinocchio::instruction::Instruction {
+        program_id: &MAGICBLOCK_DLP_ID,
+        accounts: &metas,
+        data: &data[..off],
+    };
+    pinocchio::cpi::slice_invoke_signed(
+        &ix,
+        &[payer, pda_acc, owner_program, buffer_acc, delegation_record, delegation_metadata, system_program],
+        &[pda_signer],
+    )?;
+
+    // 4) Close the buffer back to the payer.
+    *payer.try_borrow_mut_lamports()? += buffer_acc.lamports();
+    *buffer_acc.try_borrow_mut_lamports()? = 0;
+    buffer_acc.resize(0)?;
+    unsafe { buffer_acc.assign(&SYSTEM_PROGRAM_ID) };
+    Ok(())
+}`);
+    }
+
+    if (irNeedsMagicBlockCommitHelper(ir)) {
+      helpers.push(`pub fn magicblock_schedule_commit(
+    payer: &AccountInfo,
+    magic_context: &AccountInfo,
+    magic_program: &AccountInfo,
+    accounts_to_commit: &[&AccountInfo],
+    magic_fee_vault: Option<&AccountInfo>,
+    allow_undelegation: bool,
+    via_intent_bundle: bool,
+) -> ProgramResult {
+    // via_intent_bundle: the source used MagicIntentBundleBuilder. The
+    // intent-bundle serializer isn't vendored; the magic program accepts
+    // the classic ScheduleCommit wire as an equivalent, so both forms
+    // lower to it here (surfaced at parse time as
+    // magicblock_intent_bundle_downgraded).
+    let _ = via_intent_bundle;
+    const MAX_COMMIT_CPI_ACCOUNTS: usize = 16;
+    let prefix = if magic_fee_vault.is_some() { 3 } else { 2 };
+    let total = prefix + accounts_to_commit.len();
+    if total > MAX_COMMIT_CPI_ACCOUNTS {
+        return Err(ProgramError::InvalidArgument);
+    }
+    let mut metas: [pinocchio::instruction::AccountMeta; MAX_COMMIT_CPI_ACCOUNTS] =
+        core::array::from_fn(|_| pinocchio::instruction::AccountMeta::readonly(payer.key()));
+    metas[0] = pinocchio::instruction::AccountMeta::new(payer.key(), payer.is_writable(), true);
+    metas[1] = pinocchio::instruction::AccountMeta::writable(magic_context.key());
+    if let Some(vault) = magic_fee_vault {
+        metas[2] = pinocchio::instruction::AccountMeta::writable(vault.key());
+    }
+    for (i, acc) in accounts_to_commit.iter().enumerate() {
+        metas[prefix + i] = pinocchio::instruction::AccountMeta::new(acc.key(), acc.is_writable(), acc.is_signer());
+    }
+    let data: [u8; 4] = if allow_undelegation { [2, 0, 0, 0] } else { [1, 0, 0, 0] };
+    let ix = pinocchio::instruction::Instruction {
+        program_id: magic_program.key(),
+        accounts: &metas[..total],
+        data: &data,
+    };
+    let mut infos: [&AccountInfo; MAX_COMMIT_CPI_ACCOUNTS] = [payer; MAX_COMMIT_CPI_ACCOUNTS];
+    infos[1] = magic_context;
+    if let Some(vault) = magic_fee_vault {
+        infos[2] = vault;
+    }
+    for (i, acc) in accounts_to_commit.iter().enumerate() {
+        infos[prefix + i] = acc;
+    }
+    pinocchio::cpi::slice_invoke(&ix, &infos[..total])
+}`);
+    }
+
+    if (irNeedsMagicBlockUndelegateHelper(ir)) {
+      helpers.push(`pub fn magicblock_undelegate_account(
+    delegated_account: &AccountInfo,
+    buffer: &AccountInfo,
+    payer: &AccountInfo,
+    system_program: &AccountInfo,
+    owner_program: &Pubkey,
+    account_seeds: &[Vec<u8>],
+) -> ProgramResult {
+    let _ = system_program;
+    if !buffer.is_signer() {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if !buffer.is_owned_by(&MAGICBLOCK_DLP_ID) {
+        return Err(ProgramError::InvalidAccountOwner);
+    }
+    let (canonical_buffer, _) = pinocchio::pubkey::find_program_address(
+        &[b"undelegate-buffer", delegated_account.key().as_ref()],
+        &MAGICBLOCK_DLP_ID,
+    );
+    if buffer.key() != &canonical_buffer {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    if account_seeds.is_empty() || account_seeds.len() > 15 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let mut seed_refs: [&[u8]; 15] = [&[]; 15];
+    for (i, s) in account_seeds.iter().enumerate() {
+        seed_refs[i] = s.as_slice();
+    }
+    let pda_seeds = &seed_refs[..account_seeds.len()];
+    let (_, bump) = pinocchio::pubkey::find_program_address(pda_seeds, owner_program);
+    let bump_arr = [bump];
+    let mut seed_arr: [pinocchio::instruction::Seed<'_>; 16] =
+        core::array::from_fn(|_| pinocchio::instruction::Seed::from(&[][..]));
+    for (i, s) in pda_seeds.iter().enumerate() {
+        seed_arr[i] = pinocchio::instruction::Seed::from(*s);
+    }
+    seed_arr[pda_seeds.len()] = pinocchio::instruction::Seed::from(&bump_arr[..]);
+    let signer = pinocchio::instruction::Signer::from(&seed_arr[..pda_seeds.len() + 1]);
+
+    pinocchio_system::create_account_with_minimum_balance_signed(
+        delegated_account,
+        buffer.data_len(),
+        owner_program,
+        payer,
+        None,
+        &[signer],
+    )?;
+    let mut data = delegated_account.try_borrow_mut_data()?;
+    let buffer_data = buffer.try_borrow_data()?;
+    data.copy_from_slice(&buffer_data);
+    Ok(())
 }`);
     }
 

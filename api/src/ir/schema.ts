@@ -1537,6 +1537,76 @@ export const BodyStatementSchema = z.discriminatedUnion("kind", [
     signerSeeds: z.string().optional(),
   }),
 
+  // ── MagicBlock Ephemeral Rollups (delegation program DELeGG…, magic
+  // program Magic111…). Three typed kinds cover the supported catalog:
+  // delegate (dlp discriminator 0 / 19 u64-LE + borsh DelegateAccountArgs),
+  // commit / commit-and-undelegate (magic program bincode enum tag
+  // [1,0,0,0] / [2,0,0,0]; accounts [payer(w,s), magic_context(w),
+  // fee_vault?(w), …committed]), and the process_undelegation callback
+  // (external discriminator sha256("global:process_undelegation")[..8] =
+  // [196,28,41,206,48,37,51,167]; payload borsh Vec<Vec<u8>> pda seeds).
+  // Wire formats verified against ephemeral-rollups-sdk 0.16.2 source.
+  z.object({
+    kind: z.literal("cpi_magicblock_delegate"),
+    /** Account field name of the PDA being delegated (the `del`-marked field). */
+    pda: z.string(),
+    /** Payer — writable + signer. */
+    payer: z.string(),
+    /** Companion accounts injected by the #[delegate] expansion (deterministic
+     *  `buffer_<f>` / `delegation_record_<f>` / `delegation_metadata_<f>` names). */
+    buffer: z.string(),
+    delegationRecord: z.string(),
+    delegationMetadata: z.string(),
+    /** Owner program (this program) + delegation program + system program. */
+    ownerProgram: z.string(),
+    delegationProgram: z.string(),
+    systemProgram: z.string(),
+    /** Raw Rust expression for the PDA seeds slice (`&[&[u8]]`, no bump). */
+    seedsExpr: z.string(),
+    /** Raw expr for DelegateConfig.commit_frequency_ms; SDK default u32::MAX. */
+    commitFrequencyMs: z.string().optional(),
+    /** Raw expr for DelegateConfig.validator (Option<Pubkey>); SDK default None. */
+    validator: z.string().optional(),
+    /** true → dlp discriminator 19 (delegate_account_with_any_validator). */
+    anyValidator: z.boolean().optional(),
+  }),
+
+  z.object({
+    kind: z.literal("cpi_magicblock_commit"),
+    /** Payer — signer (writable flag carried through from the account meta). */
+    payer: z.string(),
+    /** Magic context account (MagicContext111…) — writable. */
+    magicContext: z.string(),
+    /** Magic program account (Magic111…). */
+    magicProgram: z.string(),
+    /** Account field names to commit, in source order. */
+    accounts: z.array(z.string()).min(1),
+    /** Optional magic fee vault (5-arg commit_accounts form / .magic_fee_vault). */
+    magicFeeVault: z.string().optional(),
+    /** true → ScheduleCommitAndUndelegate ([2,0,0,0]); false → ScheduleCommit. */
+    undelegate: z.boolean().default(false),
+    /**
+     * true when the source used MagicIntentBundleBuilder (modern API,
+     * ScheduleIntentBundle wire) rather than ephem::commit_accounts. Native
+     * emit reproduces the builder via the real SDK (byte-exact); Pinocchio
+     * emit downgrades to the semantically-equivalent v0 ScheduleCommit wire
+     * and the parser surfaces `magicblock_intent_bundle_downgraded`.
+     */
+    viaIntentBundle: z.boolean().optional(),
+  }),
+
+  z.object({
+    kind: z.literal("cpi_magicblock_undelegate"),
+    /** The delegated account being restored (base_account slot). */
+    baseAccount: z.string(),
+    /** Undelegate-buffer PDA (delegation-program-owned, must be signer). */
+    buffer: z.string(),
+    payer: z.string(),
+    systemProgram: z.string(),
+    /** Name of the Vec<Vec<u8>> instruction arg carrying the PDA seeds. */
+    seedsArg: z.string(),
+  }),
+
   // MPL Core: CreateCollectionV2 (task #48 S5). Discriminator 21; just
   // 4 accounts (collection writable+signer, update_authority optional
   // readonly, payer writable+signer, system_program); no log_wrapper
@@ -2276,6 +2346,26 @@ export const ParserWarningCodeSchema = z.enum([
    * hand-ported (or the access_control-transpile arc lands).
    */
   "access_control_dropped",
+  /**
+   * MagicBlock Ephemeral Rollups construct outside the supported catalog
+   * (delegate / commit / commit_and_undelegate / process_undelegation).
+   * Covers delegate_account_with_actions, PostDelegationActions,
+   * MagicInstructionBuilder (deprecated pre-0.7 API), intent-bundle chains
+   * with call handlers / actions / build_and_invoke_signed,
+   * #[ephemeral_accounts], #[action], and vrf/session-keys modules.
+   * Escalated to a validator ERROR (deploy-blocked) — a silently dropped
+   * delegation action changes on-chain behavior.
+   */
+  "magicblock_unsupported",
+  /**
+   * Source used MagicIntentBundleBuilder (ScheduleIntentBundle wire) and
+   * the Pinocchio target emits the semantically-equivalent v0
+   * ScheduleCommit / ScheduleCommitAndUndelegate wire instead (the intent
+   * bundle serializer is not vendored). The magic program accepts both;
+   * CPI bytes to Magic111… differ from the Anchor original. Warning, not
+   * error — surfaced so the user knows the wire shape changed.
+   */
+  "magicblock_intent_bundle_downgraded",
 ]);
 
 export type ParserWarningCode = z.infer<typeof ParserWarningCodeSchema>;

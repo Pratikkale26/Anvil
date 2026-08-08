@@ -36,6 +36,9 @@ import {
   irNeedsUnsignedSplCloseAccountHelper,
   irNeedsTokenAmountHelper,
   irNeedsInitAccountHelper,
+  irNeedsMagicBlockDelegateHelper,
+  irNeedsMagicBlockCommitHelper,
+  irNeedsMagicBlockUndelegateHelper,
   irNeedsToken2022Helper,
   irNeedsAtaCreationHelper,
   irNeedsMemoHelper,
@@ -2219,6 +2222,119 @@ pub fn anvil_sub_lamports<'a>(account: &AccountInfo<'a>, amount: u64) -> Program
         .checked_sub(amount)
         .ok_or(ProgramError::ArithmeticOverflow)?;
     Ok(())
+}`);
+    }
+
+    // ── MagicBlock Ephemeral Rollups ─────────────────────────────────────
+    // Native target wraps the real ephemeral-rollups-sdk crate (added as an
+    // on-demand Cargo dep with the backward-compat feature so it resolves
+    // against the scaffold's solana-program 2.x pin). Byte-exact by
+    // construction — same crate the Anchor source used.
+    if (irNeedsMagicBlockDelegateHelper(_ir)) {
+      helpers.push(`#[allow(clippy::too_many_arguments)]
+pub fn magicblock_delegate_account<'a>(
+    payer: &AccountInfo<'a>,
+    pda_acc: &AccountInfo<'a>,
+    owner_program: &AccountInfo<'a>,
+    buffer_acc: &AccountInfo<'a>,
+    delegation_record: &AccountInfo<'a>,
+    delegation_metadata: &AccountInfo<'a>,
+    system_program: &AccountInfo<'a>,
+    delegation_program: &AccountInfo<'a>,
+    pda_seeds: &[&[u8]],
+    commit_frequency_ms: u32,
+    validator: Option<Pubkey>,
+    any_validator: bool,
+) -> ProgramResult {
+    let del_accounts = ephemeral_rollups_sdk::cpi::DelegateAccounts {
+        payer,
+        pda: pda_acc,
+        owner_program,
+        buffer: buffer_acc,
+        delegation_record,
+        delegation_metadata,
+        delegation_program,
+        system_program,
+    };
+    let config = ephemeral_rollups_sdk::cpi::DelegateConfig {
+        commit_frequency_ms,
+        validator,
+    };
+    if any_validator {
+        ephemeral_rollups_sdk::cpi::delegate_account_with_any_validator(del_accounts, pda_seeds, config)
+    } else {
+        ephemeral_rollups_sdk::cpi::delegate_account(del_accounts, pda_seeds, config)
+    }
+}`);
+    }
+
+    if (irNeedsMagicBlockCommitHelper(_ir)) {
+      helpers.push(`pub fn magicblock_schedule_commit<'a>(
+    payer: &AccountInfo<'a>,
+    magic_context: &AccountInfo<'a>,
+    magic_program: &AccountInfo<'a>,
+    accounts_to_commit: &[&AccountInfo<'a>],
+    magic_fee_vault: Option<&AccountInfo<'a>>,
+    allow_undelegation: bool,
+    via_intent_bundle: bool,
+) -> ProgramResult {
+    if via_intent_bundle {
+        // Reproduce the source's MagicIntentBundleBuilder chain through the
+        // SDK — identical ScheduleIntentBundle wire bytes. build_and_invoke
+        // is a FoldableIntentBuilder trait method; import it fn-scoped.
+        use ephemeral_rollups_sdk::ephem::FoldableIntentBuilder;
+        let builder = ephemeral_rollups_sdk::ephem::MagicIntentBundleBuilder::new(
+            payer.clone(),
+            magic_context.clone(),
+            magic_program.clone(),
+        );
+        let builder = match magic_fee_vault {
+            Some(vault) => builder.magic_fee_vault(vault.clone()),
+            None => builder,
+        };
+        let infos: Vec<AccountInfo<'a>> = accounts_to_commit.iter().map(|a| (*a).clone()).collect();
+        if allow_undelegation {
+            builder.commit_and_undelegate(&infos).build_and_invoke()
+        } else {
+            builder.commit(&infos).build_and_invoke()
+        }
+    } else if allow_undelegation {
+        ephemeral_rollups_sdk::ephem::commit_and_undelegate_accounts(
+            payer,
+            accounts_to_commit.to_vec(),
+            magic_context,
+            magic_program,
+            magic_fee_vault,
+        )
+    } else {
+        ephemeral_rollups_sdk::ephem::commit_accounts(
+            payer,
+            accounts_to_commit.to_vec(),
+            magic_context,
+            magic_program,
+            magic_fee_vault,
+        )
+    }
+}`);
+    }
+
+    if (irNeedsMagicBlockUndelegateHelper(_ir)) {
+      helpers.push(`pub fn magicblock_undelegate_account<'a>(
+    delegated_account: &AccountInfo<'a>,
+    buffer: &AccountInfo<'a>,
+    payer: &AccountInfo<'a>,
+    system_program: &AccountInfo<'a>,
+    owner_program: &Pubkey,
+    account_seeds: &[Vec<u8>],
+) -> ProgramResult {
+    ephemeral_rollups_sdk::cpi::undelegate_account(
+        delegated_account,
+        owner_program,
+        buffer,
+        payer,
+        system_program,
+        account_seeds.to_vec(),
+    )
 }`);
     }
 

@@ -41,6 +41,7 @@ import { createWarningCollector } from "./warning-collector.js";
 import { buildHelperCpiCatalog } from "./helper-cpi-catalog.js";
 import { rewriteErrMacroToExplicit, expandPubkeyMacro, vendorExternalProgramIDs, rewriteAnchorRequireMacros } from "./project-source.js";
 import { parseExternalIdlMap, rewriteDeclareProgramCpis } from "./external-cpi.js";
+import { expandMagicBlockMacros } from "./magicblock-preparse.js";
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
@@ -250,6 +251,14 @@ export async function parseAnchor(
   source = source.replace(/#\[\s*queue_computation_accounts\s*\([^)]*\)\s*\]/g, "");
   source = source.replace(/#\[\s*callback_accounts\s*\([^)]*\)\s*\]/g, "");
   source = source.replace(/#\[\s*init_computation_definition_accounts\s*\([^)]*\)\s*\]/g, "");
+  // MagicBlock Ephemeral Rollups — expand #[ephemeral]/#[delegate]/#[commit]
+  // attribute macros textually (mirrors ephemeral-rollups-sdk 0.16.2 proc
+  // macros). No-op unless the source references ephemeral_rollups_sdk.
+  // Attr-level constructs outside the catalog are captured here and surfaced
+  // as magicblock_unsupported warnings once the collector exists (same
+  // deferred-warning pattern as stripAccessControlAttrs / B1).
+  const mbExpansion = expandMagicBlockMacros(source);
+  source = mbExpansion.source;
   // G22c — convert `pub use X::Y as Z;` to `pub type Z = X::Y;` so the
   // alias survives parse + emit. Without this, the alias is lost
   // because Anvil's parser drops `pub use` statements. Kamino's
@@ -529,6 +538,19 @@ export async function parseAnchor(
           `UNGUARDED. Re-add the check manually before deploy.`,
         instruction: inst?.name,
         snippet: ac.guard.slice(0, 200),
+      });
+    }
+
+    // ── MagicBlock: attr-level constructs outside the supported catalog ──
+    for (const label of mbExpansion.unsupported) {
+      warningCollector.add({
+        code: "magicblock_unsupported",
+        message:
+          `MagicBlock construct ${label} is outside Anvil's supported catalog ` +
+          `(delegate / commit / commit_and_undelegate / process_undelegation). ` +
+          `The attribute's expansion is NOT transpiled — keep this program on ` +
+          `Anchor or hand-port the expansion after emit.`,
+        snippet: label,
       });
     }
 

@@ -343,6 +343,36 @@ export function irNeedsT22ConfidentialMintBurnInitMintHelper(ir: SolanaIR): bool
   );
 }
 
+/**
+ * MagicBlock Ephemeral Rollups helper triggers — one per emitted helper fn.
+ * Pinocchio bodies are a vendored port of ephemeral-rollups-pinocchio
+ * 0.16.2 against pinocchio 0.9; Native bodies wrap the
+ * ephemeral-rollups-sdk crate (added as an on-demand Cargo dep).
+ */
+export function irNeedsMagicBlockDelegateHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_magicblock_delegate")
+  );
+}
+
+export function irNeedsMagicBlockCommitHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_magicblock_commit")
+  );
+}
+
+export function irNeedsMagicBlockUndelegateHelper(ir: SolanaIR): boolean {
+  return ir.instructions.some((instr) =>
+    instr.body.some((stmt) => stmt.kind === "cpi_magicblock_undelegate")
+  );
+}
+
+export function irNeedsMagicBlockHelper(ir: SolanaIR): boolean {
+  return irNeedsMagicBlockDelegateHelper(ir)
+    || irNeedsMagicBlockCommitHelper(ir)
+    || irNeedsMagicBlockUndelegateHelper(ir);
+}
+
 export function irNeedsUnsignedLamportsHelper(ir: SolanaIR): boolean {
   return ir.instructions.some((instr) =>
     instr.body.some((stmt) =>

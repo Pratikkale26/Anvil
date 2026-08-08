@@ -16,7 +16,7 @@ Each entry: `<integration> · <type> · <link> · <one-line description>`.
 
 ## Integrations
 
-_(no entries yet — will populate as users build on Anvil)_
+- **MagicBlock Ephemeral Rollups** · CLI / SDK · <https://docs.magicblock.gg> · Anchor programs built on `ephemeral-rollups-sdk` (0.16.2) transpile to Pinocchio/Native: `#[ephemeral]`/`#[delegate]`/`#[commit]` expansions, delegate/commit/undelegate CPIs, and the `process_undelegation` callback (wire-compatible discriminator). See the MagicBlock rows in [docs/feature-matrix.md](docs/feature-matrix.md).
 
 | Integration | Type | Link | Notes |
 |---|---|---|---|

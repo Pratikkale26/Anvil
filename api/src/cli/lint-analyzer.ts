@@ -86,6 +86,20 @@ export type UnsupportedPattern = {
  * in one place avoids drift between `anvil lint` and `anvil compile`.
  */
 export const UNSUPPORTED_IMPORT_PATTERNS: UnsupportedPattern[] = [
+  // ── MagicBlock Ephemeral Rollups ───────────────────────────────────────
+  {
+    prefix: "ephemeral_rollups_sdk",
+    category: "Partial integration",
+    title: "ephemeral_rollups_sdk imports (MagicBlock)",
+    detail: (target) =>
+      `Anvil transpiles the MagicBlock catalog — #[ephemeral]/#[delegate]/#[commit] macro expansions, ` +
+      `delegate_<field>(), commit_accounts / commit_and_undelegate_accounts, simple ` +
+      `MagicIntentBundleBuilder commit chains, and the process_undelegation callback ` +
+      `(${target === "pinocchio" ? "vendored pinocchio-0.9 port of ephemeral-rollups-pinocchio 0.16.2" : "via the ephemeral-rollups-sdk crate"}). ` +
+      `Outside the catalog (post-delegation actions, #[ephemeral_accounts], #[action], signed intent bundles, ` +
+      `session keys, vrf) emit refuses loudly. Suggested fix: confirm your call sites are within the catalog.`,
+    verdict: () => "review",
+  },
   // ── Metaplex Core ──────────────────────────────────────────────────────
   {
     prefix: "mpl_core",

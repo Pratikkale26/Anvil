@@ -96,6 +96,8 @@ const SUPERSET_EXCLUSIONS: Record<Target, Record<string, string>> = {
     spl_noop: "compression-family sibling; per-program-injected, not warmed in /build.",
     spl_governance:
       "heavy SPL governance program crate with a version-sensitive own dep tree; per-program-injected.",
+    ephemeral_rollups_sdk:
+      "MagicBlock ER SDK (backward-compat build): its own solana/magicblock-api dep tree is heavy and version-sensitive; per-program-injected via extractUsedCrates and proven compiling by cargo-compile-magicblock.test.ts, kept out of the always-present /build superset.",
     solana_zk_sdk: "zk crypto, heavy + toolchain-sensitive; per-program-injected, not in /build.",
     ark_bn254: "alt-bn128 pairing crypto, heavy + version-sensitive; per-program-injected.",
     ark_ff: "ark-* field crate; per-program-injected, not in the /build superset.",

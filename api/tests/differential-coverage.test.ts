@@ -45,6 +45,10 @@ import { BodyStatementSchema } from "../src/ir/schema.ts";
  */
 const FIXTURE_REGISTRY: Record<string, string> = {
   // fixture name → demo filename in src/demo-programs/
+  // MagicBlock ER — delegate leg byte-equal against the mainnet dlp .so
+  // (covers cpi_magicblock_delegate; commit/undelegate are
+  // DEFERRED_WITH_DESIGN_NOTE below).
+  "magicblock-delegate": "magicblock-counter.rs",
   counter: "counter.rs",
   vault: "vault.rs",
   escrow: "escrow.rs",
@@ -307,6 +311,18 @@ const IMPLICIT_KINDS = new Set<string>(["return_ok"]);
  *     blocked on SBF-toolchain session.
  */
 const DEFERRED_WITH_DESIGN_NOTE = new Set<string>([
+  // MagicBlock ER commit/undelegate: the magic program (Magic111…) exists
+  // ONLY inside MagicBlock's ephemeral validator — it is not a deployable
+  // .so and cannot be loaded into LiteSVM, so a commit CPI has no reference
+  // to byte-compare against. process_undelegation additionally requires the
+  // undelegate-buffer PDA to arrive as a dlp-owned SIGNER, which only dlp
+  // itself can produce via CPI (no client keypair exists for a PDA). The
+  // delegate leg (magicblock-delegate fixture) byte-equal-gates the shared
+  // wire machinery (borsh args, PDA derivations, account metas, lamport
+  // flow) against the real mainnet dlp .so; commit/undelegate stay under
+  // parser + emit + cargo-check gates (cargo-compile-magicblock.test.ts).
+  "cpi_magicblock_commit",
+  "cpi_magicblock_undelegate",
   // Pre-existing entries from the M3 IR slot landing (#29).
   "cpi_mpl_create_metadata_v3",
   "cpi_mpl_create_master_edition_v3",

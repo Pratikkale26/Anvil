@@ -915,6 +915,79 @@ export abstract class BaseEmitter {
     out = rewriteRentSysvarMethods(out);
     out = rewriteSiblingCpiCalls(out);
     out = commentOutSiblingStateAccesses(out, instr.accounts, knownDefs);
+    out = this.fixupMagicBlockCommitSites(out);
+    return out;
+  }
+
+  /**
+   * MagicBlock commit CPIs snapshot account data at CPI time in the
+   * ephemeral validator, so state mutated in the same instruction must be
+   * flushed BEFORE the commit (this is what the `counter.exit(&crate::ID)?`
+   * idiom does in MagicBlock's Anchor examples — Anvil emits the flush
+   * unconditionally so sources without the explicit exit stay correct).
+   * Also swaps a state-struct shadow for its AccountInfo alias in the
+   * committed-accounts list (`counter` → `counter_account`): the emit binds
+   * `let counter_account = counter; let mut counter = Counter::…`, so the
+   * bare name inside `&[…]` would pass the deserialized struct where the
+   * helper expects `&AccountInfo`. Both targets expose `T::save(account,
+   * &value)` with identical semantics, so one rewrite serves both.
+   */
+  protected fixupMagicBlockCommitSites(body: string): string {
+    if (!body.includes("magicblock_schedule_commit(")) return body;
+    const aliases = new Set<string>();
+    for (const m of body.matchAll(/let\s+(\w+)_account\s*=\s*\1\s*;/g)) aliases.add(m[1]!);
+    if (aliases.size === 0) return body;
+    const typeOf = new Map<string, string>();
+    for (const m of body.matchAll(/let\s+mut\s+(\w+)\s*=\s*([A-Z]\w*)\s*(?:::|\{)/g)) {
+      if (m[1] && m[2] && m[2] !== "Some" && m[2] !== "Vec" && m[2] !== "Option") {
+        typeOf.set(m[1], m[2]);
+      }
+    }
+    const callRe = /^([ \t]*)magicblock_schedule_commit\(/gm;
+    let out = "";
+    let cursor = 0;
+    let m: RegExpExecArray | null;
+    while ((m = callRe.exec(body)) !== null) {
+      const indent = m[1] ?? "";
+      const callStart = m.index;
+      // Balanced-paren scan to the call's closing `)`.
+      const open = body.indexOf("(", callStart);
+      let depth = 0;
+      let i = open;
+      for (; i < body.length; i++) {
+        if (body[i] === "(") depth++;
+        else if (body[i] === ")") {
+          depth--;
+          if (depth === 0) break;
+        }
+      }
+      if (i >= body.length) break;
+      let callText = body.slice(callStart, i + 1);
+      const flushes: string[] = [];
+      callText = callText.replace(/&\[([^\]]*)\]/, (_full, list: string) => {
+        const rewritten = list
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((name) => {
+            if (!/^[a-z_]\w*$/.test(name) || !aliases.has(name)) return name;
+            const t = typeOf.get(name);
+            if (t) flushes.push(`${indent}${t}::save(${name}_account, &${name})?;`);
+            return `${name}_account`;
+          });
+        return `&[${rewritten.join(", ")}]`;
+      });
+      out += body.slice(cursor, callStart);
+      if (flushes.length > 0) {
+        out += `${indent}// Flush mutated state before the commit CPI (the ephemeral\n`;
+        out += `${indent}// validator snapshots account data at CPI time).\n`;
+        out += `${flushes.join("\n")}\n`;
+      }
+      out += callText;
+      cursor = i + 1;
+      callRe.lastIndex = i + 1;
+    }
+    out += body.slice(cursor);
     return out;
   }
 
@@ -1167,6 +1240,14 @@ export abstract class BaseEmitter {
         // while the program crate uses borsh 1.5, surfacing as wave of
         // "Pubkey: BorshSerialize not satisfied" across PluginRegistryV1.
         if (/\bmpl_core\b/.test(statement)) return false;
+        // ephemeral_rollups_sdk dropped on BOTH targets — MagicBlock emit
+        // goes through fully-qualified helper fns (Pinocchio: vendored
+        // pinocchio-0.9 port; Native: the sdk crate added via
+        // NATIVE_OPTIONAL_DEPS and referenced with full paths). The source
+        // imports are Anchor-feature-flavored (`ephemeral_rollups_sdk::
+        // anchor::{commit, delegate, ephemeral}`, `ephem::…`) and don't
+        // resolve against the non-anchor build of the crate.
+        if (/\bephemeral_rollups_sdk\b/.test(statement)) return false;
         // switchboard_on_demand dropped on BOTH targets — the crate
         // transitively depends on borsh 0.10 (vs our 1.6), and pulls
         // solana_program::address_lookup_table (absent in 2.2). Same
