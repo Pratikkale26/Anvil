@@ -28,7 +28,7 @@
 | AST visitor (production default — regex walker being absorbed) | Y (shared, production default since 2026-05-13) | Y (shared) |
 | Zero-copy account layouts (`#[account(zero_copy)]`) | Y (`#[repr(C)]` + bytemuck `Pod`/`Zeroable`, byte-equal verified 2026-05-08) | Y |
 | Metaplex Token Metadata CPIs (create_metadata_v3, master_edition_v3, verify/sign collection, freeze/thaw, mint_new_edition, approve/revoke collection authority) | Y (12 IR kinds, 11/12 slots byte-equal differential-gated) | Y |
-| Pyth price feed reads (legacy `PriceAccountV2` + modern `PriceUpdateV2`) | Y (byte-equal differential against Pyth Receiver `.so`) | Y |
+| Pyth price feed reads (legacy `PriceAccountV2` + modern `PriceUpdateV2`) | Y (cargo-gated + byte-offset regression vs synthetic buffers; runtime differential deferred — Anchor reference can't build `pyth-solana-receiver-sdk` upstream, see `differential-oracle-pyth.test.ts`; modern path emits Anchor's owner + discriminator guard, `emitter-pyth-modern-guard.test.ts`) | Y |
 | Switchboard On-Demand PullFeed reads (`PullFeedAccountData::parse(...)` + `.value()` / `.value_with_max_staleness(N)`) | Y (parser + hand-rolled byte read; byte-equal differential pending fixture) | Y |
 | MPL Core asset lifecycle + collection (CreateV2 / UpdateV2 / TransferV1 / BurnV1 / CreateCollectionV2) | Y (byte-equal differential against real mpl_core.so loaded into LiteSVM) | Y |
 | MPL Core plugin family (AddPluginV1 / RemovePluginV1 / UpdatePluginV1 / Approve / Revoke) | Y on 8 simple Plugin variants (statically-sized payloads), byte-equal differential-gated; complex variants (Royalties, Attributes, UpdateDelegate, Edition, MasterEdition, VerifiedCreators, Autograph, BubblegumV2, FreezeExecute) fall back to `lint` | Y (same scope) |
@@ -44,7 +44,7 @@
 
 These run on every Anvil release; any emit divergence fails the gate.
 
-**199 byte-equal differential test files** — covering SPL Token (incl. `approve`/`revoke`), Token-2022 (all 13 non-confidential extensions, incl. RequiredMemoTransfers), Metaplex Token Metadata (12 IR kinds), MPL Core (10 IR kinds), Pyth (legacy + modern), Switchboard, composite Accounts, nested variable-length account state, 14+ real-world externally-authored Anchor programs, 25+ Solana Foundation program-examples, and 64 demo programs. `bun test api/tests/differential-*.test.ts` runs the full set. See [differential-testing.md](differential-testing.md) for the complete breakdown.
+**199 byte-equal differential test files** — covering SPL Token (incl. `approve`/`revoke`), Token-2022 (all 13 non-confidential extensions, incl. RequiredMemoTransfers), Metaplex Token Metadata (12 IR kinds), MPL Core (10 IR kinds), composite Accounts, nested variable-length account state, 14+ real-world externally-authored Anchor programs, 25+ Solana Foundation program-examples, and 64 demo programs. `bun test api/tests/differential-*.test.ts` runs the full set. See [differential-testing.md](differential-testing.md) for the complete breakdown.
 
 ## Real-world cargo-build coverage
 

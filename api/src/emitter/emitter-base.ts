@@ -13,6 +13,20 @@
  * compatibility.
  */
 
+// Pyth Receiver program (rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ) —
+// PriceUpdateV2::owner() in pyth-solana-receiver-sdk. Same ID Anvil's
+// scenario-runner and litesvm-aux-programs fixture use.
+export const PYTH_RECEIVER_PROGRAM_ID_BYTES: number[] = [
+  12, 183, 250, 187, 82, 247, 166, 72, 187, 91, 49, 125, 154, 1, 139, 144, 87,
+  203, 2, 71, 116, 250, 254, 1, 230, 196, 223, 152, 204, 56, 88, 129,
+];
+
+// sha256("account:PriceUpdateV2")[0..8] — Anchor discriminator, matches the
+// pyth receiver IDL.
+export const PRICE_UPDATE_V2_DISCRIMINATOR: number[] = [
+  34, 241, 35, 99, 157, 126, 244, 205,
+];
+
 import type {
   SolanaIR,
   AccountDef,
@@ -836,6 +850,24 @@ export abstract class BaseEmitter {
     ].join("\n");
   }
 
+  /**
+   * Anchor `Account<'info, T>` parity guard for foreign-program typed
+   * accounts (T::owner() is another program): not-initialized, owner, and
+   * discriminator checks with anchor-lang's exact error codes and check
+   * order (anchor-lang 1.1.2 `Account::try_from`):
+   *   1. owner == System && lamports == 0  → 3012 AccountNotInitialized
+   *   2. owner != T::owner()               → 3007 AccountOwnedByWrongProgram
+   *   3. data.len() < 8                    → 3001 AccountDiscriminatorNotFound
+   *   4. data[0..8] != T::DISCRIMINATOR    → 3002 AccountDiscriminatorMismatch
+   * Without this, any program-owned account with a plausible layout passes —
+   * the Anchor original rejects it (found by sentio SW002 on emitted output).
+   */
+  abstract emitAnchorForeignAccountGuard(
+    accountName: string,
+    ownerBytes: number[],
+    discriminator: number[],
+  ): string;
+
   emitPythReadPriceModern(
     priceUpdateAccount: string,
     priceBinding: string,
@@ -855,6 +887,11 @@ export abstract class BaseEmitter {
     const clockTs = this.emitClockGetExpr("unix_timestamp");
     const feedIdRaw = feedIdExpr.replace(/^&/, "").trim();
     return [
+      this.emitAnchorForeignAccountGuard(
+        priceUpdateAccount,
+        PYTH_RECEIVER_PROGRAM_ID_BYTES,
+        PRICE_UPDATE_V2_DISCRIMINATOR,
+      ),
       `    let __pyth_data = ${priceUpdateAccount}.try_borrow_data()?;`,
       `    if __pyth_data.len() < 50 {`,
       `        return Err(ProgramError::InvalidAccountData);`,

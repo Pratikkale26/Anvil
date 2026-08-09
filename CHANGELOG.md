@@ -6,6 +6,13 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ---
 
+## Unreleased
+
+### Fixed — SECURITY: pyth-modern typed account emitted with no owner/discriminator check
+
+- **`Account<'info, PriceUpdateV2>` reads now emit Anchor's full account guard.** The emitted pyth-modern path (both targets) performed layout/staleness/feed-id checks but never verified the account's **owner** or **8-byte discriminator** — so a crafted account owned by any program, with a plausible byte layout, was accepted where the Anchor original rejects it. The emit now mirrors anchor-lang 1.1.2 `Account::try_from` byte-for-byte in check order *and* error codes: owner==System && lamports==0 → `3012 AccountNotInitialized`; owner != pyth receiver (`rec5EKMGg…`) → `3007 AccountOwnedByWrongProgram`; missing/mismatched `sha256("account:PriceUpdateV2")[..8]` discriminator → `3001`/`3002`. New `emitAnchorForeignAccountGuard` hook on both emitters (reusable for future foreign-program `Account<T>` integrations); locked by `emitter-pyth-modern-guard.test.ts` including check ordering and the legacy path staying unguarded (legacy is `/// CHECK` `AccountInfo` in the Anchor source — no checks is faithful there).
+- Found by static analysis of Anvil's own emitted output (sentio SW002 with a native/pinocchio detection layer built in the sentio fork) — the adversarial direction that a happy-path runtime differential cannot cover; the pyth-modern differential itself remains deferred upstream (`differential-oracle-pyth.test.ts` header: the Anchor reference can't build `pyth-solana-receiver-sdk` due to its borsh-derive Cargo issue).
+
 ## 0.8.0 — 2026-08-08
 
 ### Added — MagicBlock Ephemeral Rollups support

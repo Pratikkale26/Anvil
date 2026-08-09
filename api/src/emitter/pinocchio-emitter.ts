@@ -815,6 +815,33 @@ export class PinocchioEmitter extends BaseEmitter {
     }`;
   }
 
+  override emitAnchorForeignAccountGuard(
+    accountName: string,
+    ownerBytes: number[],
+    discriminator: number[],
+  ): string {
+    // pinocchio Pubkey = [u8; 32]; System Program ID is all zeros.
+    return [
+      `    // Anchor Account<T> parity: not-initialized / owner / discriminator`,
+      `    // checks with anchor-lang error codes (see Account::try_from).`,
+      `    if ${accountName}.owner() == &[0u8; 32] && ${accountName}.lamports() == 0 {`,
+      `        return Err(ProgramError::Custom(3012));`,
+      `    }`,
+      `    if ${accountName}.owner() != &[${ownerBytes.join(", ")}] {`,
+      `        return Err(ProgramError::Custom(3007));`,
+      `    }`,
+      `    {`,
+      `        let __disc_data = ${accountName}.try_borrow_data()?;`,
+      `        if __disc_data.len() < 8 {`,
+      `            return Err(ProgramError::Custom(3001));`,
+      `        }`,
+      `        if __disc_data[0..8] != [${discriminator.join(", ")}] {`,
+      `            return Err(ProgramError::Custom(3002));`,
+      `        }`,
+      `    }`,
+    ].join("\n");
+  }
+
   override emitAtaAddressCheck(accountName: string, mint: string, authority: string, tokenProgram: string): string {
     // F2 — verify the canonical ATA address for a non-init associated_token
     // account. Anchor: get_associated_token_address_with_program_id(authority,

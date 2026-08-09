@@ -602,6 +602,32 @@ use solana_program::{
     }`;
   }
 
+  override emitAnchorForeignAccountGuard(
+    accountName: string,
+    ownerBytes: number[],
+    discriminator: number[],
+  ): string {
+    return [
+      `    // Anchor Account<T> parity: not-initialized / owner / discriminator`,
+      `    // checks with anchor-lang error codes (see Account::try_from).`,
+      `    if ${accountName}.owner == &solana_program::system_program::ID && ${accountName}.lamports() == 0 {`,
+      `        return Err(ProgramError::Custom(3012));`,
+      `    }`,
+      `    if ${accountName}.owner != &solana_program::pubkey::Pubkey::new_from_array([${ownerBytes.join(", ")}]) {`,
+      `        return Err(ProgramError::Custom(3007));`,
+      `    }`,
+      `    {`,
+      `        let __disc_data = ${accountName}.try_borrow_data()?;`,
+      `        if __disc_data.len() < 8 {`,
+      `            return Err(ProgramError::Custom(3001));`,
+      `        }`,
+      `        if __disc_data[0..8] != [${discriminator.join(", ")}] {`,
+      `            return Err(ProgramError::Custom(3002));`,
+      `        }`,
+      `    }`,
+    ].join("\n");
+  }
+
   override emitProgramIdentityCheck(name: string, accountType: string): string {
     // #17 / #20 — Program<'info, T> / Interface<'info, TokenInterface> must
     // carry a member of the program's id set (Anchor's Program<T> single-id /
