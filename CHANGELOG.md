@@ -6,7 +6,7 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ---
 
-## Unreleased
+## 0.8.1 — 2026-08-09
 
 ### Fixed — SECURITY: pyth-modern typed account emitted with no owner/discriminator check
 

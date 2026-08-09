@@ -1,6 +1,6 @@
 {
   "name": "anvil-sol",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Anvil — Anchor → Pinocchio/Native transpiler with a byte-equal proof gate. Converts Anchor source into a cargo-buildable project from a single typed IR (deterministic emit + validator + portability lint), then proves the port: anvil verify builds both binaries and byte-compares on-chain state under LiteSVM.",
   "type": "module",
   "license": "Apache-2.0",
