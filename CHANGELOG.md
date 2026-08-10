@@ -6,7 +6,7 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ---
 
-## Unreleased
+## 0.9.0 — 2026-08-10
 
 ### Added — `anvil audit`: security parity via sentio-native
 
