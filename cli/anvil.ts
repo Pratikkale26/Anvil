@@ -13,7 +13,8 @@
  *   anvil --help
  */
 
-import { existsSync, readFileSync, mkdirSync, writeFileSync, statSync, realpathSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, statSync, realpathSync, mkdtempSync } from "fs";
+import { tmpdir } from "os";
 import { resolve, join, basename, dirname } from "path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -26,6 +27,14 @@ import { validateEmitterOutput } from "../api/src/emitter/output-validator.js";
 import { auditPassthrough } from "../api/src/emitter/passthrough-audit.js";
 import { CLI_STUB_MARKER_PATTERNS } from "./stub-markers.js";
 import { analyzeCU } from "../api/src/emitter/cu-analyzer.js";
+import {
+  findSentioBinary,
+  runSentioScan,
+  compareFindings,
+  severityAtLeast,
+  SENTIO_INSTALL_HINT,
+  type SentioFinding,
+} from "../api/src/cli/audit-analyzer.js";
 import { buildProjectScaffold } from "../api/src/emitter/project-scaffold.js";
 import { resolveLocalSource } from "../api/src/parser/local-source.js";
 import { analyzePortability, renderLintMarkdown } from "../api/src/cli/lint-analyzer.js";
@@ -149,6 +158,10 @@ interface CliArgs {
    * scripts that explicitly opt in to the gate. Specifying both
    * `--strict` and `--permissive` is a hard error.
    */
+  /** `audit --fail-on <sev>`: exit non-zero when any finding at/above this
+   *  severity exists (low|medium|high|critical). Independent of the
+   *  new-on-output tripwire, which always exits 2. */
+  failOn: string | null;
   strict: boolean;
   /**
    * `--permissive` on `compile`: opt OUT of the v0.4 safe-by-default
@@ -301,6 +314,7 @@ interface CliArgs {
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     command: null,
+    failOn: null,
     input: null,
     input2: null,
     rest: [],
@@ -369,6 +383,16 @@ function parseArgs(argv: string[]): CliArgs {
     if (arg === "--single-file") {
       args.singleFile = true;
       i++;
+      continue;
+    }
+
+    if (arg === "--fail-on") {
+      const v = (rest[i + 1] ?? "").toLowerCase();
+      if (!["low", "medium", "high", "critical"].includes(v)) {
+        fatal(`--fail-on requires one of: low, medium, high, critical`);
+      }
+      args.failOn = v;
+      i += 2;
       continue;
     }
 
@@ -605,6 +629,7 @@ function printHelp(): void {
     advise       Recommend a transpile target (Pinocchio vs Native)
     refine       AI-patch validator errors (your ANTHROPIC_API_KEY, your spend)
     lint         Auto-port readiness report (ready / review / blocker findings)
+    audit        Security parity: sentio scan of source AND transpiled output
     bench        Per-instruction CU estimate vs Anchor baseline
     snapshot     Save / check CU baseline — fails on regression
     diff         Storage layout diff between two program versions
@@ -912,6 +937,7 @@ function printCommandHelp(command: string): void {
     case "advise":       void cmdAdvise({ ...({} as CliArgs), help: true } as CliArgs); return;
     case "refine":       void cmdRefine({ ...({} as CliArgs), help: true } as CliArgs); return;
     case "lint":         printLintHelp();       return;
+    case "audit":        printAuditHelp();      return;
     case "bench":        printBenchHelp();      return;
     case "snapshot":     printSnapshotHelp();   return;
     case "diff":         printDiffHelp();       return;
@@ -1717,6 +1743,170 @@ async function cmdLint(args: CliArgs): Promise<void> {
   if (report.counts.blocker > 0) process.exit(1);
 }
 
+// ─── anvil audit — security parity via sentio-native ─────────────────────────
+
+function printAuditHelp(): void {
+  console.log(`
+  ${c.bold}anvil audit${c.reset} — security parity: sentio scan of the source AND the transpiled output.
+
+  Scans your Anchor source with the sentio scanner, transpiles it, scans the
+  generated code with sentio's native/pinocchio rule layers, and classifies
+  the findings:
+
+    ${c.green}carried${c.reset}        source weakness faithfully preserved — fix your Anchor code
+    ${c.dim}not applicable${c.reset} Anchor-form rules, silent on raw code (risk covered by native layers)
+    ${c.yellow}review${c.reset}         source finding with no output counterpart — check by hand
+    ${c.red}NEW ON OUTPUT${c.reset}  no source counterpart — the transpile may have dropped a guarantee
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil audit <input> [--target pinocchio|native] [--json] [--fail-on <sev>]
+
+  ${c.bold}REQUIREMENTS${c.reset}
+
+    The sentio scanner with native rule layers:
+      cargo install --git https://github.com/Pratikkale26/sentio-native sentio-cli
+    (or set ANVIL_SENTIO_BIN). anvil itself works fine without it — audit is opt-in.
+
+  ${c.bold}EXIT CODES${c.reset}
+
+    0  ran clean (no tripwire, no --fail-on breach)
+    1  setup/parse failure, sentio missing, or --fail-on threshold breached
+    2  NEW-ON-OUTPUT findings — investigate before shipping
+`);
+}
+
+async function cmdAudit(args: CliArgs): Promise<void> {
+  if (args.help) {
+    printAuditHelp();
+    return;
+  }
+  if (!args.input) {
+    fatal("Missing input.\n\n  Usage: anvil audit <input> [--target pinocchio|native] [--json] [--fail-on <sev>]");
+  }
+  const target = (args.target ?? "pinocchio") as "pinocchio" | "native";
+  if (!["pinocchio", "native"].includes(target)) {
+    fatal(`Invalid --target "${args.target}". Must be pinocchio or native.`);
+  }
+  if (!args.json) banner();
+
+  const bin = findSentioBinary();
+  if (!bin) {
+    fatal(SENTIO_INSTALL_HINT);
+  }
+
+  // 1. Scan the Anchor source (file or directory) as-is.
+  const inputPath = resolve(args.input);
+  if (!existsSync(inputPath)) fatal(`Input not found: ${inputPath}`);
+  let inputScan;
+  try {
+    inputScan = runSentioScan(bin!, inputPath);
+  } catch (e) {
+    fatal(`sentio failed on the source: ${e instanceof Error ? e.message : e}`);
+    return;
+  }
+
+  // 2. Transpile to a temp dir.
+  const source = resolveSource(args.input);
+  const parsed = await parseAnchor(source);
+  if (!parsed.ok) {
+    if (args.json) console.log(JSON.stringify({ ok: false, error: parsed.error }));
+    else error(`Parse failed: ${parsed.error}`);
+    process.exit(1);
+  }
+  const emitted = target === "native" ? emitNativeFull(parsed.ir) : emitPinocchioFull(parsed.ir);
+  const outDir = mkdtempSync(join(tmpdir(), "anvil-audit-"));
+  for (const f of emitted.files) {
+    const fp = join(outDir, f.path);
+    mkdirSync(dirname(fp), { recursive: true });
+    writeFileSync(fp, f.content, "utf8");
+  }
+
+  // 3. Scan the transpiled output.
+  let outputScan;
+  try {
+    outputScan = runSentioScan(bin!, outDir);
+  } catch (e) {
+    fatal(`sentio failed on the transpiled output: ${e instanceof Error ? e.message : e}`);
+    return;
+  }
+
+  // 4. Classify.
+  const report = compareFindings(inputScan.findings, outputScan.findings);
+
+  const failOnBreached =
+    args.failOn != null &&
+    [...inputScan.findings, ...outputScan.findings].some((f) =>
+      severityAtLeast(f.severity, args.failOn!),
+    );
+
+  if (args.json) {
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          program: parsed.ir.name,
+          target,
+          emittedTo: outDir,
+          input: { findings: inputScan.findings, filesScanned: inputScan.files_scanned },
+          output: { findings: outputScan.findings, filesScanned: outputScan.files_scanned },
+          parity: {
+            carried: report.carried,
+            newOnOutput: report.newOnOutput,
+            inputOnlyAnchorForm: report.inputOnlyAnchorForm,
+            inputOnlyReview: report.inputOnlyReview,
+          },
+          failOn: args.failOn,
+          failOnBreached,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    const fmt = (f: SentioFinding) =>
+      `${f.rule_id} ${c.dim}${f.severity}${c.reset} ${f.location.path.split("/").pop()}:${f.location.line} ${c.dim}${f.message.slice(0, 76)}${c.reset}`;
+
+    console.log(`  ${c.bold}ANVIL AUDIT${c.reset} — ${parsed.ir.name}  ${c.dim}target: ${target} · scanner: sentio${c.reset}`);
+    console.log(`  ${c.dim}source findings: ${inputScan.findings.length} · output findings: ${outputScan.findings.length} · emitted to ${outDir}${c.reset}\n`);
+
+    if (report.newOnOutput.length > 0) {
+      console.log(`  ${c.red}${c.bold}NEW ON OUTPUT — the transpile may have dropped a guarantee:${c.reset}`);
+      for (const f of report.newOnOutput) console.log(`    ${c.red}✗${c.reset} ${fmt(f)}`);
+      console.log();
+    }
+    if (report.carried.length > 0) {
+      console.log(`  ${c.bold}Carried from source${c.reset} ${c.dim}(fix the Anchor code — the output faithfully kept the weakness)${c.reset}`);
+      for (const f of report.carried) console.log(`    ${c.yellow}⚠${c.reset} ${fmt(f)}`);
+      console.log();
+    }
+    if (report.inputOnlyReview.length > 0) {
+      console.log(`  ${c.bold}Source-only — review${c.reset} ${c.dim}(no output counterpart; hardened by transpile OR a scanner recall gap)${c.reset}`);
+      for (const f of report.inputOnlyReview) console.log(`    ${c.yellow}?${c.reset} ${fmt(f)}`);
+      console.log();
+    }
+    if (report.inputOnlyAnchorForm.length > 0) {
+      console.log(`  ${c.bold}Source-only — Anchor-form rules${c.reset} ${c.dim}(structurally silent on raw code)${c.reset}`);
+      for (const { finding, coveredBy } of report.inputOnlyAnchorForm)
+        console.log(`    ${c.dim}·${c.reset} ${fmt(finding)} ${c.dim}→ risk covered by ${coveredBy}${c.reset}`);
+      console.log();
+    }
+    if (
+      report.newOnOutput.length === 0 &&
+      report.carried.length === 0 &&
+      report.inputOnlyReview.length === 0 &&
+      report.inputOnlyAnchorForm.length === 0
+    ) {
+      console.log(`  ${c.green}✓ Clean on both sides — no findings on source or transpiled output.${c.reset}\n`);
+    } else if (report.newOnOutput.length === 0) {
+      console.log(`  ${c.green}✓ Security parity holds — no output finding lacks a source counterpart.${c.reset}\n`);
+    }
+  }
+
+  if (report.newOnOutput.length > 0) process.exit(2);
+  if (failOnBreached) process.exit(1);
+}
+
 // ─── anvil bench <subject.so> --against <reference.so> (runtime CU gate) ──────
 
 /**
@@ -2285,7 +2475,7 @@ _anvil_completions() {
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
   cmd="\${COMP_WORDS[1]}"
 
-  local commands="compile parse validate verify advise refine lint bench snapshot diff differential migrate completion upgrade"
+  local commands="compile parse validate verify advise refine lint audit bench snapshot diff differential migrate completion upgrade"
   local global_flags="--help -h --version -v"
   local target_values="pinocchio native"
   local shell_values="bash zsh fish"
@@ -2374,6 +2564,7 @@ _anvil() {
     'advise:Recommend a transpile target (Pinocchio vs Native)'
     'refine:AI-patch validator errors (your ANTHROPIC_API_KEY)'
     'lint:Auto-port readiness report'
+    'audit:Security parity scan (sentio)'
     'bench:Per-instruction CU estimate vs Anchor baseline'
     'snapshot:Save / check CU baseline'
     'diff:Storage layout diff between two program versions'
@@ -2494,6 +2685,7 @@ complete -c anvil -n '__fish_use_subcommand' -a 'verify' -d 'Prove byte-equal vs
 complete -c anvil -n '__fish_use_subcommand' -a 'advise' -d 'Recommend a transpile target (Pinocchio vs Native)'
 complete -c anvil -n '__fish_use_subcommand' -a 'refine' -d 'AI-patch validator errors (your ANTHROPIC_API_KEY)'
 complete -c anvil -n '__fish_use_subcommand' -a 'lint' -d 'Portability lint analyzer'
+complete -c anvil -n '__fish_use_subcommand' -a 'audit' -d 'Security parity: sentio scan of source and transpiled output'
 complete -c anvil -n '__fish_use_subcommand' -a 'bench' -d 'CU benchmark vs reference'
 complete -c anvil -n '__fish_use_subcommand' -a 'snapshot' -d 'Save / check IR snapshot'
 complete -c anvil -n '__fish_use_subcommand' -a 'diff' -d 'Diff two Anchor source IRs'
@@ -2642,6 +2834,9 @@ async function main(): Promise<void> {
       break;
     case "lint":
       await cmdLint(args);
+      break;
+    case "audit":
+      await cmdAudit(args);
       break;
     case "bench":
       await cmdBench(args);

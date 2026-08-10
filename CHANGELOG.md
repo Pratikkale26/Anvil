@@ -6,6 +6,23 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ---
 
+## Unreleased
+
+### Added — `anvil audit`: security parity via sentio-native
+
+- **New `anvil audit <input>` command** — scans the Anchor source with the
+  [sentio-native](https://github.com/Pratikkale26/sentio-native) scanner, transpiles, scans the
+  generated code with sentio's native/pinocchio rule layers, and classifies findings into a
+  security-parity report: **carried** (source weakness faithfully preserved — fix the Anchor code),
+  **source-only / Anchor-form** (rules structurally silent on raw code, each annotated with the
+  native layer covering the risk), **source-only / review**, and **NEW ON OUTPUT** — the tripwire
+  class (no source counterpart ⇒ the transformation may have dropped a guarantee; this exact
+  analysis found the pyth-modern owner/discriminator gap fixed in 0.8.1). `--target`, `--json`,
+  `--fail-on <sev>`; exit 2 on tripwire, 1 on threshold breach or missing scanner. sentio is
+  OPTIONAL — anvil runs fully without it; audit prints a `cargo install --git` hint when absent
+  (`ANVIL_SENTIO_BIN` overrides discovery). Parity classification is rule-granular by design —
+  line numbers don't survive transpilation, so refinement below rule level is left to the reader.
+
 ## 0.8.1 — 2026-08-09
 
 ### Fixed — SECURITY: pyth-modern typed account emitted with no owner/discriminator check
