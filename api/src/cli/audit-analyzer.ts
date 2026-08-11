@@ -1,7 +1,7 @@
 /**
  * Audit analyzer — sentio-native integration for `anvil audit`.
  *
- * Runs the sentio scanner (https://github.com/Pratikkale26/sentio-native)
+ * Runs the sentio scanner (https://github.com/Pratikkale26/anvil-audit-undertest)
  * over the Anchor SOURCE and over the transpiled OUTPUT, then classifies the
  * two finding sets into a security-parity report:
  *
@@ -79,7 +79,7 @@ export function findSentioBinary(): string | null {
 
 export const SENTIO_INSTALL_HINT =
   "anvil audit needs the sentio scanner (not found on PATH).\n" +
-  "  Install: cargo install --git https://github.com/Pratikkale26/sentio-native sentio-cli\n" +
+  "  Install: cargo install --git https://github.com/Pratikkale26/anvil-audit-undertest sentio-cli\n" +
   "  Or point ANVIL_SENTIO_BIN at a sentio binary.";
 
 /** Runs `sentio scan <path> --format json`. Throws on unparseable output. */

@@ -1750,13 +1750,16 @@ function printAuditHelp(): void {
   ${c.bold}anvil audit${c.reset} — security parity: sentio scan of the source AND the transpiled output.
 
   Scans your Anchor source with the sentio scanner, transpiles it, scans the
-  generated code with sentio's native/pinocchio rule layers, and classifies
-  the findings:
+  generated code with the pinocchio rule layers, and classifies the findings:
 
     ${c.green}carried${c.reset}        source weakness faithfully preserved — fix your Anchor code
-    ${c.dim}not applicable${c.reset} Anchor-form rules, silent on raw code (risk covered by native layers)
+    ${c.dim}not applicable${c.reset} Anchor-form rules, silent on raw code (risk covered by pinocchio layers)
     ${c.yellow}review${c.reset}         source finding with no output counterpart — check by hand
     ${c.red}NEW ON OUTPUT${c.reset}  no source counterpart — the transpile may have dropped a guarantee
+
+  Parity analysis is validated for ${c.bold}--target pinocchio${c.reset}. The scanner also runs on
+  ${c.bold}--target native${c.reset}, but native findings are noisier (runtime/CPI ownership backstops
+  are invisible to static analysis) — treat native audit as best-effort.
 
   ${c.bold}USAGE${c.reset}
 
@@ -1764,8 +1767,8 @@ function printAuditHelp(): void {
 
   ${c.bold}REQUIREMENTS${c.reset}
 
-    The sentio scanner with native rule layers:
-      cargo install --git https://github.com/Pratikkale26/sentio-native sentio-cli
+    The sentio scanner with the pinocchio rule layers:
+      cargo install --git https://github.com/Pratikkale26/anvil-audit-undertest sentio-cli
     (or set ANVIL_SENTIO_BIN). anvil itself works fine without it — audit is opt-in.
 
   ${c.bold}EXIT CODES${c.reset}
@@ -1815,6 +1818,7 @@ async function cmdAudit(args: CliArgs): Promise<void> {
     process.exit(1);
   }
   const emitted = target === "native" ? emitNativeFull(parsed.ir) : emitPinocchioFull(parsed.ir);
+
   const outDir = mkdtempSync(join(tmpdir(), "anvil-audit-"));
   for (const f of emitted.files) {
     const fp = join(outDir, f.path);

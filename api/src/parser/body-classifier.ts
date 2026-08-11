@@ -1276,35 +1276,37 @@ function classifyLetDeclaration(
   }
 
   // ── Clock::get() sysvar ──
-  // Source patterns:
+  // Source patterns (with `?` or `.unwrap()`, and an optional trailing
+  // accessor/cast):
   //   let X = Clock::get()?;
   //   let X = Clock::get()?.unix_timestamp;
-  //   let X = Clock::get()?.slot;
-  // The optional `.<field>` is captured separately so emitters can
-  // bind directly to the primitive value (Pinocchio's Clock exposes
-  // methods, not fields). Without this, emit produces `let X = Clock`
-  // and downstream arithmetic fails with E0369 (#44, token-fundraiser).
+  //   let X = Clock::get().unwrap().unix_timestamp as u64;
+  // Everything after the fallible unwrap (`?` / `.unwrap()`) is captured as
+  // the accessor tail and re-emitted verbatim onto the qualified Pinocchio
+  // path — `pinocchio::…::Clock::get()?.unix_timestamp as u64` is valid Rust.
+  // Without this, emit dropped the tail, producing `let X = Clock::get()?`
+  // (E0308: `Clock` where a primitive was expected — MetacampDAO staking).
   if (valueNode && /^Clock::get\(\)/.test(valueNode.text.trim())) {
-    const fieldMatch = valueNode.text.trim().match(/^Clock::get\(\)\?\.(\w+)\s*$/);
+    const fieldMatch = valueNode.text.trim().match(/^Clock::get\(\)(?:\?|\.unwrap\(\))?\.(.+)$/);
     return {
       stmt: {
         kind: "sysvar_clock",
         localVar,
         code: text,
-        ...(fieldMatch?.[1] ? { field: fieldMatch[1] } : {}),
+        ...(fieldMatch?.[1] ? { field: fieldMatch[1].trim() } : {}),
       },
     };
   }
 
   // ── Rent::get() sysvar ──
   if (valueNode && /^Rent::get\(\)/.test(valueNode.text.trim())) {
-    const fieldMatch = valueNode.text.trim().match(/^Rent::get\(\)\?\.(\w+)\s*$/);
+    const fieldMatch = valueNode.text.trim().match(/^Rent::get\(\)(?:\?|\.unwrap\(\))?\.(.+)$/);
     return {
       stmt: {
         kind: "sysvar_rent",
         localVar,
         code: text,
-        ...(fieldMatch?.[1] ? { field: fieldMatch[1] } : {}),
+        ...(fieldMatch?.[1] ? { field: fieldMatch[1].trim() } : {}),
       },
     };
   }
