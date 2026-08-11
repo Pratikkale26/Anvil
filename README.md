@@ -1,43 +1,67 @@
-# Anvil
+<p align="center">
+  <img src="assets/anvil-logo.png" alt="Anvil" width="440">
+</p>
 
-> **Anchor → Pinocchio, with proof.** Paste an Anchor program in, get a cargo-buildable Pinocchio project out — plus a byte-equal gate that runs both inside a real VM and checks `data + lamports + owner` against the Anchor original, so you know when a port is deploy-safe instead of trusting it. What's verified today is a growing corpus (below) — not a promise that every program transpiles cleanly.
+<h3 align="center">Anchor → Pinocchio, with proof.</h3>
 
-[anvilsol.xyz](https://anvilsol.xyz) · [npm](https://www.npmjs.com/package/anvil-sol) · [docs](docs/) · [security](SECURITY.md) · [audit trust model](docs/audit-trust-model.md)
+<p align="center">
+  Transpile an Anchor program to a cargo-buildable Pinocchio project —<br>
+  then prove the port is deploy-safe with a byte-equal gate that runs both inside a real VM.
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/anvil-sol"><img alt="npm" src="https://img.shields.io/npm/v/anvil-sol?color=f5a623&label=npm"></a>
+  <img alt="node" src="https://img.shields.io/badge/node-%E2%89%A520.19-3c873a">
+  <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-6b7bff">
+  <img alt="proof" src="https://img.shields.io/badge/gate-byte--equal-0ea880">
+</p>
+
+<p align="center">
+  <a href="https://anvilsol.xyz"><b>anvilsol.xyz</b></a> ·
+  <a href="https://anvilsol.xyz/docs">Docs</a> ·
+  <a href="https://www.npmjs.com/package/anvil-sol">npm</a> ·
+  <a href="SECURITY.md">Security</a>
+</p>
 
 ---
 
-The reason most Anchor programs stay on Anchor isn't that anyone prefers it for production — it's that hand-rewriting 2,000–10,000 lines of Rust to a leaner runtime carries unacceptable correctness risk. Anvil removes that risk:
+Most Anchor programs stay on Anchor not because anyone prefers it in production, but because hand-rewriting thousands of lines of Rust to a leaner runtime carries unacceptable correctness risk. Anvil removes that risk.
 
 ```bash
 npm install -g anvil-sol
 
-# 1. Migrate
+# 1 — migrate
 anvil compile ./my-anchor-program --target pinocchio -o ./my-pinocchio
 
-# 2. Prove it — one shot: builds BOTH .so, synthesizes a scenario from the IR
-#    (happy path + unauthorized-caller + missing-signer probes), byte-compares.
+# 2 — prove it (builds BOTH .so, synthesizes a scenario, byte-compares in a VM)
 anvil verify ./my-anchor-program
-#   ✓ BYTE-EQUAL — all N compared account(s) match.
-
-# Or drive the gate with your own scenario:
-anvil differential ./my-anchor-program --scenario scenario.json
+#   ✓ BYTE-EQUAL — all compared accounts match
 ```
 
-Step 2 is the part nobody else ships. It builds your Anchor source AND the Anvil-emitted Pinocchio version into separate `.so` files, runs the same instruction sequence against both inside [LiteSVM](https://github.com/litesvm/litesvm), and asserts every account's `data`, `lamports`, AND `owner` byte-equal at the end. Anything else — wrong CPI account order, missing bump, off-by-one Borsh layout, account left assigned to the wrong program, a dropped access-control check (revert outcomes are compared step-by-step) — fails the gate loudly. Event log payloads (`emit!`), `set_return_data`, and user `msg!()` text are opt-in comparison surfaces (`--compare-events` / `--compare-return-data` / `--compare-msg-logs`); the CLI refuses to run on `emit!()`-using sources unless you either enable the event surface or pass `--ignore-events` to acknowledge the gap. See [docs/audit-trust-model.md](docs/audit-trust-model.md).
+## Why byte-equal
 
-Cargo green is necessary but not sufficient. This is the actual correctness signal.
+**Cargo green is necessary but not sufficient.** `anvil verify` builds your Anchor source **and** the emitted Pinocchio into separate `.so` files, replays the same instruction sequence against both inside [LiteSVM](https://github.com/litesvm/litesvm), and asserts the end state is byte-identical:
 
----
+- **`data`** — every account's bytes after the full sequence
+- **`lamports`** — balance deltas across signers, PDAs, vaults
+- **`owner`** — the program each account is left assigned to
 
-## What's verified today
+Anything else — wrong CPI account order, missing bump, off-by-one Borsh layout, an account left with the wrong owner, a dropped access-control check — **fails the gate loudly**. It also fires **negative probes** (unauthorized caller, missing signer) that must revert identically on both binaries, so access control is verified too. `emit!`, `set_return_data`, and `msg!` are opt-in comparison surfaces.
 
-**Security parity — `anvil audit`.** With the [sentio-native](https://github.com/Pratikkale26/sentio-native) scanner installed, `anvil audit <input>` scans your Anchor source AND the transpiled output and reports the parity: weaknesses carried from source, Anchor-form findings with their native-layer coverage, and — the tripwire — any finding on the output with no source counterpart, meaning the transformation may have dropped a guarantee. That analysis caught a real missing owner/discriminator check in the pyth path (fixed in 0.8.1). Optional: anvil works fully without the scanner.
+Drive the gate with your own scenarios: `anvil differential ./program --scenario s.json --fuzz 100`. Format in [docs/differential-testing.md](docs/differential-testing.md).
 
-**196 byte-equal differential test files** lock these emit shapes against the Anchor reference (the full corpus is a local/on-demand run — the disk-heavy SBF builds outgrew hosted CI runners, so per-push CI gates typecheck and the corpus is run before releases). **Data + lamports + owner all byte-compared in a real VM** — not just `cargo build` green, not just IDL match. The MPL Token Metadata `.so` is bundled as a test fixture and loaded into LiteSVM via `svm.addProgram` so CPI shape correctness is also verified end-to-end (the Pyth Receiver `.so` is bundled and load-tested too, but the pyth runtime differential itself is deferred — the Anchor reference can't build `pyth-solana-receiver-sdk` upstream). **First multi-file real-world byte-equal: Helium circuit-breaker** (8 instructions, 12 source files) — Anchor and Anvil-Pinocchio produce identical on-chain state under the same scenario. **MPL byte-equal coverage 11/12**: `create_metadata_v3` (with full DataV2 support — creators, collection, uses), `create_master_edition_v3`, `update_metadata_accounts_v2`, `set_and_verify_collection`, `freeze_delegated`, `thaw_delegated`, `approve_collection_authority`, `revoke_collection_authority`, `mint_new_edition_from_master_edition`, `sign_metadata`, `verify_collection`. **Full 12/12 MPL Core catalog**: CreateV2, UpdateV2, TransferV1, BurnV1, CreateCollectionV2, AddPluginV1, RemovePluginV1, UpdatePluginV1, ApprovePluginAuthorityV1, RevokePluginAuthorityV1. **Top DeFi cohort**: marginfi-v2 (91 instructions, 1 error), raydium-clmm (34 instructions, 0 errors), klend (63 instructions, `cargo build-sbf` GREEN — first top Solana lending protocol fully compilable to Pinocchio). **Composite `#[derive(Accounts)]` flatten** shipped end-to-end with BYTE_EQUAL.
+## Verified against real code
 
-### 14+ real-world Anchor programs verified byte-equal
+Externally-authored programs cloned verbatim from public repos, emit byte-identical to the Anchor reference under the same scenario:
 
-Externally-authored programs cloned verbatim from public repos. Anvil's emit produces post-scenario state byte-identical to the Anchor reference under the same scenario:
+- **klend** — 63 instructions, `cargo build-sbf` **GREEN**. First top Solana lending protocol fully compilable to Pinocchio.
+- **Helium circuit-breaker** — 8 instructions across 12 source files. First multi-file real-world byte-equal.
+- **Metaplex** — full MPL Token Metadata (11/12) and MPL Core (12/12) catalogs emit real CPIs, no stubs.
+- **DeFi cohort** — marginfi-v2 (91 ix), raydium-clmm (34 ix) transpile and compile.
+- **196 byte-equal differential test files** + **193 real-world cargo-green regression gates** run as the pre-release corpus.
+
+<details>
+<summary><b>14+ real-world Anchor programs verified byte-equal</b></summary>
 
 | Program | Source | Surface |
 |---|---|---|
@@ -56,137 +80,34 @@ Externally-authored programs cloned verbatim from public repos. Anvil's emit pro
 | `program-examples counter` | solana-developers/program-examples | Basic PDA init + state mutation |
 | `page-visits` | solana-developers/program-examples | Smallest possible PDA-init (5-byte struct) |
 
-### 64 demo programs, representative byte-equal fixtures
+Plus 64 demo fixtures covering vaults, ATAs, SPL transfer/burn, Token-2022 `transfer_checked`, `close`, staking, AMM, multisig, realloc, vesting, `emit!`, sysvars, and the Token-2022 extension family. `bun test api/tests/differential-*.test.ts` runs the full set.
 
-| Fixture | Surface |
-|---|---|
-| `counter` | Account init + state mutation |
-| `vault` | PDA-as-vault + signer-seeded `system_program::transfer` |
-| `has-one` | Runtime constraint enforcement (`has_one = X`) |
-| `ata-mint` | ATA create + SPL `mint_to` CPI |
-| `spl-transfer` | `token::transfer` CPI |
-| `spl-burn` | `token::burn` CPI |
-| `t22-transfer` | Token-2022 `transfer_checked` (mint decimals extraction) |
-| `close` | `close = receiver` rent refund + reap |
-| `set-authority` | Hand-rolled raw SPL `set_authority` on Pinocchio |
-| `escrow` | PDA init + non-ATA token init (`init token::*` vault) + canonical vault PDA `[b"vault", escrow]` (substitution-attack-proof) + `token::transfer` |
-| `marketplace` | NFT marketplace state shape (admin + fee_bps + treasury) |
-| `event-emit` | `emit!()` discriminator + borsh payload via `sol_log_data` |
-| `staking` | Full SPL pool init — canonical `stake_vault` + `reward_vault` PDAs, `address = pool.reward_mint` constraint, snapshotted reward rate per stake |
-| `simple-staking` | SOL-only stake/claim with clock-pinned + `emit!` + msg/return-data triple parity |
-| `amm` | Constant-product pool with LP mint + protocol-fee accumulator (post-audit shape) |
-| `multisig` | m-of-n signer enforcement, executor-must-be-owner check |
-| `realloc` / `realloc-grow` | Vec resize with rent-delta accounting |
-| `vesting` | Schedule + cliff + claim math + close-with-empty-vault precondition |
+</details>
 
-Plus 22 more covering `bumps_access`, `init_if_needed`, `cpi_custom`, `cpi_memo`, sysvars, return data/err, msg logs, T22 extension family (NonTransferable, ImmutableOwner, DefaultAccountState, InterestBearingMint, TokenMetadata, TransferFee), MPL Token Metadata (`create_metadata_v3` + `create_master_edition_v3` + `update_metadata_accounts_v2` byte-equal under a chained scenario via the staged `mpl_token_metadata.so` loaded into LiteSVM), and others. `bun test api/tests/differential-*.test.ts` runs the full set.
+## Compute savings
 
-Plus 181 deterministic real-world cargo-build regression gates (MUST_PASS) from `solana-developers/program-examples` and the `coral-xyz/anchor` test corpus.
-
-### Measured CU savings on bundled demos
-
-Built both as Anchor original and Anvil-emitted Pinocchio, deployed to `solana-test-validator`, run side-by-side. Best-case across 5 trials per side (controls for `find_program_address` bump-iteration variance).
+Built both as the Anchor original and Anvil-emitted Pinocchio, deployed to `solana-test-validator`, measured side-by-side (best-of-5 trials). **Real numbers, not estimates:**
 
 | Instruction | Anchor CU | Anvil-Pinocchio CU | Saved |
 |---|---:|---:|---:|
-| `counter::initialize(start_value=10)` | 6,074 | 3,268 | **46%** |
-| `counter::increment(amount=5)` | 2,753 | 1,801 | **35%** |
 | `vault::initialize` | 9,384 | 4,893 | **48%** |
-| `vault::deposit(amount=1_000_000_000)` | 6,726 | 4,674 | **31%** |
-| `vault::withdraw(amount=500_000_000)` | 6,758 | 4,716 | **30%** |
-| `escrow::create_escrow(seed=42, deposit=250000, receive=500000)` | 26,614 | 16,133 | **39%** |
+| `counter::initialize` | 6,074 | 3,268 | **46%** |
+| `escrow::create_escrow` | 26,614 | 16,133 | **39%** |
+| `counter::increment` | 2,753 | 1,801 | **35%** |
+| `vault::deposit` | 6,726 | 4,674 | **31%** |
 
-For SPL-heavy workloads (transfers, mints, burns), the savings are larger — Helius's hand-written p-token Pinocchio implementations measure 97-98% CU reduction vs SPL-Token-via-Anchor on those primitives, and Anvil's `cpi_spl_*` emit uses the same `pinocchio_token` builders. See [docs/feature-matrix.md](docs/feature-matrix.md#cu-savings) for the full breakdown.
+SPL-heavy workloads save more — Helius's hand-written p-token measures 97–98% CU reduction on transfer/mint/burn, and Anvil's SPL emit uses the same builders. Reproduce with `bun scripts/measure-cu.ts`.
 
-Reproduce: `solana-test-validator --reset --quiet &` in one terminal, then `bun scripts/measure-cu.ts` in another.
+## CLI
 
-What we **don't** claim:
-
-- **AI patches now have a default-on differential gate.** `/build/auto-fix` runs the byte-equal compare after each cargo-green iteration whenever the request body carries `differential: { anchorSource, scenario, ... }`; patches that compile but diverge at runtime are flagged and fed back to the next refine call. The workbench's auto-fix card shows a green "✓ byte-equal verified" badge when the gate passes vs a yellow "⚠ diverged" badge when it doesn't. Pass `?with_differential=0` to skip the gate without restructuring the body. When the request omits the `differential` body entirely (no Anchor reference available), the workbench's persistent yellow banner reminds you to audit before deploy.
-- The CU table in the workbench is a heuristic estimator (constant-table per-construct sum). The measurement script above is the source of truth for absolute numbers.
-- Quasar emit was deleted from the production path on 2026-05-05 (Blueshift hadn't shipped a stable 1.0). Pinocchio + Native are the supported targets.
-
----
-
-## Try it in 30 seconds
-
-The published CLI runs on **Node ≥ 20.19** (or ≥ 22.12) — no Bun required (v0.5.0+):
-
-```bash
-npm install -g anvil-sol
-
-# Transpile any Anchor program. (v0.4+ is safe-by-default: output is written,
-# but success requires the validator + cargo gates; --permissive / --no-cargo-check
-# are the explicit opt-outs.)
-anvil compile program.rs --target pinocchio -o ./out
-
-# Prove it byte-equal vs Anchor (needs cargo-build-sbf + anchor on PATH):
-anvil verify program.rs
+```
+anvil compile <input> --target <pinocchio|native> [-o <dir>]
+anvil verify  <input> [--target <target>]          # one-shot byte-equal proof
+anvil differential <input> [--scenario s.json] [--fuzz N]
+anvil parse | validate | advise | refine | lint | bench | snapshot | diff <input> …
 ```
 
-Working from the repo instead (dev runtime is [Bun](https://bun.sh)):
-
-```bash
-git clone https://github.com/Pratikkale26/Anvil && cd Anvil
-bun install && cd cli && bun install && cd ..
-
-bun cli/anvil.ts compile api/src/demo-programs/counter.rs --target native -o /tmp/counter-native
-cd /tmp/counter-native && cargo build
-
-# Or run the differential gate against a bundled scenario:
-bun cli/anvil.ts differential api/src/demo-programs/counter.rs \
-    --scenario examples/differential/counter.json --fuzz 100
-# → 100/100 byte-equal on randomized args (full-range ints, not just safe values)
-```
-
-There's also a hosted workbench at [anvilsol.xyz](https://anvilsol.xyz) — paste source, pick a target, download the bundle. The CLI is the primary, fully-local interface.
-
-## Anchor in, native out
-
-A handler from `counter.rs`:
-
-```rust
-pub fn increment(ctx: Context<Update>, amount: u64) -> Result<()> {
-    let counter = &mut ctx.accounts.counter;
-    counter.count = counter.count.checked_add(amount).ok_or(CounterError::Overflow)?;
-    Ok(())
-}
-```
-
-What Anvil emits for `--target native` (abbreviated):
-
-```rust
-pub fn increment(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if accounts.len() < 2 { return Err(ProgramError::NotEnoughAccountKeys); }
-    let counter = &accounts[0];
-    let authority = &accounts[1];
-
-    if !authority.is_signer { return Err(ProgramError::MissingRequiredSignature); }
-    if !counter.is_writable { return Err(ProgramError::InvalidAccountData); }
-    if counter.owner != program_id { return Err(ProgramError::IncorrectProgramId); }
-
-    let amount = u64::from_le_bytes(data[..8].try_into()
-        .map_err(|_| ProgramError::InvalidInstructionData)?);
-
-    let (expected, _bump) = Pubkey::find_program_address(
-        &[b"counter", authority.key.as_ref()], program_id);
-    if expected != *counter.key { return Err(ProgramError::InvalidSeeds); }
-
-    let mut state = CounterAccount::read(&counter.data.borrow())?;
-    if state.authority != *authority.key {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    state.count = state.count.checked_add(amount).ok_or(CounterError::Overflow)?;
-    CounterAccount::write(&mut counter.data.borrow_mut(), &state)?;
-    Ok(())
-}
-```
-
-Discriminator routing, signer / writable / owner checks, args decoding, PDA derivation, manual Borsh — all generated.
-
-For the equivalent Pinocchio output and side-by-side comparison, see the workbench's "Compare targets" view.
-
----
+Safe-by-default since v0.4: `compile` refuses to declare success when the validator finds errors, the emit contains `TODO(manual)` markers, or `cargo check` rejects the output. `--permissive` / `--no-cargo-check` are the explicit opt-outs.
 
 ## Pipeline
 
@@ -196,94 +117,31 @@ Anchor source → tree-sitter → Solana IR (Zod, 100+ body kinds) → {Pinocchi
                                                   └──► Differential harness (LiteSVM byte-equal: data + lamports + owner)
 ```
 
-Same IR feeds the emitters, the lint / bench / snapshot / diff CLI commands, the workbench's compare-targets view, and the AI refine validator. No pass duplicates parsing.
+One typed IR feeds the emitters, the lint / bench / snapshot / diff commands, the workbench, and the AI refine validator. No pass duplicates parsing. Detail: [docs/architecture.md](docs/architecture.md).
 
-For detail: [docs/architecture.md](docs/architecture.md).
+## Security audit (optional)
 
----
+`anvil audit <input>` is an optional companion that scans your Anchor source **and** the transpiled output side by side, then reports the parity: weaknesses carried from source, findings with their coverage in the emit, and — the tripwire — any finding that exists **only on the output**, meaning the transformation may have dropped a guarantee. It caught a real missing owner/discriminator check in the Pyth path (fixed in 0.8.1).
 
-## What works (per target)
-
-Pinocchio is the production target. Native is the reference.
-
-Quick read: parser at 100% on 27 real-world programs; SPL Token + Token-2022 + ATA + Memo + System CPIs all green; full 12-slot Metaplex Token Metadata catalog emits real CPIs (no stubs); Pyth oracle reads (both legacy `pyth_sdk_solana` and modern `pyth_solana_receiver_sdk` PriceUpdateV2 paths) transpile to hand-rolled byte deserialization with magic-header + feed-id cross-check; account constraints (`init`, `init_if_needed`, `mut`, `has_one`, `close`, `seeds`, `bump`, `realloc`) all green; `#[derive(InitSpace)]` + `#[max_len]` honored.
-
-Full matrix and known gaps: [docs/feature-matrix.md](docs/feature-matrix.md).
-
----
-
-## CLI
-
-```
-anvil compile <input> --target <pinocchio|native> [-o <dir>]
-anvil verify <input> [--target <target>]           # one-shot byte-equal proof
-anvil differential <input> [--scenario s.json] [--anchor-so path.so] [--fuzz N]
-anvil parse <input> [--json]
-anvil validate <input> --target <target> [--json]
-anvil advise <input>                               # Pinocchio vs Native recommendation
-anvil refine <input> --target <target>             # AI-patch validator errors (your ANTHROPIC_API_KEY)
-anvil lint <input> --target <target> [--markdown]
-anvil bench <input> [--markdown]
-anvil snapshot <input> --save | --check
-anvil diff <before> <after> [--markdown]
-anvil migrate diff|codegen <old.json> <new.json>
-```
-
-Strict mode is the **default** since v0.4: `compile` refuses to declare success when the validator finds errors, the emit contains `TODO(manual)` markers, or (when `cargo` is available) `cargo check` rejects the output — `--permissive` / `--no-cargo-check` are the explicit opt-outs.
-
-`verify` is the headline gate: it builds the Anchor reference and the Anvil emit as real `.so`, synthesizes a scenario from the IR — happy path plus **negative probes** (unauthorized `has_one` caller, missing signer) that must revert identically on both — and byte-compares post-state. `differential --scenario` drives the same gate with your own scenarios; see [docs/differential-testing.md](docs/differential-testing.md) for the JSON format.
-
----
-
-## Workbench
-
-The CLI is the primary interface; the web playground at [anvilsol.xyz](https://anvilsol.xyz) offers:
-
-- Paste / file / folder / GitHub repo ingestion.
-- Live emit + CU heuristic per instruction.
-- AI refine with revert-on-regression (per-request + per-IP daily + global daily spend caps).
-- **Verify Build** — segmented Check / Build / Deploy:
-  - **Check** (`cargo check`, ~3s, runs automatically on every emit).
-  - **Build** (`cargo build`, ~10–15s, catches linker + codegen).
-  - **Deploy** (`cargo build-sbf`, ~30s–2min, produces a deployable `.so`).
-  - SSE-streamed cargo output, cancel-on-disconnect.
-- Project-bundle download (full Cargo project as `.tar`).
-
----
-
-## Public API
-
-`/parse` `/emit` `/lint` `/build` `/build/auto-fix` `/build/differential` `/build/differential/auto-scenario` `/ai/refine` `/ai/diagnose-differential` `/evidence` `/demo` `/health` `/metrics`. Every cargo invocation runs inside firejail / bwrap / unshare with prlimit caps and a stripped env (no `ANTHROPIC_API_KEY`-class secrets reach user code). Per-IP daily AI spend cap, per-IP build-sbf concurrency cap, per-minute rate limit.
-
-`/build/auto-fix` accepts an additional `differential` body field with `anchorSource` + `scenario`. When that field is present, the byte-equal compare runs after each cargo-green iteration (default-on; pass `?with_differential=0` to skip). On `DIVERGED`, synthetic `differential_diverge` ValidationIssues feed back into the next refine call so patches converge toward both compile-AND-byte-equal. `finalPayload.differentialVerdict` carries the terminal verdict for badge consumption.
-
-Threat model: [SECURITY.md](SECURITY.md). Production deploy reqs are listed at the bottom.
-
-`/health` returns release SHA + sandbox kind + prompt version + toolchain availability; `/metrics` returns refine cache hit rate, accept-rate per prompt version, build success/failure, p50/p95/p99 build latency, per-IP spend snapshot.
-
----
+> The audit is experimental and strongest on Anchor and Pinocchio code; native scanning is noisier. Anvil works fully without it. See [docs/audit-trust-model.md](docs/audit-trust-model.md).
 
 ## Project layout
 
 ```
 api/    Bun + Express service: parse, emit, validate, build, AI refine, sandbox
 cli/    anvil-sol — npm CLI, ships api/src bundled via prepack
-web/    Next.js workbench
+web/    Next.js landing + docs
 docs/   Architecture, differential testing, feature matrix, migration guide
 ```
 
----
-
 ## Status
 
-v0.5.0 — the CLI runs on **plain Node** (`npm install -g anvil-sol`; Bun no longer required), ships `anvil verify` (one-shot byte-equal proof with negative probes: unauthorized-caller + missing-signer must revert identically on both binaries) and `anvil advise`, and lands a hardening pass over the silent-miscompile surface (external-const collapse guards, CPI dispatch scoping, mutation-aware transfer folding, ambiguity-refusing Deref resolution — each with a fixture-first regression test). v0.4 made **safe-by-default** the CLI posture (`--permissive` is the opt-out); see [CHANGELOG.md](CHANGELOG.md). **Live at [anvilsol.xyz](https://anvilsol.xyz)**, public API at [`anvil-app-nrjdl.ondigitalocean.app`](https://anvil-app-nrjdl.ondigitalocean.app). 196 byte-equal differential test files + 193 realworld cargo-green MUST_PASS entries + 100+ IR body statement kinds, run as the pre-release corpus (per-push CI gates typecheck). **Top DeFi: klend (63 instructions, `cargo build-sbf` GREEN)**. **First multi-file real-world byte-equal: Helium circuit-breaker**. 1,500+ commits, single developer.
-
-Working notes for grant + migration: [docs/migration-guide.md](docs/migration-guide.md).
+**v0.9.0.** CLI runs on plain Node (`npm install -g anvil-sol`; Bun no longer required). Ships `anvil verify` (byte-equal proof with negative probes) and `anvil audit` (security parity). Live at [anvilsol.xyz](https://anvilsol.xyz). 196 byte-equal differential test files + 193 real-world cargo-green MUST_PASS gates + 100+ IR body kinds, run as the pre-release corpus (per-push CI typechecks). See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE).
 
 ## Contributing
 
-Issues + PRs welcome. Areas where help is most useful: new differential fixtures (the harness is designed for ~30-line additions — see [docs/differential-testing.md](docs/differential-testing.md)), real-world Anchor programs that fail to transpile (file the source + the divergence), workspace/multi-crate Anchor projects.
+Issues and PRs welcome. Most useful: new differential fixtures (~30-line additions — see [docs/differential-testing.md](docs/differential-testing.md)), real-world Anchor programs that fail to transpile (file the source + the divergence), and workspace/multi-crate projects.

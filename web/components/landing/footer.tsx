@@ -1,110 +1,92 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
-import { AnvilMark } from "./anvil-mark";
+import { AnvilLockup } from "@/components/brand/logo";
+import { SITE } from "@/lib/site";
 
-const RESOURCE_LINKS = [
-  { href: "https://www.npmjs.com/package/anvil-sol", label: "CLI — npm i -g anvil-sol", external: true },
-  { href: "/workbench", label: "Workbench" },
-  { href: "https://github.com/pratikkale26/anvil", label: "GitHub", external: true },
-  { href: "#how", label: "How it works" },
-  { href: "#verified", label: "Differential evidence" },
+const RESOURCES = [
+  { href: SITE.npmUrl, label: `npm — ${SITE.npm}`, external: true },
+  { href: "/docs", label: "Docs" },
+  { href: SITE.github, label: "GitHub", external: true },
+  { href: `${SITE.github}/blob/main/CHANGELOG.md`, label: "Changelog", external: true },
+];
+
+const LEARN = [
+  { href: "/#proof", label: "Byte-equal proof" },
+  { href: "/#how", label: "How it works" },
+  { href: "/#verified", label: "Verified programs" },
+  { href: "/#cu", label: "CU savings" },
 ];
 
 export function Footer() {
   return (
-    <footer className="border-t border-anvil-line mt-10">
-      <div className="anvil-container py-10">
-        <div className="grid gap-8 md:grid-cols-[1.4fr_1fr] items-start">
+    <footer className="mt-8 border-t border-anvil-line">
+      <div className="anvil-container py-12">
+        <div className="grid gap-10 md:grid-cols-[1.5fr_1fr_1fr]">
           <div>
-            <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-gradient-to-br from-[#1a1d2c] to-[#0f1119] border border-[rgba(245,166,35,0.2)]">
-                <AnvilMark size={17} />
-              </span>
-              <div className="flex flex-col leading-tight">
-                <span className="font-extrabold text-[14px] tracking-[0.22em] text-anvil-text">
-                  ANVIL
-                </span>
-                <span className="text-[11px] tracking-wider text-anvil-text-muted uppercase">
-                  Solana Compiler · v0.5.0
-                </span>
-              </div>
-            </div>
-            <p className="text-[13px] text-anvil-text-muted mt-4 max-w-[420px] leading-relaxed">
-              A typed-IR transpiler from Anchor to Pinocchio and Native Rust,
-              with a byte-equal gate that checks output against the Anchor
-              reference under LiteSVM.
+            <AnvilLockup badgeSize={34} sublabel={`Solana compiler · v${SITE.version}`} />
+            <p className="text-body mt-4 max-w-[380px]">
+              A typed-IR transpiler from Anchor to Pinocchio and Native Rust, with a
+              byte-equal gate that checks output against the Anchor reference under LiteSVM.
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-8 sm:gap-12 sm:justify-end">
-            <div>
-              <div className="text-eyebrow mb-3">Resources</div>
-              <ul className="space-y-2 list-none p-0 m-0">
-                {RESOURCE_LINKS.map((l) =>
-                  l.external ? (
-                    <li key={l.href}>
-                      <a
-                        href={l.href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-[13px] text-anvil-text-sub hover:text-anvil-text transition-colors no-underline"
-                      >
-                        {l.label} <ArrowUpRight size={12} />
-                      </a>
-                    </li>
-                  ) : l.href.startsWith("#") ? (
-                    <li key={l.href}>
-                      <a
-                        href={l.href}
-                        className="text-[13px] text-anvil-text-sub hover:text-anvil-text transition-colors no-underline"
-                      >
-                        {l.label}
-                      </a>
-                    </li>
+          <div>
+            <div className="text-eyebrow mb-3">Resources</div>
+            <ul className="m-0 list-none space-y-2 p-0">
+              {RESOURCES.map((l) => (
+                <li key={l.href}>
+                  {l.external ? (
+                    <a
+                      href={l.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[13px] text-anvil-text-sub no-underline transition-colors hover:text-anvil-text"
+                    >
+                      {l.label} <ArrowUpRight size={12} />
+                    </a>
                   ) : (
-                    <li key={l.href}>
-                      <Link
-                        href={l.href}
-                        className="text-[13px] text-anvil-text-sub hover:text-anvil-text transition-colors no-underline"
-                      >
-                        {l.label}
-                      </Link>
-                    </li>
-                  ),
-                )}
-              </ul>
-            </div>
-            <div>
-              <div className="text-eyebrow mb-3">Author</div>
-              <ul className="space-y-2 list-none p-0 m-0">
-                <li>
+                    <Link
+                      href={l.href}
+                      className="text-[13px] text-anvil-text-sub no-underline transition-colors hover:text-anvil-text"
+                    >
+                      {l.label}
+                    </Link>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <div className="text-eyebrow mb-3">Learn</div>
+            <ul className="m-0 list-none space-y-2 p-0">
+              {LEARN.map((l) => (
+                <li key={l.href}>
                   <a
-                    href="https://x.com/pratikkale26"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[13px] text-anvil-text-sub hover:text-anvil-text transition-colors no-underline"
+                    href={l.href}
+                    className="text-[13px] text-anvil-text-sub no-underline transition-colors hover:text-anvil-text"
                   >
-                    @pratikkale26 <ArrowUpRight size={12} />
+                    {l.label}
                   </a>
                 </li>
-                <li>
-                  <a
-                    href="https://anvilsol.xyz"
-                    className="inline-flex items-center gap-1 text-[13px] text-anvil-text-sub hover:text-anvil-text transition-colors no-underline"
-                  >
-                    anvilsol.xyz
-                  </a>
-                </li>
-              </ul>
-            </div>
+              ))}
+            </ul>
           </div>
         </div>
 
-        <div className="mt-10 pt-5 border-t border-anvil-line flex flex-wrap items-center justify-between gap-3">
+        <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-anvil-line pt-5">
           <span className="text-[12px] text-anvil-text-muted">
-            Built for Solana developers.
+            Built for Solana developers ·{" "}
+            <a
+              href={SITE.x}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-anvil-text-sub no-underline hover:text-anvil-text"
+            >
+              {SITE.xHandle}
+            </a>
           </span>
-          <span className="text-[12px] text-anvil-text-dim font-mono">
+          <span className="font-mono text-[12px] text-anvil-text-dim">
             anvil · compile → verify → ship
           </span>
         </div>

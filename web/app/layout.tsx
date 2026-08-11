@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { SITE } from "@/lib/site";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -8,13 +9,23 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Anvil | Anchor to Pinocchio and Native, byte-equal verified",
-  description:
-    "Compile Anchor source into Pinocchio or Native Rust with byte-equal differential verification, live CU comparisons, and runtime previews.",
+  metadataBase: new URL(SITE.url),
+  title: {
+    default: "Anvil — Anchor → Pinocchio, byte-equal verified",
+    template: "%s — Anvil",
+  },
+  description: SITE.description,
   openGraph: {
-    title: "Anvil",
-    description:
-      "Anchor to Pinocchio and Native Rust with byte-equal differential verification, supported demos, and live runtime output previews.",
+    title: "Anvil — Anchor → Pinocchio, with proof",
+    description: SITE.description,
+    url: SITE.url,
+    siteName: "Anvil",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Anvil — Anchor → Pinocchio, with proof",
+    description: SITE.description,
   },
 };
 
