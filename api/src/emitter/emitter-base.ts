@@ -953,6 +953,60 @@ export abstract class BaseEmitter {
     out = rewriteSiblingCpiCalls(out);
     out = commentOutSiblingStateAccesses(out, instr.accounts, knownDefs);
     out = this.fixupMagicBlockCommitSites(out);
+    out = this.lowerAccountExitCalls(out);
+    return out;
+  }
+
+  /**
+   * Lower Anchor's manual `account.exit(&program_id)?` to the target's
+   * serialize-back. Anchor programs call `<state>.exit(&crate::ID)?`
+   * explicitly (typically right before a MagicBlock `commit_and_undelegate`)
+   * to force the in-memory state to be written to the account buffer *now*,
+   * rather than at Anchor's implicit end-of-instruction exit — the ephemeral
+   * validator snapshots account data at CPI time, so the flush must precede
+   * the commit. Neither Pinocchio nor Native has an `.exit()` method.
+   *
+   * Rewrite rule (advisor-endorsed "save-when-bound, drop-when-not"):
+   *   - `<X>` bound as a deserialized state (`let X = T::read(&src.data.borrow())?`
+   *     on Native, `let X = T::from_account_info(src)?` on Pinocchio / the
+   *     Native shim) → `T::save(src, &X)?`. Byte-identical whether or not X was
+   *     mutated (re-saving unchanged bytes is a no-op), so it does not depend on
+   *     mutation detection.
+   *   - no state binding for the receiver → the explicit flush is redundant
+   *     (Anvil writes account fields straight to the borrowed buffer), so drop
+   *     it, leaving a breadcrumb.
+   *
+   * Runs cross-target from the shared post-process hook so Native and Pinocchio
+   * lower identically (Pinocchio also has a whole-file pass in
+   * postProcessPinocchioRewrites; this makes it idempotent for that target).
+   */
+  protected lowerAccountExitCalls(body: string): string {
+    if (!/\.exit\s*\(/.test(body)) return body;
+    // Collect state bindings: local name -> { type, src (AccountInfo ident) }.
+    const bindings = new Map<string, { type: string; src: string }>();
+    // Native form: `let [mut] X = T::read(&SRC.data.borrow())?` — src = SRC.
+    for (const m of body.matchAll(
+      /\blet\s+(?:mut\s+)?(\w+)\s*=\s*(\w+)::read\s*\(\s*&\s*(\w+)\.data\.borrow\(\)\s*\)\s*\?/g,
+    )) {
+      bindings.set(m[1]!, { type: m[2]!, src: m[3]! });
+    }
+    // Pinocchio / Native-shim form: `let [mut] X = T::from_account_info(SRC)?`.
+    for (const m of body.matchAll(
+      /\blet\s+(?:mut\s+)?(\w+)\s*=\s*(\w+)::from_account_info\s*\(\s*([^)]+?)\s*\)\s*\?/g,
+    )) {
+      bindings.set(m[1]!, { type: m[2]!, src: m[3]!.trim() });
+    }
+    let out = body;
+    for (const [local, { type, src }] of bindings) {
+      const exitRe = new RegExp(`\\b${local}\\.exit\\s*\\([^)]*\\)\\s*\\?`, "g");
+      out = out.replace(exitRe, `${type}::save(${src}, &${local})?`);
+    }
+    // Fallback: any remaining `<recv>.exit(&…)?` has no deserialized binding —
+    // the flush is a no-op against the buffer Anvil already wrote. Drop it.
+    out = out.replace(
+      /\b\w+\.exit\s*\(\s*&[^)]*\)\s*\?/g,
+      "/* Anchor .exit() elided: state already flushed to the account buffer */ ()",
+    );
     return out;
   }
 

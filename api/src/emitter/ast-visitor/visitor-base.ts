@@ -4233,6 +4233,25 @@ export class AstVisitorBase {
     const resolveRaw = (e: string) => w.normalizeKeyValueUsages(
       w.transformAccountReferences(w.transformCtxAccountsReferences(e)),
     );
+    // The DelegateConfig `validator` is `Option<Pubkey>` (owned). The idiomatic
+    // source `ctx.remaining_accounts.first().map(|acc| acc.key())` lowers with
+    // two defects that resolveRaw alone leaves: (1) `ctx.remaining_accounts` →
+    // `&accounts[N..]`, and in a `.first()…` chain the leading `&` binds to the
+    // whole expression (yielding `&Option<…>`), so parenthesize the slice ref;
+    // (2) the closure param `acc` is not a named account, so
+    // normalizeKeyValueUsages skips its `.key()` — emit the target's owned-key
+    // expression (`*acc.key` native / `*acc.key()` pinocchio) so the closure
+    // yields `Pubkey`, not `&Pubkey`. Non-idiomatic validator expressions
+    // (a bare `Some(pubkey)`, a literal) match neither rewrite and pass through.
+    const resolveValidator = (e: string): string => {
+      let v = resolveRaw(e);
+      v = v.replace(/&accounts\[([^\]]*)\]/g, "(&accounts[$1])");
+      v = v.replace(
+        /\.map\(\s*\|\s*(\w+)\s*\|\s*\1\s*\.\s*key\s*\(\s*\)\s*\)/g,
+        (_m, cv: string) => `.map(|${cv}| ${w.emitter.emitAccountKeyExpr(cv)})`,
+      );
+      return v;
+    };
     const lines: string[] = [
       `    // MagicBlock: delegate '${stmt.pda}' to the delegation program`,
       `    magicblock_delegate_account(`,
@@ -4246,7 +4265,7 @@ export class AstVisitorBase {
       `        ${this.resolveToText(stmt.delegationProgram)},`,
       `        ${resolveRaw(stmt.seedsExpr)},`,
       `        ${stmt.commitFrequencyMs ? resolveRaw(stmt.commitFrequencyMs) : "u32::MAX"},`,
-      `        ${stmt.validator ? resolveRaw(stmt.validator) : "None"},`,
+      `        ${stmt.validator ? resolveValidator(stmt.validator) : "None"},`,
       `        ${stmt.anyValidator ? "true" : "false"},`,
       `    )?;`,
     ];

@@ -175,7 +175,18 @@ function normalizeForAudit(code: string, tokenAccounts: ReadonlySet<string> = ne
     /\bctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*amount\b/g,
     (full: string, name: string) => (tokenAccounts.has(name) ? `token_account_amount(${name})` : full),
   );
-  return withoutTokenAmount.replace(
+  // Anchor's manual `ctx.accounts.X.exit(&program_id)?` is deterministically
+  // lowered by lowerAccountExitCalls (emitter-base): to `T::save(src, &X)?`
+  // when X is a deserialized state binding, else dropped as a no-op flush. Both
+  // are byte-equal-safe, so this is a handled construct — strip it here (like
+  // `.to_account_info()`) so it doesn't trip the ctx.accounts classification
+  // gap. (MagicBlock commit-and-undelegate sources call this before the commit
+  // CPI.)
+  const withoutExit = withoutTokenAmount.replace(
+    /\bctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*exit\s*\([^)]*\)/g,
+    "$1",
+  );
+  return withoutExit.replace(
     /\bctx\s*\.\s*accounts\s*\.\s*(\w+)\s*\.\s*to_account_info\s*\(\s*\)/g,
     "$1",
   );

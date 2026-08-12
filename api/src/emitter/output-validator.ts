@@ -1356,7 +1356,24 @@ export function validateEmitterOutput(ir: SolanaIR, output: EmitterOutput): Vali
   // this is the structural sibling.
   // Test fixtures sometimes hand-build IRs that bypass Zod's defaults — the
   // schema sets `warnings: [].default()` but a hand-rolled IR may omit it.
+  // The magicblock_intent_bundle_downgraded warning is raised at parse time
+  // (target-agnostic) and describes the Pinocchio lowering, where the intent-
+  // bundle serializer is not vendored so the CPI falls back to the classic
+  // ScheduleCommit wire. The Native target reproduces the builder byte-exact
+  // via ephemeral-rollups-sdk, so on Native there is no downgrade — surfacing
+  // the warning there is misleading. Detect the emit target and skip it.
+  const emitTargetForWarnings = detectTarget(
+    (output.files.length > 0
+      ? output.files.map((f) => f.content).join("\n")
+      : output.singleFile) ?? "",
+  );
   for (const w of ir.warnings ?? []) {
+    if (
+      w.code === "magicblock_intent_bundle_downgraded" &&
+      emitTargetForWarnings === "native"
+    ) {
+      continue;
+    }
     const where = w.instruction ? `instruction '${w.instruction}': ` : "";
     // path defaults to the source path the warning carries; the validator's
     // ValidationIssue carries `path` per emitted file, but parser warnings
