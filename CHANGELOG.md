@@ -6,6 +6,28 @@ This project follows [Semantic Versioning](https://semver.org). Breaking changes
 
 ---
 
+## 0.9.1 — 2026-08-12
+
+### Fixed — MagicBlock ER transpile correctness (Native + Pinocchio)
+
+Surfaced transpiling a real `ephemeral-rollups-sdk` 0.16.2 program (rooms/presence,
+session keys, `delegate`/`commit`/`undelegate`). All four fixes are byte-neutral to
+non-ER programs (the shared hooks early-return without the ER constructs):
+
+- **`.exit(&program_id)?` lowering** — Anchor's manual state flush before
+  `commit_and_undelegate` (`<state>.exit(&crate::ID)?`) is now lowered to the
+  target's serialize-back (`T::save(src, &state)?`) when the state is bound, dropped
+  when not, via a shared post-process hook so Native and Pinocchio lower identically.
+  It is also exempted from the pass-through audit. Previously this construct blocked
+  the emit on **both** targets.
+- **Delegate `validator` argument** — `ctx.remaining_accounts.first().map(|a| a.key())`
+  in `DelegateConfig` emitted a mis-bound `&` (yielding `&Option<..>`) and returned
+  `&Pubkey` instead of `Pubkey`; now parenthesizes the slice reference and emits the
+  target's owned-key expression. Fixes a `cargo check` failure on both targets.
+- **Intent-bundle downgrade warning** — `magicblock_intent_bundle_downgraded` is now
+  suppressed on the Native target, which reproduces the intent bundle byte-exact; the
+  downgrade to the classic ScheduleCommit wire only applies to Pinocchio.
+
 ## 0.9.0 — 2026-08-10
 
 ### Added — `anvil audit`: security parity via sentio-native
