@@ -56,7 +56,7 @@ import { codegenMigration } from "./migrate/codegen.js";
 
 // Must match package.json "version" — scripts/prepack.ts hard-fails the
 // publish when they drift (0.5.0 nearly shipped reporting itself as 0.4.0).
-const VERSION = "0.9.0";
+const VERSION = "0.9.1";
 
 // ─── ANSI Colors ─────────────────────────────────────────────────────────────
 
