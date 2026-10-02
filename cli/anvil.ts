@@ -40,6 +40,11 @@ import { resolveLocalSource } from "../api/src/parser/local-source.js";
 import { analyzePortability, renderLintMarkdown } from "../api/src/cli/lint-analyzer.js";
 import { runBench, renderBenchMarkdown } from "../api/src/cli/bench-analyzer.js";
 import {
+  runDoctorDiagnostics,
+  renderDoctorPretty,
+  type DoctorReport,
+} from "../api/src/cli/doctor-analyzer.js";
+import {
   SNAPSHOT_FILENAME,
   loadSnapshot,
   saveSnapshot,
@@ -626,6 +631,7 @@ function printHelp(): void {
     parse        Parse only — output IR as JSON
     validate     Parse, emit, validate — show issues
     verify       Prove byte-equal vs Anchor (build both + auto-scenario + compare)
+    doctor       Check local toolchain and environment prerequisites
     advise       Recommend a transpile target (Pinocchio vs Native)
     refine       AI-patch validator errors (your ANTHROPIC_API_KEY, your spend)
     lint         Auto-port readiness report (ready / review / blocker findings)
@@ -934,6 +940,7 @@ function printCommandHelp(command: string): void {
     case "parse":        printParseHelp();      return;
     case "validate":     printValidateHelp();   return;
     case "verify":       printVerifyHelp();     return;
+    case "doctor":       printDoctorHelp();     return;
     case "advise":       void cmdAdvise({ ...({} as CliArgs), help: true } as CliArgs); return;
     case "refine":       void cmdRefine({ ...({} as CliArgs), help: true } as CliArgs); return;
     case "lint":         printLintHelp();       return;
@@ -974,6 +981,31 @@ function printUpgradeHelp(): void {
     anvil upgrade
     anvil upgrade --global
     anvil upgrade --dry-run
+`);
+}
+
+function printDoctorHelp(): void {
+  console.log(`
+  ${c.bold}anvil doctor${c.reset} — Inspect local toolchains and environment readiness.
+
+  ${c.bold}USAGE${c.reset}
+
+    anvil doctor [options]
+
+  ${c.bold}OPTIONS${c.reset}
+
+    --json          Output structured JSON report
+
+  ${c.bold}DIAGNOSTICS${c.reset}
+
+    ${c.bold}Core Transpiler${c.reset}     Checks Node.js / Bun runtime version and engine compatibility.
+    ${c.bold}Verification Gate${c.reset}   Checks cargo, cargo-build-sbf, anchor-cli, solana-cli, and LiteSVM.
+    ${c.bold}Security Audit${c.reset}      Checks sentio scanner installation.
+
+  ${c.bold}EXAMPLES${c.reset}
+
+    anvil doctor
+    anvil doctor --json
 `);
 }
 
@@ -2479,7 +2511,7 @@ _anvil_completions() {
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
   cmd="\${COMP_WORDS[1]}"
 
-  local commands="compile parse validate verify advise refine lint audit bench snapshot diff differential migrate completion upgrade"
+  local commands="compile parse validate verify doctor advise refine lint audit bench snapshot diff differential migrate completion upgrade"
   local global_flags="--help -h --version -v"
   local target_values="pinocchio native"
   local shell_values="bash zsh fish"
@@ -2540,6 +2572,9 @@ _anvil_completions() {
     upgrade)
       flags="--global -g --dry-run --help -h"
       ;;
+    doctor)
+      flags="--json --help -h"
+      ;;
     *)
       flags="\$global_flags"
       ;;
@@ -2565,6 +2600,7 @@ _anvil() {
     'parse:Parse only - output IR as JSON'
     'validate:Parse, emit, validate - show issues'
     'verify:Prove byte-equal vs Anchor (build both + auto-scenario)'
+    'doctor:Check local toolchains and environment readiness'
     'advise:Recommend a transpile target (Pinocchio vs Native)'
     'refine:AI-patch validator errors (your ANTHROPIC_API_KEY)'
     'lint:Auto-port readiness report'
@@ -2686,6 +2722,7 @@ complete -c anvil -n '__fish_use_subcommand' -a 'compile' -d 'Parse, emit, valid
 complete -c anvil -n '__fish_use_subcommand' -a 'parse' -d 'Parse only — output IR as JSON'
 complete -c anvil -n '__fish_use_subcommand' -a 'validate' -d 'Run output validator on emit'
 complete -c anvil -n '__fish_use_subcommand' -a 'verify' -d 'Prove byte-equal vs Anchor (build both + auto-scenario)'
+complete -c anvil -n '__fish_use_subcommand' -a 'doctor' -d 'Check local toolchains and environment readiness'
 complete -c anvil -n '__fish_use_subcommand' -a 'advise' -d 'Recommend a transpile target (Pinocchio vs Native)'
 complete -c anvil -n '__fish_use_subcommand' -a 'refine' -d 'AI-patch validator errors (your ANTHROPIC_API_KEY)'
 complete -c anvil -n '__fish_use_subcommand' -a 'lint' -d 'Portability lint analyzer'
@@ -2786,6 +2823,23 @@ function cmdCompletion(args: CliArgs): void {
   }
 }
 
+function cmdDoctor(args: CliArgs): void {
+  if (args.help) {
+    printDoctorHelp();
+    return;
+  }
+  const report = runDoctorDiagnostics();
+  if (args.json) {
+    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    return;
+  }
+  banner();
+  process.stdout.write(renderDoctorPretty(report, c));
+  if (!report.coreReady) {
+    process.exit(1);
+  }
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -2869,6 +2923,9 @@ async function main(): Promise<void> {
       break;
     case "verify":
       await cmdVerify(args);
+      break;
+    case "doctor":
+      cmdDoctor(args);
       break;
     case "differential":
       await cmdDifferential(args);

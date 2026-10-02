@@ -54,14 +54,17 @@ const CLI = [
   ["anvil compile <input> --target <pinocchio|native> [-o dir]", "Transpile to a cargo-buildable project."],
   ["anvil verify <input> [--target t]", "One-shot byte-equal proof with negative probes."],
   ["anvil differential <input> [--scenario s.json] [--fuzz N]", "Drive the gate with your own scenario."],
+  ["anvil doctor [--json]", "Inspect local toolchains and environment readiness."],
   ["anvil parse <input> [--json]", "Anchor → Solana IR."],
   ["anvil validate <input> --target t [--json]", "Structural checks on the emit."],
   ["anvil advise <input>", "Pinocchio vs Native recommendation."],
   ["anvil refine <input> --target t", "AI-patch validator errors (your ANTHROPIC_API_KEY)."],
   ["anvil lint <input> --target t [--markdown]", "Deploy-readiness report."],
+  ["anvil audit <input> [--min-severity s]", "Security parity scanner (source vs emit)."],
   ["anvil bench <input> [--markdown]", "Per-instruction CU heuristic."],
   ["anvil snapshot <input> --save | --check", "Lock / diff emit shape."],
   ["anvil diff <before> <after> [--markdown]", "Compare two emits."],
+  ["anvil migrate <diff|codegen> <old> <new>", "Anchor v1.0 migration codegen and safety diff."],
 ];
 
 const DEEP_DIVES = [

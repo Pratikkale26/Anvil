@@ -7,7 +7,7 @@ export const SITE = {
   tagline: "Anchor → Pinocchio, proven.",
   description:
     "Compile Anchor programs to Pinocchio or Native Rust, then prove the port is deploy-safe with a byte-equal differential gate that runs both inside a real VM.",
-  version: "0.9.0",
+  version: "0.9.1",
 
   url: "https://anvilsol.xyz",
   npm: "anvil-sol",
